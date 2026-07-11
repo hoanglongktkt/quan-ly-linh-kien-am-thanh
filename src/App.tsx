@@ -848,7 +848,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50/50 flex flex-col md:flex-row antialiased font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900">
+    <div className="min-h-screen bg-gray-50/50 md:flex md:flex-row antialiased font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900">
       {/* Sidebar Navigation */}
       <aside className="max-md:hidden md:flex md:w-64 md:flex-col shrink-0 md:sticky md:top-0 md:self-start md:max-h-screen md:overflow-y-auto bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
         {/* Brand Header */}
@@ -1027,7 +1027,7 @@ export default function App() {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0">
+      <main className="md:flex-1 min-w-0 w-full">
         {/* Header toolbar */}
         <header className={`bg-white border-b border-gray-100 shadow-xs shrink-0 ${focusScanner ? 'max-md:hidden md:flex' : 'flex'}`}>
           <div className="app-main-container w-full px-4 md:px-6 py-3 md:py-4 flex items-center justify-between gap-3">
@@ -1084,7 +1084,7 @@ export default function App() {
         </header>
 
         {/* Active Tab rendering */}
-        <div className={`app-main-container app-page-content app-scroll-list ${activeTab === 'picking' ? 'max-md:pt-1 max-md:px-2' : activeTab === 'products' ? 'max-md:pt-1 max-md:px-2' : 'max-md:pt-2 max-md:px-3'} p-4 md:p-6 pb-24 md:pb-6 flex-1`}>
+        <div className={`app-main-container app-page-content app-scroll-list ${activeTab === 'picking' ? 'max-md:pt-1 max-md:px-2' : activeTab === 'products' ? 'max-md:pt-1 max-md:px-2' : 'max-md:pt-2 max-md:px-3'} p-4 md:p-6 pb-24 md:pb-6`}>
           {activeTab === 'dashboard' && (
             <Dashboard
               orders={orders}

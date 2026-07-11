@@ -9,8 +9,12 @@ installApiFetchInterceptor();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <DevicePreviewShell>
+    {import.meta.env.DEV ? (
+      <DevicePreviewShell>
+        <App />
+      </DevicePreviewShell>
+    ) : (
       <App />
-    </DevicePreviewShell>
+    )}
   </StrictMode>,
 );

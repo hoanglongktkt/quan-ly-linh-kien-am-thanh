@@ -518,7 +518,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       </div>
 
       {/* ── MOBILE (≤768px): giao diện tối giản, card-based ── */}
-      <div className="ia-mobile flex flex-col min-h-[calc(100dvh-6rem)] -mx-1">
+      <div className="ia-mobile flex flex-col -mx-1 pb-24">
         <div className="ia-mobile-search shrink-0 z-20 px-2 pt-1 pb-2 bg-gray-100">
           <div className="relative w-full">
             <Search className="w-[18px] h-[18px] text-gray-400/80 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -579,7 +579,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
           </div>
         </div>
 
-        <div className="ia-mobile-body flex-1 min-h-0 overflow-y-auto px-2 pb-2 bg-gray-100">
+        <div className="ia-mobile-body px-2 pb-2 bg-gray-100">
           {auditLines.length === 0 ? (
             <div className="py-20 text-center text-gray-300 text-sm font-medium">—</div>
           ) : (

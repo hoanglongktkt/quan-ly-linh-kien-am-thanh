@@ -7,22 +7,23 @@
 }
 
 /* Cho phép cuộn trang tự nhiên trên PC & mobile */
-html {
-  height: auto;
-  overflow-x: hidden;
-  overflow-y: auto;
+html,
+body {
+  height: auto !important;
+  min-height: 100%;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
   -webkit-text-size-adjust: 100%;
 }
 
 body {
-  min-height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
-  touch-action: pan-y;
+  touch-action: manipulation;
 }
 
 #root {
   min-height: 100%;
+  height: auto !important;
+  overflow: visible !important;
 }
 
 /* ── Layout: PC 32" (≥1440px) + Điện thoại (≤768px) ── */
@@ -269,7 +270,6 @@ body {
   .ia-mobile {
     display: flex !important;
     flex-direction: column;
-    min-height: calc(100dvh - 6rem);
   }
 
   .ia-mobile-search-input,
@@ -280,9 +280,6 @@ body {
 
   .ia-mobile-body {
     position: relative;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
     padding-bottom: 5.5rem;
   }
 
