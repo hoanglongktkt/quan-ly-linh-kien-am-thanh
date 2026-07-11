@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiFetch } from '../utils/apiClient';
+import { apiFetch, parseJsonResponse } from '../utils/apiClient';
 import { Lock, User, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -33,7 +33,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
         body: JSON.stringify({ username, password }),
       });
 
-      const data = await response.json();
+      const data = await parseJsonResponse<{ token?: string; username?: string; error?: string }>(response);
 
       if (!response.ok) {
         throw new Error(data.error || 'Đăng nhập không thành công.');

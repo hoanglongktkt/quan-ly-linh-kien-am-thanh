@@ -63,6 +63,29 @@ export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   return fetch(url, init);
 }
 
+/** Parse JSON an toàn — báo lỗi rõ nếu server trả HTML (404/proxy lỗi). */
+export async function parseJsonResponse<T = Record<string, unknown>>(
+  response: Response,
+): Promise<T> {
+  const text = await response.text();
+  const contentType = response.headers.get('content-type') || '';
+
+  if (
+    !contentType.includes('application/json') &&
+    (text.trimStart().startsWith('<') || text.includes('The page could not be found'))
+  ) {
+    throw new Error(
+      'API trả về trang HTML thay vì JSON (404/proxy). Kiểm tra vercel.json và backend quanly.linhkienamthanh.net.',
+    );
+  }
+
+  try {
+    return (text ? JSON.parse(text) : {}) as T;
+  } catch {
+    throw new Error(`Phản hồi API không hợp lệ: ${text.slice(0, 120)}`);
+  }
+}
+
 /** Mọi `fetch('/api/...')` dùng apiUrl (relative trên Vercel + cPanel). */
 export function installApiFetchInterceptor(): void {
   if (typeof window === 'undefined') return;
