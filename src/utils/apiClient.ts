@@ -1,26 +1,39 @@
-/** Production API — không dùng ngrok / URL test cục bộ. */
+/** Backend production (cPanel) — dùng khi frontend gọi API cross-origin trực tiếp. */
 export const PRODUCTION_API_BASE = 'https://quanly.linhkienamthanh.net';
 
 function isLocalDevHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1';
 }
 
-/** Base URL cho API (không có slash cuối). */
-export function getApiBaseUrl(): string {
-  const fromBuild = String(import.meta.env.VITE_API_BASE_URL || '').trim();
-  if (fromBuild) return fromBuild.replace(/\/$/, '');
-
-  if (typeof window !== 'undefined') {
-    if (isLocalDevHost(window.location.hostname)) {
-      return window.location.origin.replace(/\/$/, '');
-    }
-    return PRODUCTION_API_BASE;
-  }
-
-  return PRODUCTION_API_BASE;
+function isVercelHost(hostname: string): boolean {
+  return hostname.endsWith('.vercel.app') || hostname.includes('.vercel.app');
 }
 
-/** Ghép path `/api/...` thành URL đầy đủ trên hosting production. */
+function isMainProductionHost(hostname: string): boolean {
+  return hostname === 'quanly.linhkienamthanh.net' || hostname.endsWith('.linhkienamthanh.net');
+}
+
+/**
+ * Base URL cho API (không có slash cuối).
+ * - localhost / quanly.linhkienamthanh.net / vercel.app → '' (relative `/api/...`)
+ * - Chỉ dùng URL tuyệt đối khi set VITE_API_BASE_URL hoặc bắt buộc cross-origin.
+ */
+export function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+
+    // Vercel / cPanel / localhost: luôn dùng relative — proxy qua api/[...path].js hoặc cùng origin
+    if (isLocalDevHost(hostname) || isMainProductionHost(hostname) || isVercelHost(hostname)) {
+      return '';
+    }
+  }
+
+  const fromEnv = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '');
+  if (fromEnv) return fromEnv;
+  return typeof window !== 'undefined' ? PRODUCTION_API_BASE : '';
+}
+
+/** Ghép path `/api/...` — relative khi base rỗng (cùng origin hoặc Vercel proxy). */
 export function apiUrl(path: string): string {
   const normalized = path.startsWith('/') ? path : `/${path}`;
   const base = getApiBaseUrl();
@@ -36,7 +49,7 @@ export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   return fetch(url, init);
 }
 
-/** Gắn interceptor fetch toàn cục — mọi `fetch('/api/...')` tự trỏ production. */
+/** Mọi `fetch('/api/...')` dùng apiUrl (relative trên Vercel + cPanel). */
 export function installApiFetchInterceptor(): void {
   if (typeof window === 'undefined') return;
   const w = window as Window & { __apiFetchPatched?: boolean };
@@ -47,8 +60,12 @@ export function installApiFetchInterceptor(): void {
     if (typeof input === 'string' && input.startsWith('/api/')) {
       return nativeFetch(apiUrl(input), init);
     }
-    if (input instanceof Request && input.url.startsWith('/api/')) {
-      return nativeFetch(apiUrl(input.url), init);
+    if (input instanceof Request) {
+      const reqUrl = input.url;
+      const path = reqUrl.startsWith('http') ? new URL(reqUrl).pathname : reqUrl;
+      if (path.startsWith('/api/')) {
+        return nativeFetch(apiUrl(path), init);
+      }
     }
     return nativeFetch(input, init);
   };

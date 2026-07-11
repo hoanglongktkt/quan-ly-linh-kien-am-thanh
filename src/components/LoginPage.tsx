@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+import { apiFetch } from '../utils/apiClient';
 import { Lock, User, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -24,7 +25,7 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
     setError(null);
 
     try {
-      const response = await fetch('/api/login', {
+      const response = await apiFetch('/api/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -38,10 +39,14 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
         throw new Error(data.error || 'Đăng nhập không thành công.');
       }
 
-      // Success
       onLoginSuccess(data.token, data.username);
-    } catch (err: any) {
-      setError(err.message || 'Lỗi kết nối đến máy chủ. Vui lòng thử lại.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message === 'Failed to fetch' || message.includes('NetworkError')) {
+        setError('Không kết nối được máy chủ API. Kiểm tra Vercel proxy hoặc backend quanly.linhkienamthanh.net.');
+      } else {
+        setError(message || 'Lỗi kết nối đến máy chủ. Vui lòng thử lại.');
+      }
     } finally {
       setLoading(false);
     }

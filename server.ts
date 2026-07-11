@@ -2049,6 +2049,25 @@ async function startServer() {
   const app = express();
   const PORT = process.env.PORT || 3000;
 
+  app.use((req, res, next) => {
+    const origin = req.headers.origin as string | undefined;
+    const allowedOrigin =
+      origin &&
+      (/^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin) ||
+        /^https:\/\/([a-z0-9-]+\.)*linhkienamthanh\.net$/i.test(origin) ||
+        /^http:\/\/localhost(:\d+)?$/i.test(origin));
+    if (allowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', origin!);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+    next();
+  });
+
   app.use(express.json());
 
   app.post("/api/login", (req, res) => {
