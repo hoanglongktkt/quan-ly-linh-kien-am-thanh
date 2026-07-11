@@ -6,6 +6,25 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+/* Cho phép cuộn trang tự nhiên trên PC & mobile */
+html {
+  height: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+
+#root {
+  min-height: 100%;
+}
+
 /* ── Layout: PC 32" (≥1440px) + Điện thoại (≤768px) ── */
 .app-main-container {
   width: 100%;
@@ -18,8 +37,9 @@
   width: 100%;
 }
 
+/* Vùng cuộn nội bộ (modal, sidebar) — không khóa cuộn trang */
 .app-main-scroll {
-  overscroll-behavior-y: contain;
+  overscroll-behavior-y: auto;
 }
 
 /* Chrome / PC — thanh cuộn mỏng */
@@ -102,7 +122,7 @@
   .app-scroll-list,
   .ia-mobile-body,
   #sidebar-nav {
-    overscroll-behavior-y: contain;
+    overscroll-behavior-y: auto;
     -webkit-overflow-scrolling: touch;
   }
 

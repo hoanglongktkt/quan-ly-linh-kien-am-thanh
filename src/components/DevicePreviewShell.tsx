@@ -24,30 +24,27 @@ function isEmbeddedInIframe(): boolean {
 
 export default function DevicePreviewShell({ children }: { children: React.ReactNode }) {
   const embedded = isEmbeddedInIframe();
+  const isDev = import.meta.env.DEV;
 
   const [mode, setMode] = useState<DeviceMode>(() => {
-    if (embedded) return 'auto';
+    if (embedded || !isDev) return 'auto';
     const saved = localStorage.getItem(STORAGE_KEY);
     return saved === 'mobile' || saved === 'desktop' ? (saved as DeviceMode) : 'auto';
   });
 
   useEffect(() => {
-    if (!embedded) localStorage.setItem(STORAGE_KEY, mode);
-  }, [mode, embedded]);
+    if (!embedded && isDev) localStorage.setItem(STORAGE_KEY, mode);
+  }, [mode, embedded, isDev]);
 
   // Content loaded inside the simulator iframe must render plainly,
   // without spawning its own nested toggle button.
-  if (embedded) {
+  if (embedded || !isDev || mode === 'auto') {
     return <>{children}</>;
   }
 
   return (
     <>
-      {mode === 'auto' ? (
-        children
-      ) : (
-        <DeviceStage mode={mode} src={window.location.href} />
-      )}
+      <DeviceStage mode={mode} src={window.location.href} />
       <DeviceToggle mode={mode} onChange={setMode} />
     </>
   );

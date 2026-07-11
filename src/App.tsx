@@ -850,7 +850,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50/50 flex flex-col md:flex-row antialiased font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900">
       {/* Sidebar Navigation */}
-      <aside className="max-md:hidden md:flex md:w-64 md:flex-col shrink-0 bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
+      <aside className="max-md:hidden md:flex md:w-64 md:flex-col shrink-0 md:sticky md:top-0 md:self-start md:max-h-screen md:overflow-y-auto bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
         {/* Brand Header */}
         <div className="p-6 border-b border-slate-800 flex items-center gap-3">
           <div className="w-10 h-10 bg-linear-to-tr from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-indigo-500/15">
@@ -1027,7 +1027,7 @@ export default function App() {
       )}
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto app-main-scroll">
+      <main className="flex-1 flex flex-col min-w-0">
         {/* Header toolbar */}
         <header className={`bg-white border-b border-gray-100 shadow-xs shrink-0 ${focusScanner ? 'max-md:hidden md:flex' : 'flex'}`}>
           <div className="app-main-container w-full px-4 md:px-6 py-3 md:py-4 flex items-center justify-between gap-3">
