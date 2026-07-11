@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { apiFetch, parseJsonResponse } from '../utils/apiClient';
-import { Lock, User, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { Lock, User, LogIn, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { motion } from 'motion/react';
+import BrandLogo from './BrandLogo';
+import { APP_TITLE, APP_TAGLINE } from '../config/brand';
 
 interface LoginPageProps {
   onLoginSuccess: (token: string, username: string) => void;
@@ -66,12 +68,12 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
       >
         {/* Brand / Logo Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-linear-to-tr from-blue-500 to-indigo-600 rounded-2xl text-white shadow-xl shadow-indigo-500/20 mb-4">
-            <ShieldCheck className="w-8 h-8" />
+          <div className="inline-flex items-center justify-center mb-4">
+            <BrandLogo size={56} className="rounded-2xl shadow-xl shadow-indigo-500/20" />
           </div>
-          <h1 className="text-2xl font-extrabold text-white tracking-tight">Linh Kiện Âm Thanh</h1>
+          <h1 className="text-2xl font-extrabold text-white tracking-tight">{APP_TITLE}</h1>
           <p className="text-slate-400 text-xs mt-1.5 uppercase tracking-widest font-semibold">
-            Quản Lý Cửa Hàng
+            {APP_TAGLINE}
           </p>
         </div>
 

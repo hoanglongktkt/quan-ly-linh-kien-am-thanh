@@ -16,6 +16,8 @@ import OrderManager from './components/OrderManager';
 import OrderPicking from './components/OrderPicking';
 import PublishManager from './components/PublishManager';
 import LoginPage from './components/LoginPage';
+import BrandLogo, { BrandHeader } from './components/BrandLogo';
+import { APP_TITLE } from './config/brand';
 import { 
   LayoutDashboard, 
   Package, 
@@ -852,14 +854,8 @@ export default function App() {
       {/* Sidebar Navigation */}
       <aside className="max-md:hidden md:flex md:w-64 md:flex-col shrink-0 md:sticky md:top-0 md:self-start md:max-h-screen md:overflow-y-auto bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
         {/* Brand Header */}
-        <div className="p-6 border-b border-slate-800 flex items-center gap-3">
-          <div className="w-10 h-10 bg-linear-to-tr from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-indigo-500/15">
-            <ShoppingBag className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="font-extrabold text-sm text-white tracking-tight leading-tight">Linh Kiện Âm Thanh</h1>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Quản Lý Cửa Hàng</span>
-          </div>
+        <div className="p-6 border-b border-slate-800">
+          <BrandHeader />
         </div>
 
         {/* Navigation Items */}
@@ -947,8 +943,8 @@ export default function App() {
 
         {/* Sidebar Footer */}
         <div className="p-4 border-t border-slate-800 text-center space-y-1.5 text-[10px] text-slate-500 font-medium">
-          <p>Môi trường phát triển AI Studio</p>
-          <p>Local Time: 2026</p>
+          <p>{APP_TITLE}</p>
+          <p>© 2026 Linh Kiện Âm Thanh</p>
         </div>
       </aside>
 
@@ -963,15 +959,7 @@ export default function App() {
           />
           <aside className="fixed inset-y-0 left-0 w-[min(100vw-3rem,18rem)] z-70 md:hidden flex flex-col bg-slate-900 text-slate-300 border-r border-slate-800 shadow-2xl">
             <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-10 h-10 bg-linear-to-tr from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white shrink-0">
-                  <ShoppingBag className="w-5 h-5" />
-                </div>
-                <div className="min-w-0">
-                  <h1 className="font-extrabold text-sm text-white tracking-tight leading-tight truncate">Linh Kiện Âm Thanh</h1>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Quản Lý Cửa Hàng</span>
-                </div>
-              </div>
+              <BrandHeader />
               <button
                 type="button"
                 onClick={() => setMobileDrawerOpen(false)}
@@ -1039,6 +1027,9 @@ export default function App() {
           >
             <Menu className="w-5 h-5" />
           </button>
+          <div className="md:hidden shrink-0">
+            <BrandLogo size={36} className="rounded-lg" />
+          </div>
           <div className={`flex-1 min-w-0 ${activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
             <h2 className={`text-lg font-extrabold text-gray-900 tracking-tight ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-title' : ''}`}>
               {activeTab === 'dashboard' && 'Bảng Điều Khiển Tổng Quan'}
