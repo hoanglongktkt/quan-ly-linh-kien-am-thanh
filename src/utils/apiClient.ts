@@ -1,6 +1,16 @@
 /** Backend production (cPanel) — dùng khi frontend gọi API cross-origin trực tiếp. */
 export const PRODUCTION_API_BASE = 'https://quanly.linhkienamthanh.net';
 
+/** Domain chính thức của ứng dụng (frontend). */
+export const PRODUCTION_APP_ORIGIN = 'https://quanly.linhkienamthanh.net';
+
+export function getPublicAppOrigin(): string {
+  if (typeof window !== 'undefined') {
+    return window.location.origin.replace(/\/$/, '');
+  }
+  return PRODUCTION_APP_ORIGIN;
+}
+
 function isLocalDevHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1';
 }

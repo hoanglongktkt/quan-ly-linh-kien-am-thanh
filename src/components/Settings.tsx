@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChannelSettings, SyncLog, ConnectedShop } from '../types';
-import { PRODUCTION_API_BASE } from '../utils/apiClient';
+import { getPublicAppOrigin } from '../utils/apiClient';
 import { 
   Key, 
   Settings, 
@@ -61,8 +61,9 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   // Shopee Open Platform callback URLs — always derived from the app's own
   // origin and the same "/api/..." convention used by the Express routes in
   // server.ts, so the value shown here is guaranteed to match a real endpoint.
-  const shopeeRedirectUrl = `${PRODUCTION_API_BASE}/api/shopee/callback`;
-  const shopeeWebhookUrl = `${PRODUCTION_API_BASE}/api/shopee/webhook`;
+  const appOrigin = getPublicAppOrigin();
+  const shopeeRedirectUrl = `${appOrigin}/api/shopee/callback`;
+  const shopeeWebhookUrl = `${appOrigin}/api/shopee/webhook`;
   const [copiedUrlField, setCopiedUrlField] = useState<string | null>(null);
 
   const handleCopyUrl = (field: string, value: string) => {

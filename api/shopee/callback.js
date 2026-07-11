@@ -1,6 +1,6 @@
 /**
  * Vercel Serverless — Shopee Webhook / Callback
- * URL: https://<ten-mien-vercel>/api/shopee/callback
+ * URL: https://quanly.linhkienamthanh.net/api/shopee/callback
  *
  * Shopee yêu cầu phản hồi 200 OK trong ~3 giây — luôn trả lời ngay, không xử lý nặng trước.
  */
