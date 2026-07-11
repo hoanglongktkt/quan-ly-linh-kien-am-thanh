@@ -2229,41 +2229,70 @@ async function startServer() {
   });
 
   app.get("/api/health", (_req, res) => {
-    res.status(200).json({ ok: true, service: "cpanel-backend" });
+    res.status(200).json({
+      ok: true,
+      service: "cpanel-backend",
+      host: APP_BASE_URL,
+      checkedAt: new Date().toISOString(),
+    });
   });
+
+  function logShopeeIngress(prefix: string, req: any) {
+    console.log(
+      prefix,
+      JSON.stringify({
+        at: new Date().toISOString(),
+        method: req.method,
+        url: req.url,
+        query: req.query || {},
+        headers: req.headers || {},
+        body: req.body ?? null,
+      }),
+    );
+  }
 
   // Shopee Open Platform OAuth redirect callback.
   // Register in Shopee Partner App Settings: SHOPEE_CALLBACK_URL
   app.get("/api/shopee/callback", async (req, res) => {
+    logShopeeIngress("[Shopee Callback]", req);
     const { code, shop_id } = req.query;
-    console.log(`[Shopee OAuth] Callback received. code=${code || "N/A"} shop_id=${shop_id || "N/A"} env=${SHOPEE_ENV}`);
 
-    // Shopee / partner kiểm tra URL (GET không có query) — 200 body rỗng
     if (!code || !shop_id) {
+      console.log("[Shopee Callback] GET verification probe — 200 empty");
       return res.status(200).end();
     }
 
     try {
       const tokenResult = await exchangeShopeeCodeForToken(String(code), String(shop_id));
       if (!tokenResult.access_token) {
-        console.error(`[Shopee OAuth] \u0110\u1ED5i code th\u1EA5t b\u1EA1i cho shop_id=${shop_id}:`, tokenResult.error, tokenResult.message);
+        console.error(`[Shopee Callback] Đổi code thất bại shop_id=${shop_id}:`, tokenResult.error, tokenResult.message);
         return res.redirect("/?shopee_linked=0&error=" + encodeURIComponent(tokenResult.error || "token_exchange_failed"));
       }
-      console.log(`[Shopee OAuth] Shop ${shop_id} li\xEAn k\u1EBFt th\xE0nh c\xF4ng, access_token h\u1EBFt h\u1EA1n sau ${tokenResult.expire_in}s.`);
+      console.log(`[Shopee Callback] Shop ${shop_id} liên kết thành công, token hết hạn sau ${tokenResult.expire_in}s.`);
       return res.redirect("/?shopee_linked=1&shop_id=" + shop_id);
     } catch (error: any) {
-      console.error("[Shopee OAuth] Exchange token error:", error);
+      console.error("[Shopee Callback] Exchange token error:", error);
       return res.redirect("/?shopee_linked=0&error=" + encodeURIComponent(error.message || "unknown_error"));
     }
   });
 
-  // Shopee webhook — trả 200 OK ngay (<3s), xử lý dữ liệu nặng ở background.
+  app.get("/api/shopee/webhook", (req, res) => {
+    logShopeeIngress("[Shopee Webhook]", req);
+    console.log("[Shopee Webhook] GET verification probe — 200 empty");
+    res.status(200).end();
+  });
+
   app.post("/api/shopee/webhook", (req, res) => {
+    logShopeeIngress("[Shopee Webhook]", req);
     res.status(200).end();
     const payload = req.body;
     setImmediate(() => {
-      console.log("[Shopee Webhook] Payload received:", JSON.stringify(payload));
-      processShopeeWebhookPayload(payload);
+      try {
+        processShopeeWebhookPayload(payload);
+        console.log("[Shopee Webhook] Đã xử lý và lưu payload vào database.");
+      } catch (error) {
+        console.error("[Shopee Webhook] Lỗi xử lý payload:", error);
+      }
     });
   });
 

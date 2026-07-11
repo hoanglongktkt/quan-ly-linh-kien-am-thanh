@@ -68,6 +68,56 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   const shopeeWebhookUrl = `${appOrigin}/api/shopee/webhook`;
   const [copiedUrlField, setCopiedUrlField] = useState<string | null>(null);
 
+  type CpanelHealthState = 'unknown' | 'checking' | 'online' | 'offline';
+  const [cpanelHealth, setCpanelHealth] = useState<CpanelHealthState>('unknown');
+  const [cpanelHealthMessage, setCpanelHealthMessage] = useState('');
+  const [cpanelHealthDetail, setCpanelHealthDetail] = useState<Record<string, unknown> | null>(null);
+
+  const checkCpanelBackend = async (opts?: { appendTerminal?: boolean }) => {
+    setCpanelHealth('checking');
+    setCpanelHealthMessage('Đang kiểm tra kết nối cPanel...');
+    try {
+      const res = await apiFetch('/api/health/cpanel');
+      const data = await parseJsonResponse<{
+        ok?: boolean;
+        connected?: boolean;
+        message?: string;
+        cpanelBackendUrl?: string;
+        latencyMs?: number;
+        error?: string;
+      }>(res);
+      setCpanelHealthDetail(data as Record<string, unknown>);
+      const online = Boolean(data.connected ?? data.ok);
+      setCpanelHealth(online ? 'online' : 'offline');
+      const msg =
+        data.message ||
+        (online
+          ? `Backend OK${data.latencyMs != null ? ` (${data.latencyMs}ms)` : ''}`
+          : data.error || 'Không kết nối được backend cPanel');
+      setCpanelHealthMessage(msg);
+      if (opts?.appendTerminal) {
+        setTerminalLogs((prev) => [
+          ...prev,
+          `[LOG ${new Date().toLocaleTimeString('vi-VN')}] Backend cPanel: ${online ? '✅' : '❌'} ${msg}${data.cpanelBackendUrl ? ` — ${data.cpanelBackendUrl}` : ''}`,
+        ]);
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setCpanelHealth('offline');
+      setCpanelHealthMessage(message);
+      if (opts?.appendTerminal) {
+        setTerminalLogs((prev) => [
+          ...prev,
+          `[LOG ${new Date().toLocaleTimeString('vi-VN')}] ❌ Backend cPanel: ${message}`,
+        ]);
+      }
+    }
+  };
+
+  useEffect(() => {
+    void checkCpanelBackend();
+  }, []);
+
   const handleCopyUrl = (field: string, value: string) => {
     navigator.clipboard.writeText(value).then(() => {
       setCopiedUrlField(field);
@@ -538,6 +588,38 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
           </h3>
           <p className="text-xs text-gray-400 mt-1">Cấu hình kết nối API API Partner, phân tách từng gian hàng độc lập để đồng bộ cùng lúc.</p>
           <p className="text-[10px] text-gray-300 font-mono mt-0.5" title="Dùng để xác nhận bản UI đã deploy">UI build: {uiBuildId}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-lg border ${
+                cpanelHealth === 'checking' || cpanelHealth === 'unknown'
+                  ? 'bg-gray-50 border-gray-200 text-gray-500'
+                  : cpanelHealth === 'online'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                    : 'bg-red-50 border-red-200 text-red-700'
+              }`}
+              title={cpanelHealthDetail ? JSON.stringify(cpanelHealthDetail) : cpanelHealthMessage}
+            >
+              <Server className="w-3.5 h-3.5" />
+              Backend cPanel:{' '}
+              {cpanelHealth === 'checking' || cpanelHealth === 'unknown'
+                ? 'Đang kiểm tra...'
+                : cpanelHealth === 'online'
+                  ? 'Online'
+                  : 'Offline'}
+            </span>
+            <button
+              type="button"
+              onClick={() => void checkCpanelBackend({ appendTerminal: true })}
+              disabled={cpanelHealth === 'checking'}
+              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold rounded-lg border border-gray-200 bg-white hover:bg-gray-50 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${cpanelHealth === 'checking' ? 'animate-spin' : ''}`} />
+              Test cPanel
+            </button>
+            {cpanelHealthMessage ? (
+              <span className="text-[10px] text-gray-400 truncate max-w-md">{cpanelHealthMessage}</span>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex gap-2 shrink-0">

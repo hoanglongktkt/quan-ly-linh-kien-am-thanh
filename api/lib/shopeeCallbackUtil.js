@@ -1,28 +1,39 @@
-/**
- * Log chi tiết request Shopee — hiện trên Vercel → Project → Logs / Functions.
- */
-export function logShopeeRequest(label, req) {
-  const meta = {
-    at: new Date().toISOString(),
-    method: req.method,
-    url: req.url,
-    query: req.query || {},
-    headers: {
-      host: req.headers.host,
-      'user-agent': req.headers['user-agent'],
-      'content-type': req.headers['content-type'],
-      authorization: req.headers.authorization ? '(present)' : '(none)',
-      'x-shopee-signature': req.headers['x-shopee-signature'] ? '(present)' : '(none)',
-    },
-    body: req.body ?? null,
-    cpanelBackend: process.env.CPANEL_BACKEND_URL ? '(set)' : '(MISSING)',
-  };
-  console.log(`[Shopee ${label}]`, JSON.stringify(meta));
+import { cpanelBackendBase, resolveCpanelBackend } from './cpanelBackend.js';
+
+/** Log đầy đủ headers + body — prefix cố định [Shopee Callback] hoặc [Shopee Webhook]. */
+export function logShopeeRequest(prefix, req) {
+  const headers = {};
+  for (const [key, value] of Object.entries(req.headers || {})) {
+    headers[key] = value;
+  }
+
+  let body = req.body;
+  if (body != null && typeof body === 'object') {
+    try {
+      body = JSON.parse(JSON.stringify(body));
+    } catch {
+      body = String(body);
+    }
+  }
+
+  const backend = resolveCpanelBackend();
+  console.log(
+    prefix,
+    JSON.stringify({
+      at: new Date().toISOString(),
+      method: req.method,
+      url: req.url,
+      query: req.query || {},
+      headers,
+      body,
+      cpanelBackendUrl: backend.url || null,
+      cpanelBackendConfigured: backend.ok,
+      cpanelBackendError: backend.error,
+    }),
+  );
 }
 
-export function cpanelBackendBase() {
-  return String(process.env.CPANEL_BACKEND_URL || '').replace(/\/$/, '');
-}
+export { cpanelBackendBase, resolveCpanelBackend };
 
 /** Shopee Push verification: 2xx + body RỖNG (không JSON). */
 export function respondShopeeOk(res) {
@@ -40,15 +51,18 @@ const HOP_HEADERS = new Set([
   'upgrade',
 ]);
 
-/** Chuyển tiếp sang cPanel (OAuth GET hoặc webhook POST) — không chặn response Shopee. */
-export async function forwardToCpanel(pathWithQuery, req, opts = {}) {
-  const base = cpanelBackendBase();
-  if (!base) {
-    console.warn('[Shopee Forward] CPANEL_BACKEND_URL chưa set — bỏ qua forward tới cPanel.');
+/**
+ * Chuyển tiếp sang cPanel — OAuth GET hoặc webhook POST.
+ * @param {string} logPrefix - [Shopee Callback] hoặc [Shopee Webhook]
+ */
+export async function forwardToCpanel(logPrefix, pathWithQuery, req, opts = {}) {
+  const backend = resolveCpanelBackend();
+  if (!backend.ok) {
+    console.error(logPrefix, 'Forward skipped:', backend.error);
     return null;
   }
 
-  const target = `${base}${pathWithQuery}`;
+  const target = `${backend.url}${pathWithQuery}`;
   const headers = {};
   for (const [key, value] of Object.entries(req.headers || {})) {
     if (HOP_HEADERS.has(key.toLowerCase())) continue;
@@ -65,19 +79,36 @@ export async function forwardToCpanel(pathWithQuery, req, opts = {}) {
     }
   }
 
-  console.log('[Shopee Forward]', req.method, target);
+  console.log(logPrefix, 'Forward →', req.method, target);
+  const started = Date.now();
   try {
     const upstream = await fetch(target, {
       method: req.method,
       headers,
       body,
       redirect: opts.followRedirect === false ? 'manual' : 'follow',
+      signal: AbortSignal.timeout(opts.timeoutMs || 15000),
     });
-    console.log('[Shopee Forward] Response', upstream.status, target);
+    const ms = Date.now() - started;
+    const preview = await upstream.clone().text();
+    console.log(
+      logPrefix,
+      'Forward response',
+      JSON.stringify({
+        target,
+        status: upstream.status,
+        latencyMs: ms,
+        bodyPreview: preview.slice(0, 500),
+      }),
+    );
     return upstream;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[Shopee Forward] FAILED', target, message);
+    console.error(
+      logPrefix,
+      'Forward FAILED',
+      JSON.stringify({ target, latencyMs: Date.now() - started, error: message }),
+    );
     return null;
   }
 }

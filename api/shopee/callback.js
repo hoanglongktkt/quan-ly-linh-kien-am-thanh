@@ -1,17 +1,15 @@
 /**
- * Vercel Serverless — Shopee Live Callback / Push / OAuth redirect
- * URL đăng ký Shopee: https://<domain>/api/shopee/callback
- * Alias: /api/auth/shopee/callback
- *
- * Shopee Push verification (POST): bắt buộc HTTP 2xx + body RỖNG (không JSON).
- * Không yêu cầu JWT — Shopee gọi trực tiếp.
+ * Vercel — Shopee Live Callback / OAuth redirect
+ * URL: https://<domain>/api/shopee/callback
  */
 import {
   logShopeeRequest,
   respondShopeeOk,
   forwardToCpanel,
-  cpanelBackendBase,
+  resolveCpanelBackend,
 } from '../lib/shopeeCallbackUtil.js';
+
+const LOG = '[Shopee Callback]';
 
 const HOP_HEADERS = new Set([
   'host',
@@ -23,7 +21,7 @@ const HOP_HEADERS = new Set([
 ]);
 
 export default async function handler(req, res) {
-  logShopeeRequest('Callback', req);
+  logShopeeRequest(LOG, req);
 
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -42,7 +40,7 @@ export default async function handler(req, res) {
         else if (v != null) qs.append(k, String(v));
       }
       const q = qs.toString();
-      forwardToCpanel(`/api/shopee/webhook${q ? `?${q}` : ''}`, req).catch(() => {});
+      forwardToCpanel(LOG, `/api/shopee/webhook${q ? `?${q}` : ''}`, req).catch(() => {});
     });
     return;
   }
@@ -52,7 +50,7 @@ export default async function handler(req, res) {
     const shopId = req.query?.shop_id;
 
     if (!code && !shopId) {
-      console.log('[Shopee Callback] GET verification probe — 200 empty');
+      console.log(LOG, 'GET verification probe — 200 empty');
       return respondShopeeOk(res);
     }
 
@@ -62,16 +60,15 @@ export default async function handler(req, res) {
     }
     const path = `/api/shopee/callback?${qs.toString()}`;
 
-    if (!cpanelBackendBase()) {
-      console.error('[Shopee Callback] OAuth GET nhưng thiếu CPANEL_BACKEND_URL');
+    const backend = resolveCpanelBackend();
+    if (!backend.ok) {
+      console.error(LOG, backend.error);
       res.status(503);
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.end(
-        'CPANEL_BACKEND_URL chưa cấu hình trên Vercel. Không thể hoàn tất OAuth.',
-      );
+      return res.end(backend.error);
     }
 
-    const upstream = await forwardToCpanel(path, req, { followRedirect: false });
+    const upstream = await forwardToCpanel(LOG, path, req, { followRedirect: false });
     if (!upstream) {
       res.status(502);
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -87,15 +84,9 @@ export default async function handler(req, res) {
   }
 
   res.setHeader('Allow', 'GET, POST, OPTIONS');
-  res.status(405);
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  return res.end(JSON.stringify({ error: 'Method not allowed' }));
+  res.status(405).end();
 }
 
 export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '4mb',
-    },
-  },
+  api: { bodyParser: { sizeLimit: '4mb' } },
 };

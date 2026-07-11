@@ -4,8 +4,10 @@
  */
 import { logShopeeRequest, respondShopeeOk, forwardToCpanel } from '../lib/shopeeCallbackUtil.js';
 
+const LOG = '[Shopee Webhook]';
+
 export default async function handler(req, res) {
-  logShopeeRequest('Webhook', req);
+  logShopeeRequest(LOG, req);
 
   if (req.method === 'OPTIONS') {
     return respondShopeeOk(res);
@@ -15,7 +17,7 @@ export default async function handler(req, res) {
     respondShopeeOk(res);
     if (req.method === 'POST') {
       setImmediate(() => {
-        forwardToCpanel('/api/shopee/webhook', req).catch(() => {});
+        forwardToCpanel(LOG, '/api/shopee/webhook', req).catch(() => {});
       });
     }
     return;

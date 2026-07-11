@@ -1,7 +1,9 @@
 /**
- * Vercel — proxy /api/* sang backend cPanel (tránh loop khi domain trỏ Vercel).
- * Bắt buộc set CPANEL_BACKEND_URL trên Vercel (subdomain trỏ thẳng cPanel, VD: https://api.quanly.linhkienamthanh.net)
+ * Vercel — proxy /api/* sang backend cPanel.
+ * Chỉ dùng CPANEL_BACKEND_URL (VD: https://api.linhkienamthanh.net).
  */
+import { resolveCpanelBackend } from './lib/cpanelBackend.js';
+
 const HOP_HEADERS = new Set([
   'host',
   'connection',
@@ -10,10 +12,6 @@ const HOP_HEADERS = new Set([
   'keep-alive',
   'upgrade',
 ]);
-
-function backendBase() {
-  return String(process.env.CPANEL_BACKEND_URL || process.env.APP_URL || '').replace(/\/$/, '');
-}
 
 function resolvePathPart(req) {
   const raw = req.query.path;
@@ -26,13 +24,12 @@ function resolvePathPart(req) {
 }
 
 export default async function handler(req, res) {
-  const base = backendBase();
+  const backend = resolveCpanelBackend();
   const pathPart = resolvePathPart(req);
 
-  if (!base) {
-    return res.status(503).json({
-      error: 'Chưa cấu hình CPANEL_BACKEND_URL trên Vercel (subdomain backend trỏ cPanel).',
-    });
+  if (!backend.ok) {
+    console.error('[API Proxy]', backend.error);
+    return res.status(503).json({ error: backend.error });
   }
 
   const blocked =
@@ -53,7 +50,7 @@ export default async function handler(req, res) {
     else if (value != null) qs.append(key, String(value));
   }
   const query = qs.toString();
-  const target = `${base}/api/${pathPart}${query ? `?${query}` : ''}`;
+  const target = `${backend.url}/api/${pathPart}${query ? `?${query}` : ''}`;
 
   const headers = {};
   for (const [key, value] of Object.entries(req.headers)) {
@@ -71,8 +68,14 @@ export default async function handler(req, res) {
     }
   }
 
+  console.log('[API Proxy]', req.method, target);
   try {
-    const upstream = await fetch(target, { method: req.method, headers, body });
+    const upstream = await fetch(target, {
+      method: req.method,
+      headers,
+      body,
+      signal: AbortSignal.timeout(20000),
+    });
     const text = await upstream.text();
     res.status(upstream.status);
     upstream.headers.forEach((value, key) => {
@@ -81,7 +84,12 @@ export default async function handler(req, res) {
     return res.send(text);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return res.status(502).json({ error: 'Không kết nối được backend cPanel', detail: message });
+    console.error('[API Proxy] FAILED', target, message);
+    return res.status(502).json({
+      error: 'Không kết nối được backend cPanel',
+      detail: message,
+      cpanelBackendUrl: backend.url,
+    });
   }
 }
 
