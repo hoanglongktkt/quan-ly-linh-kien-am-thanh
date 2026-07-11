@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChannelSettings, SyncLog, ConnectedShop } from '../types';
-import { getPublicAppOrigin } from '../utils/apiClient';
+import { getPublicAppOrigin, apiFetch, parseJsonResponse } from '../utils/apiClient';
 import { 
   Key, 
   Settings, 
@@ -17,8 +17,6 @@ import {
   Edit,
   RefreshCw,
   Store,
-  Wifi,
-  WifiOff,
   Sliders,
   Check,
   AlertTriangle,
@@ -30,6 +28,8 @@ import {
   Sparkles,
   Loader2
 } from 'lucide-react';
+
+type ShopConnState = 'online' | 'offline' | 'checking' | 'unknown';
 
 interface SettingsProps {
   settings: ChannelSettings;
@@ -57,6 +57,8 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   // Diagnostic states
   const [testingAPI, setTestingAPI] = useState<string | null>(null); // shop.id, 'all-shops' or null
   const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
+  const [shopConnectionStatus, setShopConnectionStatus] = useState<Record<string, ShopConnState>>({});
+  const [shopConnectionMessages, setShopConnectionMessages] = useState<Record<string, string>>({});
 
   // Shopee Open Platform callback URLs — always derived from the app's own
   // origin and the same "/api/..." convention used by the Express routes in
@@ -318,35 +320,137 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       ...settings,
       shops: updatedShops
     });
+
+    const toggled = updatedShops.find(s => s.id === shop.id);
+    if (toggled) {
+      void checkShopConnections([toggled], { silent: true });
+    }
+  };
+
+  const applyConnectionResults = (
+    statuses: Record<string, { online: boolean; message: string }>,
+    targetShops: ConnectedShop[],
+    opts?: { appendTerminal?: boolean },
+  ) => {
+    setShopConnectionStatus((prev) => {
+      const next = { ...prev };
+      for (const shop of targetShops) {
+        const result = statuses[shop.id];
+        if (result) {
+          next[shop.id] = result.online ? 'online' : 'offline';
+        }
+      }
+      return next;
+    });
+    setShopConnectionMessages((prev) => {
+      const next = { ...prev };
+      for (const shop of targetShops) {
+        const result = statuses[shop.id];
+        if (result) next[shop.id] = result.message;
+      }
+      return next;
+    });
+
+    if (opts?.appendTerminal) {
+      const time = new Date().toLocaleTimeString('vi-VN');
+      const lines = targetShops.flatMap((shop) => {
+        const result = statuses[shop.id];
+        if (!result) return [];
+        return [
+          `[LOG ${time}] ${shop.shopName} (${shop.platform.toUpperCase()}): ${result.online ? '✅ Online' : '❌ Offline'} — ${result.message}`,
+        ];
+      });
+      if (lines.length) {
+        setTerminalLogs((prev) => [...prev, ...lines]);
+      }
+    }
+  };
+
+  const checkShopConnections = async (
+    targetShops: ConnectedShop[],
+    opts?: { silent?: boolean; appendTerminal?: boolean; testingId?: string | null },
+  ) => {
+    if (!targetShops.length) return;
+
+    const testingId = opts?.testingId ?? (targetShops.length === 1 ? targetShops[0].id : 'all-shops');
+    setTestingAPI(testingId);
+    setShopConnectionStatus((prev) => {
+      const next = { ...prev };
+      for (const shop of targetShops) next[shop.id] = 'checking';
+      return next;
+    });
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await apiFetch('/api/settings/shop-connection-status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+        body: JSON.stringify({ shops: targetShops }),
+      });
+      const data = await parseJsonResponse<{ success?: boolean; statuses?: Record<string, { online: boolean; message: string }>; error?: string }>(res);
+      if (!res.ok || !data.success || !data.statuses) {
+        throw new Error(data.error || 'Kiểm tra kết nối thất bại');
+      }
+      applyConnectionResults(data.statuses, targetShops, { appendTerminal: opts?.appendTerminal });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setShopConnectionStatus((prev) => {
+        const next = { ...prev };
+        for (const shop of targetShops) next[shop.id] = 'offline';
+        return next;
+      });
+      if (!opts?.silent) {
+        setTerminalLogs((prev) => [
+          ...prev,
+          `[LOG ${new Date().toLocaleTimeString('vi-VN')}] ❌ Lỗi kiểm tra kết nối: ${message}`,
+        ]);
+      }
+    } finally {
+      setTestingAPI(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!shops.length) return;
+    void checkShopConnections(shops, { silent: true });
+  }, [shops.length, settings.shops?.map((s) => `${s.id}:${s.connected}:${s.platform}:${s.shopId}`).join('|')]);
+
+  const renderShopConnectionStatus = (shop: ConnectedShop) => {
+    const status = shopConnectionStatus[shop.id] ?? 'unknown';
+    const isChecking = status === 'checking' || testingAPI === shop.id || testingAPI === 'all-shops';
+    const isOnline = status === 'online';
+
+    return (
+      <div className="flex items-center gap-1.5 shrink-0">
+        <button
+          type="button"
+          onClick={() => checkShopConnections([shop], { appendTerminal: true, testingId: shop.id })}
+          disabled={testingAPI !== null}
+          className="p-1.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600 transition-all disabled:opacity-50"
+          title={shopConnectionMessages[shop.id] || 'Kiểm tra kết nối API'}
+        >
+          <RefreshCw className={`w-4 h-4 ${isChecking ? 'animate-spin text-blue-600' : ''}`} />
+        </button>
+        <span
+          className={`text-[11px] font-bold min-w-[52px] ${
+            isChecking ? 'text-gray-400' : isOnline ? 'text-blue-600' : 'text-red-600'
+          }`}
+        >
+          {isChecking ? '...' : isOnline ? 'Online' : 'Offline'}
+        </span>
+      </div>
+    );
   };
 
   // Run connection diagnostics for a single shop
   const runDiagnostics = (shop: ConnectedShop) => {
-    setTestingAPI(shop.id);
-    setTerminalLogs([]);
-
-    const getPlatformAPI = (p: string) => {
-      if (p === 'shopee') return 'Shopee Partner OpenAPI';
-      if (p === 'tiktok') return 'TikTok Shop Seller API v2';
-      return 'WooCommerce WP REST API v3';
-    };
-
-    const steps = [
-      `[1/5] Khởi tạo giao thức bảo mật TLS v1.3...`,
-      `[2/5] Đang kiểm tra API Credentials gian hàng: ${shop.shopName} (Mã Shop/Key: ${shop.shopId})...`,
-      `[3/5] Mã hóa xác thực chữ ký đối tác HMAC-SHA256...`,
-      `[4/5] Gửi truy vấn ping kiểm tra đến cổng API máy chủ ${getPlatformAPI(shop.platform)} ${shop.wooUrl ? `(${shop.wooUrl})` : ''}...`,
-      `[5/5] Hoàn tất! Phản hồi thành công HTTP 200 OK. Gian hàng "${shop.shopName}" kết nối ổn định.`
-    ];
-
-    steps.forEach((step, index) => {
-      setTimeout(() => {
-        setTerminalLogs(prev => [...prev, `[LOG ${new Date().toLocaleTimeString('vi-VN')}] ${step}`]);
-        if (index === steps.length - 1) {
-          setTestingAPI(null);
-        }
-      }, 400 + index * 450);
-    });
+    setTerminalLogs([
+      `[LOG ${new Date().toLocaleTimeString('vi-VN')}] Bắt đầu kiểm tra kết nối: ${shop.shopName}...`,
+    ]);
+    void checkShopConnections([shop], { appendTerminal: true, testingId: shop.id });
   };
 
   // Run connection diagnostics for ALL active shops simultaneously!
@@ -356,39 +460,17 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       alert('Không có gian hàng nào đang được kích hoạt kết nối để kiểm tra đồng bộ!');
       return;
     }
-    setTestingAPI('all-shops');
-    setTerminalLogs([]);
-
-    setTerminalLogs(prev => [...prev, `[LOG ${new Date().toLocaleTimeString('vi-VN')}] [Khởi tạo] Đang kết nối đồng thời ${activeShops.length} gian hàng...`]);
-
-    activeShops.forEach((shop, shopIdx) => {
-      setTimeout(() => {
-        setTerminalLogs(prev => [
-          ...prev, 
-          `[LOG ${new Date().toLocaleTimeString('vi-VN')}] ────────────────────────────────────────────────────────────`,
-          `[LOG ${new Date().toLocaleTimeString('vi-VN')}] 🚀 KẾT NỐI GIAN HÀNG: ${shop.shopName.toUpperCase()} (${shop.platform.toUpperCase()})`,
-          `[LOG ${new Date().toLocaleTimeString('vi-VN')}] - Xác thực mã Seller/Shop ID: ${shop.shopId}`,
-          `[LOG ${new Date().toLocaleTimeString('vi-VN')}] - Kiểm tra API Token: OK (Xác thực 100%)`,
-          `[LOG ${new Date().toLocaleTimeString('vi-VN')}] - Đồng bộ tồn kho & Đơn hàng gần nhất: 12 đơn mới nhận diện.`,
-          `[LOG ${new Date().toLocaleTimeString('vi-VN')}] ✅ Thành công kết nối gian hàng ${shop.shopName}!`
-        ]);
-      }, 300 + shopIdx * 800);
-    });
-
-    setTimeout(() => {
-      setTerminalLogs(prev => [
-        ...prev, 
-        `[LOG ${new Date().toLocaleTimeString('vi-VN')}] ────────────────────────────────────────────────────────────`,
-        `[LOG ${new Date().toLocaleTimeString('vi-VN')}] 🎉 [HOÀN TẤT] Đồng bộ đồng thời đa kênh thành công! Toàn bộ ${activeShops.length} gian hàng đang hoạt động trơn tru. Hệ thống API sẵn sàng 100%!`
-      ]);
-      setTestingAPI(null);
-    }, 400 + activeShops.length * 800 + 400);
+    setTerminalLogs([
+      `[LOG ${new Date().toLocaleTimeString('vi-VN')}] Đang kiểm tra ${activeShops.length} gian hàng...`,
+    ]);
+    void checkShopConnections(activeShops, { appendTerminal: true, testingId: 'all-shops' });
   };
 
   const shopeeShops = shops.filter(s => s.platform === 'shopee');
   const tiktokShops = shops.filter(s => s.platform === 'tiktok');
   const woocommerceShops = shops.filter(s => s.platform === 'woocommerce');
   const activeShopsCount = shops.filter(s => s.connected).length;
+  const onlineShopsCount = shops.filter((s) => shopConnectionStatus[s.id] === 'online').length;
 
   return (
     <div className="space-y-6">
@@ -430,7 +512,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
           </div>
           <div>
             <span className="text-[11px] text-gray-400 uppercase font-bold tracking-wide">Trạng thái đồng bộ</span>
-            <h3 className="text-xl font-extrabold text-emerald-600 mt-0.5">{activeShopsCount} / {shops.length} Live</h3>
+            <h3 className="text-xl font-extrabold text-emerald-600 mt-0.5">{onlineShopsCount} / {shops.length} Online</h3>
           </div>
         </div>
       </div>
@@ -496,24 +578,18 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleToggleSync(shop)}
-                        className={`p-1.5 rounded-lg border transition-all ${
-                          shop.connected 
-                            ? 'bg-emerald-50 border-emerald-100 text-emerald-600 hover:bg-emerald-100' 
-                            : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100'
-                        }`}
-                        title={shop.connected ? "Tắt tự động đồng bộ" : "Bật tự động đồng bộ"}
-                      >
-                        {shop.connected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-                      </button>
+                      {renderShopConnectionStatus(shop)}
 
                       <button
-                        onClick={() => runDiagnostics(shop)}
-                        disabled={testingAPI !== null}
-                        className="px-2.5 py-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg text-[11px] font-semibold text-gray-600 transition-all disabled:opacity-50"
+                        onClick={() => handleToggleSync(shop)}
+                        className={`px-2 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wide transition-all ${
+                          shop.connected
+                            ? 'bg-blue-50 border-blue-100 text-blue-700 hover:bg-blue-100'
+                            : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100'
+                        }`}
+                        title={shop.connected ? 'Tắt tự động đồng bộ' : 'Bật tự động đồng bộ'}
                       >
-                        Ping
+                        {shop.connected ? 'Sync ON' : 'Sync OFF'}
                       </button>
 
                       <button
@@ -572,24 +648,18 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleToggleSync(shop)}
-                        className={`p-1.5 rounded-lg border transition-all ${
-                          shop.connected 
-                            ? 'bg-emerald-50 border-emerald-100 text-emerald-600 hover:bg-emerald-100' 
-                            : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100'
-                        }`}
-                        title={shop.connected ? "Tắt tự động đồng bộ" : "Bật tự động đồng bộ"}
-                      >
-                        {shop.connected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-                      </button>
+                      {renderShopConnectionStatus(shop)}
 
                       <button
-                        onClick={() => runDiagnostics(shop)}
-                        disabled={testingAPI !== null}
-                        className="px-2.5 py-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg text-[11px] font-semibold text-gray-600 transition-all disabled:opacity-50"
+                        onClick={() => handleToggleSync(shop)}
+                        className={`px-2 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wide transition-all ${
+                          shop.connected
+                            ? 'bg-blue-50 border-blue-100 text-blue-700 hover:bg-blue-100'
+                            : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100'
+                        }`}
+                        title={shop.connected ? 'Tắt tự động đồng bộ' : 'Bật tự động đồng bộ'}
                       >
-                        Ping
+                        {shop.connected ? 'Sync ON' : 'Sync OFF'}
                       </button>
 
                       <button
@@ -651,24 +721,18 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
                     </div>
 
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        onClick={() => handleToggleSync(shop)}
-                        className={`p-1.5 rounded-lg border transition-all ${
-                          shop.connected 
-                            ? 'bg-emerald-50 border-emerald-100 text-emerald-600 hover:bg-emerald-100' 
-                            : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100'
-                        }`}
-                        title={shop.connected ? "Tắt tự động đồng bộ" : "Bật tự động đồng bộ"}
-                      >
-                        {shop.connected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-                      </button>
+                      {renderShopConnectionStatus(shop)}
 
                       <button
-                        onClick={() => runDiagnostics(shop)}
-                        disabled={testingAPI !== null}
-                        className="px-2 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 text-indigo-700 rounded-lg text-[11px] font-bold transition-all disabled:opacity-50"
+                        onClick={() => handleToggleSync(shop)}
+                        className={`px-2 py-1.5 rounded-lg border text-[10px] font-bold uppercase tracking-wide transition-all ${
+                          shop.connected
+                            ? 'bg-blue-50 border-blue-100 text-blue-700 hover:bg-blue-100'
+                            : 'bg-gray-50 border-gray-200 text-gray-400 hover:bg-gray-100'
+                        }`}
+                        title={shop.connected ? 'Tắt tự động đồng bộ' : 'Bật tự động đồng bộ'}
                       >
-                        Ping API
+                        {shop.connected ? 'Sync ON' : 'Sync OFF'}
                       </button>
 
                       <button

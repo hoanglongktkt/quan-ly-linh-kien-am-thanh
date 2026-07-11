@@ -3932,6 +3932,74 @@ async function startServer() {
     }
   });
 
+  async function checkShopConnectionStatus(shop: any): Promise<{ online: boolean; message: string }> {
+    if (!shop?.connected) {
+      return { online: false, message: "Đồng bộ đang tắt" };
+    }
+
+    if (shop.platform === "shopee") {
+      if (!isShopeeConfigValid()) {
+        return { online: false, message: "Shopee Partner ID/Key chưa cấu hình" };
+      }
+      const token = await getValidShopeeAccessToken(String(shop.shopId || ""));
+      if (token) {
+        return { online: true, message: "OAuth token hợp lệ" };
+      }
+      return { online: false, message: "Chưa OAuth hoặc token hết hạn" };
+    }
+
+    if (shop.platform === "woocommerce") {
+      const base = String(shop.wooUrl || "").replace(/\/$/, "");
+      const key = String(shop.shopId || "").trim();
+      const secret = String(shop.apiSecret || shop.apiKey || "").trim();
+      if (!base || !key) {
+        return { online: false, message: "Thiếu URL hoặc Consumer Key" };
+      }
+      try {
+        const auth = Buffer.from(`${key}:${secret}`).toString("base64");
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch(`${base}/wp-json/wc/v3/system_status`, {
+          headers: { Authorization: `Basic ${auth}`, Accept: "application/json" },
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          return { online: true, message: "WooCommerce REST API phản hồi OK" };
+        }
+        return { online: false, message: `WooCommerce trả HTTP ${res.status}` };
+      } catch (error: any) {
+        return { online: false, message: error?.message || "Không kết nối được WooCommerce" };
+      }
+    }
+
+    if (shop.platform === "tiktok") {
+      if (shop.shopId && shop.apiKey) {
+        return { online: true, message: "Credentials TikTok Shop đã cấu hình" };
+      }
+      return { online: false, message: "Thiếu Seller ID hoặc API Key" };
+    }
+
+    return { online: false, message: "Nền tảng không hỗ trợ" };
+  }
+
+  app.post("/api/settings/shop-connection-status", authMiddleware, async (req, res) => {
+    try {
+      const shops = Array.isArray(req.body?.shops) ? req.body.shops : [];
+      const statuses: Record<string, { online: boolean; message: string }> = {};
+      for (const shop of shops) {
+        if (!shop?.id) continue;
+        statuses[shop.id] = await checkShopConnectionStatus(shop);
+      }
+      return res.json({ success: true, statuses });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Kiểm tra kết nối thất bại",
+      });
+    }
+  });
+
   // API endpoint for Gemini optimization (Protected)
   app.post("/api/gemini/optimize", authMiddleware, async (req, res) => {
     try {
