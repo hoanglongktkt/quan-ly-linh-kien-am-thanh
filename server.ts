@@ -189,6 +189,140 @@ async function getValidShopeeAccessToken(shopId: string): Promise<string | null>
   return refreshed.access_token || null;
 }
 
+type ShopeeDiagCode =
+  | "OK"
+  | "MISSING_PARTNER_CONFIG"
+  | "MISSING_OAUTH_TOKEN"
+  | "INVALID_TOKEN"
+  | "SHOPEE_API_ERROR"
+  | "TIMEOUT"
+  | "NETWORK_ERROR"
+  | "UNKNOWN_ERROR";
+
+async function runShopeeConnectivityDiagnostics(shopIdInput?: string) {
+  const steps: Array<{ step: string; ok: boolean; code?: ShopeeDiagCode; detail?: string; data?: any }> = [];
+  const maskedPartnerKey = SHOPEE_PARTNER_KEY ? `${SHOPEE_PARTNER_KEY.slice(0, 4)}…${SHOPEE_PARTNER_KEY.slice(-4)}` : "";
+
+  steps.push({
+    step: "env_partner_config",
+    ok: isShopeeConfigValid(),
+    code: isShopeeConfigValid() ? "OK" : "MISSING_PARTNER_CONFIG",
+    detail: isShopeeConfigValid()
+      ? "SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY hợp lệ (trên backend cPanel .env hoặc SetEnv)."
+      : `Thiếu hoặc sai Partner credentials. partner_id="${SHOPEE_PARTNER_ID || "(rỗng)"}", key=${SHOPEE_PARTNER_KEY ? "đã set" : "(rỗng)"}`,
+    data: {
+      shopee_env: SHOPEE_ENV,
+      shopee_host: SHOPEE_HOST,
+      partner_id: SHOPEE_PARTNER_ID || null,
+      partner_key_preview: SHOPEE_PARTNER_KEY ? maskedPartnerKey : null,
+      note: "Biến SHOPEE_* phải cấu hình trên cPanel backend — KHÔNG chỉ trên Vercel frontend.",
+    },
+  });
+
+  if (!isShopeeConfigValid()) {
+    return { ok: false, code: "MISSING_PARTNER_CONFIG" as ShopeeDiagCode, steps };
+  }
+
+  const tokens = loadShopeeTokens();
+  const availableShopIds = Object.keys(tokens);
+  steps.push({
+    step: "oauth_token_store",
+    ok: availableShopIds.length > 0,
+    code: availableShopIds.length > 0 ? "OK" : "MISSING_OAUTH_TOKEN",
+    detail:
+      availableShopIds.length > 0
+        ? `Có token OAuth cho shop: ${availableShopIds.join(", ")}`
+        : "Chưa có shop nào trong data/shopee_tokens.json — cần OAuth lại qua /api/shopee/callback",
+    data: { availableShopIds, tokensPath: SHOPEE_TOKENS_PATH },
+  });
+
+  const shopId = String(shopIdInput || availableShopIds[0] || "").trim();
+  if (!shopId) {
+    steps.push({
+      step: "shop_id",
+      ok: false,
+      code: "MISSING_OAUTH_TOKEN",
+      detail: "Không có shop_id để kiểm tra. Truyền ?shop_id= hoặc OAuth shop trước.",
+    });
+    return { ok: false, code: "MISSING_OAUTH_TOKEN" as ShopeeDiagCode, steps };
+  }
+
+  let accessToken: string | null = null;
+  try {
+    accessToken = await getValidShopeeAccessToken(shopId);
+    steps.push({
+      step: "access_token",
+      ok: Boolean(accessToken),
+      code: accessToken ? "OK" : "INVALID_TOKEN",
+      detail: accessToken
+        ? `Lấy được access_token cho shop_id=${shopId}`
+        : `Không lấy được token hợp lệ cho shop_id=${shopId} (hết hạn / refresh fail)`,
+      data: { shopId },
+    });
+  } catch (error: any) {
+    steps.push({
+      step: "access_token",
+      ok: false,
+      code: "INVALID_TOKEN",
+      detail: error?.message || String(error),
+    });
+    return { ok: false, code: "INVALID_TOKEN" as ShopeeDiagCode, steps };
+  }
+
+  if (!accessToken) {
+    return { ok: false, code: "INVALID_TOKEN" as ShopeeDiagCode, steps };
+  }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    const apiPath = "/api/v2/shop/get_shop_info";
+    const timestamp = Math.floor(Date.now() / 1000);
+    const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+    const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    const json: any = await res.json();
+
+    const shopeeErr = String(json?.error || "").trim();
+    const ok = res.ok && !shopeeErr;
+    let code: ShopeeDiagCode = "OK";
+    let detail = `HTTP ${res.status} — gọi ${SHOPEE_HOST} thành công`;
+
+    if (!ok) {
+      const errLower = shopeeErr.toLowerCase();
+      if (/invalid.*token|error_auth|refresh/.test(errLower)) code = "INVALID_TOKEN";
+      else if (/error_param|invalid.*partner|sign/.test(errLower)) code = "MISSING_PARTNER_CONFIG";
+      else code = "SHOPEE_API_ERROR";
+      detail = shopeeErr
+        ? `Shopee trả lỗi: ${shopeeErr} — ${json?.message || ""}`.trim()
+        : `HTTP ${res.status} từ Shopee API`;
+    }
+
+    steps.push({
+      step: "shopee_api_ping",
+      ok,
+      code,
+      detail,
+      data: { httpStatus: res.status, shopeeResponse: json },
+    });
+
+    return { ok, code, steps, shopId };
+  } catch (error: any) {
+    const isTimeout = error?.name === "AbortError";
+    const code: ShopeeDiagCode = isTimeout ? "TIMEOUT" : error?.cause?.code === "ENOTFOUND" ? "NETWORK_ERROR" : "UNKNOWN_ERROR";
+    steps.push({
+      step: "shopee_api_ping",
+      ok: false,
+      code,
+      detail: isTimeout
+        ? "Timeout 12s khi gọi partner.shopeemobile.com"
+        : error?.message || String(error),
+    });
+    return { ok: false, code, steps, shopId };
+  }
+}
+
 // v2.order.get_order_list — pulls order_sn updated within the last 15 days.
 // Supports optional order_status filter and cursor pagination (Shopee returns
 // at most page_size orders per call; more/next_cursor must be followed).
@@ -3101,6 +3235,21 @@ async function startServer() {
     console.log(`[Shopee API] Ho\xE0n t\u1EA5t k\xE9o \u0111\u01A1n: ${pulledCount} \u0111\u01A1n \u0111\xE3 \u0111\u01B0\u1EE3c c\u1EADp nh\u1EADt/th\xEAm m\u1EDBi.`);
 
     return res.json({ pulled: pulledCount, orders: orders.filter(isValidOrder), errors: errors.length ? errors : undefined });
+  });
+
+  // GET /api/shopee/diagnostics?shop_id=4127421 — kiểm tra Partner ID/Key, token OAuth, ping Shopee API
+  app.get("/api/shopee/diagnostics", authMiddleware, async (req, res) => {
+    const shopId = req.query.shop_id ? String(req.query.shop_id) : undefined;
+    console.log("[Shopee Diagnostics] Bắt đầu kiểm tra...", shopId ? `shop_id=${shopId}` : "");
+    const report = await runShopeeConnectivityDiagnostics(shopId);
+    console.log("[Shopee Diagnostics] Kết quả:", JSON.stringify(report, null, 2));
+    return res.status(report.ok ? 200 : 502).json({
+      success: report.ok,
+      summary: report.code,
+      ...report,
+      checkedAt: new Date().toISOString(),
+      backend: "cpanel-node",
+    });
   });
 
   // Debug/test-only route: call v2.order.get_order_list directly with the
