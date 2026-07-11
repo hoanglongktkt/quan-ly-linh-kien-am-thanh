@@ -23,7 +23,7 @@ PassengerStartupFile server.cjs
 # END cPanel-generated php ini directives, do not edit
 # DO NOT REMOVE OR MODIFY. CLOUDLINUX ENV VARS CONFIGURATION BEGIN
 <IfModule Litespeed>
-SetEnv ADMIN_USERNAM admin
+SetEnv ADMIN_USERNAME admin
 SetEnv ADMIN_PASSWORD lkat@254
 SetEnv JWT_SECRET 251696
 SetEnv APP_URL https://quanly.linhkienamthanh.net
@@ -51,4 +51,16 @@ SetEnv SHOPEE_ENV live
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule ^ dist/index.html [L]
+</IfModule>
+
+# Cache: luôn tải mới index.html; JS/CSS có hash cache 1 năm
+<IfModule mod_headers.c>
+  <FilesMatch "^index\.html$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+  <FilesMatch "\.(js|css)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
 </IfModule>

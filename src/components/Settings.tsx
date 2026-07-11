@@ -416,11 +416,17 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   useEffect(() => {
     if (!shops.length) return;
     void checkShopConnections(shops, { silent: true });
+
+    const timer = window.setInterval(() => {
+      void checkShopConnections(shops, { silent: true });
+    }, 60_000);
+
+    return () => window.clearInterval(timer);
   }, [shops.length, settings.shops?.map((s) => `${s.id}:${s.connected}:${s.platform}:${s.shopId}`).join('|')]);
 
   const renderShopConnectionStatus = (shop: ConnectedShop) => {
     const status = shopConnectionStatus[shop.id] ?? 'unknown';
-    const isChecking = status === 'checking' || testingAPI === shop.id || testingAPI === 'all-shops';
+    const isChecking = status === 'checking' || status === 'unknown' || testingAPI === shop.id || testingAPI === 'all-shops';
     const isOnline = status === 'online';
 
     return (
@@ -429,10 +435,16 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
           type="button"
           onClick={() => checkShopConnections([shop], { appendTerminal: true, testingId: shop.id })}
           disabled={testingAPI !== null}
-          className="p-1.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-gray-600 transition-all disabled:opacity-50"
+          className={`p-1.5 rounded-lg border transition-all disabled:opacity-50 ${
+            isChecking
+              ? 'border-gray-200 bg-gray-50 text-gray-400'
+              : isOnline
+                ? 'border-blue-100 bg-blue-50 text-blue-600 hover:bg-blue-100'
+                : 'border-red-100 bg-red-50 text-red-600 hover:bg-red-100'
+          }`}
           title={shopConnectionMessages[shop.id] || 'Kiểm tra kết nối API'}
         >
-          <RefreshCw className={`w-4 h-4 ${isChecking ? 'animate-spin text-blue-600' : ''}`} />
+          <RefreshCw className={`w-4 h-4 ${isChecking ? 'animate-spin' : ''}`} />
         </button>
         <span
           className={`text-[11px] font-bold min-w-[52px] ${
@@ -471,6 +483,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   const woocommerceShops = shops.filter(s => s.platform === 'woocommerce');
   const activeShopsCount = shops.filter(s => s.connected).length;
   const onlineShopsCount = shops.filter((s) => shopConnectionStatus[s.id] === 'online').length;
+  const uiBuildId = String(import.meta.env.VITE_BUILD_ID || 'dev').slice(0, 19);
 
   return (
     <div className="space-y-6">
@@ -524,6 +537,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
             <Key className="w-5 h-5 text-blue-600" /> Quản Lý Đa Gian Hàng Đồng Bộ API
           </h3>
           <p className="text-xs text-gray-400 mt-1">Cấu hình kết nối API API Partner, phân tách từng gian hàng độc lập để đồng bộ cùng lúc.</p>
+          <p className="text-[10px] text-gray-300 font-mono mt-0.5" title="Dùng để xác nhận bản UI đã deploy">UI build: {uiBuildId}</p>
         </div>
 
         <div className="flex gap-2 shrink-0">
