@@ -1,0 +1,1277 @@
+import React, { useState, useEffect } from 'react';
+import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkUpdatePayload, BulkSaveProductUpdate } from './types';
+import { 
+  INITIAL_PRODUCTS, 
+  INITIAL_SYNC_LOGS,
+} from './data';
+import Dashboard from './components/Dashboard';
+import ProductList from './components/ProductList';
+import InventoryAudit from './components/InventoryAudit';
+import BulkEditor from './components/BulkEditor';
+import Financials from './components/Financials';
+import SettingsView from './components/Settings';
+import SupplierManager from './components/SupplierManager';
+import ImportManager from './components/ImportManager';
+import OrderManager from './components/OrderManager';
+import OrderPicking from './components/OrderPicking';
+import PublishManager from './components/PublishManager';
+import LoginPage from './components/LoginPage';
+import { 
+  LayoutDashboard, 
+  Package, 
+  Sparkles, 
+  Coins, 
+  Settings, 
+  HelpCircle,
+  RefreshCw,
+  ShoppingBag,
+  Users,
+  ArrowDownToLine,
+  ClipboardList,
+  Globe,
+  LogOut,
+  Barcode,
+  Menu,
+  X,
+  ScanLine,
+  ShoppingBasket,
+  Scale,
+} from 'lucide-react';
+
+function resolveTabFromPath(): string {
+  if (typeof window === 'undefined') return 'dashboard';
+  const path = window.location.pathname.replace(/\/$/, '') || '/';
+  if (path === '/picking') return 'picking';
+  return 'dashboard';
+}
+
+export default function App() {
+  // Authentication States
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [adminUser, setAdminUser] = useState<string>('');
+  const [authChecking, setAuthChecking] = useState<boolean>(true);
+
+  // 1. Initialize State with Local Storage fallback
+  const [products, setProducts] = useState<Product[]>(() => {
+    const saved = localStorage.getItem('omni_products');
+    return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
+  });
+
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+
+  // Orders are no longer seeded from local mock data — they are loaded live
+  // from the backend's real synced-orders store (populated by the Shopee webhook).
+  const isRealSyncedOrder = (o: Order): boolean => {
+    const hasAmount = Number(o?.totalAmount) > 0;
+    const hasItems = Array.isArray(o?.items) && o.items.length > 0;
+    if (!hasAmount && !hasItems) return false;
+    if (String(o.orderSn || '').startsWith('260709') && !hasItems && Number(o.totalAmount) === 0) return false;
+    return true;
+  };
+
+  const [orders, setOrders] = useState<Order[]>(() => {
+    const saved = localStorage.getItem('omni_orders');
+    if (!saved) return [];
+    try {
+      const parsed: Order[] = JSON.parse(saved);
+      return parsed.filter(isRealSyncedOrder);
+    } catch {
+      return [];
+    }
+  });
+  const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
+  const [productsLoading, setProductsLoading] = useState<boolean>(false);
+
+  const [logs, setLogs] = useState<SyncLog[]>(() => {
+    const saved = localStorage.getItem('omni_logs');
+    return saved ? JSON.parse(saved) : INITIAL_SYNC_LOGS;
+  });
+
+  const [settings, setSettings] = useState<ChannelSettings>(() => {
+    const saved = localStorage.getItem('omni_settings');
+    let parsed: ChannelSettings;
+    if (saved) {
+      try {
+        parsed = JSON.parse(saved);
+      } catch (e) {
+        parsed = {
+          shopeeConnected: true,
+          shopeeShopId: "124589212",
+          shopeeApiKey: "sp_key_demo_9823",
+          tiktokConnected: true,
+          tiktokShopId: "7421893120",
+          tiktokApiKey: "tt_key_demo_7721"
+        };
+      }
+    } else {
+      parsed = {
+        shopeeConnected: true,
+        shopeeShopId: "124589212",
+        shopeeApiKey: "sp_key_demo_9823",
+        tiktokConnected: true,
+        tiktokShopId: "7421893120",
+        tiktokApiKey: "tt_key_demo_7721"
+      };
+    }
+
+    // Migrate or ensure shops exists with some initial default shops if empty
+    if (!parsed.shops || parsed.shops.length === 0) {
+      parsed.shops = [];
+      parsed.shops.push({
+        id: "shop-shopee-1",
+        platform: 'shopee',
+        shopId: "546083459",
+        shopName: "LTAT",
+        apiKey: "sp_key_demo_9823",
+        connected: true,
+        lastSynced: new Date().toISOString()
+      });
+      parsed.shops.push({
+        id: "shop-shopee-2",
+        platform: 'shopee',
+        shopId: "483583526",
+        shopName: "Linh Kiện Audio",
+        apiKey: "sp_key_demo_outlet_8812",
+        connected: true,
+        lastSynced: new Date().toISOString()
+      });
+      if (parsed.tiktokConnected && parsed.tiktokShopId) {
+        parsed.shops.push({
+          id: "shop-tiktok-1",
+          platform: 'tiktok',
+          shopId: parsed.tiktokShopId,
+          shopName: "TikTok Shop - Linh Kiện Âm Thanh . Net",
+          apiKey: parsed.tiktokApiKey,
+          connected: true,
+          lastSynced: new Date().toISOString()
+        });
+      }
+
+      // Add default WooCommerce shop for the user
+      parsed.shops.push({
+        id: "shop-woo-1",
+        platform: 'woocommerce',
+        shopId: "ck_f691bcda4210e7b8...",
+        apiSecret: "cs_e10982df4212c7d9...",
+        shopName: "WordPress Store - thongtinsolutions.com",
+        apiKey: "ck_f691bcda4210e7b8...",
+        wooUrl: "https://thongtinsolutions.com",
+        connected: true,
+        lastSynced: new Date().toISOString()
+      });
+    }
+    return parsed;
+  });
+
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+
+  const [imports, setImports] = useState<ImportTransaction[]>([]);
+
+  const [highlightProductId, setHighlightProductId] = useState<string | null>(null);
+  const [importPrefillProductId, setImportPrefillProductId] = useState<string | null>(null);
+
+  // Active navigation tab
+  const [activeTab, setActiveTab] = useState(() => resolveTabFromPath());
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [focusScanner, setFocusScanner] = useState<boolean>(false);
+  
+  // Selected products for bulk editing
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      setActiveTab(resolveTabFromPath());
+      setFocusScanner(false);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // 2. Persist state on change
+  useEffect(() => {
+    localStorage.setItem('omni_products', JSON.stringify(products));
+  }, [products]);
+
+  useEffect(() => {
+    localStorage.setItem('omni_orders', JSON.stringify(orders));
+  }, [orders]);
+
+  useEffect(() => {
+    localStorage.setItem('omni_logs', JSON.stringify(logs));
+  }, [logs]);
+
+  useEffect(() => {
+    localStorage.setItem('omni_settings', JSON.stringify(settings));
+  }, [settings]);
+
+  // Token Verification on Mount
+  useEffect(() => {
+    const verifyToken = async () => {
+      const token = localStorage.getItem('admin_token');
+      if (!token) {
+        setIsAuthenticated(false);
+        setAuthChecking(false);
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/auth/verify', {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setIsAuthenticated(true);
+          setAdminUser(data.username);
+        } else {
+          localStorage.removeItem('admin_token');
+          setIsAuthenticated(false);
+        }
+      } catch (err) {
+        console.error("Auth verification error:", err);
+        localStorage.removeItem('admin_token');
+        setIsAuthenticated(false);
+      } finally {
+        setAuthChecking(false);
+      }
+    };
+
+    verifyToken();
+  }, []);
+
+  // Fetch the real, backend-synced order list (Shopee webhook data) once authenticated.
+  const fetchOrders = async () => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+
+    setOrdersLoading(true);
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data: Order[] = await response.json();
+        setOrders(data);
+      }
+    } catch (err) {
+      console.error("Fetch orders error:", err);
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchOrders();
+      fetchProducts();
+      fetchSuppliers();
+      fetchImports();
+      fetchExpenses();
+    }
+  }, [isAuthenticated]);
+
+  const apiAuthHeaders = (): Record<string, string> => {
+    const token = localStorage.getItem('admin_token');
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+  };
+
+  const fetchProducts = async () => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+
+    setProductsLoading(true);
+    try {
+      const response = await fetch('/api/products', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+
+      const data: Product[] = await response.json();
+      if (Array.isArray(data) && data.length > 0) {
+        setProducts(data);
+        return;
+      }
+
+      const saved = localStorage.getItem('omni_products');
+      if (saved) {
+        const parsed: Product[] = JSON.parse(saved);
+        if (parsed.length > 0) {
+          const migrateRes = await fetch('/api/products/replace', {
+            method: 'PUT',
+            headers: apiAuthHeaders(),
+            body: JSON.stringify({ products: parsed }),
+          });
+          if (migrateRes.ok) {
+            const migrated = await migrateRes.json();
+            setProducts(migrated.products || parsed);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Fetch products error:', err);
+    } finally {
+      setProductsLoading(false);
+    }
+  };
+
+  // Actively pull real orders straight from Shopee (v2.order.get_order_list +
+  // get_order_detail) via the backend, then refresh local state with the result.
+  // Bound to the "Cập nhật đơn hàng" button.
+  const pullOrders = async () => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+
+    setOrdersLoading(true);
+    try {
+      const response = await fetch('/api/orders/pull', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Kéo đơn hàng thất bại.');
+      }
+      if (Array.isArray(data.orders)) {
+        setOrders(data.orders);
+      }
+      if (data.warning) {
+        throw new Error(data.warning);
+      }
+      if (Array.isArray(data.errors) && data.errors.length > 0) {
+        throw new Error(data.errors.map((e: any) => `${e.shopId ? `Shop ${e.shopId}: ` : ''}${e.error}${e.message ? ` - ${e.message}` : ''}`).join('\n'));
+      }
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
+  // Persist status/tracking changes made in the UI back to the real orders database.
+  const handleUpdateOrders = (updatedOrders: Order[]) => {
+    const previousById = new Map(orders.map(o => [o.id, o]));
+    setOrders(updatedOrders);
+
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+
+    updatedOrders.forEach(order => {
+      const prev = previousById.get(order.id);
+      if (!prev || JSON.stringify(prev) === JSON.stringify(order)) return;
+
+      fetch(`/api/orders/${encodeURIComponent(order.id)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(order),
+      }).catch(err => console.error(`Sync order ${order.id} error:`, err));
+    });
+  };
+
+  const handleLoginSuccess = (token: string, username: string) => {
+    localStorage.setItem('admin_token', token);
+    setIsAuthenticated(true);
+    setAdminUser(username);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('admin_token');
+    setIsAuthenticated(false);
+    setAdminUser('');
+    setActiveTab('dashboard');
+    setFocusScanner(false);
+  };
+
+  // 3. Actions handlers
+  const handleAddProduct = async (prod: Product) => {
+    const token = localStorage.getItem('admin_token');
+    if (token) {
+      try {
+        const response = await fetch('/api/products', {
+          method: 'POST',
+          headers: apiAuthHeaders(),
+          body: JSON.stringify(prod),
+        });
+        if (response.ok) {
+          const saved = await response.json();
+          setProducts(prev => [saved, ...prev]);
+          prod = saved;
+        } else {
+          setProducts(prev => [prod, ...prev]);
+        }
+      } catch {
+        setProducts(prev => [prod, ...prev]);
+      }
+    } else {
+      setProducts(prev => [prod, ...prev]);
+    }
+
+    const channelsLabel = prod.channels.map(c => c.toUpperCase()).join(' & ') || 'Hệ thống nội bộ';
+    handleAddLog({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      channel: prod.channels.length > 0 ? prod.channels[0] : 'all',
+      type: 'publish',
+      status: 'success',
+      message: `Đã khởi tạo và đăng thành công sản phẩm mới [${prod.title}] lên ${channelsLabel}`
+    });
+  };
+
+  const handleUpdateProduct = async (updated: Product, opts?: { save?: boolean }) => {
+    setProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
+    if (!opts?.save) return;
+
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+
+    try {
+      const response = await fetch(`/api/products/${encodeURIComponent(updated.id)}`, {
+        method: 'PATCH',
+        headers: apiAuthHeaders(),
+        body: JSON.stringify({
+          title: updated.title,
+          sku: updated.sku,
+          barcode: updated.barcode,
+          stock: updated.stock,
+          sellingPrice: updated.sellingPrice,
+          wholesalePrice: updated.wholesalePrice,
+          importPrice: updated.importPrice,
+          weight: updated.weight,
+          unit: updated.unit,
+          status: updated.status,
+        }),
+      });
+      if (response.ok) {
+        const saved = await response.json();
+        setProducts(prev => prev.map(p => p.id === saved.id ? saved : p));
+      }
+    } catch (err) {
+      console.error('Update product error:', err);
+    }
+  };
+
+  const handleDeleteProduct = async (id: string) => {
+    if (!confirm('Bạn có chắc chắn muốn xóa sản phẩm này khỏi hệ thống quản lý?')) return;
+
+    const token = localStorage.getItem('admin_token');
+    if (token) {
+      try {
+        await fetch(`/api/products/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch (err) {
+        console.error('Delete product error:', err);
+      }
+    }
+    setProducts(prev => prev.filter(p => p.id !== id));
+    setSelectedIds(prev => prev.filter(item => item !== id));
+  };
+
+  const handleUpdateBulk = (updatedProducts: Product[]) => {
+    setProducts(prev => {
+      const map = new Map(prev.map(p => [p.id, p]));
+      updatedProducts.forEach(up => map.set(up.id, up));
+      return Array.from(map.values());
+    });
+  };
+
+  const handleBulkUpdateApi = async (payload: BulkUpdatePayload): Promise<boolean> => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return false;
+    try {
+      const response = await fetch('/api/products/bulk-update', {
+        method: 'POST',
+        headers: apiAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) return false;
+      const data = await response.json();
+      if (Array.isArray(data.products)) setProducts(data.products);
+      return true;
+    } catch (err) {
+      console.error('Bulk update products error:', err);
+      return false;
+    }
+  };
+
+  const handleSyncItemVariants = async (itemId: string): Promise<Product[] | null> => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) throw new Error('Chưa đăng nhập');
+
+    const shopeeShop = settings.shops?.find(s => s.platform === 'shopee' && s.connected);
+    const response = await fetch('/api/shopee/products/sync-item-variants', {
+      method: 'POST',
+      headers: apiAuthHeaders(),
+      body: JSON.stringify({ itemId, shopId: shopeeShop?.shopId || '4127421' }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data?.message || data?.error || 'Tải SKU phân loại thất bại');
+    }
+    if (Array.isArray(data.products)) {
+      setProducts(data.products);
+      return data.products;
+    }
+    await fetchProducts();
+    return null;
+  };
+
+  const handleBulkSaveProducts = async (updates: BulkSaveProductUpdate[]): Promise<boolean> => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return false;
+
+    try {
+      const response = await fetch('/api/products/bulk-save', {
+        method: 'POST',
+        headers: apiAuthHeaders(),
+        body: JSON.stringify({ updates }),
+      });
+      if (!response.ok) return false;
+      const data = await response.json();
+      if (Array.isArray(data.products)) {
+        setProducts(data.products);
+      }
+      return true;
+    } catch (err) {
+      console.error('Bulk save products error:', err);
+      return false;
+    }
+  };
+
+  const handleReplaceProducts = async (newProducts: Product[]) => {
+    const token = localStorage.getItem('admin_token');
+    if (token) {
+      try {
+        const response = await fetch('/api/products/replace', {
+          method: 'PUT',
+          headers: apiAuthHeaders(),
+          body: JSON.stringify({ products: newProducts }),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setProducts(data.products || newProducts);
+          return;
+        }
+      } catch (err) {
+        console.error('Replace products error:', err);
+      }
+    }
+    setProducts(newProducts);
+  };
+
+  const fetchExpenses = async () => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+    try {
+      const response = await fetch('/api/expenses', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        setExpenses(await response.json());
+      }
+    } catch (err) {
+      console.error('Fetch expenses error:', err);
+    }
+  };
+
+  const handleAddExpense = async (exp: Expense) => {
+    const token = localStorage.getItem('admin_token');
+    if (token) {
+      try {
+        const response = await fetch('/api/expenses', {
+          method: 'POST',
+          headers: apiAuthHeaders(),
+          body: JSON.stringify(exp),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data.expenses)) {
+            setExpenses(data.expenses);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('Add expense error:', err);
+      }
+    }
+    setExpenses((prev) => [exp, ...prev]);
+  };
+
+  const handleDeleteExpense = async (id: string) => {
+    if (!confirm('Xóa bản ghi chi phí này?')) return;
+    const token = localStorage.getItem('admin_token');
+    if (token) {
+      try {
+        const response = await fetch(`/api/expenses/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data.expenses)) {
+            setExpenses(data.expenses);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('Delete expense error:', err);
+      }
+    }
+    setExpenses((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  const handleAddLog = (log: SyncLog) => {
+    setLogs(prev => [log, ...prev]);
+  };
+
+  const handleClearLogs = () => {
+    if (confirm('Xóa toàn bộ nhật ký đồng bộ hiện tại?')) {
+      setLogs([]);
+    }
+  };
+
+  const fetchSuppliers = async () => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+    try {
+      const response = await fetch('/api/suppliers', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        setSuppliers(await response.json());
+      }
+    } catch (err) {
+      console.error('Fetch suppliers error:', err);
+    }
+  };
+
+  const handleAddSupplier = async (payload: {
+    name: string;
+    supplierCode: string;
+    status: 'active' | 'inactive';
+  }) => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return false;
+    try {
+      const response = await fetch('/api/suppliers', {
+        method: 'POST',
+        headers: apiAuthHeaders(),
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (response.ok && Array.isArray(data.suppliers)) {
+        setSuppliers(data.suppliers);
+        return true;
+      }
+      alert(data.error === 'supplier_code_duplicate'
+        ? 'Mã nhà cung cấp đã tồn tại!'
+        : 'Tạo nhà cung cấp thất bại.');
+      return false;
+    } catch (err) {
+      console.error('Add supplier error:', err);
+      return false;
+    }
+  };
+
+  const handleUpdateSupplier = async (updated: Supplier) => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return false;
+    try {
+      const response = await fetch(`/api/suppliers/${encodeURIComponent(updated.id)}`, {
+        method: 'PUT',
+        headers: apiAuthHeaders(),
+        body: JSON.stringify(updated),
+      });
+      const data = await response.json();
+      if (response.ok && Array.isArray(data.suppliers)) {
+        setSuppliers(data.suppliers);
+        return true;
+      }
+      alert(data.error === 'supplier_code_duplicate'
+        ? 'Mã nhà cung cấp đã tồn tại!'
+        : 'Cập nhật nhà cung cấp thất bại.');
+      return false;
+    } catch (err) {
+      console.error('Update supplier error:', err);
+      return false;
+    }
+  };
+
+  const handleDeleteSupplier = async (id: string) => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return false;
+    try {
+      const response = await fetch(`/api/suppliers/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: apiAuthHeaders(),
+      });
+      const data = await response.json();
+      if (response.ok && Array.isArray(data.suppliers)) {
+        setSuppliers(data.suppliers);
+        return true;
+      }
+      if (data.error === 'supplier_has_debt') {
+        alert('Không thể xóa nhà cung cấp này vì vẫn đang còn công nợ chưa tất toán!');
+      }
+      return false;
+    } catch (err) {
+      console.error('Delete supplier error:', err);
+      return false;
+    }
+  };
+
+  const fetchImports = async () => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+    try {
+      const response = await fetch('/api/imports', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        setImports(await response.json());
+      }
+    } catch (err) {
+      console.error('Fetch imports error:', err);
+    }
+  };
+
+  const handleAddImport = async (transaction: ImportTransaction) => {
+    const token = localStorage.getItem('admin_token');
+    if (token) {
+      try {
+        const response = await fetch('/api/imports', {
+          method: 'POST',
+          headers: apiAuthHeaders(),
+          body: JSON.stringify(transaction),
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data.imports)) {
+            setImports(data.imports);
+          } else {
+            setImports((prev) => [transaction, ...prev]);
+          }
+        }
+      } catch (err) {
+        console.error('Save import error:', err);
+        setImports((prev) => [transaction, ...prev]);
+      }
+    } else {
+      setImports((prev) => [transaction, ...prev]);
+    }
+
+    setProducts(prevProducts => prevProducts.map(p => {
+      if (p.id === transaction.productId) {
+        return {
+          ...p,
+          stock: p.stock + transaction.quantity,
+          importPrice: transaction.newImportPrice,
+          status: 'active' as const
+        };
+      }
+      return p;
+    }));
+
+    const supplier = suppliers.find(s => s.id === transaction.supplierId);
+    if (supplier) {
+      await handleUpdateSupplier({
+        ...supplier,
+        totalOrderValue: supplier.totalOrderValue + transaction.totalAmount,
+        totalPaid: supplier.totalPaid + transaction.paidAmount,
+        totalDebt: supplier.totalDebt + (transaction.totalAmount - transaction.paidAmount),
+      });
+    }
+
+    handleAddLog({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      channel: 'all',
+      type: 'stock_sync',
+      status: 'success',
+      message: `Đã nhập sỉ thành công ${transaction.quantity} cái [${transaction.productTitle}] từ ${transaction.supplierName}.`
+    });
+  };
+
+  const handleEditProductShortcut = (productId: string) => {
+    setHighlightProductId(productId);
+    setActiveTab('products');
+  };
+
+  const handleNavigateToImport = (productId: string) => {
+    setImportPrefillProductId(productId);
+    setActiveTab('imports');
+    setMobileDrawerOpen(false);
+  };
+
+  const navigateTab = (tab: string, opts?: { openScanner?: boolean }) => {
+    setActiveTab(tab);
+    setMobileDrawerOpen(false);
+    setFocusScanner(tab === 'orders' && Boolean(opts?.openScanner));
+
+    if (tab === 'picking') {
+      window.history.pushState({ tab: 'picking' }, '', '/picking');
+    } else if (window.location.pathname.replace(/\/$/, '') === '/picking') {
+      window.history.pushState({ tab }, '', '/');
+    }
+  };
+
+  const navButtonClass = (tab: string) =>
+    `w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+      activeTab === tab
+        ? 'bg-blue-600 text-white font-extrabold shadow-sm'
+        : 'hover:bg-slate-800 hover:text-white text-slate-400'
+    }`;
+
+  if (authChecking) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
+        <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500"></div>
+        <p className="text-slate-400 text-xs mt-4 font-bold tracking-wider uppercase font-sans">Đang kiểm tra bảo mật...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50/50 flex flex-col md:flex-row antialiased font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900">
+      {/* Sidebar Navigation */}
+      <aside className="max-md:hidden md:flex md:w-64 md:flex-col shrink-0 bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
+        {/* Brand Header */}
+        <div className="p-6 border-b border-slate-800 flex items-center gap-3">
+          <div className="w-10 h-10 bg-linear-to-tr from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-indigo-500/15">
+            <ShoppingBag className="w-5 h-5" />
+          </div>
+          <div>
+            <h1 className="font-extrabold text-sm text-white tracking-tight leading-tight">Linh Kiện Âm Thanh</h1>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Quản Lý Cửa Hàng</span>
+          </div>
+        </div>
+
+        {/* Navigation Items */}
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto" id="sidebar-nav">
+          <button
+            onClick={() => navigateTab('dashboard')}
+            className={navButtonClass('dashboard')}
+          >
+            <LayoutDashboard className="w-4 h-4 shrink-0" /> Tổng quan
+          </button>
+
+          <button
+            onClick={() => navigateTab('products')}
+            className={navButtonClass('products')}
+          >
+            <Package className="w-4 h-4 shrink-0" /> Kho & Sản phẩm
+          </button>
+
+          <button
+            onClick={() => navigateTab('publish')}
+            className={navButtonClass('publish')}
+          >
+            <Globe className="w-4 h-4 shrink-0" /> Đăng bán sỉ đa sàn
+          </button>
+
+          <button
+            onClick={() => navigateTab('orders')}
+            className={navButtonClass('orders')}
+          >
+            <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
+          </button>
+
+          <button
+            onClick={() => navigateTab('picking')}
+            className={`${navButtonClass('picking')} max-md:hidden`}
+          >
+            <ScanLine className="w-4 h-4 shrink-0" /> Nhặt hàng
+          </button>
+
+          <button
+            onClick={() => navigateTab('bulk')}
+            className={navButtonClass('bulk')}
+          >
+            <Sparkles className="w-4 h-4 shrink-0" /> Sửa hàng loạt & AI
+          </button>
+
+          <button
+            onClick={() => navigateTab('suppliers')}
+            className={navButtonClass('suppliers')}
+          >
+            <Users className="w-4 h-4 shrink-0" /> Nhà Cung Cấp
+          </button>
+
+          <button
+            onClick={() => navigateTab('imports')}
+            className={navButtonClass('imports')}
+          >
+            <ArrowDownToLine className="w-4 h-4 shrink-0" /> Nhập Hàng
+          </button>
+
+          <button
+            onClick={() => navigateTab('financials')}
+            className={navButtonClass('financials')}
+          >
+            <Coins className="w-4 h-4 shrink-0" /> Chi Phí Bán Hàng
+          </button>
+
+          <button
+            onClick={() => navigateTab('settings')}
+            className={navButtonClass('settings')}
+          >
+            <Settings className="w-4 h-4 shrink-0" /> Cấu hình & Kết nối
+          </button>
+
+          <button
+            onClick={() => {
+              setMobileDrawerOpen(false);
+              handleLogout();
+            }}
+            className="w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer hover:bg-rose-950/40 hover:text-rose-400 text-slate-400 mt-4 border border-dashed border-slate-800/80 hover:border-rose-900/40"
+          >
+            <LogOut className="w-4 h-4 shrink-0 text-rose-500" /> Đăng xuất ({adminUser})
+          </button>
+        </nav>
+
+        {/* Sidebar Footer */}
+        <div className="p-4 border-t border-slate-800 text-center space-y-1.5 text-[10px] text-slate-500 font-medium">
+          <p>Môi trường phát triển AI Studio</p>
+          <p>Local Time: 2026</p>
+        </div>
+      </aside>
+
+      {/* Mobile drawer navigation */}
+      {mobileDrawerOpen && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 bg-black/50 z-60 md:hidden"
+            aria-label="Đóng menu"
+            onClick={() => setMobileDrawerOpen(false)}
+          />
+          <aside className="fixed inset-y-0 left-0 w-[min(100vw-3rem,18rem)] z-70 md:hidden flex flex-col bg-slate-900 text-slate-300 border-r border-slate-800 shadow-2xl">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 bg-linear-to-tr from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white shrink-0">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h1 className="font-extrabold text-sm text-white tracking-tight leading-tight truncate">Linh Kiện Âm Thanh</h1>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Quản Lý Cửa Hàng</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMobileDrawerOpen(false)}
+                className="min-h-11 min-w-11 flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-slate-800"
+                aria-label="Đóng menu"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+              <button onClick={() => navigateTab('dashboard')} className={navButtonClass('dashboard')}>
+                <LayoutDashboard className="w-4 h-4 shrink-0" /> Tổng quan
+              </button>
+              <button onClick={() => navigateTab('products')} className={navButtonClass('products')}>
+                <Package className="w-4 h-4 shrink-0" /> Kho & Sản phẩm
+              </button>
+              <button onClick={() => navigateTab('publish')} className={navButtonClass('publish')}>
+                <Globe className="w-4 h-4 shrink-0" /> Đăng bán sỉ đa sàn
+              </button>
+              <button onClick={() => navigateTab('orders')} className={navButtonClass('orders')}>
+                <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
+              </button>
+              <button onClick={() => navigateTab('orders', { openScanner: true })} className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${activeTab === 'orders' && focusScanner ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white text-slate-400'}`}>
+                <Barcode className="w-4 h-4 shrink-0" /> Quét mã vạch
+              </button>
+              <button onClick={() => navigateTab('bulk')} className={navButtonClass('bulk')}>
+                <Sparkles className="w-4 h-4 shrink-0" /> Sửa hàng loạt & AI
+              </button>
+              <button onClick={() => navigateTab('suppliers')} className={navButtonClass('suppliers')}>
+                <Users className="w-4 h-4 shrink-0" /> Nhà Cung Cấp
+              </button>
+              <button onClick={() => navigateTab('imports')} className={navButtonClass('imports')}>
+                <ArrowDownToLine className="w-4 h-4 shrink-0" /> Nhập Hàng
+              </button>
+              <button onClick={() => navigateTab('financials')} className={navButtonClass('financials')}>
+                <Coins className="w-4 h-4 shrink-0" /> Chi Phí Bán Hàng
+              </button>
+              <button onClick={() => navigateTab('settings')} className={navButtonClass('settings')}>
+                <Settings className="w-4 h-4 shrink-0" /> Cấu hình & Kết nối
+              </button>
+              <button
+                onClick={() => {
+                  setMobileDrawerOpen(false);
+                  handleLogout();
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer hover:bg-rose-950/40 hover:text-rose-400 text-slate-400 mt-4 border border-dashed border-slate-800/80"
+              >
+                <LogOut className="w-4 h-4 shrink-0 text-rose-500" /> Đăng xuất
+              </button>
+            </nav>
+          </aside>
+        </>
+      )}
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto app-main-scroll">
+        {/* Header toolbar */}
+        <header className={`bg-white border-b border-gray-100 shadow-xs shrink-0 ${focusScanner ? 'max-md:hidden md:flex' : 'flex'}`}>
+          <div className="app-main-container w-full px-4 md:px-6 py-3 md:py-4 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            className="md:hidden shrink-0 min-h-11 min-w-11 app-touch-target flex items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 active:bg-gray-100"
+            onClick={() => setMobileDrawerOpen(true)}
+            aria-label="Mở menu điều hướng"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className={`flex-1 min-w-0 ${activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
+            <h2 className={`text-lg font-extrabold text-gray-900 tracking-tight ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-title' : ''}`}>
+              {activeTab === 'dashboard' && 'Bảng Điều Khiển Tổng Quan'}
+              {activeTab === 'products' && 'Quản Lý Danh Sách Sản Phẩm'}
+              {activeTab === 'publish' && 'Hệ Thống Đăng Bán Sản Phẩm Đa Kênh'}
+              {activeTab === 'orders' && 'Hệ Thống Quản Lý Đơn Hàng Đa Sàn'}
+              {activeTab === 'picking' && 'Nhặt Hàng (Picking)'}
+              {activeTab === 'bulk' && 'Chỉnh Sửa Hàng Loạt & Công Cụ AI'}
+              {activeTab === 'suppliers' && 'Quản Lý Đối Tác Nhà Cung Cấp'}
+              {activeTab === 'imports' && 'Quản Lý Nhập Hàng'}
+              {activeTab === 'financials' && 'Chi Phí Bán Hàng'}
+              {activeTab === 'settings' && 'Thiết Lập API Sàn Thương Mại'}
+            </h2>
+            {activeTab !== 'dashboard' && (
+            <p className={`text-xs text-gray-400 ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-desc' : ''}`}>
+              {activeTab === 'products' && 'Quản lý giá nhập, giá bán lẻ, tồn kho và xuất bản kênh.'}
+              {activeTab === 'publish' && 'Đăng bán sản phẩm lên nhiều gian hàng đồng thời, lồng khung hình sỉ hàng loạt và tối ưu tiêu đề chống spam bằng AI.'}
+              {activeTab === 'orders' && 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.'}
+              {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
+              {activeTab === 'bulk' && 'Tăng giảm giá %, đặt tồn kho, tối ưu nội dung bằng AI hàng loạt.'}
+              {activeTab === 'suppliers' && 'Quản lý thông tin liên hệ, công nợ sỉ và tiền độ thanh toán cho xưởng sỉ.'}
+              {activeTab === 'imports' && 'Quản lý hóa đơn nhập đầu vào, theo dõi biến động % giá nhập hàng.'}
+              {activeTab === 'financials' && 'Theo dõi chi phí hoạt động, cơ cấu quỹ và mô phỏng lợi nhuận sau phí sàn.'}
+              {activeTab === 'settings' && 'Cập nhật mã gian hàng, API key và trỏ DNS về hosting riêng.'}
+            </p>
+            )}
+          </div>
+
+          <div className="max-md:hidden md:flex items-center gap-4 text-xs font-semibold shrink-0">
+            {/* Shopee Connection badge */}
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-xl">
+              <span className={`w-2 h-2 rounded-full ${settings.shopeeConnected ? 'bg-emerald-500' : 'bg-gray-300'}`}></span>
+              <span className="text-gray-600">Shopee</span>
+            </div>
+
+            {/* TikTok Connection badge */}
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-xl">
+              <span className={`w-2 h-2 rounded-full ${settings.tiktokConnected ? 'bg-emerald-500' : 'bg-gray-300'}`}></span>
+              <span className="text-gray-600">TikTok Shop</span>
+            </div>
+          </div>
+          </div>
+        </header>
+
+        {/* Active Tab rendering */}
+        <div className={`app-main-container app-page-content app-scroll-list ${activeTab === 'picking' ? 'max-md:pt-1 max-md:px-2' : activeTab === 'products' ? 'max-md:pt-1 max-md:px-2' : 'max-md:pt-2 max-md:px-3'} p-4 md:p-6 pb-24 md:pb-6 flex-1`}>
+          {activeTab === 'dashboard' && (
+            <Dashboard
+              orders={orders}
+              products={products}
+              onTabChange={setActiveTab}
+              onEditProductShortcut={handleEditProductShortcut}
+              onUpdateProduct={handleUpdateProduct}
+              onNavigateToImport={handleNavigateToImport}
+            />
+          )}
+
+          {activeTab === 'products' && (
+            <>
+              <div className="max-md:block md:hidden">
+                <InventoryAudit
+                  products={products}
+                  shopId={settings.shops?.find((s) => s.platform === 'shopee' && s.connected)?.shopId || '4127421'}
+                  onRefreshProducts={fetchProducts}
+                />
+              </div>
+              <div className="max-md:hidden md:block">
+                <ProductList
+                  products={products}
+                  onAddProduct={handleAddProduct}
+                  onUpdateProduct={handleUpdateProduct}
+                  onDeleteProduct={handleDeleteProduct}
+                  onReplaceProducts={handleReplaceProducts}
+                  onBulkSave={handleBulkSaveProducts}
+                  onSyncItemVariants={handleSyncItemVariants}
+                  onRefreshProducts={fetchProducts}
+                  onProductsUpdated={(prods) => setProducts(prods)}
+                  onBulkSelect={setSelectedIds}
+                  selectedIds={selectedIds}
+                  onTabChange={setActiveTab}
+                  highlightProductId={highlightProductId}
+                  onClearHighlight={() => setHighlightProductId(null)}
+                  shops={settings.shops || []}
+                  suppliers={suppliers}
+                  onAddLog={handleAddLog}
+                  productsLoading={productsLoading}
+                />
+              </div>
+            </>
+          )}
+
+          {activeTab === 'publish' && (
+            <PublishManager 
+              products={products}
+              onUpdateProduct={handleUpdateProduct}
+              onAddLog={handleAddLog}
+              shops={settings.shops || []}
+            />
+          )}
+
+          {activeTab === 'picking' && (
+            <OrderPicking
+              orders={orders}
+              onUpdateOrders={handleUpdateOrders}
+              onAddLog={handleAddLog}
+            />
+          )}
+
+          {activeTab === 'orders' && (
+            <OrderManager 
+              orders={orders}
+              onUpdateOrders={handleUpdateOrders}
+              onRefreshOrders={pullOrders}
+              ordersLoading={ordersLoading}
+              shops={settings.shops || []}
+              onAddLog={handleAddLog}
+              products={products}
+              onUpdateProduct={handleUpdateProduct}
+              focusScanner={focusScanner}
+              onCloseScanner={() => setFocusScanner(false)}
+              onEndScanSession={() => setFocusScanner(false)}
+            />
+          )}
+
+          {activeTab === 'bulk' && (
+            <BulkEditor 
+              products={products}
+              selectedIds={selectedIds}
+              shops={settings.shops || []}
+              onUpdateBulk={handleUpdateBulk}
+              onBulkUpdate={handleBulkUpdateApi}
+              onAddLog={handleAddLog}
+            />
+          )}
+
+          {activeTab === 'suppliers' && (
+            <SupplierManager 
+              suppliers={suppliers}
+              onAddSupplier={handleAddSupplier}
+              onUpdateSupplier={handleUpdateSupplier}
+              onDeleteSupplier={handleDeleteSupplier}
+            />
+          )}
+
+          {activeTab === 'imports' && (
+            <ImportManager 
+              imports={imports}
+              suppliers={suppliers}
+              onRefreshSuppliers={fetchSuppliers}
+              onSuppliersUpdated={setSuppliers}
+              products={products}
+              onAddImport={handleAddImport}
+              onEditProductShortcut={handleEditProductShortcut}
+              initialProductId={importPrefillProductId}
+              onInitialProductConsumed={() => setImportPrefillProductId(null)}
+            />
+          )}
+
+          {activeTab === 'financials' && (
+            <Financials 
+              expenses={expenses}
+              products={products}
+              orders={orders}
+              onAddExpense={handleAddExpense}
+              onDeleteExpense={handleDeleteExpense}
+            />
+          )}
+
+          {activeTab === 'settings' && (
+            <SettingsView 
+              settings={settings}
+              onUpdateSettings={setSettings}
+              logs={logs}
+              onClearLogs={handleClearLogs}
+            />
+          )}
+        </div>
+      </main>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <div className={`fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 z-50 max-md:flex md:hidden items-stretch justify-between py-1.5 px-1 shadow-xl safe-area-pb ${focusScanner ? 'max-md:hidden' : ''}`}>
+        <button
+          onClick={() => navigateTab('products')}
+          type="button"
+          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
+            activeTab === 'products'
+              ? 'text-blue-500 font-extrabold'
+              : 'text-slate-400 hover:text-white font-medium'
+          }`}
+        >
+          <Scale className="w-5 h-5" />
+          <span className="text-[9px] uppercase tracking-wide font-extrabold">Kiểm hàng</span>
+        </button>
+
+        <button
+          onClick={() => navigateTab('orders')}
+          type="button"
+          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
+            activeTab === 'orders' && !focusScanner
+              ? 'text-blue-500 font-extrabold'
+              : 'text-slate-400 hover:text-white font-medium'
+          }`}
+        >
+          <ClipboardList className="w-5 h-5" />
+          <span className="text-[9px] uppercase tracking-wide font-extrabold">Đơn hàng</span>
+        </button>
+
+        <button
+          onClick={() => navigateTab('picking')}
+          type="button"
+          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
+            activeTab === 'picking'
+              ? 'text-emerald-400 font-extrabold'
+              : 'text-slate-400 hover:text-white font-medium'
+          }`}
+        >
+          <ShoppingBasket className="w-5 h-5" />
+          <span className="text-[9px] uppercase tracking-wide font-extrabold">Nhặt hàng</span>
+        </button>
+
+        <button
+          onClick={() => navigateTab('orders', { openScanner: true })}
+          type="button"
+          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
+            activeTab === 'orders' && focusScanner
+              ? 'text-blue-500 font-extrabold'
+              : 'text-slate-400 hover:text-white font-medium'
+          }`}
+        >
+          <Barcode className="w-5 h-5" />
+          <span className="text-[9px] uppercase tracking-wide font-extrabold">Quét mã</span>
+        </button>
+      </div>
+    </div>
+  );
+}

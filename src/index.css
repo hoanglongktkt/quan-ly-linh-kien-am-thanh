@@ -1,0 +1,333 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ── Layout: PC 32" (≥1440px) + Điện thoại (≤768px) ── */
+.app-main-container {
+  width: 100%;
+  max-width: 1500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.app-page-content {
+  width: 100%;
+}
+
+.app-main-scroll {
+  overscroll-behavior-y: contain;
+}
+
+/* Chrome / PC — thanh cuộn mỏng */
+@media (min-width: 1440px) {
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(203 213 225) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgb(203 213 225);
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgb(148 163 184);
+  }
+
+  .app-main-container {
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+
+  /* Lưới 2–3 cột cho danh sách dài trên màn 32" */
+  .app-wide-card-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    padding: 1rem;
+    align-content: start;
+  }
+
+  .app-wide-card-grid > * {
+    border: 1px solid rgb(243 244 246);
+    border-radius: 1rem;
+    background: white;
+  }
+
+  .app-wide-hide-table {
+    display: none !important;
+  }
+
+  .ia-desktop-audit-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+
+  .ia-desktop-audit-grid .ia-audit-row-card {
+    border: 1px solid rgb(243 244 246);
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+    background: rgb(249 250 251 / 0.35);
+  }
+}
+
+@media (min-width: 1600px) {
+  .app-wide-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ia-desktop-audit-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Điện thoại — vuốt mượt, ẩn scrollbar, vùng bấm lớn */
+@media (max-width: 768px) {
+  .app-main-scroll,
+  .app-scroll-list,
+  .ia-mobile-body,
+  #sidebar-nav {
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-scroll-list,
+  .ia-mobile-body,
+  .om-order-card-list {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .app-scroll-list::-webkit-scrollbar,
+  .ia-mobile-body::-webkit-scrollbar,
+  .om-order-card-list::-webkit-scrollbar {
+    display: none;
+  }
+
+  .app-touch-target,
+  button,
+  input[type='button'],
+  input[type='submit'],
+  input[type='checkbox'],
+  input[type='radio'],
+  select,
+  textarea,
+  .app-touch-input {
+    min-height: 44px;
+  }
+
+  input[type='checkbox'],
+  input[type='radio'] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  input[type='text'],
+  input[type='search'],
+  input[type='number'],
+  input[type='email'],
+  input[type='password'],
+  select {
+    min-height: 48px;
+  }
+}
+
+/* Card list: mobile block; tablet-desktop ẩn; PC 32" lưới */
+.om-order-card-list {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .om-order-card-list {
+    display: block;
+  }
+}
+
+/* Used by the manual/off-platform packing-slip print preview (window.print()) */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #bulk-print-area,
+  #bulk-print-area * {
+    visibility: visible;
+  }
+  #bulk-print-area {
+    position: absolute;
+    inset: 0;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}
+
+/* Order Manager — mobile only (≤768px) */
+@media (max-width: 768px) {
+  .om-mobile-hide-prepare,
+  .om-mobile-hide-print {
+    display: none !important;
+  }
+
+  .om-orders-mobile-hide-page-title,
+  .om-orders-mobile-hide-page-desc,
+  .om-orders-mobile-hide-top-bar,
+  .om-orders-mobile-hide-support,
+  .om-orders-mobile-hide-primary-actions {
+    display: none !important;
+  }
+
+  .om-orders-sub-tabs {
+    margin-top: 0 !important;
+    flex-direction: column !important;
+    gap: 0.5rem !important;
+    border-bottom: none !important;
+    padding: 0.5rem !important;
+  }
+
+  .om-orders-mobile-hide-subtab,
+  .om-orders-mobile-hide-scanner-panel,
+  .om-orders-filters-panel {
+    display: none !important;
+  }
+
+  .om-orders-sub-tabs .om-orders-mobile-show-subtab {
+    width: 100%;
+    justify-content: space-between;
+    border-radius: 0.75rem;
+    border: 1px solid rgb(243 244 246);
+    border-bottom-width: 1px !important;
+    text-transform: none;
+    letter-spacing: normal;
+    min-height: 48px;
+  }
+
+  .om-orders-sub-tabs .om-orders-mobile-show-subtab[class*='border-blue-600'] {
+    border-color: rgb(37 99 235) !important;
+    background-color: rgb(239 246 255 / 0.5);
+  }
+
+  .om-orders-mobile-hide-search,
+  .om-orders-mobile-hide-date-filter,
+  .om-orders-mobile-hide-sort-filter,
+  .om-orders-mobile-hide-sync-btn,
+  .om-orders-mobile-hide-save-filter,
+  .om-orders-mobile-hide-columns-btn,
+  .om-orders-mobile-hide-active-filters,
+  .om-orders-mobile-hide-bulk-bar {
+    display: none !important;
+  }
+}
+
+/* Kiểm Hàng — desktop / mobile */
+.ia-desktop {
+  display: block;
+}
+
+.ia-mobile {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .ia-desktop {
+    display: none !important;
+  }
+
+  .ia-mobile {
+    display: flex !important;
+    flex-direction: column;
+    min-height: calc(100dvh - 6rem);
+  }
+
+  .ia-mobile-search-input,
+  .ia-mobile-dropdown {
+    border-radius: 8px;
+    min-height: 48px;
+  }
+
+  .ia-mobile-body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding-bottom: 5.5rem;
+  }
+
+  .ia-mobile-results {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .ia-mobile-card-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.07);
+  }
+
+  .ia-mobile-card-img {
+    border-radius: 6px;
+  }
+
+  .ia-mobile-qty-inline {
+    width: 4.25rem;
+    min-height: 48px;
+    padding: 0 4px;
+    text-align: center;
+    font-size: 1.125rem;
+    font-weight: 800;
+    font-family: var(--font-mono);
+    background: rgb(239 246 255 / 0.85);
+    border: 2px solid rgb(191 219 254);
+    border-radius: 8px;
+    outline: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .ia-mobile-qty-inline:focus {
+    border-color: rgb(59 130 246);
+    background: white;
+  }
+
+  .ia-mobile-footer {
+    box-shadow: 0 -6px 24px rgba(15, 23, 42, 0.1);
+    border-top: 1px solid rgb(229 231 235);
+  }
+
+  .ia-mobile-balance-btn {
+    border-radius: 8px;
+    min-height: 48px;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.35);
+  }
+}
+
+@media (min-width: 1440px) {
+  .ia-desktop .ia-audit-table-wrap {
+    display: none;
+  }
+
+  .ia-desktop-audit-grid {
+    display: grid;
+  }
+}
+
+.ia-desktop-audit-grid {
+  display: none;
+}

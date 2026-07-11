@@ -1,0 +1,433 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Product } from '../types';
+import { X, RefreshCw, Check, Package, Plus } from 'lucide-react';
+
+const SAPO = { blue: '#0078D4', bg: '#F4F6F8', border: '#E0E0E0' };
+
+export function getShopeeItemKey(p: Product): string | null {
+  if (p.shopeeItemId) return String(p.shopeeItemId);
+  if (p.shopeeId?.includes(':')) return p.shopeeId.split(':')[0];
+  const m = p.id.match(/^shopee-item-(\d+)/);
+  return m ? m[1] : null;
+}
+
+export function isParentOnlyShopeeRow(p: Product): boolean {
+  return /^shopee-item-\d+$/.test(p.id);
+}
+
+export function getProductVariants(allProducts: Product[], prod: Product): Product[] {
+  const key = getShopeeItemKey(prod);
+  if (!key) return [prod];
+  const variants = allProducts.filter(p => getShopeeItemKey(p) === key);
+  return variants.length > 0
+    ? [...variants].sort((a, b) => a.title.localeCompare(b.title, 'vi'))
+    : [prod];
+}
+
+export interface ProductGroupRow {
+  groupId: string;
+  representative: Product;
+  variants: Product[];
+  variantCount: number;
+  hasVariants: boolean;
+  displayTitle: string;
+  totalStock: number;
+  minSellingPrice: number;
+  maxSellingPrice: number;
+}
+
+function getBaseTitle(variants: Product[]): string {
+  const bases = variants.map((v) => {
+    const idx = v.title.indexOf(' - ');
+    return idx > 0 ? v.title.slice(0, idx).trim() : v.title.trim();
+  });
+  const first = bases[0];
+  return bases.every((b) => b === first) ? first : variants[0].title;
+}
+
+export function isJunkCategoryLabel(category?: string): boolean {
+  if (!category) return true;
+  const t = category.trim();
+  return !t || t === 'Chưa phân loại' || /^\d+$/.test(t);
+}
+
+export function formatPriceRange(min: number, max: number): string {
+  const fmt = (n: number) => `${Math.round(n).toLocaleString('vi-VN')}đ`;
+  if (min === max) return fmt(min);
+  return `${fmt(min)} - ${fmt(max)}`;
+}
+
+export function buildProductGroups(products: Product[]): ProductGroupRow[] {
+  const byKey = new Map<string, Product[]>();
+  const standalone: Product[] = [];
+
+  for (const p of products) {
+    const key = getShopeeItemKey(p);
+    if (!key) {
+      standalone.push(p);
+      continue;
+    }
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key)!.push(p);
+  }
+
+  const rows: ProductGroupRow[] = [];
+
+  for (const [key, variants] of byKey) {
+    const sorted = [...variants].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
+    const hasVariants = sorted.length > 1;
+    const count = hasVariants ? sorted.length : 1;
+    const prices = sorted.map((v) => Number(v.sellingPrice) || 0);
+
+    rows.push({
+      groupId: `group-${key}`,
+      representative: sorted.find((v) => !v.shopeeModelId) || sorted[0],
+      variants: sorted,
+      variantCount: count,
+      hasVariants,
+      displayTitle: getBaseTitle(sorted),
+      totalStock: sorted.reduce((sum, v) => sum + (Number(v.stock) || 0), 0),
+      minSellingPrice: Math.min(...prices),
+      maxSellingPrice: Math.max(...prices),
+    });
+  }
+
+  for (const p of standalone) {
+    const price = Number(p.sellingPrice) || 0;
+    rows.push({
+      groupId: p.id,
+      representative: p,
+      variants: [p],
+      variantCount: 1,
+      hasVariants: false,
+      displayTitle: p.title,
+      totalStock: Number(p.stock) || 0,
+      minSellingPrice: price,
+      maxSellingPrice: price,
+    });
+  }
+
+  return rows.sort((a, b) => a.displayTitle.localeCompare(b.displayTitle, 'vi'));
+}
+
+interface ProductDetailModalProps {
+  product: Product;
+  allProducts: Product[];
+  onClose: () => void;
+  onUpdateProduct: (product: Product, opts?: { save?: boolean }) => void | Promise<void>;
+  onSyncItemVariants?: (itemId: string) => Promise<Product[] | null>;
+  onProductsRefresh?: (products: Product[]) => void;
+}
+
+export default function ProductDetailModal({
+  product,
+  allProducts,
+  onClose,
+  onUpdateProduct,
+  onSyncItemVariants,
+  onProductsRefresh,
+}: ProductDetailModalProps) {
+  const [localProducts, setLocalProducts] = useState(allProducts);
+  const variants = useMemo(() => getProductVariants(localProducts, product), [localProducts, product]);
+  const [activeId, setActiveId] = useState(product.id);
+  const active = variants.find(v => v.id === activeId) || variants[0] || product;
+
+  const [editTitle, setEditTitle] = useState('');
+  const [editSku, setEditSku] = useState('');
+  const [editBarcode, setEditBarcode] = useState('');
+  const [editWeight, setEditWeight] = useState(0);
+  const [editWeightUnit, setEditWeightUnit] = useState<'g' | 'kg'>('g');
+  const [editStock, setEditStock] = useState(0);
+  const [editSellingPrice, setEditSellingPrice] = useState(0);
+  const [editWholesalePrice, setEditWholesalePrice] = useState(0);
+  const [editImportPrice, setEditImportPrice] = useState(0);
+  const [editUnit, setEditUnit] = useState('');
+
+  const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => { setLocalProducts(allProducts); }, [allProducts]);
+
+  useEffect(() => {
+    if (!active) return;
+    setEditTitle(active.title);
+    setEditSku(active.sku);
+    setEditBarcode(active.barcode || active.sku);
+    setEditWeight(active.weight ?? 0);
+    setEditStock(active.stock);
+    setEditSellingPrice(active.sellingPrice);
+    setEditWholesalePrice(active.wholesalePrice ?? active.sellingPrice);
+    setEditImportPrice(active.importPrice);
+    setEditUnit(active.unit || '');
+    setToast(null);
+  }, [active?.id]);
+
+  const itemKey = getShopeeItemKey(active);
+
+  const handleSyncVariants = async () => {
+    if (!onSyncItemVariants || !itemKey) return;
+    setSyncing(true);
+    setToast('Đang tải phân loại SKU từ Shopee (get_model_list)...');
+    try {
+      const updated = await onSyncItemVariants(itemKey);
+      if (updated) {
+        setLocalProducts(updated);
+        onProductsRefresh?.(updated);
+        const newVariants = getProductVariants(updated, active);
+        if (newVariants.length > 0) {
+          setActiveId(newVariants.find(v => v.shopeeModelId)?.id || newVariants[0].id);
+          setToast(
+            newVariants.length > 1
+              ? `Đã tải ${newVariants.length} phân loại với SKU riêng từ Shopee.`
+              : 'Shopee chỉ trả về 1 dòng — sản phẩm có thể không có phân loại con.'
+          );
+        }
+      } else {
+        setToast('Không nhận được dữ liệu phân loại từ server.');
+      }
+    } catch (err: any) {
+      setToast(err?.message || 'Tải SKU phân loại thất bại.');
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setToast(null), 5000);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!active) return;
+    setSaving(true);
+    const updated: Product = {
+      ...active,
+      title: editTitle.trim() || active.title,
+      sku: editSku.trim() || active.sku,
+      barcode: editBarcode.trim() || editSku.trim(),
+      weight: Math.max(0, editWeight),
+      stock: Math.max(0, Math.round(editStock)),
+      sellingPrice: Math.max(0, Math.round(editSellingPrice)),
+      wholesalePrice: Math.max(0, Math.round(editWholesalePrice)),
+      importPrice: Math.max(0, Math.round(editImportPrice)),
+      unit: editUnit.trim(),
+      status: editStock <= 0 ? 'out_of_stock' : active.status === 'draft' ? 'draft' : 'active',
+      lastSynced: new Date().toISOString(),
+    };
+    await onUpdateProduct(updated, { save: true });
+    setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+    setSaving(false);
+    setToast('Đã lưu vào kho gốc.');
+    setTimeout(() => setToast(null), 2500);
+  };
+
+  const labelCls = 'text-[12px] text-[#6B7280] mb-1 block';
+  const inputCls = 'w-full px-3 py-[8px] text-[13px] border border-[#E0E0E0] rounded-[4px] bg-white focus:border-[#0078D4] focus:ring-1 focus:ring-[#0078D4]/20 outline-none';
+  const cardCls = 'bg-white border rounded-[4px]' ;
+  const cardHeader = 'px-4 py-2.5 border-b text-[13px] font-semibold text-[#212121]';
+
+  const marginPct = editSellingPrice > 0
+    ? (((editSellingPrice - editImportPrice) / editSellingPrice) * 100).toFixed(0)
+    : '0';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-1 sm:p-3">
+      <div className="bg-white w-full max-w-[1100px] h-full sm:h-[92vh] flex flex-col overflow-hidden sm:rounded-[6px] shadow-xl" style={{ border: `1px solid ${SAPO.border}` }}>
+        <div className="flex items-center justify-between px-5 py-3 border-b shrink-0" style={{ borderColor: SAPO.border }}>
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[#0078D4]">Chi tiết sản phẩm</p>
+            <h2 className="text-[15px] font-semibold text-[#212121]">Chỉnh sửa thông tin kho</h2>
+          </div>
+          <button onClick={onClose} className="p-1 rounded hover:bg-[#F4F6F8] text-[#9CA3AF]"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="flex flex-1 min-h-0" style={{ background: SAPO.bg }}>
+          {/* Sidebar phiên bản — Sapo */}
+          <aside className="w-[240px] shrink-0 bg-white border-r max-sm:hidden sm:flex sm:flex-col" style={{ borderColor: SAPO.border }}>
+            <div className="px-3 py-2.5 border-b flex items-center justify-between" style={{ borderColor: SAPO.border }}>
+              <span className="text-[13px] font-semibold text-[#212121]">Phiên bản ({variants.length})</span>
+              {itemKey && active.channels.includes('shopee') && (
+                <button onClick={handleSyncVariants} disabled={syncing} className="text-[11px] text-[#0078D4] hover:underline disabled:opacity-50 font-semibold">
+                  {syncing ? 'Đang tải...' : 'Tải SKU'}
+                </button>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto p-1.5 space-y-0.5">
+              {variants.map(v => {
+                const selected = v.id === activeId;
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => setActiveId(v.id)}
+                    className={`w-full flex items-start gap-2 px-2 py-2 rounded-[4px] text-left transition-colors ${
+                      selected ? 'bg-[#0078D4] text-white' : 'hover:bg-[#F4F6F8] text-[#424242]'
+                    }`}
+                  >
+                    {v.imageUrl ? (
+                      <img src={v.imageUrl} alt="" className="w-9 h-9 rounded-[3px] object-cover border shrink-0" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className={`w-9 h-9 rounded-[3px] flex items-center justify-center shrink-0 ${selected ? 'bg-white/20' : 'bg-[#F4F6F8]'}`}>
+                        <Package className="w-4 h-4" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-[11px] font-medium leading-tight line-clamp-2 ${selected ? 'text-white' : 'text-[#212121]'}`}>{v.title}</p>
+                          <p className={`text-[10px] font-mono mt-0.5 ${selected ? 'text-blue-100' : 'text-[#9CA3AF]'}`}>{v.sku}</p>
+                          {v.parentSku && v.parentSku !== v.sku && (
+                            <p className={`text-[9px] mt-0.5 ${selected ? 'text-blue-200' : 'text-[#BDBDBD]'}`}>SKU cha: {v.parentSku}</p>
+                          )}
+                      <p className={`text-[10px] mt-0.5 ${selected ? 'text-blue-100' : 'text-[#6B7280]'}`}>
+                        Tồn kho: {v.stock} · Có thể bán: {v.stock}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {syncing && (
+              <div className="px-3 py-2 border-t text-[11px] text-[#0078D4] flex items-center gap-1" style={{ borderColor: SAPO.border }}>
+                <RefreshCw className="w-3 h-3 animate-spin" /> Đang tải phân loại...
+              </div>
+            )}
+          </aside>
+
+          {/* Main form */}
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
+            {/* Mobile variant picker */}
+            <div className="sm:hidden">
+              <label className={labelCls}>Phiên bản ({variants.length})</label>
+              <select value={activeId} onChange={e => setActiveId(e.target.value)} className={inputCls}>
+                {variants.map(v => <option key={v.id} value={v.id}>{v.sku} — {v.title}</option>)}
+              </select>
+            </div>
+
+            {/* Card: Thông tin chi tiết */}
+            <div className={cardCls} style={{ borderColor: SAPO.border }}>
+              <div className={cardHeader} style={{ borderColor: SAPO.border }}>Thông tin chi tiết phiên bản</div>
+              <div className="p-4">
+                <div className="flex gap-4">
+                  <div className="flex-1 space-y-3">
+                    <div>
+                      <label className={labelCls}>Tên phiên bản sản phẩm <span className="text-red-500">*</span></label>
+                      <input value={editTitle} onChange={e => setEditTitle(e.target.value)} className={inputCls} />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelCls}>Mã sản phẩm / SKU</label>
+                        <input value={editSku} onChange={e => setEditSku(e.target.value)} className={`${inputCls} font-mono`} />
+                      </div>
+                      <div>
+                        <label className={labelCls}>Mã vạch / Barcode</label>
+                        <input value={editBarcode} onChange={e => setEditBarcode(e.target.value)} className={`${inputCls} font-mono`} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className={labelCls}>Khối lượng</label>
+                        <div className="flex gap-1">
+                          <input type="number" step="0.01" value={editWeight} onChange={e => setEditWeight(Math.max(0, Number(e.target.value)))} className={`${inputCls} flex-1`} />
+                          <select value={editWeightUnit} onChange={e => setEditWeightUnit(e.target.value as 'g' | 'kg')} className="w-12 px-1 py-[8px] text-[12px] border border-[#E0E0E0] rounded-[4px]">
+                            <option value="g">g</option>
+                            <option value="kg">kg</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className={labelCls}>Tồn kho</label>
+                        <input type="number" value={editStock} onChange={e => setEditStock(Math.max(0, Number(e.target.value)))} className={`${inputCls} font-semibold`} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Đơn vị tính</label>
+                      <input
+                        value={editUnit}
+                        onChange={e => setEditUnit(e.target.value)}
+                        placeholder="Nhập đơn vị (VD: 1 cái, 1 hộp...)"
+                        className={inputCls}
+                      />
+                    </div>
+                  </div>
+                  <div className="max-sm:hidden sm:block shrink-0 w-[120px] text-center">
+                    {active.imageUrl ? (
+                      <img src={active.imageUrl} alt="" className="w-[110px] h-[110px] object-cover rounded-[4px] border" style={{ borderColor: SAPO.border }} referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-[110px] h-[110px] bg-[#F4F6F8] rounded-[4px] flex items-center justify-center">
+                        <Package className="w-8 h-8 text-[#BDBDBD]" />
+                      </div>
+                    )}
+                    <button type="button" className="mt-2 text-[11px] text-[#0078D4] hover:underline">Thay đổi ảnh</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Card: Giá sản phẩm */}
+            <div className={cardCls} style={{ borderColor: SAPO.border }}>
+              <div className={`${cardHeader} flex items-center justify-between`} style={{ borderColor: SAPO.border }}>
+                <span>Giá sản phẩm</span>
+                <button type="button" className="text-[12px] text-[#0078D4] font-normal flex items-center gap-0.5 hover:underline">
+                  <Plus className="w-3.5 h-3.5" /> Thêm chính sách giá
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelCls}>Giá bán lẻ</label>
+                    <input type="number" value={editSellingPrice} onChange={e => setEditSellingPrice(Math.max(0, Number(e.target.value)))} className={`${inputCls} text-right font-semibold`} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Giá bán buôn</label>
+                    <input type="number" value={editWholesalePrice} onChange={e => setEditWholesalePrice(Math.max(0, Number(e.target.value)))} className={`${inputCls} text-right`} />
+                  </div>
+                </div>
+                <div className="sm:w-1/2">
+                  <label className={labelCls}>Giá nhập</label>
+                  <input type="number" value={editImportPrice} onChange={e => setEditImportPrice(Math.max(0, Number(e.target.value)))} className={`${inputCls} text-right`} />
+                </div>
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div className="p-3 bg-[#F9FAFB] border rounded-[4px]" style={{ borderColor: SAPO.border }}>
+                    <span className="text-[11px] text-[#9CA3AF]">Giá vốn</span>
+                    <p className="text-[14px] font-semibold text-[#424242] mt-0.5">{editImportPrice.toLocaleString('vi-VN')} đ</p>
+                  </div>
+                  <div className="p-3 bg-[#ECFDF5] border border-[#A7F3D0] rounded-[4px]">
+                    <span className="text-[11px] text-emerald-600">Biên lãi gộp</span>
+                    <p className="text-[14px] font-semibold text-emerald-700 mt-0.5">{marginPct}%</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Liên kết sàn */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-3 bg-white border rounded-[4px] flex justify-between items-center text-[12px]" style={{ borderColor: SAPO.border }}>
+                <span className="font-semibold text-orange-700">Shopee ID</span>
+                <span className="font-mono text-orange-900">{active.shopeeId || 'Chưa liên kết'}</span>
+              </div>
+              <div className="p-3 bg-white border rounded-[4px] flex justify-between items-center text-[12px]" style={{ borderColor: SAPO.border }}>
+                <span className="font-semibold text-[#424242]">TikTok ID</span>
+                <span className="font-mono text-[#6B7280]">{active.tiktokId || 'Chưa liên kết'}</span>
+              </div>
+            </div>
+
+            {toast && (
+              <div className="text-[12px] text-[#0078D4] bg-[#E8F4FD] border border-[#B3D9F2] rounded-[4px] px-3 py-2">{toast}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t bg-white shrink-0" style={{ borderColor: SAPO.border }}>
+          <button onClick={onClose} className="px-5 py-[7px] text-[13px] font-medium text-[#424242] bg-white border rounded-[4px] hover:bg-[#F9FAFB]" style={{ borderColor: SAPO.border }}>
+            Hủy bỏ
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || syncing}
+            className="px-5 py-[7px] text-[13px] font-medium text-white rounded-[4px] disabled:opacity-50 flex items-center gap-2"
+            style={{ background: '#0078D4' }}
+          >
+            {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            Cập nhật
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
