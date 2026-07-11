@@ -1,6 +1,6 @@
 /**
- * Vercel — proxy mọi /api/* (trừ /api/shopee/callback) sang backend cPanel.
- * Cần thiết vì thư mục api/ khiến vercel.json rewrite external không áp dụng.
+ * Vercel — proxy /api/* sang backend cPanel (gọi qua vercel.json rewrite).
+ * Rewrite: /api/:path* → /api/proxy?path=:path*
  */
 const BACKEND = 'https://quanly.linhkienamthanh.net';
 
@@ -13,11 +13,20 @@ const HOP_HEADERS = new Set([
   'upgrade',
 ]);
 
-export default async function handler(req, res) {
+function resolvePathPart(req) {
   const raw = req.query.path;
-  const pathPart = Array.isArray(raw) ? raw.join('/') : String(raw || '');
+  if (raw != null && raw !== '') {
+    return Array.isArray(raw) ? raw.join('/') : String(raw);
+  }
+  const urlPath = String(req.url || '').split('?')[0];
+  const m = urlPath.match(/^\/api\/proxy\/?(.*)$/);
+  return m?.[1] ? decodeURIComponent(m[1]) : '';
+}
 
-  if (!pathPart || pathPart === 'shopee/callback' || pathPart.startsWith('shopee/callback/')) {
+export default async function handler(req, res) {
+  const pathPart = resolvePathPart(req);
+
+  if (!pathPart || pathPart === 'proxy' || pathPart.startsWith('shopee/callback')) {
     return res.status(404).json({ error: 'Not found' });
   }
 
