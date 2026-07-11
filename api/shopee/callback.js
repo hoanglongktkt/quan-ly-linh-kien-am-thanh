@@ -5,7 +5,7 @@
  * Shopee yêu cầu phản hồi 200 OK trong ~3 giây — luôn trả lời ngay, không xử lý nặng trước.
  */
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -25,4 +25,4 @@ module.exports = async function handler(req, res) {
 
   res.setHeader('Allow', 'GET, POST, OPTIONS');
   return res.status(405).json({ error: 'Method not allowed' });
-};
+}
