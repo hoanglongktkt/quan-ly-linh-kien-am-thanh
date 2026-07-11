@@ -1,4 +1,6 @@
 {
+  "buildCommand": "npm run build:vercel",
+  "outputDirectory": "dist",
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -28,7 +30,7 @@
     },
     {
       "source": "/api/:path*",
-      "destination": "https://quanly.linhkienamthanh.net/api/:path*"
+      "destination": "/api/proxy?path=:path*"
     },
     {
       "source": "/((?!api/).*)",
