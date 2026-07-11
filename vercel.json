@@ -6,7 +6,7 @@
     },
     {
       "source": "/api/:path*",
-      "destination": "/api/proxy?path=:path*"
+      "destination": "https://quanly.linhkienamthanh.net/api/:path*"
     },
     {
       "source": "/((?!api/).*)",

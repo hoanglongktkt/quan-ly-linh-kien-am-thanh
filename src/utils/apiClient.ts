@@ -22,8 +22,12 @@ export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
 
-    // Vercel / cPanel / localhost: luôn dùng relative — proxy qua api/[...path].js hoặc cùng origin
-    if (isLocalDevHost(hostname) || isMainProductionHost(hostname) || isVercelHost(hostname)) {
+    // Vercel: thử relative trước (vercel.json edge rewrite). Nếu vẫn lỗi → fallback cross-origin.
+    if (isVercelHost(hostname)) {
+      return '';
+    }
+
+    if (isLocalDevHost(hostname) || isMainProductionHost(hostname)) {
       return '';
     }
   }

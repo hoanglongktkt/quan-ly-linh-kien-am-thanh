@@ -34,6 +34,16 @@ SetEnv SHOPEE_ENV live
 </IfModule>
 # DO NOT REMOVE OR MODIFY. CLOUDLINUX ENV VARS CONFIGURATION END
 
+# CORS — cho phép frontend Vercel gọi API trực tiếp (fallback nếu edge rewrite không dùng)
+<IfModule mod_headers.c>
+  SetEnvIf Origin "^https://([a-z0-9-]+\.)*vercel\.app$" CORS=1
+  SetEnvIf Origin "^https://quanly\.linhkienamthanh\.net$" CORS=1
+  Header always set Access-Control-Allow-Origin "%{HTTP_ORIGIN}e" env=CORS
+  Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" env=CORS
+  Header always set Access-Control-Allow-Headers "Content-Type, Authorization" env=CORS
+  Header always set Access-Control-Allow-Credentials "true" env=CORS
+</IfModule>
+
 # React SPA — F5 / deep link (bổ sung khi Apache phục vụ static từ dist/)
 <IfModule mod_rewrite.c>
   RewriteEngine On
