@@ -35,7 +35,14 @@ export default async function handler(req, res) {
     });
   }
 
-  if (!pathPart || pathPart === 'proxy' || pathPart.startsWith('shopee/callback')) {
+  const blocked =
+    !pathPart ||
+    pathPart === 'proxy' ||
+    pathPart.startsWith('shopee/callback') ||
+    pathPart.startsWith('shopee/webhook') ||
+    pathPart.startsWith('auth/shopee/callback') ||
+    pathPart.startsWith('health/cpanel');
+  if (blocked) {
     return res.status(404).json({ error: 'Not found' });
   }
 

@@ -21,6 +21,18 @@
       "destination": "/api/shopee/callback"
     },
     {
+      "source": "/api/auth/shopee/callback",
+      "destination": "/api/auth/shopee/callback"
+    },
+    {
+      "source": "/api/shopee/webhook",
+      "destination": "/api/shopee/webhook"
+    },
+    {
+      "source": "/api/health/cpanel",
+      "destination": "/api/health/cpanel"
+    },
+    {
       "source": "/api/login",
       "destination": "/api/login"
     },

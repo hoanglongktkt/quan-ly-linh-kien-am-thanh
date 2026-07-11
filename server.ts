@@ -2228,14 +2228,19 @@ async function startServer() {
     });
   });
 
+  app.get("/api/health", (_req, res) => {
+    res.status(200).json({ ok: true, service: "cpanel-backend" });
+  });
+
   // Shopee Open Platform OAuth redirect callback.
   // Register in Shopee Partner App Settings: SHOPEE_CALLBACK_URL
   app.get("/api/shopee/callback", async (req, res) => {
     const { code, shop_id } = req.query;
     console.log(`[Shopee OAuth] Callback received. code=${code || "N/A"} shop_id=${shop_id || "N/A"} env=${SHOPEE_ENV}`);
 
+    // Shopee / partner kiểm tra URL (GET không có query) — 200 body rỗng
     if (!code || !shop_id) {
-      return res.status(400).send("Thi\u1EBFu tham s\u1ED1 code ho\u1EB7c shop_id t\u1EEB Shopee callback.");
+      return res.status(200).end();
     }
 
     try {
@@ -2254,7 +2259,7 @@ async function startServer() {
 
   // Shopee webhook — trả 200 OK ngay (<3s), xử lý dữ liệu nặng ở background.
   app.post("/api/shopee/webhook", (req, res) => {
-    res.status(200).json({ received: true });
+    res.status(200).end();
     const payload = req.body;
     setImmediate(() => {
       console.log("[Shopee Webhook] Payload received:", JSON.stringify(payload));
