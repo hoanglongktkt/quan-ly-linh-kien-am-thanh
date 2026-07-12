@@ -76,6 +76,106 @@ function resolveOrderShopDisplayName(order: Order, shops: ConnectedShop[]): stri
   return sid || 'Gian hàng';
 }
 
+function OrderDetailAccordionPanel({ order, shops }: { order: Order; shops: ConnectedShop[] }) {
+  return (
+    <div className="px-4 pb-4 pt-3 border-t border-slate-100 bg-slate-50/80 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-xs font-extrabold text-slate-800">Chi tiết đơn #{order.orderSn}</h4>
+        <p className="text-[10px] text-slate-500">
+          {order.channel === 'manual' ? 'Đơn ngoài sàn' : order.channel.toUpperCase()}
+          {' · '}
+          {resolveOrderShopDisplayName(order, shops)}
+        </p>
+      </div>
+
+      <div className="space-y-3 bg-white p-4 rounded-2xl border border-gray-100">
+        <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Thông tin người nhận</h4>
+        <div className="space-y-2 text-xs">
+          <div className="flex items-start gap-2">
+            <MapPin className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+            <div>
+              <span className="text-gray-400">Địa chỉ:</span>{' '}
+              <strong className="text-gray-800">{order.customerName}</strong>
+              <p className="text-gray-500 mt-0.5 text-[11px] leading-relaxed">{order.customerAddress || 'Chưa cung cấp đầy đủ thông tin'}</p>
+            </div>
+          </div>
+          {order.customerPhone && (
+            <div className="flex items-center gap-2">
+              <Phone className="w-4 h-4 text-emerald-500 shrink-0" />
+              <div>
+                <span className="text-gray-400">Số điện thoại:</span>{' '}
+                <strong className="text-gray-800 font-mono">{order.customerPhone}</strong>
+              </div>
+            </div>
+          )}
+          {getCarrierWaybillDisplay(order) && (
+            <div className="flex items-center gap-2">
+              <Barcode className="w-4 h-4 text-indigo-500 shrink-0" />
+              <div>
+                <span className="text-gray-400">Mã vận đơn:</span>{' '}
+                <strong className="text-gray-800 font-mono">{getCarrierWaybillDisplay(order)}</strong>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Sản phẩm khách đặt</h4>
+        <div className="border border-gray-100 rounded-2xl overflow-hidden divide-y divide-gray-50 bg-white">
+          {(order.items || []).map((item, index) => (
+            <div key={index} className="p-3 flex items-center justify-between text-xs gap-3">
+              <div className="flex items-center gap-2.5 min-w-0">
+                {item.productImage ? (
+                  <img
+                    src={item.productImage}
+                    alt={item.productTitle}
+                    className="w-11 h-11 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
+                  />
+                ) : (
+                  <div className="w-11 h-11 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center shrink-0">
+                    <ImageIcon className="w-4 h-4 text-gray-300" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="font-bold text-gray-800 line-clamp-2">{item.productTitle}</p>
+                  <p className="text-gray-400 text-[10px] mt-0.5">Giá bán lẻ niêm yết: {item.price.toLocaleString('vi-VN')}đ</p>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <span className="text-gray-500">x{item.quantity}</span>
+                <p className="font-extrabold text-gray-900 mt-0.5">{(item.price * item.quantity).toLocaleString('vi-VN')}đ</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2 pt-2 border-t border-gray-100 text-xs text-gray-600 bg-white p-4 rounded-2xl border border-gray-100">
+        <div className="flex justify-between">
+          <span>Tổng tiền hàng khách trả:</span>
+          <span className="font-bold text-gray-900">{order.totalAmount.toLocaleString('vi-VN')}đ</span>
+        </div>
+        {order.channel !== 'manual' ? (
+          <div className="flex justify-between text-rose-500">
+            <span>Khấu trừ phí sàn ({order.channel === 'shopee' ? '12%' : '10%'}):</span>
+            <span className="font-bold">-{(order.totalAmount - order.revenue).toLocaleString('vi-VN')}đ</span>
+          </div>
+        ) : (
+          <div className="flex justify-between text-emerald-600">
+            <span>Phí sàn / Chi phí trung gian:</span>
+            <span className="font-bold">0đ (Đơn trực tiếp)</span>
+          </div>
+        )}
+        <div className="flex justify-between text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
+          <span className="font-bold">Doanh thu chuyển về ví kho sỉ:</span>
+          <span className="font-extrabold">{order.revenue.toLocaleString('vi-VN')}đ</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[]) => void;
@@ -422,7 +522,11 @@ export default function OrderManager({
   const [scannerMessage, setScannerMessage] = useState<{ text: string; type: 'success' | 'error' | null }>({ text: '', type: null });
 
   // Detail Modal & Bulk Print Modal
-  const [selectedOrderDetails, setSelectedOrderDetails] = useState<Order | null>(null);
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+
+  const toggleOrderDetails = (orderId: string) => {
+    setExpandedOrderId((prev) => (prev === orderId ? null : orderId));
+  };
   const [bulkPrintOrders, setBulkPrintOrders] = useState<Order[] | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -2658,9 +2762,10 @@ export default function OrderManager({
                 {filteredOrders.map(order => {
                   const isChecked = selectedOrderIds.includes(order.id);
                   const badge = getStatusBadge(order.status) || { text: order.status, color: '' };
+                  const isExpanded = expandedOrderId === order.id;
                   return (
+                    <React.Fragment key={order.id}>
                     <tr 
-                      key={order.id} 
                       className={`hover:bg-slate-50/40 transition-all ${isChecked ? 'bg-blue-50/20' : ''}`}
                     >
                       {/* Checkbox column */}
@@ -2870,15 +2975,23 @@ export default function OrderManager({
                           )}
 
                           <button
-                            onClick={() => setSelectedOrderDetails(order)}
-                            className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500 transition-all"
-                            title="Xem chi tiết đơn"
+                            onClick={() => toggleOrderDetails(order.id)}
+                            className={`p-1.5 rounded-lg transition-all ${isExpanded ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-100 text-gray-500'}`}
+                            title={isExpanded ? 'Ẩn chi tiết đơn' : 'Xem chi tiết đơn'}
                           >
-                            <Eye className="w-3.5 h-3.5" />
+                            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                           </button>
                         </div>
                       </td>
                     </tr>
+                    {isExpanded && (
+                      <tr className="bg-slate-50/60">
+                        <td colSpan={7} className="p-0">
+                          <OrderDetailAccordionPanel order={order} shops={shops} />
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -2889,11 +3002,13 @@ export default function OrderManager({
             {filteredOrders.map(order => {
               const isChecked = selectedOrderIds.includes(order.id);
               const badge = getStatusBadge(order.status) || { text: order.status, color: '' };
+              const isExpanded = expandedOrderId === order.id;
               return (
                 <div
                   key={order.id}
-                  className={`om-order-card-row flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4 p-4 w-full transition-colors ${isChecked ? 'bg-blue-50/20' : 'bg-white'}`}
+                  className={`w-full transition-colors ${isChecked ? 'bg-blue-50/20' : 'bg-white'}`}
                 >
+                <div className="om-order-card-row flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4 p-4 w-full">
                   <div className="flex items-center gap-2 shrink-0 lg:min-w-[11rem]">
                     <input
                       type="checkbox"
@@ -2930,12 +3045,12 @@ export default function OrderManager({
                       </p>
                       <button
                         type="button"
-                        onClick={() => setSelectedOrderDetails(order)}
+                        onClick={() => toggleOrderDetails(order.id)}
                         className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-700 transition-colors"
-                        title="Xem chi tiết đơn"
+                        title={isExpanded ? 'Ẩn chi tiết đơn' : 'Xem chi tiết đơn'}
                       >
-                        <Eye className="w-3.5 h-3.5 shrink-0" />
-                        Xem chi tiết đơn
+                        <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                        {isExpanded ? 'Ẩn chi tiết' : 'Xem chi tiết đơn'}
                       </button>
                     </div>
                   </div>
@@ -2953,9 +3068,15 @@ export default function OrderManager({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3 lg:gap-4 shrink-0 lg:ml-auto">
-                    <div className="text-xs">
-                      <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng thanh toán</span>
-                      <span className="font-black text-slate-900 text-sm whitespace-nowrap">{order.totalAmount.toLocaleString('vi-VN')} đ</span>
+                    <div className="flex flex-col gap-2">
+                      <div className="text-xs">
+                        <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng thanh toán</span>
+                        <span className="font-black text-slate-900 text-sm whitespace-nowrap">{order.totalAmount.toLocaleString('vi-VN')} đ</span>
+                      </div>
+                      <div className="text-xs">
+                        <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng nhận được</span>
+                        <span className="font-black text-emerald-700 text-sm whitespace-nowrap">{order.revenue.toLocaleString('vi-VN')} đ</span>
+                      </div>
                     </div>
 
                     <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
@@ -3081,135 +3202,16 @@ export default function OrderManager({
                     </div>
                   </div>
                 </div>
+                {isExpanded && (
+                  <OrderDetailAccordionPanel order={order} shops={shops} />
+                )}
+                </div>
               );
             })}
           </div>
         </>
       )}
     </div>
-      )}
-
-      {/* 7. MODAL 1: Order Details Drawer/Modal */}
-      {selectedOrderDetails && (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col">
-            <div className="p-6 border-b border-gray-100 flex items-start justify-between bg-slate-900 text-white">
-              <div>
-                <h3 className="text-base font-extrabold">Chi Tiết Đơn Hàng #{selectedOrderDetails.orderSn}</h3>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Sàn: {selectedOrderDetails.channel === 'manual' ? 'Đơn ngoài sàn (Tự tạo)' : selectedOrderDetails.channel.toUpperCase()} 
-                  {selectedOrderDetails.shopName ? ` | Gian: ${selectedOrderDetails.shopName}` : ''}
-                </p>
-              </div>
-              <button 
-                onClick={() => setSelectedOrderDetails(null)}
-                className="text-slate-400 hover:text-white text-sm"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="p-6 space-y-5 overflow-y-auto max-h-[480px]">
-              
-              {/* Delivery info */}
-              <div className="space-y-3 bg-gray-50/70 p-4 rounded-2xl border border-gray-100">
-                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Thông tin người nhận</h4>
-                <div className="space-y-2 text-xs">
-                  <div className="flex items-start gap-2">
-                    <MapPin className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
-                    <div>
-                      <span className="text-gray-400">Địa chỉ:</span>{' '}
-                      <strong className="text-gray-800">{selectedOrderDetails.customerName}</strong>
-                      <p className="text-gray-500 mt-0.5 text-[11px] leading-relaxed">{selectedOrderDetails.customerAddress || 'Chưa cung cấp đầy đủ thông tin'}</p>
-                    </div>
-                  </div>
-                  {selectedOrderDetails.customerPhone && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="w-4 h-4 text-emerald-500 shrink-0" />
-                      <div>
-                        <span className="text-gray-400">Số điện thoại:</span>{' '}
-                        <strong className="text-gray-800 font-mono">{selectedOrderDetails.customerPhone}</strong>
-                      </div>
-                    </div>
-                  )}
-                  {getCarrierWaybillDisplay(selectedOrderDetails) && (
-                    <div className="flex items-center gap-2">
-                      <Barcode className="w-4 h-4 text-indigo-500 shrink-0" />
-                      <div>
-                        <span className="text-gray-400">Mã vận đơn:</span>{' '}
-                        <strong className="text-gray-800 font-mono">{getCarrierWaybillDisplay(selectedOrderDetails)}</strong>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Items List */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Sản phẩm khách đặt</h4>
-                <div className="border border-gray-100 rounded-2xl overflow-hidden divide-y divide-gray-50">
-                  {(selectedOrderDetails.items || []).map((item, index) => (
-                    <div key={index} className="p-3 bg-white flex items-center justify-between text-xs gap-3">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        {item.productImage ? (
-                          <img
-                            src={item.productImage}
-                            alt={item.productTitle}
-                            className="w-11 h-11 rounded-lg object-cover border border-gray-200 shrink-0 bg-gray-50"
-                          />
-                        ) : (
-                          <div className="w-11 h-11 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center shrink-0">
-                            <ImageIcon className="w-4 h-4 text-gray-300" />
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <p className="font-bold text-gray-800 line-clamp-2">{item.productTitle}</p>
-                          <p className="text-gray-400 text-[10px] mt-0.5">Giá bán lẻ niêm yết: {item.price.toLocaleString('vi-VN')}đ</p>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <span className="text-gray-500">x{item.quantity}</span>
-                        <p className="font-extrabold text-gray-900 mt-0.5">{(item.price * item.quantity).toLocaleString('vi-VN')}đ</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Net profit financial summary */}
-              <div className="space-y-2 pt-2 border-t border-gray-100 text-xs text-gray-600">
-                <div className="flex justify-between">
-                  <span>Tổng tiền hàng khách trả:</span>
-                  <span className="font-bold text-gray-900">{selectedOrderDetails.totalAmount.toLocaleString('vi-VN')}đ</span>
-                </div>
-                {selectedOrderDetails.channel !== 'manual' ? (
-                  <div className="flex justify-between text-rose-500">
-                    <span>Khấu trừ phí sàn ({selectedOrderDetails.channel === 'shopee' ? '12%' : '10%'}):</span>
-                    <span className="font-bold">-{(selectedOrderDetails.totalAmount - selectedOrderDetails.revenue).toLocaleString('vi-VN')}đ</span>
-                  </div>
-                ) : (
-                  <div className="flex justify-between text-emerald-600">
-                    <span>Phí sàn / Chi phí trung gian:</span>
-                    <span className="font-bold">0đ (Đơn trực tiếp)</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
-                  <span className="font-bold">Doanh thu chuyển về ví kho sỉ:</span>
-                  <span className="font-extrabold">{selectedOrderDetails.revenue.toLocaleString('vi-VN')}đ</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-end">
-              <button 
-                onClick={() => setSelectedOrderDetails(null)}
-                className="px-5 py-2 bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 font-semibold text-xs rounded-xl transition-all"
-              >
-                Đóng chi tiết
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Floating processing overlay — shown for the full duration of any real
