@@ -55,7 +55,7 @@ import {
   isStructuredAddressComplete,
   StructuredAddressValue,
 } from '../utils/vietnamAddress';
-import { resolveBackendFileUrl, parseJsonResponse } from '../utils/apiClient';
+import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse } from '../utils/apiClient';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 
@@ -434,8 +434,8 @@ export default function OrderManager({
 
   // Shopee AWB: tải PDF qua fetch → blob URL (tránh tab trắng / HTML proxy).
   const openShopeeLabelInNewTab = async (url: string) => {
-    const fullUrl = resolveBackendFileUrl(url);
-    const filename = (fullUrl.split('/').pop() || 'van-don-shopee.pdf').replace(/\?.*$/, '');
+    const fullUrl = resolveLabelFetchUrl(url);
+    const filename = (decodeURIComponent(fullUrl.split('/').pop() || 'van-don-shopee.pdf')).replace(/\?.*$/, '');
 
     const openBlob = (blob: Blob) => {
       const blobUrl = URL.createObjectURL(blob);
@@ -455,9 +455,14 @@ export default function OrderManager({
     };
 
     try {
-      const res = await fetch(fullUrl, { credentials: 'same-origin' });
+      let res = await fetch(fullUrl, { credentials: 'same-origin' });
+      if (!res.ok && fullUrl.startsWith('/api/labels/')) {
+        const altUrl = resolveBackendFileUrl(url);
+        if (altUrl !== fullUrl) res = await fetch(altUrl, { credentials: 'same-origin' });
+      }
       if (!res.ok) {
-        showToast(`Không lấy được vận đơn (HTTP ${res.status}). Thử lại sau vài giây.`);
+        const errText = await res.text().catch(() => '');
+        showToast(`Không lấy được vận đơn (HTTP ${res.status}). ${errText.slice(0, 80) || 'Thử lại sau vài giây.'}`);
         return;
       }
       const buf = await res.arrayBuffer();

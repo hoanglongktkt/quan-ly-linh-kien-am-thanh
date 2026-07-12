@@ -53,22 +53,42 @@ export function getApiBaseUrl(): string {
  * Khác origin: trỏ thẳng api.linhkienamthanh.net.
  */
 export function resolveBackendFileUrl(path: string): string {
-  let normalized = path.startsWith('/') ? path : `/${path}`;
-  if (/^https?:\/\//i.test(path)) {
+  return resolveLabelFetchUrl(path);
+}
+
+/** URL fetch PDF vận đơn — dùng /api/labels/ trực tiếp (tránh rewrite /labels 400). */
+export function resolveLabelFetchUrl(path: string): string {
+  let pathname = String(path || '').trim();
+  if (/^https?:\/\//i.test(pathname)) {
     try {
-      normalized = new URL(path).pathname;
+      pathname = new URL(pathname).pathname;
     } catch {
-      normalized = path.startsWith('/') ? path : `/${path}`;
+      pathname = String(path || '').trim();
+      if (!pathname.startsWith('/')) pathname = `/${pathname}`;
     }
+  } else if (!pathname.startsWith('/')) {
+    pathname = `/${pathname}`;
   }
+
+  const filename = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
+  if (!filename || !/\.pdf$/i.test(filename)) {
+    if (typeof window === 'undefined') return `${PRODUCTION_API_BASE}${pathname}`;
+    const hostname = window.location.hostname;
+    if (isLocalDevHost(hostname) || isVercelHost(hostname) || isMainProductionHost(hostname)) {
+      return pathname.startsWith('/') ? pathname : `/${pathname}`;
+    }
+    return `${PRODUCTION_API_BASE}${pathname}`;
+  }
+
+  const encoded = encodeURIComponent(filename);
   if (typeof window === 'undefined') {
-    return `${PRODUCTION_API_BASE}${normalized}`;
+    return `${PRODUCTION_API_BASE}/api/public/labels/${encoded}`;
   }
   const hostname = window.location.hostname;
   if (isLocalDevHost(hostname) || isVercelHost(hostname) || isMainProductionHost(hostname)) {
-    return normalized;
+    return `/api/labels/${encoded}`;
   }
-  return `${PRODUCTION_API_BASE}${normalized}`;
+  return `${PRODUCTION_API_BASE}/api/public/labels/${encoded}`;
 }
 
 /** Ghép path `/api/...` — relative khi base rỗng (cùng origin hoặc Vercel proxy). */

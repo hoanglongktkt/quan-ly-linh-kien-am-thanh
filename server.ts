@@ -5014,6 +5014,19 @@ async function startServer() {
     return safe.length > 1 ? `${primarySn}_gop_${safe.length}_don.pdf` : `${primarySn}.pdf`;
   }
 
+  function findExistingLabelFile(orderSn: string): string | null {
+    const fname = buildMergedLabelFilename([orderSn]);
+    const full = path.join(SHIPPING_DOCS_DIR, fname);
+    if (!fs.existsSync(full)) return null;
+    try {
+      const buf = fs.readFileSync(full);
+      if (isPdfBuffer(buf)) return fname;
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
   function saveLabelFile(buffer: Buffer, filename: string, contentType?: string): string {
     if (!isPdfBuffer(buffer, contentType)) {
       console.error(
@@ -5534,13 +5547,38 @@ async function startServer() {
     const allPrintedSns: string[] = [];
 
     for (const [shopId, groupOrders] of Object.entries(groups)) {
-      const orderList = groupOrders.map((o: any) => ({ order_sn: o.orderSn, package_number: o.packageNumber, tracking_number: trackingForShopeeShippingDoc(o) }));
+      const needsGenerate: any[] = [];
+
+      for (const o of groupOrders) {
+        const existing = findExistingLabelFile(o.orderSn);
+        if (existing) {
+          savedFilenames.push(existing);
+          allPrintedSns.push(o.orderSn);
+          documents.push({
+            shopId,
+            orderSns: [o.orderSn],
+            url: `/labels/${existing}`,
+            contentType: "application/pdf",
+            fromCache: true,
+          });
+        } else {
+          needsGenerate.push(o);
+        }
+      }
+
+      if (needsGenerate.length === 0) continue;
+
+      const orderList = needsGenerate.map((o: any) => ({
+        order_sn: o.orderSn,
+        package_number: o.packageNumber,
+        tracking_number: trackingForShopeeShippingDoc(o),
+      }));
       console.log(`[Shopee Print] Đang tạo vận đơn cho ${orderList.length} đơn của shop_id=${shopId}...`);
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
 
       if (docResult.success && docResult.filename) {
         savedFilenames.push(docResult.filename);
-        const sns = docResult.orderSns || groupOrders.map((o: any) => o.orderSn);
+        const sns = docResult.orderSns || needsGenerate.map((o: any) => o.orderSn);
         allPrintedSns.push(...sns);
         documents.push({
           shopId,
@@ -5560,7 +5598,28 @@ async function startServer() {
           }
         }
       } else {
-        documents.push({ shopId, orderSns: groupOrders.map((o: any) => o.orderSn), success: false, error: docResult.error, message: docResult.message });
+        for (const o of needsGenerate) {
+          const existing = findExistingLabelFile(o.orderSn);
+          if (existing) {
+            savedFilenames.push(existing);
+            allPrintedSns.push(o.orderSn);
+            documents.push({
+              shopId,
+              orderSns: [o.orderSn],
+              url: `/labels/${existing}`,
+              contentType: "application/pdf",
+              fromCache: true,
+            });
+          } else {
+            documents.push({
+              shopId,
+              orderSns: [o.orderSn],
+              success: false,
+              error: docResult.error,
+              message: docResult.message,
+            });
+          }
+        }
       }
     }
 

@@ -7,13 +7,26 @@ function isPdfBuffer(buf) {
   return buf.length > 4 && buf.subarray(0, 4).toString() === '%PDF';
 }
 
+function extractLabelPath(req) {
+  const raw = req.query.path;
+  let filePath = Array.isArray(raw) ? raw.join('/') : String(raw || '').replace(/^\/+/, '');
+  if (!filePath) {
+    const u = String(req.url || '');
+    const m = u.match(/\/(?:api\/)?labels\/([^?#]+)/i);
+    if (m) filePath = decodeURIComponent(m[1]);
+  }
+  return filePath;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const raw = req.query.path;
-  const filePath = Array.isArray(raw) ? raw.join('/') : String(raw || '').replace(/^\/+/, '');
+  const filePath = extractLabelPath(req);
+  // #region agent log
+  console.log('[Labels Proxy] path', { filePath, queryPath: req.query.path, url: req.url });
+  // #endregion
   if (!filePath || filePath.includes('..') || !/\.pdf$/i.test(filePath)) {
     return res.status(400).send('Invalid label path');
   }
