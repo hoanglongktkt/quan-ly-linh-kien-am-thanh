@@ -732,7 +732,8 @@ export default function OrderManager({
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.error || 'Đồng bộ đơn hàng Shopee thất bại.');
+        const parts = [data?.error, data?.detail, data?.hint].filter(Boolean);
+        throw new Error(parts.join(' — ') || 'Đồng bộ đơn hàng Shopee thất bại.');
       }
       if (data.warning) {
         showToast(data.warning);

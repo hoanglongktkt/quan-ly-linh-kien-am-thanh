@@ -14,10 +14,17 @@ function hostnameFromUrl(raw) {
 
 /**
  * Chỉ dùng CPANEL_BACKEND_URL (VD: https://api.linhkienamthanh.net).
- * Không fallback APP_URL — tránh proxy vòng lặp về Vercel.
+ * Fallback production khi chạy trên Vercel nhưng chưa set env.
  */
+const PRODUCTION_CPANEL_URL = 'https://api.linhkienamthanh.net';
+
 export function resolveCpanelBackend() {
-  const raw = String(process.env.CPANEL_BACKEND_URL || '').trim().replace(/\/$/, '');
+  let raw = String(process.env.CPANEL_BACKEND_URL || '').trim().replace(/\/$/, '');
+
+  if (!raw && process.env.VERCEL) {
+    raw = PRODUCTION_CPANEL_URL;
+    console.warn('[cPanel Backend] CPANEL_BACKEND_URL chưa set — dùng fallback', raw);
+  }
 
   if (!raw) {
     return {

@@ -15,7 +15,25 @@
       ]
     }
   ],
+  "functions": {
+    "api/proxy.js": {
+      "maxDuration": 300
+    },
+    "api/shopee/orders/sync.js": {
+      "maxDuration": 300
+    },
+    "api/health/cpanel.js": {
+      "maxDuration": 30
+    },
+    "api/shopee/callback.js": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
+    {
+      "source": "/api/shopee/orders/sync",
+      "destination": "/api/shopee/orders/sync"
+    },
     {
       "source": "/api/shopee/callback",
       "destination": "/api/shopee/callback"
