@@ -17,6 +17,7 @@ import PublishManager from './components/PublishManager';
 import LoginPage from './components/LoginPage';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import { APP_TITLE } from './config/brand';
+import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
 import { 
   LayoutDashboard, 
   Package, 
@@ -53,17 +54,7 @@ export default function App() {
   const [authChecking, setAuthChecking] = useState<boolean>(true);
 
   // 1. Initialize State with Local Storage fallback
-  const [products, setProducts] = useState<Product[]>(() => {
-    const saved = localStorage.getItem('omni_products');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  });
+  const [products, setProducts] = useState<Product[]>([]);
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
 
@@ -195,11 +186,7 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // 2. Persist state on change
-  useEffect(() => {
-    localStorage.setItem('omni_products', JSON.stringify(products));
-  }, [products]);
-
+  // Persist orders/settings/logs — products lấy từ API server, không cache localStorage.
   useEffect(() => {
     localStorage.setItem('omni_orders', JSON.stringify(orders));
   }, [orders]);
@@ -273,14 +260,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (isAuthenticated) {
-      fetchOrders();
-      fetchProducts();
-      fetchSuppliers();
-      fetchImports();
-      fetchExpenses();
-    }
-  }, [isAuthenticated]);
+    purgeLegacyCatalogCache();
+  }, []);
 
   const apiAuthHeaders = (): Record<string, string> => {
     const token = localStorage.getItem('admin_token');
@@ -305,9 +286,6 @@ export default function App() {
       const data: Product[] = await response.json();
       if (Array.isArray(data)) {
         setProducts(data);
-        if (data.length === 0) {
-          localStorage.removeItem('omni_products');
-        }
       }
     } catch (err) {
       console.error('Fetch products error:', err);
@@ -740,6 +718,37 @@ export default function App() {
       console.error('Fetch imports error:', err);
     }
   };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const bootstrapCatalog = async () => {
+      purgeLegacyCatalogCache();
+
+      if (localStorage.getItem(CATALOG_PURGE_FLAG) !== '1') {
+        try {
+          const res = await fetch('/api/catalog/wipe-all', {
+            method: 'POST',
+            headers: apiAuthHeaders(),
+          });
+          if (res.ok) {
+            localStorage.setItem(CATALOG_PURGE_FLAG, '1');
+          }
+        } catch (err) {
+          console.warn('[Catalog] wipe-all skipped:', err);
+        }
+        purgeLegacyCatalogCache();
+      }
+
+      fetchOrders();
+      fetchProducts();
+      fetchSuppliers();
+      fetchImports();
+      fetchExpenses();
+    };
+
+    void bootstrapCatalog();
+  }, [isAuthenticated]);
 
   const handleAddImport = async (transaction: ImportTransaction) => {
     const token = localStorage.getItem('admin_token');

@@ -4541,6 +4541,22 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     return res.json({ success: true, cleared: true, groups: [] });
   });
 
+  app.post("/api/catalog/wipe-all", authMiddleware, (_req, res) => {
+    saveProducts([]);
+    saveImports([]);
+    writeListingsDb([]);
+    writeProductListingsDb([]);
+    console.log("[Catalog] Đã xóa sạch products, imports, multi_channel_listings, product_listings.");
+    return res.json({
+      success: true,
+      cleared: true,
+      products: [],
+      imports: [],
+      listings: [],
+      productListings: [],
+    });
+  });
+
   app.post("/api/multi-channel/publish", authMiddleware, (req, res) => {
     try {
       const payload = req.body || {};

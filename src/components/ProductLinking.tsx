@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Product, SyncLog, ConnectedShop } from '../types';
+import { purgeLegacyCatalogCache } from '../utils/catalogStorage';
 import { 
   Check, 
   AlertCircle, 
@@ -56,23 +57,17 @@ interface ProductLinkingProps {
 
 export default function ProductLinking({ products, shops, onAddLog, onUpdateProduct, onAddProduct }: ProductLinkingProps) {
   // State for channel listings
-  const [listings, setListings] = useState<ChannelListing[]>(() => {
-    const saved = localStorage.getItem('omni_channel_listings');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    }
-    return [];
-  });
+  const [listings, setListings] = useState<ChannelListing[]>([]);
 
-  // Save to LocalStorage on change
   useEffect(() => {
-    localStorage.setItem('omni_channel_listings', JSON.stringify(listings));
-  }, [listings]);
+    purgeLegacyCatalogCache();
+  }, []);
+
+  useEffect(() => {
+    if (products.length === 0) {
+      setListings([]);
+    }
+  }, [products.length]);
 
   // Tab state matching Image 1: "Tất cả sản phẩm", "Liên kết thành công", "Chưa liên kết", "Liên kết thất bại"
   const [activeSubTab, setActiveSubTab] = useState<'all' | 'success' | 'unlinked' | 'failed'>('all');
