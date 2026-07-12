@@ -432,9 +432,9 @@ export default function OrderManager({
     };
   };
 
-  // Shopee AWB: mở PDF trực tiếp tab mới — trình xem PDF của trình duyệt (in A4), không window.print().
+  // Shopee AWB: mở PDF cùng origin (/labels/ → Vercel proxy) — không mở api subdomain (bị SPA/login).
   const openShopeeLabelInNewTab = (url: string) => {
-    const fullUrl = url.startsWith('http') ? url : resolveBackendFileUrl(url);
+    const fullUrl = resolveBackendFileUrl(url);
 
     const win = window.open(fullUrl, '_blank', 'noopener,noreferrer');
     if (!win) {
@@ -491,9 +491,21 @@ export default function OrderManager({
 
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,
   // per the seller's choice) for every order currently queued in `shipConfirmOrders`.
-  const pollShipJobUntilDone = async (jobId: string, total: number): Promise<any | null> => {
+  const clearShipProgressOverlay = () => {
+    setIsShipping(false);
+    setProgressMessage(null);
+    setProgressCompleted(0);
+    setProgressTotal(0);
+  };
+
+  const pollShipJobUntilDone = async (
+    jobId: string,
+    total: number,
+    onShipComplete?: () => void
+  ): Promise<any | null> => {
     const deadline = Date.now() + 15 * 60 * 1000;
     let finalJob: any = null;
+    let shipCompleteNotified = false;
 
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 900));
@@ -517,12 +529,21 @@ export default function OrderManager({
           setProgressMessage(`Đang đồng bộ Shopee: ${job.completed}/${job.total} đơn`);
         }
 
+        if (
+          !shipCompleteNotified &&
+          (job.status === 'printing' || job.status === 'done' || job.status === 'failed')
+        ) {
+          shipCompleteNotified = true;
+          onShipComplete?.();
+        }
+
         if (job.status === 'done' || job.status === 'failed') break;
       } catch {
         break;
       }
     }
 
+    if (!shipCompleteNotified) onShipComplete?.();
     return finalJob;
   };
 
@@ -644,6 +665,7 @@ export default function OrderManager({
         }
 
         showToast(`Xác nhận thành công ${successCount}/${queuedOrders.length} đơn — đang mở vận đơn in...`);
+        clearShipProgressOverlay();
         if (syncData.printDocument?.url) {
           openShopeeLabelInNewTab(syncData.printDocument.url);
         } else {
@@ -684,17 +706,17 @@ export default function OrderManager({
       }
 
       setProgressMessage(`Đang đồng bộ Shopee: 0/${total} đơn`);
-      const finalJob = await pollShipJobUntilDone(jobId, total);
+      const finalJob = await pollShipJobUntilDone(jobId, total, () => {
+        clearShipProgressOverlay();
+        showToast(`Xác nhận thành công — đang mở vận đơn in...`);
+      });
       await finishShipJobResult(finalJob, queuedOrders.length, total);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
       if (onRefreshOrders) await onRefreshOrders();
     } finally {
-      setIsShipping(false);
-      setProgressMessage(null);
-      setProgressCompleted(0);
-      setProgressTotal(0);
+      clearShipProgressOverlay();
     }
   };
 

@@ -5264,7 +5264,7 @@ async function startServer() {
     if (!primaryUrl) {
       return { url: null, printedOrderSns, skippedOrders, message: "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c v\u1EAD n \u0111\u01A1n t\u1EF1 \u0111\u1ED9ng sau khi chu\u1EA9n b\u1EB1 h\xE0ng." };
     }
-    return { url: absoluteLabelUrl(primaryUrl), printedOrderSns, skippedOrders };
+    return { url: primaryUrl, printedOrderSns, skippedOrders };
   }
 
   async function executeShipOrderBackgroundJob(
@@ -5516,9 +5516,9 @@ async function startServer() {
     console.log(`[Shopee Print] Ho\xE0n t\u1EA5t: ${documents.filter(d => d.url).length}/${Object.keys(groups).length} nh\xF3m shop t\u1EA1o v\u1EAD n th\xE0nh c\xF4ng.`);
 
     return res.json({
-      mergedUrl: absoluteLabelUrl(mergedUrl),
+      mergedUrl: mergedUrl,
       documents: documents.map((d: any) =>
-        d.url ? { ...d, url: absoluteLabelUrl(d.url) } : d
+        d.url ? { ...d, url: d.url.startsWith("/") ? d.url : `/${String(d.url).replace(/^\/+/, "")}` } : d
       ),
       orders: updatedOrders.filter(isValidOrder),
       shippingDocumentType: SHOPEE_SHIPPING_DOCUMENT_TYPE,
