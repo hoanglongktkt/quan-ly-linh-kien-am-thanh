@@ -55,7 +55,7 @@ import {
   isStructuredAddressComplete,
   StructuredAddressValue,
 } from '../utils/vietnamAddress';
-import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse } from '../utils/apiClient';
+import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse, base64ToPdfBlob } from '../utils/apiClient';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 
@@ -432,26 +432,44 @@ export default function OrderManager({
     };
   };
 
-  // Shopee AWB: tải PDF qua fetch → blob URL (tránh tab trắng / HTML proxy).
+  const openPdfBlobInNewTab = (blob: Blob, filename = 'van-don-shopee.pdf') => {
+    const blobUrl = URL.createObjectURL(blob);
+    const win = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+    if (!win) {
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      showToast('Trình duyệt chặn popup — đã tải vận đơn PDF về máy.');
+    } else {
+      showToast('Đã mở vận đơn Shopee — bấm In trên trình xem PDF.');
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+    }
+  };
+
+  /** In ngay từ buffer base64 (stream API) — ưu tiên hơn fetch URL. */
+  const openShopeeLabelFromStream = async (opts: {
+    pdfBase64?: string | null;
+    pdfFilename?: string | null;
+    url?: string | null;
+  }) => {
+    const filename = opts.pdfFilename || 'van-don-shopee.pdf';
+    if (opts.pdfBase64) {
+      openPdfBlobInNewTab(base64ToPdfBlob(opts.pdfBase64), filename);
+      return;
+    }
+    if (opts.url) await openShopeeLabelInNewTab(opts.url);
+  };
+
+  // Fallback: tải PDF qua URL (/api/labels hoặc cache đĩa).
   const openShopeeLabelInNewTab = async (url: string) => {
     const fullUrl = resolveLabelFetchUrl(url);
     const filename = (decodeURIComponent(fullUrl.split('/').pop() || 'van-don-shopee.pdf')).replace(/\?.*$/, '');
 
     const openBlob = (blob: Blob) => {
-      const blobUrl = URL.createObjectURL(blob);
-      const win = window.open(blobUrl, '_blank', 'noopener,noreferrer');
-      if (!win) {
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        showToast('Trình duyệt chặn popup — đã tải vận đơn PDF về máy.');
-      } else {
-        showToast('Đã mở vận đơn Shopee — bấm In trên trình xem PDF.');
-        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
-      }
+      openPdfBlobInNewTab(blob, filename);
     };
 
     try {
@@ -506,6 +524,8 @@ export default function OrderManager({
     });
     const data = await parseJsonResponse<{
       mergedUrl?: string;
+      pdfBase64?: string;
+      pdfFilename?: string;
       documents?: { url?: string; message?: string; error?: string }[];
       orders?: Order[];
       error?: string;
@@ -521,12 +541,27 @@ export default function OrderManager({
       onUpdateOrders(data.orders);
     }
 
+    if (data.pdfBase64) {
+      await openShopeeLabelFromStream({
+        pdfBase64: data.pdfBase64,
+        pdfFilename: data.pdfFilename,
+        url: printUrl,
+      });
+      if (failedDocs.length > 0) {
+        return {
+          success: true,
+          message: `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
+        };
+      }
+      return { success: true };
+    }
+
     if (!printUrl) {
       const detail = failedDocs.map((d) => d.message || d.error).filter(Boolean).join('\n');
       return { success: false, message: detail || 'Shopee chưa trả về file vận đơn PDF.' };
     }
 
-    await openShopeeLabelInNewTab(printUrl);
+    await openShopeeLabelFromStream({ url: printUrl });
 
     if (failedDocs.length > 0) {
       return {
@@ -619,8 +654,12 @@ export default function OrderManager({
       showToast(`Xác nhận thành công ${successCount}/${total} đơn — đang mở vận đơn in...`);
     }
 
-    if (finalJob?.printDocument?.url) {
-      await openShopeeLabelInNewTab(finalJob.printDocument.url);
+    if (finalJob?.printDocument?.pdfBase64 || finalJob?.printDocument?.url) {
+      await openShopeeLabelFromStream({
+        pdfBase64: finalJob.printDocument.pdfBase64,
+        pdfFilename: finalJob.printDocument.pdfFilename,
+        url: finalJob.printDocument.url,
+      });
     } else if (successCount > 0) {
       const shopeeIds = (finalJob?.results || [])
         .filter((r: any) => r.success)
@@ -714,8 +753,12 @@ export default function OrderManager({
 
         showToast(`Xác nhận thành công ${successCount}/${queuedOrders.length} đơn — đang mở vận đơn in...`);
         clearShipProgressOverlay();
-        if (syncData.printDocument?.url) {
-          await openShopeeLabelInNewTab(syncData.printDocument.url);
+        if (syncData.printDocument?.pdfBase64 || syncData.printDocument?.url) {
+          await openShopeeLabelFromStream({
+            pdfBase64: syncData.printDocument.pdfBase64,
+            pdfFilename: syncData.printDocument.pdfFilename,
+            url: syncData.printDocument.url,
+          });
         } else {
           const shopeeIds = (syncData.results || [])
             .filter((r: any) => r.success)

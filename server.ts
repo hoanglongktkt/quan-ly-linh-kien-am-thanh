@@ -5027,6 +5027,17 @@ async function startServer() {
     return null;
   }
 
+  function readExistingLabelBuffer(orderSn: string): Buffer | null {
+    const fname = findExistingLabelFile(orderSn);
+    if (!fname) return null;
+    try {
+      const buf = fs.readFileSync(path.join(SHIPPING_DOCS_DIR, fname));
+      return isPdfBuffer(buf) ? buf : null;
+    } catch {
+      return null;
+    }
+  }
+
   function saveLabelFile(buffer: Buffer, filename: string, contentType?: string): string {
     if (!isPdfBuffer(buffer, contentType)) {
       console.error(
@@ -5038,6 +5049,18 @@ async function startServer() {
     fs.writeFileSync(path.join(SHIPPING_DOCS_DIR, filename), buffer);
     console.log(`[Shopee Print] Đã lưu vận đơn (${buffer.length} bytes) → storage/labels/${filename}`);
     return filename;
+  }
+
+  /** Lưu PDF nền (không chặn response stream về frontend). */
+  function saveLabelFileAsync(buffer: Buffer, filename: string, contentType?: string): void {
+    const copy = Buffer.from(buffer);
+    setImmediate(() => {
+      try {
+        saveLabelFile(copy, filename, contentType);
+      } catch (err) {
+        console.warn(`[Shopee Print] Lưu nền thất bại ${filename}:`, err);
+      }
+    });
   }
 
   // Download AWB PDFs — for bulk runs, fetch each order individually then merge
@@ -5253,12 +5276,13 @@ async function startServer() {
     const ext = extensionForContentType(downloadResult.contentType);
     const orderSns = cleanOrderList.map((o: any) => o.order_sn);
     const filename = ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`;
-    saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
-    console.log(`[Shopee Print] Đã lưu vận đơn thật từ Shopee (${cleanOrderList.length} đơn → 1 file ${filename}), truy cập tại /labels/${filename}.`);
+    saveLabelFileAsync(downloadResult.buffer, filename, downloadResult.contentType);
+    console.log(`[Shopee Print] Stream vận đơn Shopee (${cleanOrderList.length} đơn → ${filename}, ${downloadResult.buffer.length} bytes) — lưu đĩa nền.`);
 
     return {
       success: true,
       filename,
+      buffer: downloadResult.buffer,
       contentType: downloadResult.contentType,
       orderSns,
       skippedOrders,
@@ -5313,6 +5337,7 @@ async function startServer() {
     const printedOrderSns: string[] = [];
     const skippedOrders: any[] = [];
     const savedFilenames: string[] = [];
+    const pdfBuffers: Buffer[] = [];
 
     for (const [shopId, groupOrders] of Object.entries(groups)) {
       const orderList = groupOrders.map((o: any) => ({
@@ -5324,6 +5349,7 @@ async function startServer() {
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
       if (docResult.success && docResult.filename) {
         savedFilenames.push(docResult.filename);
+        if (docResult.buffer && isPdfBuffer(docResult.buffer)) pdfBuffers.push(docResult.buffer);
         printedOrderSns.push(...(docResult.orderSns || groupOrders.map((o: any) => o.orderSn)));
         if (Array.isArray(docResult.skippedOrders)) skippedOrders.push(...docResult.skippedOrders);
       } else {
@@ -5332,14 +5358,24 @@ async function startServer() {
       }
     }
 
-    const primaryUrl = savedFilenames.length > 0
-      ? await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns)
-      : null;
+    let primaryUrl: string | null = null;
+    let pdfBase64: string | null = null;
+    let pdfFilename: string | null = null;
 
-    if (!primaryUrl) {
+    if (pdfBuffers.length > 0) {
+      const mergedBuf = pdfBuffers.length === 1 ? pdfBuffers[0] : await mergePdfBuffers(pdfBuffers);
+      pdfFilename = buildMergedLabelFilename(printedOrderSns);
+      pdfBase64 = mergedBuf.toString("base64");
+      primaryUrl = `/labels/${pdfFilename}`;
+      saveLabelFileAsync(mergedBuf, pdfFilename, "application/pdf");
+    } else if (savedFilenames.length > 0) {
+      primaryUrl = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
+    }
+
+    if (!primaryUrl && !pdfBase64) {
       return { url: null, printedOrderSns, skippedOrders, message: "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c v\u1EAD n \u0111\u01A1n t\u1EF1 \u0111\u1ED9ng sau khi chu\u1EA9n b\u1EB1 h\xE0ng." };
     }
-    return { url: primaryUrl, printedOrderSns, skippedOrders };
+    return { url: primaryUrl, pdfBase64, pdfFilename, printedOrderSns, skippedOrders };
   }
 
   async function executeShipOrderBackgroundJob(
@@ -5545,13 +5581,16 @@ async function startServer() {
     const documents: any[] = [];
     const savedFilenames: string[] = [];
     const allPrintedSns: string[] = [];
+    const pdfBuffers: Buffer[] = [];
 
     for (const [shopId, groupOrders] of Object.entries(groups)) {
       const needsGenerate: any[] = [];
 
       for (const o of groupOrders) {
-        const existing = findExistingLabelFile(o.orderSn);
-        if (existing) {
+        const cachedBuf = readExistingLabelBuffer(o.orderSn);
+        if (cachedBuf) {
+          pdfBuffers.push(cachedBuf);
+          const existing = buildMergedLabelFilename([o.orderSn]);
           savedFilenames.push(existing);
           allPrintedSns.push(o.orderSn);
           documents.push({
@@ -5578,6 +5617,7 @@ async function startServer() {
 
       if (docResult.success && docResult.filename) {
         savedFilenames.push(docResult.filename);
+        if (docResult.buffer && isPdfBuffer(docResult.buffer)) pdfBuffers.push(docResult.buffer);
         const sns = docResult.orderSns || needsGenerate.map((o: any) => o.orderSn);
         allPrintedSns.push(...sns);
         documents.push({
@@ -5599,8 +5639,10 @@ async function startServer() {
         }
       } else {
         for (const o of needsGenerate) {
-          const existing = findExistingLabelFile(o.orderSn);
-          if (existing) {
+          const cachedBuf = readExistingLabelBuffer(o.orderSn);
+          if (cachedBuf) {
+            pdfBuffers.push(cachedBuf);
+            const existing = buildMergedLabelFilename([o.orderSn]);
             savedFilenames.push(existing);
             allPrintedSns.push(o.orderSn);
             documents.push({
@@ -5623,13 +5665,21 @@ async function startServer() {
       }
     }
 
-    const mergedUrl = savedFilenames.length > 0
-      ? await mergeLabelFilesToSingleUrl(savedFilenames, allPrintedSns)
-      : null;
-    const primaryUrl =
-      mergedUrl ||
-      documents.find((d: any) => d.url)?.url ||
-      null;
+    let primaryUrl: string | null = null;
+    let pdfBase64: string | null = null;
+    let pdfFilename: string | null = null;
+
+    if (pdfBuffers.length > 0) {
+      const mergedBuf = pdfBuffers.length === 1 ? pdfBuffers[0] : await mergePdfBuffers(pdfBuffers);
+      pdfFilename = buildMergedLabelFilename(allPrintedSns);
+      pdfBase64 = mergedBuf.toString("base64");
+      primaryUrl = `/labels/${pdfFilename}`;
+      saveLabelFileAsync(mergedBuf, pdfFilename, "application/pdf");
+    } else if (savedFilenames.length > 0) {
+      primaryUrl = await mergeLabelFilesToSingleUrl(savedFilenames, allPrintedSns);
+    } else {
+      primaryUrl = documents.find((d: any) => d.url)?.url || null;
+    }
 
     // Mark successfully-printed orders (isPrinted=true, and auto-advance status like the old UI mock did).
     const printedOrderSns = new Set(allPrintedSns);
@@ -5645,12 +5695,14 @@ async function startServer() {
 
     return res.json({
       mergedUrl: primaryUrl,
+      pdfBase64,
+      pdfFilename,
       documents: documents.map((d: any) =>
         d.url ? { ...d, url: d.url.startsWith("/") ? d.url : `/${String(d.url).replace(/^\/+/, "")}` } : d
       ),
       orders: updatedOrders.filter(isValidOrder),
       shippingDocumentType: SHOPEE_SHIPPING_DOCUMENT_TYPE,
-      openMode: "new_tab_pdf",
+      openMode: pdfBase64 ? "inline_buffer" : "new_tab_pdf",
     });
   });
 

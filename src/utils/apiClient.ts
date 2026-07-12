@@ -91,6 +91,14 @@ export function resolveLabelFetchUrl(path: string): string {
   return `${PRODUCTION_API_BASE}/api/public/labels/${encoded}`;
 }
 
+/** Chuyển PDF base64 từ API stream → Blob in ngay (không fetch URL). */
+export function base64ToPdfBlob(base64: string): Blob {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: 'application/pdf' });
+}
+
 /** Ghép path `/api/...` — relative khi base rỗng (cùng origin hoặc Vercel proxy). */
 export function apiUrl(path: string): string {
   const normalized = path.startsWith('/') ? path : `/${path}`;
