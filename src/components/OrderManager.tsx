@@ -57,6 +57,10 @@ import {
 } from '../utils/vietnamAddress';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 
+function getOrderWaybillCode(order: Order): string {
+  return String(order.trackingNumber || order.packageNumber || '').trim();
+}
+
 interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[]) => void;
@@ -2352,7 +2356,7 @@ export default function OrderManager({
                       className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
                     />
                   </th>
-                  <th className="p-4 w-44">Mã đơn &amp; Sàn</th>
+                  <th className="p-4 w-44">Mã vận đơn &amp; Sàn</th>
                   <th className="p-4 w-32">Ngày tạo đơn</th>
                   <th className="p-4 w-[280px]">Sản phẩm đặt mua</th>
                   <th className="p-4 text-right w-40">Tổng thanh toán</th>
@@ -2379,24 +2383,24 @@ export default function OrderManager({
                         />
                       </td>
 
-                      {/* Order Code & Platform Label */}
-                      <td className="p-4 space-y-1.5">
+                      {/* Waybill & Platform Label */}
+                      <td className="p-4 space-y-1">
                         <div className="flex items-center gap-1.5">
                           <span className={`px-1.5 py-0.5 text-[9px] font-black uppercase rounded ${
                             order.channel === 'shopee' ? 'bg-orange-500 text-white' : 'bg-zinc-950 text-white'
                           }`}>
                             {order.channel}
                           </span>
-                          <span className="font-mono font-bold text-gray-900 text-xs tracking-tight">{order.orderSn}</span>
                         </div>
-                        {order.trackingNumber ? (
-                          <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1 bg-slate-100 p-1 px-1.5 rounded-lg w-max max-w-[140px] truncate" title={order.trackingNumber}>
-                            <Barcode className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                            <span>{order.trackingNumber}</span>
+                        {getOrderWaybillCode(order) ? (
+                          <div className="font-mono font-extrabold text-gray-900 text-sm tracking-tight flex items-center gap-1" title={getOrderWaybillCode(order)}>
+                            <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                            <span className="truncate max-w-[160px]">{getOrderWaybillCode(order)}</span>
                           </div>
                         ) : (
-                          <span className="om-mobile-hide-prepare text-[10px] text-gray-400 italic">Chưa chuẩn bị bưu cục</span>
+                          <span className="text-xs text-gray-400 italic font-medium">Chưa có mã vận đơn</span>
                         )}
+                        <div className="text-[10px] text-gray-400 font-mono">#{order.orderSn}</div>
                       </td>
 
                       {/* Created Time */}
@@ -2607,10 +2611,16 @@ export default function OrderManager({
                         }`}>
                           {order.channel}
                         </span>
-                        <span className="font-mono font-black text-gray-900 text-xs truncate">
-                          #{order.orderSn}
-                        </span>
                       </div>
+                      {getOrderWaybillCode(order) ? (
+                        <p className="font-mono font-extrabold text-gray-900 text-sm truncate mt-0.5 flex items-center gap-1" title={getOrderWaybillCode(order)}>
+                          <Barcode className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                          <span className="truncate">{getOrderWaybillCode(order)}</span>
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-400 italic font-medium mt-0.5">Chưa có mã vận đơn</p>
+                      )}
+                      <p className="text-[10px] text-gray-400 font-mono mt-0.5">#{order.orderSn}</p>
                       <p className="text-[11px] text-gray-500 font-medium mt-0.5">
                         {new Date(order.date).toLocaleDateString('vi-VN')}
                       </p>
@@ -2642,12 +2652,6 @@ export default function OrderManager({
                     <div className="text-xs">
                       <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng thanh toán</span>
                       <span className="font-black text-slate-900 text-sm whitespace-nowrap">{order.totalAmount.toLocaleString('vi-VN')} đ</span>
-                      {order.trackingNumber && (
-                        <p className="text-[10px] text-indigo-700 font-mono mt-1 flex items-center gap-1">
-                          <Barcode className="w-3 h-3 text-indigo-400 shrink-0" />
-                          <span className="truncate max-w-[8rem]">{order.trackingNumber}</span>
-                        </p>
-                      )}
                     </div>
 
                     <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
