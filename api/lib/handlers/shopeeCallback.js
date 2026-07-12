@@ -1,14 +1,10 @@
-/**
- * Vercel — Shopee Live Callback / OAuth redirect
- * URL: https://quanly.linhkienamthanh.net/api/shopee/callback
- */
 import {
   logShopeeRequest,
   respondShopeeOk,
   forwardToCpanel,
   resolveCpanelBackend,
   respondCallbackError,
-} from '../lib/shopeeCallbackUtil.js';
+} from '../shopeeCallbackUtil.js';
 
 const LOG = '[Shopee Callback]';
 const APP_FRONTEND = 'https://quanly.linhkienamthanh.net';
@@ -23,7 +19,7 @@ function wantsBrowserRedirect(req) {
   return queryOne(req.query?.redirect) === '1';
 }
 
-export default async function handler(req, res) {
+export async function handleShopeeCallback(req, res) {
   logShopeeRequest(LOG, req);
 
   if (req.method === 'OPTIONS') {
@@ -153,7 +149,3 @@ export default async function handler(req, res) {
   res.setHeader('Allow', 'GET, POST, OPTIONS');
   return res.status(405).type('text/plain; charset=utf-8').send('Method not allowed. Use GET or POST.');
 }
-
-export const config = {
-  api: { bodyParser: { sizeLimit: '4mb' } },
-};

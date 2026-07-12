@@ -16,52 +16,11 @@
     }
   ],
   "functions": {
-    "api/proxy.js": {
+    "api/[...path].js": {
       "maxDuration": 300
-    },
-    "api/shopee/orders/sync.js": {
-      "maxDuration": 300
-    },
-    "api/health/cpanel.js": {
-      "maxDuration": 30
-    },
-    "api/shopee/callback.js": {
-      "maxDuration": 60
     }
   },
   "rewrites": [
-    {
-      "source": "/api/shopee/orders/sync",
-      "destination": "/api/shopee/orders/sync"
-    },
-    {
-      "source": "/api/shopee/callback",
-      "destination": "/api/shopee/callback"
-    },
-    {
-      "source": "/api/auth/shopee/callback",
-      "destination": "/api/auth/shopee/callback"
-    },
-    {
-      "source": "/api/shopee/webhook",
-      "destination": "/api/shopee/webhook"
-    },
-    {
-      "source": "/api/health/cpanel",
-      "destination": "/api/health/cpanel"
-    },
-    {
-      "source": "/api/login",
-      "destination": "/api/login"
-    },
-    {
-      "source": "/api/auth/verify",
-      "destination": "/api/auth/verify"
-    },
-    {
-      "source": "/api/:path*",
-      "destination": "/api/proxy?path=:path*"
-    },
     {
       "source": "/((?!api/).*)",
       "destination": "/index.html"

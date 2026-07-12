@@ -1,12 +1,8 @@
-/**
- * Vercel — Shopee Push / Webhook
- * URL: https://<domain>/api/shopee/webhook
- */
-import { logShopeeRequest, respondShopeeOk, forwardToCpanel } from '../lib/shopeeCallbackUtil.js';
+import { logShopeeRequest, respondShopeeOk, forwardToCpanel } from '../shopeeCallbackUtil.js';
 
 const LOG = '[Shopee Webhook]';
 
-export default async function handler(req, res) {
+export async function handleShopeeWebhook(req, res) {
   logShopeeRequest(LOG, req);
 
   if (req.method === 'OPTIONS') {
@@ -25,7 +21,3 @@ export default async function handler(req, res) {
 
   res.status(405).end();
 }
-
-export const config = {
-  api: { bodyParser: { sizeLimit: '4mb' } },
-};

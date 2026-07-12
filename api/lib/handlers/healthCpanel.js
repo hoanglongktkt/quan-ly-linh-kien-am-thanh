@@ -1,10 +1,6 @@
-/**
- * GET /api/health/cpanel — ping thực tế backend cPanel từ Vercel.
- * Không qua proxy — route serverless riêng trong vercel.json.
- */
 import dns from 'node:dns/promises';
-import { resolveCpanelBackend } from '../lib/cpanelBackend.js';
-import { fetchWithDiagnostics, serializeFetchError } from '../lib/fetchDiagnostics.js';
+import { resolveCpanelBackend } from '../cpanelBackend.js';
+import { fetchWithDiagnostics, serializeFetchError } from '../fetchDiagnostics.js';
 
 const HEALTH_PATHS = ['/api/health', '/'];
 
@@ -84,7 +80,19 @@ async function probeUrl(label, url, timeoutMs) {
   };
 }
 
-export default async function handler(_req, res) {
+function buildFailureMessage(baseUrl, hostname, dnsResult, fetchError) {
+  if (fetchError?.code === 'ENOTFOUND' || dnsResult?.error === 'ENOTFOUND') {
+    return `${hostname} chưa có DNS — thêm A record trỏ IP cPanel (Zone Editor).`;
+  }
+  if (fetchError?.code === 'ECONNREFUSED') {
+    return `DNS OK (${dnsResult.ipv4?.join(', ') || 'N/A'}) nhưng cổng 443 không mở — start Node.js App trên cPanel.`;
+  }
+  if (fetchError?.hint) return fetchError.hint;
+  if (fetchError?.message) return `Không kết nối được ${baseUrl}: ${fetchError.message}`;
+  return `Không kết nối được ${baseUrl} — xem probes và Vercel Logs.`;
+}
+
+export async function handleHealthCpanel(_req, res) {
   const backend = resolveCpanelBackend();
 
   if (!backend.ok) {
@@ -152,16 +160,4 @@ export default async function handler(_req, res) {
 
   console.log('[Health cPanel]', JSON.stringify(payload));
   return res.status(connected ? 200 : 502).json(payload);
-}
-
-function buildFailureMessage(baseUrl, hostname, dnsResult, fetchError) {
-  if (fetchError?.code === 'ENOTFOUND' || dnsResult?.error === 'ENOTFOUND') {
-    return `${hostname} chưa có DNS — thêm A record trỏ IP cPanel (Zone Editor).`;
-  }
-  if (fetchError?.code === 'ECONNREFUSED') {
-    return `DNS OK (${dnsResult.ipv4?.join(', ') || 'N/A'}) nhưng cổng 443 không mở — start Node.js App trên cPanel.`;
-  }
-  if (fetchError?.hint) return fetchError.hint;
-  if (fetchError?.message) return `Không kết nối được ${baseUrl}: ${fetchError.message}`;
-  return `Không kết nối được ${baseUrl} — xem probes và Vercel Logs.`;
 }
