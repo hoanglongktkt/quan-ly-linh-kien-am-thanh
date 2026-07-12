@@ -6,7 +6,7 @@ import {
   QR_ONLY_FORMATS,
   QR_SCANNER_CONFIG,
 } from '../utils/cameraScanner';
-import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback, isLikelyTrackingCode } from '../utils/orderScan';
+import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback, isLikelyTrackingCode, buildOrderScanIndex } from '../utils/orderScan';
 import { 
   Search, 
   ShoppingBag, 
@@ -134,6 +134,8 @@ export default function OrderManager({
   
   const ordersRef = React.useRef(orders);
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
+  const isScanBusyRef = React.useRef(false);
+  const orderScanIndex = useMemo(() => buildOrderScanIndex(orders), [orders]);
   useEffect(() => {
     ordersRef.current = orders;
   }, [orders]);
@@ -146,148 +148,155 @@ export default function OrderManager({
   const handleOrderScan = React.useCallback(
     async (rawQuery: string) => {
       const trimmed = rawQuery.trim();
-      if (!trimmed) return;
+      if (!trimmed || isScanBusyRef.current) return;
 
+      isScanBusyRef.current = true;
+      setIsScanBusy(true);
       setCameraScanResult('Đang tra cứu mã...');
 
-      const token = localStorage.getItem('admin_token');
-      let order =
-        findOrderByScanPayload(ordersRef.current, trimmed) ||
-        (await lookupOrderByScanCode(trimmed, ordersRef.current, token));
+      try {
+        const token = localStorage.getItem('admin_token');
+        let order =
+          findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex) ||
+          (await lookupOrderByScanCode(trimmed, ordersRef.current, token, orderScanIndex));
 
-      if (order) {
-        const idx = ordersRef.current.findIndex((o) => o.id === order!.id);
-        if (idx >= 0) {
-          const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
-          ordersRef.current = merged;
-          onUpdateOrders(merged);
-        } else {
-          const merged = [order, ...ordersRef.current];
-          ordersRef.current = merged;
-          onUpdateOrders(merged);
+        if (order) {
+          const idx = ordersRef.current.findIndex((o) => o.id === order!.id);
+          if (idx >= 0) {
+            const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
+            ordersRef.current = merged;
+            onUpdateOrders(merged);
+          } else {
+            const merged = [order, ...ordersRef.current];
+            ordersRef.current = merged;
+            onUpdateOrders(merged);
+          }
         }
-      }
 
-      if (!order) {
+        if (!order) {
+          scanFeedback('error');
+          setCameraScanSuccess(false);
+          setCameraScanError(true);
+          setCameraScanResult(`Không tìm thấy đơn: ${trimmed}`);
+          showScanToast(
+            isLikelyTrackingCode(trimmed)
+              ? `Không tìm thấy đơn hàng với mã vận đơn "${trimmed}"`
+              : `Không tìm thấy đơn hàng này trong hệ thống (${trimmed})`,
+            'error'
+          );
+          setTimeout(() => setCameraScanError(false), 2000);
+          return;
+        }
+
+        if (order.status === 'unprocessed' || order.status === 'processed') {
+          const scannedTracking = isLikelyTrackingCode(trimmed) ? trimmed : undefined;
+          const updated = ordersRef.current.map((o) => {
+            if (o.id !== order!.id) return o;
+            const tracking =
+              o.trackingNumber ||
+              scannedTracking ||
+              `${o.channel === 'shopee' ? 'SPX' : o.channel === 'tiktok' ? 'TTS' : 'WOO'}-VN-${Math.floor(10000000 + Math.random() * 90000000)}`;
+            return { ...o, status: 'shipping' as const, trackingNumber: tracking, isPrepared: true };
+          });
+          ordersRef.current = updated;
+          onUpdateOrders(updated);
+          onAddLog({
+            id: `log-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            channel: order.channel,
+            type: 'stock_sync',
+            status: 'success',
+            message: `[QUÉT QR] Xuất kho đơn ${order.orderSn} → Đang giao.`,
+          });
+          setSessionStats((s) => ({ ...s, shipped: s.shipped + 1 }));
+          scanFeedback('success');
+          setCameraScanError(false);
+          setCameraScanSuccess(true);
+          setCameraScanResult(`✓ Xuất kho #${order.orderSn}`);
+          showScanToast(`Đã xuất kho — đơn #${order.orderSn} chuyển sang Đang giao`, 'success');
+          setManualScanInput('');
+          setTimeout(() => setCameraScanSuccess(false), 2000);
+          return;
+        }
+
+        if (order.status === 'cancelled' || order.status === 'return_pending') {
+          const isCancelRequest = order.status === 'cancelled';
+          const updated = ordersRef.current.map((o) =>
+            o.id === order.id ? { ...o, status: 'return_received' as const } : o
+          );
+          ordersRef.current = updated;
+          onUpdateOrders(updated);
+          onAddLog({
+            id: `log-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            channel: order.channel,
+            type: 'stock_sync',
+            status: 'success',
+            message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Hủy giao đã nhận.`,
+          });
+          setSessionStats((s) => ({
+            ...s,
+            cancelDetected: isCancelRequest ? s.cancelDetected + 1 : s.cancelDetected,
+            returnReceived: s.returnReceived + 1,
+          }));
+          scanFeedback('success');
+          setCameraScanError(false);
+          setCameraScanSuccess(true);
+          setCameraScanResult(`✓ Nhận hoàn #${order.orderSn}`);
+          showScanToast(
+            isCancelRequest
+              ? `Đơn báo hủy #${order.orderSn} — đã chuyển Hủy giao đã nhận`
+              : `Đã nhận hoàn đơn #${order.orderSn}`,
+            'success'
+          );
+          setManualScanInput('');
+          setTimeout(() => setCameraScanSuccess(false), 2000);
+          return;
+        }
+
+        if (order.status === 'shipping') {
+          scanFeedback('error');
+          setCameraScanSuccess(false);
+          setCameraScanError(true);
+          setCameraScanResult(`Đơn #${order.orderSn} đã ở trạng thái Đang giao`);
+          showScanToast(`Đơn #${order.orderSn} đã xuất kho trước đó`, 'error');
+          setTimeout(() => setCameraScanError(false), 2000);
+          return;
+        }
+
+        if (order.status === 'return_received') {
+          scanFeedback('error');
+          setCameraScanSuccess(false);
+          setCameraScanError(true);
+          setCameraScanResult(`Đơn #${order.orderSn} đã nhận hoàn trước đó`);
+          showScanToast(`Đơn #${order.orderSn} đã nhận hoàn`, 'error');
+          setTimeout(() => setCameraScanError(false), 2000);
+          return;
+        }
+
+        const statusLabels: Record<Order['status'], string> = {
+          pending_confirm: 'Chờ xác nhận',
+          unprocessed: 'Chờ lấy hàng (Chưa xử lý)',
+          processed: 'Chờ lấy hàng (Đã xử lý)',
+          shipping: 'Đang giao',
+          completed: 'Thành công',
+          cancelled: 'Yêu cầu huỷ đơn',
+          return_pending: 'Hủy giao chờ nhận',
+          return_received: 'Hủy giao đã nhận',
+        };
+        const statusLabel = statusLabels[order.status] || order.status;
         scanFeedback('error');
         setCameraScanSuccess(false);
         setCameraScanError(true);
-        setCameraScanResult(`Không tìm thấy đơn: ${trimmed}`);
-        showScanToast(
-          isLikelyTrackingCode(trimmed)
-            ? `Không tìm thấy đơn hàng với mã vận đơn "${trimmed}"`
-            : `Không tìm thấy đơn hàng này trong hệ thống (${trimmed})`,
-          'error'
-        );
+        setCameraScanResult(`Trạng thái không hợp lệ: ${statusLabel}`);
+        showScanToast(`Đơn #${order.orderSn} — ${statusLabel}. Không thể xử lý tự động.`, 'error');
         setTimeout(() => setCameraScanError(false), 2000);
-        return;
+      } finally {
+        isScanBusyRef.current = false;
+        setIsScanBusy(false);
       }
-
-      if (order.status === 'unprocessed' || order.status === 'processed') {
-        const scannedTracking = isLikelyTrackingCode(trimmed) ? trimmed : undefined;
-        const updated = ordersRef.current.map((o) => {
-          if (o.id !== order!.id) return o;
-          const tracking =
-            o.trackingNumber ||
-            scannedTracking ||
-            `${o.channel === 'shopee' ? 'SPX' : o.channel === 'tiktok' ? 'TTS' : 'WOO'}-VN-${Math.floor(10000000 + Math.random() * 90000000)}`;
-          return { ...o, status: 'shipping' as const, trackingNumber: tracking, isPrepared: true };
-        });
-        ordersRef.current = updated;
-        onUpdateOrders(updated);
-        onAddLog({
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          channel: order.channel,
-          type: 'stock_sync',
-          status: 'success',
-          message: `[QUÉT QR] Xuất kho đơn ${order.orderSn} → Đang giao.`,
-        });
-        setSessionStats((s) => ({ ...s, shipped: s.shipped + 1 }));
-        scanFeedback('success');
-        setCameraScanError(false);
-        setCameraScanSuccess(true);
-        setCameraScanResult(`✓ Xuất kho #${order.orderSn}`);
-        showScanToast(`Đã xuất kho — đơn #${order.orderSn} chuyển sang Đang giao`, 'success');
-        setManualScanInput('');
-        setTimeout(() => setCameraScanSuccess(false), 2000);
-        return;
-      }
-
-      if (order.status === 'cancelled' || order.status === 'return_pending') {
-        const isCancelRequest = order.status === 'cancelled';
-        const updated = ordersRef.current.map((o) =>
-          o.id === order.id ? { ...o, status: 'return_received' as const } : o
-        );
-        ordersRef.current = updated;
-        onUpdateOrders(updated);
-        onAddLog({
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          channel: order.channel,
-          type: 'stock_sync',
-          status: 'success',
-          message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Hủy giao đã nhận.`,
-        });
-        setSessionStats((s) => ({
-          ...s,
-          cancelDetected: isCancelRequest ? s.cancelDetected + 1 : s.cancelDetected,
-          returnReceived: s.returnReceived + 1,
-        }));
-        scanFeedback('success');
-        setCameraScanError(false);
-        setCameraScanSuccess(true);
-        setCameraScanResult(`✓ Nhận hoàn #${order.orderSn}`);
-        showScanToast(
-          isCancelRequest
-            ? `Đơn báo hủy #${order.orderSn} — đã chuyển Hủy giao đã nhận`
-            : `Đã nhận hoàn đơn #${order.orderSn}`,
-          'success'
-        );
-        setManualScanInput('');
-        setTimeout(() => setCameraScanSuccess(false), 2000);
-        return;
-      }
-
-      if (order.status === 'shipping') {
-        scanFeedback('error');
-        setCameraScanSuccess(false);
-        setCameraScanError(true);
-        setCameraScanResult(`Đơn #${order.orderSn} đã ở trạng thái Đang giao`);
-        showScanToast(`Đơn #${order.orderSn} đã xuất kho trước đó`, 'error');
-        setTimeout(() => setCameraScanError(false), 2000);
-        return;
-      }
-
-      if (order.status === 'return_received') {
-        scanFeedback('error');
-        setCameraScanSuccess(false);
-        setCameraScanError(true);
-        setCameraScanResult(`Đơn #${order.orderSn} đã nhận hoàn trước đó`);
-        showScanToast(`Đơn #${order.orderSn} đã nhận hoàn`, 'error');
-        setTimeout(() => setCameraScanError(false), 2000);
-        return;
-      }
-
-      const statusLabels: Record<Order['status'], string> = {
-        pending_confirm: 'Chờ xác nhận',
-        unprocessed: 'Chờ lấy hàng (Chưa xử lý)',
-        processed: 'Chờ lấy hàng (Đã xử lý)',
-        shipping: 'Đang giao',
-        completed: 'Thành công',
-        cancelled: 'Yêu cầu huỷ đơn',
-        return_pending: 'Hủy giao chờ nhận',
-        return_received: 'Hủy giao đã nhận',
-      };
-      const statusLabel = statusLabels[order.status] || order.status;
-      scanFeedback('error');
-      setCameraScanSuccess(false);
-      setCameraScanError(true);
-      setCameraScanResult(`Trạng thái không hợp lệ: ${statusLabel}`);
-      showScanToast(`Đơn #${order.orderSn} — ${statusLabel}. Không thể xử lý tự động.`, 'error');
-      setTimeout(() => setCameraScanError(false), 2000);
     },
-    [onUpdateOrders, onAddLog]
+    [onUpdateOrders, onAddLog, orderScanIndex]
   );
 
   useEffect(() => {
@@ -320,7 +329,7 @@ export default function OrderManager({
         });
 
         const qrCodeSuccessCallback = (decodedText: string) => {
-          if (!decodedText?.trim()) return;
+          if (!decodedText?.trim() || isScanBusyRef.current) return;
           const now = Date.now();
           const dedupeKey = decodedText.trim().toUpperCase();
           if (
@@ -399,11 +408,14 @@ export default function OrderManager({
   const [shipConfirmOrders, setShipConfirmOrders] = useState<Order[] | null>(null);
   const [shipMethod, setShipMethod] = useState<'pickup' | 'dropoff'>('pickup');
   const [isShipping, setIsShipping] = useState(false);
+  const [isScanBusy, setIsScanBusy] = useState(false);
 
   // Floating "processing..." overlay shown during any real Shopee API call
   // (ship_order / create+download shipping document), single or bulk — gives
   // the seller immediate visual feedback instead of just a disabled button.
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
+  const [progressCompleted, setProgressCompleted] = useState(0);
+  const [progressTotal, setProgressTotal] = useState(0);
 
   // Auto-hiding toast — replaces blocking alert() in bulk ship/print flows.
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -479,6 +491,66 @@ export default function OrderManager({
 
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,
   // per the seller's choice) for every order currently queued in `shipConfirmOrders`.
+  const pollShipJobInBackground = (jobId: string, total: number, queuedCount: number) => {
+    void (async () => {
+      const deadline = Date.now() + 15 * 60 * 1000;
+      let finalJob: any = null;
+
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1200));
+        try {
+          const jobRes = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
+          if (!jobRes.ok) break;
+          const job = await jobRes.json();
+          finalJob = job;
+
+          if (Array.isArray(job.orders)) {
+            onUpdateOrders(job.orders);
+            ordersRef.current = job.orders;
+          }
+
+          if (job.status === 'done' || job.status === 'failed') break;
+        } catch {
+          break;
+        }
+      }
+
+      const successCount = finalJob?.successCount || 0;
+      const failed = (finalJob?.results || []).filter((r: any) => !r.success);
+
+      onAddLog({
+        id: `log-${Date.now() + 2}`,
+        timestamp: new Date().toISOString(),
+        channel: 'all',
+        type: 'stock_sync',
+        status: successCount > 0 ? 'success' : 'failed',
+        message: `Đồng bộ Shopee xong: ${successCount}/${queuedCount} đơn (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'}).`
+      });
+
+      if (finalJob?.status === 'failed') {
+        showToast(finalJob.error || 'Đồng bộ Shopee gặp lỗi. Vui lòng kiểm tra lại danh sách đơn.');
+      } else if (successCount === 0) {
+        const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
+        showToast(`Không xác nhận được đơn nào trên Shopee. ${errDetail || 'Vui lòng thử lại.'}`);
+      } else if (failed.length > 0) {
+        showToast(`Shopee: ${successCount}/${queuedCount} đơn OK, ${failed.length} đơn lỗi.`);
+      } else {
+        showToast(`Shopee đã đồng bộ xong ${successCount}/${total} đơn.`);
+      }
+
+      if (finalJob?.printDocument?.url) {
+        openShopeeLabelInNewTab(finalJob.printDocument.url);
+        showToast(`Đã mở vận đơn gộp (${finalJob.printDocument.printedOrderSns?.length || successCount} đơn).`);
+      } else if (finalJob?.printDocument?.message) {
+        showToast(finalJob.printDocument.message);
+      }
+
+      if (onRefreshOrders) {
+        await onRefreshOrders();
+      }
+    })();
+  };
+
   const confirmShipOrders = async () => {
     if (!shipConfirmOrders || shipConfirmOrders.length === 0) return;
     const queuedOrders = [...shipConfirmOrders];
@@ -490,8 +562,25 @@ export default function OrderManager({
       return;
     }
 
+    const queuedKeys = new Set<string>();
+    for (const o of queuedOrders) {
+      queuedKeys.add(o.id);
+      queuedKeys.add(o.orderSn);
+      queuedKeys.add(`shopee-${o.orderSn}`);
+    }
+    const optimisticOrders = orders.map((o) =>
+      queuedKeys.has(o.id) || queuedKeys.has(o.orderSn) || queuedKeys.has(`shopee-${o.orderSn}`)
+        ? { ...o, status: 'processed' as const, isPrepared: true }
+        : o
+    );
+    onUpdateOrders(optimisticOrders);
+    ordersRef.current = optimisticOrders;
+
     setIsShipping(true);
-    setProgressMessage('Đang xử lý xác nhận đơn hàng trên Shopee, vui lòng đợi...');
+    setProgressCompleted(0);
+    setProgressTotal(queuedOrders.length);
+    setProgressMessage(`Đang ghi nhận ${queuedOrders.length} đơn...`);
+
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -501,73 +590,43 @@ export default function OrderManager({
       message: `[LOGISTICS API] Đang gọi v2.logistics.ship_order (${shipMethod === 'pickup' ? 'pickup' : 'dropoff'}) cho ${orderSns.length} đơn: ${orderSns.join(', ')}.`
     });
 
-    const isBulk = queuedOrders.length > 1;
-    const waitMsgTimer = isBulk
-      ? window.setTimeout(() => {
-          setProgressMessage('Xác nhận thành công! Đang đợi Shopee khởi tạo mã vận đơn hàng loạt (khoảng 4 giây)...');
-        }, 1500)
-      : null;
-
     try {
-      const res = await fetch('/api/shopee/ship-order/bulk', {
+      const res = await fetch('/api/shopee/ship-order/bulk-async', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
       });
       const data = await res.json();
-      if (Array.isArray(data.orders)) {
-        onUpdateOrders(data.orders);
+      if (!res.ok && res.status !== 202) {
+        showToast(data.message || data.error || 'Không thể bắt đầu xác nhận đơn hàng.');
+        if (onRefreshOrders) await onRefreshOrders();
+        return;
       }
 
-      const successCount = data.successCount || 0;
-      const failed = (data.results || []).filter((r: any) => !r.success);
-
-      onAddLog({
-        id: `log-${Date.now() + 1}`,
-        timestamp: new Date().toISOString(),
-        channel: 'all',
-        type: 'stock_sync',
-        status: successCount > 0 ? 'success' : 'failed',
-        message: `Đã chuẩn bị hàng (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'}) thành công ${successCount}/${queuedOrders.length} đơn hàng.`
-      });
-
-      if (successCount === 0) {
-        const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
-        showToast(`Không xác nhận được đơn nào. ${errDetail || 'Vui lòng thử lại.'}`);
-        return;
+      if (Array.isArray(data.orders)) {
+        onUpdateOrders(data.orders);
+        ordersRef.current = data.orders;
       }
 
       setShipConfirmOrders(null);
       setSelectedOrderIds([]);
       setActiveSubTab('processed');
       setPrintFilter('all');
+      showToast(`Đã ghi nhận ${queuedOrders.length} đơn — Shopee đang xử lý phía sau, bạn có thể tiếp tục đơn khác.`);
 
-      if (failed.length > 0) {
-        showToast(`Chuẩn bị thành công ${successCount}/${queuedOrders.length} đơn. ${failed.length} đơn lỗi.`);
-      } else {
-        showToast(`Chuẩn bị thành công ${successCount} đơn — đang tự động in vận đơn...`);
-      }
-
-      // Backend already merged AWB PDF for all successful Shopee orders in one shot.
-      if (data.printDocument?.url) {
-        setProgressMessage(isBulk
-          ? 'Xác nhận thành công! Đang đợi Shopee khởi tạo mã vận đơn hàng loạt (khoảng 4 giây)...'
-          : 'Xác nhận thành công! Đang tải tài liệu in từ Shopee...');
-        openShopeeLabelInNewTab(data.printDocument.url);
-        showToast(`Đã mở vận đơn gộp (${data.printDocument.printedOrderSns?.length || successCount} đơn) — in trên tab PDF.`);
-      } else if (data.printDocument?.message) {
-        showToast(data.printDocument.message);
-      }
-
-      if (onRefreshOrders) {
-        await onRefreshOrders();
+      const jobId = data.jobId as string | undefined;
+      const total = Number(data.total) || queuedOrders.length;
+      if (jobId) {
+        pollShipJobInBackground(jobId, total, queuedOrders.length);
       }
     } catch (err) {
       showToast('Không thể kết nối API chuẩn bị hàng. Vui lòng kiểm tra kết nối và thử lại.');
+      if (onRefreshOrders) await onRefreshOrders();
     } finally {
-      if (waitMsgTimer) clearTimeout(waitMsgTimer);
       setIsShipping(false);
       setProgressMessage(null);
+      setProgressCompleted(0);
+      setProgressTotal(0);
     }
   };
 
@@ -1281,7 +1340,7 @@ export default function OrderManager({
 
   const handleManualScanSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualScanInput.trim()) return;
+    if (!manualScanInput.trim() || isScanBusy) return;
     handleOrderScan(manualScanInput);
   };
 
@@ -1359,6 +1418,12 @@ export default function OrderManager({
                 )}
               </div>
             )}
+            {isScanBusy && (
+              <div className="absolute inset-0 bg-black/75 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3 z-10">
+                <Loader2 className="w-9 h-9 text-blue-400 animate-spin" />
+                <p className="text-xs font-bold text-white/90 px-4 text-center">Đang xử lý mã vừa quét...</p>
+              </div>
+            )}
           </div>
 
           <form onSubmit={handleManualScanSubmit} className="flex gap-2 shrink-0">
@@ -1367,12 +1432,14 @@ export default function OrderManager({
               value={manualScanInput}
               onChange={(e) => setManualScanInput(e.target.value)}
               placeholder="Nhập / dán mã QR hoặc mã đơn..."
-              className="flex-1 min-h-11 px-3 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-sm font-mono outline-none focus:border-blue-500"
+              disabled={isScanBusy}
+              className="flex-1 min-h-11 px-3 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-sm font-mono outline-none focus:border-blue-500 disabled:opacity-50"
               autoComplete="off"
             />
             <button
               type="submit"
-              className="shrink-0 min-h-11 px-4 rounded-xl bg-blue-600 text-white font-bold text-xs uppercase"
+              disabled={isScanBusy}
+              className="shrink-0 min-h-11 px-4 rounded-xl bg-blue-600 text-white font-bold text-xs uppercase disabled:opacity-50 disabled:cursor-not-allowed"
             >
               OK
             </button>
@@ -2924,8 +2991,13 @@ export default function OrderManager({
         <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-100 animate-in fade-in">
           <div className="bg-white rounded-3xl max-w-sm w-full p-8 shadow-2xl flex flex-col items-center gap-4 text-center">
             <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
+            {progressTotal > 0 && (
+              <p className="text-2xl font-black text-blue-700 tabular-nums">
+                {progressCompleted}/{progressTotal}
+              </p>
+            )}
             <p className="text-sm font-extrabold text-gray-800 leading-relaxed">{progressMessage}</p>
-            <p className="text-[11px] text-gray-400 font-semibold">Vui lòng không tắt hoặc rời khỏi trang trong lúc xử lý.</p>
+            <p className="text-[11px] text-gray-400 font-semibold">Vui lòng không bấm liên tục — hệ thống đang xử lý phía sau.</p>
           </div>
         </div>
       )}

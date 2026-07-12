@@ -119,10 +119,59 @@ export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
   );
 }
 
+export type OrderScanIndex = {
+  byOrderSn: Map<string, Order>;
+  byTracking: Map<string, Order>;
+  byInternal: Map<string, Order>;
+  byPackage: Map<string, Order>;
+  byId: Map<string, Order>;
+};
+
+export function buildOrderScanIndex(orders: Order[]): OrderScanIndex {
+  const byOrderSn = new Map<string, Order>();
+  const byTracking = new Map<string, Order>();
+  const byInternal = new Map<string, Order>();
+  const byPackage = new Map<string, Order>();
+  const byId = new Map<string, Order>();
+
+  for (const order of orders) {
+    const put = (map: Map<string, Order>, value?: string) => {
+      const key = normalizeOrderScanKey(value || '');
+      if (key) map.set(key, order);
+    };
+    put(byOrderSn, order.orderSn);
+    put(byTracking, order.trackingNumber);
+    put(byInternal, order.internalTrackingCode);
+    put(byPackage, order.packageNumber);
+    put(byId, order.id);
+    put(byId, String(order.id || '').replace(/^shopee-/i, ''));
+  }
+
+  return { byOrderSn, byTracking, byInternal, byPackage, byId };
+}
+
+function lookupExactFromScanIndex(index: OrderScanIndex, scanKeys: string[]): Order | null {
+  for (const sk of scanKeys) {
+    for (const map of [index.byTracking, index.byInternal, index.byOrderSn, index.byPackage, index.byId]) {
+      const hit = map.get(sk);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 /** Find order — prioritizes tracking match when scan looks like waybill code. */
-export function findOrderByScanPayload(orders: Order[], raw: string): Order | null {
+export function findOrderByScanPayload(
+  orders: Order[],
+  raw: string,
+  scanIndex?: OrderScanIndex
+): Order | null {
   const scanKeys = buildScanLookupKeys(raw);
   if (scanKeys.length === 0) return null;
+
+  const index = scanIndex || buildOrderScanIndex(orders);
+  const exactHit = lookupExactFromScanIndex(index, scanKeys);
+  if (exactHit) return exactHit;
 
   const trackingLike = isLikelyTrackingCode(raw);
   const internalLike = isLikelyInternalTrackingCode(raw);
@@ -155,12 +204,13 @@ export function findOrderByScanPayload(orders: Order[], raw: string): Order | nu
 export async function lookupOrderByScanCode(
   raw: string,
   localOrders: Order[],
-  token?: string | null
+  token?: string | null,
+  scanIndex?: OrderScanIndex
 ): Promise<Order | null> {
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  const local = findOrderByScanPayload(localOrders, trimmed);
+  const local = findOrderByScanPayload(localOrders, trimmed, scanIndex);
   if (local) return local;
 
   if (!token) return null;

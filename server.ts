@@ -2564,14 +2564,67 @@ const ORDERS_DB_PATH = path.join(APP_ROOT, "data", "orders.json");
 
 // Local JSON-file "database" holding orders synced in from real marketplace webhooks (Shopee, ...).
 
+type OrderLookupIndex = {
+  byId: Map<string, number>;
+  byOrderSn: Map<string, number>;
+  byTracking: Map<string, number>;
+  byInternal: Map<string, number>;
+  byPackage: Map<string, number>;
+};
+
+let orderLookupIndex: OrderLookupIndex | null = null;
+
+function normalizeOrderIndexKey(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\-_#./\\|:;,]+/g, "");
+}
+
+function rebuildOrderLookupIndex(orders: any[]): OrderLookupIndex {
+  const byId = new Map<string, number>();
+  const byOrderSn = new Map<string, number>();
+  const byTracking = new Map<string, number>();
+  const byInternal = new Map<string, number>();
+  const byPackage = new Map<string, number>();
+
+  orders.forEach((order, index) => {
+    const put = (map: Map<string, number>, value: unknown) => {
+      const key = normalizeOrderIndexKey(String(value || ""));
+      if (key) map.set(key, index);
+    };
+    put(byId, order.id);
+    put(byId, String(order.id || "").replace(/^shopee-/i, ""));
+    put(byOrderSn, order.orderSn);
+    put(byTracking, order.trackingNumber);
+    put(byInternal, order.internalTrackingCode);
+    put(byPackage, order.packageNumber);
+  });
+
+  return { byId, byOrderSn, byTracking, byInternal, byPackage };
+}
+
+function getOrderLookupIndex(orders: any[]): OrderLookupIndex {
+  if (!orderLookupIndex) {
+    orderLookupIndex = rebuildOrderLookupIndex(orders);
+  }
+  return orderLookupIndex;
+}
+
 function loadOrders(): any[] {
   try {
-    if (!fs.existsSync(ORDERS_DB_PATH)) return [];
+    if (!fs.existsSync(ORDERS_DB_PATH)) {
+      orderLookupIndex = rebuildOrderLookupIndex([]);
+      return [];
+    }
     const raw = fs.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.map(repairMisassignedTracking) : [];
+    const orders = Array.isArray(parsed) ? parsed.map(repairMisassignedTracking) : [];
+    orderLookupIndex = rebuildOrderLookupIndex(orders);
+    return orders;
   } catch (error) {
     console.error("[Orders DB] Failed to read orders.json:", error);
+    orderLookupIndex = rebuildOrderLookupIndex([]);
     return [];
   }
 }
@@ -2581,6 +2634,7 @@ function saveOrders(orders: any[]): void {
     fs.mkdirSync(path.dirname(ORDERS_DB_PATH), { recursive: true });
     const sanitized = orders.map(repairMisassignedTracking);
     fs.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized, null, 2), "utf-8");
+    orderLookupIndex = rebuildOrderLookupIndex(sanitized);
   } catch (error) {
     console.error("[Orders DB] Failed to write orders.json:", error);
   }
@@ -2928,11 +2982,15 @@ function resolveOrderShopId(order: any): string | undefined {
 function findOrderRecord(orders: any[], idOrSn: string): { index: number; order: any } | null {
   const key = String(idOrSn || "").trim();
   if (!key) return null;
-  let index = orders.findIndex((o: any) => o.id === key || o.orderSn === key);
-  if (index === -1 && !key.startsWith("shopee-")) {
-    index = orders.findIndex((o: any) => o.id === `shopee-${key}`);
+  const idx = getOrderLookupIndex(orders);
+  const normalized = normalizeOrderIndexKey(key);
+  let index =
+    idx.byId.get(normalized) ??
+    idx.byOrderSn.get(normalized);
+  if (index === undefined && !key.startsWith("shopee-")) {
+    index = idx.byId.get(normalizeOrderIndexKey(`shopee-${key}`));
   }
-  if (index === -1) return null;
+  if (index === undefined) return null;
   return { index, order: orders[index] };
 }
 
@@ -2958,6 +3016,36 @@ function resolveOrdersFromRequest(orders: any[], orderIds?: string[], orderSns?:
 function isAlreadyShippedError(result: any): boolean {
   const blob = `${result?.error || ""} ${result?.message || ""}`.toLowerCase();
   return blob.includes("already") || blob.includes("has been shipped") || blob.includes("logistics order is completed");
+}
+
+type ShipOrderJobStatus = "pending" | "running" | "printing" | "done" | "failed";
+
+type ShipOrderJob = {
+  id: string;
+  status: ShipOrderJobStatus;
+  total: number;
+  completed: number;
+  successCount: number;
+  results: any[];
+  printDocument: any | null;
+  orders: any[] | null;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+const shipOrderJobs = new Map<string, ShipOrderJob>();
+const SHIP_JOB_TTL_MS = 30 * 60 * 1000;
+
+function createShipOrderJobId(): string {
+  return `ship-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function pruneOldShipOrderJobs(): void {
+  const cutoff = Date.now() - SHIP_JOB_TTL_MS;
+  for (const [id, job] of shipOrderJobs) {
+    if (job.updatedAt < cutoff) shipOrderJobs.delete(id);
+  }
 }
 
 // Broken/mock orders (0đ total AND no items) or ghost webhook rows with no
@@ -4007,10 +4095,18 @@ async function startServer() {
     return false;
   }
 
-  /** Flexible OR: orderSn OR trackingNumber OR packageNumber. */
+  /** Flexible OR: orderSn OR trackingNumber OR packageNumber — index O(1) first, suffix fallback. */
   function findOrderByScanLookup(orders: any[], raw: string): any | null {
     const scanKeys = buildScanLookupKeys(raw);
     if (!scanKeys.length) return null;
+
+    const idx = getOrderLookupIndex(orders);
+    for (const sk of scanKeys) {
+      for (const map of [idx.byTracking, idx.byInternal, idx.byOrderSn, idx.byPackage, idx.byId]) {
+        const hit = map.get(sk);
+        if (hit !== undefined) return orders[hit];
+      }
+    }
 
     const trackingLike = /^SPX(VN)?|^GHN|^GHTK|^JNT|^JT|^NINJA|^VTP|^VNPOST/.test(
       normalizeScanLookupKey(raw)
@@ -4604,6 +4700,78 @@ async function startServer() {
 
   // --- Shopee logistics: "Chuẩn bị hàng" (ship_order) ------------------------
 
+  async function processShipOrderBatch(
+    orders: any[],
+    toShip: { index: number; order: any }[],
+    shipMethod: ShipMethod,
+    opts?: {
+      optimistic?: boolean;
+      onProgress?: (completed: number, total: number) => void;
+    }
+  ): Promise<{ results: any[]; successfulShopeeOrders: any[]; successCount: number }> {
+    const results: any[] = [];
+    const successfulShopeeOrders: any[] = [];
+
+    for (let i = 0; i < toShip.length; i++) {
+      const { index, order } = toShip[i];
+      const resolvedShopId = resolveOrderShopId(order);
+      if (resolvedShopId && !order.shopId) {
+        orders[index].shopId = resolvedShopId;
+        order.shopId = resolvedShopId;
+      }
+
+      console.log(`[Ship Order Bulk] \u0110ang x\u1EED l\xFD \u0111\u01A1n ${order.orderSn} (id=${order.id}, ${shipMethod})...`);
+      const result = await arrangeShipment(order, shipMethod);
+      const treatedAsSuccess = result.success || isAlreadyShippedError(result);
+
+      if (!treatedAsSuccess) {
+        console.error(`[Ship Order Bulk] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`);
+        if (opts?.optimistic) {
+          orders[index] = {
+            ...orders[index],
+            status: "unprocessed",
+            isPrepared: false,
+            shopeeSyncPending: false,
+            shopeeSyncError: result.message || result.error || "Kh\u00F4ng \u0111\u1ED3ng b\u1ED9 \u0111\u01B0\u1EE3c Shopee",
+          };
+        }
+      } else {
+        orders[index] = {
+          ...orders[index],
+          isPrepared: true,
+          status: "processed",
+          trackingNumber: orders[index].trackingNumber || result.trackingNumber,
+          shopId: orders[index].shopId || result.shopId || resolvedShopId,
+          shopeeSyncPending: false,
+          shopeeSyncError: undefined,
+        };
+        if (orders[index].channel === "shopee") {
+          successfulShopeeOrders.push(orders[index]);
+        }
+      }
+
+      results.push({
+        orderId: order.id,
+        orderSn: order.orderSn,
+        success: treatedAsSuccess,
+        alreadyShipped: !result.success && isAlreadyShippedError(result),
+        ...result,
+      });
+
+      if (opts?.onProgress) opts.onProgress(i + 1, toShip.length);
+
+      if (i < toShip.length - 1) {
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+
+    return {
+      results,
+      successfulShopeeOrders,
+      successCount: results.filter((r) => r.success).length,
+    };
+  }
+
   // Single order: arrange pickup/dropoff (per the seller's explicit choice in the
   // "Xác nhận đơn hàng" modal) so it moves to "Chờ lấy hàng".
   app.post("/api/shopee/ship-order", authMiddleware, async (req, res) => {
@@ -4670,52 +4838,12 @@ async function startServer() {
     const results: any[] = [];
     const successfulShopeeOrders: any[] = [];
 
-    for (let i = 0; i < toShip.length; i++) {
-      const { index, order } = toShip[i];
-      // Self-heal missing shop_id before every ship_order call.
-      const resolvedShopId = resolveOrderShopId(order);
-      if (resolvedShopId && !order.shopId) {
-        orders[index].shopId = resolvedShopId;
-        order.shopId = resolvedShopId;
-      }
-
-      console.log(`[Ship Order Bulk] \u0110ang x\u1EED l\xFD \u0111\u01A1n ${order.orderSn} (id=${order.id}, ${shipMethod})...`);
-      const result = await arrangeShipment(order, shipMethod);
-      const treatedAsSuccess = result.success || isAlreadyShippedError(result);
-
-      if (!treatedAsSuccess) {
-        console.error(`[Ship Order Bulk] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`);
-      }
-
-      if (treatedAsSuccess) {
-        orders[index] = {
-          ...orders[index],
-          isPrepared: true,
-          status: "processed",
-          trackingNumber: orders[index].trackingNumber || result.trackingNumber,
-          shopId: orders[index].shopId || result.shopId || resolvedShopId,
-        };
-        if (orders[index].channel === "shopee") {
-          successfulShopeeOrders.push(orders[index]);
-        }
-      }
-      results.push({
-        orderId: order.id,
-        orderSn: order.orderSn,
-        success: treatedAsSuccess,
-        alreadyShipped: !result.success && isAlreadyShippedError(result),
-        ...result,
-      });
-
-      // Brief pause between consecutive ship_order calls — avoids Shopee rate-limit
-      // spikes when the seller confirms a large batch in one click.
-      if (i < toShip.length - 1) {
-        await new Promise(r => setTimeout(r, 400));
-      }
-    }
+    const batch = await processShipOrderBatch(orders, toShip, shipMethod);
+    results.push(...batch.results);
+    successfulShopeeOrders.push(...batch.successfulShopeeOrders);
 
     saveOrders(orders);
-    const successCount = results.filter(r => r.success).length;
+    const successCount = batch.successCount;
     console.log(`[Ship Order Bulk] Ho\xE0n t\u1EA5t: ${successCount}/${toShip.length} \u0111\u01A1n chu\u1EA9n b\u1EB1 h\xE0ng th\xE0nh c\xF4ng.`);
 
     console.log("D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (ship-order/bulk response g\u1EEDi cho Frontend):", JSON.stringify({ successCount, total: toShip.length, results }));
@@ -5118,6 +5246,135 @@ async function startServer() {
     }
     return { url: absoluteLabelUrl(primaryUrl), printedOrderSns, skippedOrders };
   }
+
+  async function executeShipOrderBackgroundJob(
+    jobId: string,
+    shipMethod: ShipMethod,
+    idList: string[],
+    snList: string[]
+  ): Promise<void> {
+    pruneOldShipOrderJobs();
+    const job = shipOrderJobs.get(jobId);
+    if (!job) return;
+
+    try {
+      job.status = "running";
+      job.updatedAt = Date.now();
+
+      const orders = loadOrders();
+      const toShip = resolveOrdersFromRequest(orders, idList, snList);
+      job.total = toShip.length;
+
+      const batch = await processShipOrderBatch(orders, toShip, shipMethod, {
+        optimistic: true,
+        onProgress: (completed, total) => {
+          job.completed = completed;
+          job.total = total;
+          job.updatedAt = Date.now();
+        },
+      });
+
+      saveOrders(orders);
+      job.results = batch.results;
+      job.successCount = batch.successCount;
+      job.orders = orders.filter(isValidOrder);
+
+      if (batch.successfulShopeeOrders.length > 0) {
+        job.status = "printing";
+        job.updatedAt = Date.now();
+        const printDocument = await autoPrintLabelsForShopeeOrders(orders, batch.successfulShopeeOrders);
+        if (printDocument?.printedOrderSns?.length) {
+          const printedSet = new Set(printDocument.printedOrderSns);
+          for (let i = 0; i < orders.length; i++) {
+            if (printedSet.has(orders[i].orderSn)) {
+              orders[i] = { ...orders[i], isPrinted: true, status: "processed" };
+            }
+          }
+          saveOrders(orders);
+        }
+        job.printDocument = printDocument;
+        job.orders = orders.filter(isValidOrder);
+      }
+
+      job.status = "done";
+    } catch (err: any) {
+      job.status = "failed";
+      job.error = err?.message || String(err);
+      console.error(`[Ship Order Job ${jobId}] Failed:`, err);
+    }
+    job.updatedAt = Date.now();
+  }
+
+  // Non-blocking bulk ship: ghi nhận ngay trạng thái processed, Shopee + in vận đơn chạy ngầm.
+  app.post("/api/shopee/ship-order/bulk-async", authMiddleware, async (req, res) => {
+    const { orderIds, orderSns, method } = req.body;
+    const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
+    const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
+    const snList = Array.isArray(orderSns) ? orderSns.map(String) : [];
+    if (idList.length === 0 && snList.length === 0) {
+      return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns." });
+    }
+
+    const orders = loadOrders();
+    const toShip = resolveOrdersFromRequest(orders, idList, snList);
+    if (toShip.length === 0) {
+      return res.status(404).json({
+        error: "orders_not_found",
+        message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database kh\u1EDBp v\u1EDBi danh s\xE1ch g\u1EEDi l\xEAn.",
+        successCount: 0,
+        total: 0,
+        results: [],
+        orders: orders.filter(isValidOrder),
+      });
+    }
+
+    for (const { index } of toShip) {
+      orders[index] = {
+        ...orders[index],
+        isPrepared: true,
+        status: "processed",
+        shopeeSyncPending: true,
+        shopeeSyncError: undefined,
+      };
+    }
+    saveOrders(orders);
+
+    const jobId = createShipOrderJobId();
+    shipOrderJobs.set(jobId, {
+      id: jobId,
+      status: "pending",
+      total: toShip.length,
+      completed: 0,
+      successCount: 0,
+      results: [],
+      printDocument: null,
+      orders: orders.filter(isValidOrder),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    setImmediate(() => {
+      void executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
+    });
+
+    return res.status(202).json({
+      accepted: true,
+      jobId,
+      total: toShip.length,
+      orders: orders.filter(isValidOrder),
+    });
+  });
+
+  app.get("/api/shopee/ship-order/job/:jobId", authMiddleware, (req, res) => {
+    const job = shipOrderJobs.get(String(req.params.jobId || ""));
+    if (!job) {
+      return res.status(404).json({
+        error: "job_not_found",
+        message: "Kh\xF4ng t\xECm th\u1EA5y ti\u1EBFn tr\xECnh x\u1EED l\xFD.",
+      });
+    }
+    return res.json(job);
+  });
 
   // Single or bulk print: fetch the REAL Shopee AWB PDF for the given orders.
   app.post("/api/shopee/print-document", authMiddleware, async (req, res) => {
