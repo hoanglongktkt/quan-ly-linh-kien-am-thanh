@@ -73,12 +73,6 @@ interface MultiChannelListingFormProps {
   initialProductId?: string | null;
 }
 
-const DEFAULT_SHOPS: ShopItem[] = [
-  { id: 'shop-shopee-1', name: 'Shopee - Linh Kiện Âm Thanh', icon: '🟧', platform: 'shopee' },
-  { id: 'shop-lazada-1', name: 'Lazada - Linh Kiện Audio HCM', icon: '🟦', platform: 'lazada' },
-  { id: 'shop-tiktok-1', name: 'TikTok - Linh Kiện Âm Thanh', icon: '⬛', platform: 'tiktok' },
-];
-
 const TITLE_TEMPLATES = [
   { label: '[Chính hãng]', value: '[Chính hãng] ' },
   { label: '[Ảnh thật]', value: '[Ảnh thật] ' },
@@ -133,7 +127,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     const fromProps = (shops || []).filter((s) =>
       ['shopee', 'lazada', 'tiktok'].includes(String(s.platform || '').toLowerCase())
     );
-    return fromProps.length > 0 ? fromProps : DEFAULT_SHOPS;
+    return fromProps;
   }, [shops]);
 
   const [selectedShops, setSelectedShops] = useState<string[]>(

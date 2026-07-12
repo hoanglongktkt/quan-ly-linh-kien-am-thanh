@@ -77,7 +77,18 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   
   // Modals state
   const [showSyncModal, setShowSyncModal] = useState(false);
-  const [syncShopId, setSyncShopId] = useState('shop-shopee-1');
+  const [syncShopId, setSyncShopId] = useState('');
+
+  useEffect(() => {
+    const shopeeShops = shops.filter((s) => s.platform === 'shopee');
+    if (shopeeShops.length === 0) {
+      setSyncShopId('');
+      return;
+    }
+    if (!shopeeShops.some((s) => s.id === syncShopId)) {
+      setSyncShopId(shopeeShops[0].id);
+    }
+  }, [shops, syncShopId]);
   const [syncTimeframe, setSyncTimeframe] = useState<'all' | '24h' | 'custom'>('24h');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<string[]>([]);

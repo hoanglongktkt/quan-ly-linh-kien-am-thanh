@@ -92,7 +92,18 @@ export default function ProductList({
 
   // Shopee API initialization state
   const [showShopeeImportModal, setShowShopeeImportModal] = useState(false);
-  const [shopeeImportShopId, setShopeeImportShopId] = useState('shop-shopee-1');
+  const [shopeeImportShopId, setShopeeImportShopId] = useState('');
+
+  useEffect(() => {
+    const shopeeShops = shops.filter((s) => s.platform === 'shopee');
+    if (shopeeShops.length === 0) {
+      setShopeeImportShopId('');
+      return;
+    }
+    if (!shopeeShops.some((s) => s.id === shopeeImportShopId)) {
+      setShopeeImportShopId(shopeeShops[0].id);
+    }
+  }, [shops, shopeeImportShopId]);
   const [isShopeeImporting, setIsShopeeImporting] = useState(false);
   const [shopeeImportProgress, setShopeeImportProgress] = useState<string[]>([]);
   const [shopeeImportToast, setShopeeImportToast] = useState<string | null>(null);
@@ -317,8 +328,13 @@ export default function ProductList({
     setIsShopeeImporting(true);
     setShopeeImportProgress(["🔌 Đang kết nối API v2 Shopee (get_item_list)..."]);
 
-    const shop = shops.find(s => s.platform === 'shopee' && s.connected) || shops.find(s => s.id === shopeeImportShopId);
-    const apiShopId = shop?.shopId || '4127421';
+    const shop = shops.find(s => s.id === shopeeImportShopId) || shops.find(s => s.platform === 'shopee' && s.connected);
+    if (!shop?.shopId) {
+      alert('Chưa có gian hàng Shopee nào được kết nối. Vui lòng cấu hình trong Cài đặt trước.');
+      setIsShopeeImporting(false);
+      return;
+    }
+    const apiShopId = shop.shopId;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 300000);
@@ -467,7 +483,7 @@ export default function ProductList({
       ) : subTab === 'audit' ? (
         <InventoryAudit
           products={products}
-          shopId={shops.find(s => s.platform === 'shopee' && s.connected)?.shopId || '4127421'}
+          shopId={shops.find(s => s.platform === 'shopee' && s.connected)?.shopId}
           onRefreshProducts={onRefreshProducts}
         />
       ) : (
@@ -1120,10 +1136,7 @@ export default function ProductList({
                       </option>
                     ))}
                     {shops.filter(s => s.platform === 'shopee').length === 0 && (
-                      <>
-                        <option value="shop-shopee-1">LTAT (546083459)</option>
-                        <option value="shop-shopee-2">Linh Kiện Audio (483583526)</option>
-                      </>
+                      <option value="" disabled>Chưa có gian hàng Shopee</option>
                     )}
                   </select>
                   <Store className="w-4 h-4 text-gray-400 absolute right-3 top-3.5 pointer-events-none" />

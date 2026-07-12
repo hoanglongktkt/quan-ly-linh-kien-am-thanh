@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkUpdatePayload, BulkSaveProductUpdate } from './types';
+import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkUpdatePayload, BulkSaveProductUpdate, ConnectedShop } from './types';
 import { 
   INITIAL_SYNC_LOGS,
 } from './data';
@@ -47,6 +47,20 @@ function resolveTabFromPath(): string {
   return 'dashboard';
 }
 
+const DEMO_SHOP_INTERNAL_IDS = new Set(['shop-shopee-1', 'shop-shopee-2', 'shop-tiktok-1', 'shop-woo-1']);
+const DEMO_SHOP_PLATFORM_IDS = new Set(['4127421', '546083459', '483583526', '7421893120']);
+
+function stripDemoShops(shops: ConnectedShop[] = []) {
+  return shops.filter((s) => {
+    if (DEMO_SHOP_INTERNAL_IDS.has(s.id)) return false;
+    if (DEMO_SHOP_PLATFORM_IDS.has(String(s.shopId))) return false;
+    if (s.shopName === 'LTAT' || s.shopName.includes('thongtinsolutions')) return false;
+    if (s.wooUrl?.includes('thongtinsolutions.com')) return false;
+    if (s.apiKey?.includes('demo')) return false;
+    return true;
+  });
+}
+
 export default function App() {
   // Authentication States
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -87,79 +101,23 @@ export default function App() {
   });
 
   const [settings, setSettings] = useState<ChannelSettings>(() => {
+    const empty: ChannelSettings = {
+      shopeeConnected: false,
+      shopeeShopId: '',
+      shopeeApiKey: '',
+      tiktokConnected: false,
+      tiktokShopId: '',
+      tiktokApiKey: '',
+      shops: [],
+    };
     const saved = localStorage.getItem('omni_settings');
-    let parsed: ChannelSettings;
-    if (saved) {
-      try {
-        parsed = JSON.parse(saved);
-      } catch (e) {
-        parsed = {
-          shopeeConnected: true,
-          shopeeShopId: "124589212",
-          shopeeApiKey: "sp_key_demo_9823",
-          tiktokConnected: true,
-          tiktokShopId: "7421893120",
-          tiktokApiKey: "tt_key_demo_7721"
-        };
-      }
-    } else {
-      parsed = {
-        shopeeConnected: true,
-        shopeeShopId: "124589212",
-        shopeeApiKey: "sp_key_demo_9823",
-        tiktokConnected: true,
-        tiktokShopId: "7421893120",
-        tiktokApiKey: "tt_key_demo_7721"
-      };
+    if (!saved) return empty;
+    try {
+      const parsed = JSON.parse(saved) as ChannelSettings;
+      return { ...empty, ...parsed, shops: stripDemoShops(parsed.shops ?? []) };
+    } catch {
+      return empty;
     }
-
-    // Migrate or ensure shops exists with some initial default shops if empty
-    if (!parsed.shops || parsed.shops.length === 0) {
-      parsed.shops = [];
-      parsed.shops.push({
-        id: "shop-shopee-1",
-        platform: 'shopee',
-        shopId: "546083459",
-        shopName: "LTAT",
-        apiKey: "sp_key_demo_9823",
-        connected: true,
-        lastSynced: new Date().toISOString()
-      });
-      parsed.shops.push({
-        id: "shop-shopee-2",
-        platform: 'shopee',
-        shopId: "483583526",
-        shopName: "Linh Kiện Audio",
-        apiKey: "sp_key_demo_outlet_8812",
-        connected: true,
-        lastSynced: new Date().toISOString()
-      });
-      if (parsed.tiktokConnected && parsed.tiktokShopId) {
-        parsed.shops.push({
-          id: "shop-tiktok-1",
-          platform: 'tiktok',
-          shopId: parsed.tiktokShopId,
-          shopName: "TikTok Shop - Linh Kiện Âm Thanh . Net",
-          apiKey: parsed.tiktokApiKey,
-          connected: true,
-          lastSynced: new Date().toISOString()
-        });
-      }
-
-      // Add default WooCommerce shop for the user
-      parsed.shops.push({
-        id: "shop-woo-1",
-        platform: 'woocommerce',
-        shopId: "ck_f691bcda4210e7b8...",
-        apiSecret: "cs_e10982df4212c7d9...",
-        shopName: "WordPress Store - thongtinsolutions.com",
-        apiKey: "ck_f691bcda4210e7b8...",
-        wooUrl: "https://thongtinsolutions.com",
-        connected: true,
-        lastSynced: new Date().toISOString()
-      });
-    }
-    return parsed;
   });
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -536,7 +494,7 @@ export default function App() {
     const response = await fetch('/api/shopee/products/sync-item-variants', {
       method: 'POST',
       headers: apiAuthHeaders(),
-      body: JSON.stringify({ itemId, shopId: shopeeShop?.shopId || '4127421' }),
+      body: JSON.stringify({ itemId, shopId: shopeeShop?.shopId }),
     });
     const data = await response.json();
     if (!response.ok) {
@@ -1191,7 +1149,7 @@ export default function App() {
               <div className="max-md:block md:hidden">
                 <InventoryAudit
                   products={products}
-                  shopId={settings.shops?.find((s) => s.platform === 'shopee' && s.connected)?.shopId || '4127421'}
+                  shopId={settings.shops?.find((s) => s.platform === 'shopee' && s.connected)?.shopId}
                   onRefreshProducts={fetchProducts}
                 />
               </div>

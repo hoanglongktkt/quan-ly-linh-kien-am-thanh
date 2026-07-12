@@ -39,13 +39,6 @@ interface PublishEditAssetsProps {
   onAddLog: (log: SyncLog) => void;
 }
 
-const DEFAULT_SHOPS: ShopItem[] = [
-  { id: 'shop-shopee-1', name: 'Shopee - Linh Kiện Âm Thanh', platform: 'shopee' },
-  { id: 'shop-shopee-2', name: 'Shopee - Linh kiện audio', platform: 'shopee' },
-  { id: 'shop-lazada-1', name: 'Lazada - Linh Kiện Audio HCM', platform: 'lazada' },
-  { id: 'shop-tiktok-1', name: 'TikTok - Linh Kiện Âm Thanh', platform: 'tiktok' },
-];
-
 export default function PublishEditAssets({
   products,
   shops,
@@ -56,7 +49,7 @@ export default function PublishEditAssets({
     const list = (shops || []).filter((s) =>
       ['shopee', 'lazada', 'tiktok'].includes(String(s.platform || '').toLowerCase())
     );
-    return list.length > 0 ? list : DEFAULT_SHOPS;
+    return list;
   }, [shops]);
 
   const publishProducts = useMemo(
