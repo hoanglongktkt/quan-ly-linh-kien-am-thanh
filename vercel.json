@@ -16,11 +16,15 @@
     }
   ],
   "functions": {
-    "api/[...path].js": {
+    "api/index.js": {
       "maxDuration": 300
     }
   },
   "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api?path=:path*"
+    },
     {
       "source": "/((?!api/).*)",
       "destination": "/index.html"

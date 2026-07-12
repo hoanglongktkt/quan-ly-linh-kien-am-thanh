@@ -1,5 +1,5 @@
 /**
- * Vercel — single catch-all API router (Hobby plan ≤12 functions).
+ * Vercel — single API router (Hobby plan). Mọi /api/* được rewrite → /api?path=...
  */
 import { handleLogin } from './lib/handlers/login.js';
 import { handleAuthVerify } from './lib/handlers/authVerify.js';
@@ -10,8 +10,13 @@ import { proxyRequestToCpanel, resolveProxyTimeoutMs } from './lib/cpanelProxy.j
 
 function resolveRoutePath(req) {
   const raw = req.query?.path;
-  if (raw == null || raw === '') return '';
-  return Array.isArray(raw) ? raw.join('/') : String(raw);
+  if (raw != null && raw !== '') {
+    return (Array.isArray(raw) ? raw.join('/') : String(raw)).replace(/^\/+/, '');
+  }
+  const pathOnly = String(req.url || '').split('?')[0];
+  const m = pathOnly.match(/^\/api\/(.+)$/);
+  if (m?.[1]) return decodeURIComponent(m[1]);
+  return '';
 }
 
 const LOCAL_ROUTES = {
@@ -24,9 +29,9 @@ const LOCAL_ROUTES = {
 };
 
 export default async function handler(req, res) {
-  const route = resolveRoutePath(req).replace(/^\/+/, '');
+  const route = resolveRoutePath(req);
 
-  if (!route || route === 'proxy') {
+  if (!route || route === 'proxy' || route === 'index') {
     return res.status(404).json({ error: 'Not found' });
   }
 
