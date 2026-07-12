@@ -65,6 +65,17 @@ function getOrderWaybillCode(order: Order): string {
   return getCarrierWaybillDisplay(order);
 }
 
+function resolveOrderShopDisplayName(order: Order, shops: ConnectedShop[]): string {
+  const cached = order.shopName?.trim();
+  if (cached) return cached;
+  const sid = order.shopId?.trim();
+  if (sid) {
+    const match = shops.find((s) => s.id === sid || s.shopId === sid);
+    if (match?.shopName?.trim()) return match.shopName.trim();
+  }
+  return sid || 'Gian hàng';
+}
+
 interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[]) => void;
@@ -2665,10 +2676,17 @@ export default function OrderManager({
                       {/* Waybill & Platform Label */}
                       <td className="p-4 space-y-1">
                         <div className="flex items-center gap-1.5">
-                          <span className={`px-1.5 py-0.5 text-[9px] font-black uppercase rounded ${
-                            order.channel === 'shopee' ? 'bg-orange-500 text-white' : 'bg-zinc-950 text-white'
-                          }`}>
-                            {order.channel}
+                          <span
+                            className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[160px] inline-block ${
+                              order.channel === 'shopee'
+                                ? 'bg-orange-50 text-orange-700 border border-orange-200'
+                                : order.channel === 'tiktok'
+                                  ? 'bg-zinc-100 text-zinc-800 border border-zinc-200'
+                                  : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            }`}
+                            title={resolveOrderShopDisplayName(order, shops)}
+                          >
+                            {resolveOrderShopDisplayName(order, shops)}
                           </span>
                         </div>
                         {getOrderWaybillCode(order) ? (
@@ -2885,10 +2903,17 @@ export default function OrderManager({
                     />
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`px-1.5 py-0.5 text-[9px] font-black uppercase rounded shrink-0 ${
-                          order.channel === 'shopee' ? 'bg-orange-500 text-white' : order.channel === 'tiktok' ? 'bg-zinc-900 text-white' : 'bg-blue-600 text-white'
-                        }`}>
-                          {order.channel}
+                        <span
+                          className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[160px] inline-block shrink-0 ${
+                            order.channel === 'shopee'
+                              ? 'bg-orange-50 text-orange-700 border border-orange-200'
+                              : order.channel === 'tiktok'
+                                ? 'bg-zinc-100 text-zinc-800 border border-zinc-200'
+                                : 'bg-blue-50 text-blue-700 border border-blue-200'
+                          }`}
+                          title={resolveOrderShopDisplayName(order, shops)}
+                        >
+                          {resolveOrderShopDisplayName(order, shops)}
                         </span>
                       </div>
                       {getOrderWaybillCode(order) ? (

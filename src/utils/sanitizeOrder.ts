@@ -9,7 +9,11 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     orderSn: orderSn || id,
     channel: (raw.channel as Order['channel']) || 'manual',
     shopId: raw.shopId ? String(raw.shopId) : undefined,
-    shopName: raw.shopName ? String(raw.shopName) : undefined,
+    shopName: raw.shopName
+      ? String(raw.shopName)
+      : raw.shop_name
+        ? String(raw.shop_name)
+        : undefined,
     customerName: String(raw.customerName || 'Khách hàng'),
     customerPhone: raw.customerPhone ? String(raw.customerPhone) : undefined,
     customerAddress: raw.customerAddress ? String(raw.customerAddress) : undefined,
