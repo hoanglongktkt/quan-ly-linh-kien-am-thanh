@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Html5Qrcode } from 'html5-qrcode';
 import {
   startRearCameraScanner,
+  stopCloseRangeFocusAssist,
   HTTPS_CAMERA_MESSAGE,
   QR_ONLY_FORMATS,
   QR_SCANNER_CONFIG,
@@ -214,6 +215,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
     return () => {
       isMounted = false;
       clearTimeout(timer);
+      stopCloseRangeFocusAssist('picking-camera-reader');
       if (html5Qrcode?.isScanning) {
         html5Qrcode.stop().catch(() => undefined);
       }

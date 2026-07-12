@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import {
   startRearCameraScanner,
+  stopCloseRangeFocusAssist,
   HTTPS_CAMERA_MESSAGE,
   QR_ONLY_FORMATS,
   QR_SCANNER_CONFIG,
@@ -359,6 +360,7 @@ export default function OrderManager({
       return () => {
         isMounted = false;
         clearTimeout(timer);
+        stopCloseRangeFocusAssist('camera-reader');
         if (html5Qrcode?.isScanning) {
           html5Qrcode.stop().catch((err) => console.error('Error stopping html5-qrcode scanner', err));
         }
@@ -1585,7 +1587,7 @@ export default function OrderManager({
               </div>
             </div>
             <p className="absolute bottom-2 left-0 right-0 text-center text-[10px] font-bold text-white/80 pointer-events-none">
-              Đưa mã QR vào khung ngắm
+              Đưa mã QR vào khung (15–20 cm) · chạm màn hình để lấy nét
             </p>
             {cameraError && (
               <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-4 text-center text-xs text-rose-400 font-semibold gap-3">
