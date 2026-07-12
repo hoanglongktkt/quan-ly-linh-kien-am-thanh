@@ -2198,7 +2198,9 @@ function applyShopeeTrackingCode(order: any, rawCode: unknown) {
     order.internalTrackingCode = code;
     return;
   }
-  if (!order.trackingNumber) order.trackingNumber = code;
+  if (isCarrierTrackingCode(code)) {
+    order.trackingNumber = code;
+  }
 }
 
 function repairMisassignedTracking(order: any): any {
@@ -2216,10 +2218,6 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
     for (const c of candidates) {
       const s = String(c || "").trim();
       if (s && isCarrierTrackingCode(s)) return s;
-    }
-    for (const c of candidates) {
-      const s = String(c || "").trim();
-      if (s && !isShopeeInternalTrackingCode(s)) return s;
     }
     return undefined;
   };
@@ -3916,7 +3914,17 @@ async function startServer() {
   // configuration, not real Shopee orders) are filtered out of the response.
   app.get("/api/orders", authMiddleware, (req, res) => {
     const products = loadProducts();
-    const orders = enrichOrdersFromCatalog(loadOrders().filter(isValidOrder), products);
+    let rawOrders = loadOrders().filter(isValidOrder);
+    let dirty = false;
+    rawOrders = rawOrders.map((o: any) => {
+      const before = `${o.trackingNumber || ""}|${o.internalTrackingCode || ""}`;
+      repairMisassignedTracking(o);
+      const after = `${o.trackingNumber || ""}|${o.internalTrackingCode || ""}`;
+      if (before !== after) dirty = true;
+      return o;
+    });
+    if (dirty) saveOrders(rawOrders);
+    const orders = enrichOrdersFromCatalog(rawOrders, products);
     return res.json(orders);
   });
 
@@ -4751,7 +4759,16 @@ async function startServer() {
   // express.static, giving an identical public /labels/<file> URL without that side effect.
   const SHIPPING_DOCS_DIR = path.join(APP_ROOT, "storage", "labels");
   fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
-  app.use("/labels", express.static(SHIPPING_DOCS_DIR));
+  app.use("/labels", express.static(SHIPPING_DOCS_DIR, {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith(".pdf")) {
+        res.setHeader("Content-Type", "application/pdf");
+      } else if (filePath.endsWith(".html")) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+      }
+      res.setHeader("Cache-Control", "no-store");
+    },
+  }));
 
   function extensionForContentType(contentType: string): string {
     if (contentType.includes("zip")) return "zip";
@@ -4993,6 +5010,13 @@ async function startServer() {
     const downloadResult = await downloadShippingDocumentsMerged(shopId, accessToken, cleanOrderList);
     if ("error" in downloadResult || !downloadResult.buffer) {
       return { success: false, error: (downloadResult as any).error, message: (downloadResult as any).message };
+    }
+    if (downloadResult.buffer.length < 128) {
+      return {
+        success: false,
+        error: "empty_label_file",
+        message: "Shopee trả về file vận đơn rỗng — vui lòng thử lại sau khi đơn đã có mã vận đơn thật (SPXVN...).",
+      };
     }
 
     const ext = extensionForContentType(downloadResult.contentType);

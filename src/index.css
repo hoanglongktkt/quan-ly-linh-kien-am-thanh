@@ -190,18 +190,70 @@ body {
 
 /* Used by the manual/off-platform packing-slip print preview (window.print()) */
 @media print {
+  @page {
+    margin: 6mm;
+    size: auto;
+  }
+
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide app chrome — only show printable slip area */
+  .om-no-print {
+    display: none !important;
+  }
+
   body * {
     visibility: hidden;
   }
+
   #bulk-print-area,
   #bulk-print-area * {
-    visibility: visible;
+    visibility: visible !important;
   }
+
   #bulk-print-area {
-    position: absolute;
-    inset: 0;
+    position: fixed !important;
+    inset: 0 !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
     max-height: none !important;
+    height: auto !important;
     overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: white !important;
+    z-index: 2147483647 !important;
+    display: block !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  #bulk-print-area .print-slip-page {
+    position: relative !important;
+    overflow: visible !important;
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 auto 8mm !important;
+    page-break-after: always;
+    break-after: page;
+    box-shadow: none !important;
+    border: 1px solid #000 !important;
+    color: #000 !important;
+    background: white !important;
+  }
+
+  #bulk-print-area .print-slip-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
   }
 }
 

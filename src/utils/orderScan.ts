@@ -1,4 +1,5 @@
 import type { Order } from '../types';
+import { isShopeeInternalTrackingCode } from './orderTracking';
 
 /** Normalize for comparison: uppercase, strip common separators. */
 export function normalizeOrderScanKey(raw: string): string {
@@ -94,7 +95,7 @@ export function buildScanLookupKeys(raw: string): string[] {
 
 /** Heuristic: Shopee sorting / first-mile code on AWB (0FG...). */
 export function isLikelyInternalTrackingCode(raw: string): boolean {
-  return /^0FG/i.test(String(raw || '').trim());
+  return isShopeeInternalTrackingCode(raw);
 }
 
 /** Flexible OR match: orderSn OR trackingNumber OR internalTrackingCode OR packageNumber. */

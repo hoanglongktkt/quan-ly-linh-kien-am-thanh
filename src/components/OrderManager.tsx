@@ -56,9 +56,10 @@ import {
   StructuredAddressValue,
 } from '../utils/vietnamAddress';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
+import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 
 function getOrderWaybillCode(order: Order): string {
-  return String(order.trackingNumber || order.packageNumber || '').trim();
+  return getCarrierWaybillDisplay(order);
 }
 
 interface OrderManagerProps {
@@ -418,25 +419,64 @@ export default function OrderManager({
     };
   };
 
-  // Opens a real Shopee AWB/label file (PDF/HTML) — now served from our own
-  // public /labels/<file> link (like Sapo) — in a new tab and immediately
-  // triggers the OS's native print dialog via the standard window.open(url).print().
-  const openAndPrintDocument = (url: string) => {
-    const printWindow = window.open(url, '_blank');
-    if (printWindow) {
-      printWindow.focus();
-      printWindow.onload = function () {
-        printWindow.print();
-      };
-      // PDF native viewers often don't fire a reliable `load` event — retry once after render settles.
-      setTimeout(() => {
+  // Opens Shopee AWB (PDF/HTML) — fetch blob first so print dialog waits for real content.
+  const openAndPrintDocument = async (url: string) => {
+    const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url.startsWith('/') ? url : `/${url}`}`;
+
+    const triggerPrint = (win: Window | null | undefined, cleanup?: () => void) => {
+      if (!win) return;
+      const run = () => {
         try {
-          printWindow.print();
+          win.focus();
+          win.print();
         } catch {
-          // Cross-origin or already-closed — ignore, the tab is still visible for manual printing.
+          /* popup blocked or cross-origin */
+        } finally {
+          cleanup?.();
         }
-      }, 800);
+      };
+      win.addEventListener('load', () => setTimeout(run, 400));
+      setTimeout(run, 1800);
+    };
+
+    try {
+      const res = await fetch(fullUrl, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const contentType = res.headers.get('content-type') || '';
+      const blob = await res.blob();
+
+      if (contentType.includes('html') || fullUrl.endsWith('.html')) {
+        const html = await blob.text();
+        const iframe = document.createElement('iframe');
+        iframe.setAttribute('title', 'print-label');
+        iframe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;border:0;opacity:0;pointer-events:none';
+        document.body.appendChild(iframe);
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (!doc) throw new Error('iframe unavailable');
+        doc.open();
+        doc.write(html);
+        doc.close();
+        triggerPrint(iframe.contentWindow || undefined, () => {
+          setTimeout(() => iframe.remove(), 2000);
+        });
+        return;
+      }
+
+      const blobUrl = URL.createObjectURL(blob);
+      const printWindow = window.open(blobUrl, '_blank');
+      triggerPrint(printWindow, () => setTimeout(() => URL.revokeObjectURL(blobUrl), 120000));
+    } catch {
+      const printWindow = window.open(fullUrl, '_blank');
+      triggerPrint(printWindow);
     }
+  };
+
+  const handlePackingSlipPrint = () => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(() => window.print(), 150);
+      });
+    });
   };
 
   // Calls the real Shopee shipping-document flow (create → poll → download AWB PDF)
@@ -456,7 +496,7 @@ export default function OrderManager({
     const printUrl = data.mergedUrl || (data.documents || []).find((d: any) => d.url)?.url;
 
     if (printUrl) {
-      openAndPrintDocument(printUrl);
+      await openAndPrintDocument(printUrl);
     }
 
     if (Array.isArray(data.orders)) {
@@ -2829,12 +2869,12 @@ export default function OrderManager({
                       </div>
                     </div>
                   )}
-                  {selectedOrderDetails.trackingNumber && (
+                  {getCarrierWaybillDisplay(selectedOrderDetails) && (
                     <div className="flex items-center gap-2">
                       <Barcode className="w-4 h-4 text-indigo-500 shrink-0" />
                       <div>
-                        <span className="text-gray-400">Mã bưu cục vận đơn:</span>{' '}
-                        <strong className="text-gray-800 font-mono">{selectedOrderDetails.trackingNumber}</strong>
+                        <span className="text-gray-400">Mã vận đơn:</span>{' '}
+                        <strong className="text-gray-800 font-mono">{getCarrierWaybillDisplay(selectedOrderDetails)}</strong>
                       </div>
                     </div>
                   )}
@@ -3004,9 +3044,9 @@ export default function OrderManager({
 
       {/* 8. MODAL 2: BULK PRINT SLIPS & PACKING LABELS (Close fit to mockup requirements) */}
       {bulkPrintOrders && bulkPrintOrders.length > 0 && (
-        <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-3xl w-full overflow-hidden shadow-2xl flex flex-col">
-            <div className="p-5 bg-slate-900 text-white flex items-center justify-between">
+        <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in om-no-print">
+          <div className="bg-white rounded-3xl max-w-3xl w-full overflow-hidden shadow-2xl flex flex-col print:overflow-visible print:max-h-none print:shadow-none print:rounded-none">
+            <div className="p-5 bg-slate-900 text-white flex items-center justify-between om-no-print">
               <div className="flex items-center gap-2">
                 <Printer className="w-5 h-5 text-blue-400 animate-pulse" />
                 <div>
@@ -3023,11 +3063,11 @@ export default function OrderManager({
             </div>
 
             {/* Scrollable Printable list */}
-            <div id="bulk-print-area" className="p-6 bg-slate-100/50 overflow-y-auto max-h-[480px] space-y-6">
+            <div id="bulk-print-area" className="p-6 bg-slate-100/50 overflow-y-auto max-h-[480px] space-y-6 print:p-0 print:bg-white print:max-h-none print:overflow-visible">
               {bulkPrintOrders.map((order, index) => (
                 <div 
                   key={order.id} 
-                  className="bg-white p-5 rounded-xl border-2 border-dashed border-slate-300 w-full max-w-lg mx-auto shadow-sm text-[11px] text-black font-sans space-y-3 relative"
+                  className="print-slip-page bg-white p-5 rounded-xl border-2 border-dashed border-slate-300 w-full max-w-lg mx-auto shadow-sm text-[11px] text-black font-sans space-y-3 relative"
                 >
                   {/* Order counter indicator */}
                   <span className="absolute top-2 right-2 bg-blue-600 text-white text-[10px] font-black px-2 py-0.5 rounded-full">
@@ -3052,9 +3092,9 @@ export default function OrderManager({
                           <div key={i} className="bg-black" style={{ width: `${Math.floor(1 + Math.random() * 3)}px`, height: '100%' }}></div>
                         ))}
                       </div>
-                      {order.trackingNumber || 'CHƯA_XÁC_ĐỊNH_VẬN_ĐƠN'}
+                      {getCarrierWaybillDisplay(order) || 'CHƯA_XÁC_ĐỊNH_VẬN_ĐƠN'}
                     </div>
-                    <span className="font-mono text-[9px] uppercase font-black">MÃ VẬN ĐƠN: {order.trackingNumber || 'CHƯA PHÁT HÀNH'}</span>
+                    <span className="font-mono text-[9px] uppercase font-black">MÃ VẬN ĐƠN: {getCarrierWaybillDisplay(order) || 'CHƯA PHÁT HÀNH'}</span>
                   </div>
 
                   {/* Addresses */}
@@ -3098,7 +3138,7 @@ export default function OrderManager({
             </div>
 
             {/* Print trigger and dialog dismiss */}
-            <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-between items-center">
+            <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-between items-center om-no-print">
               <span className="text-xs text-slate-500 font-bold">
                 * Đơn ngoài Shopee (không có vận đơn điện tử) — in phiếu đóng gói tạm thời bằng máy in mặc định của Windows.
               </span>
@@ -3110,7 +3150,7 @@ export default function OrderManager({
                   Đóng lại
                 </button>
                 <button 
-                  onClick={() => window.print()}
+                  onClick={handlePackingSlipPrint}
                   className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5"
                 >
                   <Printer className="w-4 h-4" />
