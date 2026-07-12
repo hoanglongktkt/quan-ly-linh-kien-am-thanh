@@ -23,6 +23,7 @@
     "express": "^4.22.2",
     "html5-qrcode": "^2.3.8",
     "jsonwebtoken": "^9.0.3",
+    "localforage": "^1.10.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "pdf-lib": "^1.17.1",

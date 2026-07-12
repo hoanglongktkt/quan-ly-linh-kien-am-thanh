@@ -20,7 +20,8 @@ import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import { APP_TITLE } from './config/brand';
 import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
 import { sanitizeOrders } from './utils/sanitizeOrder';
-import { debugLog } from './utils/debugLog';
+import { safeGetItem, safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
+import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
 import { 
   LayoutDashboard, 
   Package, 
@@ -75,24 +76,13 @@ export default function App() {
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
 
-  // Orders are no longer seeded from local mock data — they are loaded live
-  // from the backend's real synced-orders store (populated by the Shopee webhook).
-  const isRealSyncedOrder = (o: Order): boolean => {
-    const hasAmount = Number(o?.totalAmount) > 0;
-    const hasItems = Array.isArray(o?.items) && o.items.length > 0;
-    if (!hasAmount && !hasItems) return false;
-    if (String(o.orderSn || '').startsWith('260709') && !hasItems && Number(o.totalAmount) === 0) return false;
-    return true;
-  };
-
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [productsLoading, setProductsLoading] = useState<boolean>(false);
 
-  const [logs, setLogs] = useState<SyncLog[]>(() => {
-    const saved = localStorage.getItem('omni_logs');
-    return saved ? JSON.parse(saved) : INITIAL_SYNC_LOGS;
-  });
+  const [logs, setLogs] = useState<SyncLog[]>(() =>
+    safeGetJson('omni_logs', INITIAL_SYNC_LOGS),
+  );
 
   const [settings, setSettings] = useState<ChannelSettings>(() => {
     const empty: ChannelSettings = {
@@ -104,11 +94,10 @@ export default function App() {
       tiktokApiKey: '',
       shops: [],
     };
-    const saved = localStorage.getItem('omni_settings');
+    const saved = safeGetJson<ChannelSettings | null>('omni_settings', null);
     if (!saved) return empty;
     try {
-      const parsed = JSON.parse(saved) as ChannelSettings;
-      return { ...empty, ...parsed, shops: stripDemoShops(parsed.shops ?? []) };
+      return { ...empty, ...saved, shops: stripDemoShops(saved.shops ?? []) };
     } catch {
       return empty;
     }
@@ -138,47 +127,19 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Đơn hàng lấy từ API server — không cache localStorage (tránh vượt quota ~5MB).
+  // Đơn hàng: RAM (React state) + IndexedDB cache — không dùng localStorage.
   useEffect(() => {
-    // #region agent log
-    try {
-      const legacy = localStorage.getItem('omni_orders');
-      const legacyBytes = legacy ? new Blob([legacy]).size : 0;
-      debugLog('App.tsx:mount', 'legacy omni_orders before clear', { legacyBytes, hadLegacy: Boolean(legacy) }, 'H1');
-      if (legacy) localStorage.removeItem('omni_orders');
-    } catch (err) {
-      debugLog('App.tsx:mount', 'clear omni_orders error', { err: String(err) }, 'H1');
-    }
-    // #endregion
+    clearLegacyOrdersLocalStorage();
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('omni_logs', JSON.stringify(logs));
-    } catch (err) {
-      // #region agent log
-      debugLog('App.tsx:logsPersist', 'omni_logs setItem failed', { err: String(err) }, 'H4');
-      // #endregion
-    }
+    const trimmed = logs.length > 200 ? logs.slice(-200) : logs;
+    safeSetItem('omni_logs', JSON.stringify(trimmed));
   }, [logs]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('omni_settings', JSON.stringify(settings));
-    } catch (err) {
-      // #region agent log
-      debugLog('App.tsx:settingsPersist', 'omni_settings setItem failed', { err: String(err) }, 'H4');
-      // #endregion
-    }
+    safeSetItem('omni_settings', JSON.stringify(settings));
   }, [settings]);
-
-  useEffect(() => {
-    if (!orders.length) return;
-    // #region agent log
-    const bytes = new Blob([JSON.stringify(orders)]).size;
-    debugLog('App.tsx:ordersState', 'orders in memory (no localStorage write)', { count: orders.length, bytes }, 'H3');
-    // #endregion
-  }, [orders]);
 
   // Token Verification on Mount
   useEffect(() => {
@@ -203,12 +164,12 @@ export default function App() {
           setIsAuthenticated(true);
           setAdminUser(data.username);
         } else {
-          localStorage.removeItem('admin_token');
+          safeRemoveItem('admin_token');
           setIsAuthenticated(false);
         }
       } catch (err) {
         console.error("Auth verification error:", err);
-        localStorage.removeItem('admin_token');
+        safeRemoveItem('admin_token');
         setIsAuthenticated(false);
       } finally {
         setAuthChecking(false);
@@ -232,11 +193,8 @@ export default function App() {
       if (response.ok) {
         const data: Order[] = await response.json();
         const sanitized = sanitizeOrders(data);
-        // #region agent log
-        const bytes = new Blob([JSON.stringify(sanitized)]).size;
-        debugLog('App.tsx:fetchOrders', 'api orders loaded', { count: sanitized.length, bytes }, 'H2');
-        // #endregion
         setOrders(sanitized);
+        void saveOrdersCache(sanitized);
       }
     } catch (err) {
       console.error("Fetch orders error:", err);
@@ -352,11 +310,8 @@ export default function App() {
       }
       if (Array.isArray(data.orders)) {
         const sanitized = sanitizeOrders(data.orders);
-        // #region agent log
-        const bytes = new Blob([JSON.stringify(sanitized)]).size;
-        debugLog('App.tsx:pullOrders', 'pulled orders', { count: sanitized.length, bytes }, 'H2');
-        // #endregion
         setOrders(sanitized);
+        void saveOrdersCache(sanitized);
       }
       if (data.warning) {
         throw new Error(data.warning);
@@ -374,6 +329,7 @@ export default function App() {
     const sanitized = sanitizeOrders(updatedOrders);
     const previousById = new Map(orders.map(o => [o.id, o]));
     setOrders(sanitized);
+    void saveOrdersCache(sanitized);
 
     const token = localStorage.getItem('admin_token');
     if (!token) return;
@@ -394,13 +350,13 @@ export default function App() {
   };
 
   const handleLoginSuccess = (token: string, username: string) => {
-    localStorage.setItem('admin_token', token);
+    safeSetItem('admin_token', token);
     setIsAuthenticated(true);
     setAdminUser(username);
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('admin_token');
+    safeRemoveItem('admin_token');
     setIsAuthenticated(false);
     setAdminUser('');
     setActiveTab('dashboard');
@@ -770,14 +726,17 @@ export default function App() {
     const bootstrapCatalog = async () => {
       purgeLegacyCatalogCache();
 
-      if (localStorage.getItem(CATALOG_PURGE_FLAG) !== '1') {
+      const cached = await loadOrdersCache();
+      if (cached.length) setOrders(cached);
+
+      if (safeGetItem(CATALOG_PURGE_FLAG) !== '1') {
         try {
           const res = await fetch('/api/catalog/wipe-all', {
             method: 'POST',
             headers: apiAuthHeaders(),
           });
           if (res.ok) {
-            localStorage.setItem(CATALOG_PURGE_FLAG, '1');
+            safeSetItem(CATALOG_PURGE_FLAG, '1');
           }
         } catch (err) {
           console.warn('[Catalog] wipe-all skipped:', err);

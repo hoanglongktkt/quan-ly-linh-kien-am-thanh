@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Smartphone, Monitor, RotateCcw } from 'lucide-react';
+import { safeGetItem, safeSetItem } from '../utils/safeStorage';
 
 type DeviceMode = 'auto' | 'mobile' | 'desktop';
 
@@ -28,12 +29,12 @@ export default function DevicePreviewShell({ children }: { children: React.React
 
   const [mode, setMode] = useState<DeviceMode>(() => {
     if (embedded || !isDev) return 'auto';
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = safeGetItem(STORAGE_KEY);
     return saved === 'mobile' || saved === 'desktop' ? (saved as DeviceMode) : 'auto';
   });
 
   useEffect(() => {
-    if (!embedded && isDev) localStorage.setItem(STORAGE_KEY, mode);
+    if (!embedded && isDev) safeSetItem(STORAGE_KEY, mode);
   }, [mode, embedded, isDev]);
 
   // Content loaded inside the simulator iframe must render plainly,

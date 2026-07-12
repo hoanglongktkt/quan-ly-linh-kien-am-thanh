@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ChannelSettings, SyncLog, ConnectedShop } from '../types';
 import { getPublicAppOrigin, apiFetch, parseJsonResponse } from '../utils/apiClient';
+import { safeGetJson, safeSetItem } from '../utils/safeStorage';
 import { 
   Key, 
   Settings, 
@@ -142,15 +143,13 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   };
 
   // Shipping Carrier configs (persist to localStorage)
-  const [ghnConfig, setGhnConfig] = useState(() => {
-    const saved = localStorage.getItem('omni_ghn_config');
-    return saved ? JSON.parse(saved) : { connected: true, token: 'ghn-tok-987293x18239081', shopId: '1938210', service: 'standard' };
-  });
+  const [ghnConfig, setGhnConfig] = useState(() =>
+    safeGetJson('omni_ghn_config', { connected: true, token: 'ghn-tok-987293x18239081', shopId: '1938210', service: 'standard' }),
+  );
 
-  const [spxConfig, setSpxConfig] = useState(() => {
-    const saved = localStorage.getItem('omni_spx_config');
-    return saved ? JSON.parse(saved) : { connected: false, clientId: 'spx-client-id-demo', clientSecret: '••••••••••••••••', merchantId: 'SPX_MERCH_4812' };
-  });
+  const [spxConfig, setSpxConfig] = useState(() =>
+    safeGetJson('omni_spx_config', { connected: false, clientId: 'spx-client-id-demo', clientSecret: '••••••••••••••••', merchantId: 'SPX_MERCH_4812' }),
+  );
 
   const [isTestingLogistics, setIsTestingLogistics] = useState<'ghn' | 'spx' | null>(null);
 
@@ -236,10 +235,10 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   const handleSaveLogistics = (carrier: 'ghn' | 'spx', updated: any) => {
     if (carrier === 'ghn') {
       setGhnConfig(updated);
-      localStorage.setItem('omni_ghn_config', JSON.stringify(updated));
+      safeSetItem('omni_ghn_config', JSON.stringify(updated));
     } else {
       setSpxConfig(updated);
-      localStorage.setItem('omni_spx_config', JSON.stringify(updated));
+      safeSetItem('omni_spx_config', JSON.stringify(updated));
     }
     alert(`Đã lưu thành công cấu hình đơn vị vận chuyển ${carrier === 'ghn' ? 'Giao Hàng Nhanh (GHN)' : 'Shopee SPX Express'}!`);
   };

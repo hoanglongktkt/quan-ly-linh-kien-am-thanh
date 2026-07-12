@@ -1,20 +1,17 @@
 import { CategorySelection, MarketplacePlatform } from '../types/marketplaceCategory';
 
+import { safeGetJson, safeSetItem } from '../utils/safeStorage';
+
 const HISTORY_KEY = 'omni_category_history';
 
 type HistoryStore = Partial<Record<MarketplacePlatform, CategorySelection[]>>;
 
 function readStore(): HistoryStore {
-  try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
+  return safeGetJson<HistoryStore>(HISTORY_KEY, {});
 }
 
 function writeStore(store: HistoryStore) {
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(store));
+  safeSetItem(HISTORY_KEY, JSON.stringify(store));
 }
 
 export function getCategoryHistory(platform: MarketplacePlatform): CategorySelection[] {
