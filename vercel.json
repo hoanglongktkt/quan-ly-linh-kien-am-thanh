@@ -23,7 +23,7 @@
   "rewrites": [
     {
       "source": "/labels/:path*",
-      "destination": "https://quanly.linhkienamthanh.net/labels/:path*"
+      "destination": "/api/labels/:path*"
     },
     {
       "source": "/api/:path*",

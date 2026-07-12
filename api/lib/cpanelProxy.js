@@ -23,6 +23,8 @@ const LONG_RUNNING_PREFIXES = [
   'products/bulk-save',
   'products/bulk-channel-sync',
   'catalog/wipe-all',
+  'shopee/ship-order',
+  'shopee/print-document',
 ];
 
 export function resolveProxyTimeoutMs(pathPart) {

@@ -49,11 +49,31 @@ function resolveAppBaseUrl(): string {
 
 const APP_BASE_URL = resolveAppBaseUrl();
 
+function resolveLabelsPublicBaseUrl(): string {
+  const explicit = String(process.env.LABELS_BASE_URL || process.env.CPANEL_PUBLIC_URL || "").trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  const host = APP_BASE_URL.replace(/^https?:\/\//, "").toLowerCase();
+  if (host.startsWith("quanly.") || host === "www.quanly.linhkienamthanh.net") {
+    return "https://api.linhkienamthanh.net";
+  }
+  return APP_BASE_URL.replace(/\/$/, "");
+}
+
 function absoluteLabelUrl(relativePath: string | null | undefined): string | null {
   if (!relativePath) return null;
-  if (/^https?:\/\//i.test(relativePath)) return relativePath;
+  if (/^https?:\/\//i.test(relativePath)) {
+    try {
+      const u = new URL(relativePath);
+      if (u.hostname.includes("quanly.linhkienamthanh.net")) {
+        return `${resolveLabelsPublicBaseUrl()}${u.pathname}`;
+      }
+    } catch {
+      /* keep as-is */
+    }
+    return relativePath;
+  }
   const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
-  return `${APP_BASE_URL.replace(/\/$/, "")}${p}`;
+  return `${resolveLabelsPublicBaseUrl()}${p}`;
 }
 
 /** Shopee console khai báo domain quanly — redirect_uri phải cùng domain đó. */

@@ -1,5 +1,5 @@
-/** Backend production (cPanel) — dùng khi frontend gọi API cross-origin trực tiếp. */
-export const PRODUCTION_API_BASE = 'https://quanly.linhkienamthanh.net';
+/** Backend production (cPanel Node) — KHÔNG dùng domain frontend quanly (Vercel). */
+export const PRODUCTION_API_BASE = 'https://api.linhkienamthanh.net';
 
 /** Domain chính thức của ứng dụng (frontend). */
 export const PRODUCTION_APP_ORIGIN = 'https://quanly.linhkienamthanh.net';
@@ -47,14 +47,25 @@ export function getApiBaseUrl(): string {
   return typeof window !== 'undefined' ? PRODUCTION_API_BASE : '';
 }
 
-/** Ghép URL file tĩnh trên backend (vận đơn PDF /labels/...) — không dùng origin Vercel. */
+/**
+ * URL mở file vận đơn PDF.
+ * Vercel / quanly: relative `/labels/...` → vercel.json proxy `/api/labels/...` → cPanel (tránh 508 loop).
+ * Khác origin: trỏ thẳng api.linhkienamthanh.net.
+ */
 export function resolveBackendFileUrl(path: string): string {
-  const normalized = path.startsWith('/') ? path : `/${path}`;
+  let normalized = path.startsWith('/') ? path : `/${path}`;
+  if (/^https?:\/\//i.test(path)) {
+    try {
+      normalized = new URL(path).pathname;
+    } catch {
+      normalized = path.startsWith('/') ? path : `/${path}`;
+    }
+  }
   if (typeof window === 'undefined') {
     return `${PRODUCTION_API_BASE}${normalized}`;
   }
   const hostname = window.location.hostname;
-  if (isLocalDevHost(hostname) || isMainProductionHost(hostname)) {
+  if (isLocalDevHost(hostname) || isVercelHost(hostname) || isMainProductionHost(hostname)) {
     return normalized;
   }
   return `${PRODUCTION_API_BASE}${normalized}`;

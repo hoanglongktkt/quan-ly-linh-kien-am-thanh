@@ -55,7 +55,7 @@ import {
   isStructuredAddressComplete,
   StructuredAddressValue,
 } from '../utils/vietnamAddress';
-import { resolveBackendFileUrl } from '../utils/apiClient';
+import { resolveBackendFileUrl, parseJsonResponse } from '../utils/apiClient';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 
@@ -491,64 +491,85 @@ export default function OrderManager({
 
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,
   // per the seller's choice) for every order currently queued in `shipConfirmOrders`.
-  const pollShipJobInBackground = (jobId: string, total: number, queuedCount: number) => {
-    void (async () => {
-      const deadline = Date.now() + 15 * 60 * 1000;
-      let finalJob: any = null;
+  const pollShipJobUntilDone = async (jobId: string, total: number): Promise<any | null> => {
+    const deadline = Date.now() + 15 * 60 * 1000;
+    let finalJob: any = null;
 
-      while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 1200));
-        try {
-          const jobRes = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
-          if (!jobRes.ok) break;
-          const job = await jobRes.json();
-          finalJob = job;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 900));
+      try {
+        const jobRes = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
+        if (!jobRes.ok) break;
+        const job = await parseJsonResponse<any>(jobRes);
+        finalJob = job;
 
-          if (Array.isArray(job.orders)) {
-            onUpdateOrders(job.orders);
-            ordersRef.current = job.orders;
-          }
+        setProgressCompleted(job.completed || 0);
+        setProgressTotal(job.total || total);
 
-          if (job.status === 'done' || job.status === 'failed') break;
-        } catch {
-          break;
+        if (Array.isArray(job.orders)) {
+          onUpdateOrders(job.orders);
+          ordersRef.current = job.orders;
+        }
+
+        if (job.status === 'printing') {
+          setProgressMessage(`Đã xác nhận ${job.successCount || job.completed}/${job.total} đơn — đang tạo vận đơn PDF...`);
+        } else if (job.status === 'running' || job.status === 'pending') {
+          setProgressMessage(`Đang đồng bộ Shopee: ${job.completed}/${job.total} đơn`);
+        }
+
+        if (job.status === 'done' || job.status === 'failed') break;
+      } catch {
+        break;
+      }
+    }
+
+    return finalJob;
+  };
+
+  const finishShipJobResult = async (finalJob: any | null, queuedCount: number, total: number) => {
+    const successCount = finalJob?.successCount || 0;
+    const failed = (finalJob?.results || []).filter((r: any) => !r.success);
+
+    onAddLog({
+      id: `log-${Date.now() + 2}`,
+      timestamp: new Date().toISOString(),
+      channel: 'all',
+      type: 'stock_sync',
+      status: successCount > 0 ? 'success' : 'failed',
+      message: `Đồng bộ Shopee xong: ${successCount}/${queuedCount} đơn (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'}).`,
+    });
+
+    if (finalJob?.status === 'failed') {
+      showToast(finalJob.error || 'Đồng bộ Shopee gặp lỗi. Vui lòng kiểm tra lại danh sách đơn.');
+    } else if (successCount === 0) {
+      const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
+      showToast(`Không xác nhận được đơn nào trên Shopee. ${errDetail || 'Vui lòng thử lại.'}`);
+    } else if (failed.length > 0) {
+      showToast(`Shopee: ${successCount}/${queuedCount} đơn OK, ${failed.length} đơn lỗi.`);
+    } else {
+      showToast(`Xác nhận thành công ${successCount}/${total} đơn — đang mở vận đơn in...`);
+    }
+
+    if (finalJob?.printDocument?.url) {
+      openShopeeLabelInNewTab(finalJob.printDocument.url);
+    } else if (successCount > 0) {
+      const shopeeIds = (finalJob?.results || [])
+        .filter((r: any) => r.success)
+        .map((r: any) => r.orderId)
+        .filter(Boolean);
+      if (shopeeIds.length > 0) {
+        const printResult = await printShopeeDocuments(shopeeIds);
+        if (!printResult.success && printResult.message) {
+          showToast(printResult.message);
         }
       }
+    } else if (finalJob?.printDocument?.message) {
+      showToast(finalJob.printDocument.message);
+    }
 
-      const successCount = finalJob?.successCount || 0;
-      const failed = (finalJob?.results || []).filter((r: any) => !r.success);
-
-      onAddLog({
-        id: `log-${Date.now() + 2}`,
-        timestamp: new Date().toISOString(),
-        channel: 'all',
-        type: 'stock_sync',
-        status: successCount > 0 ? 'success' : 'failed',
-        message: `Đồng bộ Shopee xong: ${successCount}/${queuedCount} đơn (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'}).`
-      });
-
-      if (finalJob?.status === 'failed') {
-        showToast(finalJob.error || 'Đồng bộ Shopee gặp lỗi. Vui lòng kiểm tra lại danh sách đơn.');
-      } else if (successCount === 0) {
-        const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
-        showToast(`Không xác nhận được đơn nào trên Shopee. ${errDetail || 'Vui lòng thử lại.'}`);
-      } else if (failed.length > 0) {
-        showToast(`Shopee: ${successCount}/${queuedCount} đơn OK, ${failed.length} đơn lỗi.`);
-      } else {
-        showToast(`Shopee đã đồng bộ xong ${successCount}/${total} đơn.`);
-      }
-
-      if (finalJob?.printDocument?.url) {
-        openShopeeLabelInNewTab(finalJob.printDocument.url);
-        showToast(`Đã mở vận đơn gộp (${finalJob.printDocument.printedOrderSns?.length || successCount} đơn).`);
-      } else if (finalJob?.printDocument?.message) {
-        showToast(finalJob.printDocument.message);
-      }
-
-      if (onRefreshOrders) {
-        await onRefreshOrders();
-      }
-    })();
+    if (onRefreshOrders) {
+      await onRefreshOrders();
+    }
   };
 
   const confirmShipOrders = async () => {
@@ -591,14 +612,54 @@ export default function OrderManager({
     });
 
     try {
-      const res = await fetch('/api/shopee/ship-order/bulk-async', {
+      let res = await fetch('/api/shopee/ship-order/bulk-async', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
       });
-      const data = await res.json();
+
+      if (res.status === 404 || res.status === 502 || res.status === 503) {
+        setProgressMessage(`Backend chưa hỗ trợ async — đang xác nhận ${queuedOrders.length} đơn (có thể mất vài phút)...`);
+        res = await fetch('/api/shopee/ship-order/bulk', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
+        });
+        const syncData = await parseJsonResponse<any>(res);
+        if (Array.isArray(syncData.orders)) {
+          onUpdateOrders(syncData.orders);
+          ordersRef.current = syncData.orders;
+        }
+        setShipConfirmOrders(null);
+        setSelectedOrderIds([]);
+        setActiveSubTab('processed');
+        setPrintFilter('all');
+
+        const successCount = syncData.successCount || 0;
+        if (successCount === 0) {
+          const failed = (syncData.results || []).filter((r: any) => !r.success);
+          const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
+          showToast(`Không xác nhận được đơn nào. ${errDetail || 'Vui lòng thử lại.'}`);
+          return;
+        }
+
+        showToast(`Xác nhận thành công ${successCount}/${queuedOrders.length} đơn — đang mở vận đơn in...`);
+        if (syncData.printDocument?.url) {
+          openShopeeLabelInNewTab(syncData.printDocument.url);
+        } else {
+          const shopeeIds = (syncData.results || [])
+            .filter((r: any) => r.success)
+            .map((r: any) => r.orderId)
+            .filter(Boolean);
+          if (shopeeIds.length > 0) await printShopeeDocuments(shopeeIds);
+        }
+        if (onRefreshOrders) await onRefreshOrders();
+        return;
+      }
+
+      const data = await parseJsonResponse<any>(res);
       if (!res.ok && res.status !== 202) {
-        showToast(data.message || data.error || 'Không thể bắt đầu xác nhận đơn hàng.');
+        showToast(data.message || data.error || data.detail || 'Không thể bắt đầu xác nhận đơn hàng.');
         if (onRefreshOrders) await onRefreshOrders();
         return;
       }
@@ -612,15 +673,22 @@ export default function OrderManager({
       setSelectedOrderIds([]);
       setActiveSubTab('processed');
       setPrintFilter('all');
-      showToast(`Đã ghi nhận ${queuedOrders.length} đơn — Shopee đang xử lý phía sau, bạn có thể tiếp tục đơn khác.`);
 
       const jobId = data.jobId as string | undefined;
       const total = Number(data.total) || queuedOrders.length;
-      if (jobId) {
-        pollShipJobInBackground(jobId, total, queuedOrders.length);
+      setProgressTotal(total);
+
+      if (!jobId) {
+        showToast(`Đã ghi nhận ${queuedOrders.length} đơn.`);
+        return;
       }
+
+      setProgressMessage(`Đang đồng bộ Shopee: 0/${total} đơn`);
+      const finalJob = await pollShipJobUntilDone(jobId, total);
+      await finishShipJobResult(finalJob, queuedOrders.length, total);
     } catch (err) {
-      showToast('Không thể kết nối API chuẩn bị hàng. Vui lòng kiểm tra kết nối và thử lại.');
+      const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
+      showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
       if (onRefreshOrders) await onRefreshOrders();
     } finally {
       setIsShipping(false);
