@@ -92,13 +92,19 @@ export function buildScanLookupKeys(raw: string): string[] {
   return [...keys];
 }
 
-/** Flexible OR match: orderSn OR trackingNumber OR packageNumber. */
+/** Heuristic: Shopee sorting / first-mile code on AWB (0FG...). */
+export function isLikelyInternalTrackingCode(raw: string): boolean {
+  return /^0FG/i.test(String(raw || '').trim());
+}
+
+/** Flexible OR match: orderSn OR trackingNumber OR internalTrackingCode OR packageNumber. */
 export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
   const scanKeys = buildScanLookupKeys(raw);
   if (scanKeys.length === 0) return false;
 
   const orderSnKey = normalizeOrderScanKey(order.orderSn);
   const trackingKey = order.trackingNumber ? normalizeOrderScanKey(order.trackingNumber) : '';
+  const internalKey = order.internalTrackingCode ? normalizeOrderScanKey(order.internalTrackingCode) : '';
   const packageKey = order.packageNumber ? normalizeOrderScanKey(order.packageNumber) : '';
   const idKey = normalizeOrderScanKey(order.id?.replace(/^shopee-/i, '') || '');
 
@@ -106,6 +112,7 @@ export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
     (sk) =>
       flexibleCodeMatch(sk, orderSnKey) ||
       flexibleCodeMatch(sk, trackingKey) ||
+      flexibleCodeMatch(sk, internalKey) ||
       flexibleCodeMatch(sk, packageKey) ||
       flexibleCodeMatch(sk, idKey)
   );
@@ -117,12 +124,22 @@ export function findOrderByScanPayload(orders: Order[], raw: string): Order | nu
   if (scanKeys.length === 0) return null;
 
   const trackingLike = isLikelyTrackingCode(raw);
+  const internalLike = isLikelyInternalTrackingCode(raw);
 
   if (trackingLike) {
     for (const order of orders) {
       const trackingKey = order.trackingNumber ? normalizeOrderScanKey(order.trackingNumber) : '';
       if (!trackingKey) continue;
       const matched = scanKeys.some((sk) => flexibleCodeMatch(sk, trackingKey));
+      if (matched) return order;
+    }
+  }
+
+  if (internalLike) {
+    for (const order of orders) {
+      const internalKey = order.internalTrackingCode ? normalizeOrderScanKey(order.internalTrackingCode) : '';
+      if (!internalKey) continue;
+      const matched = scanKeys.some((sk) => flexibleCodeMatch(sk, internalKey));
       if (matched) return order;
     }
   }

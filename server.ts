@@ -2012,6 +2012,7 @@ async function shopeeGetTrackingNumber(shopId: string, accessToken: string, orde
     shop_id: shopId,
     sign,
     order_sn: orderSn,
+    response_optional_fields: "first_mile_tracking_number,last_mile_tracking_number",
   });
   if (packageNumber) params.set("package_number", packageNumber);
 
@@ -2175,6 +2176,116 @@ function mapShopeeOrderLineItem(it: any) {
   };
 }
 
+// --- Shopee tracking: carrier (SPXVN...) vs internal sorting (0FG...) ---
+function isShopeeInternalTrackingCode(code: unknown): boolean {
+  return /^0FG/i.test(String(code || "").trim());
+}
+
+function isCarrierTrackingCode(code: unknown): boolean {
+  const k = String(code || "").trim().toUpperCase();
+  if (!k || isShopeeInternalTrackingCode(k)) return false;
+  return /^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST|LEX|NJV|GRB|MY|SG|TH|ID|PH)/.test(k);
+}
+
+function applyShopeeTrackingCode(order: any, rawCode: unknown) {
+  const code = String(rawCode || "").trim();
+  if (!code) return;
+  if (isCarrierTrackingCode(code)) {
+    order.trackingNumber = code;
+    return;
+  }
+  if (isShopeeInternalTrackingCode(code)) {
+    order.internalTrackingCode = code;
+    return;
+  }
+  if (!order.trackingNumber) order.trackingNumber = code;
+}
+
+function repairMisassignedTracking(order: any): any {
+  if (!order || typeof order !== "object") return order;
+  if (order.trackingNumber && isShopeeInternalTrackingCode(order.trackingNumber)) {
+    if (!order.internalTrackingCode) order.internalTrackingCode = order.trackingNumber;
+    order.trackingNumber = undefined;
+  }
+  return order;
+}
+
+function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
+  repairMisassignedTracking(merged);
+  const pickCarrier = (...candidates: unknown[]) => {
+    for (const c of candidates) {
+      const s = String(c || "").trim();
+      if (s && isCarrierTrackingCode(s)) return s;
+    }
+    for (const c of candidates) {
+      const s = String(c || "").trim();
+      if (s && !isShopeeInternalTrackingCode(s)) return s;
+    }
+    return undefined;
+  };
+  const pickInternal = (...candidates: unknown[]) => {
+    for (const c of candidates) {
+      const s = String(c || "").trim();
+      if (s && isShopeeInternalTrackingCode(s)) return s;
+    }
+    return undefined;
+  };
+
+  merged.trackingNumber = pickCarrier(
+    incoming.trackingNumber,
+    existing.trackingNumber,
+    incoming.lastMileTrackingNumber,
+    existing.lastMileTrackingNumber,
+  );
+  merged.internalTrackingCode = pickInternal(
+    incoming.internalTrackingCode,
+    existing.internalTrackingCode,
+    incoming.trackingNumber,
+    existing.trackingNumber,
+    incoming.firstMileTrackingNumber,
+    existing.firstMileTrackingNumber,
+  );
+}
+
+function applyShopeeGetTrackingResponse(order: any, trackResult: any): void {
+  const resp = trackResult?.response;
+  if (!resp) return;
+  if (resp.tracking_number) applyShopeeTrackingCode(order, resp.tracking_number);
+  if (resp.last_mile_tracking_number) applyShopeeTrackingCode(order, resp.last_mile_tracking_number);
+  if (resp.first_mile_tracking_number) {
+    if (isShopeeInternalTrackingCode(resp.first_mile_tracking_number)) {
+      order.internalTrackingCode = resp.first_mile_tracking_number;
+    } else {
+      applyShopeeTrackingCode(order, resp.first_mile_tracking_number);
+    }
+  }
+  repairMisassignedTracking(order);
+}
+
+function trackingForShopeeShippingDoc(order: any): string | undefined {
+  return order.trackingNumber || order.internalTrackingCode || undefined;
+}
+
+function needsShopeeTrackingEnrichment(order: any): boolean {
+  if (order.channel !== "shopee") return false;
+  const status = String(order.status || "");
+  if (!["processed", "shipping", "completed", "return_pending"].includes(status)) return false;
+  if (order.trackingNumber && isCarrierTrackingCode(order.trackingNumber)) return false;
+  return true;
+}
+
+async function enrichShopeeOrderTrackingFromApi(shopId: string, accessToken: string, order: any): Promise<any> {
+  repairMisassignedTracking(order);
+  if (!needsShopeeTrackingEnrichment(order)) return order;
+  try {
+    const result = await shopeeGetTrackingNumber(shopId, accessToken, order.orderSn, order.packageNumber);
+    applyShopeeGetTrackingResponse(order, result);
+  } catch (err) {
+    console.warn(`[Shopee Tracking] enrich ${order.orderSn} failed:`, err);
+  }
+  return order;
+}
+
 // Normalize one item from get_order_detail's `order_list` into this project's Order shape.
 function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any): any {
   const statusMap: Record<string, string> = {
@@ -2190,8 +2301,8 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     COMPLETED: "completed",
   };
   const rawStatus = String(item.order_status || "READY_TO_SHIP").toUpperCase();
-
-  return {
+  const pkg = item.package_list?.[0];
+  const order: any = {
     id: `shopee-${item.order_sn}`,
     orderSn: String(item.order_sn),
     channel: "shopee",
@@ -2204,22 +2315,16 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     revenue: Number(item.total_amount || 0) * 0.88,
     status: statusMap[rawStatus] || "unprocessed",
     date: item.create_time ? new Date(item.create_time * 1000).toISOString() : new Date().toISOString(),
-    trackingNumber: item.package_list?.[0]?.tracking_number || undefined,
-    // NOTE: package_number is captured here for EVERY shipped order (not just
-    // split ones) because create_shipping_document/get_shipping_document_result/
-    // download_shipping_document actually need the real package_number to match
-    // up the print task correctly — omitting it is what causes Shopee's
-    // "logistics.shipping_document_should_print_first" error even after create
-    // succeeded and status is READY. ship_order is the ONLY call that must never
-    // receive package_number for a normal/unsplit order — that is enforced with
-    // its own absolute guard inside shopeeShipOrder(), independent of this field.
-    packageNumber: item.package_list?.[0]?.package_number || undefined,
+    packageNumber: pkg?.package_number || undefined,
     isPrepared: rawStatus === "PROCESSED" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE",
     isPrinted: false,
     items: Array.isArray(item.item_list)
       ? item.item_list.map((it: any) => mapShopeeOrderLineItem(it))
       : [],
   };
+  if (pkg?.tracking_number) applyShopeeTrackingCode(order, pkg.tracking_number);
+  repairMisassignedTracking(order);
+  return order;
 }
 
 // Upsert one Shopee order from get_order_detail — trust Shopee status for tab
@@ -2251,15 +2356,13 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   } else if (existingItems.length) {
     merged.items = existingItems;
   }
-  if (!incoming.trackingNumber && existing.trackingNumber) {
-    merged.trackingNumber = existing.trackingNumber;
-  }
   if (!incoming.packageNumber && existing.packageNumber) {
     merged.packageNumber = existing.packageNumber;
   }
   if (!incoming.shopId && existing.shopId) {
     merged.shopId = existing.shopId;
   }
+  mergeShopeeTrackingFields(merged, existing, incoming);
   return merged;
 }
 
@@ -2336,7 +2439,11 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
         }
         const detailList = detailResult.response?.order_list || [];
         for (const detail of detailList) {
-          syncedForShop.push(normalizeShopeeOrderDetail(fileKey, detail.shop_name, detail));
+          let normalized = normalizeShopeeOrderDetail(fileKey, detail.shop_name, detail);
+          if (needsShopeeTrackingEnrichment(normalized)) {
+            normalized = await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, normalized);
+          }
+          syncedForShop.push(normalized);
         }
       }
 
@@ -2409,6 +2516,17 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
     }
   }
 
+  for (const shopKey of shopIds) {
+    const auth = await getShopeeAccessTokenForApi(shopKey);
+    if (!auth) continue;
+    for (let i = 0; i < orders.length; i++) {
+      const o = orders[i];
+      if (o.channel !== "shopee" || String(o.shopId) !== String(auth.fileKey)) continue;
+      if (!needsShopeeTrackingEnrichment(o)) continue;
+      orders[i] = await enrichShopeeOrderTrackingFromApi(auth.apiShopId, auth.token, { ...o });
+    }
+  }
+
   const products = loadProducts();
   orders = enrichOrdersFromCatalog(orders, products);
   saveOrders(orders);
@@ -2445,7 +2563,8 @@ function loadOrders(): any[] {
   try {
     if (!fs.existsSync(ORDERS_DB_PATH)) return [];
     const raw = fs.readFileSync(ORDERS_DB_PATH, "utf-8");
-    return raw.trim() ? JSON.parse(raw) : [];
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map(repairMisassignedTracking) : [];
   } catch (error) {
     console.error("[Orders DB] Failed to read orders.json:", error);
     return [];
@@ -2455,7 +2574,8 @@ function loadOrders(): any[] {
 function saveOrders(orders: any[]): void {
   try {
     fs.mkdirSync(path.dirname(ORDERS_DB_PATH), { recursive: true });
-    fs.writeFileSync(ORDERS_DB_PATH, JSON.stringify(orders, null, 2), "utf-8");
+    const sanitized = orders.map(repairMisassignedTracking);
+    fs.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized, null, 2), "utf-8");
   } catch (error) {
     console.error("[Orders DB] Failed to write orders.json:", error);
   }
@@ -2872,7 +2992,7 @@ function normalizeShopeeOrder(payload: any): any | null {
 
   const rawStatus = String(data.status || data.order_status || "READY_TO_SHIP").toUpperCase();
 
-  return {
+  const order: any = {
     id: `shopee-${orderSn}`,
     orderSn: String(orderSn),
     channel: "shopee",
@@ -2885,16 +3005,6 @@ function normalizeShopeeOrder(payload: any): any | null {
     revenue: Number(data.total_amount || 0) * 0.88,
     status: statusMap[rawStatus] || "unprocessed",
     date: data.create_time ? new Date(data.create_time * 1000).toISOString() : new Date().toISOString(),
-    // Shopee's push envelope uses "tracking_no" (NOT "tracking_number" like the
-    // REST APIs) for the tracking-number-assigned webhook event — check both.
-    trackingNumber: data.tracking_no || data.tracking_number || undefined,
-    // Capture package_number from the webhook event too (e.g. the code=4
-    // "tracking assigned" push) — needed by create_shipping_document /
-    // get_shipping_document_result / download_shipping_document, which
-    // otherwise fail with "logistics.shipping_document_should_print_first".
-    // Safe to capture unconditionally: ship_order (the ONLY call that must
-    // never receive package_number for a normal/unsplit order) has its own
-    // absolute guard inside shopeeShipOrder(), independent of this field.
     packageNumber: data.package_number || undefined,
     isPrepared: false,
     isPrinted: false,
@@ -2902,6 +3012,10 @@ function normalizeShopeeOrder(payload: any): any | null {
       ? data.item_list.map((it: any) => mapShopeeOrderLineItem(it))
       : [],
   };
+  const rawTrack = data.tracking_no || data.tracking_number;
+  if (rawTrack) applyShopeeTrackingCode(order, rawTrack);
+  repairMisassignedTracking(order);
+  return order;
 }
 
 function processShopeeWebhookPayload(body: any): void {
@@ -2923,12 +3037,10 @@ function processShopeeWebhookPayload(body: any): void {
       if (!normalized.shopId) {
         merged.shopId = orders[existingIndex].shopId;
       }
-      if (!normalized.trackingNumber) {
-        merged.trackingNumber = orders[existingIndex].trackingNumber;
-      }
       if (!normalized.packageNumber) {
         merged.packageNumber = orders[existingIndex].packageNumber;
       }
+      mergeShopeeTrackingFields(merged, orders[existingIndex], normalized);
       orders[existingIndex] = merged;
     } else {
       orders.unshift(normalized);
@@ -3892,14 +4004,24 @@ async function startServer() {
     if (trackingLike) {
       for (const order of orders) {
         const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
-        if (!trackingKey) continue;
-        if (scanKeys.some((sk) => flexibleScanCodeMatch(sk, trackingKey))) return order;
+        const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
+        if (trackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, trackingKey))) return order;
+        if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey))) return order;
+      }
+    }
+
+    const internalLike = /^0FG/.test(normalizeScanLookupKey(raw));
+    if (internalLike) {
+      for (const order of orders) {
+        const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
+        if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey))) return order;
       }
     }
 
     for (const order of orders) {
       const orderSnKey = normalizeScanLookupKey(order.orderSn);
       const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
+      const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
       const packageKey = order.packageNumber ? normalizeScanLookupKey(order.packageNumber) : "";
       const idKey = normalizeScanLookupKey(String(order.id || "").replace(/^shopee-/i, ""));
 
@@ -3907,6 +4029,7 @@ async function startServer() {
         (sk) =>
           flexibleScanCodeMatch(sk, orderSnKey) ||
           flexibleScanCodeMatch(sk, trackingKey) ||
+          flexibleScanCodeMatch(sk, internalKey) ||
           flexibleScanCodeMatch(sk, packageKey) ||
           flexibleScanCodeMatch(sk, idKey)
       );
@@ -3915,7 +4038,7 @@ async function startServer() {
     return null;
   }
 
-  // Lookup order by scanned QR/barcode — matches orderSn OR trackingNumber OR packageNumber.
+  // Lookup order by scanned QR/barcode — matches orderSn OR trackingNumber OR internalTrackingCode OR packageNumber.
   app.get("/api/orders/lookup", authMiddleware, (req, res) => {
     const code = String(req.query.code || req.query.q || "").trim();
     if (!code) {
@@ -4915,13 +5038,13 @@ async function startServer() {
       const accessToken = await getValidShopeeAccessToken(shopId);
       if (!accessToken) continue;
       for (const o of groupOrders) {
-        if (o.trackingNumber) continue;
+        if (o.trackingNumber && isCarrierTrackingCode(o.trackingNumber)) continue;
         const trackResult = await shopeeGetTrackingNumber(shopId, accessToken, o.orderSn, o.packageNumber);
-        const fresh = trackResult.response?.tracking_number;
-        if (fresh) {
-          o.trackingNumber = fresh;
-          const idx = allOrders.findIndex((x: any) => x.orderSn === o.orderSn);
-          if (idx >= 0) allOrders[idx].trackingNumber = fresh;
+        applyShopeeGetTrackingResponse(o, trackResult);
+        const idx = allOrders.findIndex((x: any) => x.orderSn === o.orderSn);
+        if (idx >= 0) {
+          allOrders[idx].trackingNumber = o.trackingNumber;
+          allOrders[idx].internalTrackingCode = o.internalTrackingCode;
         }
       }
     }
@@ -4940,7 +5063,7 @@ async function startServer() {
       const orderList = groupOrders.map((o: any) => ({
         order_sn: o.orderSn,
         package_number: o.packageNumber,
-        tracking_number: o.trackingNumber,
+        tracking_number: trackingForShopeeShippingDoc(o),
       }));
       console.log(`[Ship Order Bulk Auto-Print] Tạo vận gộp ${orderList.length} đơn shop_id=${shopId}...`);
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
@@ -5017,16 +5140,16 @@ async function startServer() {
       const accessToken = await getValidShopeeAccessToken(shopId);
       if (!accessToken) continue;
       for (const o of groupOrders) {
-        if (o.trackingNumber) continue;
+        if (o.trackingNumber && isCarrierTrackingCode(o.trackingNumber)) continue;
         const trackResult = await shopeeGetTrackingNumber(shopId, accessToken, o.orderSn, o.packageNumber);
-        const fresh = trackResult.response?.tracking_number;
-        if (fresh) {
-          o.trackingNumber = fresh;
-          const idx = orders.findIndex((x: any) => x.orderSn === o.orderSn);
-          if (idx >= 0) orders[idx].trackingNumber = fresh;
-          console.log(`[Shopee Print] \u0110\xE3 l\u1EA5y tracking_number="${fresh}" cho \u0111\u01A1n ${o.orderSn} qua get_tracking_number.`);
-        } else {
-          console.error(`[Shopee Print] Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c tracking_number cho \u0111\u01A1n ${o.orderSn} (get_tracking_number tr\u1EA3 v\u1EC1: ${JSON.stringify(trackResult)}). create_shipping_document c\xF3 th\u1EC3 s\u1EBD b\u1ECB t\u1EEB ch\u1ED1i.`);
+        applyShopeeGetTrackingResponse(o, trackResult);
+        const idx = orders.findIndex((x: any) => x.orderSn === o.orderSn);
+        if (idx >= 0) {
+          orders[idx].trackingNumber = o.trackingNumber;
+          orders[idx].internalTrackingCode = o.internalTrackingCode;
+          console.log(`[Shopee Print] Đã lấy tracking cho đơn ${o.orderSn}: carrier=${o.trackingNumber || "—"}, internal=${o.internalTrackingCode || "—"}.`);
+        } else if (!trackResult.response?.tracking_number) {
+          console.error(`[Shopee Print] Không lấy được tracking_number cho đơn ${o.orderSn} (get_tracking_number trả về: ${JSON.stringify(trackResult)}). create_shipping_document có thể sẽ bị từ chối.`);
         }
       }
     }
@@ -5037,7 +5160,7 @@ async function startServer() {
     const allPrintedSns: string[] = [];
 
     for (const [shopId, groupOrders] of Object.entries(groups)) {
-      const orderList = groupOrders.map((o: any) => ({ order_sn: o.orderSn, package_number: o.packageNumber, tracking_number: o.trackingNumber }));
+      const orderList = groupOrders.map((o: any) => ({ order_sn: o.orderSn, package_number: o.packageNumber, tracking_number: trackingForShopeeShippingDoc(o) }));
       console.log(`[Shopee Print] Đang tạo vận đơn cho ${orderList.length} đơn của shop_id=${shopId}...`);
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
 

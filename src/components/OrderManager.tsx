@@ -887,9 +887,10 @@ export default function OrderManager({
       const matchSn = order.orderSn.toLowerCase().includes(q);
       const matchName = order.customerName.toLowerCase().includes(q);
       const matchTracking = order.trackingNumber ? order.trackingNumber.toLowerCase().includes(q) : false;
+      const matchInternal = order.internalTrackingCode ? order.internalTrackingCode.toLowerCase().includes(q) : false;
       const matchProduct = order.items.some(it => it.productTitle.toLowerCase().includes(q));
 
-      if (!matchSn && !matchName && !matchTracking && !matchProduct) return false;
+      if (!matchSn && !matchName && !matchTracking && !matchInternal && !matchProduct) return false;
     }
 
     return true;

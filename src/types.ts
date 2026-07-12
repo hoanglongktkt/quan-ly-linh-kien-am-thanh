@@ -87,7 +87,8 @@ export interface Order {
   revenue: number; // Net revenue after channel fees
   status: 'pending_confirm' | 'unprocessed' | 'processed' | 'shipping' | 'cancelled' | 'return_pending' | 'return_received' | 'completed';
   date: string;
-  trackingNumber?: string;
+  trackingNumber?: string; // Carrier tracking (SPXVN..., GHN...) — mã trên phiếu giao / QR quét
+  internalTrackingCode?: string; // Shopee sorting / first-mile (0FG...) — mã nội bộ sàn
   packageNumber?: string; // Shopee package_number, required by logistics APIs for split orders
   isPrepared?: boolean;
   isPrinted?: boolean;
