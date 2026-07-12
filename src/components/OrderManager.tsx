@@ -419,56 +419,26 @@ export default function OrderManager({
     };
   };
 
-  // Opens Shopee AWB (PDF/HTML) — fetch blob first so print dialog waits for real content.
-  const openAndPrintDocument = async (url: string) => {
-    const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url.startsWith('/') ? url : `/${url}`}`;
+  // Shopee AWB: mở PDF trực tiếp tab mới — trình xem PDF của trình duyệt (in A4), không window.print().
+  const openShopeeLabelInNewTab = (url: string) => {
+    const fullUrl = url.startsWith('http')
+      ? url
+      : `${window.location.origin}${url.startsWith('/') ? url : `/${url}`}`;
 
-    const triggerPrint = (win: Window | null | undefined, cleanup?: () => void) => {
-      if (!win) return;
-      const run = () => {
-        try {
-          win.focus();
-          win.print();
-        } catch {
-          /* popup blocked or cross-origin */
-        } finally {
-          cleanup?.();
-        }
-      };
-      win.addEventListener('load', () => setTimeout(run, 400));
-      setTimeout(run, 1800);
-    };
-
-    try {
-      const res = await fetch(fullUrl, { credentials: 'same-origin' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const contentType = res.headers.get('content-type') || '';
-      const blob = await res.blob();
-
-      if (contentType.includes('html') || fullUrl.endsWith('.html')) {
-        const html = await blob.text();
-        const iframe = document.createElement('iframe');
-        iframe.setAttribute('title', 'print-label');
-        iframe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;border:0;opacity:0;pointer-events:none';
-        document.body.appendChild(iframe);
-        const doc = iframe.contentDocument || iframe.contentWindow?.document;
-        if (!doc) throw new Error('iframe unavailable');
-        doc.open();
-        doc.write(html);
-        doc.close();
-        triggerPrint(iframe.contentWindow || undefined, () => {
-          setTimeout(() => iframe.remove(), 2000);
-        });
-        return;
-      }
-
-      const blobUrl = URL.createObjectURL(blob);
-      const printWindow = window.open(blobUrl, '_blank');
-      triggerPrint(printWindow, () => setTimeout(() => URL.revokeObjectURL(blobUrl), 120000));
-    } catch {
-      const printWindow = window.open(fullUrl, '_blank');
-      triggerPrint(printWindow);
+    const win = window.open(fullUrl, '_blank', 'noopener,noreferrer');
+    if (!win) {
+      const a = document.createElement('a');
+      a.href = fullUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.download = fullUrl.split('/').pop() || 'van-don-shopee.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      showToast('Trình duyệt chặn popup — đã tải vận đơn PDF về máy. Mở file và in trên khổ A4.');
+      return;
     }
+    showToast('Đã mở vận đơn Shopee (NORMAL_AIR_WAYBILL / A4) — bấm In trên trình xem PDF.');
   };
 
   const handlePackingSlipPrint = () => {
@@ -479,8 +449,7 @@ export default function OrderManager({
     });
   };
 
-  // Calls the real Shopee shipping-document flow (create → poll → download AWB PDF)
-  // for one or more orders, then opens + auto-prints each returned real PDF/label.
+  // Shopee: create → poll → download NORMAL_AIR_WAYBILL PDF, mở tab mới (không ép window.print).
   const printShopeeDocuments = async (orderIds: string[]): Promise<{ success: boolean; message?: string }> => {
     const res = await fetch('/api/shopee/print-document', {
       method: 'POST',
@@ -496,7 +465,7 @@ export default function OrderManager({
     const printUrl = data.mergedUrl || (data.documents || []).find((d: any) => d.url)?.url;
 
     if (printUrl) {
-      await openAndPrintDocument(printUrl);
+      openShopeeLabelInNewTab(printUrl);
     }
 
     if (Array.isArray(data.orders)) {
@@ -585,8 +554,8 @@ export default function OrderManager({
         setProgressMessage(isBulk
           ? 'Xác nhận thành công! Đang đợi Shopee khởi tạo mã vận đơn hàng loạt (khoảng 4 giây)...'
           : 'Xác nhận thành công! Đang tải tài liệu in từ Shopee...');
-        openAndPrintDocument(data.printDocument.url);
-        showToast(`Đã tải vận đơn gộp (${data.printDocument.printedOrderSns?.length || successCount} đơn) — hộp thoại in đã mở.`);
+        openShopeeLabelInNewTab(data.printDocument.url);
+        showToast(`Đã mở vận đơn gộp (${data.printDocument.printedOrderSns?.length || successCount} đơn) — in trên tab PDF.`);
       } else if (data.printDocument?.message) {
         showToast(data.printDocument.message);
       }

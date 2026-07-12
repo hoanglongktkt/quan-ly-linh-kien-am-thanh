@@ -4763,6 +4763,7 @@ async function startServer() {
     setHeaders(res, filePath) {
       if (filePath.endsWith(".pdf")) {
         res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", "inline");
       } else if (filePath.endsWith(".html")) {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
       }
@@ -5230,7 +5231,13 @@ async function startServer() {
 
     console.log(`[Shopee Print] Ho\xE0n t\u1EA5t: ${documents.filter(d => d.url).length}/${Object.keys(groups).length} nh\xF3m shop t\u1EA1o v\u1EAD n th\xE0nh c\xF4ng.`);
 
-    return res.json({ mergedUrl, documents, orders: updatedOrders.filter(isValidOrder) });
+    return res.json({
+      mergedUrl,
+      documents,
+      orders: updatedOrders.filter(isValidOrder),
+      shippingDocumentType: SHOPEE_SHIPPING_DOCUMENT_TYPE,
+      openMode: "new_tab_pdf",
+    });
   });
 
   let ai: GoogleGenAI | null = null;
