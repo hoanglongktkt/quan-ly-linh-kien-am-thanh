@@ -10,8 +10,33 @@ import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 
 dotenv.config();
 
+/** Thư mục gốc app — Passenger/cPanel có thể khác process.cwd(). */
+function resolveAppRoot(): string {
+  const candidates = [
+    process.env.PASSENGER_APP_ROOT,
+    typeof __dirname !== "undefined" ? __dirname : "",
+    process.cwd(),
+  ]
+    .map((c) => String(c || "").trim())
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    const abs = path.resolve(candidate);
+    if (
+      fs.existsSync(path.join(abs, "server.cjs")) ||
+      fs.existsSync(path.join(abs, "data")) ||
+      fs.existsSync(path.join(abs, ".htaccess"))
+    ) {
+      return abs;
+    }
+  }
+  return path.resolve(candidates[0] || process.cwd());
+}
+
+const APP_ROOT = resolveAppRoot();
+
 const JWT_SECRET = process.env.JWT_SECRET || "omnisales-vn-super-secret-key-2026";
-const ENV_PATH = path.join(process.cwd(), ".env");
+const ENV_PATH = path.join(APP_ROOT, ".env");
 
 const PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
 
@@ -23,8 +48,18 @@ function resolveAppBaseUrl(): string {
 }
 
 const APP_BASE_URL = resolveAppBaseUrl();
-const SHOPEE_CALLBACK_URL = `${APP_BASE_URL}/api/shopee/callback`;
+
+/** Shopee console khai báo domain quanly — redirect_uri phải cùng domain đó. */
+function resolveShopeeCallbackUrl(): string {
+  const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
+  if (explicit) return explicit;
+  return `${APP_BASE_URL}/api/shopee/callback`;
+}
+
+const SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
 const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
+const SHOPEE_CALLBACK_IDLE_MSG =
+  "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 
 function updateEnvVar(key: string, value: string): void {
   let content = "";
@@ -76,26 +111,509 @@ if (!isShopeeConfigValid()) {
 }
 
 // Local JSON-file token store: shop_id -> { access_token, refresh_token, expire_in, obtained_at }
-const SHOPEE_TOKENS_PATH = path.join(process.cwd(), "data", "shopee_tokens.json");
+const SHOPEE_TOKENS_PATH = path.resolve(APP_ROOT, "data", "shopee_tokens.json");
+const SHOPEE_OAUTH_LAST_PATH = path.resolve(APP_ROOT, "data", "shopee_oauth_last.json");
+
+function ensureDataDirs(): void {
+  const dataDir = path.join(APP_ROOT, "data");
+  fs.mkdirSync(dataDir, { recursive: true });
+  if (!fs.existsSync(SHOPEE_TOKENS_PATH)) {
+    fs.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  }
+}
+
+function saveOAuthAudit(entry: Record<string, any>): void {
+  try {
+    ensureDataDirs();
+    fs.writeFileSync(
+      SHOPEE_OAUTH_LAST_PATH,
+      JSON.stringify({ ...entry, at: new Date().toISOString() }, null, 2),
+      "utf-8",
+    );
+  } catch (error) {
+    console.error("[Shopee OAuth] Failed to write shopee_oauth_last.json:", error);
+  }
+}
+
+function loadLastOAuthAudit(): Record<string, any> | null {
+  try {
+    if (!fs.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(fs.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+ensureDataDirs();
+try {
+  const normalized = normalizeTokenStore(loadShopeeTokens());
+  if (Object.keys(normalized).length > 0) {
+    saveShopeeTokens(normalized);
+    console.log(`[Boot] Normalized shopee_tokens.json keys: [${Object.keys(normalized).join(", ")}]`);
+  }
+} catch (error) {
+  console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
+}
+console.log(
+  `[Boot] APP_ROOT=${APP_ROOT} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${fs.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL}`,
+);
 
 function loadShopeeTokens(): Record<string, any> {
   try {
     if (!fs.existsSync(SHOPEE_TOKENS_PATH)) return {};
     const raw = fs.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
-    return raw.trim() ? JSON.parse(raw) : {};
+    if (!raw.trim()) return {};
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const map: Record<string, any> = {};
+      for (const row of parsed) {
+        const k = normalizeShopIdKey(row?.shop_id ?? row?.shopId);
+        if (k) map[k] = row;
+      }
+      return map;
+    }
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch (error) {
     console.error("[Shopee Tokens] Failed to read shopee_tokens.json:", error);
     return {};
   }
 }
 
-function saveShopeeTokens(tokens: Record<string, any>): void {
-  try {
-    fs.mkdirSync(path.dirname(SHOPEE_TOKENS_PATH), { recursive: true });
-    fs.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(tokens, null, 2), "utf-8");
-  } catch (error) {
-    console.error("[Shopee Tokens] Failed to write shopee_tokens.json:", error);
+function maskTokenStoreForLog(tokens: Record<string, any>): Record<string, any> {
+  const masked: Record<string, any> = {};
+  for (const [key, record] of Object.entries(tokens || {})) {
+    masked[key] = {
+      shop_id: record?.shop_id ?? key,
+      oauth_shop_id: record?.oauth_shop_id ?? null,
+      shop_id_list: record?.shop_id_list ?? [],
+      merchant_id_list: record?.merchant_id_list ?? [],
+      expire_in: record?.expire_in ?? null,
+      obtained_at: record?.obtained_at ?? null,
+      access_token: record?.access_token ? `${String(record.access_token).slice(0, 16)}…` : null,
+      refresh_token: record?.refresh_token ? `${String(record.refresh_token).slice(0, 16)}…` : null,
+    };
   }
+  return masked;
+}
+
+function saveShopeeTokens(tokensToWrite: Record<string, any>): boolean {
+  const absPath = path.resolve(SHOPEE_TOKENS_PATH);
+  try {
+    ensureDataDirs();
+
+    // Luôn merge với file trên đĩa — không ghi đè mất shop cũ
+    const onDisk = normalizeTokenStore(loadShopeeTokens());
+    const tokensData: Record<string, any> = { ...onDisk };
+    const keysBefore = Object.keys(tokensData);
+
+    for (const [rawKey, record] of Object.entries(tokensToWrite || {})) {
+      const shop_id = normalizeShopIdKey(record?.shop_id ?? rawKey);
+      if (!shop_id || !record) continue;
+      tokensData[shop_id] = {
+        ...tokensData[shop_id],
+        ...record,
+        shop_id,
+      };
+      console.log(
+        "DEBUG SAVE: Saving data for shop:",
+        shop_id,
+        "Full Data:",
+        JSON.stringify(tokensData[shop_id]),
+      );
+    }
+
+    const keysAfter = Object.keys(tokensData);
+    console.log(
+      "DEBUG SAVE: Merge keys",
+      JSON.stringify({ keysBefore, keysAfter, addedOrUpdated: keysAfter.filter((k) => !keysBefore.includes(k) || tokensToWrite[k]) }),
+    );
+    console.log("DEBUG SAVE: Full tokensData file keys:", keysAfter);
+    console.log(
+      "DEBUG SAVE: Full tokensData (masked):",
+      JSON.stringify(maskTokenStoreForLog(tokensData)),
+    );
+
+    const payload = JSON.stringify(tokensData, null, 2);
+    console.log(
+      "[Shopee Tokens] fs.writeFileSync — TRƯỚC KHI GHI",
+      JSON.stringify({
+        absPath,
+        SHOPEE_TOKENS_PATH,
+        APP_ROOT,
+        keys: keysAfter,
+        byteLength: Buffer.byteLength(payload, "utf-8"),
+      }),
+    );
+    fs.writeFileSync(absPath, payload, "utf-8");
+    console.log(
+      "[Shopee Tokens] fs.writeFileSync — GHI THÀNH CÔNG",
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: fs.statSync(absPath).size }),
+    );
+    return true;
+  } catch (error: any) {
+    console.error(
+      "[Shopee Tokens] fs.writeFileSync — LỖI GHI FILE",
+      JSON.stringify({
+        absPath,
+        SHOPEE_TOKENS_PATH,
+        errorMessage: error?.message || String(error),
+        errorCode: error?.code || null,
+      }),
+    );
+    return false;
+  }
+}
+
+function normalizeShopIdKey(shopId: string | number | undefined): string {
+  const key = String(shopId ?? "").trim();
+  return /^\d+$/.test(key) ? key : "";
+}
+
+function queryParamOne(value: unknown): string {
+  if (Array.isArray(value)) return String(value[0] ?? "").trim();
+  return String(value ?? "").trim();
+}
+
+/** Chuẩn hóa response Shopee — hỗ trợ wrapper `response`, tên field khác nhau. */
+function normalizeShopeeTokenResponse(raw: any): Record<string, any> {
+  const inner =
+    raw?.response && typeof raw.response === "object" && !Array.isArray(raw.response)
+      ? raw.response
+      : raw?.data && typeof raw.data === "object"
+        ? raw.data
+        : raw;
+
+  const access_token =
+    inner?.access_token ?? inner?.accessToken ?? raw?.access_token ?? raw?.accessToken ?? "";
+  const refresh_token =
+    inner?.refresh_token ?? inner?.refreshToken ?? raw?.refresh_token ?? raw?.refreshToken ?? "";
+  const expire_in = Number(
+    inner?.expire_in ?? inner?.expire_time ?? inner?.expires_in ?? raw?.expire_in ?? raw?.expire_time ?? 0,
+  );
+
+  const shop_id_list = inner?.shop_id_list ?? raw?.shop_id_list ?? inner?.shop_ids ?? [];
+  const merchant_id_list = inner?.merchant_id_list ?? raw?.merchant_id_list ?? [];
+
+  return {
+    ...raw,
+    access_token: access_token || undefined,
+    refresh_token: refresh_token || undefined,
+    expire_in: expire_in > 0 ? expire_in : undefined,
+    shop_id_list: Array.isArray(shop_id_list) ? shop_id_list : [],
+    merchant_id_list: Array.isArray(merchant_id_list) ? merchant_id_list : [],
+    shop_id: inner?.shop_id ?? raw?.shop_id,
+    error: raw?.error ?? inner?.error,
+    message: raw?.message ?? inner?.message,
+    _raw: raw,
+  };
+}
+
+/** Cấu trúc token đồng nhất cho mọi shop trong shopee_tokens.json */
+function buildShopeeTokenRecord(
+  shopKey: string,
+  authJson: any,
+  oauthShopId: string,
+  existing?: Record<string, any>,
+): Record<string, any> {
+  const key = normalizeShopIdKey(shopKey);
+  const oauth = normalizeShopIdKey(oauthShopId) || key;
+  const fromAuthList = Array.isArray(authJson?.shop_id_list)
+    ? authJson.shop_id_list.map((x: unknown) => normalizeShopIdKey(x)).filter(Boolean)
+    : [];
+  const fromExistingList = Array.isArray(existing?.shop_id_list)
+    ? existing.shop_id_list.map((x: unknown) => normalizeShopIdKey(x)).filter(Boolean)
+    : [];
+  const shopIdList = [...new Set([...fromAuthList, ...fromExistingList, key].filter(Boolean))];
+
+  const fromAuthMerchants = Array.isArray(authJson?.merchant_id_list)
+    ? authJson.merchant_id_list.map((x: unknown) => String(x)).filter(Boolean)
+    : [];
+  const fromExistingMerchants = Array.isArray(existing?.merchant_id_list)
+    ? existing.merchant_id_list.map((x: unknown) => String(x)).filter(Boolean)
+    : [];
+  const merchantIdList = [...new Set([...fromAuthMerchants, ...fromExistingMerchants])];
+
+  return {
+    shop_id: key,
+    access_token: String(authJson?.access_token ?? existing?.access_token ?? ""),
+    refresh_token: String(authJson?.refresh_token ?? existing?.refresh_token ?? ""),
+    expire_in: Number(authJson?.expire_in ?? existing?.expire_in ?? 14400),
+    obtained_at: Number(authJson?.obtained_at ?? Math.floor(Date.now() / 1000)),
+    oauth_shop_id: existing?.oauth_shop_id || oauth,
+    shop_id_list: shopIdList,
+    merchant_id_list: merchantIdList,
+  };
+}
+
+/** Ghi token đầy đủ access_token / refresh_token / expire_in vào đúng key shop_id. */
+function saveShopeeTokenFromAuth(shopId: string, authJson: any, oauthShopId: string): boolean {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !authJson?.access_token) return false;
+
+  const new_token_data = buildShopeeTokenRecord(key, authJson, oauthShopId || key);
+  console.log(
+    "DEBUG SAVE: Saving data for shop:",
+    key,
+    "Full Data:",
+    JSON.stringify(new_token_data),
+  );
+
+  const tokensData = normalizeTokenStore(loadShopeeTokens());
+  tokensData[key] = new_token_data;
+  return saveShopeeTokens(tokensData);
+}
+
+/** Chuẩn hóa key = shop_id và bổ sung trường thiếu cho shop cũ (VD: 4127421). */
+function normalizeTokenStore(tokens: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [rawKey, record] of Object.entries(tokens || {})) {
+    if (!record || typeof record !== "object") continue;
+    const key = normalizeShopIdKey(record.shop_id ?? rawKey);
+    if (!key || !record.access_token) continue;
+    const oauthShopId = normalizeShopIdKey(record.oauth_shop_id) || key;
+    out[key] = buildShopeeTokenRecord(key, record, oauthShopId, record);
+  }
+  return out;
+}
+
+function getShopeeTokenRecord(tokens: Record<string, any>, shopId: string): any | null {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return null;
+  if (tokens[key]) return tokens[key];
+  for (const [k, v] of Object.entries(tokens)) {
+    if (normalizeShopIdKey(k) === key) return v;
+    const linked = Array.isArray(v?.shop_id_list) ? v.shop_id_list : [];
+    if (linked.some((id: unknown) => normalizeShopIdKey(id) === key)) return v;
+  }
+  return null;
+}
+
+/** Gom mọi shop_id cần lưu token sau OAuth (callback + shop_id_list từ Shopee + expected). */
+function collectShopIdsForTokenSave(
+  requestShopId: string,
+  authJson: any,
+  expectedShopId?: string,
+): string[] {
+  const ids = new Set<string>();
+  const primary = normalizeShopIdKey(requestShopId);
+  if (primary) ids.add(primary);
+
+  const expected = normalizeShopIdKey(expectedShopId);
+  if (expected) ids.add(expected);
+
+  for (const raw of authJson?.shop_id_list || []) {
+    const k = normalizeShopIdKey(raw);
+    if (k) ids.add(k);
+  }
+
+  const fromBody = normalizeShopIdKey(authJson?.shop_id);
+  if (fromBody) ids.add(fromBody);
+
+  return [...ids];
+}
+
+/** Lưu token cho nhiều shop — ghi một lần (atomic merge), key = shop_id. */
+function persistOAuthTokens(
+  authJson: any,
+  opts: { oauthShopId?: string; mainAccountId?: string; expectedShopId?: string },
+): string[] {
+  if (!authJson?.access_token) return [];
+
+  const oauthShopId = normalizeShopIdKey(opts.oauthShopId);
+  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
+  const expected = normalizeShopIdKey(opts.expectedShopId);
+  const shopIds = new Set(collectShopIdsForTokenSave(oauthShopId || mainAccountId, authJson, expected));
+
+  // Main account OAuth: Shopee trả shop_id_list — lưu token cho TỪNG shop trong list
+  if (mainAccountId && Array.isArray(authJson?.shop_id_list)) {
+    for (const raw of authJson.shop_id_list) {
+      const k = normalizeShopIdKey(raw);
+      if (k) shopIds.add(k);
+    }
+  }
+
+  const shopMismatch = Boolean(expected && oauthShopId && expected !== oauthShopId);
+  if (shopMismatch && !shopIds.has(expected)) {
+    console.warn(
+      `[Shopee OAuth] Shop mismatch: expected=${expected}, oauth=${oauthShopId}, shop_id_list=[${(authJson?.shop_id_list || []).join(", ")}] — không lưu alias token sai shop.`,
+    );
+    shopIds.delete(expected);
+  }
+
+  if (shopIds.size === 0 && oauthShopId) shopIds.add(oauthShopId);
+
+  const keysBeforeMerge = Object.keys(normalizeTokenStore(loadShopeeTokens()));
+  const tokenOwner = oauthShopId || mainAccountId || "";
+  const updates: Record<string, any> = {};
+
+  for (const id of shopIds) {
+    updates[id] = buildShopeeTokenRecord(id, authJson, tokenOwner || id, loadShopeeTokens()[id]);
+    console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(updates[id]));
+  }
+
+  saveShopeeTokens(updates);
+
+  const saved = [...shopIds];
+  const tokensData = normalizeTokenStore(loadShopeeTokens());
+  console.log(
+    "[Shopee Tokens] persistOAuthTokens — SAU MERGE",
+    JSON.stringify({
+      oauthShopId,
+      mainAccountId: mainAccountId || null,
+      expectedShopId: expected || null,
+      shopMismatch,
+      keysBefore: keysBeforeMerge,
+      keysAfter: Object.keys(tokensData),
+      shopIdsSaved: saved,
+      shopee_shop_id_list: authJson?.shop_id_list || [],
+      tokensPath: SHOPEE_TOKENS_PATH,
+    }),
+  );
+  return saved;
+}
+
+/** Đọc lại file sau khi lưu — xác minh shop_id đã có token. */
+function verifyTokenSaved(shopId: string): boolean {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return false;
+  const tokens = loadShopeeTokens();
+  return Boolean(getShopeeTokenRecord(tokens, key)?.access_token);
+}
+
+type ShopeeOAuthCallbackParams = {
+  shopIdRaw?: string;
+  mainAccountIdRaw?: string;
+  expectedShopId?: string;
+};
+
+/** Luồng OAuth đầy đủ: đổi code → lưu file → audit. Dùng cho callback + Vercel proxy JSON. */
+async function completeShopeeOAuthFlow(code: string, params: ShopeeOAuthCallbackParams) {
+  const oauthShopId = normalizeShopIdKey(params.shopIdRaw);
+  const mainAccountId = normalizeShopIdKey(params.mainAccountIdRaw);
+  const expected = normalizeShopIdKey(params.expectedShopId);
+
+  if (!oauthShopId && !mainAccountId) {
+    return {
+      success: false,
+      oauth_shop_id: "",
+      saved_shop_ids: [] as string[],
+      verified_in_file: false,
+      error: "invalid_shop_id",
+      message: `Thiếu shop_id hoặc main_account_id hợp lệ trong callback (shop_id=${params.shopIdRaw || ""}, main_account_id=${params.mainAccountIdRaw || ""})`,
+    };
+  }
+
+  console.log(
+    "[Shopee OAuth] completeShopeeOAuthFlow BẮT ĐẦU",
+    JSON.stringify({
+      oauthShopId: oauthShopId || null,
+      mainAccountId: mainAccountId || null,
+      expectedShopId: expected || null,
+      shop_mismatch: expected && oauthShopId ? expected !== oauthShopId : false,
+      code_preview: `${code.slice(0, 8)}…`,
+      tokensPath: SHOPEE_TOKENS_PATH,
+    }),
+  );
+
+  const tokenResult = await exchangeShopeeCodeForToken(code, {
+    shopId: oauthShopId || undefined,
+    mainAccountId: mainAccountId || undefined,
+  });
+  let savedIds: string[] = [];
+
+  if (tokenResult.access_token) {
+    savedIds = persistOAuthTokens(tokenResult, {
+      oauthShopId: oauthShopId || undefined,
+      mainAccountId: mainAccountId || undefined,
+      expectedShopId: expected || undefined,
+    });
+    tokenResult.saved_shop_ids = savedIds;
+  }
+
+  const shopMismatch = Boolean(
+    expected &&
+      oauthShopId &&
+      expected !== oauthShopId &&
+      !savedIds.includes(expected),
+  );
+  const verified = expected
+    ? savedIds.includes(expected) && verifyTokenSaved(expected)
+    : oauthShopId
+      ? verifyTokenSaved(oauthShopId)
+      : savedIds.length > 0;
+
+  saveOAuthAudit({
+    callback_shop_id: oauthShopId || null,
+    main_account_id: mainAccountId || null,
+    expected_shop_id: expected || null,
+    shop_mismatch: shopMismatch,
+    callback_code_present: Boolean(code),
+    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
+    verified_in_file: verified,
+    error: tokenResult.error || null,
+    message: tokenResult.message || null,
+    saved_shop_ids: savedIds,
+    shopee_shop_id_list: tokenResult.shop_id_list || [],
+    file_keys_after: Object.keys(loadShopeeTokens()),
+    tokens_path: SHOPEE_TOKENS_PATH,
+    app_root: APP_ROOT,
+  });
+
+  return {
+    success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
+    oauth_shop_id: oauthShopId || savedIds[0] || "",
+    expected_shop_id: expected || null,
+    shop_mismatch: shopMismatch,
+    saved_shop_ids: savedIds,
+    verified_in_file: verified,
+    error: tokenResult.error || (shopMismatch ? "shop_mismatch" : verified ? null : "token_not_persisted"),
+    message: shopMismatch
+      ? `Shopee trả về shop ${oauthShopId}, KHÔNG phải shop bạn yêu cầu ${expected}. Token KHÔNG thể dùng cho shop khác — hãy đăng xuất Shopee Seller Center, đăng nhập đúng shop ${expected}, rồi bấm OAuth lại.`
+      : tokenResult.message ||
+        (verified
+          ? `OAuth thành công. Token đã lưu cho: [${savedIds.join(", ")}].`
+          : "Token không ghi được vào shopee_tokens.json"),
+    shopee_response: tokenResult.access_token
+      ? { shop_id_list: tokenResult.shop_id_list || [], expire_in: tokenResult.expire_in }
+      : tokenResult,
+  };
+}
+
+function buildShopeeAuthPartnerUrl(shopId?: string): string {
+  const apiPath = "/api/v2/shop/auth_partner";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp);
+  const sid = normalizeShopIdKey(shopId);
+  const redirectTarget = sid
+    ? `${SHOPEE_CALLBACK_URL}?redirect=1&expected_shop=${sid}`
+    : `${SHOPEE_CALLBACK_URL}?redirect=1`;
+  const redirect = encodeURIComponent(redirectTarget);
+  let url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}&redirect=${redirect}`;
+  if (sid) url += `&shop_id=${sid}`;
+  console.log(`[Shopee OAuth] auth_partner URL cho shop_id=${sid || "(none)"}: ${url.replace(/sign=[^&]+/, "sign=***")}`);
+  return url;
+}
+
+function saveShopeeTokenForShop(shopId: string, record: Record<string, any>): void {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return;
+  let tokens = normalizeTokenStore(loadShopeeTokens());
+  const existing = tokens[key];
+  tokens[key] = buildShopeeTokenRecord(
+    key,
+    { ...existing, ...record, obtained_at: record.obtained_at ?? Math.floor(Date.now() / 1000) },
+    existing?.oauth_shop_id || key,
+    existing,
+  );
+  saveShopeeTokens(tokens);
+  console.log(`[Shopee Tokens] Saved token for shop_id=${key}. All shops: [${Object.keys(tokens).join(", ")}]`);
+}
+
+function listShopeeOAuthShopIds(): string[] {
+  return Object.keys(loadShopeeTokens())
+    .map(normalizeShopIdKey)
+    .filter(Boolean)
+    .sort();
 }
 
 // Signature per Shopee v2 spec: HMAC-SHA256(partner_key, partner_id + path + timestamp [+ access_token + shop_id])
@@ -107,14 +625,27 @@ function shopeeSign(apiPath: string, timestamp: number, accessToken?: string, sh
 }
 
 // Exchange the OAuth `code` for a real access_token/refresh_token pair (Live Shop).
-async function exchangeShopeeCodeForToken(code: string, shopId: string) {
+async function exchangeShopeeCodeForToken(
+  code: string,
+  opts: { shopId?: string; mainAccountId?: string },
+) {
+  const shopId = normalizeShopIdKey(opts.shopId);
+  const mainAccountId = normalizeShopIdKey(opts.mainAccountId);
+
   if (!isShopeeConfigValid()) {
     const error = {
       error: "invalid_partner_config",
       message: `SHOPEE_PARTNER_ID/"${SHOPEE_PARTNER_ID}" ho\u1EB7c SHOPEE_PARTNER_KEY trong .env ch\u01B0a ph\u1EA3i gi\xE1 tr\u1ECB Live th\u1EF1c. Vui l\xF2ng \u0111i\u1EC1n \u0111\xFAng Partner ID (s\u1ED1 nguy\xEAn) v\xE0 Partner Key t\u1EEB App PRODUCTION tr\xEAn open.shopee.com r\u1ED3i th\u1EED l\u1EA1i.`,
     };
-    console.error(`[Shopee OAuth] \u274C Kh\xF4ng th\u1EC3 \u0111\u1ED5i code cho shop_id=${shopId}: ${error.message}`);
+    console.error(`[Shopee OAuth] \u274C Kh\xF4ng th\u1EC3 \u0111\u1ED5i code: ${error.message}`);
     return error;
+  }
+
+  if (!shopId && !mainAccountId) {
+    return {
+      error: "missing_shop_or_main_account",
+      message: "Shopee token/get cần shop_id HOẶC main_account_id (không được thiếu cả hai).",
+    };
   }
 
   const apiPath = "/api/v2/auth/token/get";
@@ -122,23 +653,65 @@ async function exchangeShopeeCodeForToken(code: string, shopId: string) {
   const sign = shopeeSign(apiPath, timestamp);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
 
+  const body: Record<string, unknown> = {
+    code,
+    partner_id: Number(SHOPEE_PARTNER_ID),
+  };
+  if (mainAccountId) {
+    body.main_account_id = Number(mainAccountId);
+  } else if (shopId) {
+    body.shop_id = Number(shopId);
+  }
+
+  console.log(
+    "[Shopee OAuth] token/get request",
+    JSON.stringify({ shop_id: shopId || null, main_account_id: mainAccountId || null }),
+  );
+
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code, shop_id: Number(shopId), partner_id: Number(SHOPEE_PARTNER_ID) }),
+    body: JSON.stringify(body),
   });
-  const json: any = await res.json();
-  console.log(`[Shopee API] POST ${apiPath} (env=${SHOPEE_ENV}) -> HTTP ${res.status}:`, JSON.stringify(json));
+  const rawText = await res.text();
+  console.log("DEBUG RAW RESPONSE:", rawText);
 
-  if (json.access_token) {
-    const tokens = loadShopeeTokens();
-    tokens[shopId] = {
-      access_token: json.access_token,
-      refresh_token: json.refresh_token,
-      expire_in: json.expire_in,
-      obtained_at: Math.floor(Date.now() / 1000),
-    };
-    saveShopeeTokens(tokens);
+  let json: any;
+  try {
+    json = rawText ? JSON.parse(rawText) : {};
+  } catch (parseErr) {
+    console.error("[Shopee OAuth] Không parse được JSON từ Shopee:", parseErr);
+    return { error: "invalid_json", message: rawText.slice(0, 500) };
+  }
+
+  json = normalizeShopeeTokenResponse(json);
+  console.log("DEBUG NORMALIZED RESPONSE:", JSON.stringify(json));
+  console.log(`[Shopee API] POST ${apiPath} (env=${SHOPEE_ENV}) -> HTTP ${res.status}`);
+
+  if (json.access_token && json.refresh_token) {
+    console.log(
+      "[Shopee OAuth] ĐÃ LẤY TOKEN TỪ SHOPEE",
+      JSON.stringify({
+        shop_id: shopId || null,
+        main_account_id: mainAccountId || null,
+        access_token: `${String(json.access_token).slice(0, 16)}…`,
+        refresh_token: `${String(json.refresh_token).slice(0, 16)}…`,
+        expire_in: json.expire_in,
+        shop_id_list: json.shop_id_list || [],
+      }),
+    );
+  } else {
+    console.error(
+      "[Shopee OAuth] SHOPEE KHÔNG TRẢ đủ access_token/refresh_token",
+      JSON.stringify({
+        shop_id: shopId || null,
+        main_account_id: mainAccountId || null,
+        httpStatus: res.status,
+        error: json.error || null,
+        message: json.message || null,
+        keys: Object.keys(json),
+      }),
+    );
   }
   return json;
 }
@@ -159,24 +732,57 @@ async function refreshShopeeToken(shopId: string, refreshToken: string) {
   console.log(`[Shopee API] POST ${apiPath} (refresh) -> HTTP ${res.status}:`, JSON.stringify(json));
 
   if (json.access_token) {
-    const tokens = loadShopeeTokens();
-    tokens[shopId] = {
+    saveShopeeTokenForShop(shopId, {
       access_token: json.access_token,
       refresh_token: json.refresh_token,
       expire_in: json.expire_in,
       obtained_at: Math.floor(Date.now() / 1000),
-    };
-    saveShopeeTokens(tokens);
+    });
   }
   return json;
+}
+
+/** Gọi Shopee get_shop_info để xác minh token thực sự dùng được cho shop_id. */
+async function verifyShopeeShopToken(shopId: string, accessToken: string): Promise<{ ok: boolean; error?: string }> {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !accessToken) return { ok: false, error: "missing_shop_or_token" };
+  try {
+    const apiPath = "/api/v2/shop/get_shop_info";
+    const timestamp = Math.floor(Date.now() / 1000);
+    const sign = shopeeSign(apiPath, timestamp, accessToken, key);
+    const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${key}&sign=${sign}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    const json: any = await res.json();
+    const err = String(json?.error || "").trim();
+    if (err) return { ok: false, error: err };
+    return { ok: true };
+  } catch (error: any) {
+    return { ok: false, error: error?.message || String(error) };
+  }
+}
+
+function resolveShopeeApiShopId(record: any, configuredShopId: string): string {
+  const configured = normalizeShopIdKey(configuredShopId);
+  const recordKey = normalizeShopIdKey(record?.shop_id);
+  if (recordKey === configured) return configured;
+  const oauth = normalizeShopIdKey(record?.oauth_shop_id);
+  if (oauth) return oauth;
+  return recordKey || configured;
 }
 
 // Returns a valid (non-expired) access_token for the shop, refreshing it first if needed.
 async function getValidShopeeAccessToken(shopId: string): Promise<string | null> {
   const tokens = loadShopeeTokens();
-  const record = tokens[shopId];
+  const key = normalizeShopIdKey(shopId);
+  const record = getShopeeTokenRecord(tokens, key);
   if (!record) {
-    console.warn(`[Shopee API] Ch\u01B0a c\xF3 access_token n\xE0o cho shop_id=${shopId}. C\u1EA7n th\u1EF1c hi\u1EC7n l\u1EA1i lu\u1ED3ng OAuth (/api/shopee/callback) v\u1EDBi shop Live th\u1EADt.`);
+    const available = listShopeeOAuthShopIds();
+    console.warn(
+      `[Shopee API] Chưa có access_token cho shop_id=${key}. Token đang có: [${available.join(", ") || "không có"}]`,
+    );
     return null;
   }
 
@@ -184,8 +790,9 @@ async function getValidShopeeAccessToken(shopId: string): Promise<string | null>
   const isExpired = now - record.obtained_at >= record.expire_in - 60; // refresh 60s early
   if (!isExpired) return record.access_token;
 
-  console.log(`[Shopee API] access_token c\u1EE7a shop_id=${shopId} \u0111\xE3 h\u1EBFt h\u1EA1n, \u0111ang refresh...`);
-  const refreshed = await refreshShopeeToken(shopId, record.refresh_token);
+  console.log(`[Shopee API] access_token c\u1EE7a shop_id=${key} \u0111\xE3 h\u1EBFt h\u1EA1n, \u0111ang refresh...`);
+  const apiShopId = resolveShopeeApiShopId(record, key);
+  const refreshed = await refreshShopeeToken(apiShopId, record.refresh_token);
   return refreshed.access_token || null;
 }
 
@@ -1661,7 +2268,7 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
     errors: errors.length ? errors : undefined,
   };
 }
-const ORDERS_DB_PATH = path.join(process.cwd(), "data", "orders.json");
+const ORDERS_DB_PATH = path.join(APP_ROOT, "data", "orders.json");
 
 // Local JSON-file "database" holding orders synced in from real marketplace webhooks (Shopee, ...).
 
@@ -1819,7 +2426,7 @@ function buildDashboardChart(orders: any[], range: { start: Date; end: Date; key
   return Array.from(buckets.values());
 }
 
-const PRODUCTS_DB_PATH = path.join(process.cwd(), "data", "products.json");
+const PRODUCTS_DB_PATH = path.join(APP_ROOT, "data", "products.json");
 
 function loadProducts(): any[] {
   try {
@@ -1841,7 +2448,7 @@ function saveProducts(products: any[]): void {
   }
 }
 
-const SUPPLIERS_DB_PATH = path.join(process.cwd(), "data", "suppliers.json");
+const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
 
 function normalizeSupplier(raw: any): any {
   const totalOrderValue = Number(raw?.totalOrderValue) || 0;
@@ -1878,7 +2485,7 @@ function saveSuppliers(suppliers: any[]): void {
   }
 }
 
-const IMPORTS_DB_PATH = path.join(process.cwd(), "data", "imports.json");
+const IMPORTS_DB_PATH = path.join(APP_ROOT, "data", "imports.json");
 
 function loadImports(): any[] {
   try {
@@ -1901,8 +2508,8 @@ function saveImports(imports: any[]): void {
   }
 }
 
-const EXPENSES_DB_PATH = path.join(process.cwd(), "data", "expenses.json");
-const EXPENSES_CLEAR_MARKER = path.join(process.cwd(), "data", ".expenses-cleared-v2");
+const EXPENSES_DB_PATH = path.join(APP_ROOT, "data", "expenses.json");
+const EXPENSES_CLEAR_MARKER = path.join(APP_ROOT, "data", ".expenses-cleared-v2");
 
 function loadExpenses(): any[] {
   try {
@@ -2229,10 +2836,29 @@ async function startServer() {
   });
 
   app.get("/api/health", (_req, res) => {
+    const shopIds = listShopeeOAuthShopIds();
+    let dataDirWritable = false;
+    try {
+      ensureDataDirs();
+      fs.accessSync(path.join(APP_ROOT, "data"), fs.constants.W_OK);
+      dataDirWritable = true;
+    } catch {
+      dataDirWritable = false;
+    }
     res.status(200).json({
       ok: true,
       service: "cpanel-backend",
       host: APP_BASE_URL,
+      appRoot: APP_ROOT,
+      tokensPath: SHOPEE_TOKENS_PATH,
+      tokensFileExists: fs.existsSync(SHOPEE_TOKENS_PATH),
+      dataDirWritable,
+      shopeeOAuthShopIds: shopIds,
+      lastOAuth: loadLastOAuthAudit(),
+      oauthHint:
+        shopIds.length > 0
+          ? "Vào Cài đặt → shop Shopee → bấm OAuth (shop_id phải khớp). Sau OAuth kiểm tra lastOAuth.success=true."
+          : "Chưa có shop OAuth — bấm nút OAuth trong Cài đặt.",
       checkedAt: new Date().toISOString(),
     });
   });
@@ -2252,27 +2878,139 @@ async function startServer() {
   }
 
   // Shopee Open Platform OAuth redirect callback.
-  // Register in Shopee Partner App Settings: SHOPEE_CALLBACK_URL
-  app.get("/api/shopee/callback", async (req, res) => {
-    logShopeeIngress("[Shopee Callback]", req);
-    const { code, shop_id } = req.query;
+  // Register in Shopee Partner App Settings: SHOPEE_CALLBACK_URL (domain quanly.linhkienamthanh.net)
+  app.get("/api/shopee/oauth/complete", async (req, res) => {
+    console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
+    logShopeeIngress("[Shopee OAuth Complete]", req);
+    const code = queryParamOne(req.query.code);
+    const shopIdRaw = queryParamOne(req.query.shop_id);
+    const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
+    const expectedShop = queryParamOne(req.query.expected_shop);
 
-    if (!code || !shop_id) {
-      console.log("[Shopee Callback] GET verification probe — 200 empty");
-      return res.status(200).end();
+    console.log(
+      "[Shopee OAuth Complete] REQUEST (Vercel proxy JSON)",
+      JSON.stringify({
+        code_present: Boolean(code),
+        shop_id_raw: shopIdRaw || null,
+        main_account_id_raw: mainAccountIdRaw || null,
+        expected_shop: expectedShop || null,
+        SHOPEE_TOKENS_PATH,
+      }),
+    );
+
+    if (!code || (!shopIdRaw && !mainAccountIdRaw)) {
+      return res.status(200).type("text/plain; charset=utf-8").send(SHOPEE_CALLBACK_IDLE_MSG);
     }
 
     try {
-      const tokenResult = await exchangeShopeeCodeForToken(String(code), String(shop_id));
-      if (!tokenResult.access_token) {
-        console.error(`[Shopee Callback] Đổi code thất bại shop_id=${shop_id}:`, tokenResult.error, tokenResult.message);
-        return res.redirect("/?shopee_linked=0&error=" + encodeURIComponent(tokenResult.error || "token_exchange_failed"));
+      const result = await completeShopeeOAuthFlow(code, {
+        shopIdRaw: shopIdRaw || undefined,
+        mainAccountIdRaw: mainAccountIdRaw || undefined,
+        expectedShopId: expectedShop || undefined,
+      });
+      console.log("[Shopee OAuth Complete] KẾT QUẢ", JSON.stringify(result));
+      return res.status(result.success ? 200 : 400).json({
+        ...result,
+        message: result.success
+          ? `OAuth thành công. Token đã lưu cho shop ${result.oauth_shop_id}.`
+          : result.message || result.error || "OAuth thất bại",
+        tokens_path: SHOPEE_TOKENS_PATH,
+      });
+    } catch (error: any) {
+      console.error("[Shopee OAuth Complete] LỖI", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "unknown_error",
+      });
+    }
+  });
+
+  app.get("/api/shopee/callback", async (req, res) => {
+    console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
+    logShopeeIngress("[Shopee Callback]", req);
+    const code = queryParamOne(req.query.code);
+    const shopIdRaw = queryParamOne(req.query.shop_id);
+    const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
+    const expectedShop = queryParamOne(req.query.expected_shop);
+
+    console.log(
+      "[Shopee Callback] REQUEST NHẬN ĐƯỢC",
+      JSON.stringify({
+        at: new Date().toISOString(),
+        method: req.method,
+        url: req.url,
+        code_present: Boolean(code),
+        code_length: code.length,
+        shop_id_raw: shopIdRaw || null,
+        main_account_id_raw: mainAccountIdRaw || null,
+        expected_shop: expectedShop || null,
+        query: req.query || {},
+        SHOPEE_TOKENS_PATH,
+        SHOPEE_CALLBACK_URL,
+        APP_ROOT,
+        cwd: process.cwd(),
+      }),
+    );
+
+    if (!code || (!shopIdRaw && !mainAccountIdRaw)) {
+      console.log("[Shopee Callback] Truy cập trực tiếp — thiếu code/shop_id");
+      return res.status(200).type("text/plain; charset=utf-8").send(SHOPEE_CALLBACK_IDLE_MSG);
+    }
+
+    const oauthShopId = normalizeShopIdKey(shopIdRaw);
+    const mainAccountId = normalizeShopIdKey(mainAccountIdRaw);
+    if (!oauthShopId && !mainAccountId) {
+      console.error(`[Shopee Callback] shop_id/main_account_id không hợp lệ: shop_id=${shopIdRaw}, main_account_id=${mainAccountIdRaw}`);
+      return res.status(400).json({
+        success: false,
+        error: "invalid_shop_id",
+        message: `Shop ID / Main Account ID không hợp lệ`,
+        tokens_path: SHOPEE_TOKENS_PATH,
+      });
+    }
+
+    try {
+      const result = await completeShopeeOAuthFlow(code, {
+        shopIdRaw: shopIdRaw || undefined,
+        mainAccountIdRaw: mainAccountIdRaw || undefined,
+        expectedShopId: expectedShop || undefined,
+      });
+
+      if (!result.success) {
+        console.error(`[Shopee Callback] Đổi code thất bại:`, result.error, result.message);
+        return res.status(400).json({
+          ...result,
+          message: result.message || result.error || "token_exchange_failed",
+          tokens_path: SHOPEE_TOKENS_PATH,
+        });
       }
-      console.log(`[Shopee Callback] Shop ${shop_id} liên kết thành công, token hết hạn sau ${tokenResult.expire_in}s.`);
-      return res.redirect("/?shopee_linked=1&shop_id=" + shop_id);
+
+      console.log(
+        `[Shopee Callback] OAuth OK. Token đã lưu cho: [${result.saved_shop_ids.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`,
+      );
+      return res.status(200).json({
+        ...result,
+        message: result.message || `OAuth thành công. Token đã lưu cho: [${result.saved_shop_ids.join(", ")}].`,
+        tokens_path: SHOPEE_TOKENS_PATH,
+        callback_url: SHOPEE_CALLBACK_URL,
+      });
     } catch (error: any) {
       console.error("[Shopee Callback] Exchange token error:", error);
-      return res.redirect("/?shopee_linked=0&error=" + encodeURIComponent(error.message || "unknown_error"));
+      saveOAuthAudit({
+        callback_shop_id: oauthShopId || mainAccountId || null,
+        main_account_id: mainAccountId || null,
+        success: false,
+        error: error?.message || "unknown_error",
+        tokens_path: SHOPEE_TOKENS_PATH,
+        app_root: APP_ROOT,
+      });
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "unknown_error",
+        message: error?.message || "Lỗi xử lý OAuth callback",
+        oauth_shop_id: oauthShopId,
+        tokens_path: SHOPEE_TOKENS_PATH,
+      });
     }
   });
 
@@ -3593,7 +4331,7 @@ async function startServer() {
   // every `npm run build`, which would bloat/leak generated AWB files into the
   // production bundle. "storage/labels" is served the exact same way via
   // express.static, giving an identical public /labels/<file> URL without that side effect.
-  const SHIPPING_DOCS_DIR = path.join(process.cwd(), "storage", "labels");
+  const SHIPPING_DOCS_DIR = path.join(APP_ROOT, "storage", "labels");
   fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
   app.use("/labels", express.static(SHIPPING_DOCS_DIR));
 
@@ -4128,9 +4866,41 @@ async function startServer() {
       if (!isShopeeConfigValid()) {
         return { online: false, message: "Shopee Partner ID/Key chưa cấu hình" };
       }
-      const token = await getValidShopeeAccessToken(String(shop.shopId || ""));
-      if (token) {
-        return { online: true, message: "OAuth token hợp lệ" };
+      const configuredId = normalizeShopIdKey(String(shop.shopId || ""));
+      const oauthShopIds = listShopeeOAuthShopIds();
+      const tokens = loadShopeeTokens();
+      const record = configuredId ? getShopeeTokenRecord(tokens, configuredId) : null;
+      const token = configuredId ? await getValidShopeeAccessToken(configuredId) : null;
+
+      if (token && record) {
+        const apiShopId = resolveShopeeApiShopId(record, configuredId);
+        const ping = await verifyShopeeShopToken(apiShopId, token);
+        if (ping.ok) {
+          return { online: true, message: `OAuth token hợp lệ (Shopee API OK, shop_id=${apiShopId})` };
+        }
+        return {
+          online: false,
+          message: `Có token trong file nhưng Shopee từ chối shop_id=${apiShopId}: ${ping.error || "invalid_token"}. Cần OAuth lại đúng shop ${configuredId}.`,
+        };
+      }
+
+      const lastOAuth = loadLastOAuthAudit();
+      if (
+        lastOAuth?.expected_shop_id === configuredId &&
+        lastOAuth?.shop_mismatch &&
+        lastOAuth?.callback_shop_id
+      ) {
+        return {
+          online: false,
+          message: `OAuth gần nhất: Shopee trả shop ${lastOAuth.callback_shop_id}, không phải ${configuredId}. Đăng xuất Shopee Seller, đăng nhập shop ${configuredId}, bấm OAuth lại.`,
+        };
+      }
+
+      if (oauthShopIds.length > 0) {
+        return {
+          online: false,
+          message: `Shop ID cấu hình "${shop.shopId || "(trống)"}" chưa có token. OAuth đã lưu: [${oauthShopIds.join(", ")}] — kiểm tra Shop ID có đúng trên Shopee Seller Center không.`,
+        };
       }
       return { online: false, message: "Chưa OAuth hoặc token hết hạn" };
     }
@@ -4169,6 +4939,52 @@ async function startServer() {
 
     return { online: false, message: "Nền tảng không hỗ trợ" };
   }
+
+  app.get("/api/shopee/oauth-shops", authMiddleware, (_req, res) => {
+    const tokens = loadShopeeTokens();
+    const shopIds = listShopeeOAuthShopIds();
+    const details = shopIds.map((id) => ({
+      shop_id: id,
+      obtained_at: tokens[id]?.obtained_at ?? null,
+      expire_in: tokens[id]?.expire_in ?? null,
+      oauth_shop_id: tokens[id]?.oauth_shop_id ?? null,
+      shop_id_list: tokens[id]?.shop_id_list ?? [],
+    }));
+    let lastOAuth: any = loadLastOAuthAudit();
+    return res.json({
+      success: true,
+      shopIds,
+      details,
+      tokensPath: SHOPEE_TOKENS_PATH,
+      appRoot: APP_ROOT,
+      lastOAuth,
+      count: shopIds.length,
+    });
+  });
+
+  app.get("/api/shopee/auth-url", authMiddleware, (req, res) => {
+    if (!isShopeeConfigValid()) {
+      return res.status(500).json({
+        success: false,
+        error: "invalid_partner_config",
+        message: "SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY chưa cấu hình trên backend cPanel.",
+      });
+    }
+    const shopId = normalizeShopIdKey(String(req.query.shop_id || ""));
+    if (!shopId) {
+      return res.status(400).json({
+        success: false,
+        error: "shop_id_required",
+        message: "Cần shop_id (VD: 241215004) để tạo link ủy quyền OAuth.",
+      });
+    }
+    return res.json({
+      success: true,
+      shop_id: shopId,
+      url: buildShopeeAuthPartnerUrl(shopId),
+      callback: SHOPEE_CALLBACK_URL,
+    });
+  });
 
   app.post("/api/settings/shop-connection-status", authMiddleware, async (req, res) => {
     try {
@@ -4287,7 +5103,7 @@ Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
     }
   });
 
-  const LISTINGS_DB_PATH = path.join(process.cwd(), "data", "multi_channel_listings.json");
+  const LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "multi_channel_listings.json");
 
   const readListingsDb = (): any[] => {
     try {
@@ -4462,7 +5278,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   });
 
-  const PRODUCT_LISTINGS_DB_PATH = path.join(process.cwd(), "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "product_listings.json");
 
   const readProductListingsDb = (): any[] => {
     try {
@@ -4641,8 +5457,8 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   });
 
-  const PUBLISH_EDIT_DB_PATH = path.join(process.cwd(), "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = path.join(process.cwd(), "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = path.join(APP_ROOT, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = path.join(APP_ROOT, "data", "framed_images");
 
   const readPublishEditDb = (): { config: any; meta: Record<string, any> } => {
     try {
@@ -4751,7 +5567,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    const distPath = path.join(APP_ROOT, "dist");
     app.use(express.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {

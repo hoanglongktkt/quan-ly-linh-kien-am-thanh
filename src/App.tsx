@@ -263,6 +263,59 @@ export default function App() {
     purgeLegacyCatalogCache();
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const linked = params.get('shopee_linked');
+    const oauthShopId = String(params.get('shop_id') || '').trim();
+    const expectedShop = String(params.get('expected_shop') || '').trim();
+    const savedShops = String(params.get('saved_shops') || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (linked === '0') {
+      const err = params.get('error') || 'OAuth thất bại';
+      alert(decodeURIComponent(err));
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+      return;
+    }
+
+    if (linked !== '1' || !oauthShopId) return;
+
+    if (expectedShop && expectedShop !== oauthShopId) {
+      alert(
+        `Cảnh báo: Bạn yêu cầu OAuth shop ${expectedShop} nhưng Shopee trả về shop ${oauthShopId}.\n` +
+          'Token đã lưu cho shop Shopee trả về — shop cấu hình 241215004 vẫn chưa có token.\n' +
+          'Hãy đăng xuất Shopee Seller, bấm OAuth lại trên đúng shop 241215004.',
+      );
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+      return;
+    }
+
+    setSettings((prev) => {
+      let shops = [...(prev.shops || [])];
+      const idsToApply = savedShops.length ? savedShops : [oauthShopId];
+
+      for (const sid of idsToApply) {
+        const hasExact = shops.some(
+          (s) => s.platform === 'shopee' && String(s.shopId) === sid,
+        );
+        if (hasExact) {
+          shops = shops.map((s) =>
+            s.platform === 'shopee' && String(s.shopId) === sid
+              ? { ...s, connected: true, lastSynced: new Date().toISOString() }
+              : s,
+          );
+          continue;
+        }
+        // Không tự ghi đè Shop ID khi OAuth trả về shop khác shop đã cấu hình
+      }
+      return { ...prev, shops };
+    });
+
+    window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+  }, []);
+
   const apiAuthHeaders = (): Record<string, string> => {
     const token = localStorage.getItem('admin_token');
     return {
@@ -745,6 +798,51 @@ export default function App() {
       fetchSuppliers();
       fetchImports();
       fetchExpenses();
+      syncShopeeOAuthShopIds();
+    };
+
+    const syncShopeeOAuthShopIds = async () => {
+      const token = localStorage.getItem('admin_token');
+      if (!token) return;
+      try {
+        const res = await fetch('/api/shopee/oauth-shops', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const shopIds: string[] = Array.isArray(data.shopIds) ? data.shopIds.map(String) : [];
+        if (!shopIds.length) return;
+
+        setSettings((prev) => {
+          const shops = [...(prev.shops || [])];
+          const shopeeShops = shops.filter((s) => s.platform === 'shopee');
+          const unmatchedTokens = shopIds.filter(
+            (id) => !shopeeShops.some((s) => String(s.shopId) === id),
+          );
+          const unmatchedShops = shopeeShops.filter(
+            (s) => !shopIds.includes(String(s.shopId)),
+          );
+          if (unmatchedTokens.length === 1 && unmatchedShops.length === 1) {
+            const target = unmatchedShops[0];
+            return {
+              ...prev,
+              shops: shops.map((s) =>
+                s.id === target.id
+                  ? {
+                      ...s,
+                      shopId: unmatchedTokens[0],
+                      connected: true,
+                      lastSynced: new Date().toISOString(),
+                    }
+                  : s,
+              ),
+            };
+          }
+          return prev;
+        });
+      } catch {
+        /* ignore */
+      }
     };
 
     void bootstrapCatalog();

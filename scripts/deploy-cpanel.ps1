@@ -16,12 +16,13 @@ Copy-Item -Force "dist\server.cjs" "server.cjs"
 
 $staging = Join-Path $root "cpanel-deploy-staging"
 Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path "$staging\dist", "$staging\assets" -Force | Out-Null
+New-Item -ItemType Directory -Path "$staging\dist", "$staging\assets", "$staging\data" -Force | Out-Null
 
 Copy-Item -Recurse -Force "dist\*" "$staging\dist\"
 Copy-Item -Force "dist\server.cjs" "$staging\server.cjs"
 Copy-Item -Recurse -Force "dist\assets\*" "$staging\assets\"
 Copy-Item -Force ".htaccess" "$staging\.htaccess"
+"KHONG ghi de shopee_tokens.json tren server " | Set-Content -Path "$staging\data\.gitkeep" -Encoding UTF8
 
 @"
 DEPLOY cPanel — Build $buildId

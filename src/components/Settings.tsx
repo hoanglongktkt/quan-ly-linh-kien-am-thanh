@@ -60,13 +60,25 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   const [shopConnectionStatus, setShopConnectionStatus] = useState<Record<string, ShopConnState>>({});
   const [shopConnectionMessages, setShopConnectionMessages] = useState<Record<string, string>>({});
 
-  // Shopee Open Platform callback URLs — always derived from the app's own
-  // origin and the same "/api/..." convention used by the Express routes in
-  // server.ts, so the value shown here is guaranteed to match a real endpoint.
+  // Shopee Open Platform callback URLs — lấy từ backend (OAuth trỏ thẳng cPanel)
   const appOrigin = getPublicAppOrigin();
-  const shopeeRedirectUrl = `${appOrigin}/api/shopee/callback`;
+  const [shopeeRedirectUrl, setShopeeRedirectUrl] = useState(`${appOrigin}/api/shopee/callback`);
   const shopeeWebhookUrl = `${appOrigin}/api/shopee/webhook`;
   const [copiedUrlField, setCopiedUrlField] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await apiFetch('/api/config/public');
+        const data = await parseJsonResponse<{ shopeeCallbackUrl?: string }>(res);
+        if (res.ok && data.shopeeCallbackUrl) {
+          setShopeeRedirectUrl(data.shopeeCallbackUrl);
+        }
+      } catch {
+        /* giữ fallback */
+      }
+    })();
+  }, []);
 
   type CpanelHealthState = 'unknown' | 'checking' | 'online' | 'offline';
   const [cpanelHealth, setCpanelHealth] = useState<CpanelHealthState>('unknown');
@@ -361,6 +373,37 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         ...settings,
         shops: updatedShops
       });
+    }
+  };
+
+  const handleShopeeOAuth = async (shop: ConnectedShop) => {
+    const targetId = String(shop.shopId || '').trim();
+    if (!targetId) {
+      alert('Shop ID trống — hãy sửa gian hàng và nhập Shop ID (VD: 241215004) trước khi OAuth.');
+      return;
+    }
+    if (
+      !window.confirm(
+        `OAuth Shopee cho shop ID: ${targetId}\n\n` +
+          'Trên trang Shopee, bạn PHẢI authorize đúng shop này.\n' +
+          'Nếu Shopee hiện shop khác (VD: 831052930), hãy đăng xuất tài khoản Shopee Seller và thử lại.',
+      )
+    ) {
+      return;
+    }
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await apiFetch(`/api/shopee/auth-url?shop_id=${encodeURIComponent(shop.shopId)}`, {
+        headers: { Authorization: token ? `Bearer ${token}` : '' },
+      });
+      const data = await parseJsonResponse<{ success?: boolean; url?: string; error?: string; message?: string }>(res);
+      if (!res.ok || !data.success || !data.url) {
+        throw new Error(data.message || data.error || 'Không tạo được link OAuth Shopee');
+      }
+      window.location.href = data.url;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      alert(`OAuth Shopee thất bại: ${message}`);
     }
   };
 
@@ -679,6 +722,15 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
 
                     <div className="flex items-center gap-2">
                       {renderShopConnectionStatus(shop)}
+
+                      <button
+                        type="button"
+                        onClick={() => handleShopeeOAuth(shop)}
+                        className="px-2 py-1.5 rounded-lg border border-orange-200 bg-orange-50 text-orange-700 text-[10px] font-bold uppercase tracking-wide hover:bg-orange-100 transition-all"
+                        title={`Ủy quyền OAuth Shopee cho shop ${shop.shopId}`}
+                      >
+                        OAuth
+                      </button>
 
                       <button
                         onClick={() => handleToggleSync(shop)}

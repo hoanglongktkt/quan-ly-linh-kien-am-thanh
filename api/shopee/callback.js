@@ -1,9 +1,6 @@
 /**
  * Vercel — Shopee Live Callback / OAuth redirect
- * URL: https://<domain>/api/shopee/callback
- *
- * Biến môi trường: CPANEL_BACKEND_URL (VD: https://api.linhkienamthanh.net)
- * Không dùng APP_URL, BACKEND_URL hay NEXT_PUBLIC_*.
+ * URL: https://quanly.linhkienamthanh.net/api/shopee/callback
  */
 import {
   logShopeeRequest,
@@ -14,15 +11,17 @@ import {
 } from '../lib/shopeeCallbackUtil.js';
 
 const LOG = '[Shopee Callback]';
+const APP_FRONTEND = 'https://quanly.linhkienamthanh.net';
+const IDLE_MSG = 'Callback route is active. Waiting for Shopee parameters (code, shop_id)...';
 
-const HOP_HEADERS = new Set([
-  'host',
-  'connection',
-  'content-length',
-  'transfer-encoding',
-  'keep-alive',
-  'upgrade',
-]);
+function queryOne(value) {
+  if (Array.isArray(value)) return String(value[0] ?? '').trim();
+  return String(value ?? '').trim();
+}
+
+function wantsBrowserRedirect(req) {
+  return queryOne(req.query?.redirect) === '1';
+}
 
 export default async function handler(req, res) {
   logShopeeRequest(LOG, req);
@@ -31,7 +30,7 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    return respondShopeeOk(res);
+    return res.status(200).type('text/plain; charset=utf-8').send('OK');
   }
 
   if (req.method === 'POST') {
@@ -50,19 +49,20 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
-    const code = req.query?.code;
-    const shopId = req.query?.shop_id;
+    const code = queryOne(req.query?.code);
+    const shopId = queryOne(req.query?.shop_id);
+    const mainAccountId = queryOne(req.query?.main_account_id);
 
-    if (!code && !shopId) {
-      console.log(LOG, 'GET verification probe — 200 empty');
-      return respondShopeeOk(res);
+    if (!code && !shopId && !mainAccountId) {
+      console.log(LOG, 'Truy cập trực tiếp — thiếu code/shop_id');
+      return res.status(200).type('text/plain; charset=utf-8').send(IDLE_MSG);
     }
 
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(req.query || {})) {
-      if (v != null) qs.set(k, String(v));
+      if (v != null) qs.set(k, String(Array.isArray(v) ? v[0] : v));
     }
-    const path = `/api/shopee/callback?${qs.toString()}`;
+    const path = `/api/shopee/oauth/complete?${qs.toString()}`;
 
     const backend = resolveCpanelBackend();
     if (!backend.ok) {
@@ -71,42 +71,87 @@ export default async function handler(req, res) {
         message: backend.error,
         errorCode: 'BACKEND_CONFIG',
         cpanelBackendUrl: process.env.CPANEL_BACKEND_URL ? '(set but invalid)' : '(MISSING)',
-        hint: 'Set CPANEL_BACKEND_URL trên Vercel → subdomain cPanel (https://api.linhkienamthanh.net).',
+        hint: 'Set CPANEL_BACKEND_URL trên Vercel → https://api.linhkienamthanh.net',
       });
     }
 
-    const forward = await forwardToCpanel(LOG, path, req, { followRedirect: false });
+    console.log(LOG, 'OAuth → cPanel JSON complete', path);
+
+    const forward = await forwardToCpanel(LOG, path, req, {
+      followRedirect: false,
+      timeoutMs: 60000,
+    });
 
     if (!forward.ok || !forward.upstream) {
       const err = forward.error || { message: 'fetch failed' };
       console.error(
         LOG,
-        'Forward failed',
+        'OAuth complete failed',
         JSON.stringify({ target: forward.target, cpanelBackendUrl: forward.cpanelBackendUrl, ...err }),
       );
-      return respondCallbackError(res, 502, {
+      return res.status(502).json({
+        success: false,
         message: err.message || 'Không kết nối được backend cPanel',
-        errorCode: err.code || err.causeCode || null,
-        causeMessage: err.causeMessage || null,
-        hint: err.hint || null,
-        targetUrl: forward.target,
+        error: err.code || 'cpanel_oauth_failed',
         cpanelBackendUrl: forward.cpanelBackendUrl || backend.url,
-        latencyMs: forward.latencyMs,
-        errorChain: err.chain || null,
       });
     }
 
     const upstream = forward.upstream;
-    res.status(upstream.status);
-    upstream.headers.forEach((value, key) => {
-      if (!HOP_HEADERS.has(key.toLowerCase())) res.setHeader(key, value);
+    const bodyText = await upstream.text();
+    console.log(
+      LOG,
+      'OAuth complete response',
+      JSON.stringify({ status: upstream.status, bodyPreview: bodyText.slice(0, 800) }),
+    );
+
+    let data;
+    try {
+      data = JSON.parse(bodyText);
+    } catch {
+      console.error(LOG, 'OAuth complete — invalid JSON from cPanel', bodyText.slice(0, 500));
+      return res.status(502).json({
+        success: false,
+        message: 'Backend cPanel trả về dữ liệu không phải JSON',
+        error: 'invalid_cpanel_response',
+        bodyPreview: bodyText.slice(0, 500),
+      });
+    }
+
+    const oauthShopId = String(data.oauth_shop_id || shopId || '');
+    const expectedShop = queryOne(req.query?.expected_shop) || String(data.expected_shop_id || '');
+
+    if (wantsBrowserRedirect(req)) {
+      if (data.success) {
+        const savedQuery = encodeURIComponent((data.saved_shop_ids || []).join(','));
+        const expectedQuery = expectedShop ? `&expected_shop=${encodeURIComponent(expectedShop)}` : '';
+        return res.redirect(
+          302,
+          `${APP_FRONTEND}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`,
+        );
+      }
+      const errMsg = data.message || data.error || 'token_exchange_failed';
+      return res.redirect(
+        302,
+        `${APP_FRONTEND}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`,
+      );
+    }
+
+    return res.status(data.success ? 200 : upstream.status >= 400 ? upstream.status : 400).json({
+      ...data,
+      oauth_shop_id: oauthShopId,
+      message:
+        data.message ||
+        (data.success
+          ? `OAuth thành công cho shop ${oauthShopId}.`
+          : data.error || 'OAuth thất bại'),
+      frontend_url: APP_FRONTEND,
+      hint: 'Thêm ?redirect=1 vào callback URL để tự chuyển về app sau OAuth.',
     });
-    const buf = Buffer.from(await upstream.arrayBuffer());
-    return res.end(buf);
   }
 
   res.setHeader('Allow', 'GET, POST, OPTIONS');
-  res.status(405).end();
+  return res.status(405).type('text/plain; charset=utf-8').send('Method not allowed. Use GET or POST.');
 }
 
 export const config = {
