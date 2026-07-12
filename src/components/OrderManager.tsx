@@ -2582,6 +2582,15 @@ export default function OrderManager({
                       <p className="text-[11px] text-gray-500 font-medium mt-0.5">
                         {new Date(order.date).toLocaleDateString('vi-VN')}
                       </p>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedOrderDetails(order)}
+                        className="mt-1.5 inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:text-blue-700 transition-colors"
+                        title="Xem chi tiết đơn"
+                      >
+                        <Eye className="w-3.5 h-3.5 shrink-0" />
+                        Xem chi tiết đơn
+                      </button>
                     </div>
                   </div>
 
@@ -2729,15 +2738,6 @@ export default function OrderManager({
                           Nhận Hoàn
                         </button>
                       )}
-
-                      <button
-                        onClick={() => setSelectedOrderDetails(order)}
-                        className="min-h-11 px-3 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 font-bold text-xs rounded-xl flex items-center gap-1 transition-all border border-gray-150"
-                        title="Xem chi tiết đơn"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span className="max-lg:sr-only">Xem</span>
-                      </button>
                     </div>
                   </div>
                 </div>
