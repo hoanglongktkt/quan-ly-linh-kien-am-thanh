@@ -22,11 +22,15 @@
   },
   "rewrites": [
     {
+      "source": "/labels/:path*",
+      "destination": "https://quanly.linhkienamthanh.net/labels/:path*"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api?path=:path*"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/((?!api/|labels/).*)",
       "destination": "/index.html"
     }
   ]

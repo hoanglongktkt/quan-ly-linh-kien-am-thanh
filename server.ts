@@ -49,6 +49,13 @@ function resolveAppBaseUrl(): string {
 
 const APP_BASE_URL = resolveAppBaseUrl();
 
+function absoluteLabelUrl(relativePath: string | null | undefined): string | null {
+  if (!relativePath) return null;
+  if (/^https?:\/\//i.test(relativePath)) return relativePath;
+  const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
+  return `${APP_BASE_URL.replace(/\/$/, "")}${p}`;
+}
+
 /** Shopee console khai báo domain quanly — redirect_uri phải cùng domain đó. */
 function resolveShopeeCallbackUrl(): string {
   const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
@@ -5109,7 +5116,7 @@ async function startServer() {
     if (!primaryUrl) {
       return { url: null, printedOrderSns, skippedOrders, message: "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c v\u1EAD n \u0111\u01A1n t\u1EF1 \u0111\u1ED9ng sau khi chu\u1EA9n b\u1EB1 h\xE0ng." };
     }
-    return { url: primaryUrl, printedOrderSns, skippedOrders };
+    return { url: absoluteLabelUrl(primaryUrl), printedOrderSns, skippedOrders };
   }
 
   // Single or bulk print: fetch the REAL Shopee AWB PDF for the given orders.
@@ -5232,8 +5239,10 @@ async function startServer() {
     console.log(`[Shopee Print] Ho\xE0n t\u1EA5t: ${documents.filter(d => d.url).length}/${Object.keys(groups).length} nh\xF3m shop t\u1EA1o v\u1EAD n th\xE0nh c\xF4ng.`);
 
     return res.json({
-      mergedUrl,
-      documents,
+      mergedUrl: absoluteLabelUrl(mergedUrl),
+      documents: documents.map((d: any) =>
+        d.url ? { ...d, url: absoluteLabelUrl(d.url) } : d
+      ),
       orders: updatedOrders.filter(isValidOrder),
       shippingDocumentType: SHOPEE_SHIPPING_DOCUMENT_TYPE,
       openMode: "new_tab_pdf",
@@ -6029,6 +6038,9 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       },
     }));
     app.get("*", (req, res) => {
+      if (req.path.startsWith("/labels/")) {
+        return res.status(404).type("text/plain").send("Không tìm thấy file vận đơn.");
+      }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.sendFile(path.join(distPath, "index.html"));
     });

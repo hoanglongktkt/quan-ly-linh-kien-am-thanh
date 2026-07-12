@@ -50,6 +50,7 @@ SetEnv SHOPEE_PARTNER_KEY shpk446c744962586c74506e486e7a4d4c676d527671496e447747
 <IfModule mod_rewrite.c>
   RewriteEngine On
   RewriteCond %{REQUEST_URI} !^/api/ [NC]
+  RewriteCond %{REQUEST_URI} !^/labels/ [NC]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule ^ dist/index.html [L]

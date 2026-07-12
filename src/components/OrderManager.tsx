@@ -55,6 +55,7 @@ import {
   isStructuredAddressComplete,
   StructuredAddressValue,
 } from '../utils/vietnamAddress';
+import { resolveBackendFileUrl } from '../utils/apiClient';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 
@@ -421,9 +422,7 @@ export default function OrderManager({
 
   // Shopee AWB: mở PDF trực tiếp tab mới — trình xem PDF của trình duyệt (in A4), không window.print().
   const openShopeeLabelInNewTab = (url: string) => {
-    const fullUrl = url.startsWith('http')
-      ? url
-      : `${window.location.origin}${url.startsWith('/') ? url : `/${url}`}`;
+    const fullUrl = url.startsWith('http') ? url : resolveBackendFileUrl(url);
 
     const win = window.open(fullUrl, '_blank', 'noopener,noreferrer');
     if (!win) {

@@ -47,6 +47,19 @@ export function getApiBaseUrl(): string {
   return typeof window !== 'undefined' ? PRODUCTION_API_BASE : '';
 }
 
+/** Ghép URL file tĩnh trên backend (vận đơn PDF /labels/...) — không dùng origin Vercel. */
+export function resolveBackendFileUrl(path: string): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`;
+  if (typeof window === 'undefined') {
+    return `${PRODUCTION_API_BASE}${normalized}`;
+  }
+  const hostname = window.location.hostname;
+  if (isLocalDevHost(hostname) || isMainProductionHost(hostname)) {
+    return normalized;
+  }
+  return `${PRODUCTION_API_BASE}${normalized}`;
+}
+
 /** Ghép path `/api/...` — relative khi base rỗng (cùng origin hoặc Vercel proxy). */
 export function apiUrl(path: string): string {
   const normalized = path.startsWith('/') ? path : `/${path}`;
