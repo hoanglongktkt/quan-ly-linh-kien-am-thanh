@@ -15,9 +15,11 @@ import OrderManager from './components/OrderManager';
 import OrderPicking from './components/OrderPicking';
 import PublishManager from './components/PublishManager';
 import LoginPage from './components/LoginPage';
+import ErrorBoundary from './components/ErrorBoundary';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import { APP_TITLE } from './config/brand';
 import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
+import { sanitizeOrders } from './utils/sanitizeOrder';
 import { 
   LayoutDashboard, 
   Package, 
@@ -87,7 +89,7 @@ export default function App() {
     if (!saved) return [];
     try {
       const parsed: Order[] = JSON.parse(saved);
-      return parsed.filter(isRealSyncedOrder);
+      return sanitizeOrders(parsed.filter(isRealSyncedOrder));
     } catch {
       return [];
     }
@@ -208,7 +210,7 @@ export default function App() {
       });
       if (response.ok) {
         const data: Order[] = await response.json();
-        setOrders(data);
+        setOrders(sanitizeOrders(data));
       }
     } catch (err) {
       console.error("Fetch orders error:", err);
@@ -323,7 +325,7 @@ export default function App() {
         throw new Error(data?.error || 'Kéo đơn hàng thất bại.');
       }
       if (Array.isArray(data.orders)) {
-        setOrders(data.orders);
+        setOrders(sanitizeOrders(data.orders));
       }
       if (data.warning) {
         throw new Error(data.warning);
@@ -338,13 +340,14 @@ export default function App() {
 
   // Persist status/tracking changes made in the UI back to the real orders database.
   const handleUpdateOrders = (updatedOrders: Order[]) => {
+    const sanitized = sanitizeOrders(updatedOrders);
     const previousById = new Map(orders.map(o => [o.id, o]));
-    setOrders(updatedOrders);
+    setOrders(sanitized);
 
     const token = localStorage.getItem('admin_token');
     if (!token) return;
 
-    updatedOrders.forEach(order => {
+    sanitized.forEach(order => {
       const prev = previousById.get(order.id);
       if (!prev || JSON.stringify(prev) === JSON.stringify(order)) return;
 
@@ -1134,14 +1137,16 @@ export default function App() {
         {/* Active Tab rendering */}
         <div className={`app-main-container app-page-content app-scroll-list ${activeTab === 'picking' ? 'max-md:pt-1 max-md:px-2' : activeTab === 'products' ? 'max-md:pt-1 max-md:px-2' : 'max-md:pt-2 max-md:px-3'} p-4 md:p-6 pb-24 md:pb-6`}>
           {activeTab === 'dashboard' && (
-            <Dashboard
-              orders={orders}
-              products={products}
-              onTabChange={setActiveTab}
-              onEditProductShortcut={handleEditProductShortcut}
-              onUpdateProduct={handleUpdateProduct}
-              onNavigateToImport={handleNavigateToImport}
-            />
+            <ErrorBoundary label="Tổng quan">
+              <Dashboard
+                orders={orders}
+                products={products}
+                onTabChange={setActiveTab}
+                onEditProductShortcut={handleEditProductShortcut}
+                onUpdateProduct={handleUpdateProduct}
+                onNavigateToImport={handleNavigateToImport}
+              />
+            </ErrorBoundary>
           )}
 
           {activeTab === 'products' && (
@@ -1196,7 +1201,8 @@ export default function App() {
           )}
 
           {activeTab === 'orders' && (
-            <OrderManager 
+            <ErrorBoundary label="Quản lý đơn hàng">
+              <OrderManager 
               orders={orders}
               onUpdateOrders={handleUpdateOrders}
               onRefreshOrders={pullOrders}
@@ -1209,6 +1215,7 @@ export default function App() {
               onCloseScanner={() => setFocusScanner(false)}
               onEndScanSession={() => setFocusScanner(false)}
             />
+            </ErrorBoundary>
           )}
 
           {activeTab === 'bulk' && (

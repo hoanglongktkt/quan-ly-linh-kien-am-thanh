@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Product, Order } from '../types';
 import { computeDashboardStats } from '../utils/dashboardStats';
 import {
@@ -72,6 +72,43 @@ interface DashboardData {
   };
 }
 
+function normalizeDashboardPayload(raw: Partial<DashboardData> | null | undefined): DashboardData | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const kpi = raw.kpi || { revenue: 0, newOrders: 0, returns: 0, cancelled: 0 };
+  const pending = raw.pendingOrders || {
+    pendingApproval: 0,
+    pendingPayment: 0,
+    pendingPack: 0,
+    pendingPickup: 0,
+    shipping: 0,
+    returnPending: 0,
+  };
+  return {
+    dateRange: String(raw.dateRange || 'today'),
+    dateRangeLabel: String(raw.dateRangeLabel || 'Hôm nay'),
+    kpi: {
+      revenue: Number(kpi.revenue) || 0,
+      newOrders: Number(kpi.newOrders) || 0,
+      returns: Number(kpi.returns) || 0,
+      cancelled: Number(kpi.cancelled) || 0,
+    },
+    pendingOrders: {
+      pendingApproval: Number(pending.pendingApproval) || 0,
+      pendingPayment: Number(pending.pendingPayment) || 0,
+      pendingPack: Number(pending.pendingPack) || 0,
+      pendingPickup: Number(pending.pendingPickup) || 0,
+      shipping: Number(pending.shipping) || 0,
+      returnPending: Number(pending.returnPending) || 0,
+    },
+    chart: Array.isArray(raw.chart) ? raw.chart : [],
+    topProducts: Array.isArray(raw.topProducts) ? raw.topProducts : [],
+    inventory: {
+      lowStockThreshold: Number(raw.inventory?.lowStockThreshold) || 5,
+      lowStockProducts: Array.isArray(raw.inventory?.lowStockProducts) ? raw.inventory!.lowStockProducts! : [],
+    },
+  };
+}
+
 interface DashboardProps {
   orders: Order[];
   products: Product[];
@@ -97,17 +134,18 @@ export default function Dashboard({
   const [stockEditItem, setStockEditItem] = useState<{ id: string; title: string; stock: number } | null>(null);
   const [stockInput, setStockInput] = useState('');
   const [stockSaving, setStockSaving] = useState(false);
+  const ordersRef = useRef(orders);
+  const productsRef = useRef(products);
+  ordersRef.current = orders;
+  productsRef.current = products;
 
-  const applyFallback = useCallback(
-    (range: DashboardDateRange) => {
-      const stats = computeDashboardStats(orders, products, range);
-      console.log('[Dashboard] Client fallback stats:', stats);
-      setData(stats);
-      setUsingFallback(true);
-      setError(null);
-    },
-    [orders, products]
-  );
+  const applyFallback = useCallback((range: DashboardDateRange) => {
+    const stats = computeDashboardStats(ordersRef.current, productsRef.current, range);
+    console.log('[Dashboard] Client fallback stats:', stats);
+    setData(normalizeDashboardPayload(stats as unknown as DashboardData));
+    setUsingFallback(true);
+    setError(null);
+  }, []);
 
   const fetchDashboard = useCallback(async (range: DashboardDateRange) => {
     const token = localStorage.getItem('admin_token');
@@ -142,7 +180,7 @@ export default function Dashboard({
       if (!contentType.includes('application/json')) {
         console.warn('[Dashboard] Non-JSON response — switching to client fallback.');
         console.error('[Dashboard] Body preview:', rawText.slice(0, 200));
-        if (orders.length > 0 || products.length > 0) {
+        if (ordersRef.current.length > 0 || productsRef.current.length > 0) {
           applyFallback(range);
           return;
         }
@@ -167,7 +205,7 @@ export default function Dashboard({
       console.log('[Dashboard] Response:', payload);
 
       if (!res.ok) {
-        if (orders.length > 0 || products.length > 0) {
+        if (ordersRef.current.length > 0 || productsRef.current.length > 0) {
           applyFallback(range);
           return;
         }
@@ -176,10 +214,10 @@ export default function Dashboard({
         return;
       }
 
-      setData(payload);
+      setData(normalizeDashboardPayload(payload));
       setUsingFallback(false);
     } catch (err) {
-      if (orders.length > 0 || products.length > 0) {
+      if (ordersRef.current.length > 0 || productsRef.current.length > 0) {
         applyFallback(range);
         return;
       }
@@ -190,11 +228,11 @@ export default function Dashboard({
     } finally {
       setLoading(false);
     }
-  }, [orders, products, applyFallback]);
+  }, [applyFallback]);
 
   useEffect(() => {
     fetchDashboard(dateRange);
-  }, [dateRange, fetchDashboard, orders.length, products.length]);
+  }, [dateRange, fetchDashboard]);
 
   const refreshInventoryList = useCallback(() => {
     if (usingFallback) {

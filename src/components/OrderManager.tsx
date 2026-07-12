@@ -1031,11 +1031,10 @@ export default function OrderManager({
     // 4. Time Range Filter
     if (selectedTimeRange === 'today') {
       const todayStr = new Date().toISOString().split('T')[0];
-      if (!order.date.startsWith(todayStr)) return false;
+      if (!String(order.date || '').startsWith(todayStr)) return false;
     } else if (selectedTimeRange === 'week') {
-      // Within last 7 days from local time 2026-07-07
       const limit = new Date('2026-07-01');
-      if (new Date(order.date) < limit) return false;
+      if (new Date(order.date || 0) < limit) return false;
     }
 
     // 5. Text query search
@@ -1052,9 +1051,10 @@ export default function OrderManager({
 
     return true;
   }).sort((a, b) => {
-    if (selectedSort === 'newest') return new Date(b.date).getTime() - new Date(a.date).getTime();
-    if (selectedSort === 'oldest') return new Date(a.date).getTime() - new Date(b.date).getTime();
-    if (selectedSort === 'highest_value') return b.totalAmount - a.totalAmount;
+    const dateMs = (o: Order) => new Date(o.date || 0).getTime() || 0;
+    if (selectedSort === 'newest') return dateMs(b) - dateMs(a);
+    if (selectedSort === 'oldest') return dateMs(a) - dateMs(b);
+    if (selectedSort === 'highest_value') return (Number(b.totalAmount) || 0) - (Number(a.totalAmount) || 0);
     return 0;
   });
 
@@ -1291,7 +1291,7 @@ export default function OrderManager({
     // Find matching order in "unprocessed" or "processed" state
     const targetOrder = orders.find(o => 
       (o.status === 'unprocessed' || o.status === 'processed') &&
-      (o.orderSn.toUpperCase() === query || (o.trackingNumber && o.trackingNumber.toUpperCase() === query))
+      (String(o.orderSn || '').toUpperCase() === query || (o.trackingNumber && o.trackingNumber.toUpperCase() === query))
     );
 
     if (targetOrder) {
@@ -1329,7 +1329,7 @@ export default function OrderManager({
       // Check if already in shipping
       const alreadyShipping = orders.find(o => 
         o.status === 'shipping' && 
-        (o.orderSn.toUpperCase() === query || (o.trackingNumber && o.trackingNumber.toUpperCase() === query))
+        (String(o.orderSn || '').toUpperCase() === query || (o.trackingNumber && o.trackingNumber.toUpperCase() === query))
       );
 
       if (alreadyShipping) {
@@ -1360,7 +1360,7 @@ export default function OrderManager({
     // Find return_pending order
     const targetOrder = orders.find(o =>
       o.status === 'return_pending' &&
-      (o.orderSn.toUpperCase() === query || (o.trackingNumber && o.trackingNumber.toUpperCase() === query))
+      (String(o.orderSn || '').toUpperCase() === query || (o.trackingNumber && o.trackingNumber.toUpperCase() === query))
     );
 
     if (targetOrder) {
@@ -1391,7 +1391,7 @@ export default function OrderManager({
       setReturnBarcode('');
     } else {
       const otherStateOrder = orders.find(o =>
-        (o.orderSn.toUpperCase() === query || (o.trackingNumber && o.trackingNumber.toUpperCase() === query))
+        (String(o.orderSn || '').toUpperCase() === query || (o.trackingNumber && o.trackingNumber.toUpperCase() === query))
       );
 
       if (otherStateOrder) {
@@ -2578,7 +2578,7 @@ export default function OrderManager({
                       {/* Order items list — thumbnail + full title + quantity */}
                       <td className="p-4 w-[280px]">
                         <div className="space-y-2">
-                          {order.items.map((item, idx) => (
+                          {(order.items || []).map((item, idx) => (
                             <div key={idx} className="flex items-center gap-2">
                               {item.productImage ? (
                                 <img
@@ -2805,7 +2805,7 @@ export default function OrderManager({
                   <div className="flex-1 min-w-0 bg-slate-50/80 px-2.5 py-2 rounded-xl border border-slate-100">
                     <div className="text-[9px] font-bold text-gray-400 uppercase tracking-wide mb-1">Sản phẩm đặt mua</div>
                     <div className="space-y-1">
-                      {order.items.map((item, idx) => (
+                      {(order.items || []).map((item, idx) => (
                         <div key={idx} className="flex justify-between items-start text-gray-700 gap-2">
                           <span className="truncate text-[11px] font-medium leading-tight">{item.productTitle}</span>
                           <span className="text-blue-600 text-xs shrink-0 font-black">x{item.quantity}</span>
@@ -3010,7 +3010,7 @@ export default function OrderManager({
               <div className="space-y-2">
                 <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Sản phẩm khách đặt</h4>
                 <div className="border border-gray-100 rounded-2xl overflow-hidden divide-y divide-gray-50">
-                  {selectedOrderDetails.items.map((item, index) => (
+                  {(selectedOrderDetails.items || []).map((item, index) => (
                     <div key={index} className="p-3 bg-white flex items-center justify-between text-xs gap-3">
                       <div className="flex items-center gap-2.5 min-w-0">
                         {item.productImage ? (
@@ -3246,7 +3246,7 @@ export default function OrderManager({
                   <div className="space-y-1">
                     <p className="font-bold text-black uppercase text-[9px]">Danh sách sản phẩm ({order.items.length} phân loại):</p>
                     <div className="divide-y divide-gray-100">
-                      {order.items.map((it, itemIdx) => (
+                      {(order.items || []).map((it, itemIdx) => (
                         <div key={itemIdx} className="py-1 flex justify-between font-medium">
                           <span>{it.productTitle}</span>
                           <span className="font-extrabold text-blue-600">x{it.quantity}</span>
