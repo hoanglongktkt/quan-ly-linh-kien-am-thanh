@@ -14,9 +14,6 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       : raw.shop_name
         ? String(raw.shop_name)
         : undefined,
-    customerName: String(raw.customerName || 'Khách hàng'),
-    customerPhone: raw.customerPhone ? String(raw.customerPhone) : undefined,
-    customerAddress: raw.customerAddress ? String(raw.customerAddress) : undefined,
     totalAmount: Number(raw.totalAmount) || 0,
     revenue: Number(raw.revenue) || Number(raw.totalAmount) || 0,
     status: (raw.status as Order['status']) || 'unprocessed',

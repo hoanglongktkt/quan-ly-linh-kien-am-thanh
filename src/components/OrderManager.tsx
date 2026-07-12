@@ -22,8 +22,6 @@ import {
   Check, 
   Filter, 
   Eye, 
-  MapPin, 
-  Phone, 
   Barcode, 
   ArrowRight, 
   AlertCircle, 
@@ -42,7 +40,6 @@ import {
   Sparkle,
   Plus,
   Trash2,
-  User,
   CreditCard,
   ImageIcon,
   Loader2,
@@ -88,37 +85,17 @@ function OrderDetailAccordionPanel({ order, shops }: { order: Order; shops: Conn
         </p>
       </div>
 
-      <div className="space-y-3 bg-white p-4 rounded-2xl border border-gray-100">
-        <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Thông tin người nhận</h4>
-        <div className="space-y-2 text-xs">
-          <div className="flex items-start gap-2">
-            <MapPin className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+      {getCarrierWaybillDisplay(order) && (
+        <div className="bg-white p-4 rounded-2xl border border-gray-100">
+          <div className="flex items-center gap-2 text-xs">
+            <Barcode className="w-4 h-4 text-indigo-500 shrink-0" />
             <div>
-              <span className="text-gray-400">Địa chỉ:</span>{' '}
-              <strong className="text-gray-800">{order.customerName}</strong>
-              <p className="text-gray-500 mt-0.5 text-[11px] leading-relaxed">{order.customerAddress || 'Chưa cung cấp đầy đủ thông tin'}</p>
+              <span className="text-gray-400">Mã vận đơn:</span>{' '}
+              <strong className="text-gray-800 font-mono">{getCarrierWaybillDisplay(order)}</strong>
             </div>
           </div>
-          {order.customerPhone && (
-            <div className="flex items-center gap-2">
-              <Phone className="w-4 h-4 text-emerald-500 shrink-0" />
-              <div>
-                <span className="text-gray-400">Số điện thoại:</span>{' '}
-                <strong className="text-gray-800 font-mono">{order.customerPhone}</strong>
-              </div>
-            </div>
-          )}
-          {getCarrierWaybillDisplay(order) && (
-            <div className="flex items-center gap-2">
-              <Barcode className="w-4 h-4 text-indigo-500 shrink-0" />
-              <div>
-                <span className="text-gray-400">Mã vận đơn:</span>{' '}
-                <strong className="text-gray-800 font-mono">{getCarrierWaybillDisplay(order)}</strong>
-              </div>
-            </div>
-          )}
         </div>
-      </div>
+      )}
 
       <div className="space-y-2">
         <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Sản phẩm khách đặt</h4>
@@ -944,8 +921,6 @@ export default function OrderManager({
 
   // Manual Order Creator states
   const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
-  const [custName, setCustName] = useState('');
-  const [custPhone, setCustPhone] = useState('');
   const [shippingAddress, setShippingAddress] = useState<StructuredAddressValue>(emptyStructuredAddress());
   const [submittingManualOrder, setSubmittingManualOrder] = useState(false);
   const [orderItems, setOrderItems] = useState<{ productId: string; productTitle: string; sku: string; quantity: number; price: number; stock: number }[]>([]);
@@ -1011,10 +986,6 @@ export default function OrderManager({
 
   const handleSubmitManualOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!custName.trim() || !custPhone.trim()) {
-      alert('Vui lòng điền đầy đủ thông tin khách hàng (Tên, SĐT)!');
-      return;
-    }
     if (!isStructuredAddressComplete(shippingAddress)) {
       alert('Vui lòng chọn đầy đủ Tỉnh/Quận/Phường và nhập địa chỉ chi tiết!');
       return;
@@ -1030,8 +1001,6 @@ export default function OrderManager({
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          customerName: custName.trim(),
-          customerPhone: custPhone.trim(),
           shippingAddress: {
             province: shippingAddress.provinceName,
             provinceCode: shippingAddress.provinceCode,
@@ -1083,7 +1052,7 @@ export default function OrderManager({
         channel: 'manual',
         type: 'publish',
         status: 'success',
-        message: `[TẠO ĐƠN THỦ CÔNG] Đã khởi tạo thành công đơn hàng sỉ ngoài sàn #${newOrder.orderSn} cho khách ${newOrder.customerName}. Tổng thu: ${newOrder.totalAmount.toLocaleString('vi-VN')}đ.`
+        message: `[TẠO ĐƠN THỦ CÔNG] Đã khởi tạo thành công đơn hàng sỉ ngoài sàn #${newOrder.orderSn}. Tổng thu: ${newOrder.totalAmount.toLocaleString('vi-VN')}đ.`
       });
 
       if (selectedCarrier !== 'self') {
@@ -1108,8 +1077,6 @@ export default function OrderManager({
 
       setShowCreateOrderModal(false);
       setOrderItems([]);
-      setCustName('');
-      setCustPhone('');
       setShippingAddress(emptyStructuredAddress());
     } catch {
       alert('Lỗi kết nối server khi tạo đơn hàng!');
@@ -1263,12 +1230,11 @@ export default function OrderManager({
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
-      const matchName = String(order.customerName || '').toLowerCase().includes(q);
       const matchTracking = order.trackingNumber ? order.trackingNumber.toLowerCase().includes(q) : false;
       const matchInternal = order.internalTrackingCode ? order.internalTrackingCode.toLowerCase().includes(q) : false;
       const matchProduct = (order.items || []).some(it => String(it.productTitle || '').toLowerCase().includes(q));
 
-      if (!matchSn && !matchName && !matchTracking && !matchInternal && !matchProduct) return false;
+      if (!matchSn && !matchTracking && !matchInternal && !matchProduct) return false;
     }
 
     return true;
@@ -1543,7 +1509,7 @@ export default function OrderManager({
       });
 
       setScannerMessage({
-        text: `✅ [BÀN GIAO SHIPPER] Thành công! Đơn hàng #${targetOrder.orderSn} (${targetOrder.customerName}) đã được chuyển trạng thái "ĐANG GIAO".`,
+        text: `✅ [BÀN GIAO SHIPPER] Thành công! Đơn hàng #${targetOrder.orderSn} đã được chuyển trạng thái "ĐANG GIAO".`,
         type: 'success'
       });
       setShipperBarcode('');
@@ -2162,8 +2128,6 @@ export default function OrderManager({
 
           <button
             onClick={() => {
-              setCustName('');
-              setCustPhone('');
               setShippingAddress(emptyStructuredAddress());
               setOrderItems([]);
               setSelectedCarrier('self');
@@ -3367,18 +3331,11 @@ export default function OrderManager({
                     <span className="font-mono text-[9px] uppercase font-black">MÃ VẬN ĐƠN: {getCarrierWaybillDisplay(order) || 'CHƯA PHÁT HÀNH'}</span>
                   </div>
 
-                  {/* Addresses */}
-                  <div className="grid grid-cols-2 gap-4 border-b border-gray-100 pb-2">
+                  {/* Sender */}
+                  <div className="border-b border-gray-100 pb-2">
                     <div className="space-y-1 text-gray-600">
                       <p className="font-bold text-black uppercase text-[9px]">Gửi từ:</p>
-                      <p className="font-semibold text-black">{order.shopName || 'Tổng Kho Sunhouse Hà Nội'}</p>
-                      <p className="text-[10px]">Kho trung chuyển Quận Tân Bình, TP. Hồ Chí Minh</p>
-                    </div>
-                    <div className="space-y-1 text-gray-600 border-l border-gray-100 pl-2">
-                      <p className="font-bold text-black uppercase text-[9px]">Người nhận:</p>
-                      <p className="font-semibold text-black">{order.customerName}</p>
-                      {order.customerPhone && <p className="font-mono">{order.customerPhone}</p>}
-                      <p className="text-[10px] leading-tight line-clamp-2">{order.customerAddress || 'Việt Nam'}</p>
+                      <p className="font-semibold text-black">{order.shopName || resolveOrderShopDisplayName(order, shops)}</p>
                     </div>
                   </div>
 
@@ -3461,32 +3418,8 @@ export default function OrderManager({
               <div className="md:col-span-5 space-y-4">
                 <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs space-y-3">
                   <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5 border-b border-gray-100 pb-2">
-                    <User className="w-4 h-4 text-emerald-600" /> Thông tin người nhận
+                    <Truck className="w-4 h-4 text-emerald-600" /> Địa chỉ giao hàng
                   </h4>
-                  
-                  <div>
-                    <label className="text-[11px] font-semibold text-gray-500">Tên khách hàng *</label>
-                    <input 
-                      type="text"
-                      required
-                      value={custName}
-                      onChange={(e) => setCustName(e.target.value)}
-                      placeholder="Nguyễn Văn A..."
-                      className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-medium text-gray-800"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold text-gray-500">Số điện thoại *</label>
-                    <input 
-                      type="text"
-                      required
-                      value={custPhone}
-                      onChange={(e) => setCustPhone(e.target.value)}
-                      placeholder="Số điện thoại nhận hàng..."
-                      className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-mono font-medium text-gray-800"
-                    />
-                  </div>
 
                   <StructuredAddressForm
                     value={shippingAddress}

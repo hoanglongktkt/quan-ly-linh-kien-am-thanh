@@ -1245,7 +1245,7 @@ async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSn
     // Note: `image_info` is nested inside item_list automatically — not a top-level field.
     // `order_status` / `create_time` are NOT valid values here (they're returned by default);
     // passing them causes Shopee to reject the whole request with response_optional_fields error.
-    response_optional_fields: "buyer_user_id,buyer_username,recipient_address,item_list,total_amount,shipping_carrier,package_list",
+    response_optional_fields: "buyer_user_id,item_list,total_amount,shipping_carrier,package_list",
   });
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
@@ -2380,9 +2380,6 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     channel: "shopee",
     shopId: String(shopId),
     shopName: shopName || "Shopee Shop",
-    customerName: item.recipient_address?.name || item.buyer_username || "Kh\xE1ch Shopee",
-    customerPhone: item.recipient_address?.phone || undefined,
-    customerAddress: item.recipient_address?.full_address || undefined,
     totalAmount: Number(item.total_amount || 0),
     revenue: Number(item.total_amount || 0) * 0.88,
     status: statusMap[rawStatus] || "unprocessed",
@@ -2435,6 +2432,9 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     merged.shopId = existing.shopId;
   }
   mergeShopeeTrackingFields(merged, existing, incoming);
+  delete merged.customerName;
+  delete merged.customerPhone;
+  delete merged.customerAddress;
   return merged;
 }
 
@@ -3158,9 +3158,6 @@ function normalizeShopeeOrder(payload: any): any | null {
     channel: "shopee",
     shopId: shopId ? String(shopId) : undefined,
     shopName: data.shop_name || "Shopee Shop",
-    customerName: data.buyer_username || data.recipient_address?.name || "Khách Shopee",
-    customerPhone: data.recipient_address?.phone || undefined,
-    customerAddress: data.recipient_address?.full_address || undefined,
     totalAmount: Number(data.total_amount || 0),
     revenue: Number(data.total_amount || 0) * 0.88,
     status: statusMap[rawStatus] || "unprocessed",
@@ -4405,8 +4402,6 @@ async function startServer() {
     try {
       const body = req.body || {};
       const {
-        customerName,
-        customerPhone,
         shippingAddress,
         items,
         carrier = "self",
@@ -4415,10 +4410,6 @@ async function startServer() {
         orderDiscount = 0,
         carrierNotes = "",
       } = body;
-
-      if (!customerName?.trim() || !customerPhone?.trim()) {
-        return res.status(400).json({ error: "Thiếu tên hoặc số điện thoại khách hàng." });
-      }
 
       const addr = shippingAddress || {};
       if (!addr.provinceCode || !addr.districtCode || !addr.wardCode || !addr.street?.trim()) {
@@ -4446,7 +4437,7 @@ async function startServer() {
         carrier !== "self"
           ? buildCarrierLogisticsPayload(
               carrier,
-              { name: customerName.trim(), phone: customerPhone.trim() },
+              { name: "Khách sỉ", phone: "0900000000" },
               {
                 street: addr.street.trim(),
                 province: addr.province,
@@ -4475,9 +4466,6 @@ async function startServer() {
         id: `order-manual-${Date.now()}`,
         orderSn: `DON-NGOAI-${Math.floor(100000 + Math.random() * 900000)}`,
         channel: "manual",
-        customerName: customerName.trim(),
-        customerPhone: customerPhone.trim(),
-        customerAddress: fullAddress,
         shippingAddress: {
           province: addr.province,
           provinceCode: String(addr.provinceCode),

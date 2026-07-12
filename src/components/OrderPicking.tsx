@@ -309,7 +309,6 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
             <div>
               <p className="text-[11px] font-bold text-gray-400 uppercase">Đơn đang nhặt</p>
               <p className="text-base font-extrabold text-gray-900 font-mono">#{activeOrder.orderSn}</p>
-              <p className="text-xs text-gray-500 mt-0.5">{activeOrder.customerName}</p>
             </div>
             <button
               type="button"

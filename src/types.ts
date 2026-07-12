@@ -69,7 +69,7 @@ export interface Order {
   channel: 'shopee' | 'tiktok' | 'woocommerce' | 'manual';
   shopId?: string; // ConnectedShop ID
   shopName?: string; // Cache shopName to display which shop
-  customerName: string;
+  customerName?: string;
   customerPhone?: string;
   customerAddress?: string;
   shippingAddress?: {
