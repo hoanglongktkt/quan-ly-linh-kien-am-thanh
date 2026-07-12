@@ -1,4 +1,5 @@
 import { cpanelBackendBase, resolveCpanelBackend } from './cpanelBackend.js';
+import { fetchWithDiagnostics } from './fetchDiagnostics.js';
 
 /** Log đầy đủ headers + body — prefix cố định [Shopee Callback] hoặc [Shopee Webhook]. */
 export function logShopeeRequest(prefix, req) {
@@ -80,35 +81,28 @@ export async function forwardToCpanel(logPrefix, pathWithQuery, req, opts = {}) 
   }
 
   console.log(logPrefix, 'Forward →', req.method, target);
-  const started = Date.now();
-  try {
-    const upstream = await fetch(target, {
-      method: req.method,
-      headers,
-      body,
-      redirect: opts.followRedirect === false ? 'manual' : 'follow',
-      signal: AbortSignal.timeout(opts.timeoutMs || 15000),
-    });
-    const ms = Date.now() - started;
-    const preview = await upstream.clone().text();
-    console.log(
-      logPrefix,
-      'Forward response',
-      JSON.stringify({
-        target,
-        status: upstream.status,
-        latencyMs: ms,
-        bodyPreview: preview.slice(0, 500),
-      }),
-    );
-    return upstream;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(
-      logPrefix,
-      'Forward FAILED',
-      JSON.stringify({ target, latencyMs: Date.now() - started, error: message }),
-    );
+  const result = await fetchWithDiagnostics(logPrefix, target, {
+    method: req.method,
+    headers,
+    body,
+    redirect: opts.followRedirect === false ? 'manual' : 'follow',
+  }, opts.timeoutMs || 15000);
+
+  if (!result.ok) {
     return null;
   }
+
+  const upstream = result.upstream;
+  const preview = await upstream.clone().text();
+  console.log(
+    logPrefix,
+    'Forward response',
+    JSON.stringify({
+      target,
+      status: upstream.status,
+      latencyMs: result.latencyMs,
+      bodyPreview: preview.slice(0, 500),
+    }),
+  );
+  return upstream;
 }

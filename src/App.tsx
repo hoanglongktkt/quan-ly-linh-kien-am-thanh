@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkUpdatePayload, BulkSaveProductUpdate } from './types';
 import { 
-  INITIAL_PRODUCTS, 
   INITIAL_SYNC_LOGS,
 } from './data';
 import Dashboard from './components/Dashboard';
@@ -56,7 +55,14 @@ export default function App() {
   // 1. Initialize State with Local Storage fallback
   const [products, setProducts] = useState<Product[]>(() => {
     const saved = localStorage.getItem('omni_products');
-    return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch {
+        return [];
+      }
+    }
+    return [];
   });
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -297,24 +303,10 @@ export default function App() {
       if (!response.ok) return;
 
       const data: Product[] = await response.json();
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         setProducts(data);
-        return;
-      }
-
-      const saved = localStorage.getItem('omni_products');
-      if (saved) {
-        const parsed: Product[] = JSON.parse(saved);
-        if (parsed.length > 0) {
-          const migrateRes = await fetch('/api/products/replace', {
-            method: 'PUT',
-            headers: apiAuthHeaders(),
-            body: JSON.stringify({ products: parsed }),
-          });
-          if (migrateRes.ok) {
-            const migrated = await migrateRes.json();
-            setProducts(migrated.products || parsed);
-          }
+        if (data.length === 0) {
+          localStorage.removeItem('omni_products');
         }
       }
     } catch (err) {

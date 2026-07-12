@@ -60,92 +60,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     const saved = localStorage.getItem('omni_channel_listings');
     if (saved) {
       try {
-        return JSON.parse(saved);
-      } catch (e) {
-        // Fallback to initial data
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
       }
     }
-
-    // Default initial channel listings matching Image 1
-    return [
-      {
-        id: "cl-1",
-        title: "Mạch BLUTOOTH Liền Công Suất 6V-24V 3116 D2 80W 2 Kênh",
-        sku: "mp3.80w",
-        imageUrl: "https://images.unsplash.com/photo-1608248597279-f99d160bfcbc?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3",
-        channelId: "54608345933",
-        platform: "shopee",
-        shopName: "LTAT",
-        status: "success",
-        linkedProductId: "prod-master-1"
-      },
-      {
-        id: "cl-2",
-        title: "MẠCH BLUTOOTH LIỀN CÔNG SUẤT 6V-24V 3116D2 80W",
-        sku: "mp3.80w",
-        imageUrl: "https://images.unsplash.com/photo-1608248597279-f99d160bfcbc?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3",
-        channelId: "48358352639",
-        platform: "shopee",
-        shopName: "Linh Kiện Audio",
-        status: "success",
-        linkedProductId: "prod-master-1"
-      },
-      {
-        id: "cl-3",
-        title: "Mạch bluetooth liền công suất TPA3116 sỉ giá tại xưởng",
-        sku: "", // Missing SKU
-        imageUrl: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3",
-        channelId: "54608492021",
-        platform: "shopee",
-        shopName: "LTAT",
-        status: "unlinked",
-        linkedProductId: undefined
-      },
-      {
-        id: "cl-4",
-        title: "Nồi Chiên Không Dầu Sunhouse 6L SHD4026 Cao Cấp (Flash Sale)",
-        sku: "SH-NCKD-6L",
-        imageUrl: "https://images.unsplash.com/photo-1621972750749-0fbb1abb7736?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3",
-        channelId: "99281310239",
-        platform: "shopee",
-        shopName: "LTAT",
-        status: "success",
-        linkedProductId: "prod-1"
-      },
-      {
-        id: "cl-5",
-        title: "Mạch Bluetooth Âm Thanh Loa Kéo Công Suất Khủng 100W",
-        sku: "", // No SKU, unlinked
-        imageUrl: "https://images.unsplash.com/photo-1583394838336-acd977736f90?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3",
-        channelId: "77218392102",
-        platform: "tiktok",
-        shopName: "TikTok Shop - Linh Kiện Âm Thanh . Net",
-        status: "unlinked",
-        linkedProductId: undefined
-      },
-      {
-        id: "cl-6",
-        title: "Bàn Phím Cơ Không Dây KTT Royal Axe R100 RGB Pro",
-        sku: "KB-ROYAL-AXE-WRONG", // Wrong SKU, mapping failed
-        imageUrl: "https://images.unsplash.com/photo-1587829741301-dc798b83add3?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3",
-        channelId: "9982130283",
-        platform: "shopee",
-        shopName: "Linh Kiện Audio",
-        status: "failed",
-        linkedProductId: undefined
-      },
-      {
-        id: "cl-7",
-        title: "Son Tint Lì Romand Juicy Lasting Nucadamia 23",
-        sku: "",
-        imageUrl: "https://images.unsplash.com/photo-1586495777744-4413f21062fa?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3",
-        channelId: "3029104821",
-        platform: "shopee",
-        shopName: "LTAT",
-        status: "unlinked",
-        linkedProductId: undefined
-      }
-    ];
+    return [];
   });
 
   // Save to LocalStorage on change

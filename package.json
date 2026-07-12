@@ -10,6 +10,7 @@
     "build:vercel": "vite build",
     "deploy:cpanel": "powershell -ExecutionPolicy Bypass -File scripts/deploy-cpanel.ps1",
     "test:shopee": "node scripts/test-shopee-connection.mjs",
+    "wipe:dummy-data": "node scripts/wipe-dummy-data.mjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"

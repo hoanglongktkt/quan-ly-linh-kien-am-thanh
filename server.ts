@@ -2452,6 +2452,11 @@ async function startServer() {
     return res.json({ deleted: req.params.id });
   });
 
+  app.post("/api/products/clear-all", authMiddleware, (_req, res) => {
+    saveProducts([]);
+    return res.json({ success: true, cleared: true, products: [] });
+  });
+
   app.post("/api/products/bulk-update", authMiddleware, (req, res) => {
     const { productIds, stock, price } = req.body || {};
     if (!Array.isArray(productIds) || productIds.length === 0) {
@@ -4529,6 +4534,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     } catch (error: any) {
       return res.status(500).json({ success: false, error: error.message });
     }
+  });
+
+  app.post("/api/product-listings/clear-all", authMiddleware, (_req, res) => {
+    writeProductListingsDb([]);
+    return res.json({ success: true, cleared: true, groups: [] });
   });
 
   app.post("/api/multi-channel/publish", authMiddleware, (req, res) => {

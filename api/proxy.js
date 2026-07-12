@@ -1,8 +1,10 @@
 /**
  * Vercel — proxy /api/* sang backend cPanel.
  * Chỉ dùng CPANEL_BACKEND_URL (VD: https://api.linhkienamthanh.net).
+ * Không chặn CORS — proxy server-to-server; CORS do backend cPanel xử lý.
  */
 import { resolveCpanelBackend } from './lib/cpanelBackend.js';
+import { fetchWithDiagnostics } from './lib/fetchDiagnostics.js';
 
 const HOP_HEADERS = new Set([
   'host',
@@ -69,28 +71,32 @@ export default async function handler(req, res) {
   }
 
   console.log('[API Proxy]', req.method, target);
-  try {
-    const upstream = await fetch(target, {
-      method: req.method,
-      headers,
-      body,
-      signal: AbortSignal.timeout(20000),
-    });
-    const text = await upstream.text();
-    res.status(upstream.status);
-    upstream.headers.forEach((value, key) => {
-      if (!HOP_HEADERS.has(key.toLowerCase())) res.setHeader(key, value);
-    });
-    return res.send(text);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error('[API Proxy] FAILED', target, message);
+  const result = await fetchWithDiagnostics('[API Proxy]', target, {
+    method: req.method,
+    headers,
+    body,
+  }, 20000);
+
+  if (!result.ok) {
+    const e = result.error;
     return res.status(502).json({
       error: 'Không kết nối được backend cPanel',
-      detail: message,
+      detail: e?.message || 'fetch failed',
+      errorCode: e?.code || null,
+      hint: e?.hint || null,
+      causeMessage: e?.causeMessage || null,
       cpanelBackendUrl: backend.url,
+      latencyMs: result.latencyMs,
     });
   }
+
+  const upstream = result.upstream;
+  const text = await upstream.text();
+  res.status(upstream.status);
+  upstream.headers.forEach((value, key) => {
+    if (!HOP_HEADERS.has(key.toLowerCase())) res.setHeader(key, value);
+  });
+  return res.send(text);
 }
 
 export const config = {

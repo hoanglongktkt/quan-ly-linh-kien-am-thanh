@@ -85,15 +85,19 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         cpanelBackendUrl?: string;
         latencyMs?: number;
         error?: string;
+        errorCode?: string;
+        hint?: string;
+        dns?: { ipv4?: string[]; error?: string };
       }>(res);
       setCpanelHealthDetail(data as Record<string, unknown>);
       const online = Boolean(data.connected ?? data.ok);
       setCpanelHealth(online ? 'online' : 'offline');
       const msg =
         data.message ||
+        data.hint ||
         (online
           ? `Backend OK${data.latencyMs != null ? ` (${data.latencyMs}ms)` : ''}`
-          : data.error || 'Không kết nối được backend cPanel');
+          : [data.errorCode, data.error].filter(Boolean).join(': ') || 'Không kết nối được backend cPanel');
       setCpanelHealthMessage(msg);
       if (opts?.appendTerminal) {
         setTerminalLogs((prev) => [
