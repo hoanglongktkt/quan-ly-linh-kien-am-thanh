@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Html5Qrcode } from 'html5-qrcode';
 import {
   startRearCameraScanner,
-  stopCloseRangeFocusAssist,
+  stopTapToFocusAssist,
+  PICKING_CAMERA_TAP_LAYER_ID,
   HTTPS_CAMERA_MESSAGE,
   QR_ONLY_FORMATS,
   QR_SCANNER_CONFIG,
@@ -201,7 +202,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
         lookupOrder(decodedText);
       };
 
-      void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, onScan, () => {}, 'picking-camera-reader')
+      void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, onScan, () => {}, 'picking-camera-reader', PICKING_CAMERA_TAP_LAYER_ID)
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : 'Không thể mở camera.';
           setCameraError(
@@ -215,7 +216,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
     return () => {
       isMounted = false;
       clearTimeout(timer);
-      stopCloseRangeFocusAssist('picking-camera-reader');
+      stopTapToFocusAssist(PICKING_CAMERA_TAP_LAYER_ID);
       if (html5Qrcode?.isScanning) {
         html5Qrcode.stop().catch(() => undefined);
       }
@@ -276,6 +277,12 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
           {cameraOpen && (
             <div className="rounded-2xl border border-gray-200 overflow-hidden bg-black relative">
               <div id="picking-camera-reader" className="w-full min-h-[220px]" />
+              <button
+                type="button"
+                id={PICKING_CAMERA_TAP_LAYER_ID}
+                className="absolute inset-0 z-[5] w-full h-full cursor-pointer opacity-0"
+                aria-label="Chạm để lấy nét"
+              />
               {cameraError && (
                 <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-4 text-center gap-3">
                   <p className="text-xs text-rose-300 font-semibold">{cameraError}</p>

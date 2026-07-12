@@ -2,8 +2,8 @@ import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 
 export const HTTPS_CAMERA_MESSAGE = 'Vui lòng truy cập qua HTTPS để sử dụng camera';
 
-/** Khoảng cách quét mục tiêu: 15–20 cm */
-const CLOSE_FOCUS_METERS = 0.17;
+export const CAMERA_TAP_LAYER_ID = 'camera-tap-focus';
+export const PICKING_CAMERA_TAP_LAYER_ID = 'picking-camera-tap-focus';
 
 export const REAR_CAMERA_CONSTRAINTS: MediaTrackConstraints = {
   facingMode: { ideal: 'environment' },
@@ -12,10 +12,10 @@ export const REAR_CAMERA_CONSTRAINTS: MediaTrackConstraints = {
 export const QR_ONLY_FORMATS = [Html5QrcodeSupportedFormats.QR_CODE];
 
 export const QR_SCANNER_CONFIG = {
-  fps: 18,
+  fps: 15,
   qrbox: (width: number, height: number) => {
     const minEdge = Math.min(width, height);
-    const size = Math.floor(minEdge * 0.58);
+    const size = Math.floor(minEdge * 0.7);
     return { width: size, height: size };
   },
   aspectRatio: 1.0,
@@ -39,21 +39,29 @@ type CameraStartConfig = string | { facingMode: 'environment' | 'user' };
 
 type ExtendedCaps = MediaTrackCapabilities & {
   focusMode?: string[];
-  focusDistance?: { min: number; max: number; step?: number };
   zoom?: { min: number; max: number; step?: number };
-  torch?: boolean;
 };
 
-const REAR_LABEL = /back|rear|environment|后置|後鏡|sau|arrière|trás|wide/i;
+const REAR_LABEL = /back|rear|environment|后置|後鏡|sau|arrière|trás/i;
+const WIDE_LABEL = /wide|ultra|0\.5|góc rộng/i;
+const TELE_LABEL = /tele|zoom|2x|3x|5x|periscope|telephoto/i;
 
-const focusAssistStops = new Map<string, () => void>();
+const tapFocusStops = new Map<string, () => void>();
 
 function pickRearCameraId(cameras: { id: string; label: string }[]): string | null {
   if (!cameras.length) return null;
-  const byLabel = cameras.find((c) => REAR_LABEL.test(c.label));
-  if (byLabel) return byLabel.id;
-  if (cameras.length === 1) return cameras[0].id;
-  return cameras[cameras.length - 1].id;
+  const label = (c: { label: string }) => c.label || '';
+  const nonTele = cameras.filter((c) => !TELE_LABEL.test(label(c)));
+  const list = nonTele.length ? nonTele : cameras;
+
+  const wide = list.find((c) => WIDE_LABEL.test(label(c)));
+  if (wide) return wide.id;
+
+  const back = list.find((c) => REAR_LABEL.test(label(c)) && !TELE_LABEL.test(label(c)));
+  if (back) return back.id;
+
+  if (list.length === 1) return list[0].id;
+  return list[list.length - 1].id;
 }
 
 async function buildCameraStartConfigs(): Promise<CameraStartConfig[]> {
@@ -63,10 +71,12 @@ async function buildCameraStartConfigs(): Promise<CameraStartConfig[]> {
     const rearId = pickRearCameraId(cameras);
     if (rearId) configs.push(rearId);
     for (const cam of cameras) {
-      if (!configs.includes(cam.id)) configs.push(cam.id);
+      if (!TELE_LABEL.test(cam.label || '') && !configs.includes(cam.id)) {
+        configs.push(cam.id);
+      }
     }
   } catch {
-    /* fallback facingMode */
+    /* fallback */
   }
   configs.push({ facingMode: 'environment' });
   configs.push({ facingMode: 'user' });
@@ -89,104 +99,118 @@ async function waitForScannerVideo(scannerElementId: string): Promise<HTMLVideoE
   return null;
 }
 
-function clampFocusDistance(caps: ExtendedCaps): number {
-  const fd = caps.focusDistance;
-  if (!fd) return CLOSE_FOCUS_METERS;
-  return Math.min(fd.max, Math.max(fd.min, CLOSE_FOCUS_METERS));
-}
-
-function closeRangeZoom(caps: ExtendedCaps): number | null {
-  const z = caps.zoom;
-  if (!z || z.max <= z.min) return null;
-  return Math.min(z.max, z.min + (z.max - z.min) * 0.32);
-}
-
-/** Lấy nét gần 15–20 cm: focusDistance + continuous AF + zoom nhẹ. */
-async function applyCloseRangeFocus(scannerElementId: string): Promise<void> {
+async function getVideoTrack(scannerElementId: string): Promise<MediaStreamTrack | null> {
   const video = await waitForScannerVideo(scannerElementId);
-  const track = (video?.srcObject as MediaStream | null)?.getVideoTracks()?.[0];
+  return (video?.srcObject as MediaStream | null)?.getVideoTracks()?.[0] ?? null;
+}
+
+/** Góc rộng tối đa + AF liên tục — không zoom (zoom gây phải để máy xa ~60cm). */
+async function applyWideContinuousAutofocus(scannerElementId: string): Promise<void> {
+  const track = await getVideoTrack(scannerElementId);
   if (!track?.applyConstraints) return;
 
   const caps = (typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}) as ExtendedCaps;
-  const focusDistance = clampFocusDistance(caps);
-  const zoom = closeRangeZoom(caps);
 
-  const attempts: MediaTrackConstraints[] = [];
-
-  if (caps.focusDistance) {
-    attempts.push({
-      advanced: [
-        { focusMode: 'continuous' },
-        { focusDistance },
-        ...(zoom != null ? [{ zoom }] : []),
-      ] as MediaTrackConstraintSet[],
-    });
-    attempts.push({ focusDistance } as MediaTrackConstraints);
+  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] } as MediaTrackConstraints);
+    } catch {
+      /* ignore */
+    }
   }
 
   if (caps.focusMode?.includes('continuous')) {
-    attempts.push({
-      advanced: [
-        { focusMode: 'continuous' },
-        ...(zoom != null ? [{ zoom }] : []),
-      ] as MediaTrackConstraintSet[],
-    });
-  } else if (caps.focusMode?.includes('auto')) {
-    attempts.push({ advanced: [{ focusMode: 'auto' }] } as MediaTrackConstraints);
-  }
-
-  if (zoom != null) {
-    attempts.push({ advanced: [{ zoom }] } as MediaTrackConstraints);
-  }
-
-  try {
-    await track.applyConstraints({ width: { ideal: 1920 }, height: { ideal: 1080 } });
-  } catch {
-    /* ignore */
-  }
-
-  for (const c of attempts) {
     try {
-      await track.applyConstraints(c);
+      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] } as MediaTrackConstraints);
       return;
     } catch {
-      /* thử cấu hình tiếp theo */
+      /* ignore */
+    }
+  }
+
+  if (caps.focusMode?.includes('auto')) {
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode: 'auto' }] } as MediaTrackConstraints);
+    } catch {
+      /* ignore */
     }
   }
 }
 
-export function stopCloseRangeFocusAssist(scannerElementId: string): void {
-  focusAssistStops.get(scannerElementId)?.();
-  focusAssistStops.delete(scannerElementId);
+/** Chạm lấy nét: single-shot → continuous (hoạt động trên Chrome/Android & Safari mới). */
+export async function triggerTapToFocus(scannerElementId: string): Promise<void> {
+  const track = await getVideoTrack(scannerElementId);
+  if (!track?.applyConstraints) return;
+
+  const caps = (typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}) as ExtendedCaps;
+
+  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] } as MediaTrackConstraints);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (caps.focusMode?.includes('single-shot')) {
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] } as MediaTrackConstraints);
+      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] } as MediaTrackConstraints);
+      return;
+    } catch {
+      /* fallback */
+    }
+  }
+
+  if (caps.focusMode?.includes('continuous')) {
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode: 'manual' }] } as MediaTrackConstraints);
+    } catch {
+      /* ignore */
+    }
+    try {
+      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] } as MediaTrackConstraints);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
-/** Giữ lấy nét gần: chạm màn hình + nhắc AF định kỳ. */
-export function startCloseRangeFocusAssist(scannerElementId: string): void {
-  stopCloseRangeFocusAssist(scannerElementId);
+export function stopTapToFocusAssist(tapLayerId: string): void {
+  tapFocusStops.get(tapLayerId)?.();
+  tapFocusStops.delete(tapLayerId);
+}
 
-  const onTap = () => {
-    void applyCloseRangeFocus(scannerElementId);
+/** Lớp chạm riêng (pointer-events) — gắn vào nút trong suốt phủ camera. */
+export function startTapToFocusAssist(scannerElementId: string, tapLayerId: string): void {
+  stopTapToFocusAssist(tapLayerId);
+
+  const onTap = (e: Event) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void triggerTapToFocus(scannerElementId);
   };
 
-  const root = document.getElementById(scannerElementId);
-  root?.addEventListener('click', onTap);
-  root?.addEventListener('touchstart', onTap, { passive: true });
+  const layer = document.getElementById(tapLayerId);
+  layer?.addEventListener('click', onTap);
+  layer?.addEventListener('touchend', onTap, { passive: false });
 
-  void applyCloseRangeFocus(scannerElementId);
+  void applyWideContinuousAutofocus(scannerElementId);
 
-  const intervalId = window.setInterval(() => {
-    void applyCloseRangeFocus(scannerElementId);
-  }, 2000);
-
-  focusAssistStops.set(scannerElementId, () => {
-    clearInterval(intervalId);
-    root?.removeEventListener('click', onTap);
-    root?.removeEventListener('touchstart', onTap);
+  tapFocusStops.set(tapLayerId, () => {
+    layer?.removeEventListener('click', onTap);
+    layer?.removeEventListener('touchend', onTap);
   });
 }
 
+/** @deprecated dùng stopTapToFocusAssist */
+export function stopCloseRangeFocusAssist(_scannerElementId: string): void {
+  stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
+  stopTapToFocusAssist(PICKING_CAMERA_TAP_LAYER_ID);
+}
+
 export async function applyScannerAutofocus(scannerElementId: string): Promise<void> {
-  await applyCloseRangeFocus(scannerElementId);
+  await applyWideContinuousAutofocus(scannerElementId);
 }
 
 export async function startRearCameraScanner(
@@ -200,11 +224,12 @@ export async function startRearCameraScanner(
   onSuccess: (decodedText: string) => void,
   onScanFailure: (error: string) => void,
   scannerElementId?: string,
+  tapLayerId?: string,
 ): Promise<void> {
   const blocked = getCameraBlockedReason();
   if (blocked) throw new Error(blocked);
 
-  if (scannerElementId) stopCloseRangeFocusAssist(scannerElementId);
+  if (tapLayerId) stopTapToFocusAssist(tapLayerId);
 
   if (html5Qrcode.isScanning) {
     await html5Qrcode.stop().catch(() => undefined);
@@ -214,10 +239,12 @@ export async function startRearCameraScanner(
   let lastError: unknown;
 
   for (let i = 0; i < fallbacks.length; i++) {
-    const cameraConfig = fallbacks[i];
     try {
-      await html5Qrcode.start(cameraConfig, config, onSuccess, onScanFailure);
-      if (scannerElementId) startCloseRangeFocusAssist(scannerElementId);
+      await html5Qrcode.start(fallbacks[i], config, onSuccess, onScanFailure);
+      if (scannerElementId) {
+        void applyWideContinuousAutofocus(scannerElementId);
+        if (tapLayerId) startTapToFocusAssist(scannerElementId, tapLayerId);
+      }
       return;
     } catch (err) {
       lastError = err;

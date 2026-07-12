@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import {
   startRearCameraScanner,
-  stopCloseRangeFocusAssist,
+  stopTapToFocusAssist,
+  CAMERA_TAP_LAYER_ID,
   HTTPS_CAMERA_MESSAGE,
   QR_ONLY_FORMATS,
   QR_SCANNER_CONFIG,
@@ -344,7 +345,14 @@ export default function OrderManager({
           applyScanRef.current(decodedText);
         };
 
-        void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, qrCodeSuccessCallback, () => {}, 'camera-reader')
+        void startRearCameraScanner(
+          html5Qrcode,
+          QR_SCANNER_CONFIG,
+          qrCodeSuccessCallback,
+          () => {},
+          'camera-reader',
+          CAMERA_TAP_LAYER_ID,
+        )
           .catch((err: unknown) => {
             console.error('Camera scanner start failed:', err);
             const msg =
@@ -360,7 +368,7 @@ export default function OrderManager({
       return () => {
         isMounted = false;
         clearTimeout(timer);
-        stopCloseRangeFocusAssist('camera-reader');
+        stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
         if (html5Qrcode?.isScanning) {
           html5Qrcode.stop().catch((err) => console.error('Error stopping html5-qrcode scanner', err));
         }
@@ -1573,7 +1581,13 @@ export default function OrderManager({
         <div className="flex-1 min-h-0 px-3 flex flex-col gap-2 pb-2">
           <div className="flex-1 min-h-[180px] max-h-[42vh] relative rounded-2xl border border-zinc-800 overflow-hidden bg-black">
             <div id="camera-reader" className="w-full h-full object-cover" />
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-black/20">
+            <button
+              type="button"
+              id={CAMERA_TAP_LAYER_ID}
+              className="absolute inset-0 z-[5] w-full h-full cursor-pointer opacity-0"
+              aria-label="Chạm để lấy nét"
+            />
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-black/20 z-[6]">
               <div
                 className={`qr-viewfinder ${
                   cameraScanSuccess
@@ -1587,10 +1601,10 @@ export default function OrderManager({
               </div>
             </div>
             <p className="absolute bottom-2 left-0 right-0 text-center text-[10px] font-bold text-white/80 pointer-events-none">
-              Đưa mã QR vào khung (15–20 cm) · chạm màn hình để lấy nét
+              Đưa mã QR vào khung (~20 cm) · chạm vùng camera để lấy nét
             </p>
             {cameraError && (
-              <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-4 text-center text-xs text-rose-400 font-semibold gap-3">
+              <div className="absolute inset-0 z-20 bg-black/85 flex flex-col items-center justify-center p-4 text-center text-xs text-rose-400 font-semibold gap-3">
                 <AlertCircle className="w-7 h-7 text-rose-500" />
                 <span>{cameraError}</span>
                 {cameraError !== HTTPS_CAMERA_MESSAGE && (
