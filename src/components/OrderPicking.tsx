@@ -206,7 +206,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
           setCameraError(
             msg === HTTPS_CAMERA_MESSAGE
               ? msg
-              : 'Không thể khởi động camera. Hãy cấp quyền và bấm "Thử lại".'
+              : `Không thể khởi động camera${msg ? `: ${msg}` : ''}. Bấm "Thử lại".`,
           );
         });
     }, 300);

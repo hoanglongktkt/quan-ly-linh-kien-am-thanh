@@ -320,6 +320,7 @@ export default function OrderManager({
         const element = document.getElementById('camera-reader');
         if (!element) {
           console.error('camera-reader element not found');
+          setCameraError('Không tìm thấy vùng hiển thị camera.');
           return;
         }
 
@@ -350,7 +351,7 @@ export default function OrderManager({
             setCameraError(
               msg === HTTPS_CAMERA_MESSAGE
                 ? msg
-                : 'Không thể khởi động Camera. Vui lòng cấp quyền truy cập và bấm "Thử lại".'
+                : `Không thể khởi động Camera${msg ? `: ${msg}` : ''}. Bấm "Thử lại".`,
             );
           });
       }, 300);
@@ -360,6 +361,11 @@ export default function OrderManager({
         clearTimeout(timer);
         if (html5Qrcode?.isScanning) {
           html5Qrcode.stop().catch((err) => console.error('Error stopping html5-qrcode scanner', err));
+        }
+        try {
+          html5Qrcode?.clear();
+        } catch {
+          /* ignore */
         }
       };
     }
