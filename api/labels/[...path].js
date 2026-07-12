@@ -1,7 +1,11 @@
 /**
- * Proxy PDF vận đơn từ cPanel — tránh rewrite Vercel → quanly (frontend) gây 508 loop.
+ * Proxy PDF vận đơn từ cPanel qua /api/public/labels (Express) — tránh /labels/* bị LiteSpeed trả SPA HTML.
  */
 import { resolveCpanelBackend } from '../lib/cpanelBackend.js';
+
+function isPdfBuffer(buf) {
+  return buf.length > 4 && buf.subarray(0, 4).toString() === '%PDF';
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -10,7 +14,7 @@ export default async function handler(req, res) {
 
   const raw = req.query.path;
   const filePath = Array.isArray(raw) ? raw.join('/') : String(raw || '').replace(/^\/+/, '');
-  if (!filePath || filePath.includes('..')) {
+  if (!filePath || filePath.includes('..') || !/\.pdf$/i.test(filePath)) {
     return res.status(400).send('Invalid label path');
   }
 
@@ -19,23 +23,45 @@ export default async function handler(req, res) {
     return res.status(503).json({ error: backend.error, errorCode: 'BACKEND_CONFIG' });
   }
 
-  const target = `${backend.url}/labels/${filePath}`;
+  const filename = filePath.split('/').pop() || filePath;
+  const target = `${backend.url}/api/public/labels/${encodeURIComponent(filename)}`;
+
   try {
     const upstream = await fetch(target, { method: req.method });
     if (!upstream.ok) {
-      return res.status(upstream.status).send('Label file not found');
+      const errText = await upstream.text().catch(() => '');
+      console.error('[Labels Proxy] upstream fail', upstream.status, target, errText.slice(0, 120));
+      return res.status(upstream.status).send(errText || 'Label file not found');
     }
 
-    const contentType = upstream.headers.get('content-type') || 'application/pdf';
-    res.status(200);
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Disposition', 'inline');
-    res.setHeader('Cache-Control', 'no-store');
-
-    if (req.method === 'HEAD') return res.end();
+    if (req.method === 'HEAD') {
+      res.status(200);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      const len = upstream.headers.get('content-length');
+      if (len) res.setHeader('Content-Length', len);
+      return res.end();
+    }
 
     const buf = Buffer.from(await upstream.arrayBuffer());
-    return res.send(buf);
+    if (!isPdfBuffer(buf)) {
+      const preview = buf.subarray(0, 120).toString('utf8');
+      console.error('[Labels Proxy] Not PDF', { target, size: buf.length, preview: preview.slice(0, 80) });
+      return res.status(502).type('text/plain').send(
+        preview.trimStart().startsWith('<!')
+          ? 'Backend trả HTML thay vì PDF — file vận đơn chưa sẵn sàng hoặc route sai.'
+          : 'File vận đơn không hợp lệ (không phải PDF).'
+      );
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    res.setHeader('Content-Length', String(buf.length));
+    res.setHeader('Cache-Control', 'no-store');
+    console.log('[Labels Proxy] OK', filename, buf.length, 'bytes');
+    return res.end(buf);
   } catch (err) {
     console.error('[Labels Proxy]', target, err);
     return res.status(502).json({

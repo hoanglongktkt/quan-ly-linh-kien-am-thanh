@@ -18,6 +18,9 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 300
+    },
+    "api/labels/[...path].js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

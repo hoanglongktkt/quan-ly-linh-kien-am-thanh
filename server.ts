@@ -34,6 +34,53 @@ function resolveAppRoot(): string {
 }
 
 const APP_ROOT = resolveAppRoot();
+const SHIPPING_DOCS_DIR = path.join(APP_ROOT, "storage", "labels");
+try {
+  fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
+} catch {
+  /* ignore */
+}
+
+function safeLabelFilename(raw: string): string | null {
+  const base = path.basename(String(raw || "").trim());
+  if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
+  return base;
+}
+
+function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
+  if (contentType?.includes("pdf")) return true;
+  return buffer.length > 4 && buffer.subarray(0, 4).toString() === "%PDF";
+}
+
+type ServeLabelPdfResult = "sent" | "not_found" | "invalid";
+
+function serveLabelPdfFromDisk(filename: string, res: any): ServeLabelPdfResult {
+  const safe = safeLabelFilename(filename);
+  if (!safe) {
+    res.status(400).type("text/plain").send("Tên file vận đơn không hợp lệ.");
+    return "invalid";
+  }
+  const filePath = path.join(SHIPPING_DOCS_DIR, safe);
+  if (!fs.existsSync(filePath)) {
+    return "not_found";
+  }
+  const buf = fs.readFileSync(filePath);
+  if (!isPdfBuffer(buf)) {
+    console.error(
+      `[Labels] File không phải PDF hợp lệ: ${safe}, size=${buf.length}, head=${buf.subarray(0, 20).toString("hex")}`
+    );
+    res.status(415).type("text/plain").send("File vận đơn không phải PDF hợp lệ.");
+    return "invalid";
+  }
+  res.status(200);
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
+  res.setHeader("Content-Length", String(buf.length));
+  res.setHeader("Cache-Control", "no-store");
+  res.end(buf);
+  console.log(`[Labels] Served PDF ${safe} (${buf.length} bytes)`);
+  return "sent";
+}
 
 const JWT_SECRET = process.env.JWT_SECRET || "omnisales-vn-super-secret-key-2026";
 const ENV_PATH = path.join(APP_ROOT, ".env");
@@ -3258,6 +3305,20 @@ async function startServer() {
     });
   });
 
+  // PDF vận đơn — public (tab in mới không gửi Bearer). LiteSpeed thường chặn /labels/* trước Node;
+  // route /api/public/labels/* luôn vào Express.
+  app.get("/api/public/labels/:filename", (req, res) => {
+    const result = serveLabelPdfFromDisk(req.params.filename, res);
+    if (result === "not_found") {
+      res.status(404).type("text/plain").send("Không tìm thấy file vận đơn.");
+    }
+  });
+
+  app.get("/labels/:filename", (req, res, next) => {
+    const result = serveLabelPdfFromDisk(req.params.filename, res);
+    if (result === "not_found") return next();
+  });
+
   function logShopeeIngress(prefix: string, req: any) {
     console.log(
       prefix,
@@ -4910,15 +4971,14 @@ async function startServer() {
   // NOTE: deliberately NOT named "public/" — Vite treats a root-level "public/"
   // folder as its own publicDir and copies its entire contents into dist/ on
   // every `npm run build`, which would bloat/leak generated AWB files into the
-  // production bundle. "storage/labels" is served the exact same way via
-  // express.static, giving an identical public /labels/<file> URL without that side effect.
-  const SHIPPING_DOCS_DIR = path.join(APP_ROOT, "storage", "labels");
+  // production bundle. "storage/labels" is served via /api/public/labels (primary) and /labels fallback.
   fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
   app.use("/labels", express.static(SHIPPING_DOCS_DIR, {
     setHeaders(res, filePath) {
       if (filePath.endsWith(".pdf")) {
+        const name = path.basename(filePath);
         res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", "inline");
+        res.setHeader("Content-Disposition", `inline; filename="${name}"`);
       } else if (filePath.endsWith(".html")) {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
       }
@@ -4930,11 +4990,6 @@ async function startServer() {
     if (contentType.includes("zip")) return "zip";
     if (contentType.includes("html")) return "html";
     return "pdf";
-  }
-
-  function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
-    if (contentType?.includes("pdf")) return true;
-    return buffer.length > 4 && buffer.subarray(0, 4).toString() === "%PDF";
   }
 
   // Concatenate multiple AWB PDF buffers into one multi-page document so
@@ -4959,9 +5014,15 @@ async function startServer() {
   }
 
   function saveLabelFile(buffer: Buffer, filename: string, contentType?: string): string {
+    if (!isPdfBuffer(buffer, contentType)) {
+      console.error(
+        `[Shopee Print] Từ chối lưu — dữ liệu không phải PDF: ${filename}, size=${buffer.length}, type=${contentType || ""}`
+      );
+      throw new Error("Dữ liệu vận đơn từ Shopee không phải PDF hợp lệ.");
+    }
     fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
     fs.writeFileSync(path.join(SHIPPING_DOCS_DIR, filename), buffer);
-    console.log(`[Shopee Print] Đã lưu vận đơn (${contentType || "application/pdf"}) → storage/labels/${filename}`);
+    console.log(`[Shopee Print] Đã lưu vận đơn (${buffer.length} bytes) → storage/labels/${filename}`);
     return filename;
   }
 
