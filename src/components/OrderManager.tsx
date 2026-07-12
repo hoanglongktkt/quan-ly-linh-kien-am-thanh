@@ -432,24 +432,56 @@ export default function OrderManager({
     };
   };
 
-  // Shopee AWB: mở PDF cùng origin (/labels/ → Vercel proxy) — không mở api subdomain (bị SPA/login).
-  const openShopeeLabelInNewTab = (url: string) => {
+  // Shopee AWB: tải PDF qua fetch → blob URL (tránh tab trắng / HTML proxy).
+  const openShopeeLabelInNewTab = async (url: string) => {
     const fullUrl = resolveBackendFileUrl(url);
+    const filename = (fullUrl.split('/').pop() || 'van-don-shopee.pdf').replace(/\?.*$/, '');
 
-    const win = window.open(fullUrl, '_blank', 'noopener,noreferrer');
-    if (!win) {
-      const a = document.createElement('a');
-      a.href = fullUrl;
-      a.target = '_blank';
-      a.rel = 'noopener noreferrer';
-      a.download = fullUrl.split('/').pop() || 'van-don-shopee.pdf';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      showToast('Trình duyệt chặn popup — đã tải vận đơn PDF về máy. Mở file và in trên khổ A4.');
-      return;
+    const openBlob = (blob: Blob) => {
+      const blobUrl = URL.createObjectURL(blob);
+      const win = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+      if (!win) {
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        showToast('Trình duyệt chặn popup — đã tải vận đơn PDF về máy.');
+      } else {
+        showToast('Đã mở vận đơn Shopee — bấm In trên trình xem PDF.');
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
+      }
+    };
+
+    try {
+      const res = await fetch(fullUrl, { credentials: 'same-origin' });
+      if (!res.ok) {
+        showToast(`Không lấy được vận đơn (HTTP ${res.status}). Thử lại sau vài giây.`);
+        return;
+      }
+      const buf = await res.arrayBuffer();
+      const head = new Uint8Array(buf.slice(0, 4));
+      const isPdf = head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46;
+      if (!isPdf) {
+        showToast('File vận đơn không hợp lệ (backend trả HTML thay vì PDF).');
+        return;
+      }
+      openBlob(new Blob([buf], { type: 'application/pdf' }));
+    } catch {
+      const win = window.open(fullUrl, '_blank', 'noopener,noreferrer');
+      if (!win) {
+        const a = document.createElement('a');
+        a.href = fullUrl;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        showToast('Đã thử tải vận đơn — mở file PDF và in trên khổ A4.');
+      }
     }
-    showToast('Đã mở vận đơn Shopee (NORMAL_AIR_WAYBILL / A4) — bấm In trên trình xem PDF.');
   };
 
   const handlePackingSlipPrint = () => {
@@ -467,26 +499,37 @@ export default function OrderManager({
       headers: authHeaders(),
       body: JSON.stringify({ orderIds }),
     });
-    const data = await res.json();
+    const data = await parseJsonResponse<{
+      mergedUrl?: string;
+      documents?: { url?: string; message?: string; error?: string }[];
+      orders?: Order[];
+      error?: string;
+    }>(res);
     if (!res.ok) {
       return { success: false, message: data.error || 'Không thể tạo vận đơn Shopee.' };
     }
 
-    const failedDocs = (data.documents || []).filter((d: any) => !d.url);
-    const printUrl = data.mergedUrl || (data.documents || []).find((d: any) => d.url)?.url;
-
-    if (printUrl) {
-      openShopeeLabelInNewTab(printUrl);
-    }
+    const failedDocs = (data.documents || []).filter((d) => !d.url);
+    const printUrl = data.mergedUrl || (data.documents || []).find((d) => d.url)?.url;
 
     if (Array.isArray(data.orders)) {
       onUpdateOrders(data.orders);
     }
 
-    if (failedDocs.length > 0 && !printUrl) {
-      return { success: false, message: failedDocs.map((d: any) => d.message || d.error).join('\n') };
+    if (!printUrl) {
+      const detail = failedDocs.map((d) => d.message || d.error).filter(Boolean).join('\n');
+      return { success: false, message: detail || 'Shopee chưa trả về file vận đơn PDF.' };
     }
-    return { success: true, message: failedDocs.length > 0 ? `Một số đơn lỗi: ${failedDocs.map((d: any) => d.message || d.error).join('; ')}` : undefined };
+
+    await openShopeeLabelInNewTab(printUrl);
+
+    if (failedDocs.length > 0) {
+      return {
+        success: true,
+        message: `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
+      };
+    }
+    return { success: true };
   };
 
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,
@@ -572,7 +615,7 @@ export default function OrderManager({
     }
 
     if (finalJob?.printDocument?.url) {
-      openShopeeLabelInNewTab(finalJob.printDocument.url);
+      await openShopeeLabelInNewTab(finalJob.printDocument.url);
     } else if (successCount > 0) {
       const shopeeIds = (finalJob?.results || [])
         .filter((r: any) => r.success)
@@ -667,7 +710,7 @@ export default function OrderManager({
         showToast(`Xác nhận thành công ${successCount}/${queuedOrders.length} đơn — đang mở vận đơn in...`);
         clearShipProgressOverlay();
         if (syncData.printDocument?.url) {
-          openShopeeLabelInNewTab(syncData.printDocument.url);
+          await openShopeeLabelInNewTab(syncData.printDocument.url);
         } else {
           const shopeeIds = (syncData.results || [])
             .filter((r: any) => r.success)

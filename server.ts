@@ -5466,7 +5466,10 @@ async function startServer() {
     }
 
     const orders = loadOrders();
-    const targetOrders = orders.filter((o: any) => orderIds.includes(o.id));
+    const idSet = new Set(orderIds.map(String));
+    const targetOrders = orders.filter(
+      (o: any) => idSet.has(String(o.id)) || idSet.has(String(o.orderSn)) || idSet.has(`shopee-${o.orderSn}`),
+    );
 
     // Self-heal orders that lost shop_id from the old webhook-normalization bug —
     // resolveOrderShopId() falls back to the single connected Shopee shop when
@@ -5564,6 +5567,10 @@ async function startServer() {
     const mergedUrl = savedFilenames.length > 0
       ? await mergeLabelFilesToSingleUrl(savedFilenames, allPrintedSns)
       : null;
+    const primaryUrl =
+      mergedUrl ||
+      documents.find((d: any) => d.url)?.url ||
+      null;
 
     // Mark successfully-printed orders (isPrinted=true, and auto-advance status like the old UI mock did).
     const printedOrderSns = new Set(allPrintedSns);
@@ -5578,7 +5585,7 @@ async function startServer() {
     console.log(`[Shopee Print] Ho\xE0n t\u1EA5t: ${documents.filter(d => d.url).length}/${Object.keys(groups).length} nh\xF3m shop t\u1EA1o v\u1EAD n th\xE0nh c\xF4ng.`);
 
     return res.json({
-      mergedUrl: mergedUrl,
+      mergedUrl: primaryUrl,
       documents: documents.map((d: any) =>
         d.url ? { ...d, url: d.url.startsWith("/") ? d.url : `/${String(d.url).replace(/^\/+/, "")}` } : d
       ),
