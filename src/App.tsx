@@ -20,6 +20,7 @@ import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import { APP_TITLE } from './config/brand';
 import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
 import { sanitizeOrders } from './utils/sanitizeOrder';
+import { debugLog } from './utils/debugLog';
 import { 
   LayoutDashboard, 
   Package, 
@@ -84,16 +85,7 @@ export default function App() {
     return true;
   };
 
-  const [orders, setOrders] = useState<Order[]>(() => {
-    const saved = localStorage.getItem('omni_orders');
-    if (!saved) return [];
-    try {
-      const parsed: Order[] = JSON.parse(saved);
-      return sanitizeOrders(parsed.filter(isRealSyncedOrder));
-    } catch {
-      return [];
-    }
-  });
+  const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [productsLoading, setProductsLoading] = useState<boolean>(false);
 
@@ -146,18 +138,47 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Persist orders/settings/logs — products lấy từ API server, không cache localStorage.
+  // Đơn hàng lấy từ API server — không cache localStorage (tránh vượt quota ~5MB).
   useEffect(() => {
-    localStorage.setItem('omni_orders', JSON.stringify(orders));
-  }, [orders]);
+    // #region agent log
+    try {
+      const legacy = localStorage.getItem('omni_orders');
+      const legacyBytes = legacy ? new Blob([legacy]).size : 0;
+      debugLog('App.tsx:mount', 'legacy omni_orders before clear', { legacyBytes, hadLegacy: Boolean(legacy) }, 'H1');
+      if (legacy) localStorage.removeItem('omni_orders');
+    } catch (err) {
+      debugLog('App.tsx:mount', 'clear omni_orders error', { err: String(err) }, 'H1');
+    }
+    // #endregion
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem('omni_logs', JSON.stringify(logs));
+    try {
+      localStorage.setItem('omni_logs', JSON.stringify(logs));
+    } catch (err) {
+      // #region agent log
+      debugLog('App.tsx:logsPersist', 'omni_logs setItem failed', { err: String(err) }, 'H4');
+      // #endregion
+    }
   }, [logs]);
 
   useEffect(() => {
-    localStorage.setItem('omni_settings', JSON.stringify(settings));
+    try {
+      localStorage.setItem('omni_settings', JSON.stringify(settings));
+    } catch (err) {
+      // #region agent log
+      debugLog('App.tsx:settingsPersist', 'omni_settings setItem failed', { err: String(err) }, 'H4');
+      // #endregion
+    }
   }, [settings]);
+
+  useEffect(() => {
+    if (!orders.length) return;
+    // #region agent log
+    const bytes = new Blob([JSON.stringify(orders)]).size;
+    debugLog('App.tsx:ordersState', 'orders in memory (no localStorage write)', { count: orders.length, bytes }, 'H3');
+    // #endregion
+  }, [orders]);
 
   // Token Verification on Mount
   useEffect(() => {
@@ -210,7 +231,12 @@ export default function App() {
       });
       if (response.ok) {
         const data: Order[] = await response.json();
-        setOrders(sanitizeOrders(data));
+        const sanitized = sanitizeOrders(data);
+        // #region agent log
+        const bytes = new Blob([JSON.stringify(sanitized)]).size;
+        debugLog('App.tsx:fetchOrders', 'api orders loaded', { count: sanitized.length, bytes }, 'H2');
+        // #endregion
+        setOrders(sanitized);
       }
     } catch (err) {
       console.error("Fetch orders error:", err);
@@ -325,7 +351,12 @@ export default function App() {
         throw new Error(data?.error || 'Kéo đơn hàng thất bại.');
       }
       if (Array.isArray(data.orders)) {
-        setOrders(sanitizeOrders(data.orders));
+        const sanitized = sanitizeOrders(data.orders);
+        // #region agent log
+        const bytes = new Blob([JSON.stringify(sanitized)]).size;
+        debugLog('App.tsx:pullOrders', 'pulled orders', { count: sanitized.length, bytes }, 'H2');
+        // #endregion
+        setOrders(sanitized);
       }
       if (data.warning) {
         throw new Error(data.warning);
