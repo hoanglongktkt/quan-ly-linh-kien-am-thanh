@@ -1,12 +1,16 @@
 /**
  * Vercel — Shopee Live Callback / OAuth redirect
  * URL: https://<domain>/api/shopee/callback
+ *
+ * Biến môi trường: CPANEL_BACKEND_URL (VD: https://api.linhkienamthanh.net)
+ * Không dùng APP_URL, BACKEND_URL hay NEXT_PUBLIC_*.
  */
 import {
   logShopeeRequest,
   respondShopeeOk,
   forwardToCpanel,
   resolveCpanelBackend,
+  respondCallbackError,
 } from '../lib/shopeeCallbackUtil.js';
 
 const LOG = '[Shopee Callback]';
@@ -63,18 +67,36 @@ export default async function handler(req, res) {
     const backend = resolveCpanelBackend();
     if (!backend.ok) {
       console.error(LOG, backend.error);
-      res.status(503);
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.end(backend.error);
+      return respondCallbackError(res, 503, {
+        message: backend.error,
+        errorCode: 'BACKEND_CONFIG',
+        cpanelBackendUrl: process.env.CPANEL_BACKEND_URL ? '(set but invalid)' : '(MISSING)',
+        hint: 'Set CPANEL_BACKEND_URL trên Vercel → subdomain cPanel (https://api.linhkienamthanh.net).',
+      });
     }
 
-    const upstream = await forwardToCpanel(LOG, path, req, { followRedirect: false });
-    if (!upstream) {
-      res.status(502);
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.end('Không kết nối được backend cPanel.');
+    const forward = await forwardToCpanel(LOG, path, req, { followRedirect: false });
+
+    if (!forward.ok || !forward.upstream) {
+      const err = forward.error || { message: 'fetch failed' };
+      console.error(
+        LOG,
+        'Forward failed',
+        JSON.stringify({ target: forward.target, cpanelBackendUrl: forward.cpanelBackendUrl, ...err }),
+      );
+      return respondCallbackError(res, 502, {
+        message: err.message || 'Không kết nối được backend cPanel',
+        errorCode: err.code || err.causeCode || null,
+        causeMessage: err.causeMessage || null,
+        hint: err.hint || null,
+        targetUrl: forward.target,
+        cpanelBackendUrl: forward.cpanelBackendUrl || backend.url,
+        latencyMs: forward.latencyMs,
+        errorChain: err.chain || null,
+      });
     }
 
+    const upstream = forward.upstream;
     res.status(upstream.status);
     upstream.headers.forEach((value, key) => {
       if (!HOP_HEADERS.has(key.toLowerCase())) res.setHeader(key, value);

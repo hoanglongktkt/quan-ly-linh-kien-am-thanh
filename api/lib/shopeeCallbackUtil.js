@@ -60,7 +60,18 @@ export async function forwardToCpanel(logPrefix, pathWithQuery, req, opts = {}) 
   const backend = resolveCpanelBackend();
   if (!backend.ok) {
     console.error(logPrefix, 'Forward skipped:', backend.error);
-    return null;
+    return {
+      ok: false,
+      target: pathWithQuery,
+      upstream: null,
+      latencyMs: 0,
+      error: {
+        message: backend.error,
+        code: 'BACKEND_CONFIG',
+        hint: 'Kiểm tra biến CPANEL_BACKEND_URL trên Vercel Project Settings.',
+      },
+      cpanelBackendUrl: null,
+    };
   }
 
   const target = `${backend.url}${pathWithQuery}`;
@@ -89,7 +100,14 @@ export async function forwardToCpanel(logPrefix, pathWithQuery, req, opts = {}) 
   }, opts.timeoutMs || 15000);
 
   if (!result.ok) {
-    return null;
+    return {
+      ok: false,
+      target,
+      upstream: null,
+      latencyMs: result.latencyMs,
+      error: result.error,
+      cpanelBackendUrl: backend.url,
+    };
   }
 
   const upstream = result.upstream;
@@ -104,5 +122,30 @@ export async function forwardToCpanel(logPrefix, pathWithQuery, req, opts = {}) 
       bodyPreview: preview.slice(0, 500),
     }),
   );
-  return upstream;
+  return {
+    ok: true,
+    target,
+    upstream,
+    latencyMs: result.latencyMs,
+    error: null,
+    cpanelBackendUrl: backend.url,
+  };
+}
+
+/** Trả lỗi JSON chi tiết cho OAuth callback (debug trên browser / Vercel Logs). */
+export function respondCallbackError(res, status, details) {
+  res.status(status);
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  return res.end(
+    JSON.stringify(
+      {
+        ok: false,
+        route: '/api/shopee/callback',
+        envVar: 'CPANEL_BACKEND_URL',
+        ...details,
+      },
+      null,
+      2,
+    ),
+  );
 }
