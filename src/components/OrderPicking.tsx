@@ -6,7 +6,7 @@ import {
   QR_ONLY_FORMATS,
   QR_SCANNER_CONFIG,
 } from '../utils/cameraScanner';
-import { findOrderByScanPayload, scanFeedback } from '../utils/orderScan';
+import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback } from '../utils/orderScan';
 import {
   Barcode,
   Camera,
@@ -77,14 +77,29 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
   }, []);
 
   const lookupOrder = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
       const trimmed = raw.trim();
       if (!trimmed) {
         setScanError('Vui lòng nhập hoặc quét mã QR đơn hàng.');
         return;
       }
 
-      const found = orders.find((o) => o.status === 'unprocessed' && findOrderByScanPayload([o], trimmed));
+      const token = localStorage.getItem('admin_token');
+      let found =
+        orders.find((o) => o.status === 'unprocessed' && findOrderByScanPayload([o], trimmed)) ||
+        null;
+
+      if (!found) {
+        const remote = await lookupOrderByScanCode(trimmed, orders, token);
+        if (remote?.status === 'unprocessed') found = remote;
+        else if (remote && remote.status !== 'unprocessed') {
+          scanFeedback('error');
+          setScanError(`Đơn #${remote.orderSn} không ở trạng thái "Chờ lấy hàng (Chưa xử lý)".`);
+          setActiveOrder(null);
+          setPickedKeys(new Set());
+          return;
+        }
+      }
 
       if (!found) {
         const other = findOrderByScanPayload(orders, trimmed);
@@ -93,7 +108,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
           setScanError(`Đơn #${other.orderSn} không ở trạng thái "Chờ lấy hàng (Chưa xử lý)".`);
         } else {
           scanFeedback('error');
-          setScanError(`Không tìm thấy đơn hàng này trong hệ thống (${trimmed}).`);
+          setScanError(`Không tìm thấy đơn hàng khớp mã vận đơn/mã đơn "${trimmed}".`);
         }
         setActiveOrder(null);
         setPickedKeys(new Set());

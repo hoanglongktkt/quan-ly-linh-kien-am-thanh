@@ -6,7 +6,7 @@ import {
   QR_ONLY_FORMATS,
   QR_SCANNER_CONFIG,
 } from '../utils/cameraScanner';
-import { findOrderByScanPayload, scanFeedback } from '../utils/orderScan';
+import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback, isLikelyTrackingCode } from '../utils/orderScan';
 import { 
   Search, 
   ShoppingBag, 
@@ -138,27 +138,52 @@ export default function OrderManager({
   };
 
   const handleOrderScan = React.useCallback(
-    (rawQuery: string) => {
+    async (rawQuery: string) => {
       const trimmed = rawQuery.trim();
       if (!trimmed) return;
 
-      const order = findOrderByScanPayload(ordersRef.current, trimmed);
+      setCameraScanResult('Đang tra cứu mã...');
+
+      const token = localStorage.getItem('admin_token');
+      let order =
+        findOrderByScanPayload(ordersRef.current, trimmed) ||
+        (await lookupOrderByScanCode(trimmed, ordersRef.current, token));
+
+      if (order) {
+        const idx = ordersRef.current.findIndex((o) => o.id === order!.id);
+        if (idx >= 0) {
+          const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
+          ordersRef.current = merged;
+          onUpdateOrders(merged);
+        } else {
+          const merged = [order, ...ordersRef.current];
+          ordersRef.current = merged;
+          onUpdateOrders(merged);
+        }
+      }
 
       if (!order) {
         scanFeedback('error');
         setCameraScanSuccess(false);
         setCameraScanError(true);
         setCameraScanResult(`Không tìm thấy đơn: ${trimmed}`);
-        showScanToast(`Không tìm thấy đơn hàng này trong hệ thống (${trimmed})`, 'error');
+        showScanToast(
+          isLikelyTrackingCode(trimmed)
+            ? `Không tìm thấy đơn hàng với mã vận đơn "${trimmed}"`
+            : `Không tìm thấy đơn hàng này trong hệ thống (${trimmed})`,
+          'error'
+        );
         setTimeout(() => setCameraScanError(false), 2000);
         return;
       }
 
       if (order.status === 'unprocessed' || order.status === 'processed') {
+        const scannedTracking = isLikelyTrackingCode(trimmed) ? trimmed : undefined;
         const updated = ordersRef.current.map((o) => {
-          if (o.id !== order.id) return o;
+          if (o.id !== order!.id) return o;
           const tracking =
             o.trackingNumber ||
+            scannedTracking ||
             `${o.channel === 'shopee' ? 'SPX' : o.channel === 'tiktok' ? 'TTS' : 'WOO'}-VN-${Math.floor(10000000 + Math.random() * 90000000)}`;
           return { ...o, status: 'shipping' as const, trackingNumber: tracking, isPrepared: true };
         });

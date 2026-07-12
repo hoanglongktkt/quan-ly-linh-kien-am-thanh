@@ -3808,6 +3808,131 @@ async function startServer() {
     return res.json(orders);
   });
 
+  function normalizeScanLookupKey(raw: string): string {
+    return String(raw || "")
+      .trim()
+      .toUpperCase()
+      .replace(/[\s\-_#./\\|:;,]+/g, "");
+  }
+
+  function buildScanLookupKeys(raw: string): string[] {
+    const text = String(raw || "").trim();
+    if (!text) return [];
+    const keys = new Set<string>();
+    const add = (v: unknown) => {
+      const normalized = normalizeScanLookupKey(String(v || ""));
+      if (normalized.length >= 4) keys.add(normalized);
+    };
+    add(text);
+    add(text.replace(/^#+/, ""));
+    if (/^https?:\/\//i.test(text)) {
+      try {
+        const url = new URL(text);
+        [
+          "tracking",
+          "tracking_no",
+          "tracking_number",
+          "tn",
+          "order_sn",
+          "ordersn",
+          "order",
+          "order_id",
+          "package_number",
+          "code",
+          "sn",
+        ].forEach((p) => {
+          const v = url.searchParams.get(p);
+          if (v) add(v);
+        });
+        url.pathname.split("/").filter(Boolean).forEach(add);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (text.startsWith("{") || text.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(text);
+        [
+          "tracking_number",
+          "trackingNumber",
+          "tracking_no",
+          "trackingNo",
+          "order_sn",
+          "orderSn",
+          "package_number",
+          "packageNumber",
+        ].forEach((k) => {
+          if (parsed?.[k]) add(parsed[k]);
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+    return [...keys];
+  }
+
+  function flexibleScanCodeMatch(scanKey: string, fieldKey: string): boolean {
+    if (!scanKey || !fieldKey) return false;
+    if (scanKey === fieldKey) return true;
+    if (scanKey.length >= 10 && fieldKey.length >= 10) {
+      return fieldKey.endsWith(scanKey) || scanKey.endsWith(fieldKey);
+    }
+    return false;
+  }
+
+  /** Flexible OR: orderSn OR trackingNumber OR packageNumber. */
+  function findOrderByScanLookup(orders: any[], raw: string): any | null {
+    const scanKeys = buildScanLookupKeys(raw);
+    if (!scanKeys.length) return null;
+
+    const trackingLike = /^SPX(VN)?|^GHN|^GHTK|^JNT|^JT|^NINJA|^VTP|^VNPOST/.test(
+      normalizeScanLookupKey(raw)
+    );
+
+    if (trackingLike) {
+      for (const order of orders) {
+        const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
+        if (!trackingKey) continue;
+        if (scanKeys.some((sk) => flexibleScanCodeMatch(sk, trackingKey))) return order;
+      }
+    }
+
+    for (const order of orders) {
+      const orderSnKey = normalizeScanLookupKey(order.orderSn);
+      const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
+      const packageKey = order.packageNumber ? normalizeScanLookupKey(order.packageNumber) : "";
+      const idKey = normalizeScanLookupKey(String(order.id || "").replace(/^shopee-/i, ""));
+
+      const matched = scanKeys.some(
+        (sk) =>
+          flexibleScanCodeMatch(sk, orderSnKey) ||
+          flexibleScanCodeMatch(sk, trackingKey) ||
+          flexibleScanCodeMatch(sk, packageKey) ||
+          flexibleScanCodeMatch(sk, idKey)
+      );
+      if (matched) return order;
+    }
+    return null;
+  }
+
+  // Lookup order by scanned QR/barcode — matches orderSn OR trackingNumber OR packageNumber.
+  app.get("/api/orders/lookup", authMiddleware, (req, res) => {
+    const code = String(req.query.code || req.query.q || "").trim();
+    if (!code) {
+      return res.status(400).json({ error: "Thi\u1EBFu m\u00E3 qu\u00E9t (code)." });
+    }
+    const products = loadProducts();
+    const orders = enrichOrdersFromCatalog(loadOrders().filter(isValidOrder), products);
+    const found = findOrderByScanLookup(orders, code);
+    if (!found) {
+      return res.status(404).json({
+        error: "Kh\u00F4ng t\u00ECm th\u1EA5y \u0111\u01A1n h\u00E0ng kh\u1EDBp m\u00E3 qu\u00E9t.",
+        scannedCode: code,
+      });
+    }
+    return res.json(found);
+  });
+
   // Cleanup utility: permanently DELETE broken/mock order records (0đ total AND
   // no items) from the local database so they stop polluting the data file.
   app.post("/api/orders/cleanup-mock", authMiddleware, (req, res) => {

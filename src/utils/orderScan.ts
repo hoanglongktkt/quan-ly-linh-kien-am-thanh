@@ -8,17 +8,31 @@ export function normalizeOrderScanKey(raw: string): string {
     .replace(/[\s\-_#./\\|:;,]+/g, '');
 }
 
-/** Extract candidate lookup keys from raw QR payload. */
-export function extractOrderScanKeys(raw: string): string[] {
+/** Heuristic: QR on waybill usually encodes carrier tracking (SPXVN..., etc.). */
+export function isLikelyTrackingCode(raw: string): boolean {
+  const key = normalizeOrderScanKey(raw);
+  if (!key || key.length < 8) return false;
+  return /^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST)[A-Z0-9]+$/.test(key);
+}
+
+function flexibleCodeMatch(scanKey: string, fieldKey: string): boolean {
+  if (!scanKey || !fieldKey) return false;
+  if (scanKey === fieldKey) return true;
+  if (scanKey.length >= 10 && fieldKey.length >= 10) {
+    return fieldKey.endsWith(scanKey) || scanKey.endsWith(fieldKey);
+  }
+  return false;
+}
+
+/** Build all normalized keys to try from raw QR / manual input. */
+export function buildScanLookupKeys(raw: string): string[] {
   const text = String(raw || '').trim();
   if (!text) return [];
 
   const keys = new Set<string>();
   const add = (v: unknown) => {
-    const s = String(v || '').trim();
-    if (!s || s.length < 4) return;
-    keys.add(normalizeOrderScanKey(s));
-    keys.add(s.trim().toUpperCase());
+    const normalized = normalizeOrderScanKey(String(v || ''));
+    if (normalized.length >= 4) keys.add(normalized);
   };
 
   add(text);
@@ -28,18 +42,17 @@ export function extractOrderScanKeys(raw: string): string[] {
     try {
       const url = new URL(text);
       [
-        'order_sn',
-        'ordersn',
-        'order',
-        'order_id',
-        'orderid',
         'tracking',
         'tracking_no',
         'tracking_number',
         'tn',
+        'order_sn',
+        'ordersn',
+        'order',
+        'order_id',
+        'package_number',
         'code',
         'sn',
-        'package_number',
       ].forEach((p) => {
         const v = url.searchParams.get(p);
         if (v) add(v);
@@ -54,17 +67,14 @@ export function extractOrderScanKeys(raw: string): string[] {
     try {
       const parsed = JSON.parse(text);
       [
-        'order_sn',
-        'orderSn',
-        'ordersn',
         'tracking_number',
         'trackingNumber',
         'tracking_no',
         'trackingNo',
+        'order_sn',
+        'orderSn',
         'package_number',
         'packageNumber',
-        'id',
-        'code',
       ].forEach((k) => {
         if (parsed?.[k]) add(parsed[k]);
       });
@@ -74,54 +84,79 @@ export function extractOrderScanKeys(raw: string): string[] {
   }
 
   for (const m of text.matchAll(
-    /(?:order[_-]?sn|tracking[_-]?(?:no|number)?|package[_-]?number?)\s*[:=]\s*([A-Za-z0-9\-]+)/gi
+    /(?:tracking[_-]?(?:no|number)?|order[_-]?sn|package[_-]?number?)\s*[:=]\s*([A-Za-z0-9\-]+)/gi
   )) {
     add(m[1]);
   }
 
-  for (const token of text.match(/[A-Z0-9][A-Z0-9\-]{3,}/gi) || []) {
-    add(token);
-  }
-
-  return [...keys].filter((k, i, arr) => k && arr.indexOf(k) === i);
-}
-
-export function getOrderLookupKeys(order: Order): string[] {
-  const raw = [
-    order.orderSn,
-    order.trackingNumber,
-    order.packageNumber,
-    order.id,
-    order.id?.replace(/^shopee-/i, ''),
-  ];
-  const keys = new Set<string>();
-  for (const v of raw) {
-    if (!v) continue;
-    keys.add(normalizeOrderScanKey(v));
-    keys.add(String(v).trim().toUpperCase());
-  }
   return [...keys];
 }
 
-function scanKeysMatch(scanKey: string, orderKey: string): boolean {
-  if (!scanKey || !orderKey) return false;
-  if (scanKey === orderKey) return true;
-  if (scanKey.length >= 10 && orderKey.length >= 10) {
-    return orderKey.endsWith(scanKey) || scanKey.endsWith(orderKey);
-  }
-  return false;
+/** Flexible OR match: orderSn OR trackingNumber OR packageNumber. */
+export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
+  const scanKeys = buildScanLookupKeys(raw);
+  if (scanKeys.length === 0) return false;
+
+  const orderSnKey = normalizeOrderScanKey(order.orderSn);
+  const trackingKey = order.trackingNumber ? normalizeOrderScanKey(order.trackingNumber) : '';
+  const packageKey = order.packageNumber ? normalizeOrderScanKey(order.packageNumber) : '';
+  const idKey = normalizeOrderScanKey(order.id?.replace(/^shopee-/i, '') || '');
+
+  return scanKeys.some(
+    (sk) =>
+      flexibleCodeMatch(sk, orderSnKey) ||
+      flexibleCodeMatch(sk, trackingKey) ||
+      flexibleCodeMatch(sk, packageKey) ||
+      flexibleCodeMatch(sk, idKey)
+  );
 }
 
+/** Find order — prioritizes tracking match when scan looks like waybill code. */
 export function findOrderByScanPayload(orders: Order[], raw: string): Order | null {
-  const scanKeys = extractOrderScanKeys(raw);
+  const scanKeys = buildScanLookupKeys(raw);
   if (scanKeys.length === 0) return null;
 
-  for (const order of orders) {
-    const orderKeys = getOrderLookupKeys(order);
-    const matched = scanKeys.some((sk) => orderKeys.some((ok) => scanKeysMatch(sk, ok)));
-    if (matched) return order;
+  const trackingLike = isLikelyTrackingCode(raw);
+
+  if (trackingLike) {
+    for (const order of orders) {
+      const trackingKey = order.trackingNumber ? normalizeOrderScanKey(order.trackingNumber) : '';
+      if (!trackingKey) continue;
+      const matched = scanKeys.some((sk) => flexibleCodeMatch(sk, trackingKey));
+      if (matched) return order;
+    }
   }
+
+  for (const order of orders) {
+    if (matchScannedCodeToOrder(order, raw)) return order;
+  }
+
   return null;
+}
+
+export async function lookupOrderByScanCode(
+  raw: string,
+  localOrders: Order[],
+  token?: string | null
+): Promise<Order | null> {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const local = findOrderByScanPayload(localOrders, trimmed);
+  if (local) return local;
+
+  if (!token) return null;
+
+  try {
+    const res = await fetch(`/api/orders/lookup?code=${encodeURIComponent(trimmed)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const order = (await res.json()) as Order;
+    return order?.id ? order : null;
+  } catch {
+    return null;
+  }
 }
 
 export function playScanBeep(type: 'success' | 'error' = 'success') {
