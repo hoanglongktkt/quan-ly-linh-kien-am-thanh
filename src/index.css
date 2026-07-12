@@ -168,14 +168,23 @@ body {
   }
 }
 
-/* Card list: mobile block; tablet-desktop ẩn; PC 32" lưới */
+/* Card list: mobile + PC 32" — một cột full width */
 .om-order-card-list {
   display: none;
 }
 
 @media (max-width: 768px) {
   .om-order-card-list {
-    display: block;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+@media (min-width: 1440px) {
+  .om-order-card-list {
+    display: flex !important;
+    flex-direction: column;
+    width: 100%;
   }
 }
 

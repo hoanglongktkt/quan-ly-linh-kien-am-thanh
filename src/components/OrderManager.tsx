@@ -2552,82 +2552,68 @@ export default function OrderManager({
             </table>
           </div>
 
-          <div className="om-order-card-list app-wide-card-grid divide-y divide-gray-100 max-md:divide-y">
+          <div className="om-order-card-list flex flex-col divide-y divide-gray-100 w-full">
             {filteredOrders.map(order => {
               const isChecked = selectedOrderIds.includes(order.id);
               const badge = getStatusBadge(order.status) || { text: order.status, color: '' };
               return (
-                <div key={order.id} className={`p-4 space-y-3 transition-colors ${isChecked ? 'bg-blue-50/20' : 'bg-white'}`}>
-                  {/* Card Header: Channel Badge, OrderSn, Status Badge */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <input 
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => handleToggleSelectOne(order.id)}
-                        className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer shrink-0"
-                      />
-                      <span className={`px-1.5 py-0.5 text-[9px] font-black uppercase rounded shrink-0 ${
-                        order.channel === 'shopee' ? 'bg-orange-500 text-white' : order.channel === 'tiktok' ? 'bg-zinc-900 text-white' : 'bg-blue-600 text-white'
-                      }`}>
-                        {order.channel}
-                      </span>
-                      <span className="font-mono font-black text-gray-900 text-xs truncate">
-                        #{order.orderSn}
-                      </span>
+                <div
+                  key={order.id}
+                  className={`om-order-card-row flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-4 p-4 w-full transition-colors ${isChecked ? 'bg-blue-50/20' : 'bg-white'}`}
+                >
+                  <div className="flex items-center gap-2 shrink-0 lg:min-w-[11rem]">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => handleToggleSelectOne(order.id)}
+                      className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500 cursor-pointer shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`px-1.5 py-0.5 text-[9px] font-black uppercase rounded shrink-0 ${
+                          order.channel === 'shopee' ? 'bg-orange-500 text-white' : order.channel === 'tiktok' ? 'bg-zinc-900 text-white' : 'bg-blue-600 text-white'
+                        }`}>
+                          {order.channel}
+                        </span>
+                        <span className="font-mono font-black text-gray-900 text-xs truncate">
+                          #{order.orderSn}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-500 font-medium mt-0.5">
+                        {new Date(order.date).toLocaleDateString('vi-VN')}
+                      </p>
                     </div>
+                  </div>
+
+                  <div className="flex-1 min-w-0 bg-slate-50/80 px-2.5 py-2 rounded-xl border border-slate-100">
+                    <div className="text-[9px] font-bold text-gray-400 uppercase tracking-wide mb-1">Sản phẩm đặt mua</div>
+                    <div className="space-y-1">
+                      {order.items.map((item, idx) => (
+                        <div key={idx} className="flex justify-between items-start text-gray-700 gap-2">
+                          <span className="truncate text-[11px] font-medium leading-tight">{item.productTitle}</span>
+                          <span className="text-blue-600 text-xs shrink-0 font-black">x{item.quantity}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3 lg:gap-4 shrink-0 lg:ml-auto">
+                    <div className="text-xs">
+                      <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng thanh toán</span>
+                      <span className="font-black text-slate-900 text-sm whitespace-nowrap">{order.totalAmount.toLocaleString('vi-VN')} đ</span>
+                      {order.trackingNumber && (
+                        <p className="text-[10px] text-indigo-700 font-mono mt-1 flex items-center gap-1">
+                          <Barcode className="w-3 h-3 text-indigo-400 shrink-0" />
+                          <span className="truncate max-w-[8rem]">{order.trackingNumber}</span>
+                        </p>
+                      )}
+                    </div>
+
                     <span className={`inline-block px-2 py-0.5 text-[9px] font-black rounded-full border shrink-0 ${badge.color}`}>
                       {badge.text}
                     </span>
-                  </div>
 
-                  {/* Customer & Timestamp Info */}
-                  <div className="grid grid-cols-2 gap-2 text-[11px] text-gray-500 font-semibold">
-                    <div>
-                      <span className="text-gray-400 block font-bold text-[9px] uppercase tracking-wider">Khách hàng:</span>
-                      <span className="font-bold text-gray-800">{order.customerName}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-400 block font-bold text-[9px] uppercase tracking-wider">Ngày đặt:</span>
-                      <span className="font-medium text-gray-700">{new Date(order.date).toLocaleDateString('vi-VN')}</span>
-                    </div>
-                  </div>
-
-                  {/* Products purchased in this order */}
-                  <div className="bg-slate-50/80 p-2.5 rounded-xl text-xs space-y-1.5 border border-slate-100">
-                    <div className="text-[9px] font-bold text-gray-400 uppercase tracking-wide">Sản phẩm đặt mua</div>
-                    {order.items.map((item, idx) => (
-                      <div key={idx} className="flex justify-between items-start text-gray-700 font-bold gap-2">
-                        <span className="truncate text-[11px] font-medium leading-tight">{item.productTitle}</span>
-                        <span className="text-blue-600 text-xs shrink-0 font-black">x{item.quantity}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Amount and Shipping Details */}
-                  <div className="flex items-center justify-between text-xs pt-1">
-                    <div className="space-y-0.5">
-                      <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng thanh toán:</span>
-                      <span className="font-black text-slate-900 text-sm">{order.totalAmount.toLocaleString('vi-VN')} đ</span>
-                    </div>
-                    {order.trackingNumber && (
-                      <div className="text-[10px] text-indigo-700 font-mono bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100/50 flex items-center gap-1">
-                        <Barcode className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>VD: <strong className="font-black">{order.trackingNumber}</strong></span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2 max-md:pt-1.5 border-t border-gray-50 gap-2">
-                    <button
-                      onClick={() => setSelectedOrderDetails(order)}
-                      className="min-h-11 px-3 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 font-bold text-xs rounded-xl flex items-center gap-1 transition-all border border-gray-150"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Xem</span>
-                    </button>
-
-                    <div className="flex items-center gap-1 max-md:ml-auto max-md:justify-end">
+                    <div className="flex items-center gap-1 flex-wrap justify-end">
                       {order.status === 'pending_confirm' && (
                         <button
                           onClick={() => {
@@ -2743,6 +2729,15 @@ export default function OrderManager({
                           Nhận Hoàn
                         </button>
                       )}
+
+                      <button
+                        onClick={() => setSelectedOrderDetails(order)}
+                        className="min-h-11 px-3 py-2 bg-gray-50 hover:bg-gray-100 text-gray-600 font-bold text-xs rounded-xl flex items-center gap-1 transition-all border border-gray-150"
+                        title="Xem chi tiết đơn"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span className="max-lg:sr-only">Xem</span>
+                      </button>
                     </div>
                   </div>
                 </div>
