@@ -1,6 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import {
+  startRearCameraScanner,
+  HTTPS_CAMERA_MESSAGE,
+  QR_ONLY_FORMATS,
+  QR_SCANNER_CONFIG,
+} from '../utils/cameraScanner';
+import { findOrderByScanPayload, scanFeedback } from '../utils/orderScan';
+import {
   Barcode,
   Camera,
   Check,
@@ -11,7 +18,6 @@ import {
   X,
 } from 'lucide-react';
 import { Order, SyncLog } from '../types';
-import { startRearCameraScanner, HTTPS_CAMERA_MESSAGE } from '../utils/cameraScanner';
 
 interface OrderPickingProps {
   orders: Order[];
@@ -72,31 +78,22 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
 
   const lookupOrder = useCallback(
     (raw: string) => {
-      const query = raw.trim().toUpperCase();
-      if (!query) {
-        setScanError('Vui lòng nhập hoặc quét mã đơn hàng.');
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        setScanError('Vui lòng nhập hoặc quét mã QR đơn hàng.');
         return;
       }
 
-      const found = orders.find(
-        (o) =>
-          o.status === 'unprocessed' &&
-          (o.orderSn.toUpperCase() === query ||
-            o.id.toUpperCase() === query ||
-            (o.trackingNumber && o.trackingNumber.toUpperCase() === query))
-      );
+      const found = orders.find((o) => o.status === 'unprocessed' && findOrderByScanPayload([o], trimmed));
 
       if (!found) {
-        const other = orders.find(
-          (o) =>
-            o.orderSn.toUpperCase() === query ||
-            o.id.toUpperCase() === query ||
-            (o.trackingNumber && o.trackingNumber.toUpperCase() === query)
-        );
+        const other = findOrderByScanPayload(orders, trimmed);
         if (other && other.status !== 'unprocessed') {
+          scanFeedback('error');
           setScanError(`Đơn #${other.orderSn} không ở trạng thái "Chờ lấy hàng (Chưa xử lý)".`);
         } else {
-          setScanError(`Không tìm thấy đơn chờ lấy hàng khớp mã "${raw.trim()}".`);
+          scanFeedback('error');
+          setScanError(`Không tìm thấy đơn hàng này trong hệ thống (${trimmed}).`);
         }
         setActiveOrder(null);
         setPickedKeys(new Set());
@@ -104,10 +101,12 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       }
 
       if (!found.items?.length) {
+        scanFeedback('error');
         setScanError(`Đơn #${found.orderSn} chưa có danh sách sản phẩm.`);
         return;
       }
 
+      scanFeedback('success');
       setScanError('');
       setActiveOrder(found);
       setPickedKeys(new Set());
@@ -175,23 +174,18 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       const element = document.getElementById('picking-camera-reader');
       if (!element) return;
 
-      html5Qrcode = new Html5Qrcode('picking-camera-reader');
+      html5Qrcode = new Html5Qrcode('picking-camera-reader', {
+        formatsToSupport: QR_ONLY_FORMATS,
+        verbose: false,
+      });
 
       const onScan = (decodedText: string) => {
-        if (!decodedText) return;
+        if (!decodedText?.trim()) return;
         setScanInput(decodedText.trim());
         lookupOrder(decodedText);
       };
 
-      const config = {
-        fps: 12,
-        qrbox: (w: number, h: number) => {
-          const size = Math.min(w, h) * 0.7;
-          return { width: size, height: size };
-        },
-      };
-
-      void startRearCameraScanner(html5Qrcode, config, onScan, () => {})
+      void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, onScan, () => {})
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : 'Không thể mở camera.';
           setCameraError(

@@ -357,3 +357,102 @@ body {
 .ia-desktop-audit-grid {
   display: none;
 }
+
+/* QR camera scanner — html5-qrcode injects video into these containers */
+#camera-reader,
+#picking-camera-reader {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 180px;
+}
+
+#camera-reader video,
+#picking-camera-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 0 !important;
+}
+
+#camera-reader img,
+#picking-camera-reader img {
+  display: none !important;
+}
+
+#camera-reader > div,
+#picking-camera-reader > div {
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+}
+
+.qr-viewfinder {
+  position: relative;
+  width: min(72vw, 240px);
+  height: min(72vw, 240px);
+  border-radius: 16px;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.qr-viewfinder::before,
+.qr-viewfinder::after {
+  content: '';
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border-color: inherit;
+  border-style: solid;
+  pointer-events: none;
+}
+
+.qr-viewfinder::before {
+  top: -2px;
+  left: -2px;
+  border-width: 4px 0 0 4px;
+  border-radius: 12px 0 0 0;
+}
+
+.qr-viewfinder::after {
+  bottom: -2px;
+  right: -2px;
+  border-width: 0 4px 4px 0;
+  border-radius: 0 0 12px 0;
+}
+
+.qr-viewfinder-idle {
+  border: 2px solid rgb(59 130 246);
+  box-shadow: 0 0 18px rgba(59, 130, 246, 0.35);
+}
+
+.qr-viewfinder-success {
+  border: 3px solid rgb(16 185 129);
+  box-shadow: 0 0 24px rgba(16, 185, 129, 0.55);
+}
+
+.qr-viewfinder-error {
+  border: 3px solid rgb(244 63 94);
+  box-shadow: 0 0 24px rgba(244, 63, 94, 0.45);
+}
+
+.qr-scan-line {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(59 130 246), transparent);
+  animation: qr-scan-sweep 2.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes qr-scan-sweep {
+  0%,
+  100% {
+    top: 12%;
+    opacity: 0.35;
+  }
+  50% {
+    top: 88%;
+    opacity: 1;
+  }
+}

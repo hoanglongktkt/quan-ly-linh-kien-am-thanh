@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
-import { startRearCameraScanner, HTTPS_CAMERA_MESSAGE } from '../utils/cameraScanner';
+import {
+  startRearCameraScanner,
+  HTTPS_CAMERA_MESSAGE,
+  QR_ONLY_FORMATS,
+  QR_SCANNER_CONFIG,
+} from '../utils/cameraScanner';
+import { findOrderByScanPayload, scanFeedback } from '../utils/orderScan';
 import { 
   Search, 
   ShoppingBag, 
@@ -92,27 +98,6 @@ function VariationNameBadge({ variationName }: { variationName?: string }) {
   );
 }
 
-const playBeep = () => {
-  try {
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioCtx.createOscillator();
-    const gainNode = audioCtx.createGain();
-
-    oscillator.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
-
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(1000, audioCtx.currentTime); // 1000Hz beep
-    gainNode.gain.setValueAtTime(0.5, audioCtx.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
-
-    oscillator.start();
-    oscillator.stop(audioCtx.currentTime + 0.15);
-  } catch (err) {
-    console.error("Audio beep failed:", err);
-  }
-};
-
 export default function OrderManager({ 
   orders, 
   onUpdateOrders, 
@@ -129,10 +114,12 @@ export default function OrderManager({
   const [activeSubTab, setActiveSubTab] = useState<OrderTab>('unprocessed'); // Default to unprocessed "Chờ lấy hàng (Chưa xử lý)" like mockup
   
   // Camera Barcode Scanning States and Ref
-  const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét...');
+  const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét mã QR...');
   const [cameraScanSuccess, setCameraScanSuccess] = useState<boolean>(false);
+  const [cameraScanError, setCameraScanError] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string>('');
   const [cameraRestartKey, setCameraRestartKey] = useState(0);
+  const lastQrScanRef = React.useRef({ key: '', at: 0 });
 
   const [sessionStats, setSessionStats] = useState({ shipped: 0, cancelDetected: 0, returnReceived: 0 });
   const [manualScanInput, setManualScanInput] = useState('');
@@ -152,27 +139,22 @@ export default function OrderManager({
 
   const handleOrderScan = React.useCallback(
     (rawQuery: string) => {
-      const query = rawQuery.trim().toUpperCase();
-      if (!query) return;
+      const trimmed = rawQuery.trim();
+      if (!trimmed) return;
 
-      const findOrder = () =>
-        ordersRef.current.find(
-          (o) =>
-            o.orderSn.toUpperCase() === query ||
-            (o.trackingNumber && o.trackingNumber.toUpperCase() === query)
-        );
-
-      const order = findOrder();
+      const order = findOrderByScanPayload(ordersRef.current, trimmed);
 
       if (!order) {
-        playBeep();
+        scanFeedback('error');
         setCameraScanSuccess(false);
-        setCameraScanResult(`Không tìm thấy đơn: ${rawQuery.trim()}`);
-        showScanToast(`Không tìm thấy đơn khớp mã "${rawQuery.trim()}"`, 'error');
+        setCameraScanError(true);
+        setCameraScanResult(`Không tìm thấy đơn: ${trimmed}`);
+        showScanToast(`Không tìm thấy đơn hàng này trong hệ thống (${trimmed})`, 'error');
+        setTimeout(() => setCameraScanError(false), 2000);
         return;
       }
 
-      if (order.status === 'processed') {
+      if (order.status === 'unprocessed' || order.status === 'processed') {
         const updated = ordersRef.current.map((o) => {
           if (o.id !== order.id) return o;
           const tracking =
@@ -180,6 +162,7 @@ export default function OrderManager({
             `${o.channel === 'shopee' ? 'SPX' : o.channel === 'tiktok' ? 'TTS' : 'WOO'}-VN-${Math.floor(10000000 + Math.random() * 90000000)}`;
           return { ...o, status: 'shipping' as const, trackingNumber: tracking, isPrepared: true };
         });
+        ordersRef.current = updated;
         onUpdateOrders(updated);
         onAddLog({
           id: `log-${Date.now()}`,
@@ -187,10 +170,11 @@ export default function OrderManager({
           channel: order.channel,
           type: 'stock_sync',
           status: 'success',
-          message: `[QUÉT MÃ] Xuất kho đơn ${order.orderSn} → Đang giao.`,
+          message: `[QUÉT QR] Xuất kho đơn ${order.orderSn} → Đang giao.`,
         });
         setSessionStats((s) => ({ ...s, shipped: s.shipped + 1 }));
-        playBeep();
+        scanFeedback('success');
+        setCameraScanError(false);
         setCameraScanSuccess(true);
         setCameraScanResult(`✓ Xuất kho #${order.orderSn}`);
         showScanToast(`Đã xuất kho — đơn #${order.orderSn} chuyển sang Đang giao`, 'success');
@@ -204,6 +188,7 @@ export default function OrderManager({
         const updated = ordersRef.current.map((o) =>
           o.id === order.id ? { ...o, status: 'return_received' as const } : o
         );
+        ordersRef.current = updated;
         onUpdateOrders(updated);
         onAddLog({
           id: `log-${Date.now()}`,
@@ -211,14 +196,15 @@ export default function OrderManager({
           channel: order.channel,
           type: 'stock_sync',
           status: 'success',
-          message: `[QUÉT MÃ] Nhận hoàn đơn ${order.orderSn} → Hủy giao đã nhận.`,
+          message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Hủy giao đã nhận.`,
         });
         setSessionStats((s) => ({
           ...s,
           cancelDetected: isCancelRequest ? s.cancelDetected + 1 : s.cancelDetected,
           returnReceived: s.returnReceived + 1,
         }));
-        playBeep();
+        scanFeedback('success');
+        setCameraScanError(false);
         setCameraScanSuccess(true);
         setCameraScanResult(`✓ Nhận hoàn #${order.orderSn}`);
         showScanToast(
@@ -233,18 +219,22 @@ export default function OrderManager({
       }
 
       if (order.status === 'shipping') {
-        playBeep();
+        scanFeedback('error');
         setCameraScanSuccess(false);
+        setCameraScanError(true);
         setCameraScanResult(`Đơn #${order.orderSn} đã ở trạng thái Đang giao`);
         showScanToast(`Đơn #${order.orderSn} đã xuất kho trước đó`, 'error');
+        setTimeout(() => setCameraScanError(false), 2000);
         return;
       }
 
       if (order.status === 'return_received') {
-        playBeep();
+        scanFeedback('error');
         setCameraScanSuccess(false);
+        setCameraScanError(true);
         setCameraScanResult(`Đơn #${order.orderSn} đã nhận hoàn trước đó`);
         showScanToast(`Đơn #${order.orderSn} đã nhận hoàn`, 'error');
+        setTimeout(() => setCameraScanError(false), 2000);
         return;
       }
 
@@ -259,10 +249,12 @@ export default function OrderManager({
         return_received: 'Hủy giao đã nhận',
       };
       const statusLabel = statusLabels[order.status] || order.status;
-      playBeep();
+      scanFeedback('error');
       setCameraScanSuccess(false);
+      setCameraScanError(true);
       setCameraScanResult(`Trạng thái không hợp lệ: ${statusLabel}`);
       showScanToast(`Đơn #${order.orderSn} — ${statusLabel}. Không thể xử lý tự động.`, 'error');
+      setTimeout(() => setCameraScanError(false), 2000);
     },
     [onUpdateOrders, onAddLog]
   );
@@ -276,9 +268,11 @@ export default function OrderManager({
     let isMounted = true;
 
     if (focusScanner) {
-      setCameraScanResult('Đang chờ quét...');
+      setCameraScanResult('Đang chờ quét mã QR...');
       setCameraScanSuccess(false);
+      setCameraScanError(false);
       setCameraError('');
+      lastQrScanRef.current = { key: '', at: 0 };
 
       const timer = setTimeout(() => {
         if (!isMounted) return;
@@ -289,22 +283,26 @@ export default function OrderManager({
           return;
         }
 
-        html5Qrcode = new Html5Qrcode('camera-reader');
+        html5Qrcode = new Html5Qrcode('camera-reader', {
+          formatsToSupport: QR_ONLY_FORMATS,
+          verbose: false,
+        });
 
         const qrCodeSuccessCallback = (decodedText: string) => {
-          if (!decodedText) return;
+          if (!decodedText?.trim()) return;
+          const now = Date.now();
+          const dedupeKey = decodedText.trim().toUpperCase();
+          if (
+            dedupeKey === lastQrScanRef.current.key &&
+            now - lastQrScanRef.current.at < 2500
+          ) {
+            return;
+          }
+          lastQrScanRef.current = { key: dedupeKey, at: now };
           applyScanRef.current(decodedText);
         };
 
-        const config = {
-          fps: 15,
-          qrbox: (width: number, height: number) => {
-            const size = Math.min(width, height) * 0.75;
-            return { width: size, height: size };
-          },
-        };
-
-        void startRearCameraScanner(html5Qrcode, config, qrCodeSuccessCallback, () => {})
+        void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, qrCodeSuccessCallback, () => {})
           .catch((err: unknown) => {
             console.error('Camera scanner start failed:', err);
             const msg =
@@ -1257,7 +1255,7 @@ export default function OrderManager({
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-white font-extrabold text-[10px] uppercase tracking-widest">Quét mã vận đơn</span>
+              <span className="text-white font-extrabold text-[10px] uppercase tracking-widest">Quét mã QR đơn hàng</span>
             </div>
             {onCloseScanner && (
               <button
@@ -1289,15 +1287,22 @@ export default function OrderManager({
         <div className="flex-1 min-h-0 px-3 flex flex-col gap-2 pb-2">
           <div className="flex-1 min-h-[180px] max-h-[42vh] relative rounded-2xl border border-zinc-800 overflow-hidden bg-black">
             <div id="camera-reader" className="w-full h-full object-cover" />
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center bg-black/20">
               <div
-                className={`w-[200px] h-[200px] border-2 rounded-xl transition-all duration-300 ${
+                className={`qr-viewfinder ${
                   cameraScanSuccess
-                    ? 'border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.4)]'
-                    : 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.2)]'
+                    ? 'qr-viewfinder-success'
+                    : cameraScanError
+                      ? 'qr-viewfinder-error'
+                      : 'qr-viewfinder-idle'
                 }`}
-              />
+              >
+                {!cameraScanSuccess && !cameraScanError && <div className="qr-scan-line" />}
+              </div>
             </div>
+            <p className="absolute bottom-2 left-0 right-0 text-center text-[10px] font-bold text-white/80 pointer-events-none">
+              Đưa mã QR vào khung ngắm
+            </p>
             {cameraError && (
               <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-4 text-center text-xs text-rose-400 font-semibold gap-3">
                 <AlertCircle className="w-7 h-7 text-rose-500" />
@@ -1323,7 +1328,7 @@ export default function OrderManager({
               type="text"
               value={manualScanInput}
               onChange={(e) => setManualScanInput(e.target.value)}
-              placeholder="Nhập / dán mã đơn..."
+              placeholder="Nhập / dán mã QR hoặc mã đơn..."
               className="flex-1 min-h-11 px-3 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-sm font-mono outline-none focus:border-blue-500"
               autoComplete="off"
             />
@@ -1339,6 +1344,8 @@ export default function OrderManager({
             className={`shrink-0 text-sm font-bold px-3 py-2.5 rounded-xl text-center transition-all ${
               cameraScanSuccess
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                : cameraScanError
+                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
                 : cameraScanResult.startsWith('Đang chờ')
                   ? 'text-zinc-500'
                   : 'bg-zinc-800 text-yellow-400 border border-zinc-700'
