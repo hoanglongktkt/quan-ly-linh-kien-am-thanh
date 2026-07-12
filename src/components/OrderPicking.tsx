@@ -200,7 +200,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
         lookupOrder(decodedText);
       };
 
-      void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, onScan, () => {})
+      void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, onScan, () => {}, 'picking-camera-reader')
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : 'Không thể mở camera.';
           setCameraError(

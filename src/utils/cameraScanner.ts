@@ -3,18 +3,26 @@ import { Html5QrcodeSupportedFormats } from 'html5-qrcode';
 
 export const HTTPS_CAMERA_MESSAGE = 'Vui lòng truy cập qua HTTPS để sử dụng camera';
 
-export const REAR_CAMERA_CONSTRAINTS = { facingMode: { exact: 'environment' as const } };
+/** Camera sau + độ phân giải cao + lấy nét liên tục (quét gần 10–15cm). */
+export const REAR_CAMERA_CONSTRAINTS: MediaTrackConstraints = {
+  facingMode: { exact: 'environment' },
+  width: { ideal: 1920, min: 1280 },
+  height: { ideal: 1080, min: 720 },
+  aspectRatio: { ideal: 16 / 9 },
+  frameRate: { ideal: 30, min: 20 },
+  advanced: [{ focusMode: 'continuous' }] as MediaTrackConstraintSet[],
+};
 
 export const QR_ONLY_FORMATS = [Html5QrcodeSupportedFormats.QR_CODE];
 
 export const QR_SCANNER_CONFIG = {
-  fps: 20,
+  fps: 24,
   qrbox: (width: number, height: number) => {
     const minEdge = Math.min(width, height);
-    const size = Math.floor(minEdge * 0.72);
-    return { width: size, height: size };
+    const size = Math.floor(minEdge * 0.82);
+    return { width: size, height: Math.floor(size * 0.55) };
   },
-  aspectRatio: 1.0,
+  aspectRatio: 1.777,
   disableFlip: false,
 };
 
@@ -32,6 +40,85 @@ export function getCameraBlockedReason(): string | null {
   return null;
 }
 
+function buildCameraConstraintsFallback(): MediaTrackConstraints[] {
+  const withFocus = (facing: MediaTrackConstraints['facingMode']) =>
+    ({
+      facingMode: facing,
+      width: { ideal: 1920, min: 1280 },
+      height: { ideal: 1080, min: 720 },
+      aspectRatio: { ideal: 16 / 9 },
+      frameRate: { ideal: 30, min: 20 },
+      advanced: [{ focusMode: 'continuous' }] as MediaTrackConstraintSet[],
+    }) satisfies MediaTrackConstraints;
+
+  return [
+    withFocus({ exact: 'environment' }),
+    withFocus('environment'),
+    {
+      facingMode: 'environment',
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      advanced: [{ focusMode: 'continuous' }, { focusMode: 'auto' }] as MediaTrackConstraintSet[],
+    },
+    { facingMode: 'user' },
+  ];
+}
+
+async function waitForScannerVideo(scannerElementId: string): Promise<HTMLVideoElement | null> {
+  for (let i = 0; i < 40; i++) {
+    const video = document.querySelector(`#${scannerElementId} video`) as HTMLVideoElement | null;
+    if (video?.srcObject) {
+      if (video.readyState < 2) {
+        await new Promise<void>((resolve) => {
+          video.addEventListener('loadedmetadata', () => resolve(), { once: true });
+        });
+      }
+      return video;
+    }
+    await new Promise((r) => requestAnimationFrame(r));
+  }
+  return null;
+}
+
+/** Kích hoạt autofocus liên tục sau khi stream đã chạy. */
+export async function applyScannerAutofocus(scannerElementId: string): Promise<void> {
+  const video = await waitForScannerVideo(scannerElementId);
+  const track = (video?.srcObject as MediaStream | null)?.getVideoTracks()?.[0];
+  if (!track?.applyConstraints) return;
+
+  type FocusCaps = MediaTrackCapabilities & { focusMode?: string[]; zoom?: { min: number; max: number } };
+  const caps = (typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}) as FocusCaps;
+
+  if (caps.focusMode?.includes('continuous')) {
+    try {
+      await track.applyConstraints({
+        advanced: [{ focusMode: 'continuous' }],
+      } as MediaTrackConstraints);
+    } catch {
+      /* trình duyệt không hỗ trợ */
+    }
+  } else if (caps.focusMode?.includes('auto')) {
+    try {
+      await track.applyConstraints({
+        advanced: [{ focusMode: 'auto' }],
+      } as MediaTrackConstraints);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+    try {
+      const zoom = Math.min(caps.zoom.max, caps.zoom.min + (caps.zoom.max - caps.zoom.min) * 0.12);
+      await track.applyConstraints({
+        advanced: [{ zoom }],
+      } as MediaTrackConstraints);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 export async function requestRearCameraPermission(): Promise<void> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('Trình duyệt không hỗ trợ truy cập camera.');
@@ -42,12 +129,6 @@ export async function requestRearCameraPermission(): Promise<void> {
   stream.getTracks().forEach((track) => track.stop());
 }
 
-const CAMERA_CONSTRAINTS_FALLBACK = [
-  { facingMode: { exact: 'environment' as const } },
-  { facingMode: 'environment' as const },
-  { facingMode: 'user' as const },
-];
-
 export async function startRearCameraScanner(
   html5Qrcode: Html5Qrcode,
   config: {
@@ -57,7 +138,8 @@ export async function startRearCameraScanner(
     disableFlip?: boolean;
   },
   onSuccess: (decodedText: string) => void,
-  onScanFailure: (error: string) => void
+  onScanFailure: (error: string) => void,
+  scannerElementId?: string,
 ): Promise<void> {
   const blocked = getCameraBlockedReason();
   if (blocked) {
@@ -71,9 +153,12 @@ export async function startRearCameraScanner(
   }
 
   let lastError: unknown;
-  for (const constraints of CAMERA_CONSTRAINTS_FALLBACK) {
+  for (const constraints of buildCameraConstraintsFallback()) {
     try {
       await html5Qrcode.start(constraints, config, onSuccess, onScanFailure);
+      if (scannerElementId) {
+        await applyScannerAutofocus(scannerElementId);
+      }
       return;
     } catch (err) {
       lastError = err;

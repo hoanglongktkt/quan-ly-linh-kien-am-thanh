@@ -342,7 +342,7 @@ export default function OrderManager({
           applyScanRef.current(decodedText);
         };
 
-        void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, qrCodeSuccessCallback, () => {})
+        void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, qrCodeSuccessCallback, () => {}, 'camera-reader')
           .catch((err: unknown) => {
             console.error('Camera scanner start failed:', err);
             const msg =
