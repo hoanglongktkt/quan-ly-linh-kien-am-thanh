@@ -1041,11 +1041,11 @@ export default function OrderManager({
     // 5. Text query search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      const matchSn = order.orderSn.toLowerCase().includes(q);
-      const matchName = order.customerName.toLowerCase().includes(q);
+      const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
+      const matchName = String(order.customerName || '').toLowerCase().includes(q);
       const matchTracking = order.trackingNumber ? order.trackingNumber.toLowerCase().includes(q) : false;
       const matchInternal = order.internalTrackingCode ? order.internalTrackingCode.toLowerCase().includes(q) : false;
-      const matchProduct = order.items.some(it => it.productTitle.toLowerCase().includes(q));
+      const matchProduct = (order.items || []).some(it => String(it.productTitle || '').toLowerCase().includes(q));
 
       if (!matchSn && !matchName && !matchTracking && !matchInternal && !matchProduct) return false;
     }

@@ -9,7 +9,14 @@
       ]
     },
     {
-      "source": "/((?!assets/).*)",
+      "source": "/index.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+        { "key": "Pragma", "value": "no-cache" }
+      ]
+    },
+    {
+      "source": "/((?!assets/|index\\.html).*)",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
       ]
@@ -29,11 +36,11 @@
       "destination": "/api/labels/:path*"
     },
     {
-      "source": "/api/:path*",
-      "destination": "/api?path=:path*"
+      "source": "/api/((?!labels/).*)",
+      "destination": "/api?path=$1"
     },
     {
-      "source": "/((?!api/|labels/).*)",
+      "source": "/((?!api/|labels/|assets/|logo\\.png|logo\\.svg|favicon\\.ico).*)",
       "destination": "/index.html"
     }
   ]

@@ -3305,21 +3305,16 @@ async function startServer() {
     });
   });
 
-  // PDF vận đơn — public (tab in mới không gửi Bearer). LiteSpeed thường chặn /labels/* trước Node;
-  // route /api/public/labels/* luôn vào Express.
-  app.get("/api/public/labels/:filename", (req, res) => {
-    const result = serveLabelPdfFromDisk(req.params.filename, res);
-    if (result === "not_found") {
-      res.status(404).type("text/plain").send("Không tìm thấy file vận đơn.");
-    }
-  });
+    // PDF vận đơn — public (tab in mới không gửi Bearer). LiteSpeed thường chặn /labels/* trước Node;
+    // route /api/public/labels/* luôn vào Express.
+    app.get("/api/public/labels/:filename", (req, res) => {
+      const result = serveLabelPdfFromDisk(req.params.filename, res);
+      if (result === "not_found") {
+        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn.");
+      }
+    });
 
-  app.get("/labels/:filename", (req, res, next) => {
-    const result = serveLabelPdfFromDisk(req.params.filename, res);
-    if (result === "not_found") return next();
-  });
-
-  function logShopeeIngress(prefix: string, req: any) {
+    function logShopeeIngress(prefix: string, req: any) {
     console.log(
       prefix,
       JSON.stringify({
@@ -4973,6 +4968,12 @@ async function startServer() {
   // every `npm run build`, which would bloat/leak generated AWB files into the
   // production bundle. "storage/labels" is served via /api/public/labels (primary) and /labels fallback.
   fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
+
+  app.get("/labels/:filename", (req, res, next) => {
+    const result = serveLabelPdfFromDisk(req.params.filename, res);
+    if (result === "not_found") return next();
+  });
+
   app.use("/labels", express.static(SHIPPING_DOCS_DIR, {
     setHeaders(res, filePath) {
       if (filePath.endsWith(".pdf")) {
