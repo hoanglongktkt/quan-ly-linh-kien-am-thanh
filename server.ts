@@ -731,15 +731,63 @@ async function refreshShopeeToken(shopId: string, refreshToken: string) {
   const json: any = await res.json();
   console.log(`[Shopee API] POST ${apiPath} (refresh) -> HTTP ${res.status}:`, JSON.stringify(json));
 
-  if (json.access_token) {
+  const normalized = normalizeShopeeTokenResponse(json);
+  if (normalized.access_token) {
     saveShopeeTokenForShop(shopId, {
-      access_token: json.access_token,
-      refresh_token: json.refresh_token,
-      expire_in: json.expire_in,
+      access_token: normalized.access_token,
+      refresh_token: normalized.refresh_token,
+      expire_in: normalized.expire_in,
       obtained_at: Math.floor(Date.now() / 1000),
     });
+    return normalized;
   }
-  return json;
+  console.error(
+    `[Shopee API] Refresh token thất bại shop_id=${shopId}:`,
+    normalized.error || json.error,
+    normalized.message || json.message,
+  );
+  return normalized;
+}
+
+function isShopeeInvalidTokenError(error?: unknown, message?: unknown): boolean {
+  const text = `${error || ""} ${message || ""}`.toLowerCase();
+  return /invalid.*access_token|invalid_acceess_token|error_auth|invalid_token|token expired/.test(text);
+}
+
+/** Lấy access_token + shop_id thực tế dùng khi gọi Shopee API. */
+async function getShopeeAccessTokenForApi(
+  shopKey: string,
+  opts?: { forceRefresh?: boolean },
+): Promise<{ token: string; apiShopId: string; fileKey: string } | null> {
+  const fileKey = normalizeShopIdKey(shopKey);
+  if (!fileKey) return null;
+
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, fileKey);
+  if (!record?.refresh_token && !record?.access_token) return null;
+
+  const apiShopId = resolveShopeeApiShopId(record, fileKey);
+
+  if (opts?.forceRefresh && record.refresh_token) {
+    console.log(`[Shopee API] Force refresh token shop_id=${apiShopId} (key=${fileKey})`);
+    const refreshed = await refreshShopeeToken(apiShopId, record.refresh_token);
+    if (refreshed.access_token) {
+      if (fileKey !== apiShopId) {
+        saveShopeeTokenForShop(fileKey, {
+          access_token: refreshed.access_token,
+          refresh_token: refreshed.refresh_token,
+          expire_in: refreshed.expire_in,
+          obtained_at: Math.floor(Date.now() / 1000),
+        });
+      }
+      return { token: refreshed.access_token, apiShopId, fileKey };
+    }
+    return null;
+  }
+
+  const token = await getValidShopeeAccessToken(fileKey);
+  if (!token) return null;
+  return { token, apiShopId, fileKey };
 }
 
 /** Gọi Shopee get_shop_info để xác minh token thực sự dùng được cho shop_id. */
@@ -2233,57 +2281,114 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
   const errors: any[] = [];
   const statusCounts: Record<string, number> = {};
 
-  for (const shopId of shopIds) {
-    try {
-      const accessToken = await getValidShopeeAccessToken(shopId);
-      if (!accessToken) {
-        errors.push({ shopId, error: "no_valid_access_token" });
-        continue;
-      }
+  const dedupeErrors = (list: any[]) => {
+    const seen = new Set<string>();
+    return list.filter((e) => {
+      const k = `${e.shopId}:${e.error}:${e.message || ""}:${e.status || ""}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  };
 
+  for (const shopKey of shopIds) {
+    let auth = await getShopeeAccessTokenForApi(shopKey);
+    if (!auth) {
+      errors.push({
+        shopId: shopKey,
+        error: "no_valid_access_token",
+        message: "Token hết hạn hoặc refresh thất bại — hãy OAuth lại shop trên Cài đặt.",
+      });
+      continue;
+    }
+
+    const runShopPull = async (accessToken: string, apiShopId: string, fileKey: string) => {
+      const shopErrors: any[] = [];
       const orderSnSet = new Set<string>();
+
       for (const status of statuses) {
         try {
-          const sns = await shopeeFetchAllOrderSnsByStatus(shopId, accessToken, status);
+          const sns = await shopeeFetchAllOrderSnsByStatus(apiShopId, accessToken, status);
           sns.forEach((sn) => orderSnSet.add(sn));
-          statusCounts[`${shopId}:${status}`] = sns.length;
-          console.log(`[Shopee Sync] Shop ${shopId} / ${status}: ${sns.length} đơn (15 ngày, đã lật trang).`);
+          statusCounts[`${fileKey}:${status}`] = sns.length;
+          console.log(`[Shopee Sync] Shop ${fileKey} (api=${apiShopId}) / ${status}: ${sns.length} đơn.`);
         } catch (statusErr: any) {
-          console.error(`[Shopee Sync] Shop ${shopId} / ${status} lỗi (bỏ qua, tiếp tục status khác):`, statusErr?.message || statusErr);
-          errors.push({ shopId, status, error: statusErr?.message || String(statusErr) });
+          const errMsg = statusErr?.message || String(statusErr);
+          console.error(`[Shopee Sync] Shop ${fileKey} / ${status} lỗi:`, errMsg);
+          shopErrors.push({ shopId: fileKey, status, error: statusErr?.error || "shopee_api_error", message: errMsg });
         }
       }
 
       const orderSnList = Array.from(orderSnSet);
-      if (orderSnList.length === 0) continue;
-
       const syncedForShop: any[] = [];
+
       for (let i = 0; i < orderSnList.length; i += 50) {
         const batch = orderSnList.slice(i, i + 50);
-        const detailResult = await shopeeGetOrderDetail(shopId, accessToken, batch);
+        const detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, batch);
         if (detailResult.error) {
-          errors.push({ shopId, error: detailResult.error, message: detailResult.message, batch: batch.length });
+          shopErrors.push({
+            shopId: fileKey,
+            error: detailResult.error,
+            message: detailResult.message,
+            batch: batch.length,
+          });
           continue;
         }
-
         const detailList = detailResult.response?.order_list || [];
         for (const detail of detailList) {
-          syncedForShop.push(normalizeShopeeOrderDetail(shopId, detail.shop_name, detail));
+          syncedForShop.push(normalizeShopeeOrderDetail(fileKey, detail.shop_name, detail));
         }
       }
+
+      return { shopErrors, orderSnList, syncedForShop };
+    };
+
+    try {
+      let { shopErrors, orderSnList, syncedForShop } = await runShopPull(auth.token, auth.apiShopId, auth.fileKey);
+
+      if (
+        shopErrors.some((e) => isShopeeInvalidTokenError(e.error, e.message)) &&
+        !shopErrors.every((e) => e.error === "no_valid_access_token")
+      ) {
+        console.warn(`[Shopee Sync] shop_id=${shopKey} invalid access_token — đang refresh và thử lại...`);
+        auth = (await getShopeeAccessTokenForApi(shopKey, { forceRefresh: true })) || auth;
+        if (auth) {
+          const retry = await runShopPull(auth.token, auth.apiShopId, auth.fileKey);
+          if (
+            !retry.shopErrors.some((e) => isShopeeInvalidTokenError(e.error, e.message)) ||
+            retry.syncedForShop.length > syncedForShop.length
+          ) {
+            shopErrors = retry.shopErrors;
+            orderSnList = retry.orderSnList;
+            syncedForShop = retry.syncedForShop;
+          } else {
+            shopErrors = [
+              {
+                shopId: shopKey,
+                error: "invalid_access_token",
+                message: "Token không hợp lệ sau khi refresh — vào Cài đặt → OAuth lại shop này.",
+              },
+            ];
+          }
+        }
+      }
+
+      errors.push(...shopErrors);
+
+      if (orderSnList.length === 0) continue;
 
       const syncedSnSet = new Set(syncedForShop.map((o) => o.orderSn));
       const fetchComplete = orderSnList.length > 0 && syncedForShop.length >= orderSnList.length;
       if (fetchComplete) {
         orders = orders.filter((o: any) => {
-          if (o.channel !== "shopee" || String(o.shopId) !== String(shopId)) return true;
+          if (o.channel !== "shopee" || String(o.shopId) !== String(auth!.fileKey)) return true;
           if (syncedSnSet.has(o.orderSn)) return false;
           if (!SHOPEE_SYNC_UI_STATUSES.has(o.status)) return true;
           return false;
         });
       } else if (orderSnList.length > syncedForShop.length) {
         console.warn(
-          `[Shopee Sync] shop_id=${shopId}: get_order_detail thiếu ${orderSnList.length - syncedForShop.length}/${orderSnList.length} đơn — giữ đơn cũ, không xóa.`,
+          `[Shopee Sync] shop_id=${shopKey}: get_order_detail thiếu ${orderSnList.length - syncedForShop.length}/${orderSnList.length} đơn — giữ đơn cũ, không xóa.`,
         );
       }
 
@@ -2299,8 +2404,8 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
         syncedCount++;
       }
     } catch (error: any) {
-      console.error(`[Shopee Sync] Lỗi shop_id=${shopId}:`, error);
-      errors.push({ shopId, error: error.message || "unknown_error" });
+      console.error(`[Shopee Sync] Lỗi shop_id=${shopKey}:`, error);
+      errors.push({ shopId: shopKey, error: error.message || "unknown_error" });
     }
   }
 
@@ -2316,6 +2421,8 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
   };
   console.log(`[Shopee Sync] UI counts sau đồng bộ:`, JSON.stringify(uiStatusCounts));
 
+  const uniqueErrors = dedupeErrors(errors);
+
   return {
     synced: syncedCount,
     added: addedCount,
@@ -2323,7 +2430,11 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
     orders: validOrders,
     statusCounts,
     uiStatusCounts,
-    errors: errors.length ? errors : undefined,
+    errors: uniqueErrors.length ? uniqueErrors : undefined,
+    warning:
+      uniqueErrors.some((e) => isShopeeInvalidTokenError(e.error, e.message))
+        ? "Một số shop có token Shopee hết hạn — vào Cài đặt bấm OAuth lại shop bị lỗi."
+        : undefined,
   };
 }
 const ORDERS_DB_PATH = path.join(APP_ROOT, "data", "orders.json");
