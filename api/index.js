@@ -1,6 +1,8 @@
 /**
  * Vercel — single API router (Hobby plan). Mọi /api/* được rewrite → /api?path=...
  */
+import { handleLogin } from './lib/handlers/login.js';
+import { handleAuthVerify } from './lib/handlers/authVerify.js';
 import { handleShopeeCallback } from './lib/handlers/shopeeCallback.js';
 import { handleShopeeWebhook } from './lib/handlers/shopeeWebhook.js';
 import { handleHealthCpanel } from './lib/handlers/healthCpanel.js';
@@ -17,8 +19,10 @@ function resolveRoutePath(req) {
   return '';
 }
 
-/** login + auth/verify proxy thẳng cPanel — JWT/credentials một nguồn, tránh lệch token Vercel vs cPanel. */
+/** login + auth/verify xử lý local trên Vercel (JSON ổn định). Các route khác proxy cPanel. */
 const LOCAL_ROUTES = {
+  login: handleLogin,
+  'auth/verify': handleAuthVerify,
   'shopee/callback': handleShopeeCallback,
   'auth/shopee/callback': handleShopeeCallback,
   'shopee/webhook': handleShopeeWebhook,
