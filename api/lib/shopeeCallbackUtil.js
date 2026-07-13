@@ -75,7 +75,10 @@ export async function forwardToCpanel(logPrefix, pathWithQuery, req, opts = {}) 
   }
 
   const target = `${backend.url}${pathWithQuery}`;
-  const headers = {};
+  const headers = {
+    'User-Agent': 'OmniSales-Vercel-OAuth/1.0 (+https://quanly.linhkienamthanh.net)',
+    'X-Proxy-Source': 'vercel-oauth',
+  };
   for (const [key, value] of Object.entries(req.headers || {})) {
     if (HOP_HEADERS.has(key.toLowerCase())) continue;
     if (value != null) headers[key] = value;
