@@ -53,12 +53,10 @@ function resolveTabFromPath(): string {
 }
 
 const DEMO_SHOP_INTERNAL_IDS = new Set(['shop-shopee-1', 'shop-shopee-2', 'shop-tiktok-1', 'shop-woo-1']);
-const DEMO_SHOP_PLATFORM_IDS = new Set(['4127421', '546083459', '483583526', '7421893120']);
 
 function stripDemoShops(shops: ConnectedShop[] = []) {
   return shops.filter((s) => {
     if (DEMO_SHOP_INTERNAL_IDS.has(s.id)) return false;
-    if (DEMO_SHOP_PLATFORM_IDS.has(String(s.shopId))) return false;
     if (s.shopName === 'LTAT' || s.shopName.includes('thongtinsolutions')) return false;
     if (s.wooUrl?.includes('thongtinsolutions.com')) return false;
     if (s.apiKey?.includes('demo')) return false;
