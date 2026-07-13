@@ -113,25 +113,46 @@ export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
     body,
   }, timeoutMs);
 
-  if (!result.ok) {
-    const e = result.error;
-    return res.status(502).json({
-      error: 'Không kết nối được backend cPanel',
-      detail: e?.message || 'fetch failed',
-      errorCode: e?.code || null,
-      hint: e?.hint || null,
-      causeMessage: e?.causeMessage || null,
-      cpanelBackendUrl: backend.url,
-      latencyMs: result.latencyMs,
-      timeoutMs,
+  if (result.ok) {
+    const upstream = result.upstream;
+    const text = await upstream.text();
+    const trimmed = String(text || '').trimStart();
+    const isHtml =
+      trimmed.startsWith('<!DOCTYPE') ||
+      trimmed.startsWith('<html') ||
+      trimmed.includes('503 Service Unavailable') ||
+      trimmed.includes('502 Bad Gateway');
+    const isServerError = upstream.status >= 500;
+
+    if (isHtml || (isServerError && !trimmed.startsWith('{'))) {
+      return res.status(isServerError ? upstream.status : 502).json({
+        success: false,
+        error: upstream.status === 503 ? 'backend_unavailable' : 'invalid_cpanel_response',
+        message: 'Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau',
+        httpStatus: upstream.status,
+        cpanelBackendUrl: backend.url,
+        latencyMs: result.latencyMs,
+      });
+    }
+
+    res.status(upstream.status);
+    upstream.headers.forEach((value, key) => {
+      if (!HOP_HEADERS.has(key.toLowerCase())) res.setHeader(key, value);
     });
+    return res.send(text);
   }
 
-  const upstream = result.upstream;
-  const text = await upstream.text();
-  res.status(upstream.status);
-  upstream.headers.forEach((value, key) => {
-    if (!HOP_HEADERS.has(key.toLowerCase())) res.setHeader(key, value);
+  const e = result.error;
+  return res.status(502).json({
+    success: false,
+    error: 'Không kết nối được backend cPanel',
+    message: 'Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau',
+    detail: e?.message || 'fetch failed',
+    errorCode: e?.code || null,
+    hint: e?.hint || null,
+    causeMessage: e?.causeMessage || null,
+    cpanelBackendUrl: backend.url,
+    latencyMs: result.latencyMs,
+    timeoutMs,
   });
-  return res.send(text);
 }

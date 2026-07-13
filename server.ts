@@ -5796,46 +5796,51 @@ async function startServer() {
     }
 
     if (shop.platform === "shopee") {
-      if (!isShopeeConfigValid()) {
-        return { online: false, message: "Shopee Partner ID/Key chưa cấu hình" };
-      }
-      const configuredId = normalizeShopIdKey(String(shop.shopId || ""));
-      const oauthShopIds = listShopeeOAuthShopIds();
-      const tokens = loadShopeeTokens();
-      const record = configuredId ? getShopeeTokenRecord(tokens, configuredId) : null;
-      const token = configuredId ? await getValidShopeeAccessToken(configuredId) : null;
-
-      if (token && record) {
-        const apiShopId = resolveShopeeApiShopId(record, configuredId);
-        const ping = await verifyShopeeShopToken(apiShopId, token);
-        if (ping.ok) {
-          return { online: true, message: `OAuth token hợp lệ (Shopee API OK, shop_id=${apiShopId})` };
+      try {
+        if (!isShopeeConfigValid()) {
+          return { online: false, message: "Shopee Partner ID/Key chưa cấu hình" };
         }
-        return {
-          online: false,
-          message: `Có token trong file nhưng Shopee từ chối shop_id=${apiShopId}: ${ping.error || "invalid_token"}. Cần OAuth lại đúng shop ${configuredId}.`,
-        };
-      }
+        const configuredId = normalizeShopIdKey(String(shop.shopId || ""));
+        const oauthShopIds = listShopeeOAuthShopIds();
+        const tokens = loadShopeeTokens();
+        const record = configuredId ? getShopeeTokenRecord(tokens, configuredId) : null;
+        const token = configuredId ? await getValidShopeeAccessToken(configuredId) : null;
 
-      const lastOAuth = loadLastOAuthAudit();
-      if (
-        lastOAuth?.expected_shop_id === configuredId &&
-        lastOAuth?.shop_mismatch &&
-        lastOAuth?.callback_shop_id
-      ) {
-        return {
-          online: false,
-          message: `OAuth gần nhất: Shopee trả shop ${lastOAuth.callback_shop_id}, không phải ${configuredId}. Đăng xuất Shopee Seller, đăng nhập shop ${configuredId}, bấm OAuth lại.`,
-        };
-      }
+        if (token && record) {
+          const apiShopId = resolveShopeeApiShopId(record, configuredId);
+          const ping = await verifyShopeeShopToken(apiShopId, token);
+          if (ping.ok) {
+            return { online: true, message: `OAuth token hợp lệ (Shopee API OK, shop_id=${apiShopId})` };
+          }
+          return {
+            online: false,
+            message: `Có token trong file nhưng Shopee từ chối shop_id=${apiShopId}: ${ping.error || "invalid_token"}. Cần OAuth lại đúng shop ${configuredId}.`,
+          };
+        }
 
-      if (oauthShopIds.length > 0) {
-        return {
-          online: false,
-          message: `Shop ID cấu hình "${shop.shopId || "(trống)"}" chưa có token. OAuth đã lưu: [${oauthShopIds.join(", ")}] — kiểm tra Shop ID có đúng trên Shopee Seller Center không.`,
-        };
+        const lastOAuth = loadLastOAuthAudit();
+        if (
+          lastOAuth?.expected_shop_id === configuredId &&
+          lastOAuth?.shop_mismatch &&
+          lastOAuth?.callback_shop_id
+        ) {
+          return {
+            online: false,
+            message: `OAuth gần nhất: Shopee trả shop ${lastOAuth.callback_shop_id}, không phải ${configuredId}. Đăng xuất Shopee Seller, đăng nhập shop ${configuredId}, bấm OAuth lại.`,
+          };
+        }
+
+        if (oauthShopIds.length > 0) {
+          return {
+            online: false,
+            message: `Shop ID cấu hình "${shop.shopId || "(trống)"}" chưa có token. OAuth đã lưu: [${oauthShopIds.join(", ")}] — kiểm tra Shop ID có đúng trên Shopee Seller Center không.`,
+          };
+        }
+        return { online: false, message: "Chưa OAuth hoặc token hết hạn" };
+      } catch (error: any) {
+        console.error("[Shop connection] Shopee check failed:", shop?.shopId, error);
+        return { online: false, message: error?.message || "Lỗi kiểm tra kết nối Shopee" };
       }
-      return { online: false, message: "Chưa OAuth hoặc token hết hạn" };
     }
 
     if (shop.platform === "woocommerce") {
@@ -5925,13 +5930,28 @@ async function startServer() {
       const statuses: Record<string, { online: boolean; message: string }> = {};
       for (const shop of shops) {
         if (!shop?.id) continue;
-        statuses[shop.id] = await checkShopConnectionStatus(shop);
+        try {
+          statuses[shop.id] = await Promise.race([
+            checkShopConnectionStatus(shop),
+            new Promise<{ online: boolean; message: string }>((_, reject) => {
+              setTimeout(() => reject(new Error("Timeout kiểm tra kết nối (15s)")), 15_000);
+            }),
+          ]);
+        } catch (shopErr: any) {
+          console.error("[Shop connection-status] shop failed:", shop?.id, shopErr);
+          statuses[shop.id] = {
+            online: false,
+            message: shopErr?.message || "Lỗi kiểm tra kết nối gian hàng",
+          };
+        }
       }
       return res.json({ success: true, statuses });
     } catch (error: any) {
+      console.error("[Shop connection-status] fatal:", error);
       return res.status(500).json({
         success: false,
         error: error?.message || "Kiểm tra kết nối thất bại",
+        message: "Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau",
       });
     }
   });

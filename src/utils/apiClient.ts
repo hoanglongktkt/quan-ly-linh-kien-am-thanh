@@ -115,26 +115,48 @@ export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   return fetch(url, init);
 }
 
-/** Parse JSON an toàn — báo lỗi rõ nếu server trả HTML (404/proxy lỗi). */
+/** Parse JSON an toàn — báo lỗi rõ nếu server trả HTML (404/proxy/503). */
 export async function parseJsonResponse<T = Record<string, unknown>>(
   response: Response,
 ): Promise<T> {
   const text = await response.text();
   const contentType = response.headers.get('content-type') || '';
+  const trimmed = text.trimStart();
+
+  if (response.status === 503 || response.status === 502 || response.status === 504) {
+    let msg = 'Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau';
+    try {
+      const parsed = JSON.parse(text) as { message?: string; error?: string };
+      if (parsed.message || parsed.error) {
+        msg = String(parsed.message || parsed.error);
+      }
+    } catch {
+      /* HTML hoặc body rỗng — giữ thông báo mặc định */
+    }
+    throw new Error(msg);
+  }
+
+  if (response.status >= 500) {
+    throw new Error('Lỗi máy chủ, vui lòng thử lại sau');
+  }
 
   if (
     !contentType.includes('application/json') &&
-    (text.trimStart().startsWith('<') || text.includes('The page could not be found'))
+    (trimmed.startsWith('<') ||
+      trimmed.includes('503 Service Unavailable') ||
+      trimmed.includes('The page could not be found'))
   ) {
-    throw new Error(
-      'API trả về trang HTML thay vì JSON (404/proxy). Kiểm tra vercel.json và backend quanly.linhkienamthanh.net.',
-    );
+    throw new Error('Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau');
   }
 
   try {
     return (text ? JSON.parse(text) : {}) as T;
   } catch {
-    throw new Error(`Phản hồi API không hợp lệ: ${text.slice(0, 120)}`);
+    throw new Error(
+      response.ok
+        ? `Phản hồi API không hợp lệ: ${text.slice(0, 120)}`
+        : 'Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau',
+    );
   }
 }
 

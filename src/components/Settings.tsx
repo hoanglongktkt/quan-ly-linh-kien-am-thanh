@@ -486,9 +486,9 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         },
         body: JSON.stringify({ shops: targetShops }),
       });
-      const data = await parseJsonResponse<{ success?: boolean; statuses?: Record<string, { online: boolean; message: string }>; error?: string }>(res);
+      const data = await parseJsonResponse<{ success?: boolean; statuses?: Record<string, { online: boolean; message: string }>; error?: string; message?: string }>(res);
       if (!res.ok || !data.success || !data.statuses) {
-        throw new Error(data.error || 'Kiểm tra kết nối thất bại');
+        throw new Error(data.message || data.error || 'Kiểm tra kết nối thất bại');
       }
       applyConnectionResults(data.statuses, targetShops, { appendTerminal: opts?.appendTerminal });
     } catch (error: unknown) {

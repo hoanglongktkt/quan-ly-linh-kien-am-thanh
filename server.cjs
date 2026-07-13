@@ -4800,39 +4800,44 @@ async function startServer() {
       return { online: false, message: "\u0110\u1ED3ng b\u1ED9 \u0111ang t\u1EAFt" };
     }
     if (shop.platform === "shopee") {
-      if (!isShopeeConfigValid()) {
-        return { online: false, message: "Shopee Partner ID/Key ch\u01B0a c\u1EA5u h\xECnh" };
-      }
-      const configuredId = normalizeShopIdKey(String(shop.shopId || ""));
-      const oauthShopIds = listShopeeOAuthShopIds();
-      const tokens = loadShopeeTokens();
-      const record = configuredId ? getShopeeTokenRecord(tokens, configuredId) : null;
-      const token = configuredId ? await getValidShopeeAccessToken(configuredId) : null;
-      if (token && record) {
-        const apiShopId = resolveShopeeApiShopId(record, configuredId);
-        const ping = await verifyShopeeShopToken(apiShopId, token);
-        if (ping.ok) {
-          return { online: true, message: `OAuth token h\u1EE3p l\u1EC7 (Shopee API OK, shop_id=${apiShopId})` };
+      try {
+        if (!isShopeeConfigValid()) {
+          return { online: false, message: "Shopee Partner ID/Key ch\u01B0a c\u1EA5u h\xECnh" };
         }
-        return {
-          online: false,
-          message: `C\xF3 token trong file nh\u01B0ng Shopee t\u1EEB ch\u1ED1i shop_id=${apiShopId}: ${ping.error || "invalid_token"}. C\u1EA7n OAuth l\u1EA1i \u0111\xFAng shop ${configuredId}.`
-        };
+        const configuredId = normalizeShopIdKey(String(shop.shopId || ""));
+        const oauthShopIds = listShopeeOAuthShopIds();
+        const tokens = loadShopeeTokens();
+        const record = configuredId ? getShopeeTokenRecord(tokens, configuredId) : null;
+        const token = configuredId ? await getValidShopeeAccessToken(configuredId) : null;
+        if (token && record) {
+          const apiShopId = resolveShopeeApiShopId(record, configuredId);
+          const ping = await verifyShopeeShopToken(apiShopId, token);
+          if (ping.ok) {
+            return { online: true, message: `OAuth token h\u1EE3p l\u1EC7 (Shopee API OK, shop_id=${apiShopId})` };
+          }
+          return {
+            online: false,
+            message: `C\xF3 token trong file nh\u01B0ng Shopee t\u1EEB ch\u1ED1i shop_id=${apiShopId}: ${ping.error || "invalid_token"}. C\u1EA7n OAuth l\u1EA1i \u0111\xFAng shop ${configuredId}.`
+          };
+        }
+        const lastOAuth = loadLastOAuthAudit();
+        if (lastOAuth?.expected_shop_id === configuredId && lastOAuth?.shop_mismatch && lastOAuth?.callback_shop_id) {
+          return {
+            online: false,
+            message: `OAuth g\u1EA7n nh\u1EA5t: Shopee tr\u1EA3 shop ${lastOAuth.callback_shop_id}, kh\xF4ng ph\u1EA3i ${configuredId}. \u0110\u0103ng xu\u1EA5t Shopee Seller, \u0111\u0103ng nh\u1EADp shop ${configuredId}, b\u1EA5m OAuth l\u1EA1i.`
+          };
+        }
+        if (oauthShopIds.length > 0) {
+          return {
+            online: false,
+            message: `Shop ID c\u1EA5u h\xECnh "${shop.shopId || "(tr\u1ED1ng)"}" ch\u01B0a c\xF3 token. OAuth \u0111\xE3 l\u01B0u: [${oauthShopIds.join(", ")}] \u2014 ki\u1EC3m tra Shop ID c\xF3 \u0111\xFAng tr\xEAn Shopee Seller Center kh\xF4ng.`
+          };
+        }
+        return { online: false, message: "Ch\u01B0a OAuth ho\u1EB7c token h\u1EBFt h\u1EA1n" };
+      } catch (error) {
+        console.error("[Shop connection] Shopee check failed:", shop?.shopId, error);
+        return { online: false, message: error?.message || "L\u1ED7i ki\u1EC3m tra k\u1EBFt n\u1ED1i Shopee" };
       }
-      const lastOAuth = loadLastOAuthAudit();
-      if (lastOAuth?.expected_shop_id === configuredId && lastOAuth?.shop_mismatch && lastOAuth?.callback_shop_id) {
-        return {
-          online: false,
-          message: `OAuth g\u1EA7n nh\u1EA5t: Shopee tr\u1EA3 shop ${lastOAuth.callback_shop_id}, kh\xF4ng ph\u1EA3i ${configuredId}. \u0110\u0103ng xu\u1EA5t Shopee Seller, \u0111\u0103ng nh\u1EADp shop ${configuredId}, b\u1EA5m OAuth l\u1EA1i.`
-        };
-      }
-      if (oauthShopIds.length > 0) {
-        return {
-          online: false,
-          message: `Shop ID c\u1EA5u h\xECnh "${shop.shopId || "(tr\u1ED1ng)"}" ch\u01B0a c\xF3 token. OAuth \u0111\xE3 l\u01B0u: [${oauthShopIds.join(", ")}] \u2014 ki\u1EC3m tra Shop ID c\xF3 \u0111\xFAng tr\xEAn Shopee Seller Center kh\xF4ng.`
-        };
-      }
-      return { online: false, message: "Ch\u01B0a OAuth ho\u1EB7c token h\u1EBFt h\u1EA1n" };
     }
     if (shop.platform === "woocommerce") {
       const base = String(shop.wooUrl || "").replace(/\/$/, "");
@@ -4916,13 +4921,28 @@ async function startServer() {
       const statuses = {};
       for (const shop of shops) {
         if (!shop?.id) continue;
-        statuses[shop.id] = await checkShopConnectionStatus(shop);
+        try {
+          statuses[shop.id] = await Promise.race([
+            checkShopConnectionStatus(shop),
+            new Promise((_, reject) => {
+              setTimeout(() => reject(new Error("Timeout ki\u1EC3m tra k\u1EBFt n\u1ED1i (15s)")), 15e3);
+            })
+          ]);
+        } catch (shopErr) {
+          console.error("[Shop connection-status] shop failed:", shop?.id, shopErr);
+          statuses[shop.id] = {
+            online: false,
+            message: shopErr?.message || "L\u1ED7i ki\u1EC3m tra k\u1EBFt n\u1ED1i gian h\xE0ng"
+          };
+        }
       }
       return res.json({ success: true, statuses });
     } catch (error) {
+      console.error("[Shop connection-status] fatal:", error);
       return res.status(500).json({
         success: false,
-        error: error?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i th\u1EA5t b\u1EA1i"
+        error: error?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i th\u1EA5t b\u1EA1i",
+        message: "M\xE1y ch\u1EE7 \u0111ang qu\xE1 t\u1EA3i ho\u1EB7c l\u1ED7i, vui l\xF2ng th\u1EED l\u1EA1i sau"
       });
     }
   });
