@@ -416,18 +416,28 @@ export default function App() {
       if (!response.ok) {
         throw new Error(extractApiErrorMessage(data, 'Kéo đơn hàng thất bại.'));
       }
-      if (Array.isArray(data.orders)) {
+      const pulled = Number(data.pulled) || 0;
+      const pullErrors = Array.isArray(data.errors) ? data.errors : [];
+      if (pullErrors.length > 0 && pulled === 0) {
+        throw new Error(formatPullErrors(pullErrors));
+      }
+      const refreshRes = await fetch('/api/orders', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (refreshRes.ok) {
+        const freshOrders = await refreshRes.json();
+        if (Array.isArray(freshOrders)) {
+          const sanitized = sanitizeOrders(freshOrders);
+          setOrders(sanitized);
+          void saveOrdersCache(sanitized);
+        }
+      } else if (Array.isArray(data.orders) && data.orders.length > 0) {
         const sanitized = sanitizeOrders(data.orders);
         setOrders(sanitized);
         void saveOrdersCache(sanitized);
       }
       if (data.warning) {
         throw new Error(String(data.warning));
-      }
-      const pulled = Number(data.pulled) || 0;
-      const pullErrors = Array.isArray(data.errors) ? data.errors : [];
-      if (pullErrors.length > 0 && pulled === 0) {
-        throw new Error(formatPullErrors(pullErrors));
       }
       if (pullErrors.length > 0) {
         console.warn('[Orders Pull] partial errors:', formatPullErrors(pullErrors));
