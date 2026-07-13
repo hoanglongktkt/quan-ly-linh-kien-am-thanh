@@ -16,6 +16,7 @@ const HOP_HEADERS = new Set([
 /** API đồng bộ Shopee / bulk — thường > 20s. */
 const LONG_RUNNING_PREFIXES = [
   'shopee/orders/sync',
+  'shopee/orders/sync/job',
   'orders/pull',
   'shopee/products/sync',
   'shopee/force-sync',

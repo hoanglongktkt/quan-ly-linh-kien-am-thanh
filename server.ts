@@ -1326,11 +1326,11 @@ function parseShopeeOrderListPagination(result: any): { more: boolean; nextCurso
 const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 const SHOPEE_ORDER_LIST_MAX_WINDOWS = 1;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
-const SHOPEE_ORDER_LIST_MAX_PAGES = 10;
-const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 150;
-const SHOPEE_SYNC_DETAIL_BATCH_SIZE = 50;
-const SHOPEE_SYNC_BATCH_DELAY_MS = 1000;
-const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1000;
+const SHOPEE_ORDER_LIST_MAX_PAGES = 5;
+const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 60;
+const SHOPEE_SYNC_DETAIL_BATCH_SIZE = 20;
+const SHOPEE_SYNC_BATCH_DELAY_MS = 2000;
+const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1500;
 
 function shopeeSyncDelay(ms: number = SHOPEE_SYNC_BATCH_DELAY_MS): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -2828,8 +2828,12 @@ function upsertShopeeOrdersIntoStore(
 }
 
 // Pull orders from every connected Shopee shop — RAM-safe: sequential batches,
-// delay between API calls, save orders.json after each batch of 50.
-async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STATUSES]) {
+// delay between API calls, save orders.json after each batch of 20.
+async function syncShopeeOrdersFromApi(
+  statuses: string[] = [...SHOPEE_SYNC_STATUSES],
+  opts?: { onProgress?: (completed: number, total: number, message?: string) => void },
+) {
+  const onProgress = opts?.onProgress;
   const tokens = loadShopeeTokens();
   const shopIds = Object.keys(tokens);
   let orders = loadOrders();
@@ -2890,6 +2894,7 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
 
       const syncedSnSet = new Set<string>();
       const totalSnTarget = orderSnList.length;
+      if (onProgress) onProgress(0, totalSnTarget, `Shop ${fileKey}: bắt đầu tải ${totalSnTarget} đơn...`);
 
       for (let i = 0; i < orderSnList.length; i += SHOPEE_SYNC_DETAIL_BATCH_SIZE) {
         await shopeeSyncDelay();
@@ -2956,6 +2961,13 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
 
         batchSns.length = 0;
         batchNormalized = [];
+        if (onProgress) {
+          onProgress(
+            Math.min(i + SHOPEE_SYNC_DETAIL_BATCH_SIZE, totalSnTarget),
+            totalSnTarget,
+            `Shop ${fileKey}: đã xử lý ${Math.min(i + SHOPEE_SYNC_DETAIL_BATCH_SIZE, totalSnTarget)}/${totalSnTarget} đơn`,
+          );
+        }
       }
 
       orderSnList = [];
@@ -3143,7 +3155,7 @@ function saveOrders(orders: any[]): void {
   try {
     fs.mkdirSync(path.dirname(ORDERS_DB_PATH), { recursive: true });
     const sanitized = orders.map(repairMisassignedTracking);
-    fs.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized, null, 2), "utf-8");
+    fs.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
   } catch (error) {
     console.error("[Orders DB] Failed to write orders.json:", error);
@@ -3732,6 +3744,50 @@ type ShipOrderJob = {
 
 const shipOrderJobs = new Map<string, ShipOrderJob>();
 const SHIP_JOB_TTL_MS = 30 * 60 * 1000;
+
+type OrderSyncJobStatus = "pending" | "running" | "done" | "failed";
+
+type OrderSyncJob = {
+  id: string;
+  status: OrderSyncJobStatus;
+  total: number;
+  completed: number;
+  synced: number;
+  added: number;
+  updated: number;
+  message: string;
+  errors?: any[];
+  uiStatusCounts?: Record<string, number>;
+  warning?: string;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+const orderSyncJobs = new Map<string, OrderSyncJob>();
+const ORDER_SYNC_JOB_TTL_MS = 30 * 60 * 1000;
+let activeOrderSyncJobId: string | null = null;
+
+function createOrderSyncJobId(): string {
+  return `sync-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function pruneOldOrderSyncJobs(): void {
+  const cutoff = Date.now() - ORDER_SYNC_JOB_TTL_MS;
+  for (const [id, job] of orderSyncJobs) {
+    if (job.updatedAt < cutoff) {
+      orderSyncJobs.delete(id);
+      if (activeOrderSyncJobId === id) activeOrderSyncJobId = null;
+    }
+  }
+}
+
+function getRunningOrderSyncJob(): OrderSyncJob | null {
+  if (!activeOrderSyncJobId) return null;
+  const job = orderSyncJobs.get(activeOrderSyncJobId);
+  if (!job || job.status === "done" || job.status === "failed") return null;
+  return job;
+}
 
 function createShipOrderJobId(): string {
   return `ship-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -5159,7 +5215,46 @@ async function startServer() {
     }
   });
 
-  // Full Shopee order sync — READY_TO_SHIP + PROCESSED + SHIPPED (15 ngày, lật trang đủ).
+  // Full Shopee order sync — chạy NGẦM (async job) để không giữ HTTP/RAM, tránh sập cPanel.
+  async function executeOrderSyncBackgroundJob(jobId: string): Promise<void> {
+    pruneOldOrderSyncJobs();
+    const job = orderSyncJobs.get(jobId);
+    if (!job) return;
+
+    try {
+      job.status = "running";
+      job.message = "Đang quét đơn từ Shopee (chế độ tiết kiệm RAM)...";
+      job.updatedAt = Date.now();
+
+      const result = await syncShopeeOrdersFromApi([...SHOPEE_SYNC_STATUSES], {
+        onProgress: (completed, total, message) => {
+          job.completed = completed;
+          job.total = Math.max(job.total, total);
+          if (message) job.message = message;
+          job.updatedAt = Date.now();
+        },
+      });
+
+      job.synced = result.synced;
+      job.added = result.added;
+      job.updated = result.updated;
+      job.errors = result.errors;
+      job.uiStatusCounts = result.uiStatusCounts;
+      job.warning = result.warning;
+      job.completed = job.total || result.synced;
+      job.status = "done";
+      job.message = `Hoàn tất: ${result.synced} đơn (${result.added} mới, ${result.updated} cập nhật).`;
+    } catch (err: any) {
+      job.status = "failed";
+      job.error = err?.message || String(err);
+      job.message = job.error || "Đồng bộ thất bại";
+      console.error(`[Order Sync Job ${jobId}] Failed:`, err);
+    } finally {
+      job.updatedAt = Date.now();
+      if (activeOrderSyncJobId === jobId) activeOrderSyncJobId = null;
+    }
+  }
+
   app.post("/api/shopee/orders/sync", authMiddleware, async (req, res) => {
     try {
       if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) {
@@ -5174,19 +5269,43 @@ async function startServer() {
         return res.json({ synced: 0, orders: [], warning: "Ch\u01B0a c\xF3 shop Shopee Live n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n." });
       }
 
-      console.log(`[Shopee Sync] Bắt đầu đồng bộ đơn ${SHOPEE_SYNC_STATUSES.join(" + ")} (tối đa ${SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP} đơn/shop)...`);
-      const result = await syncShopeeOrdersFromApi([...SHOPEE_SYNC_STATUSES]);
-      console.log(`[Shopee Sync] Ho\xE0n t\u1EA5t: ${result.synced} \u0111\u01A1n (${result.added} m\u1EDBi, ${result.updated} c\u1EADp nh\u1EADt).`);
+      const running = getRunningOrderSyncJob();
+      if (running) {
+        return res.status(202).json({
+          jobId: running.id,
+          status: running.status,
+          message: "Đồng bộ đang chạy — vui lòng chờ job hiện tại hoàn tất.",
+          completed: running.completed,
+          total: running.total,
+        });
+      }
 
-      return res.json({
-        synced: result.synced,
-        added: result.added,
-        updated: result.updated,
-        orders: result.orders,
-        statusCounts: result.statusCounts,
-        uiStatusCounts: result.uiStatusCounts,
-        errors: result.errors,
-        warning: result.synced === 0 && !result.errors ? `Không tìm thấy đơn ${SHOPEE_SYNC_STATUSES.join("/")} nào trong 15 ngày gần nhất.` : undefined,
+      pruneOldOrderSyncJobs();
+      const jobId = createOrderSyncJobId();
+      activeOrderSyncJobId = jobId;
+      orderSyncJobs.set(jobId, {
+        id: jobId,
+        status: "pending",
+        total: 0,
+        completed: 0,
+        synced: 0,
+        added: 0,
+        updated: 0,
+        message: "Đã xếp hàng — bắt đầu đồng bộ ngầm...",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      console.log(`[Shopee Sync] Khởi tạo job ngầm ${jobId} (max ${SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP} đơn/shop, batch ${SHOPEE_SYNC_DETAIL_BATCH_SIZE}).`);
+
+      setImmediate(() => {
+        void executeOrderSyncBackgroundJob(jobId);
+      });
+
+      return res.status(202).json({
+        jobId,
+        status: "pending",
+        message: "Đồng bộ đang chạy ngầm — không chặn server, tránh quá tải RAM.",
       });
     } catch (error: any) {
       const errorMsg =
@@ -5195,27 +5314,23 @@ async function startServer() {
         error?.message ||
         String(error);
       console.error("[Shopee Sync] API fatal error:", error?.response?.data || errorMsg);
-      // #region agent log
-      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "809c09" },
-        body: JSON.stringify({
-          sessionId: "809c09",
-          runId: "sync-error",
-          hypothesisId: "sync-fatal",
-          location: "server.ts:/api/shopee/orders/sync",
-          message: "sync fatal error",
-          data: { errorMsg, detail: error?.response?.data || null },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       return res.status(500).json({
         error: errorMsg,
         message: errorMsg,
         detail: error?.response?.data,
       });
     }
+  });
+
+  app.get("/api/shopee/orders/sync/job/:jobId", authMiddleware, (req, res) => {
+    const job = orderSyncJobs.get(String(req.params.jobId || ""));
+    if (!job) {
+      return res.status(404).json({
+        error: "job_not_found",
+        message: "Không tìm thấy tiến trình đồng bộ.",
+      });
+    }
+    return res.json(job);
   });
 
   // Active "pull" — actively calls Shopee's real v2.order.get_order_list +

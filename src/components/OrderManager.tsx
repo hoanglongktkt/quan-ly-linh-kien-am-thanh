@@ -1254,17 +1254,45 @@ export default function OrderManager({
     return parts.map(String).join(' — ') || fallback;
   };
 
-  // Calls Shopee API to sync READY_TO_SHIP + PROCESSED orders, then reload list.
+  // Calls Shopee API to sync — job ngầm (202), poll tiến trình, tránh treo server cPanel.
+  const pollOrderSyncJobUntilDone = async (jobId: string): Promise<any | null> => {
+    const deadline = Date.now() + 20 * 60 * 1000;
+    let finalJob: any = null;
+
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        const jobRes = await fetch(`/api/shopee/orders/sync/job/${jobId}`, { headers: authHeaders() });
+        if (!jobRes.ok) break;
+        const job = await jobRes.json();
+        finalJob = job;
+
+        setProgressTotal(job.total || 0);
+        setProgressCompleted(job.completed || 0);
+        setProgressMessage(job.message || 'Đang đồng bộ đơn từ Shopee...');
+
+        if (job.status === 'done' || job.status === 'failed') break;
+      } catch {
+        break;
+      }
+    }
+
+    return finalJob;
+  };
+
   const handleShopeeSyncOrders = async () => {
     setIsSyncing(true);
-    setProgressMessage('Đang quét và đồng bộ toàn bộ đơn hàng mới nhất từ Shopee...');
+    setProgressDone(false);
+    setProgressCompleted(0);
+    setProgressTotal(0);
+    setProgressMessage('Đang khởi tạo đồng bộ ngầm (tiết kiệm RAM server)...');
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
       channel: 'shopee',
       type: 'stock_sync',
       status: 'success',
-      message: '[Shopee Sync] Đang gọi v2.order.get_order_list + get_order_detail (READY_TO_SHIP, PROCESSED, SHIPPED — 15 ngày, lật trang).'
+      message: '[Shopee Sync] Job ngầm — batch 20 đơn, delay 2s, max 60 đơn/shop.',
     });
 
     try {
@@ -1273,39 +1301,42 @@ export default function OrderManager({
         headers: authHeaders(),
       });
       const data = await res.json().catch(() => ({}));
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '809c09' },
-        body: JSON.stringify({
-          sessionId: '809c09',
-          runId: 'sync-response',
-          hypothesisId: 'sync-frontend',
-          location: 'OrderManager.tsx:handleShopeeSyncOrders',
-          message: 'sync api response',
-          data: { ok: res.ok, status: res.status, synced: data?.synced, errorCount: data?.errors?.length || 0, error: data?.error, message: data?.message },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-      if (!res.ok) {
+
+      if (!res.ok && res.status !== 202) {
         throw new Error(extractApiErrorMessage(data, 'Đồng bộ đơn hàng Shopee thất bại.'));
       }
-      if (data.warning) {
-        showToast(String(data.warning));
+
+      const jobId = data.jobId as string | undefined;
+      if (!jobId) {
+        if (data.warning) showToast(String(data.warning));
+        return;
       }
-      const synced = Number(data.synced) || 0;
-      const syncErrors = Array.isArray(data.errors) ? data.errors : [];
+
+      const finalJob = await pollOrderSyncJobUntilDone(jobId);
+      if (!finalJob) {
+        throw new Error('Mất kết nối tiến trình đồng bộ — thử lại sau vài phút.');
+      }
+
+      if (finalJob.status === 'failed') {
+        throw new Error(finalJob.error || finalJob.message || 'Đồng bộ Shopee thất bại.');
+      }
+
+      if (finalJob.warning) {
+        showToast(String(finalJob.warning));
+      }
+
+      const synced = Number(finalJob.synced) || 0;
+      const syncErrors = Array.isArray(finalJob.errors) ? finalJob.errors : [];
       if (syncErrors.length > 0 && synced === 0) {
         throw new Error(formatSyncErrors(syncErrors));
       }
+
       const refreshRes = await fetch('/api/orders', { headers: authHeaders() });
       if (refreshRes.ok) {
         onUpdateOrders(await refreshRes.json());
-      } else if (Array.isArray(data.orders)) {
-        onUpdateOrders(data.orders);
       }
-      const ui = data.uiStatusCounts;
+
+      const ui = finalJob.uiStatusCounts;
       const countMsg = ui
         ? ` — Đang giao: ${ui.shipping}, Chờ lấy (đã xử lý): ${ui.processed}, Chưa xử lý: ${ui.unprocessed}`
         : '';
@@ -1314,11 +1345,12 @@ export default function OrderManager({
       } else {
         showToast(`Đồng bộ thành công ${synced} đơn từ Shopee${countMsg}.`);
       }
+      markProgressComplete('Đồng bộ hoàn tất!');
     } catch (err: any) {
       showToast(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);
+      clearShipProgressOverlay();
     } finally {
       setIsSyncing(false);
-      setProgressMessage(null);
     }
   };
 
