@@ -1121,24 +1121,34 @@ async function shopeeGetOrderList(
     time_range_field: opts?.timeRangeField || "create_time",
     time_from: String(timeFrom),
     time_to: String(timeTo),
-    page_size: "100",
+    page_size: String(SHOPEE_ORDER_LIST_PAGE_SIZE),
     response_optional_fields: "order_status",
   });
   if (opts?.orderStatus) params.set("order_status", opts.orderStatus);
   if (opts?.cursor !== undefined && opts.cursor !== "") params.set("cursor", opts.cursor);
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const res = await fetch(url);
-  const json: any = await res.json();
-  console.log(
-    `[Shopee API] GET ${apiPath} (shop_id=${shopId}, status=${opts?.orderStatus || "ALL"}, field=${opts?.timeRangeField || "create_time"}, from=${timeFrom}, to=${timeTo}, cursor=${opts?.cursor || ""}) -> HTTP ${res.status}:`,
-    JSON.stringify(json),
-  );
+  try {
+    const res = await fetch(url);
+    const rawText = await res.text();
+    let json: any;
+    try {
+      json = rawText ? JSON.parse(rawText) : {};
+    } catch (parseErr) {
+      return shopeeApiErrorResult(parseErr, `get_order_list JSON parse (shop_id=${shopId})`);
+    }
+    console.log(
+      `[Shopee API] GET ${apiPath} (shop_id=${shopId}, status=${opts?.orderStatus || "ALL"}, field=${opts?.timeRangeField || "create_time"}, from=${timeFrom}, to=${timeTo}, cursor=${opts?.cursor || ""}) -> HTTP ${res.status}:`,
+      JSON.stringify(json).slice(0, 500),
+    );
 
-  if (json.error) {
-    console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y danh s\xE1ch \u0111\u01A1n: ${json.error} - ${json.message}`);
+    if (json.error) {
+      console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y danh s\xE1ch \u0111\u01A1n: ${json.error} - ${json.message}`);
+    }
+    return json;
+  } catch (err) {
+    return shopeeApiErrorResult(err, `get_order_list fetch (shop_id=${shopId})`);
   }
-  return json;
 }
 
 function extractShopeeOrderListRows(result: any): any[] {
@@ -1166,7 +1176,16 @@ function parseShopeeOrderListPagination(result: any): { more: boolean; nextCurso
 }
 
 const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
-const SHOPEE_ORDER_LIST_MAX_WINDOWS = 8;
+const SHOPEE_ORDER_LIST_MAX_WINDOWS = 2;
+const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
+const SHOPEE_ORDER_LIST_MAX_PAGES = 20;
+const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 300;
+
+function shopeeApiErrorResult(err: unknown, context: string): Record<string, any> {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`[Shopee API] ${context}:`, message);
+  return { error: "shopee_api_error", message: `${context}: ${message}` };
+}
 
 // Paginate get_order_list for one Shopee order_status — lật trang + quét nhiều cửa sổ 15 ngày.
 async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: string, orderStatus: string): Promise<string[]> {
@@ -1180,7 +1199,7 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
     let page = 0;
     let windowCount = 0;
 
-    while (page < 500) {
+    while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
       page++;
       const listResult = await shopeeGetOrderList(shopId, accessToken, {
         orderStatus,
@@ -1190,12 +1209,18 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
         timeTo,
       });
       if (listResult.error) {
-        throw new Error(`${listResult.error}${listResult.message ? ` - ${listResult.message}` : ""}`);
+        console.error(
+          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} page=${page} lỗi:`,
+          listResult.error,
+          listResult.message,
+        );
+        break;
       }
 
       const pageList = extractShopeeOrderListRows(listResult);
       for (const row of pageList) {
         if (row?.order_sn) orderSnSet.add(String(row.order_sn));
+        if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
       }
       windowCount += pageList.length;
 
@@ -1211,10 +1236,15 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
         );
         break;
       }
+      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) {
+        console.warn(`[Shopee Sync] shop_id=${shopId} đạt giới hạn ${SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP} đơn — dừng phân trang.`);
+        break;
+      }
       cursor = nextCursor;
       await new Promise((r) => setTimeout(r, 120));
     }
 
+    if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
     if (windowCount === 0 && windowIdx > 0) break;
   }
 
@@ -1233,7 +1263,7 @@ async function shopeeFetchAllOrderSns(shopId: string, accessToken: string): Prom
     let page = 0;
     let windowCount = 0;
 
-    while (page < 500) {
+    while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
       page++;
       const listResult = await shopeeGetOrderList(shopId, accessToken, {
         cursor,
@@ -1242,12 +1272,14 @@ async function shopeeFetchAllOrderSns(shopId: string, accessToken: string): Prom
         timeTo,
       });
       if (listResult.error) {
-        throw new Error(`${listResult.error}${listResult.message ? ` - ${listResult.message}` : ""}`);
+        console.error(`[Shopee API] shop_id=${shopId} window=${windowIdx + 1} lỗi:`, listResult.message || listResult.error);
+        break;
       }
 
       const pageList = extractShopeeOrderListRows(listResult);
       for (const row of pageList) {
         if (row?.order_sn) orderSnSet.add(String(row.order_sn));
+        if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
       }
       windowCount += pageList.length;
 
@@ -1258,17 +1290,19 @@ async function shopeeFetchAllOrderSns(shopId: string, accessToken: string): Prom
 
       if (!more) break;
       if (!nextCursor) break;
+      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
       cursor = nextCursor;
       await new Promise((r) => setTimeout(r, 120));
     }
 
+    if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
     if (windowCount === 0 && windowIdx > 0) break;
   }
 
   return Array.from(orderSnSet);
 }
 
-// v2.order.get_order_detail — pulls full order info (buyer, items, address...) for up to 50 order_sn at a time.
+// v2.order.get_order_detail
 async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSnList: string[]) {
   const apiPath = "/api/v2/order/get_order_detail";
   const timestamp = Math.floor(Date.now() / 1000);
@@ -1288,14 +1322,27 @@ async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSn
   });
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const res = await fetch(url);
-  const json: any = await res.json();
-  console.log(`[Shopee API] GET ${apiPath} (shop_id=${shopId}, ${orderSnList.length} orders) -> HTTP ${res.status}:`, JSON.stringify(json));
+  try {
+    const res = await fetch(url);
+    const rawText = await res.text();
+    let json: any;
+    try {
+      json = rawText ? JSON.parse(rawText) : {};
+    } catch (parseErr) {
+      return shopeeApiErrorResult(parseErr, `get_order_detail JSON parse (shop_id=${shopId})`);
+    }
+    console.log(
+      `[Shopee API] GET ${apiPath} (shop_id=${shopId}, ${orderSnList.length} orders) -> HTTP ${res.status}:`,
+      JSON.stringify(json).slice(0, 500),
+    );
 
-  if (json.error) {
-    console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y chi ti\u1EBFt \u0111\u01A1n: ${json.error} - ${json.message}`);
+    if (json.error) {
+      console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y chi ti\u1EBFt \u0111\u01A1n: ${json.error} - ${json.message}`);
+    }
+    return json;
+  } catch (err) {
+    return shopeeApiErrorResult(err, `get_order_detail fetch (shop_id=${shopId})`);
   }
-  return json;
 }
 
 // v2.product.get_item_list — paginated list of item_ids currently listed on the shop.
@@ -2265,28 +2312,34 @@ function extractShopeeOrderModelSku(it: any): string | undefined {
 }
 
 function mapShopeeOrderLineItem(it: any) {
-  const itemId = String(it.item_id || "");
-  const modelId = extractShopeeOrderModelId(it);
-  const modelSku = extractShopeeOrderModelSku(it);
-  const modelName = extractShopeeOrderModelName(it);
-  const itemName = String(it.item_name || "S\u1EA3n ph\u1EA9m Shopee").trim();
-  const productTitle = modelName ? `${itemName} - ${modelName}` : itemName;
-  const productImage =
-    it.image_info?.image_url ||
-    it.image_url ||
-    it.variation_image_url ||
-    undefined;
+  if (!it || typeof it !== "object") return null;
+  try {
+    const itemId = String(it?.item_id || "");
+    const modelId = extractShopeeOrderModelId(it);
+    const modelSku = extractShopeeOrderModelSku(it);
+    const modelName = extractShopeeOrderModelName(it);
+    const itemName = String(it?.item_name || "S\u1EA3n ph\u1EA9m Shopee").trim();
+    const productTitle = modelName ? `${itemName} - ${modelName}` : itemName;
+    const productImage =
+      it?.image_info?.image_url ||
+      it?.image_url ||
+      it?.variation_image_url ||
+      undefined;
 
-  return {
-    productId: itemId,
-    productTitle,
-    productImage,
-    quantity: Number(it.model_quantity_purchased || it.model_quantity || it.quantity || 1),
-    price: Number(it.model_discounted_price || it.model_original_price || it.item_price || 0),
-    modelId: modelId === "0" ? undefined : modelId,
-    modelSku,
-    modelName,
-  };
+    return {
+      productId: itemId,
+      productTitle,
+      productImage,
+      quantity: Number(it?.model_quantity_purchased || it?.model_quantity || it?.quantity || 1),
+      price: Number(it?.model_discounted_price || it?.model_original_price || it?.item_price || 0),
+      modelId: modelId === "0" ? undefined : modelId,
+      modelSku,
+      modelName,
+    };
+  } catch (err) {
+    console.warn("[Shopee Sync] mapShopeeOrderLineItem failed:", err);
+    return null;
+  }
 }
 
 // --- Shopee tracking: carrier (SPXVN...) vs internal sorting (0FG...) ---
@@ -2398,41 +2451,49 @@ async function enrichShopeeOrderTrackingFromApi(shopId: string, accessToken: str
 }
 
 // Normalize one item from get_order_detail's `order_list` into this project's Order shape.
-function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any): any {
-  const statusMap: Record<string, string> = {
-    UNPAID: "pending_confirm",
-    READY_TO_SHIP: "unprocessed",
-    PROCESSED: "processed",
-    RETRY_SHIP: "unprocessed",
-    SHIPPED: "shipping",
-    TO_CONFIRM_RECEIVE: "shipping",
-    IN_CANCEL: "cancelled",
-    CANCELLED: "cancelled",
-    TO_RETURN: "return_pending",
-    COMPLETED: "completed",
-  };
-  const rawStatus = String(item.order_status || "READY_TO_SHIP").toUpperCase();
-  const pkg = item.package_list?.[0];
-  const order: any = {
-    id: `shopee-${item.order_sn}`,
-    orderSn: String(item.order_sn),
-    channel: "shopee",
-    shopId: String(shopId),
-    shopName: shopName || "Shopee Shop",
-    totalAmount: Number(item.total_amount || 0),
-    revenue: Number(item.total_amount || 0) * 0.88,
-    status: statusMap[rawStatus] || "unprocessed",
-    date: item.create_time ? new Date(item.create_time * 1000).toISOString() : new Date().toISOString(),
-    packageNumber: pkg?.package_number || undefined,
-    isPrepared: rawStatus === "PROCESSED" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE",
-    isPrinted: false,
-    items: Array.isArray(item.item_list)
-      ? item.item_list.map((it: any) => mapShopeeOrderLineItem(it))
-      : [],
-  };
-  if (pkg?.tracking_number) applyShopeeTrackingCode(order, pkg.tracking_number);
-  repairMisassignedTracking(order);
-  return order;
+function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any): any | null {
+  if (!item || !item.order_sn) {
+    console.warn("[Shopee Sync] Bỏ qua order detail thiếu order_sn:", item);
+    return null;
+  }
+  try {
+    const statusMap: Record<string, string> = {
+      UNPAID: "pending_confirm",
+      READY_TO_SHIP: "unprocessed",
+      PROCESSED: "processed",
+      RETRY_SHIP: "unprocessed",
+      SHIPPED: "shipping",
+      TO_CONFIRM_RECEIVE: "shipping",
+      IN_CANCEL: "cancelled",
+      CANCELLED: "cancelled",
+      TO_RETURN: "return_pending",
+      COMPLETED: "completed",
+    };
+    const rawStatus = String(item?.order_status || "READY_TO_SHIP").toUpperCase();
+    const pkg = Array.isArray(item?.package_list) ? item.package_list[0] : undefined;
+    const itemList = Array.isArray(item?.item_list) ? item.item_list : [];
+    const order: any = {
+      id: `shopee-${item.order_sn}`,
+      orderSn: String(item.order_sn),
+      channel: "shopee",
+      shopId: String(shopId),
+      shopName: shopName || "Shopee Shop",
+      totalAmount: Number(item?.total_amount || 0),
+      revenue: Number(item?.total_amount || 0) * 0.88,
+      status: statusMap[rawStatus] || "unprocessed",
+      date: item?.create_time ? new Date(Number(item.create_time) * 1000).toISOString() : new Date().toISOString(),
+      packageNumber: pkg?.package_number || undefined,
+      isPrepared: rawStatus === "PROCESSED" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE",
+      isPrinted: false,
+      items: itemList.map((it: any) => mapShopeeOrderLineItem(it)).filter(Boolean),
+    };
+    if (pkg?.tracking_number) applyShopeeTrackingCode(order, pkg.tracking_number);
+    repairMisassignedTracking(order);
+    return order;
+  } catch (err) {
+    console.error(`[Shopee Sync] normalizeShopeeOrderDetail lỗi order_sn=${item?.order_sn}:`, err);
+    return null;
+  }
 }
 
 // Upsert one Shopee order from get_order_detail — trust Shopee status for tab
@@ -2533,28 +2594,49 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
         }
       }
 
-      const orderSnList = Array.from(orderSnSet);
+      let orderSnList = Array.from(orderSnSet);
+      if (orderSnList.length > SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) {
+        console.warn(
+          `[Shopee Sync] Shop ${fileKey}: cắt ${orderSnList.length} → ${SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP} đơn để tránh quá tải RAM.`,
+        );
+        orderSnList = orderSnList.slice(0, SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP);
+      }
       const syncedForShop: any[] = [];
 
       for (let i = 0; i < orderSnList.length; i += 50) {
         const batch = orderSnList.slice(i, i + 50);
-        const detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, batch);
-        if (detailResult.error) {
+        try {
+          const detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, batch);
+          if (detailResult.error) {
+            shopErrors.push({
+              shopId: fileKey,
+              error: detailResult.error,
+              message: detailResult.message,
+              batch: batch.length,
+            });
+            continue;
+          }
+          const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
+          if (!Array.isArray(detailList)) continue;
+          for (const detail of detailList) {
+            try {
+              let normalized = normalizeShopeeOrderDetail(fileKey, detail?.shop_name, detail);
+              if (!normalized) continue;
+              if (needsShopeeTrackingEnrichment(normalized)) {
+                normalized = await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, normalized);
+              }
+              syncedForShop.push(normalized);
+            } catch (detailErr: any) {
+              console.error(`[Shopee Sync] Lỗi xử lý đơn ${detail?.order_sn}:`, detailErr?.message || detailErr);
+            }
+          }
+        } catch (batchErr: any) {
           shopErrors.push({
             shopId: fileKey,
-            error: detailResult.error,
-            message: detailResult.message,
+            error: "batch_detail_failed",
+            message: batchErr?.message || String(batchErr),
             batch: batch.length,
           });
-          continue;
-        }
-        const detailList = detailResult.response?.order_list || [];
-        for (const detail of detailList) {
-          let normalized = normalizeShopeeOrderDetail(fileKey, detail.shop_name, detail);
-          if (needsShopeeTrackingEnrichment(normalized)) {
-            normalized = await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, normalized);
-          }
-          syncedForShop.push(normalized);
         }
       }
 
@@ -2632,15 +2714,29 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
     if (!auth) continue;
     for (let i = 0; i < orders.length; i++) {
       const o = orders[i];
-      if (o.channel !== "shopee" || String(o.shopId) !== String(auth.fileKey)) continue;
+      if (o?.channel !== "shopee" || String(o?.shopId) !== String(auth.fileKey)) continue;
       if (!needsShopeeTrackingEnrichment(o)) continue;
-      orders[i] = await enrichShopeeOrderTrackingFromApi(auth.apiShopId, auth.token, { ...o });
+      try {
+        orders[i] = await enrichShopeeOrderTrackingFromApi(auth.apiShopId, auth.token, { ...o });
+      } catch (trackErr: any) {
+        console.warn(`[Shopee Sync] enrich tracking ${o?.orderSn} failed:`, trackErr?.message || trackErr);
+      }
     }
   }
 
-  const products = loadProducts();
-  orders = enrichOrdersFromCatalog(orders, products);
-  saveOrders(orders);
+  try {
+    const products = loadProducts();
+    orders = enrichOrdersFromCatalog(orders, products);
+  } catch (catalogErr: any) {
+    console.error("[Shopee Sync] enrichOrdersFromCatalog failed:", catalogErr?.message || catalogErr);
+  }
+
+  try {
+    saveOrders(orders);
+  } catch (saveErr: any) {
+    console.error("[Shopee Sync] saveOrders failed:", saveErr?.message || saveErr);
+    errors.push({ error: "save_orders_failed", message: saveErr?.message || String(saveErr) });
+  }
   const validOrders = orders.filter(isValidOrder);
   const uiStatusCounts = {
     unprocessed: validOrders.filter((o: any) => o.status === "unprocessed").length,
@@ -4750,31 +4846,40 @@ async function startServer() {
 
   // Full Shopee order sync — READY_TO_SHIP + PROCESSED + SHIPPED (15 ngày, lật trang đủ).
   app.post("/api/shopee/orders/sync", authMiddleware, async (req, res) => {
-    if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) {
+    try {
+      if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) {
+        return res.status(500).json({
+          error: "Thi\u1EBFu SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY (Live) trong file .env.",
+          message: "Thiếu cấu hình Shopee Partner trên backend.",
+        });
+      }
+
+      const tokens = loadShopeeTokens();
+      if (Object.keys(tokens).length === 0) {
+        return res.json({ synced: 0, orders: [], warning: "Ch\u01B0a c\xF3 shop Shopee Live n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n." });
+      }
+
+      console.log(`[Shopee Sync] Bắt đầu đồng bộ đơn ${SHOPEE_SYNC_STATUSES.join(" + ")} (tối đa ${SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP} đơn/shop)...`);
+      const result = await syncShopeeOrdersFromApi([...SHOPEE_SYNC_STATUSES]);
+      console.log(`[Shopee Sync] Ho\xE0n t\u1EA5t: ${result.synced} \u0111\u01A1n (${result.added} m\u1EDBi, ${result.updated} c\u1EADp nh\u1EADt).`);
+
+      return res.json({
+        synced: result.synced,
+        added: result.added,
+        updated: result.updated,
+        orders: result.orders,
+        statusCounts: result.statusCounts,
+        uiStatusCounts: result.uiStatusCounts,
+        errors: result.errors,
+        warning: result.synced === 0 && !result.errors ? `Không tìm thấy đơn ${SHOPEE_SYNC_STATUSES.join("/")} nào trong 15 ngày gần nhất.` : undefined,
+      });
+    } catch (error: any) {
+      console.error("[Shopee Sync] API fatal error:", error?.response?.data || error?.message || error);
       return res.status(500).json({
-        error: "Thi\u1EBFu SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY (Live) trong file .env.",
+        error: error?.message || "sync_failed",
+        message: error?.message || "Đồng bộ đơn hàng Shopee thất bại — xem log cPanel.",
       });
     }
-
-    const tokens = loadShopeeTokens();
-    if (Object.keys(tokens).length === 0) {
-      return res.json({ synced: 0, orders: [], warning: "Ch\u01B0a c\xF3 shop Shopee Live n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n." });
-    }
-
-    console.log(`[Shopee Sync] Bắt đầu đồng bộ đơn ${SHOPEE_SYNC_STATUSES.join(" + ")} (15 ngày, lật trang cursor)...`);
-    const result = await syncShopeeOrdersFromApi([...SHOPEE_SYNC_STATUSES]);
-    console.log(`[Shopee Sync] Ho\xE0n t\u1EA5t: ${result.synced} \u0111\u01A1n (${result.added} m\u1EDBi, ${result.updated} c\u1EADp nh\u1EADt).`);
-
-    return res.json({
-      synced: result.synced,
-      added: result.added,
-      updated: result.updated,
-      orders: result.orders,
-      statusCounts: result.statusCounts,
-      uiStatusCounts: result.uiStatusCounts,
-      errors: result.errors,
-      warning: result.synced === 0 && !result.errors ? `Không tìm thấy đơn ${SHOPEE_SYNC_STATUSES.join("/")} nào trong 15 ngày gần nhất.` : undefined,
-    });
   });
 
   // Active "pull" — actively calls Shopee's real v2.order.get_order_list +
@@ -4782,66 +4887,94 @@ async function startServer() {
   // instead of passively waiting for webhook pushes. Bound to the "Cập nhật
   // đơn hàng" button on the frontend.
   app.post("/api/orders/pull", authMiddleware, async (req, res) => {
-    if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) {
-      return res.status(500).json({
-        error: "Thi\u1EBFu SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY (Live) trong file .env. Vui l\xF2ng c\u1EA5u h\xECnh tr\u01B0\u1EDBc khi k\xE9o \u0111\u01A1n.",
-      });
-    }
+    try {
+      if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) {
+        return res.status(500).json({
+          error: "Thi\u1EBFu SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY (Live) trong file .env. Vui l\xF2ng c\u1EA5u h\xECnh tr\u01B0\u1EDBc khi k\xE9o \u0111\u01A1n.",
+        });
+      }
 
-    const tokens = loadShopeeTokens();
-    const shopIds = Object.keys(tokens);
-    if (shopIds.length === 0) {
-      console.warn("[Shopee API] Kh\xF4ng c\xF3 shop_id n\xE0o \u0111\xE3 li\xEAn k\u1EBFt OAuth th\u1EADt. H\xE3y li\xEAn k\u1EBFt shop qua /api/shopee/callback tr\u01B0\u1EDBc.");
-      return res.json({ pulled: 0, orders: [], warning: "Ch\u01B0a c\xF3 shop Shopee Live n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n." });
-    }
+      const tokens = loadShopeeTokens();
+      const shopIds = Object.keys(tokens);
+      if (shopIds.length === 0) {
+        console.warn("[Shopee API] Kh\xF4ng c\xF3 shop_id n\xE0o \u0111\xE3 li\xEAn k\u1EBFt OAuth th\u1EADt. H\xE3y li\xEAn k\u1EBFt shop qua /api/shopee/callback tr\u01B0\u1EDBc.");
+        return res.json({ pulled: 0, orders: [], warning: "Ch\u01B0a c\xF3 shop Shopee Live n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n." });
+      }
 
-    const orders = loadOrders();
-    let pulledCount = 0;
-    const errors: any[] = [];
+      const orders = loadOrders();
+      let pulledCount = 0;
+      const errors: any[] = [];
 
-    for (const shopId of shopIds) {
-      try {
-        const accessToken = await getValidShopeeAccessToken(shopId);
-        if (!accessToken) {
-          errors.push({ shopId, error: "no_valid_access_token" });
-          continue;
-        }
-
-        const orderSnList = await shopeeFetchAllOrderSns(shopId, accessToken);
-        console.log(`[Shopee API] Shop ${shopId}: tìm thấy ${orderSnList.length} đơn hàng trong 15 ngày gần nhất (đã lật trang đủ).`);
-        if (orderSnList.length === 0) continue;
-
-        // get_order_detail accepts at most 50 order_sn per call.
-        for (let i = 0; i < orderSnList.length; i += 50) {
-          const batch = orderSnList.slice(i, i + 50);
-          const detailResult = await shopeeGetOrderDetail(shopId, accessToken, batch);
-          if (detailResult.error) {
-            errors.push({ shopId, error: detailResult.error, message: detailResult.message });
+      for (const shopId of shopIds) {
+        try {
+          const accessToken = await getValidShopeeAccessToken(shopId);
+          if (!accessToken) {
+            errors.push({ shopId, error: "no_valid_access_token" });
             continue;
           }
 
-          const detailList = detailResult.response?.order_list || [];
-          for (const detail of detailList) {
-            const normalized = normalizeShopeeOrderDetail(shopId, detail.shop_name, detail);
-            const existingIndex = orders.findIndex((o: any) => o.orderSn === normalized.orderSn);
-            if (existingIndex >= 0) {
-              orders[existingIndex] = mergeShopeeOrderOnSync(orders[existingIndex], normalized);
-            } else {
-              orders.unshift(normalized);
-            }
-            pulledCount++;
+          let orderSnList = await shopeeFetchAllOrderSns(shopId, accessToken);
+          if (orderSnList.length > SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) {
+            orderSnList = orderSnList.slice(0, SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP);
           }
+          console.log(`[Shopee API] Shop ${shopId}: tìm thấy ${orderSnList.length} đơn hàng (giới hạn ${SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP}).`);
+          if (orderSnList.length === 0) continue;
+
+          for (let i = 0; i < orderSnList.length; i += 50) {
+            const batch = orderSnList.slice(i, i + 50);
+            try {
+              const detailResult = await shopeeGetOrderDetail(shopId, accessToken, batch);
+              if (detailResult.error) {
+                errors.push({ shopId, error: detailResult.error, message: detailResult.message });
+                continue;
+              }
+
+              const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
+              if (!Array.isArray(detailList)) continue;
+              for (const detail of detailList) {
+                try {
+                  const normalized = normalizeShopeeOrderDetail(shopId, detail?.shop_name, detail);
+                  if (!normalized) continue;
+                  const existingIndex = orders.findIndex((o: any) => o?.orderSn === normalized.orderSn);
+                  if (existingIndex >= 0) {
+                    orders[existingIndex] = mergeShopeeOrderOnSync(orders[existingIndex], normalized);
+                  } else {
+                    orders.unshift(normalized);
+                  }
+                  pulledCount++;
+                } catch (detailErr: any) {
+                  console.error(`[Shopee API] Lỗi normalize đơn ${detail?.order_sn}:`, detailErr?.message || detailErr);
+                }
+              }
+            } catch (batchErr: any) {
+              errors.push({ shopId, error: "batch_failed", message: batchErr?.message || String(batchErr) });
+            }
+          }
+        } catch (error: any) {
+          console.error(`[Shopee API] L\u1ED7i khi k\xE9o \u0111\u01A1n cho shop_id=${shopId}:`, error);
+          errors.push({ shopId, error: error.message || "unknown_error" });
         }
-      } catch (error: any) {
-        console.error(`[Shopee API] L\u1ED7i khi k\xE9o \u0111\u01A1n cho shop_id=${shopId}:`, error);
-        errors.push({ shopId, error: error.message || "unknown_error" });
       }
+
+      try {
+        saveOrders(orders);
+      } catch (saveErr: any) {
+        console.error("[Shopee API] saveOrders failed:", saveErr?.message || saveErr);
+        return res.status(500).json({
+          error: saveErr?.message || "save_orders_failed",
+          message: "Lưu orders.json thất bại",
+        });
+      }
+      console.log(`[Shopee API] Ho\xE0n t\u1EA5t k\xE9o \u0111\u01A1n: ${pulledCount} \u0111\u01A1n \u0111\xE3 \u0111\u01B0\u1EE3c c\u1EADp nh\u1EADt/th\xEAm m\u1EDBi.`);
+
+      return res.json({ pulled: pulledCount, orders: orders.filter(isValidOrder), errors: errors.length ? errors : undefined });
+    } catch (error: any) {
+      console.error("[Shopee API] /api/orders/pull fatal:", error?.response?.data || error?.message || error);
+      return res.status(500).json({
+        error: error?.message || "pull_failed",
+        message: error?.message || "Kéo đơn hàng Shopee thất bại",
+      });
     }
-
-    saveOrders(orders);
-    console.log(`[Shopee API] Ho\xE0n t\u1EA5t k\xE9o \u0111\u01A1n: ${pulledCount} \u0111\u01A1n \u0111\xE3 \u0111\u01B0\u1EE3c c\u1EADp nh\u1EADt/th\xEAm m\u1EDBi.`);
-
-    return res.json({ pulled: pulledCount, orders: orders.filter(isValidOrder), errors: errors.length ? errors : undefined });
   });
 
   // GET /api/shopee/diagnostics?shop_id=4127421 — kiểm tra Partner ID/Key, token OAuth, ping Shopee API
