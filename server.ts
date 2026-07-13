@@ -348,6 +348,24 @@ function queryParamOne(value: unknown): string {
   return String(value ?? "").trim();
 }
 
+function shouldOAuthRedirectToFrontend(req: any): boolean {
+  if (queryParamOne(req.query?.format) === "json") return false;
+  if (queryParamOne(req.query?.redirect) === "0") return false;
+  return true;
+}
+
+function buildOAuthFrontendRedirectUrl(req: any, result: any): string {
+  const oauthShopId = String(result.oauth_shop_id || queryParamOne(req.query.shop_id) || "");
+  const expectedShop = queryParamOne(req.query?.expected_shop) || String(result.expected_shop_id || "");
+  if (result.success) {
+    const savedQuery = encodeURIComponent((result.saved_shop_ids || []).join(","));
+    const expectedQuery = expectedShop ? `&expected_shop=${encodeURIComponent(expectedShop)}` : "";
+    return `${APP_BASE_URL}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
+  }
+  const errMsg = result.message || result.error || "token_exchange_failed";
+  return `${APP_BASE_URL}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
+}
+
 /** Chuẩn hóa response Shopee — hỗ trợ wrapper `response`, tên field khác nhau. */
 function normalizeShopeeTokenResponse(raw: any): Record<string, any> {
   const inner =
@@ -3426,6 +3444,9 @@ async function startServer() {
 
       if (!result.success) {
         console.error(`[Shopee Callback] Đổi code thất bại:`, result.error, result.message);
+        if (shouldOAuthRedirectToFrontend(req)) {
+          return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
+        }
         return res.status(400).json({
           ...result,
           message: result.message || result.error || "token_exchange_failed",
@@ -3436,6 +3457,9 @@ async function startServer() {
       console.log(
         `[Shopee Callback] OAuth OK. Token đã lưu cho: [${result.saved_shop_ids.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`,
       );
+      if (shouldOAuthRedirectToFrontend(req)) {
+        return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
+      }
       return res.status(200).json({
         ...result,
         message: result.message || `OAuth thành công. Token đã lưu cho: [${result.saved_shop_ids.join(", ")}].`,
@@ -3452,11 +3476,17 @@ async function startServer() {
         tokens_path: SHOPEE_TOKENS_PATH,
         app_root: APP_ROOT,
       });
-      return res.status(500).json({
+      const failResult = {
         success: false,
         error: error?.message || "unknown_error",
         message: error?.message || "Lỗi xử lý OAuth callback",
         oauth_shop_id: oauthShopId,
+      };
+      if (shouldOAuthRedirectToFrontend(req)) {
+        return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
+      }
+      return res.status(500).json({
+        ...failResult,
         tokens_path: SHOPEE_TOKENS_PATH,
       });
     }

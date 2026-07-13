@@ -16,7 +16,9 @@ function queryOne(value) {
 }
 
 function wantsBrowserRedirect(req) {
-  return queryOne(req.query?.redirect) === '1';
+  if (queryOne(req.query?.format) === 'json') return false;
+  if (queryOne(req.query?.redirect) === '0') return false;
+  return true;
 }
 
 export async function handleShopeeCallback(req, res) {
@@ -142,7 +144,9 @@ export async function handleShopeeCallback(req, res) {
           ? `OAuth thành công cho shop ${oauthShopId}.`
           : data.error || 'OAuth thất bại'),
       frontend_url: APP_FRONTEND,
-      hint: 'Thêm ?redirect=1 vào callback URL để tự chuyển về app sau OAuth.',
+      hint: wantsBrowserRedirect(req)
+        ? null
+        : 'Thêm ?format=json hoặc ?redirect=0 để xem JSON debug thay vì chuyển về app.',
     });
   }
 

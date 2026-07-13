@@ -402,6 +402,22 @@ function queryParamOne(value) {
   if (Array.isArray(value)) return String(value[0] ?? "").trim();
   return String(value ?? "").trim();
 }
+function shouldOAuthRedirectToFrontend(req) {
+  if (queryParamOne(req.query?.format) === "json") return false;
+  if (queryParamOne(req.query?.redirect) === "0") return false;
+  return true;
+}
+function buildOAuthFrontendRedirectUrl(req, result) {
+  const oauthShopId = String(result.oauth_shop_id || queryParamOne(req.query.shop_id) || "");
+  const expectedShop = queryParamOne(req.query?.expected_shop) || String(result.expected_shop_id || "");
+  if (result.success) {
+    const savedQuery = encodeURIComponent((result.saved_shop_ids || []).join(","));
+    const expectedQuery = expectedShop ? `&expected_shop=${encodeURIComponent(expectedShop)}` : "";
+    return `${APP_BASE_URL}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
+  }
+  const errMsg = result.message || result.error || "token_exchange_failed";
+  return `${APP_BASE_URL}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
+}
 function normalizeShopeeTokenResponse(raw) {
   const inner = raw?.response && typeof raw.response === "object" && !Array.isArray(raw.response) ? raw.response : raw?.data && typeof raw.data === "object" ? raw.data : raw;
   const access_token = inner?.access_token ?? inner?.accessToken ?? raw?.access_token ?? raw?.accessToken ?? "";
@@ -2842,6 +2858,9 @@ async function startServer() {
       });
       if (!result.success) {
         console.error(`[Shopee Callback] \u0110\u1ED5i code th\u1EA5t b\u1EA1i:`, result.error, result.message);
+        if (shouldOAuthRedirectToFrontend(req)) {
+          return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
+        }
         return res.status(400).json({
           ...result,
           message: result.message || result.error || "token_exchange_failed",
@@ -2851,6 +2870,9 @@ async function startServer() {
       console.log(
         `[Shopee Callback] OAuth OK. Token \u0111\xE3 l\u01B0u cho: [${result.saved_shop_ids.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`
       );
+      if (shouldOAuthRedirectToFrontend(req)) {
+        return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
+      }
       return res.status(200).json({
         ...result,
         message: result.message || `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${result.saved_shop_ids.join(", ")}].`,
@@ -2867,11 +2889,17 @@ async function startServer() {
         tokens_path: SHOPEE_TOKENS_PATH,
         app_root: APP_ROOT
       });
-      return res.status(500).json({
+      const failResult = {
         success: false,
         error: error?.message || "unknown_error",
         message: error?.message || "L\u1ED7i x\u1EED l\xFD OAuth callback",
-        oauth_shop_id: oauthShopId,
+        oauth_shop_id: oauthShopId
+      };
+      if (shouldOAuthRedirectToFrontend(req)) {
+        return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
+      }
+      return res.status(500).json({
+        ...failResult,
         tokens_path: SHOPEE_TOKENS_PATH
       });
     }
