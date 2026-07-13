@@ -21,6 +21,7 @@ import { APP_TITLE } from './config/brand';
 import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
 import { sanitizeOrders } from './utils/sanitizeOrder';
 import { safeGetItem, safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
+import { parseJsonResponse } from './utils/apiClient';
 import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
 import { 
   LayoutDashboard, 
@@ -65,6 +66,26 @@ function stripDemoShops(shops: ConnectedShop[] = []) {
   });
 }
 
+function emptyChannelSettings(): ChannelSettings {
+  return {
+    shopeeConnected: false,
+    shopeeShopId: '',
+    shopeeApiKey: '',
+    tiktokConnected: false,
+    tiktokShopId: '',
+    tiktokApiKey: '',
+    shops: [],
+  };
+}
+
+function mergeChannelSettings(raw: Partial<ChannelSettings> | null | undefined): ChannelSettings {
+  return {
+    ...emptyChannelSettings(),
+    ...raw,
+    shops: stripDemoShops(raw?.shops ?? []),
+  };
+}
+
 export default function App() {
   // Authentication States
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -85,21 +106,12 @@ export default function App() {
   );
 
   const [settings, setSettings] = useState<ChannelSettings>(() => {
-    const empty: ChannelSettings = {
-      shopeeConnected: false,
-      shopeeShopId: '',
-      shopeeApiKey: '',
-      tiktokConnected: false,
-      tiktokShopId: '',
-      tiktokApiKey: '',
-      shops: [],
-    };
     const saved = safeGetJson<ChannelSettings | null>('omni_settings', null);
-    if (!saved) return empty;
+    if (!saved) return emptyChannelSettings();
     try {
-      return { ...empty, ...saved, shops: stripDemoShops(saved.shops ?? []) };
+      return mergeChannelSettings(saved);
     } catch {
-      return empty;
+      return emptyChannelSettings();
     }
   });
 
@@ -141,7 +153,7 @@ export default function App() {
     const payload = JSON.stringify(settings);
     const saved = safeSetItem('omni_settings', payload);
     // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:settingsPersist',message:'localStorage omni_settings save',data:{saved,shopsCount:settings.shops?.length??0,payloadBytes:payload.length},timestamp:Date.now(),hypothesisId:'H1',runId:'pre-fix'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:settingsPersist',message:'localStorage omni_settings save',data:{saved,shopsCount:settings.shops?.length??0,payloadBytes:payload.length},timestamp:Date.now(),hypothesisId:'H1',runId:'post-fix'})}).catch(()=>{});
     // #endregion
   }, [settings]);
 
@@ -150,7 +162,7 @@ export default function App() {
     const rawShops = raw?.shops ?? [];
     const stripped = stripDemoShops(rawShops);
     // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:mountLoadSettings',message:'settings loaded on mount',data:{rawShopsCount:rawShops.length,afterStripCount:stripped.length,strippedIds:rawShops.filter(s=>!stripped.some(x=>x.id===s.id)).map(s=>s.id)},timestamp:Date.now(),hypothesisId:'H2',runId:'pre-fix'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:mountLoadSettings',message:'settings loaded on mount',data:{rawShopsCount:rawShops.length,afterStripCount:stripped.length,strippedIds:rawShops.filter(s=>!stripped.some(x=>x.id===s.id)).map(s=>s.id)},timestamp:Date.now(),hypothesisId:'H2',runId:'post-fix'})}).catch(()=>{});
     // #endregion
   }, []);
 
@@ -242,34 +254,13 @@ export default function App() {
     if (expectedShop && expectedShop !== oauthShopId) {
       alert(
         `Cảnh báo: Bạn yêu cầu OAuth shop ${expectedShop} nhưng Shopee trả về shop ${oauthShopId}.\n` +
-          'Token đã lưu cho shop Shopee trả về — shop cấu hình 241215004 vẫn chưa có token.\n' +
-          'Hãy đăng xuất Shopee Seller, bấm OAuth lại trên đúng shop 241215004.',
+          'Token đã lưu trên máy chủ — hãy kiểm tra Shop ID trong Cài đặt có khớp không.',
       );
       window.history.replaceState({}, '', window.location.pathname + window.location.hash);
       return;
     }
 
-    setSettings((prev) => {
-      let shops = [...(prev.shops || [])];
-      const idsToApply = savedShops.length ? savedShops : [oauthShopId];
-
-      for (const sid of idsToApply) {
-        const hasExact = shops.some(
-          (s) => s.platform === 'shopee' && String(s.shopId) === sid,
-        );
-        if (hasExact) {
-          shops = shops.map((s) =>
-            s.platform === 'shopee' && String(s.shopId) === sid
-              ? { ...s, connected: true, lastSynced: new Date().toISOString() }
-              : s,
-          );
-          continue;
-        }
-        // Không tự ghi đè Shop ID khi OAuth trả về shop khác shop đã cấu hình
-      }
-      return { ...prev, shops };
-    });
-
+    alert(`OAuth Shopee thành công. Shop ID: ${oauthShopId}${savedShops.length ? ` (đã lưu: ${savedShops.join(', ')})` : ''}`);
     window.history.replaceState({}, '', window.location.pathname + window.location.hash);
   }, []);
 
@@ -279,6 +270,53 @@ export default function App() {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
+  };
+
+  const persistChannelSettings = async (next: ChannelSettings): Promise<boolean> => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return false;
+    try {
+      const response = await fetch('/api/settings/channels', {
+        method: 'PUT',
+        headers: apiAuthHeaders(),
+        body: JSON.stringify({ settings: next }),
+      });
+      const data = await parseJsonResponse<{ settings?: ChannelSettings; message?: string; error?: string }>(response);
+      if (response.ok && data?.settings) {
+        setSettings(mergeChannelSettings(data.settings));
+        return true;
+      }
+      console.error('[Channel Settings] PUT failed:', data?.error || data?.message);
+      return false;
+    } catch (err) {
+      console.error('[Channel Settings] PUT error:', err);
+      return false;
+    }
+  };
+
+  const fetchChannelSettings = async () => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+    try {
+      const response = await fetch('/api/settings/channels', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+      const data = await parseJsonResponse<{ settings?: ChannelSettings }>(response);
+      const serverShops = stripDemoShops(data.settings?.shops ?? []);
+      if (serverShops.length > 0) {
+        setSettings(mergeChannelSettings(data.settings));
+        return;
+      }
+      const local = safeGetJson<ChannelSettings | null>('omni_settings', null);
+      const localShops = stripDemoShops(local?.shops ?? []);
+      if (localShops.length > 0) {
+        await persistChannelSettings(mergeChannelSettings(local));
+      }
+    } catch (err) {
+      console.error('Fetch channel settings error:', err);
+    }
   };
 
   const fetchProducts = async () => {
@@ -763,6 +801,7 @@ export default function App() {
       fetchSuppliers();
       fetchImports();
       fetchExpenses();
+      fetchChannelSettings();
       syncShopeeOAuthShopIds();
     };
 
@@ -1269,7 +1308,7 @@ export default function App() {
           {activeTab === 'settings' && (
             <SettingsView 
               settings={settings}
-              onUpdateSettings={setSettings}
+              onUpdateSettings={persistChannelSettings}
               logs={logs}
               onClearLogs={handleClearLogs}
             />

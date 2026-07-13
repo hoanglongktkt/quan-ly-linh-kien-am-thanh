@@ -325,6 +325,7 @@ function saveShopeeTokens(tokensToWrite: Record<string, any>): boolean {
     );
     return true;
   } catch (error: any) {
+    logOAuthSaveError("saveShopeeTokens", error);
     console.error(
       "[Shopee Tokens] fs.writeFileSync — LỖI GHI FILE",
       JSON.stringify({
@@ -620,6 +621,9 @@ async function completeShopeeOAuthFlow(code: string, params: ShopeeOAuthCallback
       expectedShopId: expected || undefined,
     });
     tokenResult.saved_shop_ids = savedIds;
+    if (savedIds.length > 0) {
+      syncOAuthShopsToChannelSettings(savedIds);
+    }
   }
 
   const shopMismatch = Boolean(
@@ -757,15 +761,30 @@ async function exchangeShopeeCodeForToken(
 
   console.log(
     "[Shopee OAuth] token/get request",
-    JSON.stringify({ shop_id: shopId || null, main_account_id: mainAccountId || null }),
+    JSON.stringify({
+      shop_id: shopId || null,
+      main_account_id: mainAccountId || null,
+      partner_id: SHOPEE_PARTNER_ID,
+      url_host: SHOPEE_HOST,
+    }),
   );
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const rawText = await res.text();
+  let res: Response;
+  let rawText: string;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    rawText = await res.text();
+  } catch (error: any) {
+    logOAuthSaveError("exchangeShopeeCodeForToken fetch", error);
+    return {
+      error: "network_error",
+      message: error?.message || "Không gọi được Shopee token/get",
+    };
+  }
   console.log("DEBUG RAW RESPONSE:", rawText);
 
   let json: any;
@@ -815,30 +834,35 @@ async function refreshShopeeToken(shopId: string, refreshToken: string) {
   const sign = shopeeSign(apiPath, timestamp);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken, shop_id: Number(shopId), partner_id: Number(SHOPEE_PARTNER_ID) }),
-  });
-  const json: any = await res.json();
-  console.log(`[Shopee API] POST ${apiPath} (refresh) -> HTTP ${res.status}:`, JSON.stringify(json));
-
-  const normalized = normalizeShopeeTokenResponse(json);
-  if (normalized.access_token) {
-    saveShopeeTokenForShop(shopId, {
-      access_token: normalized.access_token,
-      refresh_token: normalized.refresh_token,
-      expire_in: normalized.expire_in,
-      obtained_at: Math.floor(Date.now() / 1000),
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken, shop_id: Number(shopId), partner_id: Number(SHOPEE_PARTNER_ID) }),
     });
+    const json: any = await res.json();
+    console.log(`[Shopee API] POST ${apiPath} (refresh) -> HTTP ${res.status}:`, JSON.stringify(json));
+
+    const normalized = normalizeShopeeTokenResponse(json);
+    if (normalized.access_token) {
+      saveShopeeTokenForShop(shopId, {
+        access_token: normalized.access_token,
+        refresh_token: normalized.refresh_token,
+        expire_in: normalized.expire_in,
+        obtained_at: Math.floor(Date.now() / 1000),
+      });
+      return normalized;
+    }
+    console.error(
+      `[Shopee API] Refresh token thất bại shop_id=${shopId}:`,
+      normalized.error || json.error,
+      normalized.message || json.message,
+    );
     return normalized;
+  } catch (error: any) {
+    logOAuthSaveError(`refreshShopeeToken shop_id=${shopId}`, error);
+    return { error: "refresh_failed", message: error?.message || String(error) };
   }
-  console.error(
-    `[Shopee API] Refresh token thất bại shop_id=${shopId}:`,
-    normalized.error || json.error,
-    normalized.message || json.message,
-  );
-  return normalized;
 }
 
 function isShopeeInvalidTokenError(error?: unknown, message?: unknown): boolean {
@@ -927,7 +951,9 @@ async function getValidShopeeAccessToken(shopId: string): Promise<string | null>
   }
 
   const now = Math.floor(Date.now() / 1000);
-  const isExpired = now - record.obtained_at >= record.expire_in - 60; // refresh 60s early
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
   if (!isExpired) return record.access_token;
 
   console.log(`[Shopee API] access_token c\u1EE7a shop_id=${key} \u0111\xE3 h\u1EBFt h\u1EA1n, \u0111ang refresh...`);
@@ -2913,8 +2939,118 @@ function saveSuppliers(suppliers: any[]): void {
   try {
     fs.mkdirSync(path.dirname(SUPPLIERS_DB_PATH), { recursive: true });
     fs.writeFileSync(SUPPLIERS_DB_PATH, JSON.stringify(suppliers, null, 2), "utf-8");
-  } catch (error) {
+  } catch (error: any) {
+    console.error(
+      "Lỗi chi tiết khi lưu shop/OAuth:",
+      error?.response?.data || error?.message || String(error),
+    );
     console.error("[Suppliers DB] Failed to write suppliers.json:", error);
+  }
+}
+
+const CHANNEL_SETTINGS_PATH = path.join(APP_ROOT, "data", "channel_settings.json");
+
+const DEFAULT_CHANNEL_SETTINGS: Record<string, any> = {
+  shopeeConnected: false,
+  shopeeShopId: "",
+  shopeeApiKey: "",
+  tiktokConnected: false,
+  tiktokShopId: "",
+  tiktokApiKey: "",
+  shops: [],
+};
+
+function logOAuthSaveError(context: string, error: any): void {
+  const detail = error?.response?.data ?? error?.message ?? String(error);
+  console.error(`Lỗi chi tiết khi lưu shop/OAuth (${context}):`, detail);
+}
+
+function normalizeConnectedShop(raw: any): Record<string, any> | null {
+  const platform = String(raw?.platform || "").trim();
+  if (!["shopee", "tiktok", "woocommerce"].includes(platform)) return null;
+  const shopId = String(raw?.shopId || "").trim();
+  const shopName = String(raw?.shopName || "").trim();
+  const apiKey = String(raw?.apiKey || "").trim();
+  if (!shopId || !shopName || !apiKey) return null;
+  const shop: Record<string, any> = {
+    id: String(raw?.id || `shop-${Date.now()}`),
+    platform,
+    shopId,
+    shopName,
+    apiKey,
+    connected: Boolean(raw?.connected),
+    lastSynced: raw?.lastSynced ? String(raw.lastSynced) : undefined,
+  };
+  if (raw?.apiSecret) shop.apiSecret = String(raw.apiSecret).trim();
+  if (raw?.wooUrl) shop.wooUrl = String(raw.wooUrl).trim();
+  return shop;
+}
+
+function loadChannelSettings(): Record<string, any> {
+  try {
+    if (!fs.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = fs.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : {};
+    const shops = Array.isArray(parsed?.shops)
+      ? parsed.shops.map(normalizeConnectedShop).filter(Boolean)
+      : [];
+    return { ...DEFAULT_CHANNEL_SETTINGS, ...parsed, shops };
+  } catch (error: any) {
+    logOAuthSaveError("loadChannelSettings", error);
+    return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+  }
+}
+
+function saveChannelSettings(settings: Record<string, any>): boolean {
+  try {
+    ensureDataDirs();
+    const shops = Array.isArray(settings?.shops)
+      ? settings.shops.map(normalizeConnectedShop).filter(Boolean)
+      : [];
+    const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...settings, shops };
+    fs.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
+    console.log(
+      `[Channel Settings] Saved ${shops.length} shop(s) → ${CHANNEL_SETTINGS_PATH}`,
+    );
+    return true;
+  } catch (error: any) {
+    logOAuthSaveError("saveChannelSettings", error);
+    return false;
+  }
+}
+
+/** Sau OAuth thành công — cập nhật connected/lastSynced cho shop đã có, hoặc thêm shop Shopee mới. */
+function syncOAuthShopsToChannelSettings(savedShopIds: string[]): void {
+  if (!savedShopIds.length) return;
+  try {
+    const settings = loadChannelSettings();
+    const shops = [...(settings.shops || [])];
+    const now = new Date().toISOString();
+
+    for (const sid of savedShopIds) {
+      const key = normalizeShopIdKey(sid);
+      if (!key) continue;
+      const idx = shops.findIndex((s: any) => normalizeShopIdKey(s?.shopId) === key);
+      if (idx >= 0) {
+        shops[idx] = { ...shops[idx], connected: true, lastSynced: now };
+      } else {
+        shops.push({
+          id: `shop-shopee-${key}`,
+          platform: "shopee",
+          shopName: `Shopee ${key}`,
+          shopId: key,
+          apiKey: SHOPEE_PARTNER_ID || "oauth",
+          connected: true,
+          lastSynced: now,
+        });
+      }
+    }
+
+    if (!saveChannelSettings({ ...settings, shops })) {
+      console.error("[Shopee OAuth] syncOAuthShopsToChannelSettings: ghi channel_settings.json thất bại");
+    }
+  } catch (error: any) {
+    logOAuthSaveError("syncOAuthShopsToChannelSettings", error);
   }
 }
 
@@ -3383,7 +3519,7 @@ async function startServer() {
         tokens_path: SHOPEE_TOKENS_PATH,
       });
     } catch (error: any) {
-      console.error("[Shopee OAuth Complete] LỖI", error);
+      logOAuthSaveError("Shopee OAuth Complete", error);
       return res.status(500).json({
         success: false,
         error: error?.message || "unknown_error",
@@ -3467,7 +3603,7 @@ async function startServer() {
         callback_url: SHOPEE_CALLBACK_URL,
       });
     } catch (error: any) {
-      console.error("[Shopee Callback] Exchange token error:", error);
+      logOAuthSaveError("Shopee Callback", error);
       saveOAuthAudit({
         callback_shop_id: oauthShopId || mainAccountId || null,
         main_account_id: mainAccountId || null,
@@ -5746,6 +5882,64 @@ async function startServer() {
       },
     });
   };
+
+  app.get("/api/settings/channels", authMiddleware, (_req, res) => {
+    try {
+      const settings = loadChannelSettings();
+      return res.json({
+        success: true,
+        settings,
+        path: CHANNEL_SETTINGS_PATH,
+        shopCount: Array.isArray(settings.shops) ? settings.shops.length : 0,
+      });
+    } catch (error: any) {
+      logOAuthSaveError("GET /api/settings/channels", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "load_failed",
+        message: "Không đọc được cấu hình gian hàng",
+      });
+    }
+  });
+
+  app.put("/api/settings/channels", authMiddleware, (req, res) => {
+    try {
+      const incoming = req.body?.settings;
+      if (!incoming || typeof incoming !== "object") {
+        return res.status(400).json({
+          success: false,
+          error: "invalid_settings",
+          message: "Thiếu trường settings trong body",
+        });
+      }
+      const shops = Array.isArray(incoming.shops) ? incoming.shops : [];
+      const normalizedShops = shops.map(normalizeConnectedShop).filter(Boolean);
+      if (shops.length > 0 && normalizedShops.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "invalid_shop_schema",
+          message: "Dữ liệu shop thiếu trường bắt buộc (platform, shopId, shopName, apiKey)",
+        });
+      }
+      const merged = { ...DEFAULT_CHANNEL_SETTINGS, ...incoming, shops: normalizedShops };
+      if (!saveChannelSettings(merged)) {
+        return res.status(500).json({
+          success: false,
+          error: "save_failed",
+          message: "Không ghi được file channel_settings.json trên máy chủ",
+        });
+      }
+      const saved = loadChannelSettings();
+      return res.json({ success: true, settings: saved, shopCount: saved.shops?.length ?? 0 });
+    } catch (error: any) {
+      logOAuthSaveError("PUT /api/settings/channels", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "save_failed",
+        message: "Lưu cấu hình gian hàng thất bại",
+      });
+    }
+  });
 
   app.get("/api/settings/gemini-status", authMiddleware, (_req, res) => {
     const key = process.env.GEMINI_API_KEY || "";

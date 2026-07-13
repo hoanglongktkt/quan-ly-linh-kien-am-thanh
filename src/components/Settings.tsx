@@ -34,7 +34,7 @@ type ShopConnState = 'online' | 'offline' | 'checking' | 'unknown';
 
 interface SettingsProps {
   settings: ChannelSettings;
-  onUpdateSettings: (settings: ChannelSettings) => void;
+  onUpdateSettings: (settings: ChannelSettings) => void | Promise<boolean>;
   logs: SyncLog[];
   onClearLogs: () => void;
 }
@@ -311,7 +311,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     setShowAddModal(true);
   };
 
-  const handleSaveShop = (e: React.FormEvent) => {
+  const handleSaveShop = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!shopName.trim() || !shopId.trim() || !apiKey.trim()) {
       alert('Vui lòng điền đầy đủ các thông tin bắt buộc!');
@@ -323,11 +323,12 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     }
 
     // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'Settings.tsx:handleSaveShop:entry',message:'save shop clicked',data:{editing:!!editingShop,shopsCountBefore:shops.length,shopId:shopId.trim(),platform},timestamp:Date.now(),hypothesisId:'H3-H4',runId:'pre-fix'})}).catch(()=>{});
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'Settings.tsx:handleSaveShop:entry',message:'save shop clicked',data:{editing:!!editingShop,shopsCountBefore:shops.length,shopId:shopId.trim(),platform},timestamp:Date.now(),hypothesisId:'H3-H4',runId:'post-fix'})}).catch(()=>{});
     // #endregion
 
+    let nextSettings: ChannelSettings;
+
     if (editingShop) {
-      // Edit existing shop
       const updatedShops = shops.map(s => s.id === editingShop.id ? {
         ...s,
         platform,
@@ -338,14 +339,8 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         wooUrl: platform === 'woocommerce' ? wooUrl.trim() : undefined,
         connected
       } : s);
-
-      onUpdateSettings({
-        ...settings,
-        shops: updatedShops
-      });
-      alert(`Đã cập nhật thông tin gian hàng: ${shopName}`);
+      nextSettings = { ...settings, shops: updatedShops };
     } else {
-      // Add new shop
       const newShop: ConnectedShop = {
         id: `shop-${Date.now()}`,
         platform,
@@ -357,28 +352,31 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         connected,
         lastSynced: new Date().toISOString()
       };
-
-      onUpdateSettings({
-        ...settings,
-        shops: [...shops, newShop]
-      });
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'Settings.tsx:handleSaveShop:add',message:'shop added to local state only (no API)',data:{newShopId:newShop.id,shopsCountAfter:shops.length+1,apiHasDemo:apiKey.includes('demo')},timestamp:Date.now(),hypothesisId:'H3-H4',runId:'pre-fix'})}).catch(()=>{});
-      // #endregion
-      alert(`Đã liên kết thành công gian hàng mới: ${shopName}`);
+      nextSettings = { ...settings, shops: [...shops, newShop] };
     }
+
+    const ok = await onUpdateSettings(nextSettings);
+    // #region agent log
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'Settings.tsx:handleSaveShop:result',message:'save shop API result',data:{ok,shopsCountAfter:nextSettings.shops?.length??0},timestamp:Date.now(),hypothesisId:'H3',runId:'post-fix'})}).catch(()=>{});
+    // #endregion
+    if (!ok) {
+      alert('Lưu gian hàng thất bại — dữ liệu chưa được ghi lên máy chủ. Vui lòng thử lại.');
+      return;
+    }
+
+    alert(editingShop
+      ? `Đã cập nhật thông tin gian hàng: ${shopName}`
+      : `Đã liên kết thành công gian hàng mới: ${shopName}`);
 
     setShowAddModal(false);
     setEditingShop(null);
   };
 
-  const handleDeleteShop = (id: string, name: string) => {
+  const handleDeleteShop = async (id: string, name: string) => {
     if (confirm(`Bạn có chắc chắn muốn ngắt kết nối và xóa gian hàng "${name}" khỏi danh sách quản lý?`)) {
       const updatedShops = shops.filter(s => s.id !== id);
-      onUpdateSettings({
-        ...settings,
-        shops: updatedShops
-      });
+      const ok = await onUpdateSettings({ ...settings, shops: updatedShops });
+      if (!ok) alert('Xóa gian hàng thất bại — dữ liệu chưa được cập nhật trên máy chủ.');
     }
   };
 
@@ -413,16 +411,17 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     }
   };
 
-  const handleToggleSync = (shop: ConnectedShop) => {
+  const handleToggleSync = async (shop: ConnectedShop) => {
     const updatedShops = shops.map(s => s.id === shop.id ? {
       ...s,
       connected: !s.connected
     } : s);
 
-    onUpdateSettings({
-      ...settings,
-      shops: updatedShops
-    });
+    const ok = await onUpdateSettings({ ...settings, shops: updatedShops });
+    if (!ok) {
+      alert('Cập nhật trạng thái đồng bộ thất bại.');
+      return;
+    }
 
     const toggled = updatedShops.find(s => s.id === shop.id);
     if (toggled) {
