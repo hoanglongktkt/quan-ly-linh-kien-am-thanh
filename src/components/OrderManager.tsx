@@ -176,7 +176,8 @@ type OrderTab =
   | 'cancelled' 
   | 'return_pending' 
   | 'return_received'
-  | 'order_products';
+  | 'order_products'
+  | 'reprint';
 
 function VariationNameBadge({ variationName }: { variationName?: string }) {
   const name = variationName?.trim();
@@ -524,6 +525,11 @@ export default function OrderManager({
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [progressCompleted, setProgressCompleted] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
+  const [progressDone, setProgressDone] = useState(false);
+  const progressCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [reprintOrderSn, setReprintOrderSn] = useState('');
+  const [isReprintSearching, setIsReprintSearching] = useState(false);
 
   // Auto-hiding toast — replaces blocking alert() in bulk ship/print flows.
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -633,25 +639,33 @@ export default function OrderManager({
     });
   };
 
-  // Shopee: create → poll → download NORMAL_AIR_WAYBILL PDF, mở tab mới (không ép window.print).
-  const printShopeeDocuments = async (orderIds: string[]): Promise<{ success: boolean; message?: string }> => {
+  type PrintDocumentResponse = {
+    mergedUrl?: string;
+    pdfBase64?: string;
+    pdfFilename?: string;
+    documents?: { url?: string; message?: string; error?: string }[];
+    orders?: Order[];
+    error?: string;
+  };
+
+  const fetchPrintDocumentApi = async (orderIds: string[]): Promise<{
+    ok: boolean;
+    status: number;
+    data: PrintDocumentResponse;
+  }> => {
     const res = await fetch('/api/shopee/print-document', {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ orderIds }),
     });
-    const data = await parseJsonResponse<{
-      mergedUrl?: string;
-      pdfBase64?: string;
-      pdfFilename?: string;
-      documents?: { url?: string; message?: string; error?: string }[];
-      orders?: Order[];
-      error?: string;
-    }>(res);
-    if (!res.ok) {
-      return { success: false, message: data.error || 'Không thể tạo vận đơn Shopee.' };
-    }
+    const data = await parseJsonResponse<PrintDocumentResponse>(res);
+    return { ok: res.ok, status: res.status, data };
+  };
 
+  const applyPrintDocumentResponse = async (
+    data: PrintDocumentResponse,
+    openPdf: boolean
+  ): Promise<{ success: boolean; message?: string; mergedUrl?: string | null }> => {
     const failedDocs = (data.documents || []).filter((d) => !d.url);
     const printUrl = data.mergedUrl || (data.documents || []).find((d) => d.url)?.url;
 
@@ -660,25 +674,30 @@ export default function OrderManager({
     }
 
     if (printUrl) {
-      await openShopeeLabelFromStream({
-        url: printUrl,
-        pdfFilename: data.pdfFilename,
-        pdfBase64: data.pdfBase64,
-      });
+      if (openPdf) {
+        await openShopeeLabelFromStream({
+          url: printUrl,
+          pdfFilename: data.pdfFilename,
+          pdfBase64: data.pdfBase64,
+        });
+      }
       if (failedDocs.length > 0) {
         return {
           success: true,
+          mergedUrl: printUrl,
           message: `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
         };
       }
-      return { success: true };
+      return { success: true, mergedUrl: printUrl };
     }
 
     if (data.pdfBase64) {
-      await openShopeeLabelFromStream({
-        pdfBase64: data.pdfBase64,
-        pdfFilename: data.pdfFilename,
-      });
+      if (openPdf) {
+        await openShopeeLabelFromStream({
+          pdfBase64: data.pdfBase64,
+          pdfFilename: data.pdfFilename,
+        });
+      }
       if (failedDocs.length > 0) {
         return {
           success: true,
@@ -692,13 +711,83 @@ export default function OrderManager({
     return { success: false, message: detail || 'Shopee chưa trả về file vận đơn PDF.' };
   };
 
+  // Shopee: create → poll → download NORMAL_AIR_WAYBILL PDF, mở tab mới (không ép window.print).
+  const printShopeeDocuments = async (
+    orderIds: string[],
+    options: { openPdf?: boolean; onProgress?: (completed: number, total: number) => void } = {}
+  ): Promise<{ success: boolean; message?: string; mergedUrl?: string | null }> => {
+    const { openPdf = true, onProgress } = options;
+    const uniqueIds = [...new Set(orderIds.map(String).filter(Boolean))];
+    if (uniqueIds.length === 0) {
+      return { success: false, message: 'Không có đơn hàng để in.' };
+    }
+
+    if (uniqueIds.length > 1 && onProgress) {
+      const total = uniqueIds.length;
+      onProgress(0, total);
+      const stepErrors: string[] = [];
+
+      for (let i = 0; i < uniqueIds.length; i++) {
+        const step = await fetchPrintDocumentApi([uniqueIds[i]]);
+        if (!step.ok) {
+          stepErrors.push(step.data.error || `Đơn ${uniqueIds[i]}: lỗi HTTP ${step.status}`);
+        } else {
+          const stepResult = await applyPrintDocumentResponse(step.data, false);
+          if (!stepResult.success && stepResult.message) stepErrors.push(stepResult.message);
+        }
+        onProgress(i + 1, total);
+      }
+
+      const final = await fetchPrintDocumentApi(uniqueIds);
+      if (!final.ok) {
+        return { success: false, message: final.data.error || 'Không thể gộp vận đơn Shopee.' };
+      }
+
+      const result = await applyPrintDocumentResponse(final.data, openPdf);
+      if (stepErrors.length > 0 && result.success) {
+        return {
+          ...result,
+          message: stepErrors.join('; '),
+        };
+      }
+      return result;
+    }
+
+    const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds);
+    if (!ok) {
+      return { success: false, message: data.error || `Không thể tạo vận đơn Shopee (HTTP ${status}).` };
+    }
+
+    if (onProgress) onProgress(uniqueIds.length, uniqueIds.length);
+    return applyPrintDocumentResponse(data, openPdf);
+  };
+
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,
   // per the seller's choice) for every order currently queued in `shipConfirmOrders`.
   const clearShipProgressOverlay = () => {
+    if (progressCloseTimerRef.current) {
+      clearTimeout(progressCloseTimerRef.current);
+      progressCloseTimerRef.current = null;
+    }
     setIsShipping(false);
     setProgressMessage(null);
     setProgressCompleted(0);
     setProgressTotal(0);
+    setProgressDone(false);
+  };
+
+  const scheduleCloseProgressOverlay = (delayMs = 1800) => {
+    if (progressCloseTimerRef.current) clearTimeout(progressCloseTimerRef.current);
+    progressCloseTimerRef.current = setTimeout(() => {
+      clearShipProgressOverlay();
+    }, delayMs);
+  };
+
+  const markProgressComplete = (message?: string) => {
+    setProgressDone(true);
+    if (message) setProgressMessage(message);
+    if (progressTotal > 0) setProgressCompleted(progressTotal);
+    scheduleCloseProgressOverlay(1800);
   };
 
   const pollShipJobUntilDone = async (
@@ -868,11 +957,11 @@ export default function OrderManager({
           const failed = (syncData.results || []).filter((r: any) => !r.success);
           const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
           showToast(`Không xác nhận được đơn nào. ${errDetail || 'Vui lòng thử lại.'}`);
+          clearShipProgressOverlay();
           return;
         }
 
         showToast(`Xác nhận thành công ${successCount}/${queuedOrders.length} đơn — đang mở vận đơn in...`);
-        clearShipProgressOverlay();
         if (syncData.printDocument?.pdfBase64 || syncData.printDocument?.url) {
           await openShopeeLabelFromStream({
             pdfBase64: syncData.printDocument.pdfBase64,
@@ -887,6 +976,7 @@ export default function OrderManager({
           if (shopeeIds.length > 0) await printShopeeDocuments(shopeeIds);
         }
         if (onRefreshOrders) await onRefreshOrders();
+        markProgressComplete('Xác nhận & in đơn hoàn tất!');
         return;
       }
 
@@ -894,6 +984,7 @@ export default function OrderManager({
       if (!res.ok && res.status !== 202) {
         showToast(data.message || data.error || data.detail || 'Không thể bắt đầu xác nhận đơn hàng.');
         if (onRefreshOrders) await onRefreshOrders();
+        clearShipProgressOverlay();
         return;
       }
 
@@ -913,20 +1004,20 @@ export default function OrderManager({
 
       if (!jobId) {
         showToast(`Đã ghi nhận ${queuedOrders.length} đơn.`);
+        markProgressComplete('Đã ghi nhận đơn hàng!');
         return;
       }
 
       setProgressMessage(`Đang đồng bộ Shopee: 0/${total} đơn`);
       const finalJob = await pollShipJobUntilDone(jobId, total, () => {
-        clearShipProgressOverlay();
         showToast(`Xác nhận thành công — đang mở vận đơn in...`);
       });
       await finishShipJobResult(finalJob, queuedOrders.length, total);
+      markProgressComplete('Xác nhận & in đơn hoàn tất!');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
       if (onRefreshOrders) await onRefreshOrders();
-    } finally {
       clearShipProgressOverlay();
     }
   };
@@ -1210,7 +1301,7 @@ export default function OrderManager({
   // Filter logic
   const filteredOrders = orders.filter(order => {
     // 1. Tab filter
-    if (activeSubTab !== 'all' && activeSubTab !== 'order_products') {
+    if (activeSubTab !== 'all' && activeSubTab !== 'order_products' && activeSubTab !== 'reprint') {
       if (order.status !== activeSubTab) return false;
     }
 
@@ -1314,7 +1405,10 @@ export default function OrderManager({
 
     setIsBulkPrinting(true);
     if (shopeeAll.length > 0) {
-      setProgressMessage('Đang kết nối Shopee và tải tài liệu in về hosting...');
+      setProgressDone(false);
+      setProgressTotal(shopeeAll.length);
+      setProgressCompleted(0);
+      setProgressMessage(`Đang tải vận đơn: 0/${shopeeAll.length} đơn...`);
     }
     try {
       if (shopeeAll.length > 0) {
@@ -1326,11 +1420,23 @@ export default function OrderManager({
           status: 'success',
           message: `[SHOPEE API] Đang gọi v2.logistics.create_shipping_document + download_shipping_document để lấy vận đơn thật cho ${shopeeAll.length} đơn hàng.`
         });
-        const result = await printShopeeDocuments(shopeeAll);
+        const result = await printShopeeDocuments(shopeeAll, {
+          onProgress: (completed, total) => {
+            setProgressCompleted(completed);
+            setProgressTotal(total);
+            setProgressMessage(
+              completed >= total
+                ? 'Hoàn tất — đang mở PDF vận đơn...'
+                : `Đang tải vận đơn từ Shopee: ${completed}/${total} đơn...`
+            );
+          },
+        });
         if (!result.success) {
           showToast(`In vận đơn Shopee thất bại: ${result.message}`);
-        } else if (result.message) {
-          showToast(result.message);
+          clearShipProgressOverlay();
+        } else {
+          if (result.message) showToast(result.message);
+          markProgressComplete('In vận đơn thành công!');
         }
       }
       // Non-Shopee (manual/tiktok) orders don't have a real Shopee AWB — show the mock preview instead.
@@ -1340,7 +1446,6 @@ export default function OrderManager({
       }
     } finally {
       setIsBulkPrinting(false);
-      setProgressMessage(null);
     }
   };
 
@@ -1459,7 +1564,10 @@ export default function OrderManager({
     // label to be generated. If it doesn't, Shopee's own error message (surfaced
     // in the alert below) explains why — no more local pre-check blocking the request.
     setPrintingOrderId(order.id);
-    setProgressMessage('Đang kết nối Shopee và tải tài liệu in về hosting...');
+    setProgressDone(false);
+    setProgressTotal(1);
+    setProgressCompleted(0);
+    setProgressMessage('Đang tải vận đơn: 0/1 đơn...');
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -1469,15 +1577,90 @@ export default function OrderManager({
       message: `[SHOPEE API] Đang tạo & tải vận đơn thật (AWB) cho đơn ${order.orderSn}.`
     });
     try {
-      const result = await printShopeeDocuments([order.id]);
+      const result = await printShopeeDocuments([order.id], {
+        onProgress: (completed, total) => {
+          setProgressCompleted(completed);
+          setProgressTotal(total);
+          setProgressMessage(
+            completed >= total ? 'Hoàn tất — đang mở PDF...' : `Đang tải vận đơn: ${completed}/${total} đơn...`
+          );
+        },
+      });
       if (!result.success) {
         alert(`In vận đơn thất bại cho đơn ${order.orderSn}: ${result.message}`);
+        clearShipProgressOverlay();
+      } else {
+        markProgressComplete('In vận đơn thành công!');
       }
     } catch (err) {
       alert('Không thể kết nối API in vận đơn Shopee. Vui lòng thử lại.');
+      clearShipProgressOverlay();
     } finally {
       setPrintingOrderId(null);
-      setProgressMessage(null);
+    }
+  };
+
+  const handleReprintOrder = async () => {
+    const query = reprintOrderSn.trim();
+    if (!query) {
+      showToast('Vui lòng nhập mã đơn hàng.');
+      return;
+    }
+
+    const normalized = query.toUpperCase();
+    const order = orders.find(
+      (o) =>
+        String(o.orderSn || '').toUpperCase() === normalized ||
+        o.id === query ||
+        o.id === `shopee-${query}` ||
+        String(o.id).toUpperCase() === normalized
+    );
+
+    if (!order) {
+      showToast(`Không tìm thấy đơn #${query} trong hệ thống.`);
+      return;
+    }
+
+    if (order.channel !== 'shopee' || !order.shopId) {
+      setBulkPrintOrders([order]);
+      showToast(`Đơn #${order.orderSn} không phải Shopee — mở phiếu in mẫu.`);
+      return;
+    }
+
+    setIsReprintSearching(true);
+    setProgressDone(false);
+    setProgressTotal(1);
+    setProgressCompleted(0);
+    setProgressMessage(`Đang tìm & tải vận đơn đơn #${order.orderSn}...`);
+
+    onAddLog({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      channel: 'shopee',
+      type: 'stock_sync',
+      status: 'success',
+      message: `[IN LẠI ĐƠN] Đang lấy vận đơn cache cho đơn ${order.orderSn} (không phụ thuộc trạng thái tab).`,
+    });
+
+    try {
+      const result = await printShopeeDocuments([order.id], {
+        onProgress: (completed, total) => {
+          setProgressCompleted(completed);
+          setProgressTotal(total);
+          setProgressMessage(`Đang tải vận đơn: ${completed}/${total} đơn...`);
+        },
+      });
+      if (!result.success) {
+        showToast(result.message || `Không in lại được vận đơn đơn #${order.orderSn}.`);
+        clearShipProgressOverlay();
+      } else {
+        markProgressComplete(`Đã mở vận đơn đơn #${order.orderSn}!`);
+      }
+    } catch {
+      showToast('Không thể kết nối API in vận đơn. Vui lòng thử lại.');
+      clearShipProgressOverlay();
+    } finally {
+      setIsReprintSearching(false);
     }
   };
 
@@ -2276,6 +2459,18 @@ export default function OrderManager({
         </button>
 
         <button
+          onClick={() => setActiveSubTab('reprint')}
+          className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'reprint'
+              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20'
+              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <Printer className="w-3.5 h-3.5" />
+          <span>In lại đơn</span>
+        </button>
+
+        <button
           onClick={() => setActiveSubTab('return_received')}
           className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'return_received' 
@@ -2291,7 +2486,7 @@ export default function OrderManager({
       </div>
 
       {/* 3. SCANNERS PANEL: NEW DUAL BARCODE SCANNERS (HANDOVER + RETURNS) */}
-      {!focusScanner && activeSubTab !== 'order_products' && (
+      {!focusScanner && activeSubTab !== 'order_products' && activeSubTab !== 'reprint' && (
         <div className="om-orders-mobile-hide-scanner-panel bg-white p-5 rounded-3xl border border-gray-100 shadow-sm space-y-4">
           <div className="flex border-b border-gray-100">
             <button
@@ -2383,7 +2578,7 @@ export default function OrderManager({
       )}
 
       {/* 4. FILTER BOX & SEARCH TAGS (Mockup faithful design) */}
-      {activeSubTab !== 'order_products' && (
+      {activeSubTab !== 'order_products' && activeSubTab !== 'reprint' && (
       <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs space-y-4">
         <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
           
@@ -2519,7 +2714,7 @@ export default function OrderManager({
       )}
 
       {/* 5. BULK ACTION BAR ("Chọn thao tác" dropdown matching mockup perfectly) */}
-      {activeSubTab !== 'order_products' && (
+      {activeSubTab !== 'order_products' && activeSubTab !== 'reprint' && (
       <div className="om-orders-mobile-hide-bulk-bar bg-slate-50 border border-slate-200/80 p-3 max-md:p-2.5 rounded-2xl flex items-center justify-between gap-4 max-md:gap-2">
         <div className="flex items-center gap-3">
           <button 
@@ -2701,6 +2896,51 @@ export default function OrderManager({
               </div>
             </>
           )}
+        </div>
+      ) : activeSubTab === 'reprint' ? (
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
+          <div className="px-5 py-4 border-b border-gray-100 bg-blue-50/40">
+            <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2">
+              <Printer className="w-4 h-4 text-blue-600" />
+              In lại đơn
+            </h3>
+            <p className="text-[11px] text-gray-500 mt-1">
+              Nhập mã đơn hàng để tìm và in lại vận đơn PDF từ bộ nhớ cache — không phụ thuộc trạng thái tab hiện tại.
+            </p>
+          </div>
+          <div className="p-6 max-w-xl">
+            <label className="block text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">
+              Mã đơn hàng (Order ID)
+            </label>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                value={reprintOrderSn}
+                onChange={(e) => setReprintOrderSn(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleReprintOrder();
+                }}
+                placeholder="VD: 250712ABCDEF"
+                className="flex-1 px-4 py-3 bg-gray-50 rounded-xl border border-gray-200 focus:border-blue-500 focus:bg-white text-sm outline-none font-mono font-semibold"
+              />
+              <button
+                type="button"
+                onClick={() => void handleReprintOrder()}
+                disabled={isReprintSearching || !reprintOrderSn.trim()}
+                className="px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 shrink-0"
+              >
+                {isReprintSearching ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Printer className="w-4 h-4" />
+                )}
+                <span>{isReprintSearching ? 'Đang tìm...' : 'Tìm và In'}</span>
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-3 leading-relaxed">
+              Hệ thống sẽ lấy vận đơn đã lưu trên server (nếu có) hoặc tải mới từ Shopee. Áp dụng cho mọi đơn Shopee trong cơ sở dữ liệu.
+            </p>
+          </div>
         </div>
       ) : (
       <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
@@ -3196,14 +3436,20 @@ export default function OrderManager({
       {progressMessage && (
         <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-100 animate-in fade-in">
           <div className="bg-white rounded-3xl max-w-sm w-full p-8 shadow-2xl flex flex-col items-center gap-4 text-center">
-            <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
+            {progressDone ? (
+              <CheckCircle2 className="w-10 h-10 text-emerald-600" />
+            ) : (
+              <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
+            )}
             {progressTotal > 0 && (
-              <p className="text-2xl font-black text-blue-700 tabular-nums">
+              <p className={`text-2xl font-black tabular-nums ${progressDone ? 'text-emerald-700' : 'text-blue-700'}`}>
                 {progressCompleted}/{progressTotal}
               </p>
             )}
             <p className="text-sm font-extrabold text-gray-800 leading-relaxed">{progressMessage}</p>
-            <p className="text-[11px] text-gray-400 font-semibold">Vui lòng không bấm liên tục — hệ thống đang xử lý phía sau.</p>
+            <p className="text-[11px] text-gray-400 font-semibold">
+              {progressDone ? 'Modal sẽ tự đóng sau vài giây...' : 'Vui lòng không bấm liên tục — hệ thống đang xử lý phía sau.'}
+            </p>
           </div>
         </div>
       )}
