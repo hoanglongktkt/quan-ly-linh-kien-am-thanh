@@ -39,7 +39,7 @@ SetEnv SHOPEE_PARTNER_KEY shpk446c744962586c74506e486e7a4d4c676d527671496e447747
 # CORS — cho phép frontend Vercel gọi API trực tiếp (fallback nếu edge rewrite không dùng)
 <IfModule mod_headers.c>
   SetEnvIf Origin "^https://([a-z0-9-]+\.)*vercel\.app$" CORS=1
-  SetEnvIf Origin "^https://quanly\.linhkienamthanh\.net$" CORS=1
+  SetEnvIf Origin "^https://([a-z0-9-]+\.)*linhkienamthanh\.net$" CORS=1
   Header always set Access-Control-Allow-Origin "%{HTTP_ORIGIN}e" env=CORS
   Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS" env=CORS
   Header always set Access-Control-Allow-Headers "Content-Type, Authorization" env=CORS

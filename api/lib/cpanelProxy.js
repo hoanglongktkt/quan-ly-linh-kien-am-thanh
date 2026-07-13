@@ -25,14 +25,39 @@ const LONG_RUNNING_PREFIXES = [
   'catalog/wipe-all',
   'shopee/ship-order',
   'shopee/print-document',
+  'settings/shop-connection-status',
 ];
+
+const RETRYABLE_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'AbortError',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_SOCKET',
+  'ENOTFOUND',
+]);
 
 export function resolveProxyTimeoutMs(pathPart) {
   const p = String(pathPart || '').replace(/^\/+/, '');
   if (LONG_RUNNING_PREFIXES.some((prefix) => p === prefix || p.startsWith(`${prefix}/`))) {
-    return 120_000;
+    return 240_000;
   }
-  return 45_000;
+  return 60_000;
+}
+
+async function fetchBackendWithRetry(label, url, init, timeoutMs, maxAttempts = 3) {
+  let lastResult = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    lastResult = await fetchWithDiagnostics(`${label}#${attempt}`, url, init, timeoutMs);
+    if (lastResult.ok) return lastResult;
+    const code = lastResult.error?.code;
+    const retryable = code && RETRYABLE_ERROR_CODES.has(String(code));
+    if (!retryable || attempt >= maxAttempts) return lastResult;
+    await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+  }
+  return lastResult;
 }
 
 export function buildCpanelTarget(backendUrl, pathPart, queryWithoutPath) {
@@ -62,7 +87,10 @@ export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
 
   const target = buildCpanelTarget(backend.url, pathPart, req.query);
 
-  const headers = {};
+  const headers = {
+    'User-Agent': 'OmniSales-Vercel-Proxy/1.0 (+https://quanly.linhkienamthanh.net)',
+    'X-Proxy-Source': 'vercel',
+  };
   for (const [key, value] of Object.entries(req.headers || {})) {
     if (HOP_HEADERS.has(key.toLowerCase())) continue;
     if (value != null) headers[key] = value;
@@ -79,7 +107,7 @@ export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
   }
 
   console.log('[API Proxy]', req.method, target, `(timeout=${timeoutMs}ms)`);
-  const result = await fetchWithDiagnostics('[API Proxy]', target, {
+  const result = await fetchBackendWithRetry('[API Proxy]', target, {
     method: req.method,
     headers,
     body,

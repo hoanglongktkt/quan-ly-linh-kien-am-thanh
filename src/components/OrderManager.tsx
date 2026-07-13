@@ -1103,9 +1103,9 @@ export default function OrderManager({
         method: 'POST',
         headers: authHeaders(),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const parts = [data?.error, data?.detail, data?.hint].filter(Boolean);
+        const parts = [data?.error, data?.detail, data?.hint, data?.causeMessage].filter(Boolean);
         throw new Error(parts.join(' — ') || 'Đồng bộ đơn hàng Shopee thất bại.');
       }
       if (data.warning) {

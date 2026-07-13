@@ -304,9 +304,10 @@ export default function App() {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data?.error || 'Kéo đơn hàng thất bại.');
+        const parts = [data?.error, data?.detail, data?.hint, data?.causeMessage].filter(Boolean);
+        throw new Error(parts.join(' — ') || data?.error || 'Kéo đơn hàng thất bại.');
       }
       if (Array.isArray(data.orders)) {
         const sanitized = sanitizeOrders(data.orders);
