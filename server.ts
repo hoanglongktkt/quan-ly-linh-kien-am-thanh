@@ -34,12 +34,123 @@ function resolveAppRoot(): string {
 }
 
 const APP_ROOT = resolveAppRoot();
-const SHIPPING_DOCS_DIR = path.join(APP_ROOT, "storage", "labels");
-try {
-  fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
-} catch {
-  /* ignore */
+/** Thư mục tập trung lưu PDF vận đơn (tương đương public/waybills/ trên hosting, nhưng ngoài Vite publicDir). */
+const WAYBILLS_DIR = path.join(APP_ROOT, "storage", "waybills");
+const LEGACY_WAYBILLS_DIR = path.join(APP_ROOT, "storage", "labels");
+const SHIPPING_DOCS_DIR = WAYBILLS_DIR;
+const WAYBILLS_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
+const WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
+
+function ensureWaybillsDir(): void {
+  try {
+    fs.mkdirSync(WAYBILLS_DIR, { recursive: true });
+  } catch {
+    /* ignore */
+  }
 }
+
+function migrateLegacyWaybillFiles(): void {
+  try {
+    if (!fs.existsSync(LEGACY_WAYBILLS_DIR)) return;
+    ensureWaybillsDir();
+    for (const name of fs.readdirSync(LEGACY_WAYBILLS_DIR)) {
+      if (!WAYBILL_FILE_RE.test(name)) continue;
+      const src = path.join(LEGACY_WAYBILLS_DIR, name);
+      const dst = path.join(WAYBILLS_DIR, name);
+      if (fs.existsSync(dst)) continue;
+      try {
+        fs.renameSync(src, dst);
+      } catch {
+        try {
+          fs.copyFileSync(src, dst);
+        } catch {
+          /* ignore per-file */
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[Waybills] Không migrate được thư mục cũ storage/labels:", err);
+  }
+}
+
+type WaybillCleanupResult = { scanned: number; deleted: number; skipped: number; errors: number };
+
+function cleanupExpiredWaybills(
+  dir: string = WAYBILLS_DIR,
+  maxAgeMs: number = WAYBILLS_MAX_AGE_MS
+): WaybillCleanupResult {
+  const result: WaybillCleanupResult = { scanned: 0, deleted: 0, skipped: 0, errors: 0 };
+  try {
+    if (!fs.existsSync(dir)) return result;
+    const now = Date.now();
+    for (const name of fs.readdirSync(dir)) {
+      if (!WAYBILL_FILE_RE.test(name)) continue;
+      const full = path.join(dir, name);
+      result.scanned += 1;
+      try {
+        const stat = fs.statSync(full);
+        if (!stat.isFile()) {
+          result.skipped += 1;
+          continue;
+        }
+        const ageMs = now - stat.mtimeMs;
+        if (ageMs > maxAgeMs) {
+          fs.unlinkSync(full);
+          result.deleted += 1;
+          console.log(
+            `[Waybills Cleanup] Đã xóa ${name} (tuổi ${Math.floor(ageMs / 86400000)} ngày, dir=${path.basename(dir)})`
+          );
+        }
+      } catch {
+        result.errors += 1;
+      }
+    }
+  } catch (err) {
+    console.warn(`[Waybills Cleanup] Quét thư mục thất bại (${dir}):`, err);
+  }
+  if (result.deleted > 0) {
+    console.log(
+      `[Waybills Cleanup] Hoàn tất: scanned=${result.scanned} deleted=${result.deleted} errors=${result.errors}`
+    );
+  }
+  return result;
+}
+
+let waybillCleanupRunning = false;
+
+function scheduleWaybillsCleanup(): void {
+  if (waybillCleanupRunning) return;
+  waybillCleanupRunning = true;
+  setImmediate(() => {
+    try {
+      ensureWaybillsDir();
+      const primary = cleanupExpiredWaybills(WAYBILLS_DIR);
+      const legacy =
+        fs.existsSync(LEGACY_WAYBILLS_DIR) && LEGACY_WAYBILLS_DIR !== WAYBILLS_DIR
+          ? cleanupExpiredWaybills(LEGACY_WAYBILLS_DIR)
+          : { scanned: 0, deleted: 0, skipped: 0, errors: 0 };
+      // #region agent log
+      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "809c09" },
+        body: JSON.stringify({
+          sessionId: "809c09",
+          runId: "waybills-cleanup",
+          hypothesisId: "cleanup",
+          location: "server.ts:scheduleWaybillsCleanup",
+          message: "waybills auto-cleanup finished",
+          data: { primary, legacy, dir: WAYBILLS_DIR },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+    } finally {
+      waybillCleanupRunning = false;
+    }
+  });
+}
+
+ensureWaybillsDir();
 
 function safeLabelFilename(raw: string): string | null {
   const base = path.basename(String(raw || "").trim());
@@ -5350,8 +5461,10 @@ async function startServer() {
   // NOTE: deliberately NOT named "public/" — Vite treats a root-level "public/"
   // folder as its own publicDir and copies its entire contents into dist/ on
   // every `npm run build`, which would bloat/leak generated AWB files into the
-  // production bundle. "storage/labels" is served via /api/public/labels (primary) and /labels fallback.
-  fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
+  // production bundle. "storage/waybills" is served via /api/public/labels (primary) and /labels fallback.
+  ensureWaybillsDir();
+  migrateLegacyWaybillFiles();
+  scheduleWaybillsCleanup();
 
   app.get("/labels/:filename", (req, res, next) => {
     const result = serveLabelPdfFromDisk(req.params.filename, res);
@@ -5431,7 +5544,7 @@ async function startServer() {
     }
     fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
     fs.writeFileSync(path.join(SHIPPING_DOCS_DIR, filename), buffer);
-    console.log(`[Shopee Print] Đã lưu vận đơn (${buffer.length} bytes) → storage/labels/${filename}`);
+    console.log(`[Shopee Print] Đã lưu vận đơn (${buffer.length} bytes) → storage/waybills/${filename}`);
     return filename;
   }
 
@@ -6119,6 +6232,8 @@ async function startServer() {
     saveOrders(updatedOrders);
 
     console.log(`[Shopee Print] Ho\xE0n t\u1EA5t: ${documents.filter(d => d.url).length}/${Object.keys(groups).length} nh\xF3m shop t\u1EA1o v\u1EAD n th\xE0nh c\xF4ng.`);
+
+    scheduleWaybillsCleanup();
 
     return res.json({
       mergedUrl: primaryUrl,
