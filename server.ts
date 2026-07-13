@@ -288,12 +288,7 @@ function saveShopeeTokens(tokensToWrite: Record<string, any>): boolean {
         ...record,
         shop_id,
       };
-      console.log(
-        "DEBUG SAVE: Saving data for shop:",
-        shop_id,
-        "Full Data:",
-        JSON.stringify(tokensData[shop_id]),
-      );
+      console.log(`[Shopee Tokens] UPSERT shop_id=${shop_id}`);
     }
 
     const keysAfter = Object.keys(tokensData);
@@ -622,7 +617,7 @@ async function completeShopeeOAuthFlow(code: string, params: ShopeeOAuthCallback
     });
     tokenResult.saved_shop_ids = savedIds;
     if (savedIds.length > 0) {
-      syncOAuthShopsToChannelSettings(savedIds);
+      syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || undefined });
     }
   }
 
@@ -2966,14 +2961,21 @@ function logOAuthSaveError(context: string, error: any): void {
 }
 
 function normalizeConnectedShop(raw: any): Record<string, any> | null {
-  const platform = String(raw?.platform || "").trim();
+  if (!raw || typeof raw !== "object") return null;
+  const platform = String(raw?.platform || raw?.type || "").trim().toLowerCase();
   if (!["shopee", "tiktok", "woocommerce"].includes(platform)) return null;
-  const shopId = String(raw?.shopId || "").trim();
-  const shopName = String(raw?.shopName || "").trim();
-  const apiKey = String(raw?.apiKey || "").trim();
-  if (!shopId || !shopName || !apiKey) return null;
+  const shopId = String(raw?.shopId ?? raw?.shop_id ?? "").trim();
+  const shopName = String(raw?.shopName ?? raw?.shop_name ?? raw?.name ?? "").trim();
+  const apiKey = String(raw?.apiKey ?? raw?.api_key ?? raw?.partner_id ?? "").trim();
+  if (!shopId || !shopName || !apiKey) {
+    console.warn(
+      "[Channel Settings] Shop thiếu trường bắt buộc:",
+      JSON.stringify({ platform, shopId: shopId || null, shopName: shopName || null, hasApiKey: Boolean(apiKey) }),
+    );
+    return null;
+  }
   const shop: Record<string, any> = {
-    id: String(raw?.id || `shop-${Date.now()}`),
+    id: String(raw?.id || `shop-${platform}-${shopId}`),
     platform,
     shopId,
     shopName,
@@ -2986,14 +2988,72 @@ function normalizeConnectedShop(raw: any): Record<string, any> | null {
   return shop;
 }
 
+function shopListKey(shop: Record<string, any>): string {
+  const platform = String(shop?.platform || "").trim().toLowerCase();
+  const shopId = normalizeShopIdKey(shop?.shopId) || String(shop?.shopId ?? "").trim();
+  return `${platform}:${shopId}`;
+}
+
+/** UPSERT danh sách shop — giữ metadata cũ (id, shopName, apiKey) khi OAuth cập nhật token. */
+function upsertShopsInChannelSettings(
+  existing: Record<string, any>[] = [],
+  incoming: Record<string, any>[] = [],
+): Record<string, any>[] {
+  const map = new Map<string, Record<string, any>>();
+
+  for (const raw of existing) {
+    const normalized = normalizeConnectedShop(raw);
+    if (!normalized) continue;
+    map.set(shopListKey(normalized), normalized);
+  }
+
+  for (const raw of incoming) {
+    const normalized = normalizeConnectedShop(raw);
+    if (!normalized) continue;
+    const key = shopListKey(normalized);
+    const prev = map.get(key);
+    if (prev) {
+      map.set(key, {
+        ...prev,
+        ...normalized,
+        id: prev.id || normalized.id,
+        shopName: normalized.shopName || prev.shopName,
+        apiKey: normalized.apiKey || prev.apiKey,
+        apiSecret: normalized.apiSecret ?? prev.apiSecret,
+        wooUrl: normalized.wooUrl ?? prev.wooUrl,
+        connected: normalized.connected ?? prev.connected,
+        lastSynced: normalized.lastSynced || prev.lastSynced,
+      });
+    } else {
+      map.set(key, normalized);
+    }
+  }
+
+  return dedupeShopsByPlatformId([...map.values()]);
+}
+
+function dedupeShopsByPlatformId(shops: Record<string, any>[]): Record<string, any>[] {
+  const map = new Map<string, Record<string, any>>();
+  for (const shop of shops) {
+    if (!shop) continue;
+    const key = `${shop.platform}:${normalizeShopIdKey(shop.shopId) || String(shop.shopId)}`;
+    map.set(key, shop);
+  }
+  return [...map.values()];
+}
+
 function loadChannelSettings(): Record<string, any> {
   try {
     if (!fs.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
     const raw = fs.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
-    const shops = Array.isArray(parsed?.shops)
-      ? parsed.shops.map(normalizeConnectedShop).filter(Boolean)
-      : [];
+    const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
+    const shops = upsertShopsInChannelSettings([], rawShops);
+    if (rawShops.length > shops.length) {
+      console.warn(
+        `[Channel Settings] ${rawShops.length - shops.length} shop bị loại khi đọc file (schema cũ/lỗi)`,
+      );
+    }
     return { ...DEFAULT_CHANNEL_SETTINGS, ...parsed, shops };
   } catch (error: any) {
     logOAuthSaveError("loadChannelSettings", error);
@@ -3004,13 +3064,14 @@ function loadChannelSettings(): Record<string, any> {
 function saveChannelSettings(settings: Record<string, any>): boolean {
   try {
     ensureDataDirs();
-    const shops = Array.isArray(settings?.shops)
-      ? settings.shops.map(normalizeConnectedShop).filter(Boolean)
-      : [];
-    const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...settings, shops };
+    const onDisk = loadChannelSettings();
+    const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
+    const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
+    const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
     fs.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
-      `[Channel Settings] Saved ${shops.length} shop(s) → ${CHANNEL_SETTINGS_PATH}`,
+      `[Channel Settings] UPSERT ${shops.length} shop(s) → ${CHANNEL_SETTINGS_PATH}`,
+      shops.map((s) => s.shopId).join(", "),
     );
     return true;
   } catch (error: any) {
@@ -3019,35 +3080,45 @@ function saveChannelSettings(settings: Record<string, any>): boolean {
   }
 }
 
-/** Sau OAuth thành công — cập nhật connected/lastSynced cho shop đã có, hoặc thêm shop Shopee mới. */
-function syncOAuthShopsToChannelSettings(savedShopIds: string[]): void {
-  if (!savedShopIds.length) return;
+/** Sau OAuth — UPSERT shop theo shop_id, giữ tên/API key người dùng đã nhập. */
+function syncOAuthShopsToChannelSettings(
+  savedShopIds: string[],
+  opts?: { expectedShopId?: string },
+): void {
+  if (!savedShopIds.length && !opts?.expectedShopId) return;
   try {
     const settings = loadChannelSettings();
-    const shops = [...(settings.shops || [])];
     const now = new Date().toISOString();
+    const incoming: Record<string, any>[] = [];
 
-    for (const sid of savedShopIds) {
-      const key = normalizeShopIdKey(sid);
-      if (!key) continue;
-      const idx = shops.findIndex((s: any) => normalizeShopIdKey(s?.shopId) === key);
-      if (idx >= 0) {
-        shops[idx] = { ...shops[idx], connected: true, lastSynced: now };
-      } else {
-        shops.push({
-          id: `shop-shopee-${key}`,
-          platform: "shopee",
-          shopName: `Shopee ${key}`,
-          shopId: key,
-          apiKey: SHOPEE_PARTNER_ID || "oauth",
-          connected: true,
-          lastSynced: now,
-        });
-      }
+    const ids = new Set<string>(savedShopIds.map((id) => normalizeShopIdKey(id)).filter(Boolean));
+    const expected = normalizeShopIdKey(opts?.expectedShopId);
+    if (expected) ids.add(expected);
+
+    for (const key of ids) {
+      incoming.push({
+        platform: "shopee",
+        shopId: key,
+        shopName: `Shopee ${key}`,
+        apiKey: SHOPEE_PARTNER_ID || "oauth",
+        connected: savedShopIds.some((id) => normalizeShopIdKey(id) === key),
+        lastSynced: now,
+        id: `shop-shopee-${key}`,
+      });
     }
 
+    const shops = upsertShopsInChannelSettings(settings.shops || [], incoming);
     if (!saveChannelSettings({ ...settings, shops })) {
       console.error("[Shopee OAuth] syncOAuthShopsToChannelSettings: ghi channel_settings.json thất bại");
+      return;
+    }
+
+    const verify = loadChannelSettings();
+    const verifyIds = (verify.shops || []).map((s: any) => String(s.shopId));
+    for (const key of ids) {
+      if (!verifyIds.includes(key)) {
+        console.error(`[Shopee OAuth] UPSERT xong nhưng shop_id=${key} KHÔNG có trong file sau khi đọc lại`);
+      }
     }
   } catch (error: any) {
     logOAuthSaveError("syncOAuthShopsToChannelSettings", error);
@@ -5912,17 +5983,20 @@ async function startServer() {
           message: "Thiếu trường settings trong body",
         });
       }
-      const shops = Array.isArray(incoming.shops) ? incoming.shops : [];
-      const normalizedShops = shops.map(normalizeConnectedShop).filter(Boolean);
-      if (shops.length > 0 && normalizedShops.length === 0) {
+      const onDisk = loadChannelSettings();
+      const incomingShops = Array.isArray(incoming.shops) ? incoming.shops : [];
+      const mergedShops = upsertShopsInChannelSettings(onDisk.shops || [], incomingShops);
+
+      if (incomingShops.length > 0 && mergedShops.length === 0) {
         return res.status(400).json({
           success: false,
           error: "invalid_shop_schema",
           message: "Dữ liệu shop thiếu trường bắt buộc (platform, shopId, shopName, apiKey)",
         });
       }
-      const merged = { ...DEFAULT_CHANNEL_SETTINGS, ...incoming, shops: normalizedShops };
-      if (!saveChannelSettings(merged)) {
+
+      const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...incoming, shops: mergedShops };
+      if (!saveChannelSettings(payload)) {
         return res.status(500).json({
           success: false,
           error: "save_failed",
@@ -5930,6 +6004,10 @@ async function startServer() {
         });
       }
       const saved = loadChannelSettings();
+      console.log(
+        "[Channel Settings] PUT OK — shop_ids:",
+        (saved.shops || []).map((s: any) => s.shopId).join(", ") || "(trống)",
+      );
       return res.json({ success: true, settings: saved, shopCount: saved.shops?.length ?? 0 });
     } catch (error: any) {
       logOAuthSaveError("PUT /api/settings/channels", error);

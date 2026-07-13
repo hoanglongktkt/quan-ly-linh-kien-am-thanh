@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkUpdatePayload, BulkSaveProductUpdate, ConnectedShop } from './types';
 import { 
   INITIAL_SYNC_LOGS,
@@ -54,7 +54,8 @@ function resolveTabFromPath(): string {
 
 const DEMO_SHOP_INTERNAL_IDS = new Set(['shop-shopee-1', 'shop-shopee-2', 'shop-tiktok-1', 'shop-woo-1']);
 
-function stripDemoShops(shops: ConnectedShop[] = []) {
+/** Chỉ lọc shop seed demo cũ — không lọc theo shopId thật (VD: 4127421). */
+function stripLegacyDemoShops(shops: ConnectedShop[] = []) {
   return shops.filter((s) => {
     if (DEMO_SHOP_INTERNAL_IDS.has(s.id)) return false;
     if (s.shopName === 'LTAT' || s.shopName.includes('thongtinsolutions')) return false;
@@ -62,6 +63,14 @@ function stripDemoShops(shops: ConnectedShop[] = []) {
     if (s.apiKey?.includes('demo')) return false;
     return true;
   });
+}
+
+function mergeChannelSettings(raw: Partial<ChannelSettings> | null | undefined): ChannelSettings {
+  return {
+    ...emptyChannelSettings(),
+    ...raw,
+    shops: Array.isArray(raw?.shops) ? raw.shops : [],
+  };
 }
 
 function emptyChannelSettings(): ChannelSettings {
@@ -76,12 +85,16 @@ function emptyChannelSettings(): ChannelSettings {
   };
 }
 
-function mergeChannelSettings(raw: Partial<ChannelSettings> | null | undefined): ChannelSettings {
-  return {
-    ...emptyChannelSettings(),
-    ...raw,
-    shops: stripDemoShops(raw?.shops ?? []),
-  };
+function mergeShopLists(primary: ConnectedShop[] = [], secondary: ConnectedShop[] = []): ConnectedShop[] {
+  const map = new Map<string, ConnectedShop>();
+  for (const s of primary) {
+    map.set(`${s.platform}:${String(s.shopId)}`, s);
+  }
+  for (const s of secondary) {
+    const key = `${s.platform}:${String(s.shopId)}`;
+    if (!map.has(key)) map.set(key, s);
+  }
+  return [...map.values()];
 }
 
 export default function App() {
@@ -107,11 +120,17 @@ export default function App() {
     const saved = safeGetJson<ChannelSettings | null>('omni_settings', null);
     if (!saved) return emptyChannelSettings();
     try {
-      return mergeChannelSettings(saved);
+      return mergeChannelSettings({
+        ...saved,
+        shops: stripLegacyDemoShops(saved.shops ?? []),
+      });
     } catch {
       return emptyChannelSettings();
     }
   });
+
+  const channelSettingsFetchRef = useRef<AbortController | null>(null);
+  const channelSettingsSaveAtRef = useRef(0);
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
 
@@ -158,7 +177,7 @@ export default function App() {
   useEffect(() => {
     const raw = safeGetJson<ChannelSettings | null>('omni_settings', null);
     const rawShops = raw?.shops ?? [];
-    const stripped = stripDemoShops(rawShops);
+    const stripped = stripLegacyDemoShops(rawShops);
     // #region agent log
     fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:mountLoadSettings',message:'settings loaded on mount',data:{rawShopsCount:rawShops.length,afterStripCount:stripped.length,strippedIds:rawShops.filter(s=>!stripped.some(x=>x.id===s.id)).map(s=>s.id)},timestamp:Date.now(),hypothesisId:'H2',runId:'post-fix'})}).catch(()=>{});
     // #endregion
@@ -273,15 +292,28 @@ export default function App() {
   const persistChannelSettings = async (next: ChannelSettings): Promise<boolean> => {
     const token = localStorage.getItem('admin_token');
     if (!token) return false;
+    channelSettingsFetchRef.current?.abort();
+    const expectedShopIds = (next.shops ?? []).map((s) => String(s.shopId));
     try {
       const response = await fetch('/api/settings/channels', {
         method: 'PUT',
         headers: apiAuthHeaders(),
         body: JSON.stringify({ settings: next }),
       });
-      const data = await parseJsonResponse<{ settings?: ChannelSettings; message?: string; error?: string }>(response);
+      const data = await parseJsonResponse<{ settings?: ChannelSettings; message?: string; error?: string; shopCount?: number }>(response);
       if (response.ok && data?.settings) {
-        setSettings(mergeChannelSettings(data.settings));
+        const merged = mergeChannelSettings(data.settings);
+        const returnedIds = (merged.shops ?? []).map((s) => String(s.shopId));
+        const missing = expectedShopIds.filter((id) => !returnedIds.includes(id));
+        // #region agent log
+        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:persistChannelSettings',message:'PUT channels response',data:{expectedShopIds,returnedIds,missing,shopCount:merged.shops?.length??0},timestamp:Date.now(),hypothesisId:'H2-H6',runId:'post-fix-2'})}).catch(()=>{});
+        // #endregion
+        if (missing.length > 0) {
+          console.error('[Channel Settings] Server thiếu shop sau khi lưu:', missing);
+          return false;
+        }
+        channelSettingsSaveAtRef.current = Date.now();
+        setSettings(merged);
         return true;
       }
       console.error('[Channel Settings] PUT failed:', data?.error || data?.message);
@@ -295,24 +327,36 @@ export default function App() {
   const fetchChannelSettings = async () => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
+    channelSettingsFetchRef.current?.abort();
+    const controller = new AbortController();
+    channelSettingsFetchRef.current = controller;
+    const fetchStartedAt = Date.now();
     try {
       const response = await fetch('/api/settings/channels', {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
       });
+      if (controller.signal.aborted) return;
+      if (channelSettingsSaveAtRef.current > fetchStartedAt) return;
       if (!response.ok) return;
       const data = await parseJsonResponse<{ settings?: ChannelSettings }>(response);
-      const serverShops = stripDemoShops(data.settings?.shops ?? []);
-      if (serverShops.length > 0) {
-        setSettings(mergeChannelSettings(data.settings));
-        return;
-      }
+      if (controller.signal.aborted) return;
+      if (channelSettingsSaveAtRef.current > fetchStartedAt) return;
+
+      const serverMerged = mergeChannelSettings(data.settings);
+      setSettings((prev) => ({
+        ...serverMerged,
+        shops: mergeShopLists(serverMerged.shops ?? [], prev.shops ?? []),
+      }));
+
       const local = safeGetJson<ChannelSettings | null>('omni_settings', null);
-      const localShops = stripDemoShops(local?.shops ?? []);
-      if (localShops.length > 0) {
-        await persistChannelSettings(mergeChannelSettings(local));
+      const localShops = stripLegacyDemoShops(local?.shops ?? []);
+      if ((serverMerged.shops ?? []).length === 0 && localShops.length > 0) {
+        await persistChannelSettings(mergeChannelSettings({ ...local, shops: localShops }));
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
       console.error('Fetch channel settings error:', err);
     }
   };
