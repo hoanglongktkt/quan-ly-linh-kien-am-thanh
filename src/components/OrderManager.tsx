@@ -557,24 +557,34 @@ export default function OrderManager({
     }
   };
 
-  /** In ngay từ buffer base64 (stream API) — ưu tiên hơn fetch URL. */
+  /** Mở PDF — ưu tiên URL tĩnh (CDN/backend cache), không stream base64 qua JSON. */
   const openShopeeLabelFromStream = async (opts: {
     pdfBase64?: string | null;
     pdfFilename?: string | null;
     url?: string | null;
   }) => {
+    if (opts.url) {
+      await openShopeeLabelInNewTab(opts.url);
+      return;
+    }
     const filename = opts.pdfFilename || 'van-don-shopee.pdf';
     if (opts.pdfBase64) {
       openPdfBlobInNewTab(base64ToPdfBlob(opts.pdfBase64), filename);
-      return;
     }
-    if (opts.url) await openShopeeLabelInNewTab(opts.url);
   };
 
-  // Fallback: tải PDF qua URL (/api/labels hoặc cache đĩa).
+  // Mở PDF trực tiếp qua URL tĩnh — trình duyệt tải song song, không proxy buffer qua API JSON.
   const openShopeeLabelInNewTab = async (url: string) => {
     const fullUrl = resolveLabelFetchUrl(url);
     const filename = (decodeURIComponent(fullUrl.split('/').pop() || 'van-don-shopee.pdf')).replace(/\?.*$/, '');
+
+    if (/^https?:\/\//i.test(fullUrl)) {
+      const win = window.open(fullUrl, '_blank', 'noopener,noreferrer');
+      if (win) {
+        showToast('Đã mở vận đơn — bấm In trên trình xem PDF.');
+        return;
+      }
+    }
 
     const openBlob = (blob: Blob) => {
       openPdfBlobInNewTab(blob, filename);
@@ -649,11 +659,11 @@ export default function OrderManager({
       onUpdateOrders(data.orders);
     }
 
-    if (data.pdfBase64) {
+    if (printUrl) {
       await openShopeeLabelFromStream({
-        pdfBase64: data.pdfBase64,
-        pdfFilename: data.pdfFilename,
         url: printUrl,
+        pdfFilename: data.pdfFilename,
+        pdfBase64: data.pdfBase64,
       });
       if (failedDocs.length > 0) {
         return {
@@ -664,20 +674,22 @@ export default function OrderManager({
       return { success: true };
     }
 
-    if (!printUrl) {
-      const detail = failedDocs.map((d) => d.message || d.error).filter(Boolean).join('\n');
-      return { success: false, message: detail || 'Shopee chưa trả về file vận đơn PDF.' };
+    if (data.pdfBase64) {
+      await openShopeeLabelFromStream({
+        pdfBase64: data.pdfBase64,
+        pdfFilename: data.pdfFilename,
+      });
+      if (failedDocs.length > 0) {
+        return {
+          success: true,
+          message: `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
+        };
+      }
+      return { success: true };
     }
 
-    await openShopeeLabelFromStream({ url: printUrl });
-
-    if (failedDocs.length > 0) {
-      return {
-        success: true,
-        message: `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
-      };
-    }
-    return { success: true };
+    const detail = failedDocs.map((d) => d.message || d.error).filter(Boolean).join('\n');
+    return { success: false, message: detail || 'Shopee chưa trả về file vận đơn PDF.' };
   };
 
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,

@@ -58,15 +58,11 @@ export function resolveBackendFileUrl(path: string): string {
 
 /** URL fetch PDF vận đơn — dùng /api/labels/ trực tiếp (tránh rewrite /labels 400). */
 export function resolveLabelFetchUrl(path: string): string {
-  let pathname = String(path || '').trim();
-  if (/^https?:\/\//i.test(pathname)) {
-    try {
-      pathname = new URL(pathname).pathname;
-    } catch {
-      pathname = String(path || '').trim();
-      if (!pathname.startsWith('/')) pathname = `/${pathname}`;
-    }
-  } else if (!pathname.startsWith('/')) {
+  const raw = String(path || '').trim();
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  let pathname = raw;
+  if (!pathname.startsWith('/')) {
     pathname = `/${pathname}`;
   }
 
