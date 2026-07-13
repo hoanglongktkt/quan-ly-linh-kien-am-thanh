@@ -1,7 +1,15 @@
 node_modules/
 build/
 dist/
+.next/
 coverage/
+cpanel-deploy/
+cpanel-deploy-staging/
+cpanel-deploy.zip
+assets/
+server.cjs
+server.cjs.map
+*.map
 .DS_Store
 *.log
 .env*
