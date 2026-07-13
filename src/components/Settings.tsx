@@ -322,6 +322,10 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       return;
     }
 
+    // #region agent log
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'Settings.tsx:handleSaveShop:entry',message:'save shop clicked',data:{editing:!!editingShop,shopsCountBefore:shops.length,shopId:shopId.trim(),platform},timestamp:Date.now(),hypothesisId:'H3-H4',runId:'pre-fix'})}).catch(()=>{});
+    // #endregion
+
     if (editingShop) {
       // Edit existing shop
       const updatedShops = shops.map(s => s.id === editingShop.id ? {
@@ -358,6 +362,9 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         ...settings,
         shops: [...shops, newShop]
       });
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'Settings.tsx:handleSaveShop:add',message:'shop added to local state only (no API)',data:{newShopId:newShop.id,shopsCountAfter:shops.length+1,apiHasDemo:apiKey.includes('demo')},timestamp:Date.now(),hypothesisId:'H3-H4',runId:'pre-fix'})}).catch(()=>{});
+      // #endregion
       alert(`Đã liên kết thành công gian hàng mới: ${shopName}`);
     }
 

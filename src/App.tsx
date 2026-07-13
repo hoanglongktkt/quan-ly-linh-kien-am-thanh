@@ -138,8 +138,21 @@ export default function App() {
   }, [logs]);
 
   useEffect(() => {
-    safeSetItem('omni_settings', JSON.stringify(settings));
+    const payload = JSON.stringify(settings);
+    const saved = safeSetItem('omni_settings', payload);
+    // #region agent log
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:settingsPersist',message:'localStorage omni_settings save',data:{saved,shopsCount:settings.shops?.length??0,payloadBytes:payload.length},timestamp:Date.now(),hypothesisId:'H1',runId:'pre-fix'})}).catch(()=>{});
+    // #endregion
   }, [settings]);
+
+  useEffect(() => {
+    const raw = safeGetJson<ChannelSettings | null>('omni_settings', null);
+    const rawShops = raw?.shops ?? [];
+    const stripped = stripDemoShops(rawShops);
+    // #region agent log
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:mountLoadSettings',message:'settings loaded on mount',data:{rawShopsCount:rawShops.length,afterStripCount:stripped.length,strippedIds:rawShops.filter(s=>!stripped.some(x=>x.id===s.id)).map(s=>s.id)},timestamp:Date.now(),hypothesisId:'H2',runId:'pre-fix'})}).catch(()=>{});
+    // #endregion
+  }, []);
 
   // Token Verification on Mount
   useEffect(() => {
