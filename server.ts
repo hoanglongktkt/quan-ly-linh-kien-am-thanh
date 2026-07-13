@@ -1092,7 +1092,22 @@ async function getValidShopeeAccessToken(shopId: string): Promise<string | null>
   console.log(`[Shopee API] access_token c\u1EE7a shop_id=${key} \u0111\xE3 h\u1EBFt h\u1EA1n, \u0111ang refresh...`);
   const apiShopId = resolveShopeeApiShopId(record, key);
   const refreshed = await refreshShopeeToken(apiShopId, record.refresh_token);
-  return refreshed.access_token || null;
+  if (refreshed.access_token) {
+    if (key !== apiShopId) {
+      saveShopeeTokenForShop(key, {
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token,
+        expire_in: refreshed.expire_in,
+        obtained_at: Math.floor(Date.now() / 1000),
+      });
+    }
+    return refreshed.access_token;
+  }
+  console.error(
+    `[Shopee API] Refresh token thất bại shop_id=${key} (api=${apiShopId}):`,
+    refreshed.error || refreshed.message,
+  );
+  return null;
 }
 
 type ShopeeDiagCode =
@@ -1267,21 +1282,16 @@ async function shopeeGetOrderList(
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
   try {
-    const res = await fetch(url);
-    const rawText = await res.text();
-    let json: any;
-    try {
-      json = rawText ? JSON.parse(rawText) : {};
-    } catch (parseErr) {
-      return shopeeApiErrorResult(parseErr, `get_order_list JSON parse (shop_id=${shopId})`);
-    }
+    const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `get_order_list shop_id=${shopId}`);
     console.log(
-      `[Shopee API] GET ${apiPath} (shop_id=${shopId}, status=${opts?.orderStatus || "ALL"}, field=${opts?.timeRangeField || "create_time"}, from=${timeFrom}, to=${timeTo}, cursor=${opts?.cursor || ""}) -> HTTP ${res.status}:`,
+      `[Shopee API] GET ${apiPath} (shop_id=${shopId}, status=${opts?.orderStatus || "ALL"}, field=${opts?.timeRangeField || "create_time"}, from=${timeFrom}, to=${timeTo}, cursor=${opts?.cursor || ""}) -> HTTP ${httpStatus}:`,
       JSON.stringify(json).slice(0, 500),
     );
 
     if (json.error) {
-      console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y danh s\xE1ch \u0111\u01A1n: ${json.error} - ${json.message}`);
+      const errMsg = formatShopeeApiError(json, httpStatus);
+      console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y danh s\xE1ch \u0111\u01A1n: ${errMsg}`);
+      return { ...json, message: json.message || errMsg };
     }
     return json;
   } catch (err) {
@@ -1325,6 +1335,111 @@ function shopeeApiErrorResult(err: unknown, context: string): Record<string, any
   return { error: "shopee_api_error", message: `${context}: ${message}` };
 }
 
+function formatShopeeApiError(json: any, httpStatus?: number): string {
+  const parts = [json?.message, json?.error, json?.msg].filter(Boolean).map(String);
+  if (httpStatus === 429) {
+    return parts[0] || "Shopee giới hạn tần suất (HTTP 429 Too Many Requests) — vui lòng thử lại sau 1–2 phút.";
+  }
+  if (parts.length > 0) return parts.join(" — ");
+  if (httpStatus && httpStatus >= 400) return `Shopee API HTTP ${httpStatus}`;
+  return "Lỗi Shopee API không xác định";
+}
+
+function isShopeeRateLimited(httpStatus: number, json?: any): boolean {
+  if (httpStatus === 429) return true;
+  const text = `${json?.error || ""} ${json?.message || ""}`.toLowerCase();
+  return /rate.?limit|too many request|api_call_limit|exceed/.test(text);
+}
+
+function describeShopeeTokenFailure(shopKey: string): { error: string; message: string } {
+  const tokens = loadShopeeTokens();
+  const key = normalizeShopIdKey(shopKey);
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record) {
+    return {
+      error: "missing_oauth",
+      message: `Shop ${key} chưa có token OAuth — vào Cài đặt → Liên kết Shopee để ủy quyền lại.`,
+    };
+  }
+  if (!record.refresh_token) {
+    return {
+      error: "missing_refresh_token",
+      message: `Shop ${key} thiếu refresh_token — OAuth lại shop trên Cài đặt.`,
+    };
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
+  if (isExpired) {
+    return {
+      error: "refresh_token_expired",
+      message: `Access token shop ${key} đã hết hạn và refresh thất bại — OAuth lại shop trên Cài đặt.`,
+    };
+  }
+  return {
+    error: "no_valid_access_token",
+    message: `Không lấy được access_token hợp lệ cho shop ${key}.`,
+  };
+}
+
+async function shopeeFetchJsonWithRetry(
+  url: string,
+  context: string,
+  opts?: { maxAttempts?: number; baseDelayMs?: number }
+): Promise<{ json: any; httpStatus: number }> {
+  const maxAttempts = opts?.maxAttempts ?? 4;
+  const baseDelayMs = opts?.baseDelayMs ?? 1200;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res: Response;
+    let rawText = "";
+    try {
+      res = await fetch(url);
+      rawText = await res.text();
+    } catch (err) {
+      if (attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, baseDelayMs * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+
+    let json: any;
+    try {
+      json = rawText ? JSON.parse(rawText) : {};
+    } catch (parseErr) {
+      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      return {
+        httpStatus: res.status,
+        json: {
+          error: "json_parse_error",
+          message: `${context}: phản hồi không phải JSON hợp lệ (HTTP ${res.status}): ${parseMsg}`,
+        },
+      };
+    }
+
+    if (isShopeeRateLimited(res.status, json) && attempt < maxAttempts - 1) {
+      const waitMs = Math.min(10_000, baseDelayMs * Math.pow(2, attempt));
+      console.warn(
+        `[Shopee API] ${context} bị rate limit (HTTP ${res.status}), thử lại ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+      );
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+
+    return { json, httpStatus: res.status };
+  }
+
+  return {
+    httpStatus: 429,
+    json: {
+      error: "rate_limit_exceeded",
+      message: "Shopee giới hạn tần suất (HTTP 429) — vui lòng thử lại sau 1–2 phút.",
+    },
+  };
+}
+
 // Paginate get_order_list for one Shopee order_status — lật trang + quét nhiều cửa sổ 15 ngày.
 async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: string, orderStatus: string): Promise<string[]> {
   const orderSnSet = new Set<string>();
@@ -1347,12 +1462,13 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
         timeTo,
       });
       if (listResult.error) {
+        const errMsg = listResult.message || formatShopeeApiError(listResult);
         console.error(
           `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} page=${page} lỗi:`,
           listResult.error,
-          listResult.message,
+          errMsg,
         );
-        break;
+        throw Object.assign(new Error(errMsg), { error: listResult.error, message: errMsg });
       }
 
       const pageList = extractShopeeOrderListRows(listResult);
@@ -1461,21 +1577,19 @@ async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSn
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
   try {
-    const res = await fetch(url);
-    const rawText = await res.text();
-    let json: any;
-    try {
-      json = rawText ? JSON.parse(rawText) : {};
-    } catch (parseErr) {
-      return shopeeApiErrorResult(parseErr, `get_order_detail JSON parse (shop_id=${shopId})`);
-    }
+    const { json, httpStatus } = await shopeeFetchJsonWithRetry(
+      url,
+      `get_order_detail shop_id=${shopId} (${orderSnList.length} orders)`
+    );
     console.log(
-      `[Shopee API] GET ${apiPath} (shop_id=${shopId}, ${orderSnList.length} orders) -> HTTP ${res.status}:`,
+      `[Shopee API] GET ${apiPath} (shop_id=${shopId}, ${orderSnList.length} orders) -> HTTP ${httpStatus}:`,
       JSON.stringify(json).slice(0, 500),
     );
 
     if (json.error) {
-      console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y chi ti\u1EBFt \u0111\u01A1n: ${json.error} - ${json.message}`);
+      const errMsg = formatShopeeApiError(json, httpStatus);
+      console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y chi ti\u1EBFt \u0111\u01A1n: ${errMsg}`);
+      return { ...json, message: json.message || errMsg };
     }
     return json;
   } catch (err) {
@@ -2707,10 +2821,11 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
   for (const shopKey of shopIds) {
     let auth = await getShopeeAccessTokenForApi(shopKey);
     if (!auth) {
+      const tokenFail = describeShopeeTokenFailure(shopKey);
       errors.push({
         shopId: shopKey,
-        error: "no_valid_access_token",
-        message: "Token hết hạn hoặc refresh thất bại — hãy OAuth lại shop trên Cài đặt.",
+        error: tokenFail.error,
+        message: tokenFail.message,
       });
       continue;
     }
@@ -2746,10 +2861,11 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
         try {
           const detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, batch);
           if (detailResult.error) {
+            const errMsg = detailResult.message || formatShopeeApiError(detailResult);
             shopErrors.push({
               shopId: fileKey,
               error: detailResult.error,
-              message: detailResult.message,
+              message: errMsg,
               batch: batch.length,
             });
             continue;
@@ -2842,8 +2958,13 @@ async function syncShopeeOrdersFromApi(statuses: string[] = [...SHOPEE_SYNC_STAT
         syncedCount++;
       }
     } catch (error: any) {
-      console.error(`[Shopee Sync] Lỗi shop_id=${shopKey}:`, error);
-      errors.push({ shopId: shopKey, error: error.message || "unknown_error" });
+      const errorMsg = error?.message || formatShopeeApiError(error) || String(error);
+      console.error(`[Shopee Sync] Lỗi shop_id=${shopKey}:`, errorMsg);
+      errors.push({
+        shopId: shopKey,
+        error: error?.error || error?.code || "sync_shop_failed",
+        message: errorMsg,
+      });
     }
   }
 
@@ -5019,10 +5140,31 @@ async function startServer() {
         warning: result.synced === 0 && !result.errors ? `Không tìm thấy đơn ${SHOPEE_SYNC_STATUSES.join("/")} nào trong 15 ngày gần nhất.` : undefined,
       });
     } catch (error: any) {
-      console.error("[Shopee Sync] API fatal error:", error?.response?.data || error?.message || error);
+      const errorMsg =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        String(error);
+      console.error("[Shopee Sync] API fatal error:", error?.response?.data || errorMsg);
+      // #region agent log
+      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "809c09" },
+        body: JSON.stringify({
+          sessionId: "809c09",
+          runId: "sync-error",
+          hypothesisId: "sync-fatal",
+          location: "server.ts:/api/shopee/orders/sync",
+          message: "sync fatal error",
+          data: { errorMsg, detail: error?.response?.data || null },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       return res.status(500).json({
-        error: error?.message || "sync_failed",
-        message: error?.message || "Đồng bộ đơn hàng Shopee thất bại — xem log cPanel.",
+        error: errorMsg,
+        message: errorMsg,
+        detail: error?.response?.data,
       });
     }
   });
@@ -5054,7 +5196,8 @@ async function startServer() {
         try {
           const accessToken = await getValidShopeeAccessToken(shopId);
           if (!accessToken) {
-            errors.push({ shopId, error: "no_valid_access_token" });
+            const tokenFail = describeShopeeTokenFailure(shopId);
+            errors.push({ shopId, error: tokenFail.error, message: tokenFail.message });
             continue;
           }
 
@@ -5070,7 +5213,8 @@ async function startServer() {
             try {
               const detailResult = await shopeeGetOrderDetail(shopId, accessToken, batch);
               if (detailResult.error) {
-                errors.push({ shopId, error: detailResult.error, message: detailResult.message });
+                const errMsg = detailResult.message || formatShopeeApiError(detailResult);
+                errors.push({ shopId, error: detailResult.error, message: errMsg });
                 continue;
               }
 
@@ -5096,8 +5240,9 @@ async function startServer() {
             }
           }
         } catch (error: any) {
-          console.error(`[Shopee API] L\u1ED7i khi k\xE9o \u0111\u01A1n cho shop_id=${shopId}:`, error);
-          errors.push({ shopId, error: error.message || "unknown_error" });
+          const errorMsg = error?.message || String(error);
+          console.error(`[Shopee API] L\u1ED7i khi k\xE9o \u0111\u01A1n cho shop_id=${shopId}:`, errorMsg);
+          errors.push({ shopId, error: error?.error || "pull_shop_failed", message: errorMsg });
         }
       }
 
@@ -5114,10 +5259,16 @@ async function startServer() {
 
       return res.json({ pulled: pulledCount, orders: orders.filter(isValidOrder), errors: errors.length ? errors : undefined });
     } catch (error: any) {
-      console.error("[Shopee API] /api/orders/pull fatal:", error?.response?.data || error?.message || error);
+      const errorMsg =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        error?.message ||
+        String(error);
+      console.error("[Shopee API] /api/orders/pull fatal:", error?.response?.data || errorMsg);
       return res.status(500).json({
-        error: error?.message || "pull_failed",
-        message: error?.message || "Kéo đơn hàng Shopee thất bại",
+        error: errorMsg,
+        message: errorMsg,
+        detail: error?.response?.data,
       });
     }
   });

@@ -1239,6 +1239,21 @@ export default function OrderManager({
     }
   };
 
+  const formatSyncErrors = (errors: any[]): string =>
+    errors
+      .map((e) => {
+        const shop = e.shopId ? `Shop ${e.shopId}` : 'Hệ thống';
+        const code = e.error ? ` [${e.error}]` : '';
+        const msg = e.message || e.error || 'Lỗi không xác định';
+        return `${shop}${code}: ${msg}`;
+      })
+      .join('; ');
+
+  const extractApiErrorMessage = (data: Record<string, unknown>, fallback: string): string => {
+    const parts = [data?.message, data?.error, data?.detail, data?.hint, data?.causeMessage].filter(Boolean);
+    return parts.map(String).join(' — ') || fallback;
+  };
+
   // Calls Shopee API to sync READY_TO_SHIP + PROCESSED orders, then reload list.
   const handleShopeeSyncOrders = async () => {
     setIsSyncing(true);
@@ -1258,15 +1273,31 @@ export default function OrderManager({
         headers: authHeaders(),
       });
       const data = await res.json().catch(() => ({}));
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '809c09' },
+        body: JSON.stringify({
+          sessionId: '809c09',
+          runId: 'sync-response',
+          hypothesisId: 'sync-frontend',
+          location: 'OrderManager.tsx:handleShopeeSyncOrders',
+          message: 'sync api response',
+          data: { ok: res.ok, status: res.status, synced: data?.synced, errorCount: data?.errors?.length || 0, error: data?.error, message: data?.message },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       if (!res.ok) {
-        const parts = [data?.error, data?.detail, data?.hint, data?.causeMessage].filter(Boolean);
-        throw new Error(parts.join(' — ') || 'Đồng bộ đơn hàng Shopee thất bại.');
+        throw new Error(extractApiErrorMessage(data, 'Đồng bộ đơn hàng Shopee thất bại.'));
       }
       if (data.warning) {
-        showToast(data.warning);
+        showToast(String(data.warning));
       }
-      if (Array.isArray(data.errors) && data.errors.length > 0) {
-        throw new Error(data.errors.map((e: any) => `${e.shopId ? `Shop ${e.shopId}: ` : ''}${e.error}${e.message ? ` - ${e.message}` : ''}`).join('; '));
+      const synced = Number(data.synced) || 0;
+      const syncErrors = Array.isArray(data.errors) ? data.errors : [];
+      if (syncErrors.length > 0 && synced === 0) {
+        throw new Error(formatSyncErrors(syncErrors));
       }
       const refreshRes = await fetch('/api/orders', { headers: authHeaders() });
       if (refreshRes.ok) {
@@ -1278,7 +1309,11 @@ export default function OrderManager({
       const countMsg = ui
         ? ` — Đang giao: ${ui.shipping}, Chờ lấy (đã xử lý): ${ui.processed}, Chưa xử lý: ${ui.unprocessed}`
         : '';
-      showToast(`Đồng bộ thành công ${data.synced || 0} đơn từ Shopee${countMsg}.`);
+      if (syncErrors.length > 0) {
+        showToast(`Đồng bộ ${synced} đơn, nhưng có cảnh báo: ${formatSyncErrors(syncErrors)}${countMsg}`);
+      } else {
+        showToast(`Đồng bộ thành công ${synced} đơn từ Shopee${countMsg}.`);
+      }
     } catch (err: any) {
       showToast(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);
     } finally {

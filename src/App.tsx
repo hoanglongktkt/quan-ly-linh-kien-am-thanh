@@ -384,6 +384,21 @@ export default function App() {
     }
   };
 
+  const formatPullErrors = (errors: any[]): string =>
+    errors
+      .map((e) => {
+        const shop = e.shopId ? `Shop ${e.shopId}` : 'Hệ thống';
+        const code = e.error ? ` [${e.error}]` : '';
+        const msg = e.message || e.error || 'Lỗi không xác định';
+        return `${shop}${code}: ${msg}`;
+      })
+      .join('; ');
+
+  const extractApiErrorMessage = (data: Record<string, unknown>, fallback: string): string => {
+    const parts = [data?.message, data?.error, data?.detail, data?.hint, data?.causeMessage].filter(Boolean);
+    return parts.map(String).join(' — ') || fallback;
+  };
+
   // Actively pull real orders straight from Shopee (v2.order.get_order_list +
   // get_order_detail) via the backend, then refresh local state with the result.
   // Bound to the "Cập nhật đơn hàng" button.
@@ -399,8 +414,7 @@ export default function App() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const parts = [data?.error, data?.detail, data?.hint, data?.causeMessage].filter(Boolean);
-        throw new Error(parts.join(' — ') || data?.error || 'Kéo đơn hàng thất bại.');
+        throw new Error(extractApiErrorMessage(data, 'Kéo đơn hàng thất bại.'));
       }
       if (Array.isArray(data.orders)) {
         const sanitized = sanitizeOrders(data.orders);
@@ -408,10 +422,15 @@ export default function App() {
         void saveOrdersCache(sanitized);
       }
       if (data.warning) {
-        throw new Error(data.warning);
+        throw new Error(String(data.warning));
       }
-      if (Array.isArray(data.errors) && data.errors.length > 0) {
-        throw new Error(data.errors.map((e: any) => `${e.shopId ? `Shop ${e.shopId}: ` : ''}${e.error}${e.message ? ` - ${e.message}` : ''}`).join('\n'));
+      const pulled = Number(data.pulled) || 0;
+      const pullErrors = Array.isArray(data.errors) ? data.errors : [];
+      if (pullErrors.length > 0 && pulled === 0) {
+        throw new Error(formatPullErrors(pullErrors));
+      }
+      if (pullErrors.length > 0) {
+        console.warn('[Orders Pull] partial errors:', formatPullErrors(pullErrors));
       }
     } finally {
       setOrdersLoading(false);
