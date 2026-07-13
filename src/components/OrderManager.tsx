@@ -661,7 +661,6 @@ export default function OrderManager({
     const data = await parseJsonResponse<PrintDocumentResponse>(res);
     return { ok: res.ok, status: res.status, data };
   };
-
   const applyPrintDocumentResponse = async (
     data: PrintDocumentResponse,
     openPdf: boolean
@@ -722,44 +721,96 @@ export default function OrderManager({
       return { success: false, message: 'Không có đơn hàng để in.' };
     }
 
-    if (uniqueIds.length > 1 && onProgress) {
-      const total = uniqueIds.length;
-      onProgress(0, total);
-      const stepErrors: string[] = [];
+    const total = uniqueIds.length;
+    const logPrint = (message: string, extra: Record<string, unknown> = {}) => {
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '809c09' },
+        body: JSON.stringify({
+          sessionId: '809c09',
+          runId: 'print-fix',
+          hypothesisId: 'print-flow',
+          location: 'OrderManager.tsx:printShopeeDocuments',
+          message,
+          data: { orderCount: total, orderIds: uniqueIds, ...extra },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
+    };
 
-      for (let i = 0; i < uniqueIds.length; i++) {
-        const step = await fetchPrintDocumentApi([uniqueIds[i]]);
-        if (!step.ok) {
-          stepErrors.push(step.data.error || `Đơn ${uniqueIds[i]}: lỗi HTTP ${step.status}`);
-        } else {
-          const stepResult = await applyPrintDocumentResponse(step.data, false);
-          if (!stepResult.success && stepResult.message) stepErrors.push(stepResult.message);
+    try {
+      if (onProgress) onProgress(0, total);
+      logPrint('print start', { openPdf });
+
+      // Tuần tự từng đơn để cập nhật tiến trình; cache từng PDF trước khi gộp/mở.
+      if (total > 1 && onProgress) {
+        const stepErrors: string[] = [];
+        const stepUrls: string[] = [];
+
+        for (let i = 0; i < uniqueIds.length; i++) {
+          logPrint('print step', { step: i + 1, orderId: uniqueIds[i] });
+          try {
+            const step = await fetchPrintDocumentApi([uniqueIds[i]]);
+            if (!step.ok) {
+              stepErrors.push(step.data.error || `Đơn ${uniqueIds[i]}: lỗi HTTP ${step.status}`);
+            } else {
+              const stepResult = await applyPrintDocumentResponse(step.data, false);
+              if (stepResult.mergedUrl) stepUrls.push(stepResult.mergedUrl);
+              if (!stepResult.success && stepResult.message) stepErrors.push(stepResult.message);
+            }
+          } catch (stepErr) {
+            stepErrors.push(stepErr instanceof Error ? stepErr.message : `Đơn ${uniqueIds[i]}: lỗi không xác định`);
+          }
+          onProgress(i + 1, total);
         }
-        onProgress(i + 1, total);
+
+        try {
+          const final = await fetchPrintDocumentApi(uniqueIds);
+          if (final.ok) {
+            const result = await applyPrintDocumentResponse(final.data, openPdf);
+            logPrint('print merge ok', { success: result.success, mergedUrl: result.mergedUrl || null });
+            if (stepErrors.length > 0 && result.success) {
+              return { ...result, message: stepErrors.join('; ') };
+            }
+            return result;
+          }
+          stepErrors.push(final.data.error || 'Không thể gộp vận đơn Shopee.');
+        } catch (mergeErr) {
+          stepErrors.push(mergeErr instanceof Error ? mergeErr.message : 'Lỗi gộp vận đơn.');
+        }
+
+        const fallbackUrl = stepUrls[stepUrls.length - 1] || null;
+        if (fallbackUrl && openPdf) {
+          await openShopeeLabelFromStream({ url: fallbackUrl });
+          logPrint('print fallback url', { fallbackUrl });
+          return {
+            success: true,
+            mergedUrl: fallbackUrl,
+            message: stepErrors.length > 0 ? stepErrors.join('; ') : undefined,
+          };
+        }
+
+        logPrint('print failed', { stepErrors });
+        return { success: false, message: stepErrors.join('; ') || 'Không thể tạo vận đơn Shopee.' };
       }
 
-      const final = await fetchPrintDocumentApi(uniqueIds);
-      if (!final.ok) {
-        return { success: false, message: final.data.error || 'Không thể gộp vận đơn Shopee.' };
+      const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds);
+      if (!ok) {
+        logPrint('print api error', { status, error: data.error });
+        return { success: false, message: data.error || `Không thể tạo vận đơn Shopee (HTTP ${status}).` };
       }
 
-      const result = await applyPrintDocumentResponse(final.data, openPdf);
-      if (stepErrors.length > 0 && result.success) {
-        return {
-          ...result,
-          message: stepErrors.join('; '),
-        };
-      }
+      if (onProgress) onProgress(total, total);
+      const result = await applyPrintDocumentResponse(data, openPdf);
+      logPrint('print single ok', { success: result.success, mergedUrl: result.mergedUrl || null });
       return result;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Lỗi không xác định khi in vận đơn.';
+      logPrint('print exception', { error: msg });
+      return { success: false, message: msg };
     }
-
-    const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds);
-    if (!ok) {
-      return { success: false, message: data.error || `Không thể tạo vận đơn Shopee (HTTP ${status}).` };
-    }
-
-    if (onProgress) onProgress(uniqueIds.length, uniqueIds.length);
-    return applyPrintDocumentResponse(data, openPdf);
   };
 
   // Called from the "Xác nhận đơn hàng" modal — arranges shipment (pickup/dropoff,
@@ -1444,6 +1495,10 @@ export default function OrderManager({
         setBulkPrintOrders(others);
         onUpdateOrders(orders.map(o => others.some(x => x.id === o.id) ? { ...o, isPrinted: true, status: o.isPrepared ? ('processed' as const) : o.status } : o));
       }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
+      showToast(`In vận đơn Shopee thất bại: ${msg}`);
+      clearShipProgressOverlay();
     } finally {
       setIsBulkPrinting(false);
     }

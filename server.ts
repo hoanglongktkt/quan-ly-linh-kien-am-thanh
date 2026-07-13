@@ -165,14 +165,24 @@ function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
 
 type ServeLabelPdfResult = "sent" | "not_found" | "invalid";
 
+function resolveLabelFilePath(filename: string): string | null {
+  const safe = safeLabelFilename(filename);
+  if (!safe) return null;
+  const primary = path.join(SHIPPING_DOCS_DIR, safe);
+  if (fs.existsSync(primary)) return primary;
+  const legacy = path.join(LEGACY_WAYBILLS_DIR, safe);
+  if (fs.existsSync(legacy)) return legacy;
+  return null;
+}
+
 function serveLabelPdfFromDisk(filename: string, res: any): ServeLabelPdfResult {
   const safe = safeLabelFilename(filename);
   if (!safe) {
     res.status(400).type("text/plain").send("Tên file vận đơn không hợp lệ.");
     return "invalid";
   }
-  const filePath = path.join(SHIPPING_DOCS_DIR, safe);
-  if (!fs.existsSync(filePath)) {
+  const filePath = resolveLabelFilePath(safe);
+  if (!filePath) {
     return "not_found";
   }
   const buf = fs.readFileSync(filePath);
@@ -5513,13 +5523,14 @@ async function startServer() {
 
   function findExistingLabelFile(orderSn: string): string | null {
     const fname = buildMergedLabelFilename([orderSn]);
-    const full = path.join(SHIPPING_DOCS_DIR, fname);
-    if (!fs.existsSync(full)) return null;
-    try {
-      const buf = fs.readFileSync(full);
-      if (isPdfBuffer(buf)) return fname;
-    } catch {
-      /* ignore */
+    if (resolveLabelFilePath(fname)) {
+      try {
+        const filePath = resolveLabelFilePath(fname)!;
+        const buf = fs.readFileSync(filePath);
+        if (isPdfBuffer(buf)) return fname;
+      } catch {
+        /* ignore */
+      }
     }
     return null;
   }
@@ -5528,7 +5539,9 @@ async function startServer() {
     const fname = findExistingLabelFile(orderSn);
     if (!fname) return null;
     try {
-      const buf = fs.readFileSync(path.join(SHIPPING_DOCS_DIR, fname));
+      const filePath = resolveLabelFilePath(fname);
+      if (!filePath) return null;
+      const buf = fs.readFileSync(filePath);
       return isPdfBuffer(buf) ? buf : null;
     } catch {
       return null;
@@ -5639,8 +5652,8 @@ async function startServer() {
   async function mergeLabelFilesToSingleUrl(filenames: string[], orderSns: string[]): Promise<string | null> {
     const pdfBuffers: Buffer[] = [];
     for (const name of filenames) {
-      const full = path.join(SHIPPING_DOCS_DIR, name);
-      if (!fs.existsSync(full)) continue;
+      const full = resolveLabelFilePath(name);
+      if (!full) continue;
       const buf = fs.readFileSync(full);
       if (isPdfBuffer(buf)) pdfBuffers.push(buf);
     }
@@ -6204,11 +6217,11 @@ async function startServer() {
 
     if (allPrintedSns.length > 0) {
       pdfFilename = buildMergedLabelFilename(allPrintedSns);
-      const mergedOnDisk = path.join(SHIPPING_DOCS_DIR, pdfFilename);
-      if (!fs.existsSync(mergedOnDisk) && savedFilenames.length > 1) {
+      const mergedOnDisk = resolveLabelFilePath(pdfFilename);
+      if (!mergedOnDisk && savedFilenames.length > 1) {
         primaryUrl = await mergeLabelFilesToSingleUrl(savedFilenames, allPrintedSns);
         if (primaryUrl) primaryUrl = absoluteLabelUrl(primaryUrl);
-      } else if (fs.existsSync(mergedOnDisk)) {
+      } else if (mergedOnDisk) {
         primaryUrl = labelUrl(pdfFilename);
       } else if (savedFilenames.length === 1) {
         primaryUrl = labelUrl(savedFilenames[0]);
