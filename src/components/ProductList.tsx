@@ -99,7 +99,7 @@ export default function ProductList({
   }, [highlightProductId, products, onClearHighlight]);
 
   // Master sub-tab selection: 'warehouse' (Kho sản phẩm chính) or 'linking' (Liên kết sản phẩm)
-  const [subTab, setSubTab] = useState<'warehouse' | 'linking' | 'audit'>('audit');
+  const [subTab, setSubTab] = useState<'warehouse' | 'linking' | 'audit'>('warehouse');
 
   // Shopee API initialization state
   const [showShopeeImportModal, setShowShopeeImportModal] = useState(false);
@@ -542,7 +542,7 @@ export default function ProductList({
                 <span>CƠ SỞ DỮ LIỆU KHO SẢN PHẨM GỐC</span>
               </h4>
               <p className="text-[11px] text-gray-500 leading-relaxed font-semibold">
-                Danh sách không tự tải khi mở trang (tránh lỗi 413). Bấm &quot;Tải danh sách&quot; để lấy tối đa 50 sản phẩm/lần, hoặc khởi tạo từ Shopee API.
+                Kho gốc (Master Inventory): chỉ tạo / sửa / xóa thông tin, giá và tồn kho. Liên kết sàn được thực hiện riêng tại tab &quot;Liên kết sản phẩm&quot;. Đồng bộ giá &amp; tồn là 1 chiều: Kho gốc → Sàn.
               </p>
             </div>
             
@@ -874,15 +874,28 @@ export default function ProductList({
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
-                          {!group.hasVariants && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); onDeleteProduct(prod.id); }}
-                              className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
-                              title="Xóa sản phẩm"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (group.hasVariants) {
+                                const ok = confirm(
+                                  `Xóa sản phẩm "${group.displayTitle}" và ${group.variantCount} phân loại khỏi Kho gốc?`
+                                );
+                                if (!ok) return;
+                                group.variants.forEach((v) => onDeleteProduct(v.id));
+                                if (!group.variants.some((v) => v.id === prod.id)) {
+                                  onDeleteProduct(prod.id);
+                                }
+                              } else {
+                                if (!confirm(`Xóa sản phẩm "${group.displayTitle}" khỏi Kho gốc?`)) return;
+                                onDeleteProduct(prod.id);
+                              }
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                            title="Xóa sản phẩm"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -979,11 +992,14 @@ export default function ProductList({
                                 <Edit3 className="w-3.5 h-3.5" />
                               </button>
                               <button
-                                onClick={() => onTabChange('linking')}
-                                className="px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-50 rounded-md"
-                                title="Liên kết SKU"
+                                onClick={() => {
+                                  if (!confirm(`Xóa phân loại "${child.modelName || child.sku}" khỏi Kho gốc?`)) return;
+                                  onDeleteProduct(child.id);
+                                }}
+                                className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
+                                title="Xóa phân loại"
                               >
-                                Liên kết
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </td>

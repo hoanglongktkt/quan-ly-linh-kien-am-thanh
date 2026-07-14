@@ -5861,41 +5861,56 @@ async function startServer() {
 
   app.post("/api/sync-stock", authMiddleware, async (req, res) => {
     try {
-      let shopeeUpdated = 0;
-      let shopeeCompared = 0;
+      // Đồng bộ 1 CHIỀU: Kho gốc (Master) → Sàn. Không kéo tồn từ Sàn đè Kho gốc.
+      const products = loadProducts();
+      const shopId = resolveShopeeTokenShopId(req.body?.shopId);
       const warnings: string[] = [];
 
-      if (isShopeeConfigValid()) {
-        const shopId = resolveShopeeTokenShopId(req.body?.shopId);
-        if (shopId) {
-          const accessToken = await getValidShopeeAccessToken(shopId);
-          if (accessToken) {
-            const result = await syncStockFromShopee(shopId, accessToken);
-            shopeeUpdated = result.updated;
-            shopeeCompared = result.compared;
-          } else {
-            warnings.push("Shopee: chưa có access_token hợp lệ.");
-          }
-        } else {
-          warnings.push("Shopee: chưa có shop được ủy quyền.");
-        }
-      } else {
-        warnings.push("Shopee: cấu hình Partner chưa hợp lệ.");
+      if (!isShopeeConfigValid()) {
+        return res.status(400).json({
+          success: false,
+          message: "Shopee: cấu hình Partner chưa hợp lệ.",
+        });
+      }
+      if (!shopId) {
+        return res.status(400).json({
+          success: false,
+          message: "Shopee: chưa có shop được ủy quyền.",
+        });
       }
 
-      const products = loadProducts();
+      const shopeeResult = await pushStockUpdatesToShopee(products, shopId);
+      if (shopeeResult.warnings?.length) warnings.push(...shopeeResult.warnings);
+      if (!shopeeResult.ok && shopeeResult.errors.length > 0) {
+        const onlyStale = shopeeResult.errors.every((e) => isStaleShopeeItemErrorText(e));
+        if (!onlyStale) {
+          return res.status(400).json({
+            success: false,
+            message: `Đẩy tồn Kho gốc → Shopee thất bại: ${shopeeResult.errors.join(" | ")}`,
+            shopeeErrors: shopeeResult.errors,
+            shopeeWarnings: warnings,
+          });
+        }
+        warnings.push(...shopeeResult.errors);
+      }
+
       const message =
-        shopeeUpdated > 0
-          ? `Đồng bộ thành công: ${shopeeUpdated} SKU đã cập nhật từ Shopee.`
-          : "Đồng bộ thành công: tồn kho local đã khớp với sàn.";
+        shopeeResult.pushed > 0
+          ? `Đã đẩy ${shopeeResult.pushed} SKU từ Kho gốc lên Shopee (đồng bộ 1 chiều).`
+          : "Không có SKU nào cần đẩy lên Shopee (đã khớp hoặc chưa liên kết).";
 
       return res.json({
         success: true,
         message,
-        shopee: { updated: shopeeUpdated, compared: shopeeCompared },
+        direction: "warehouse_to_channel",
+        shopee: {
+          pushed: shopeeResult.pushed,
+          staleSkus: shopeeResult.staleSkus,
+          warnings,
+        },
         tiktok: { updated: 0, message: "TikTok Shop API chưa được tích hợp trên server." },
         warnings,
-        products,
+        products: loadProducts(),
       });
     } catch (err: any) {
       console.error("[Sync Stock]", err);
@@ -5925,13 +5940,46 @@ async function startServer() {
   });
 
   app.delete("/api/products/:id", authMiddleware, (req, res) => {
-    const products = loadProducts();
-    const next = products.filter((p: any) => p.id !== req.params.id);
-    if (next.length === products.length) {
-      return res.status(404).json({ error: "product_not_found" });
+    try {
+      const id = String(req.params.id);
+      const products = loadProducts();
+      let found = false;
+      const next: any[] = [];
+
+      for (const p of products) {
+        if (p.id === id) {
+          found = true;
+          continue; // xóa parent / dòng flat
+        }
+        const children = getProductChildrenList(p);
+        if (children.length > 0) {
+          const filteredChildren = children.filter((c: any) => c.id !== id);
+          if (filteredChildren.length !== children.length) {
+            found = true;
+            if (filteredChildren.length === 0) continue; // không còn child → bỏ parent rỗng
+            const totalStock = filteredChildren.reduce(
+              (s: number, c: any) => s + (Number(c.stock) || 0),
+              0
+            );
+            next.push({ ...p, children: filteredChildren, stock: totalStock });
+            continue;
+          }
+        }
+        next.push(p);
+      }
+
+      if (!found) {
+        return res.status(404).json({ error: "product_not_found" });
+      }
+      saveProducts(next);
+      return res.json({ deleted: id, success: true });
+    } catch (err: unknown) {
+      console.error("[Products] DELETE failed:", err);
+      return res.status(500).json({
+        error: "delete_failed",
+        message: err instanceof Error ? err.message : "Xóa sản phẩm thất bại",
+      });
     }
-    saveProducts(next);
-    return res.json({ deleted: req.params.id });
   });
 
   app.post("/api/products/clear-all", authMiddleware, (_req, res) => {

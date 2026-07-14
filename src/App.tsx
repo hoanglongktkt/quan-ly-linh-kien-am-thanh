@@ -578,8 +578,7 @@ export default function App() {
   };
 
   const handleDeleteProduct = async (id: string) => {
-    if (!confirm('Bạn có chắc chắn muốn xóa sản phẩm này khỏi hệ thống quản lý?')) return;
-
+    // Confirm được gọi từ UI (nhóm Parent) hoặc tại đây cho xóa đơn lẻ
     const token = localStorage.getItem('admin_token');
     if (token) {
       try {
@@ -591,8 +590,20 @@ export default function App() {
         console.error('Delete product error:', err);
       }
     }
-    setProducts(prev => prev.filter(p => p.id !== id));
-    setSelectedIds(prev => prev.filter(item => item !== id));
+    setProducts((prev) =>
+      prev
+        .map((p) => {
+          const children = Array.isArray(p.children) ? p.children : p.children_models;
+          if (!children?.length) return p;
+          if (!children.some((c) => c.id === id)) return p;
+          const nextChildren = children.filter((c) => c.id !== id);
+          if (nextChildren.length === 0) return null;
+          const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
+          return { ...p, children: nextChildren, stock: totalStock };
+        })
+        .filter((p): p is Product => p != null && p.id !== id)
+    );
+    setSelectedIds((prev) => prev.filter((item) => item !== id));
   };
 
   const handleUpdateBulk = (updatedProducts: Product[]) => {
