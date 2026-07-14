@@ -161,11 +161,33 @@ type OrderTab =
   | 'unprocessed' 
   | 'processed' 
   | 'shipping' 
-  | 'cancelled' 
-  | 'return_pending' 
-  | 'return_received'
+  | 'cancel_returns'
   | 'order_products'
   | 'reprint';
+
+type CancelReturnTab = 'all' | 'refund_return' | 'cancelled' | 'failed_delivery';
+
+const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending', 'return_received'];
+
+function isCancelReturnOrder(order: Order): boolean {
+  return CANCEL_RETURN_STATUSES.includes(order.status);
+}
+
+function matchesCancelReturnTab(order: Order, tab: CancelReturnTab): boolean {
+  if (!isCancelReturnOrder(order)) return false;
+  switch (tab) {
+    case 'all':
+      return true;
+    case 'refund_return':
+      return order.status === 'return_received';
+    case 'cancelled':
+      return order.status === 'cancelled';
+    case 'failed_delivery':
+      return order.status === 'return_pending';
+    default:
+      return false;
+  }
+}
 
 function VariationNameBadge({ variationName }: { variationName?: string }) {
   const name = variationName?.trim();
@@ -197,7 +219,8 @@ export default function OrderManager({
   onCloseScanner,
   onEndScanSession
 }: OrderManagerProps) {
-  const [activeSubTab, setActiveSubTab] = useState<OrderTab>('unprocessed'); // Default to unprocessed "Chờ lấy hàng (Chưa xử lý)" like mockup
+  const [activeSubTab, setActiveSubTab] = useState<OrderTab>('unprocessed');
+  const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>('all');
   
   // Camera Barcode Scanning States and Ref
   const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét mã QR...');
@@ -1267,11 +1290,11 @@ export default function OrderManager({
       case 'completed': 
         return { text: 'Thành công', color: 'bg-green-50 text-green-700 border-green-200/60' };
       case 'cancelled': 
-        return { text: 'Yêu cầu huỷ đơn', color: 'bg-rose-50 text-rose-500 border-rose-100' };
+        return { text: 'Đơn Hủy', color: 'bg-rose-50 text-rose-500 border-rose-100' };
       case 'return_pending': 
-        return { text: 'Hủy giao chờ nhận', color: 'bg-purple-50 text-purple-600 border-purple-200/60 font-bold animate-pulse' };
+        return { text: 'Giao hàng không thành công', color: 'bg-purple-50 text-purple-600 border-purple-200/60 font-bold' };
       case 'return_received': 
-        return { text: 'Hủy giao đã nhận', color: 'bg-slate-100 text-slate-700 border-slate-300' };
+        return { text: 'Trả hàng Hoàn tiền', color: 'bg-orange-50 text-orange-700 border-orange-200' };
     }
   };
 
@@ -1281,9 +1304,27 @@ export default function OrderManager({
     [orders, products]
   );
 
+  const cancelReturnPool = useMemo(
+    () => orders.filter(isCancelReturnOrder),
+    [orders]
+  );
+
+  const getCancelReturnCount = (tab: CancelReturnTab) =>
+    cancelReturnPool.filter((o) => matchesCancelReturnTab(o, tab)).length;
+
+  const cancelReturnTabItems: { id: CancelReturnTab; label: string }[] = [
+    { id: 'all', label: 'Tất cả' },
+    { id: 'refund_return', label: 'Đơn Trả hàng Hoàn tiền' },
+    { id: 'cancelled', label: 'Đơn Hủy' },
+    { id: 'failed_delivery', label: 'Đơn Giao hàng không thành công' },
+  ];
+
   const getCount = (status: OrderTab) => {
     if (status === 'order_products') {
       return aggregatedOrderProducts.length;
+    }
+    if (status === 'cancel_returns') {
+      return cancelReturnPool.length;
     }
     return orders.filter(o => {
       if (status === 'all') return true;
@@ -1295,7 +1336,9 @@ export default function OrderManager({
   // Filter logic
   const filteredOrders = orders.filter(order => {
     // 1. Tab filter
-    if (activeSubTab !== 'all' && activeSubTab !== 'order_products' && activeSubTab !== 'reprint') {
+    if (activeSubTab === 'cancel_returns') {
+      if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
+    } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products' && activeSubTab !== 'reprint') {
       if (order.status !== activeSubTab) return false;
     }
 
@@ -2143,16 +2186,19 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('cancelled')}
+          onClick={() => {
+            setActiveSubTab('cancel_returns');
+            setCancelReturnTab('all');
+          }}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeSubTab === 'cancelled' 
+            activeSubTab === 'cancel_returns' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
-          <span>Yêu cầu huỷ đơn</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded-full bg-gray-100 text-gray-600 border border-gray-200">
-            {getCount('cancelled')}
+          <span>ĐƠN HỦY, ĐƠN HOÀN</span>
+          <span className="px-1.5 py-0.2 text-[10px] font-semibold rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+            {getCount('cancel_returns')}
           </span>
         </button>
 
@@ -2171,20 +2217,6 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('return_pending')}
-          className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeSubTab === 'return_pending' 
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-          }`}
-        >
-          <span>Hủy giao chờ nhận</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-purple-100 text-purple-700 border border-purple-200">
-            {getCount('return_pending')}
-          </span>
-        </button>
-
-        <button
           onClick={() => setActiveSubTab('reprint')}
           className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'reprint'
@@ -2195,21 +2227,32 @@ export default function OrderManager({
           <Printer className="w-3.5 h-3.5" />
           <span>In lại đơn</span>
         </button>
-
-        <button
-          onClick={() => setActiveSubTab('return_received')}
-          className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeSubTab === 'return_received' 
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-          }`}
-        >
-          <span>Hủy giao đã nhận</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-slate-200 text-slate-700 border border-slate-300">
-            {getCount('return_received')}
-          </span>
-        </button>
       </div>
+
+      {activeSubTab === 'cancel_returns' && (
+        <div className="bg-white border border-gray-100 rounded-2xl shadow-xs overflow-x-auto">
+          <div className="flex min-w-max border-b border-gray-100 px-2">
+            {cancelReturnTabItems.map((tab) => {
+              const active = cancelReturnTab === tab.id;
+              const count = getCancelReturnCount(tab.id);
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setCancelReturnTab(tab.id)}
+                  className={`px-4 py-3 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors ${
+                    active
+                      ? 'border-orange-500 text-orange-600'
+                      : 'border-transparent text-gray-600 hover:text-orange-500'
+                  }`}
+                >
+                  {tab.label} ({count})
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* 4. FILTER BOX — search only */}
       {activeSubTab !== 'order_products' && activeSubTab !== 'reprint' && (
