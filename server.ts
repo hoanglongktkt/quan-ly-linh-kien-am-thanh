@@ -6427,6 +6427,37 @@ async function startServer() {
     return res.json({ success: true, cleared: true, products: [] });
   });
 
+  /** Xóa sạch Kho gốc + Mapping (để test sync sạch). */
+  const handleInventoryClearAll = (_req: any, res: any) => {
+    try {
+      saveProducts([]);
+      writeChannelListingsDb([]);
+      try {
+        writeProductListingsDb([]);
+      } catch {
+        /* optional */
+      }
+      console.log("[Inventory] Đã xóa sạch Kho gốc (products) + Mapping (channel_listings).");
+      return res.status(200).json({
+        success: true,
+        message: "Đã xóa toàn bộ Kho gốc và dữ liệu Liên kết (Mapping).",
+        cleared: true,
+        products: [],
+        channelListings: [],
+      });
+    } catch (error: unknown) {
+      const errObj = error instanceof Error ? error : new Error(String(error));
+      console.error("[Inventory] clear-all failed:", errObj);
+      return res.status(500).json({
+        success: false,
+        message: errObj.message,
+        error: errObj.toString(),
+      });
+    }
+  };
+  app.delete("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+  app.post("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
+
   app.post("/api/products/bulk-update", authMiddleware, (req, res) => {
     const { productIds, stock, price } = req.body || {};
     if (!Array.isArray(productIds) || productIds.length === 0) {

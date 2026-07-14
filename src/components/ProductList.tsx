@@ -131,6 +131,7 @@ export default function ProductList({
   const [isShopeeImporting, setIsShopeeImporting] = useState(false);
   const [shopeeImportProgress, setShopeeImportProgress] = useState<string[]>([]);
   const [shopeeImportToast, setShopeeImportToast] = useState<string | null>(null);
+  const [isClearingInventory, setIsClearingInventory] = useState(false);
 
   // Search & Filter state
   const [search, setSearch] = useState('');
@@ -386,6 +387,42 @@ export default function ProductList({
     setShowAddModal(false);
   };
 
+  const handleClearAllInventory = async () => {
+    const ok = window.confirm(
+      'CẢNH BÁO: Bạn sắp XÓA TOÀN BỘ Kho gốc và dữ liệu Liên kết (Mapping).\n\nThao tác này không thể hoàn tác. Bạn có chắc chắn muốn tiếp tục?'
+    );
+    if (!ok) return;
+
+    const ok2 = window.confirm('Xác nhận lần cuối: Xóa sạch toàn bộ sản phẩm kho và mapping?');
+    if (!ok2) return;
+
+    setIsClearingInventory(true);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/inventory/clear-all', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await parseJsonResponse<{ success?: boolean; message?: string; error?: string }>(res);
+      if (!res.ok || data.success === false) {
+        throw new Error(data?.message || data?.error || 'Xóa toàn bộ kho thất bại.');
+      }
+      onBulkSelect([]);
+      setExpandedParentIds(new Set());
+      warehouseLoadedRef.current = false;
+      await onRefreshProducts?.({ page: 1, append: false });
+      setShopeeImportToast(data.message || 'Đã xóa toàn bộ Kho gốc và Mapping.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Xóa toàn bộ kho thất bại.';
+      alert(message);
+    } finally {
+      setIsClearingInventory(false);
+    }
+  };
+
   const handleTriggerShopeeImport = async () => {
     setIsShopeeImporting(true);
     setShopeeImportProgress(["🔌 Đang kết nối API v2 Shopee (get_item_list)..."]);
@@ -568,6 +605,15 @@ export default function ProductList({
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${productsLoading ? 'animate-spin' : ''}`} />
                 <span>{productsLoading ? 'Đang tải...' : 'Tải danh sách'}</span>
+              </button>
+              <button
+                onClick={() => void handleClearAllInventory()}
+                type="button"
+                disabled={isClearingInventory}
+                className="px-4 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-red-500/10 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className={`w-3.5 h-3.5 ${isClearingInventory ? 'animate-pulse' : ''}`} />
+                <span>{isClearingInventory ? 'Đang xóa...' : 'Xóa toàn bộ Kho'}</span>
               </button>
               <button
                 onClick={() => setShowShopeeImportModal(true)}
