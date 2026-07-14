@@ -24,11 +24,10 @@ function resolveRoutePath(req) {
 }
 
 /**
- * Route mới chưa có trên cPanel cũ → map sang endpoint tương thích.
+ * Route alias — CHỈ map endpoint CŨ thật sự thiếu trên cPanel.
+ * KHÔNG alias channel-products/fetch → products/sync (sai ngữ nghĩa: sync kho gốc ≠ lưu mapping DB).
  */
-const ROUTE_ALIASES = {
-  'shopee/channel-products/fetch': 'shopee/products/sync',
-};
+const ROUTE_ALIASES = {};
 
 /** Route xử lý local trên Vercel — còn lại proxy sang cPanel. */
 const LOCAL_ROUTES = {

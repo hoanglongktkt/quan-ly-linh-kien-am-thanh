@@ -123,12 +123,19 @@ async function fetchMappingListingsFromServer(token: string): Promise<{ rows: Ch
   const endpoints = ['/api/mapping-products', '/api/channel-listings'];
   for (const endpoint of endpoints) {
     try {
-      const res = await fetch(endpoint, {
+      const res = await apiFetch(endpoint, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      const text = await res.text();
+      let data: { success?: boolean; listings?: ChannelListing[] } = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        console.warn(`[ProductLinking] ${endpoint} non-JSON:`, text.slice(0, 120));
+        continue;
+      }
       if (res.ok && data.success !== false && Array.isArray(data.listings)) {
-        return { rows: data.listings as ChannelListing[], source: endpoint };
+        return { rows: data.listings, source: endpoint };
       }
       console.warn(`[ProductLinking] ${endpoint} failed:`, { status: res.status, data });
     } catch (err) {
@@ -195,14 +202,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     purgeLegacyCatalogCache();
   }, []);
 
-  // KHÔNG auto-fetch mapping khi mount (tránh HTTP 413). Tải thủ công qua nút.
-  const loadMappingListings = useCallback(async () => {
+  const loadMappingListings = useCallback(async (opts?: { silent?: boolean }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) {
       setListingsLoading(false);
       const msg = 'Chưa đăng nhập — không thể tải dữ liệu mapping.';
       setMappingLoadError(msg);
-      showToast(msg);
+      if (!opts?.silent) showToast(msg);
       return;
     }
     setListingsLoading(true);
@@ -213,21 +219,27 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         listingsHydratedRef.current = true;
         setListings(serverResult.rows);
         setMappingLoadError(null);
-        showToast(`Đã tải ${serverResult.rows.length} dòng mapping.`);
+        if (!opts?.silent) showToast(`Đã tải ${serverResult.rows.length} dòng mapping.`);
         return;
       }
       const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối hoặc bấm "Tải dữ liệu từ sàn".';
       setMappingLoadError(msg);
-      showToast(msg);
+      if (!opts?.silent) showToast(msg);
     } catch (err) {
       const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
       console.error('[ProductLinking] Tải mapping thất bại:', err);
       setMappingLoadError(msg);
-      showToast(msg);
+      if (!opts?.silent) showToast(msg);
     } finally {
       setListingsLoading(false);
     }
   }, [showToast]);
+
+  // F5 / mở tab mapping → đọc lại từ Database (GET /api/mapping-products).
+  useEffect(() => {
+    if (listingsHydratedRef.current) return;
+    void loadMappingListings({ silent: true });
+  }, [loadMappingListings]);
 
   useEffect(() => {
     if (listings.length > 0) {
@@ -536,14 +548,14 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch('/api/shopee/channel-products/fetch', {
+      const res = await apiFetch('/api/shopee/channel-products/fetch', {
         method: 'POST',
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ shopId: shop.shopId }),
+        body: JSON.stringify({ shopId: shop.shopId, fetchAll: true }),
       });
       const data = await parseJsonResponse<{
         success?: boolean;
@@ -560,55 +572,22 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         throw new Error(data?.message || data?.error || 'Tải dữ liệu từ sàn thất bại.');
       }
 
-      const productsFromApi = Array.isArray(data.products) ? data.products : [];
-      const count =
-        data.fetchedCount ??
-        data.savedCount ??
-        data.listingsCount ??
-        (Array.isArray(data.listings) ? data.listings.length : 0) ??
-        productsFromApi.length;
-
+      // Server đã ghi channel_listings.json — hydrate UI từ response hoặc GET lại DB.
       if (Array.isArray(data.listings) && data.listings.length > 0) {
         listingsHydratedRef.current = true;
         setListings(data.listings);
-        await persistListings(data.listings);
-      } else if (productsFromApi.length > 0) {
-        // Fallback khi backend cũ (products/sync) chưa trả listings — dựng từ products
-        const byKey = new Map<string, ChannelListing>(
-          listings.map((l) => [`${l.platform}::${l.channelId}`, l]),
-        );
-        productsFromApi.forEach((item) => {
-          const channelId = String(item.shopeeId || item.shopeeItemId || '');
-          if (!channelId) return;
-          const key = `shopee::${channelId}`;
-          const existing = byKey.get(key);
-          byKey.set(key, {
-            id: existing?.id || `cl-shopee-${channelId}`,
-            title: item.title,
-            sku: item.sku,
-            imageUrl: item.avatarUrl || item.imageUrl,
-            channelId,
-            platform: 'shopee',
-            shopName: shop.shopName,
-            status: existing?.status === 'success' ? 'success' : existing?.status === 'failed' ? 'failed' : 'unlinked',
-            linkedProductId: existing?.linkedProductId,
-          });
-        });
-        const nextRows = Array.from(byKey.values());
-        listingsHydratedRef.current = true;
-        setListings(nextRows);
-        await persistListings(nextRows);
       } else {
-        const refreshed = await fetchMappingListingsFromServer(token || '');
-        if (refreshed?.rows?.length) {
-          listingsHydratedRef.current = true;
-          setListings(refreshed.rows);
-        }
+        await loadMappingListings({ silent: true });
       }
 
       if (onRefreshProducts) await onRefreshProducts();
 
-      showToast(data.message || `Đã tải về thành công ${count} sản phẩm từ sàn Shopee`);
+      const count =
+        data.listingsCount ??
+        data.savedCount ??
+        data.fetchedCount ??
+        (Array.isArray(data.listings) ? data.listings.length : 0);
+      showToast(data.message || `Đã tải và lưu DB thành công ${count} sản phẩm từ sàn Shopee`);
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
