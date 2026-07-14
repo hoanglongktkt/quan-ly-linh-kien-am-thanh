@@ -1975,6 +1975,23 @@ async function syncProductToShopee(
     ];
   }
 
+  const preCheck = await verifyShopeeItemExists(shopId, accessToken, itemId);
+  if (!preCheck.exists) {
+    markShopeeItemsInvalidInDb([itemId], preCheck.detail || "product.error_item_not_found");
+    const msg = `Shopee item không tồn tại (${preCheck.detail || "product.error_item_not_found"}) — đã đánh dấu invalid`;
+    const base = {
+      productId: product.id,
+      sku: product.sku,
+      channel: "shopee" as const,
+      success: false,
+      message: msg,
+    };
+    return [
+      { ...base, action: "update_stock" },
+      { ...base, action: "update_price" },
+    ];
+  }
+
   const stockEntry = buildShopeeUpdateStockEntry(product.stock, product.shopeeModelId);
   const priceEntry: { model_id?: number; original_price: number } = {
     original_price: Math.max(0, Math.round(Number(product.sellingPrice) || 0)),
@@ -1985,8 +2002,21 @@ async function syncProductToShopee(
   }
 
   const stockResult = await shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
+  if (isShopeeItemNotFoundError(stockResult)) {
+    const detail = `${stockResult?.error || "product.error_item_not_found"}${stockResult?.message ? ` — ${stockResult.message}` : ""}`;
+    markShopeeItemsInvalidInDb([itemId], detail);
+    const msg = `update_stock: ${detail} — đã đánh dấu invalid, bỏ qua`;
+    const base = { productId: product.id, sku: product.sku, channel: "shopee" as const, success: false, message: msg };
+    return [
+      { ...base, action: "update_stock" },
+      { ...base, action: "update_price" },
+    ];
+  }
   await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
   const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
+  if (isShopeeItemNotFoundError(priceResult)) {
+    markShopeeItemsInvalidInDb([itemId], priceResult?.error || "product.error_item_not_found");
+  }
 
   return [
     parseShopeeApiResult(stockResult, product, "update_stock"),
@@ -2098,6 +2128,76 @@ function isShopeeItemNotFoundError(result: any): boolean {
   return parts.some((p) => isStaleShopeeItemErrorText(String(p || "")));
 }
 
+async function verifyShopeeItemExists(
+  shopId: string,
+  accessToken: string,
+  itemId: number
+): Promise<{ exists: boolean; detail?: string }> {
+  const result = await shopeeGetItemBaseInfo(shopId, accessToken, [itemId]);
+  if (result?.error || isShopeeItemNotFoundError(result)) {
+    const detail = `${result?.error || "product.error_item_not_found"}${result?.message ? ` — ${result.message}` : ""}`.trim();
+    return { exists: false, detail };
+  }
+  const found = Array.isArray(result?.response?.item_list) && result.response.item_list.length > 0;
+  if (!found) return { exists: false, detail: "product.error_item_not_found" };
+  return { exists: true };
+}
+
+async function refreshShopeeLiveItemIdSet(shopId: string, accessToken: string): Promise<Set<number>> {
+  const ids = await fetchAllShopeeItemIds(shopId, accessToken);
+  console.log(`[Shopee Push Stock] Refresh get_item_list: ${ids.length} item_id đang liệt kê trên shop`);
+  return new Set(ids);
+}
+
+function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): string[] {
+  const idSet = new Set(itemIds.map(Number).filter((n) => Number.isFinite(n) && n > 0));
+  if (idSet.size === 0) return [];
+
+  const products = loadProducts();
+  const affectedSkus: string[] = [];
+
+  const nextProducts = products.map((p: any) => {
+    const itemId = getShopeeItemIdForStockPush(p);
+    if (itemId == null || !idSet.has(itemId)) return p;
+    const sku = String(p.sku || "").trim();
+    if (sku) affectedSkus.push(sku);
+    console.warn(`[Shopee Stock] SKU ${sku || p.id} item_id=${itemId}: ${reason} — đánh dấu invalid, bỏ qua đẩy tồn`);
+    const channels = Array.isArray(p.channels) ? p.channels.filter((c: string) => c !== "shopee") : p.channels;
+    return {
+      ...p,
+      shopeeItemId: undefined,
+      shopeeModelId: undefined,
+      shopeeId: undefined,
+      shopeeLinkStatus: "invalid",
+      channels,
+      lastSynced: new Date().toISOString(),
+    };
+  });
+
+  if (affectedSkus.length > 0) saveProducts(nextProducts);
+
+  try {
+    const listings = readChannelListingsDb();
+    let listingChanged = false;
+    const nextListings = listings.map((row: any) => {
+      const cid = Number(row.channelId);
+      if (row.platform !== "shopee" || !Number.isFinite(cid) || !idSet.has(cid)) return row;
+      listingChanged = true;
+      return {
+        ...sanitizeChannelListingRow(row),
+        status: "invalid",
+        linkedProductId: undefined,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    if (listingChanged) writeChannelListingsDb(nextListings);
+  } catch (err) {
+    console.error("[Shopee Stock] Không cập nhật channel_listings:", err);
+  }
+
+  return [...new Set(affectedSkus)];
+}
+
 function getShopeeItemIdForStockPush(product: any): number | null {
   const raw = product?.shopeeItemId ?? product?.shopeeId;
   const match = String(raw || "").match(/(\d{6,})/);
@@ -2124,6 +2224,19 @@ async function pushStockUpdatesToShopee(
     return { ok: false, errors: ["Chưa có shop Shopee được ủy quyền."], warnings: [], pushed: 0, staleSkus: [] };
   }
 
+  const accessToken = preferredShopId ? await getValidShopeeAccessToken(preferredShopId) : null;
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const staleSkus: string[] = [];
+  let liveItemIds: Set<number> | null = null;
+  if (preferredShopId && accessToken) {
+    try {
+      liveItemIds = await refreshShopeeLiveItemIdSet(preferredShopId, accessToken);
+    } catch (err: any) {
+      warnings.push(`Không refresh được danh sách item Shopee: ${err?.message || err}. Sẽ kiểm tra từng item.`);
+    }
+  }
+
   const byItem = new Map<number, any[]>();
   for (const p of shopeeRows) {
     const itemId = getShopeeItemIdForStockPush(p)!;
@@ -2131,22 +2244,25 @@ async function pushStockUpdatesToShopee(
     byItem.get(itemId)!.push(p);
   }
 
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  const staleSkus: string[] = [];
+  const invalidItemIds = new Set<number>();
   let pushed = 0;
 
   const markStaleItem = (itemId: number, rows: any[], detail: string) => {
     const skus = extractSkusFromShopeeRows(rows);
     warnings.push(`item_id=${itemId} (SKU: ${skus.join(", ")}): ${detail}`);
     staleSkus.push(...skus);
+    invalidItemIds.add(itemId);
   };
 
   const itemEntries = [...byItem.entries()];
   let processedInBatch = 0;
 
   for (const [itemId, rows] of itemEntries) {
-    const resolved = await resolveShopeeShopForItemId(itemId, preferredShopId || undefined);
+    let resolved =
+      preferredShopId && accessToken ? { shopId: preferredShopId, accessToken } : null;
+    if (!resolved) {
+      resolved = await resolveShopeeShopForItemId(itemId, preferredShopId || undefined);
+    }
     if (!resolved) {
       markStaleItem(
         itemId,
@@ -2155,6 +2271,30 @@ async function pushStockUpdatesToShopee(
       );
       continue;
     }
+
+    if (liveItemIds && !liveItemIds.has(itemId)) {
+      const verified = await verifyShopeeItemExists(resolved.shopId, resolved.accessToken, itemId);
+      if (!verified.exists) {
+        markStaleItem(
+          itemId,
+          rows,
+          `Không còn trong danh sách Shopee (${verified.detail || "product.error_item_not_found"}) — đã bỏ qua đẩy tồn.`
+        );
+        continue;
+      }
+    }
+
+    const preCheck = await verifyShopeeItemExists(resolved.shopId, resolved.accessToken, itemId);
+    if (!preCheck.exists) {
+      markStaleItem(
+        itemId,
+        rows,
+        `get_item_base_info thất bại (${preCheck.detail || "product.error_item_not_found"}) — đã bỏ qua đẩy tồn.`
+      );
+      continue;
+    }
+
+    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
 
     const stockList = rows.map((p) => buildShopeeUpdateStockEntry(p.stock, p.shopeeModelId));
 
@@ -2166,9 +2306,9 @@ async function pushStockUpdatesToShopee(
 
     if (result?.error || isShopeeItemNotFoundError(result)) {
       const skus = extractSkusFromShopeeRows(rows).join(", ");
-      const detail = `${result?.error || "item_not_found"}${result?.message ? ` — ${result.message}` : ""}`;
-      if (isShopeeItemNotFoundError(result)) {
-        markStaleItem(itemId, rows, `Liên kết Shopee đã hết hạn (${detail.trim()}) — đã bỏ qua đẩy tồn.`);
+      const detail = `${result?.error || "product.error_item_not_found"}${result?.message ? ` — ${result.message}` : ""}`;
+      if (isShopeeItemNotFoundError(result) || result?.error === "product.error_item_not_found") {
+        markStaleItem(itemId, rows, `update_stock: ${detail.trim()} — sản phẩm đã mất trên Shopee, đã bỏ qua.`);
       } else {
         errors.push(`item_id=${itemId} (SKU: ${skus}): ${detail}`);
       }
@@ -2196,6 +2336,16 @@ async function pushStockUpdatesToShopee(
     if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE === 0 && processedInBatch < itemEntries.length) {
       console.log(`[Shopee Push Stock] Nghỉ ${SHOPEE_PRODUCT_BATCH_PAUSE_MS}ms sau ${processedInBatch}/${itemEntries.length} item...`);
       await sleep(SHOPEE_PRODUCT_BATCH_PAUSE_MS);
+    }
+  }
+
+  if (invalidItemIds.size > 0) {
+    const dbSkus = markShopeeItemsInvalidInDb(
+      [...invalidItemIds],
+      "Sản phẩm không tồn tại trên Shopee (product.error_item_not_found)"
+    );
+    for (const sku of dbSkus) {
+      if (!staleSkus.includes(sku)) staleSkus.push(sku);
     }
   }
 
@@ -3668,7 +3818,7 @@ function sanitizeChannelListingRow(row: any): any {
     platform: row.platform || "shopee",
     shopName: String(row.shopName || ""),
     shopId: row.shopId ? String(row.shopId) : undefined,
-    status: row.status === "success" || row.status === "failed" ? row.status : "unlinked",
+    status: ["success", "failed", "unlinked", "invalid"].includes(row.status) ? row.status : "unlinked",
     linkedProductId: row.linkedProductId ? String(row.linkedProductId) : undefined,
     updatedAt: row.updatedAt || new Date().toISOString(),
   };
@@ -4961,25 +5111,6 @@ async function startServer() {
       console.log(`[Inventory Balance] Cập nhật kho gốc ${updatedCount} SKU`);
 
       const shopeeResult = await pushStockUpdatesToShopee(updatedProducts, req.body?.shopId);
-
-      if (shopeeResult.staleSkus.length > 0) {
-        const staleSet = new Set(shopeeResult.staleSkus.map((s) => s.toLowerCase()));
-        const repaired = loadProducts().map((p: any) => {
-          const sku = String(p.sku || "").trim().toLowerCase();
-          if (!staleSet.has(sku)) return p;
-          return {
-            ...p,
-            shopeeItemId: undefined,
-            shopeeModelId: undefined,
-            shopeeId: undefined,
-            channels: Array.isArray(p.channels)
-              ? p.channels.filter((c: string) => c !== "shopee")
-              : p.channels,
-          };
-        });
-        saveProducts(repaired);
-        console.log(`[Inventory Balance] Gỡ liên kết Shopee hết hạn: ${shopeeResult.staleSkus.join(", ")}`);
-      }
 
       if (!shopeeResult.ok) {
         const onlyStale = shopeeResult.errors.every((e) => isStaleShopeeItemErrorText(e));
