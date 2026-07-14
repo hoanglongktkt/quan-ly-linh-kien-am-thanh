@@ -224,7 +224,12 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       }
 
       if (!res.ok || !data.success) {
-        throw new Error(data?.message || data?.error || 'Cân bằng kho thất bại.');
+        const parts = [
+          data?.message,
+          data?.error,
+          ...(Array.isArray(data.shopeeErrors) ? data.shopeeErrors : []),
+        ].filter(Boolean);
+        throw new Error(Array.from(new Set(parts)).join('\n') || 'Cân bằng kho thất bại.');
       }
 
       if (onRefreshProducts) await onRefreshProducts();
@@ -242,7 +247,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Cân bằng kho thất bại.';
       setToast({ type: 'error', text: msg });
-      setTimeout(() => setToast(null), 4000);
+      setTimeout(() => setToast(null), 8000);
     } finally {
       setBalancing(false);
     }

@@ -66,8 +66,20 @@ function applyProductChannelLink(masterProd: Product, listing: ChannelListing): 
   const linked: Product = { ...masterProd, channels };
 
   if (listing.platform === 'shopee') {
-    linked.shopeeId = listing.channelId;
-    linked.shopeeItemId = listing.channelId;
+    const cid = String(listing.channelId || '').trim();
+    const modelHint = (listing as ChannelListing & { modelId?: string }).modelId;
+    if (cid.includes(':')) {
+      const [itemPart, modelPart] = cid.split(':');
+      const itemId = (itemPart.match(/(\d{6,})/) || [])[1] || itemPart;
+      const modelId = (String(modelPart).match(/(\d+)/) || [])[1] || modelPart;
+      linked.shopeeItemId = itemId;
+      linked.shopeeModelId = modelId || undefined;
+      linked.shopeeId = modelId ? `${itemId}:${modelId}` : cid;
+    } else {
+      linked.shopeeId = cid;
+      linked.shopeeItemId = cid;
+      if (modelHint) linked.shopeeModelId = String(modelHint);
+    }
   } else if (listing.platform === 'tiktok') {
     linked.tiktokId = listing.channelId;
   } else if (listing.platform === 'woocommerce') {
@@ -437,6 +449,21 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     const createdProducts: Product[] = initVariants.map((row, idx) => {
       const baseTitle = initTitle.trim();
       const title = initVariants.length > 1 ? `${baseTitle} - ${row.label}` : baseTitle;
+      let shopeeId: string | undefined;
+      let shopeeItemId: string | undefined;
+      let shopeeModelId: string | undefined;
+      if (initListing.platform === 'shopee') {
+        const cid = String(initListing.channelId || '').trim();
+        if (cid.includes(':')) {
+          const [itemPart, modelPart] = cid.split(':');
+          shopeeItemId = (itemPart.match(/(\d{6,})/) || [])[1] || itemPart;
+          shopeeModelId = (String(modelPart).match(/(\d+)/) || [])[1] || modelPart;
+          shopeeId = shopeeModelId ? `${shopeeItemId}:${shopeeModelId}` : cid;
+        } else {
+          shopeeId = cid;
+          shopeeItemId = cid;
+        }
+      }
       return {
         id: `prod-imported-${Date.now()}-${idx}`,
         title,
@@ -450,8 +477,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         imageUrl: initListing.imageUrl || 'https://images.unsplash.com/photo-1608248597279-f99d160bfcbc?w=400&auto=format&fit=crop&q=60&ixlib=rb-4.0.3',
         description: `Sản phẩm khởi tạo từ sàn ${initListing.platform.toUpperCase()} - ${initListing.shopName}. ID sàn: ${initListing.channelId}`,
         status: row.stock > 0 ? 'active' as const : 'out_of_stock' as const,
-        shopeeId: initListing.platform === 'shopee' ? initListing.channelId : undefined,
-        shopeeItemId: initListing.platform === 'shopee' ? initListing.channelId : undefined,
+        shopeeId,
+        shopeeItemId,
+        shopeeModelId,
         modelName: initVariants.length > 1 ? row.label : undefined,
         tiktokId: initListing.platform === 'tiktok' ? initListing.channelId : undefined,
         lastSynced: new Date().toISOString(),

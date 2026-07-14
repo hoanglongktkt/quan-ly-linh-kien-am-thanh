@@ -297,7 +297,13 @@ export default function Dashboard({
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.message || 'Đồng bộ tồn kho thất bại.');
+        const parts = [
+          data?.message,
+          data?.error,
+          ...(Array.isArray(data.shopeeErrors) ? data.shopeeErrors : []),
+          ...(Array.isArray(data.warnings) ? data.warnings.slice(0, 5) : []),
+        ].filter(Boolean);
+        throw new Error(Array.from(new Set(parts)).join('\n') || 'Đồng bộ tồn kho thất bại.');
       }
       if (onRefreshProducts) await onRefreshProducts();
       refreshInventoryList();
