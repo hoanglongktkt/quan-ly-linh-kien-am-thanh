@@ -947,20 +947,12 @@ export default function ProductList({
                                 >
                                   {child.modelName || child.title}
                                 </button>
-                                {child.shopeeModelId && (
-                                  <span className="text-[10px] text-gray-400 font-mono">model_id: {child.shopeeModelId}</span>
-                                )}
                               </div>
                             </div>
                           </td>
                           <td className="p-3">
                             <div className="space-y-0.5">
                               <span className="font-mono text-xs text-indigo-700 font-semibold block">{child.sku}</span>
-                              {child.shopeeModelId && (
-                                <span className="text-[10px] text-gray-500 font-mono block">
-                                  Mã phân loại: {child.shopeeModelId}
-                                </span>
-                              )}
                               {child.modelName && (
                                 <span className="text-[10px] text-gray-400 block">{child.modelName}</span>
                               )}
@@ -1105,9 +1097,6 @@ export default function ProductList({
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-gray-800 truncate">{child.modelName || child.title}</p>
                           <p className="text-[10px] font-mono text-indigo-600">SKU: {child.sku}</p>
-                          {child.shopeeModelId && (
-                            <p className="text-[10px] font-mono text-gray-500">Phân loại: {child.shopeeModelId}</p>
-                          )}
                         </div>
                         <span className="text-xs font-mono font-bold text-slate-700">{child.stock}</span>
                       </div>
