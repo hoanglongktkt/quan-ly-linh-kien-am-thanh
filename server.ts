@@ -4682,11 +4682,16 @@ function writeChannelListingsDb(rows: any[]): void {
     }
     const bytes = fs.statSync(CHANNEL_LISTINGS_DB_PATH).size;
     console.log(`Đã lưu DB thành công — ${payload.length} dòng (${bytes} bytes) -> ${CHANNEL_LISTINGS_DB_PATH}`);
-    console.log(`[Channel Listings DB] Đã ghi ${payload.length} dòng -> ${CHANNEL_LISTINGS_DB_PATH}`);
   } catch (error) {
     console.error(`[Channel Listings DB] Failed to write ${CHANNEL_LISTINGS_DB_PATH}:`, error);
     throw error;
   }
+}
+
+/** Sản phẩm kéo từ Shopee dạng shopee-item-* — KHÔNG phải Kho gốc thủ công. */
+function isSyntheticShopeePullProduct(p: any): boolean {
+  const id = String(p?.id || "");
+  return id.startsWith("shopee-item-");
 }
 
 function sanitizeChannelListingRow(row: any): any {
@@ -4721,7 +4726,7 @@ function buildMasterProductLookupById(products?: any[]): Map<string, any> {
   return index;
 }
 
-/** Populate tên/SKU kho gốc vào listing trước khi trả Frontend. */
+/** Populate tên/SKU kho gốc vào listing (chỉ đọc — không ghi DB). */
 function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any[] {
   const lookup = buildMasterProductLookupById(products);
   return (Array.isArray(listings) ? listings : []).map((row) => {
@@ -4736,7 +4741,8 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
       };
     }
     const master = lookup.get(String(linkedId));
-    if (!master) {
+    // Không hiển thị sản phẩm ảo shopee-item-* như Kho gốc
+    if (!master || isSyntheticShopeePullProduct(master)) {
       return {
         ...base,
         linkedProductTitle: undefined,
@@ -4879,10 +4885,11 @@ function upsertChannelListingsFromShopeeFetch(
   return merged;
 }
 
-/** Index SKU kho chính — tương đương INDEX/WHERE IN trên DB file JSON (gồm cả children). */
+/** Index SKU kho chính thật — loại trừ sản phẩm ảo kéo từ Shopee (shopee-item-*). */
 function buildMasterSkuIndex(products: any[]): Map<string, any> {
   const index = new Map<string, any>();
   for (const p of flattenProductsForStockSync(products)) {
+    if (isSyntheticShopeePullProduct(p)) continue;
     const sku = String(p.sku || "").trim().toLowerCase();
     if (sku && !index.has(sku)) index.set(sku, p);
   }
@@ -4900,7 +4907,7 @@ function autoLinkChannelListingsByExactSku(): {
   unlinkedRemaining: number;
 } {
   const listings = readChannelListingsDb();
-  const masterProducts = loadProducts();
+  const masterProducts = loadProducts().filter((p: any) => !isSyntheticShopeePullProduct(p));
   const skuIndex = buildMasterSkuIndex(masterProducts);
   const byId = new Map<string, any>(masterProducts.map((p: any) => [String(p.id), { ...p }]));
 
@@ -5083,61 +5090,25 @@ function resolveConnectedShopDisplayName(
   return sid ? `Shop ${sid}` : undefined;
 }
 
-function rebuildChannelListingsFromProducts(): any[] {
-  const products = loadProducts();
-  const settings = loadChannelSettings();
-  const defaultShop = (settings.shops || []).find((s: any) => s.platform === "shopee");
-  const defaultShopName = String(defaultShop?.shopName || "Shopee");
-  const defaultShopId = String(defaultShop?.shopId || "");
-  const byKey = new Map<string, any>();
-
-  for (const p of products) {
-    const channelId = String(p.shopeeItemId || p.shopeeId || "").trim();
-    if (!channelId) continue;
-    const key = `shopee::${channelId}`;
-    if (byKey.has(key)) continue;
-    byKey.set(
-      key,
-      sanitizeChannelListingRow({
-        id: `cl-shopee-${channelId}`,
-        title: String(p.title || ""),
-        sku: String(p.sku || ""),
-        imageUrl: p.avatarUrl || p.imageUrl,
-        channelId,
-        platform: "shopee",
-        shopName: defaultShopName,
-        shopId: defaultShopId || undefined,
-        status: "success",
-        linkedProductId: p.id,
-      }),
-    );
-  }
-  return Array.from(byKey.values());
-}
-
-function ensureChannelListingsDb(): any[] {
+/** Chỉ ĐỌC file mapping — tuyệt đối không ghi / không rebuild / không auto-link. */
+function readChannelListingsForGet(): any[] {
   const existing = readChannelListingsDb();
-  console.log(`[Mapping GET] Đọc DB: ${existing.length} dòng từ ${CHANNEL_LISTINGS_DB_PATH} (exists=${fs.existsSync(CHANNEL_LISTINGS_DB_PATH)})`);
-  if (existing.length > 0) return existing;
-  const rebuilt = rebuildChannelListingsFromProducts();
-  console.log(`[Mapping GET] DB trống — rebuild từ products.json: ${rebuilt.length} dòng`);
-  if (rebuilt.length > 0) {
-    try {
-      writeChannelListingsDb(rebuilt);
-      console.log(`[Channel Listings] Auto-rebuild ${rebuilt.length} dòng từ products.json`);
-    } catch (err: any) {
-      console.error(`[Mapping GET] Lỗi lưu Database khi rebuild:`, err?.message || err);
-      throw new Error(`Lỗi lưu Database: ${err?.message || String(err)}`);
-    }
-  }
-  return rebuilt;
+  console.log(
+    `[Mapping GET] Đọc DB (read-only): ${existing.length} dòng từ ${CHANNEL_LISTINGS_DB_PATH} (exists=${fs.existsSync(CHANNEL_LISTINGS_DB_PATH)})`
+  );
+  return existing;
 }
 
 function hydrateChannelListingsOnBoot(): void {
   try {
-    console.log(`[Boot] Khởi tạo mapping DB tại: ${CHANNEL_LISTINGS_DB_PATH}`);
-    const rows = ensureChannelListingsDb();
-    console.log(`[Boot] Mapping DB sẵn sàng: ${rows.length} dòng`);
+    ensureDataDirs();
+    if (!fs.existsSync(CHANNEL_LISTINGS_DB_PATH)) {
+      writeChannelListingsDb([]);
+      console.log(`[Boot] Tạo file mapping trống: ${CHANNEL_LISTINGS_DB_PATH}`);
+    } else {
+      const rows = readChannelListingsDb();
+      console.log(`[Boot] Mapping DB sẵn sàng: ${rows.length} dòng (không rebuild)`);
+    }
   } catch (err: any) {
     console.error(`[Boot] Không thể khởi tạo mapping DB:`, err?.message || err);
   }
@@ -5782,9 +5753,10 @@ async function startServer() {
   // ─── Mapping products — ĐẶT SỚM, TRƯỚC static / SPA catch-all ───
   const handleMappingProductsGet = (_req: any, res: any) => {
     try {
-      const listings = enrichChannelListingsWithMaster(ensureChannelListingsDb());
+      // CHỈ ĐỌC DB — không ghi, không rebuild, không auto-link.
+      const listings = enrichChannelListingsWithMaster(readChannelListingsForGet());
       console.log(
-        `[Mapping Products] GET trả về ${listings.length} dòng từ DB (${CHANNEL_LISTINGS_DB_PATH}) (đã JOIN kho gốc)`
+        `[Mapping Products] GET (read-only) trả về ${listings.length} dòng từ ${CHANNEL_LISTINGS_DB_PATH}`
       );
       return res.status(200).json({ success: true, listings, count: listings.length });
     } catch (error: any) {
@@ -5804,11 +5776,13 @@ async function startServer() {
         return res.status(400).json({
           success: false,
           message: "Thiếu mảng listings trong request body.",
+          hint: "PUT/POST /api/mapping-products cần body { listings: [...] }. Liên kết tự động dùng POST /api/shopee/channel-products/auto-link (không cần listings).",
         });
       }
       console.log(`[Mapping Save] UPSERT nhận ${incoming.length} dòng (${req.method})`);
       const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
       writeChannelListingsDb(sanitized);
+      console.log(`Đã lưu DB thành công — mapping upsert ${sanitized.length} dòng`);
       const verified = enrichChannelListingsWithMaster(readChannelListingsDb());
       return res.status(200).json({
         success: true,
@@ -7740,10 +7714,11 @@ async function startServer() {
     }
   });
 
-  // API 2: Liên kết tự động theo SKU — chỉ xử lý nội bộ DB (in-memory bulk).
-  // Alias routes (cùng handler) — đặt trước SPA catch-all / Vite.
-  const handleAutoLinkBySku = (_req: any, res: any) => {
+  // API 2: Liên kết tự động theo SKU — tự đọc DB, KHÔNG cần body.listings.
+  const handleAutoLinkBySku = (req: any, res: any) => {
     try {
+      // Bỏ qua body — luôn query channel_listings.json + products.json
+      void req;
       const result = autoLinkChannelListingsByExactSku();
       const data = {
         linkedCount: result.linkedCount,
@@ -7751,6 +7726,9 @@ async function startServer() {
         unlinkedRemaining: result.unlinkedRemaining,
         listings: result.listings,
       };
+      console.log(
+        `Đã lưu DB thành công — auto-link linked=${result.linkedCount}, remaining=${result.unlinkedRemaining}`
+      );
       return res.status(200).json({
         success: true,
         data,
@@ -7764,7 +7742,7 @@ async function startServer() {
       console.error("[Auto Link SKU] Exception:", error);
       const message = error instanceof Error ? error.message : String(error);
       if (!res.headersSent) {
-        return res.status(500).json({ success: false, message });
+        return res.status(500).json({ success: false, message, error: String(error) });
       }
     }
   };

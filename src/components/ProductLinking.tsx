@@ -163,8 +163,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       showToast('Phiên đăng nhập hết hạn. Vui lòng đăng nhập lại.');
       return false;
     }
+    if (!Array.isArray(rows)) {
+      console.error('[ProductLinking] persistListings: rows không phải mảng');
+      return false;
+    }
     try {
-      const res = await fetch('/api/mapping-products', {
+      const res = await apiFetch('/api/mapping-products', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -627,6 +631,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        // Backend tự query DB — không gửi listings (tránh nhầm endpoint upsert).
+        body: JSON.stringify({}),
       });
       const data = await parseJsonResponse<{
         success?: boolean;
@@ -1003,7 +1009,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                   const showLinked =
                     item.status === 'success' &&
                     !!item.linkedProductId &&
-                    (!!linkedTitle || !!linkedSku || !!item.linkedProductId);
+                    (!!linkedTitle || !!linkedSku);
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="p-4 text-center">
@@ -1101,7 +1107,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                         {showLinked ? (
                           <div className="space-y-0.5">
                             <p className="font-extrabold text-blue-600 text-xs hover:underline cursor-pointer line-clamp-1 max-w-[280px]">
-                              {linkedTitle || `Kho gốc #${item.linkedProductId}`}
+                              {linkedTitle}
                             </p>
                             <p className="font-mono font-bold text-gray-400 text-[10px]">
                               SKU: {linkedSku || '—'}
