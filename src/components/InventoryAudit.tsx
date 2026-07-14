@@ -232,7 +232,11 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       setAuditLines([]);
       setSearch('');
       setCurrentPage(1);
-      setToast({ type: 'success', text: data.message || 'Cân bằng kho thành công!' });
+      const warnNote =
+        Array.isArray(data.shopeeWarnings) && data.shopeeWarnings.length > 0
+          ? ` (${data.shopeeWarnings.length} SKU Shopee bỏ qua do liên kết hết hạn)`
+          : '';
+      setToast({ type: 'success', text: (data.message || 'Cân bằng kho thành công!') + warnNote });
       setTimeout(() => setToast(null), 4000);
       searchRef.current?.focus();
     } catch (err: unknown) {
