@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
 import {
-  startRearCameraScanner,
+  startLiveQrScanner,
   stopTapToFocusAssist,
   PICKING_CAMERA_TAP_LAYER_ID,
   HTTPS_CAMERA_MESSAGE,
-  QR_ONLY_FORMATS,
-  QR_SCANNER_CONFIG,
+  type LiveQrScannerHandle,
 } from '../utils/cameraScanner';
 import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback } from '../utils/orderScan';
 import {
@@ -195,7 +193,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
   useEffect(() => {
     if (!cameraOpen || activeOrder) return;
 
-    let html5Qrcode: Html5Qrcode | null = null;
+    const scannerRef = { current: null as LiveQrScannerHandle | null };
     let isMounted = true;
 
     const timer = setTimeout(() => {
@@ -203,18 +201,24 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       const element = document.getElementById('picking-camera-reader');
       if (!element) return;
 
-      html5Qrcode = new Html5Qrcode('picking-camera-reader', {
-        formatsToSupport: QR_ONLY_FORMATS,
-        verbose: false,
-      });
-
       const onScan = (decodedText: string) => {
         if (!decodedText?.trim()) return;
         setScanInput(decodedText.trim());
         lookupOrder(decodedText);
       };
 
-      void startRearCameraScanner(html5Qrcode, QR_SCANNER_CONFIG, onScan, () => {}, 'picking-camera-reader', PICKING_CAMERA_TAP_LAYER_ID)
+      void startLiveQrScanner({
+        containerId: 'picking-camera-reader',
+        tapLayerId: PICKING_CAMERA_TAP_LAYER_ID,
+        onSuccess: onScan,
+      })
+        .then((handle) => {
+          if (!isMounted) {
+            void handle.stop();
+            return;
+          }
+          scannerRef.current = handle;
+        })
         .catch((err: unknown) => {
           const msg = err instanceof Error ? err.message : 'Không thể mở camera.';
           setCameraError(
@@ -223,15 +227,13 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
               : `Không thể khởi động camera${msg ? `: ${msg}` : ''}. Bấm "Thử lại".`,
           );
         });
-    }, 300);
+    }, 200);
 
     return () => {
       isMounted = false;
       clearTimeout(timer);
       stopTapToFocusAssist(PICKING_CAMERA_TAP_LAYER_ID);
-      if (html5Qrcode?.isScanning) {
-        html5Qrcode.stop().catch(() => undefined);
-      }
+      void scannerRef.current?.stop().catch(() => undefined);
     };
   }, [cameraOpen, activeOrder, cameraRestartKey, lookupOrder]);
 

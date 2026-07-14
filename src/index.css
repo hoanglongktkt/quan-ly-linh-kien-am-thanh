@@ -428,7 +428,7 @@ body {
   display: none;
 }
 
-/* QR camera scanner — html5-qrcode injects video into these containers */
+/* QR camera scanner — live video + continuous frame decode */
 #camera-reader,
 #picking-camera-reader {
   position: relative;

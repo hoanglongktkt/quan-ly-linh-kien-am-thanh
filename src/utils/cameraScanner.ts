@@ -1,30 +1,57 @@
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+/**
+ * Live QR scanner — Continuous Frame Processing.
+ * Primary: BarcodeDetector (Chrome/Android = Google ML Kit / Play Services).
+ * Fallback: @zxing/browser continuous decode.
+ */
+import { BrowserMultiFormatReader } from '@zxing/browser';
+import { BarcodeFormat, DecodeHintType } from '@zxing/library';
 
 export const HTTPS_CAMERA_MESSAGE = 'Vui lòng truy cập qua HTTPS để sử dụng camera';
 
 export const CAMERA_TAP_LAYER_ID = 'camera-tap-focus';
 export const PICKING_CAMERA_TAP_LAYER_ID = 'picking-camera-tap-focus';
 
-export const REAR_CAMERA_CONSTRAINTS: MediaTrackConstraints = {
-  facingMode: { ideal: 'environment' },
+/** Độ phân giải capture thấp → CPU/RAM nhẹ, tần suất quét cao. */
+const CAPTURE_WIDTH = 960;
+const CAPTURE_HEIGHT = 720;
+/** Canvas decode nhỏ hơn nữa để tăng FPS detect. */
+const DECODE_MAX_EDGE = 480;
+/** Khoảng cách tối thiểu giữa 2 lần decode (ms) — ~20–25 FPS. */
+const DECODE_INTERVAL_MS = 40;
+
+export type LiveQrScannerHandle = {
+  stop: () => Promise<void>;
 };
 
-export const QR_ONLY_FORMATS = [Html5QrcodeSupportedFormats.QR_CODE];
-
-export const QR_SCANNER_CONFIG = {
-  fps: 15,
-  qrbox: (width: number, height: number) => {
-    const minEdge = Math.min(width, height);
-    const size = Math.floor(minEdge * 0.7);
-    return { width: size, height: size };
-  },
-  aspectRatio: 1.0,
-  disableFlip: false,
+type ExtendedCaps = MediaTrackCapabilities & {
+  focusMode?: string[];
+  exposureMode?: string[];
+  exposureCompensation?: { min: number; max: number; step?: number };
+  zoom?: { min: number; max: number; step?: number };
 };
+
+type BarcodeDetectorLike = {
+  detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue?: string }>>;
+};
+
+declare global {
+  interface Window {
+    BarcodeDetector?: new (opts?: { formats?: string[] }) => BarcodeDetectorLike;
+  }
+}
+
+const REAR_LABEL = /back|rear|environment|后置|後鏡|sau|arrière|trás/i;
+const WIDE_LABEL = /wide|ultra|0\.5|góc rộng/i;
+const TELE_LABEL = /tele|zoom|2x|3x|5x|periscope|telephoto/i;
+
+const tapFocusStops = new Map<string, () => void>();
+const activeScanners = new Map<string, LiveQrScannerHandle>();
 
 export function isMobileDevice(): boolean {
   if (typeof navigator === 'undefined') return false;
-  return /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  return /Android|iPhone|iPad|iPod|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent,
+  );
 }
 
 export function getCameraBlockedReason(): string | null {
@@ -35,145 +62,145 @@ export function getCameraBlockedReason(): string | null {
   return null;
 }
 
-type CameraStartConfig = string | { facingMode: 'environment' | 'user' };
-
-type ExtendedCaps = MediaTrackCapabilities & {
-  focusMode?: string[];
-  zoom?: { min: number; max: number; step?: number };
-};
-
-const REAR_LABEL = /back|rear|environment|后置|後鏡|sau|arrière|trás/i;
-const WIDE_LABEL = /wide|ultra|0\.5|góc rộng/i;
-const TELE_LABEL = /tele|zoom|2x|3x|5x|periscope|telephoto/i;
-
-const tapFocusStops = new Map<string, () => void>();
-
-function pickRearCameraId(cameras: { id: string; label: string }[]): string | null {
-  if (!cameras.length) return null;
-  const label = (c: { label: string }) => c.label || '';
-  const nonTele = cameras.filter((c) => !TELE_LABEL.test(label(c)));
-  const list = nonTele.length ? nonTele : cameras;
-
-  const wide = list.find((c) => WIDE_LABEL.test(label(c)));
-  if (wide) return wide.id;
-
-  const back = list.find((c) => REAR_LABEL.test(label(c)) && !TELE_LABEL.test(label(c)));
-  if (back) return back.id;
-
-  if (list.length === 1) return list[0].id;
-  return list[list.length - 1].id;
-}
-
-async function buildCameraStartConfigs(): Promise<CameraStartConfig[]> {
-  const configs: CameraStartConfig[] = [];
+function createBarcodeDetector(): BarcodeDetectorLike | null {
   try {
-    const cameras = await Html5Qrcode.getCameras();
-    const rearId = pickRearCameraId(cameras);
-    if (rearId) configs.push(rearId);
-    for (const cam of cameras) {
-      if (!TELE_LABEL.test(cam.label || '') && !configs.includes(cam.id)) {
-        configs.push(cam.id);
-      }
-    }
+    if (typeof window === 'undefined' || !window.BarcodeDetector) return null;
+    return new window.BarcodeDetector({ formats: ['qr_code'] });
   } catch {
-    /* fallback */
+    return null;
   }
-  configs.push({ facingMode: 'environment' });
-  configs.push({ facingMode: 'user' });
-  return configs;
 }
 
-async function waitForScannerVideo(scannerElementId: string): Promise<HTMLVideoElement | null> {
-  for (let i = 0; i < 60; i++) {
-    const video = document.querySelector(`#${scannerElementId} video`) as HTMLVideoElement | null;
-    if (video?.srcObject) {
-      if (video.readyState < 2) {
-        await new Promise<void>((resolve) => {
-          video.addEventListener('loadedmetadata', () => resolve(), { once: true });
-        });
-      }
-      return video;
-    }
-    await new Promise((r) => requestAnimationFrame(r));
+async function listVideoInputDevices(): Promise<MediaDeviceInfo[]> {
+  if (!navigator.mediaDevices?.enumerateDevices) return [];
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter((d) => d.kind === 'videoinput');
+  } catch {
+    return [];
   }
-  return null;
 }
 
-async function getVideoTrack(scannerElementId: string): Promise<MediaStreamTrack | null> {
-  const video = await waitForScannerVideo(scannerElementId);
-  return (video?.srcObject as MediaStream | null)?.getVideoTracks()?.[0] ?? null;
+function pickRearDeviceId(devices: MediaDeviceInfo[]): string | undefined {
+  if (!devices.length) return undefined;
+  const label = (d: MediaDeviceInfo) => d.label || '';
+  const nonTele = devices.filter((d) => !TELE_LABEL.test(label(d)));
+  const list = nonTele.length ? nonTele : devices;
+  const wide = list.find((d) => WIDE_LABEL.test(label(d)));
+  if (wide) return wide.deviceId;
+  const back = list.find((d) => REAR_LABEL.test(label(d)));
+  if (back) return back.deviceId;
+  if (list.length === 1) return list[0].deviceId;
+  return list[list.length - 1]?.deviceId;
 }
 
-/** Góc rộng tối đa + AF liên tục — không zoom (zoom gây phải để máy xa ~60cm). */
-async function applyWideContinuousAutofocus(scannerElementId: string): Promise<void> {
-  const track = await getVideoTrack(scannerElementId);
-  if (!track?.applyConstraints) return;
+/** Constraints: camera sau, độ phân giải thấp (AF/exposure apply sau khi mở stream). */
+function buildStreamConstraints(deviceId?: string): MediaStreamConstraints {
+  const video: MediaTrackConstraints = {
+    width: { ideal: CAPTURE_WIDTH },
+    height: { ideal: CAPTURE_HEIGHT },
+    frameRate: { ideal: 30, max: 30 },
+    ...(deviceId
+      ? { deviceId: { exact: deviceId } }
+      : { facingMode: { ideal: 'environment' } }),
+  };
+  return { audio: false, video };
+}
 
-  const caps = (typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}) as ExtendedCaps;
+async function openRearCameraStream(): Promise<MediaStream> {
+  const devices = await listVideoInputDevices();
+  const rearId = pickRearDeviceId(devices);
+  const attempts: MediaStreamConstraints[] = [
+    buildStreamConstraints(rearId),
+    buildStreamConstraints(undefined),
+    {
+      audio: false,
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+      },
+    },
+  ];
 
-  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+  let lastError: unknown;
+  for (const constraints of attempts) {
     try {
-      await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] } as MediaTrackConstraints);
-    } catch {
-      /* ignore */
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (err) {
+      lastError = err;
     }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Không thể khởi động camera.');
+}
+
+async function applyContinuousFocusAndExposure(track: MediaStreamTrack): Promise<void> {
+  if (!track?.applyConstraints) return;
+  const caps = (
+    typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}
+  ) as ExtendedCaps;
+
+  const applyAdvanced = async (constraint: Record<string, unknown>) => {
+    try {
+      await track.applyConstraints({ advanced: [constraint] } as unknown as MediaTrackConstraints);
+    } catch {
+      /* ignore unsupported constraint */
+    }
+  };
+
+  // Zoom về minimum — quét gần dễ hơn, không phải đứng xa.
+  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
+    await applyAdvanced({ zoom: caps.zoom.min });
   }
 
   if (caps.focusMode?.includes('continuous')) {
-    try {
-      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] } as MediaTrackConstraints);
-      return;
-    } catch {
-      /* ignore */
-    }
+    await applyAdvanced({ focusMode: 'continuous' });
+  } else if (caps.focusMode?.includes('auto')) {
+    await applyAdvanced({ focusMode: 'auto' });
   }
 
-  if (caps.focusMode?.includes('auto')) {
-    try {
-      await track.applyConstraints({ advanced: [{ focusMode: 'auto' }] } as MediaTrackConstraints);
-    } catch {
-      /* ignore */
-    }
+  if (caps.exposureMode?.includes('continuous')) {
+    await applyAdvanced({ exposureMode: 'continuous' });
+  } else if (caps.exposureMode?.includes('auto')) {
+    await applyAdvanced({ exposureMode: 'auto' });
+  }
+
+  // Bù sáng nhẹ nếu tối (QR trên phiếu in).
+  if (caps.exposureCompensation) {
+    const { min, max } = caps.exposureCompensation;
+    const bias = Math.min(max, Math.max(min, 0.3));
+    await applyAdvanced({ exposureCompensation: bias });
   }
 }
 
-/** Chạm lấy nét: single-shot → continuous (hoạt động trên Chrome/Android & Safari mới). */
+/** Chạm lấy nét: single-shot rồi quay lại continuous. */
 export async function triggerTapToFocus(scannerElementId: string): Promise<void> {
-  const track = await getVideoTrack(scannerElementId);
+  const video = document.querySelector(`#${scannerElementId} video`) as HTMLVideoElement | null;
+  const track = (video?.srcObject as MediaStream | null)?.getVideoTracks()?.[0];
   if (!track?.applyConstraints) return;
 
-  const caps = (typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}) as ExtendedCaps;
-
-  if (caps.zoom && caps.zoom.max > caps.zoom.min) {
-    try {
-      await track.applyConstraints({ advanced: [{ zoom: caps.zoom.min }] } as MediaTrackConstraints);
-    } catch {
-      /* ignore */
-    }
-  }
+  const caps = (
+    typeof track.getCapabilities === 'function' ? track.getCapabilities() : {}
+  ) as ExtendedCaps;
 
   if (caps.focusMode?.includes('single-shot')) {
     try {
-      await track.applyConstraints({ advanced: [{ focusMode: 'single-shot' }] } as MediaTrackConstraints);
-      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] } as MediaTrackConstraints);
+      await track.applyConstraints({
+        advanced: [{ focusMode: 'single-shot' }],
+      } as unknown as MediaTrackConstraints);
+      await new Promise((r) => setTimeout(r, 120));
+      if (caps.focusMode.includes('continuous')) {
+        await track.applyConstraints({
+          advanced: [{ focusMode: 'continuous' }],
+        } as unknown as MediaTrackConstraints);
+      }
       return;
     } catch {
-      /* fallback */
+      /* fallthrough */
     }
   }
 
-  if (caps.focusMode?.includes('continuous')) {
-    try {
-      await track.applyConstraints({ advanced: [{ focusMode: 'manual' }] } as MediaTrackConstraints);
-    } catch {
-      /* ignore */
-    }
-    try {
-      await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] } as MediaTrackConstraints);
-    } catch {
-      /* ignore */
-    }
-  }
+  await applyContinuousFocusAndExposure(track);
 }
 
 export function stopTapToFocusAssist(tapLayerId: string): void {
@@ -181,7 +208,6 @@ export function stopTapToFocusAssist(tapLayerId: string): void {
   tapFocusStops.delete(tapLayerId);
 }
 
-/** Lớp chạm riêng (pointer-events) — gắn vào nút trong suốt phủ camera. */
 export function startTapToFocusAssist(scannerElementId: string, tapLayerId: string): void {
   stopTapToFocusAssist(tapLayerId);
 
@@ -195,64 +221,250 @@ export function startTapToFocusAssist(scannerElementId: string, tapLayerId: stri
   layer?.addEventListener('click', onTap);
   layer?.addEventListener('touchend', onTap, { passive: false });
 
-  void applyWideContinuousAutofocus(scannerElementId);
-
   tapFocusStops.set(tapLayerId, () => {
     layer?.removeEventListener('click', onTap);
     layer?.removeEventListener('touchend', onTap);
   });
 }
 
-/** @deprecated dùng stopTapToFocusAssist */
+export async function applyScannerAutofocus(scannerElementId: string): Promise<void> {
+  const video = document.querySelector(`#${scannerElementId} video`) as HTMLVideoElement | null;
+  const track = (video?.srcObject as MediaStream | null)?.getVideoTracks()?.[0];
+  if (track) await applyContinuousFocusAndExposure(track);
+}
+
+function drawDownscaledFrame(
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+): CanvasRenderingContext2D | null {
+  const vw = video.videoWidth || 0;
+  const vh = video.videoHeight || 0;
+  if (vw < 2 || vh < 2) return null;
+
+  const scale = Math.min(1, DECODE_MAX_EDGE / Math.max(vw, vh));
+  const w = Math.max(1, Math.floor(vw * scale));
+  const h = Math.max(1, Math.floor(vh * scale));
+
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== h) canvas.height = h;
+
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(video, 0, 0, w, h);
+  return ctx;
+}
+
+function createZxingReader(): BrowserMultiFormatReader {
+  const hints = new Map();
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+  hints.set(DecodeHintType.TRY_HARDER, true);
+  return new BrowserMultiFormatReader(hints, {
+    delayBetweenScanAttempts: DECODE_INTERVAL_MS,
+    delayBetweenScanSuccess: 800,
+  });
+}
+
+/**
+ * Khởi động quét QR realtime (continuous frames).
+ * Engine: BarcodeDetector (ML Kit trên Android) → fallback ZXing.
+ */
+export async function startLiveQrScanner(opts: {
+  containerId: string;
+  tapLayerId?: string;
+  onSuccess: (decodedText: string) => void;
+  onError?: (error: Error) => void;
+}): Promise<LiveQrScannerHandle> {
+  const blocked = getCameraBlockedReason();
+  if (blocked) throw new Error(blocked);
+
+  const prev = activeScanners.get(opts.containerId);
+  if (prev) await prev.stop().catch(() => undefined);
+
+  const container = document.getElementById(opts.containerId);
+  if (!container) throw new Error('Không tìm thấy vùng hiển thị camera.');
+
+  container.innerHTML = '';
+  const video = document.createElement('video');
+  video.setAttribute('playsinline', 'true');
+  video.setAttribute('muted', 'true');
+  video.muted = true;
+  video.autoplay = true;
+  video.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;background:#000;';
+  container.appendChild(video);
+
+  const stream = await openRearCameraStream();
+  video.srcObject = stream;
+  await video.play().catch(() => undefined);
+
+  const track = stream.getVideoTracks()[0];
+  if (track) {
+    await applyContinuousFocusAndExposure(track);
+    // Re-apply sau khi camera warm-up (một số máy chỉ nhận AF sau vài trăm ms).
+    window.setTimeout(() => {
+      void applyContinuousFocusAndExposure(track);
+    }, 400);
+    window.setTimeout(() => {
+      void applyContinuousFocusAndExposure(track);
+    }, 1200);
+  }
+
+  if (opts.tapLayerId) {
+    startTapToFocusAssist(opts.containerId, opts.tapLayerId);
+  }
+
+  const detector = createBarcodeDetector();
+  const canvas = document.createElement('canvas');
+  let stopped = false;
+  let decoding = false;
+  let lastDecodeAt = 0;
+  let rafId = 0;
+  let zxingReader: BrowserMultiFormatReader | null = null;
+  let zxingControls: { stop: () => void } | null = null;
+
+  const emitSuccess = (text: string) => {
+    const trimmed = String(text || '').trim();
+    if (!trimmed || stopped) return;
+    opts.onSuccess(trimmed);
+  };
+
+  const loopDetect = async () => {
+    if (stopped) return;
+    rafId = requestAnimationFrame(() => {
+      void loopDetect();
+    });
+
+    const now = performance.now();
+    if (decoding || now - lastDecodeAt < DECODE_INTERVAL_MS) return;
+    if (video.readyState < 2) return;
+
+    decoding = true;
+    lastDecodeAt = now;
+    try {
+      if (detector) {
+        const ctx = drawDownscaledFrame(video, canvas);
+        if (ctx) {
+          const codes = await detector.detect(canvas);
+          const value = codes?.[0]?.rawValue;
+          if (value) emitSuccess(value);
+        }
+      }
+    } catch {
+      /* frame skip */
+    } finally {
+      decoding = false;
+    }
+  };
+
+  if (detector) {
+    console.log('[QR Scanner] Engine: BarcodeDetector (ML Kit / native)');
+    void loopDetect();
+  } else {
+    console.log('[QR Scanner] Engine: ZXing continuous fallback');
+    zxingReader = createZxingReader();
+    try {
+      zxingControls = await zxingReader.decodeFromVideoElement(video, (result, err) => {
+        if (stopped) return;
+        if (result) {
+          emitSuccess(result.getText());
+          return;
+        }
+        void err;
+      });
+    } catch (err) {
+      // ZXing decodeFromVideoElement failed — try canvas poll with decodeFromCanvas
+      console.warn('[QR Scanner] ZXing video element failed, using canvas poll', err);
+      const reader = zxingReader;
+      const canvasLoop = async () => {
+        if (stopped) return;
+        rafId = requestAnimationFrame(() => {
+          void canvasLoop();
+        });
+        const now = performance.now();
+        if (decoding || now - lastDecodeAt < DECODE_INTERVAL_MS) return;
+        if (video.readyState < 2) return;
+        decoding = true;
+        lastDecodeAt = now;
+        try {
+          drawDownscaledFrame(video, canvas);
+          const result = reader.decodeFromCanvas(canvas);
+          if (result) emitSuccess(result.getText());
+        } catch {
+          /* NotFoundException mỗi frame — bình thường */
+        } finally {
+          decoding = false;
+        }
+      };
+      void canvasLoop();
+    }
+  }
+
+  const handle: LiveQrScannerHandle = {
+    stop: async () => {
+      if (stopped) return;
+      stopped = true;
+      cancelAnimationFrame(rafId);
+      if (opts.tapLayerId) stopTapToFocusAssist(opts.tapLayerId);
+      try {
+        zxingControls?.stop();
+      } catch {
+        /* ignore */
+      }
+      zxingReader = null;
+      stream.getTracks().forEach((t) => t.stop());
+      video.srcObject = null;
+      video.remove();
+      canvas.width = 0;
+      canvas.height = 0;
+      container.innerHTML = '';
+      activeScanners.delete(opts.containerId);
+    },
+  };
+
+  activeScanners.set(opts.containerId, handle);
+  return handle;
+}
+
+/** @deprecated giữ API cũ — chuyển sang startLiveQrScanner */
+export const QR_ONLY_FORMATS = ['QR_CODE'] as const;
+
+export const QR_SCANNER_CONFIG = {
+  fps: 24,
+  qrbox: (width: number, height: number) => {
+    const minEdge = Math.min(width, height);
+    const size = Math.floor(minEdge * 0.85);
+    return { width: size, height: size };
+  },
+  aspectRatio: 1.0,
+  disableFlip: false,
+};
+
+export const REAR_CAMERA_CONSTRAINTS: MediaTrackConstraints = {
+  facingMode: { ideal: 'environment' },
+  width: { ideal: CAPTURE_WIDTH },
+  height: { ideal: CAPTURE_HEIGHT },
+};
+
+/** @deprecated */
 export function stopCloseRangeFocusAssist(_scannerElementId: string): void {
   stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
   stopTapToFocusAssist(PICKING_CAMERA_TAP_LAYER_ID);
 }
 
-export async function applyScannerAutofocus(scannerElementId: string): Promise<void> {
-  await applyWideContinuousAutofocus(scannerElementId);
-}
-
+/**
+ * Wrapper tương thích Html5Qrcode callers cũ.
+ * Bỏ qua instance html5 — dùng engine ML Kit / ZXing mới.
+ */
 export async function startRearCameraScanner(
-  html5Qrcode: Html5Qrcode,
-  config: {
-    fps: number;
-    qrbox: (w: number, h: number) => { width: number; height: number };
-    aspectRatio?: number;
-    disableFlip?: boolean;
-  },
+  _html5Qrcode: unknown,
+  _config: unknown,
   onSuccess: (decodedText: string) => void,
-  onScanFailure: (error: string) => void,
-  scannerElementId?: string,
+  _onScanFailure: (error: string) => void,
+  scannerElementId = 'camera-reader',
   tapLayerId?: string,
-): Promise<void> {
-  const blocked = getCameraBlockedReason();
-  if (blocked) throw new Error(blocked);
-
-  if (tapLayerId) stopTapToFocusAssist(tapLayerId);
-
-  if (html5Qrcode.isScanning) {
-    await html5Qrcode.stop().catch(() => undefined);
-  }
-
-  const fallbacks = await buildCameraStartConfigs();
-  let lastError: unknown;
-
-  for (let i = 0; i < fallbacks.length; i++) {
-    try {
-      await html5Qrcode.start(fallbacks[i], config, onSuccess, onScanFailure);
-      if (scannerElementId) {
-        void applyWideContinuousAutofocus(scannerElementId);
-        if (tapLayerId) startTapToFocusAssist(scannerElementId, tapLayerId);
-      }
-      return;
-    } catch (err) {
-      lastError = err;
-      if (html5Qrcode.isScanning) {
-        await html5Qrcode.stop().catch(() => undefined);
-      }
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error('Không thể khởi động camera.');
+): Promise<LiveQrScannerHandle> {
+  return startLiveQrScanner({
+    containerId: scannerElementId,
+    tapLayerId,
+    onSuccess,
+  });
 }

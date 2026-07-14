@@ -1,12 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Html5Qrcode } from 'html5-qrcode';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  startRearCameraScanner,
+  startLiveQrScanner,
   stopTapToFocusAssist,
   CAMERA_TAP_LAYER_ID,
   HTTPS_CAMERA_MESSAGE,
-  QR_ONLY_FORMATS,
-  QR_SCANNER_CONFIG,
+  type LiveQrScannerHandle,
 } from '../utils/cameraScanner';
 import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback, isLikelyTrackingCode, buildOrderScanIndex } from '../utils/orderScan';
 import { 
@@ -399,7 +397,7 @@ export default function OrderManager({
   }, [handleOrderScan]);
 
   useEffect(() => {
-    let html5Qrcode: Html5Qrcode | null = null;
+    const scannerRef = { current: null as LiveQrScannerHandle | null };
     let isMounted = true;
 
     if (focusScanner) {
@@ -419,11 +417,6 @@ export default function OrderManager({
           return;
         }
 
-        html5Qrcode = new Html5Qrcode('camera-reader', {
-          formatsToSupport: QR_ONLY_FORMATS,
-          verbose: false,
-        });
-
         const qrCodeSuccessCallback = (decodedText: string) => {
           if (!decodedText?.trim() || isScanBusyRef.current) return;
           const now = Date.now();
@@ -438,14 +431,18 @@ export default function OrderManager({
           applyScanRef.current(decodedText);
         };
 
-        void startRearCameraScanner(
-          html5Qrcode,
-          QR_SCANNER_CONFIG,
-          qrCodeSuccessCallback,
-          () => {},
-          'camera-reader',
-          CAMERA_TAP_LAYER_ID,
-        )
+        void startLiveQrScanner({
+          containerId: 'camera-reader',
+          tapLayerId: CAMERA_TAP_LAYER_ID,
+          onSuccess: qrCodeSuccessCallback,
+        })
+          .then((handle) => {
+            if (!isMounted) {
+              void handle.stop();
+              return;
+            }
+            scannerRef.current = handle;
+          })
           .catch((err: unknown) => {
             console.error('Camera scanner start failed:', err);
             const msg =
@@ -456,20 +453,13 @@ export default function OrderManager({
                 : `Không thể khởi động Camera${msg ? `: ${msg}` : ''}. Bấm "Thử lại".`,
             );
           });
-      }, 300);
+      }, 200);
 
       return () => {
         isMounted = false;
         clearTimeout(timer);
         stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
-        if (html5Qrcode?.isScanning) {
-          html5Qrcode.stop().catch((err) => console.error('Error stopping html5-qrcode scanner', err));
-        }
-        try {
-          html5Qrcode?.clear();
-        } catch {
-          /* ignore */
-        }
+        void scannerRef.current?.stop().catch((err) => console.error('Error stopping QR scanner', err));
       };
     }
 
@@ -1600,7 +1590,7 @@ export default function OrderManager({
               </div>
             </div>
             <p className="absolute bottom-2 left-0 right-0 text-center text-[10px] font-bold text-white/80 pointer-events-none">
-              Đưa mã QR vào khung (~20 cm) · chạm vùng camera để lấy nét
+              Đưa mã QR vào khung · lấy nét tự động · chạm màn hình nếu cần lấy nét lại
             </p>
             {cameraError && (
               <div className="absolute inset-0 z-20 bg-black/85 flex flex-col items-center justify-center p-4 text-center text-xs text-rose-400 font-semibold gap-3">
