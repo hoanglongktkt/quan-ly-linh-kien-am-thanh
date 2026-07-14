@@ -63,6 +63,7 @@ async function cpanelJson(backendUrl, path, req, method = 'GET', body, timeoutMs
 }
 
 function sanitizeListing(row) {
+  const linkedId = row.linkedProductId ? String(row.linkedProductId) : undefined;
   return {
     id: String(row.id || `cl-${row.platform}-${row.channelId}`),
     title: String(row.title || ''),
@@ -75,8 +76,31 @@ function sanitizeListing(row) {
     modelId: row.modelId != null ? String(row.modelId) : undefined,
     itemId: row.itemId != null ? String(row.itemId) : undefined,
     status: row.status === 'success' || row.status === 'failed' ? row.status : 'unlinked',
-    linkedProductId: row.linkedProductId ? String(row.linkedProductId) : undefined,
+    linkedProductId: linkedId,
+    linkedProductTitle: row.linkedProductTitle || row.linkedProduct?.title || undefined,
+    linkedProductSku: row.linkedProductSku || row.linkedProduct?.sku || undefined,
+    linkedProduct: row.linkedProduct || undefined,
     updatedAt: row.updatedAt || new Date().toISOString(),
+  };
+}
+
+function enrichListingWithMaster(row, idIndex) {
+  const base = sanitizeListing(row);
+  const linkedId = base.linkedProductId;
+  if (!linkedId) return base;
+  const master = idIndex.get(String(linkedId));
+  if (!master) return base;
+  const title = String(master.title || '').trim();
+  const sku = String(master.sku || '').trim();
+  return {
+    ...base,
+    linkedProductTitle: title || undefined,
+    linkedProductSku: sku || undefined,
+    linkedProduct: {
+      id: String(master.id),
+      title: title || String(master.id),
+      sku: sku || '—',
+    },
   };
 }
 
@@ -166,7 +190,9 @@ export async function handleChannelAutoLink(req, res) {
 
     const flat = flattenProducts(products);
     const skuIndex = new Map();
+    const idIndex = new Map();
     for (const p of flat) {
+      if (p?.id != null) idIndex.set(String(p.id), p);
       const sku = String(p.sku || '').trim().toLowerCase();
       if (sku && !skuIndex.has(sku)) skuIndex.set(sku, p);
     }
@@ -179,19 +205,22 @@ export async function handleChannelAutoLink(req, res) {
     const updated = listings.map((listing) => {
       if (listing.status === 'success' && listing.linkedProductId) {
         alreadyLinked += 1;
-        return sanitizeListing(listing);
+        return enrichListingWithMaster(listing, idIndex);
       }
       const sku = String(listing.sku || '').trim().toLowerCase();
-      if (!sku) return sanitizeListing(listing);
+      if (!sku) return enrichListingWithMaster(listing, idIndex);
       const match = skuIndex.get(sku);
-      if (!match) return sanitizeListing(listing);
+      if (!match) return enrichListingWithMaster(listing, idIndex);
 
       linkedCount += 1;
-      const next = sanitizeListing({
-        ...listing,
-        status: 'success',
-        linkedProductId: String(match.id),
-      });
+      const next = enrichListingWithMaster(
+        {
+          ...listing,
+          status: 'success',
+          linkedProductId: String(match.id),
+        },
+        idIndex
+      );
 
       if ((listing.platform || 'shopee') === 'shopee' && !patchedIds.has(String(match.id))) {
         const { itemId, modelId } = parseShopeeIds(listing.channelId, listing.modelId, listing.itemId);
@@ -211,7 +240,37 @@ export async function handleChannelAutoLink(req, res) {
     });
 
     if (linkedCount > 0) {
-      await cpanelJson(backend.url, 'mapping-products', req, 'PUT', { listings: updated }, 180_000);
+      // Persist chỉ fields DB; GET sau sẽ JOIN lại.
+      const toSave = updated.map((row) => ({
+        id: row.id,
+        title: row.title,
+        sku: row.sku,
+        imageUrl: row.imageUrl,
+        channelId: row.channelId,
+        platform: row.platform,
+        shopName: row.shopName,
+        shopId: row.shopId,
+        modelId: row.modelId,
+        itemId: row.itemId,
+        status: row.status,
+        linkedProductId: row.linkedProductId,
+        updatedAt: row.updatedAt,
+      }));
+      const putResult = await cpanelJson(
+        backend.url,
+        'mapping-products',
+        req,
+        'PUT',
+        { listings: toSave },
+        180_000
+      );
+      // Ưu tiên listings đã enrich từ cPanel nếu có
+      if (Array.isArray(putResult?.listings) && putResult.listings.length > 0) {
+        for (let i = 0; i < updated.length; i++) {
+          const enriched = putResult.listings[i];
+          if (enriched) Object.assign(updated[i], enriched);
+        }
+      }
 
       for (let i = 0; i < productPatches.length; i += BULK_SAVE_CHUNK) {
         const chunk = productPatches.slice(i, i + BULK_SAVE_CHUNK);

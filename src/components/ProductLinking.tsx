@@ -37,6 +37,10 @@ interface ChannelListing {
   shopName: string;
   status: 'success' | 'unlinked' | 'failed';
   linkedProductId?: string;
+  /** Populate từ API JOIN kho gốc */
+  linkedProductTitle?: string;
+  linkedProductSku?: string;
+  linkedProduct?: { id: string; title: string; sku: string };
 }
 
 interface InitVariantRow {
@@ -1006,7 +1010,21 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                 </tr>
               ) : (
                 filteredListings.map(item => {
-                  const linkedProduct = products.find(p => p.id === item.linkedProductId);
+                  const fromProps = products.find((p) => p.id === item.linkedProductId);
+                  const linkedTitle =
+                    fromProps?.title ||
+                    item.linkedProduct?.title ||
+                    item.linkedProductTitle ||
+                    '';
+                  const linkedSku =
+                    fromProps?.sku ||
+                    item.linkedProduct?.sku ||
+                    item.linkedProductSku ||
+                    '';
+                  const showLinked =
+                    item.status === 'success' &&
+                    !!item.linkedProductId &&
+                    (!!linkedTitle || !!linkedSku || !!item.linkedProductId);
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="p-4 text-center">
@@ -1101,13 +1119,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
                       {/* Linked master product info */}
                       <td className="p-4">
-                        {item.status === 'success' && linkedProduct ? (
+                        {showLinked ? (
                           <div className="space-y-0.5">
                             <p className="font-extrabold text-blue-600 text-xs hover:underline cursor-pointer line-clamp-1 max-w-[280px]">
-                              {linkedProduct.title}
+                              {linkedTitle || `Kho gốc #${item.linkedProductId}`}
                             </p>
                             <p className="font-mono font-bold text-gray-400 text-[10px]">
-                              SKU: {linkedProduct.sku}
+                              SKU: {linkedSku || '—'}
                             </p>
                           </div>
                         ) : (

@@ -4689,6 +4689,57 @@ function sanitizeChannelListingRow(row: any): any {
   };
 }
 
+/** Index id → product (parent + children) để JOIN mapping ↔ kho gốc. */
+function buildMasterProductLookupById(products?: any[]): Map<string, any> {
+  const index = new Map<string, any>();
+  for (const p of Array.isArray(products) ? products : loadProducts()) {
+    if (!p) continue;
+    if (p.id != null) index.set(String(p.id), p);
+    for (const c of getProductChildrenList(p)) {
+      if (c?.id != null) index.set(String(c.id), c);
+    }
+  }
+  return index;
+}
+
+/** Populate tên/SKU kho gốc vào listing trước khi trả Frontend. */
+function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any[] {
+  const lookup = buildMasterProductLookupById(products);
+  return (Array.isArray(listings) ? listings : []).map((row) => {
+    const base = sanitizeChannelListingRow(row);
+    const linkedId = base.linkedProductId;
+    if (!linkedId) {
+      return {
+        ...base,
+        linkedProductTitle: undefined,
+        linkedProductSku: undefined,
+        linkedProduct: undefined,
+      };
+    }
+    const master = lookup.get(String(linkedId));
+    if (!master) {
+      return {
+        ...base,
+        linkedProductTitle: undefined,
+        linkedProductSku: undefined,
+        linkedProduct: undefined,
+      };
+    }
+    const title = String(master.title || "").trim();
+    const sku = String(master.sku || "").trim();
+    return {
+      ...base,
+      linkedProductTitle: title || undefined,
+      linkedProductSku: sku || undefined,
+      linkedProduct: {
+        id: String(master.id),
+        title: title || String(master.id),
+        sku: sku || "—",
+      },
+    };
+  });
+}
+
 function upsertChannelListingsFromShopeeSync(
   syncedProducts: any[],
   shopId: string,
@@ -4915,7 +4966,12 @@ function autoLinkChannelListingsByExactSku(): {
   console.log(
     `[Auto Link SKU] Hàng loạt xong — linked=${linkedCount}, already=${alreadyLinked}, còn chưa liên kết=${unlinkedRemaining} (in-memory, 1 lần ghi DB)`
   );
-  return { linkedCount, listings: updated, alreadyLinked, unlinkedRemaining };
+  return {
+    linkedCount,
+    listings: enrichChannelListingsWithMaster(updated, masterProducts),
+    alreadyLinked,
+    unlinkedRemaining,
+  };
 }
 
 const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
@@ -5707,9 +5763,9 @@ async function startServer() {
   // ─── Mapping products — ĐẶT SỚM, TRƯỚC static / SPA catch-all ───
   const handleMappingProductsGet = (_req: any, res: any) => {
     try {
-      const listings = ensureChannelListingsDb();
+      const listings = enrichChannelListingsWithMaster(ensureChannelListingsDb());
       console.log(
-        `[Mapping Products] GET trả về ${listings.length} dòng từ DB (${CHANNEL_LISTINGS_DB_PATH})`
+        `[Mapping Products] GET trả về ${listings.length} dòng từ DB (${CHANNEL_LISTINGS_DB_PATH}) (đã JOIN kho gốc)`
       );
       return res.status(200).json({ success: true, listings, count: listings.length });
     } catch (error: any) {
@@ -5734,10 +5790,10 @@ async function startServer() {
       console.log(`[Mapping Save] UPSERT nhận ${incoming.length} dòng (${req.method})`);
       const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
       writeChannelListingsDb(sanitized);
-      const verified = readChannelListingsDb();
+      const verified = enrichChannelListingsWithMaster(readChannelListingsDb());
       return res.status(200).json({
         success: true,
-        count: sanitized.length,
+        count: verified.length,
         listings: verified,
       });
     } catch (error: any) {
