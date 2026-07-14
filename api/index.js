@@ -1,13 +1,16 @@
 /**
- * Vercel — single API router (Hobby plan). Mọi /api/* được rewrite → /api?path=...
+ * Vercel Hobby — MỘT Serverless Function duy nhất.
+ * Mọi /api/* và /labels/* rewrite → /api?path=...
+ * Shared code nằm ở /_lib (ngoài /api) để không bị đếm vào giới hạn 12 functions.
  */
-import { handleLogin } from './lib/handlers/login.js';
-import { handleAuthVerify } from './lib/handlers/authVerify.js';
-import { handleShopeeCallback } from './lib/handlers/shopeeCallback.js';
-import { handleShopeeWebhook } from './lib/handlers/shopeeWebhook.js';
-import { handleHealthCpanel } from './lib/handlers/healthCpanel.js';
-import { handleChannelAutoLink } from './lib/handlers/channelAutoLink.js';
-import { proxyRequestToCpanel, resolveProxyTimeoutMs } from './lib/cpanelProxy.js';
+import { handleLogin } from '../_lib/handlers/login.js';
+import { handleAuthVerify } from '../_lib/handlers/authVerify.js';
+import { handleShopeeCallback } from '../_lib/handlers/shopeeCallback.js';
+import { handleShopeeWebhook } from '../_lib/handlers/shopeeWebhook.js';
+import { handleHealthCpanel } from '../_lib/handlers/healthCpanel.js';
+import { handleChannelAutoLink } from '../_lib/handlers/channelAutoLink.js';
+import { handleLabelProxy } from '../_lib/handlers/labels.js';
+import { proxyRequestToCpanel, resolveProxyTimeoutMs } from '../_lib/cpanelProxy.js';
 
 function resolveRoutePath(req) {
   const raw = req.query?.path;
@@ -22,13 +25,12 @@ function resolveRoutePath(req) {
 
 /**
  * Route mới chưa có trên cPanel cũ → map sang endpoint tương thích.
- * `shopee/channel-products/fetch` → `shopee/products/sync` (kéo SP từ Shopee).
  */
 const ROUTE_ALIASES = {
   'shopee/channel-products/fetch': 'shopee/products/sync',
 };
 
-/** login + auth/verify xử lý local trên Vercel (JSON ổn định). Các route khác proxy cPanel. */
+/** Route xử lý local trên Vercel — còn lại proxy sang cPanel. */
 const LOCAL_ROUTES = {
   login: handleLogin,
   'auth/verify': handleAuthVerify,
@@ -43,7 +45,12 @@ export default async function handler(req, res) {
   const route = resolveRoutePath(req);
 
   if (!route || route === 'proxy' || route === 'index') {
-    return res.status(404).json({ error: 'Not found' });
+    return res.status(404).json({ success: false, error: 'Not found' });
+  }
+
+  // PDF vận đơn: /api?path=labels/xxx.pdf hoặc /api/labels/...
+  if (route === 'labels' || route.startsWith('labels/')) {
+    return handleLabelProxy(req, res, route.replace(/^labels\/?/, ''));
   }
 
   const local = LOCAL_ROUTES[route];

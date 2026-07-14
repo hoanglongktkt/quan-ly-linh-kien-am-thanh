@@ -1,30 +1,35 @@
 /**
- * Proxy PDF vận đơn từ cPanel qua /api/public/labels (Express) — tránh /labels/* bị LiteSpeed trả SPA HTML.
+ * Proxy PDF vận đơn từ cPanel — gom vào entry /api (1 serverless function).
  */
-import { resolveCpanelBackend } from '../lib/cpanelBackend.js';
+import { resolveCpanelBackend } from '../cpanelBackend.js';
 
 function isPdfBuffer(buf) {
   return buf.length > 4 && buf.subarray(0, 4).toString() === '%PDF';
 }
 
-function extractLabelPath(req) {
-  const raw = req.query.path;
-  let filePath = Array.isArray(raw) ? raw.join('/') : String(raw || '').replace(/^\/+/, '');
+function extractFilename(routeFile, req) {
+  let filePath = String(routeFile || '').replace(/^\/+/, '');
+  if (!filePath) {
+    const raw = req.query?.path;
+    const fromQuery = Array.isArray(raw) ? raw.join('/') : String(raw || '');
+    // path=labels/foo.pdf → foo.pdf
+    filePath = fromQuery.replace(/^labels\/?/i, '').replace(/^\/+/, '');
+  }
   if (!filePath) {
     const u = String(req.url || '');
     const m = u.match(/\/(?:api\/)?labels\/([^?#]+)/i);
     if (m) filePath = decodeURIComponent(m[1]);
   }
-  return filePath;
+  return filePath.split('/').pop() || filePath;
 }
 
-export default async function handler(req, res) {
+export async function handleLabelProxy(req, res, routeFile = '') {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const filePath = extractLabelPath(req);
-  if (!filePath || filePath.includes('..') || !/\.pdf$/i.test(filePath)) {
+  const filename = extractFilename(routeFile, req);
+  if (!filename || filename.includes('..') || !/\.pdf$/i.test(filename)) {
     return res.status(400).send('Invalid label path');
   }
 
@@ -33,7 +38,6 @@ export default async function handler(req, res) {
     return res.status(503).json({ error: backend.error, errorCode: 'BACKEND_CONFIG' });
   }
 
-  const filename = filePath.split('/').pop() || filePath;
   const target = `${backend.url}/api/public/labels/${encodeURIComponent(filename)}`;
 
   try {
@@ -61,7 +65,7 @@ export default async function handler(req, res) {
       return res.status(502).type('text/plain').send(
         preview.trimStart().startsWith('<!')
           ? 'Backend trả HTML thay vì PDF — file vận đơn chưa sẵn sàng hoặc route sai.'
-          : 'File vận đơn không hợp lệ (không phải PDF).'
+          : 'File vận đơn không hợp lệ (không phải PDF).',
       );
     }
 

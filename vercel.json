@@ -25,18 +25,19 @@
   "functions": {
     "api/index.js": {
       "maxDuration": 300
-    },
-    "api/labels/[...path].js": {
-      "maxDuration": 60
     }
   },
   "rewrites": [
     {
       "source": "/labels/:path*",
-      "destination": "/api/labels/:path*"
+      "destination": "/api?path=labels/:path*"
     },
     {
-      "source": "/api/((?!labels/).*)",
+      "source": "/api/labels/:path*",
+      "destination": "/api?path=labels/:path*"
+    },
+    {
+      "source": "/api/(.*)",
       "destination": "/api?path=$1"
     },
     {
