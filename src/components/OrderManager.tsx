@@ -2254,8 +2254,8 @@ export default function OrderManager({
         </div>
       )}
 
-      {/* 4. FILTER BOX — search only */}
-      {activeSubTab !== 'order_products' && activeSubTab !== 'reprint' && (
+      {/* 4. FILTER BOX — search only (ẩn trên màn ĐƠN HỦY, ĐƠN HOÀN) */}
+      {activeSubTab !== 'order_products' && activeSubTab !== 'reprint' && activeSubTab !== 'cancel_returns' && (
       <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs">
         <div className="relative w-full">
           <Search className="absolute left-3.5 top-3.5 text-gray-400 w-4 h-4" />
