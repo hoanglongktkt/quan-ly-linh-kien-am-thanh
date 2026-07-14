@@ -543,6 +543,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         fetchedCount?: number;
         savedCount?: number;
         listings?: ChannelListing[];
+        products?: Product[];
+        listingsCount?: number;
         message?: string;
         error?: string;
       }>(res);
@@ -551,11 +553,44 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         throw new Error(data?.message || data?.error || 'Tải dữ liệu từ sàn thất bại.');
       }
 
-      const count = data.fetchedCount ?? data.savedCount ?? 0;
+      const productsFromApi = Array.isArray(data.products) ? data.products : [];
+      const count =
+        data.fetchedCount ??
+        data.savedCount ??
+        data.listingsCount ??
+        (Array.isArray(data.listings) ? data.listings.length : 0) ??
+        productsFromApi.length;
+
       if (Array.isArray(data.listings) && data.listings.length > 0) {
         listingsHydratedRef.current = true;
         setListings(data.listings);
         await persistListings(data.listings);
+      } else if (productsFromApi.length > 0) {
+        // Fallback khi backend cũ (products/sync) chưa trả listings — dựng từ products
+        const byKey = new Map<string, ChannelListing>(
+          listings.map((l) => [`${l.platform}::${l.channelId}`, l]),
+        );
+        productsFromApi.forEach((item) => {
+          const channelId = String(item.shopeeId || item.shopeeItemId || '');
+          if (!channelId) return;
+          const key = `shopee::${channelId}`;
+          const existing = byKey.get(key);
+          byKey.set(key, {
+            id: existing?.id || `cl-shopee-${channelId}`,
+            title: item.title,
+            sku: item.sku,
+            imageUrl: item.avatarUrl || item.imageUrl,
+            channelId,
+            platform: 'shopee',
+            shopName: shop.shopName,
+            status: existing?.status === 'success' ? 'success' : existing?.status === 'failed' ? 'failed' : 'unlinked',
+            linkedProductId: existing?.linkedProductId,
+          });
+        });
+        const nextRows = Array.from(byKey.values());
+        listingsHydratedRef.current = true;
+        setListings(nextRows);
+        await persistListings(nextRows);
       } else {
         const refreshed = await fetchMappingListingsFromServer(token || '');
         if (refreshed?.rows?.length) {
@@ -563,6 +598,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           setListings(refreshed.rows);
         }
       }
+
+      if (onRefreshProducts) await onRefreshProducts();
 
       showToast(data.message || `Đã tải về thành công ${count} sản phẩm từ sàn Shopee`);
       onAddLog({

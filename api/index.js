@@ -6,6 +6,7 @@ import { handleAuthVerify } from './lib/handlers/authVerify.js';
 import { handleShopeeCallback } from './lib/handlers/shopeeCallback.js';
 import { handleShopeeWebhook } from './lib/handlers/shopeeWebhook.js';
 import { handleHealthCpanel } from './lib/handlers/healthCpanel.js';
+import { handleChannelAutoLink } from './lib/handlers/channelAutoLink.js';
 import { proxyRequestToCpanel, resolveProxyTimeoutMs } from './lib/cpanelProxy.js';
 
 function resolveRoutePath(req) {
@@ -19,6 +20,14 @@ function resolveRoutePath(req) {
   return '';
 }
 
+/**
+ * Route mới chưa có trên cPanel cũ → map sang endpoint tương thích.
+ * `shopee/channel-products/fetch` → `shopee/products/sync` (kéo SP từ Shopee).
+ */
+const ROUTE_ALIASES = {
+  'shopee/channel-products/fetch': 'shopee/products/sync',
+};
+
 /** login + auth/verify xử lý local trên Vercel (JSON ổn định). Các route khác proxy cPanel. */
 const LOCAL_ROUTES = {
   login: handleLogin,
@@ -27,6 +36,7 @@ const LOCAL_ROUTES = {
   'auth/shopee/callback': handleShopeeCallback,
   'shopee/webhook': handleShopeeWebhook,
   'health/cpanel': handleHealthCpanel,
+  'shopee/channel-products/auto-link': handleChannelAutoLink,
 };
 
 export default async function handler(req, res) {
@@ -41,8 +51,9 @@ export default async function handler(req, res) {
     return local(req, res);
   }
 
-  const timeoutMs = resolveProxyTimeoutMs(route);
-  return proxyRequestToCpanel(req, res, route, { timeoutMs });
+  const targetRoute = ROUTE_ALIASES[route] || route;
+  const timeoutMs = resolveProxyTimeoutMs(targetRoute);
+  return proxyRequestToCpanel(req, res, targetRoute, { timeoutMs });
 }
 
 export const config = {
