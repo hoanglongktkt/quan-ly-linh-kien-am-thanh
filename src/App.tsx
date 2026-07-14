@@ -1249,6 +1249,7 @@ export default function App() {
                 onEditProductShortcut={handleEditProductShortcut}
                 onUpdateProduct={handleUpdateProduct}
                 onNavigateToImport={handleNavigateToImport}
+                onRefreshProducts={fetchProducts}
               />
             </ErrorBoundary>
           )}

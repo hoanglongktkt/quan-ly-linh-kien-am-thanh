@@ -2201,6 +2201,56 @@ async function runFullShopeeWarehouseSync(shopId: string, accessToken: string) {
   };
 }
 
+async function syncStockFromShopee(shopId: string, accessToken: string) {
+  const products = loadProducts();
+  const localShopee = products.filter((p) => p.shopeeItemId);
+  const itemIds = [
+    ...new Set(
+      localShopee
+        .map((p) => Number(p.shopeeItemId))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    ),
+  ];
+
+  if (itemIds.length === 0) {
+    return { updated: 0, compared: 0, products };
+  }
+
+  const stockBySku = new Map<string, number>();
+  const allItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds);
+  const CONCURRENCY = 4;
+
+  for (let i = 0; i < allItems.length; i += CONCURRENCY) {
+    const chunk = allItems.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      chunk.map((item) => syncShopeeItemToWarehouseRows(shopId, accessToken, item))
+    );
+    for (const r of results) {
+      for (const row of r.rows) {
+        const sku = String(row.sku || "").trim();
+        if (sku) stockBySku.set(sku, Math.max(0, Number(row.stock) || 0));
+      }
+    }
+    await new Promise((res) => setTimeout(res, 80));
+  }
+
+  let updated = 0;
+  let compared = 0;
+  const next = products.map((p) => {
+    const sku = String(p.sku || "").trim();
+    if (!sku || !p.shopeeItemId || !stockBySku.has(sku)) return p;
+    compared++;
+    const newStock = stockBySku.get(sku)!;
+    if (Number(p.stock) === newStock) return p;
+    updated++;
+    return mergeProductPatch(p, { stock: newStock });
+  });
+
+  saveProducts(next);
+  console.log(`[Sync Stock] Shopee shop_id=${shopId}: ${compared} SKU so sánh, ${updated} SKU cập nhật`);
+  return { updated, compared, products: next };
+}
+
 async function fetchShopeeItemVariants(
   shopId: string,
   accessToken: string,
@@ -4358,6 +4408,50 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Inventory Balance] Exception:", err);
       return res.status(500).json({ success: false, message: err?.message || "Lỗi server khi cân bằng kho." });
+    }
+  });
+
+  app.post("/api/sync-stock", authMiddleware, async (req, res) => {
+    try {
+      let shopeeUpdated = 0;
+      let shopeeCompared = 0;
+      const warnings: string[] = [];
+
+      if (isShopeeConfigValid()) {
+        const shopId = resolveShopeeTokenShopId(req.body?.shopId);
+        if (shopId) {
+          const accessToken = await getValidShopeeAccessToken(shopId);
+          if (accessToken) {
+            const result = await syncStockFromShopee(shopId, accessToken);
+            shopeeUpdated = result.updated;
+            shopeeCompared = result.compared;
+          } else {
+            warnings.push("Shopee: chưa có access_token hợp lệ.");
+          }
+        } else {
+          warnings.push("Shopee: chưa có shop được ủy quyền.");
+        }
+      } else {
+        warnings.push("Shopee: cấu hình Partner chưa hợp lệ.");
+      }
+
+      const products = loadProducts();
+      const message =
+        shopeeUpdated > 0
+          ? `Đồng bộ thành công: ${shopeeUpdated} SKU đã cập nhật từ Shopee.`
+          : "Đồng bộ thành công: tồn kho local đã khớp với sàn.";
+
+      return res.json({
+        success: true,
+        message,
+        shopee: { updated: shopeeUpdated, compared: shopeeCompared },
+        tiktok: { updated: 0, message: "TikTok Shop API chưa được tích hợp trên server." },
+        warnings,
+        products,
+      });
+    } catch (err: any) {
+      console.error("[Sync Stock]", err);
+      return res.status(500).json({ success: false, message: err?.message || "Đồng bộ tồn kho thất bại." });
     }
   });
 
