@@ -238,11 +238,20 @@ async function runInBatches<T>(
   items: T[],
   batchSize: number,
   worker: (item: T) => Promise<void>,
+  opts?: { itemDelayMs?: number; batchPauseMs?: number },
 ): Promise<void> {
   const size = Math.max(1, batchSize);
+  const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
+  const batchPauseMs = opts?.batchPauseMs ?? SHOPEE_PRODUCT_BATCH_PAUSE_MS;
   for (let i = 0; i < items.length; i += size) {
     const batch = items.slice(i, i + size);
-    await Promise.all(batch.map((item) => worker(item)));
+    for (const item of batch) {
+      await worker(item);
+      await sleep(itemDelayMs);
+    }
+    if (i + size < items.length) {
+      await sleep(batchPauseMs);
+    }
   }
 }
 
@@ -1313,19 +1322,67 @@ const SHOPEE_ORDER_LIST_MAX_WINDOWS = 1;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 const SHOPEE_ORDER_LIST_MAX_PAGES = 5;
 const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 60;
-/** Số đơn xử lý song song trong 1 chunk (Promise.all) — cân bằng tốc độ vs NPROC ~120 */
+/** Xử lý tuần tự từng đơn trong chunk — không Promise.all */
 const SHOPEE_SYNC_CHUNK_SIZE = 8;
-/** Nghỉ giữa các chunk trước khi chạy chunk tiếp theo */
-const SHOPEE_SYNC_CHUNK_DELAY_MS = 600;
+/** Nghỉ 2–3s giữa các chunk đơn hàng */
+const SHOPEE_SYNC_CHUNK_DELAY_MS = 2500;
 const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
-const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 800;
-/** Delay giữa các lần gọi API sản phẩm Shopee (pull/push) — tránh 429 */
-const SHOPEE_PRODUCT_API_DELAY_MS = 800;
-/** get_item_base_info: tối đa 50/item_id theo tài liệu Shopee — dùng 30 để an toàn hơn */
-const SHOPEE_PRODUCT_BASE_INFO_BATCH = 30;
+const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1000;
+/** Delay tối thiểu giữa mỗi lần gọi API sản phẩm Shopee */
+const SHOPEE_PRODUCT_API_DELAY_MS = 1000;
+/** Kích thước gói sản phẩm — xử lý xong 1 gói nghỉ batchPause */
+const SHOPEE_PRODUCT_BATCH_SIZE = 20;
+/** Nghỉ 2–3s giữa các gói 20 sản phẩm */
+const SHOPEE_PRODUCT_BATCH_PAUSE_MS = 2500;
+/** get_item_base_info: tối đa 50/item_id — dùng 20 để giảm tải CPU */
+const SHOPEE_PRODUCT_BASE_INFO_BATCH = 20;
+const SHOPEE_API_MAX_RETRY = 5;
+const SHOPEE_API_RETRY_BASE_MS = 1500;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function shopeeExponentialBackoffMs(attempt: number, baseMs = SHOPEE_API_RETRY_BASE_MS): number {
+  return Math.min(30_000, baseMs * Math.pow(2, attempt));
+}
+
+function isShopeeRetryableNetworkError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
+}
+
+function isShopeeRetryableHttpStatus(status: number): boolean {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+
+/** Xử lý danh sách tuần tự theo gói — delay giữa item và nghỉ giữa các gói. */
+async function runInShopeeBatches<T>(
+  items: T[],
+  processor: (item: T, index: number) => Promise<void>,
+  opts?: { batchSize?: number; itemDelayMs?: number; batchPauseMs?: number },
+): Promise<void> {
+  if (items.length === 0) return;
+  const batchSize = opts?.batchSize ?? SHOPEE_PRODUCT_BATCH_SIZE;
+  const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
+  const batchPauseMs = opts?.batchPauseMs ?? SHOPEE_PRODUCT_BATCH_PAUSE_MS;
+
+  for (let batchStart = 0; batchStart < items.length; batchStart += batchSize) {
+    const batch = items.slice(batchStart, batchStart + batchSize);
+    const batchNo = Math.floor(batchStart / batchSize) + 1;
+    const totalBatches = Math.ceil(items.length / batchSize);
+    console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
+
+    for (let j = 0; j < batch.length; j++) {
+      await processor(batch[j], batchStart + j);
+      if (j < batch.length - 1) await sleep(itemDelayMs);
+    }
+
+    if (batchStart + batchSize < items.length) {
+      console.log(`[Shopee Throttle] Nghỉ ${batchPauseMs}ms trước batch kế...`);
+      await sleep(batchPauseMs);
+    }
+  }
 }
 
 function shopeeSyncDelay(ms: number = SHOPEE_SYNC_BATCH_DELAY_MS): Promise<void> {
@@ -1420,8 +1477,8 @@ async function shopeeFetchJsonWithRetry(
   context: string,
   opts?: { maxAttempts?: number; baseDelayMs?: number }
 ): Promise<{ json: any; httpStatus: number }> {
-  const maxAttempts = opts?.maxAttempts ?? 4;
-  const baseDelayMs = opts?.baseDelayMs ?? 1200;
+  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let res: Response;
@@ -1430,8 +1487,10 @@ async function shopeeFetchJsonWithRetry(
       res = await fetch(url);
       rawText = await res.text();
     } catch (err) {
-      if (attempt < maxAttempts - 1) {
-        await new Promise((r) => setTimeout(r, baseDelayMs * (attempt + 1)));
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        console.warn(`[Shopee API] ${context} lỗi mạng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
+        await sleep(waitMs);
         continue;
       }
       const netMsg = err instanceof Error ? err.message : String(err);
@@ -1452,12 +1511,12 @@ async function shopeeFetchJsonWithRetry(
       };
     }
 
-    if (isShopeeRateLimited(res.status, json) && attempt < maxAttempts - 1) {
-      const waitMs = Math.min(10_000, baseDelayMs * Math.pow(2, attempt));
+    if ((isShopeeRateLimited(res.status, json) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       console.warn(
-        `[Shopee API] ${context} bị rate limit (HTTP ${res.status}), thử lại ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`,
       );
-      await new Promise((r) => setTimeout(r, waitMs));
+      await sleep(waitMs);
       continue;
     }
 
@@ -1479,8 +1538,8 @@ async function shopeePostJsonWithRetry(
   context: string,
   opts?: { maxAttempts?: number; baseDelayMs?: number }
 ): Promise<{ json: any; httpStatus: number }> {
-  const maxAttempts = opts?.maxAttempts ?? 4;
-  const baseDelayMs = opts?.baseDelayMs ?? 1200;
+  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let res: Response;
@@ -1493,8 +1552,10 @@ async function shopeePostJsonWithRetry(
       });
       rawText = await res.text();
     } catch (err) {
-      if (attempt < maxAttempts - 1) {
-        await sleep(baseDelayMs * (attempt + 1));
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        console.warn(`[Shopee API] ${context} lỗi mạng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
+        await sleep(waitMs);
         continue;
       }
       const netMsg = err instanceof Error ? err.message : String(err);
@@ -1515,10 +1576,10 @@ async function shopeePostJsonWithRetry(
       };
     }
 
-    if (isShopeeRateLimited(res.status, json) && attempt < maxAttempts - 1) {
-      const waitMs = Math.min(12_000, baseDelayMs * Math.pow(2, attempt));
+    if ((isShopeeRateLimited(res.status, json) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       console.warn(
-        `[Shopee API] ${context} bị rate limit (HTTP ${res.status}), thử lại ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`,
       );
       await sleep(waitMs);
       continue;
@@ -2081,7 +2142,10 @@ async function pushStockUpdatesToShopee(
     staleSkus.push(...skus);
   };
 
-  for (const [itemId, rows] of byItem) {
+  const itemEntries = [...byItem.entries()];
+  let processedInBatch = 0;
+
+  for (const [itemId, rows] of itemEntries) {
     const resolved = await resolveShopeeShopForItemId(itemId, preferredShopId || undefined);
     if (!resolved) {
       markStaleItem(
@@ -2127,7 +2191,12 @@ async function pushStockUpdatesToShopee(
       pushed += rows.length;
     }
 
+    processedInBatch++;
     await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+    if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE === 0 && processedInBatch < itemEntries.length) {
+      console.log(`[Shopee Push Stock] Nghỉ ${SHOPEE_PRODUCT_BATCH_PAUSE_MS}ms sau ${processedInBatch}/${itemEntries.length} item...`);
+      await sleep(SHOPEE_PRODUCT_BATCH_PAUSE_MS);
+    }
   }
 
   return { ok: errors.length === 0, errors, warnings, pushed, staleSkus: [...new Set(staleSkus)] };
@@ -2342,19 +2411,25 @@ async function fetchAllShopeeItemIds(shopId: string, accessToken: string): Promi
 
 async function fetchShopeeBaseItemsByIds(shopId: string, accessToken: string, itemIds: number[]): Promise<any[]> {
   const allItems: any[] = [];
+  const batches: number[][] = [];
   for (let i = 0; i < itemIds.length; i += SHOPEE_PRODUCT_BASE_INFO_BATCH) {
-    const batch = itemIds.slice(i, i + SHOPEE_PRODUCT_BASE_INFO_BATCH);
-    const baseInfoResult = await shopeeGetItemBaseInfo(shopId, accessToken, batch);
-    if (baseInfoResult.error) {
-      const errMsg = formatShopeeApiError(baseInfoResult) || `${baseInfoResult.error}: ${baseInfoResult.message || ""}`;
-      console.error(`[Shopee Sync] get_item_base_info batch ${i}: ${errMsg}`);
-      throw new Error(errMsg);
-    }
-    allItems.push(...(baseInfoResult.response?.item_list || []));
-    if (i + SHOPEE_PRODUCT_BASE_INFO_BATCH < itemIds.length) {
-      await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
-    }
+    batches.push(itemIds.slice(i, i + SHOPEE_PRODUCT_BASE_INFO_BATCH));
   }
+
+  await runInShopeeBatches(
+    batches,
+    async (batch, batchIdx) => {
+      const baseInfoResult = await shopeeGetItemBaseInfo(shopId, accessToken, batch);
+      if (baseInfoResult.error) {
+        const errMsg = formatShopeeApiError(baseInfoResult) || `${baseInfoResult.error}: ${baseInfoResult.message || ""}`;
+        console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx}: ${errMsg}`);
+        throw new Error(errMsg);
+      }
+      allItems.push(...(baseInfoResult.response?.item_list || []));
+    },
+    { batchSize: 1, itemDelayMs: SHOPEE_PRODUCT_API_DELAY_MS, batchPauseMs: SHOPEE_PRODUCT_BATCH_PAUSE_MS },
+  );
+
   return allItems;
 }
 
@@ -2369,16 +2444,11 @@ async function fetchShopeeListingRowsFromApi(shopId: string, accessToken: string
   const startedAt = Date.now();
   let variantItems = 0;
 
-  for (let idx = 0; idx < allItems.length; idx++) {
-    const item = allItems[idx];
+  await runInShopeeBatches(allItems, async (item) => {
     const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
     if (r.modelCount > 0) variantItems++;
     products.push(...r.rows);
-    if (idx % 20 === 0 || idx === allItems.length - 1) {
-      console.log(`[Shopee Channel Fetch] ${idx + 1}/${allItems.length} item -> ${products.length} dong`);
-    }
-    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
-  }
+  });
 
   const cleaned = dedupeShopeeParentVariantRows(products);
   console.log(
@@ -2417,14 +2487,13 @@ async function syncStockFromShopee(shopId: string, accessToken: string) {
   const stockBySku = new Map<string, number>();
   const allItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds);
 
-  for (const item of allItems) {
+  await runInShopeeBatches(allItems, async (item) => {
     const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
     for (const row of r.rows) {
       const sku = String(row.sku || "").trim();
       if (sku) stockBySku.set(sku, Math.max(0, Number(row.stock) || 0));
     }
-    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
-  }
+  });
 
   let updated = 0;
   let compared = 0;
@@ -3061,7 +3130,7 @@ function upsertShopeeOrdersIntoStore(
   return { added, updated };
 }
 
-/** Lấy chi tiết + chuẩn hóa song song trong 1 chunk (Promise.all), rồi caller delay trước chunk kế. */
+/** Lấy chi tiết + chuẩn hóa TUẦN TỰ từng đơn — delay giữa các đơn, caller delay trước chunk kế. */
 async function fetchNormalizeShopeeOrderChunk(
   apiShopId: string,
   accessToken: string,
@@ -3073,49 +3142,48 @@ async function fetchNormalizeShopeeOrderChunk(
   const errors: any[] = [];
   const enrichTracking = opts?.enrichTracking !== false;
 
-  await Promise.all(
-    orderSns.map(async (orderSn) => {
-      try {
-        const detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, [orderSn]);
-        if (detailResult.error) {
-          errors.push({
-            shopId: fileKey,
-            error: detailResult.error,
-            message: detailResult.message || formatShopeeApiError(detailResult),
-            orderSn,
-          });
-          return;
-        }
-        const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
-        if (!Array.isArray(detailList)) return;
-        for (const detail of detailList) {
-          try {
-            let norm = normalizeShopeeOrderDetail(fileKey, detail?.shop_name, detail);
-            if (!norm) continue;
-            if (enrichTracking && needsShopeeTrackingEnrichment(norm)) {
-              norm = await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, norm);
-            }
-            normalized.push(norm);
-          } catch (detailErr: any) {
-            console.error(`[Shopee Sync] Lỗi xử lý đơn ${detail?.order_sn}:`, detailErr?.message || detailErr);
-          }
-        }
-      } catch (err: any) {
+  for (const orderSn of orderSns) {
+    try {
+      const detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, [orderSn]);
+      if (detailResult.error) {
         errors.push({
           shopId: fileKey,
-          error: "order_detail_failed",
-          message: err?.message || String(err),
+          error: detailResult.error,
+          message: detailResult.message || formatShopeeApiError(detailResult),
           orderSn,
         });
+      } else {
+        const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
+        if (Array.isArray(detailList)) {
+          for (const detail of detailList) {
+            try {
+              let norm = normalizeShopeeOrderDetail(fileKey, detail?.shop_name, detail);
+              if (!norm) continue;
+              if (enrichTracking && needsShopeeTrackingEnrichment(norm)) {
+                norm = await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, norm);
+              }
+              normalized.push(norm);
+            } catch (detailErr: any) {
+              console.error(`[Shopee Sync] Lỗi xử lý đơn ${detail?.order_sn}:`, detailErr?.message || detailErr);
+            }
+          }
+        }
       }
-    }),
-  );
+    } catch (err: any) {
+      errors.push({
+        shopId: fileKey,
+        error: "order_detail_failed",
+        message: err?.message || String(err),
+        orderSn,
+      });
+    }
+    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+  }
 
   return { normalized, errors };
 }
 
-// Pull orders from every connected Shopee shop — RAM-safe: chunk Promise.all,
-// delay giữa các chunk, save orders.json sau mỗi chunk.
+// Pull orders from every connected Shopee shop — tuần tự + chunk delay, save orders.json sau mỗi chunk.
 async function syncShopeeOrdersFromApi(
   statuses: string[] = [...SHOPEE_SYNC_STATUSES],
   opts?: { onProgress?: (completed: number, total: number, message?: string) => void },
@@ -3726,60 +3794,74 @@ function upsertChannelListingsFromShopeeFetch(
   return merged;
 }
 
-/** Liên kết tự động theo SKU trùng khớp chính xác — chỉ xử lý nội bộ DB. */
-function autoLinkChannelListingsByExactSku(): {
+/** Index SKU kho chính — tương đương INDEX/WHERE IN trên DB file JSON. */
+function buildMasterSkuIndex(products: any[]): Map<string, any> {
+  const index = new Map<string, any>();
+  for (const p of products) {
+    const sku = String(p.sku || "").trim().toLowerCase();
+    if (sku && !index.has(sku)) index.set(sku, p);
+  }
+  return index;
+}
+
+/** Liên kết tự động theo SKU trùng khớp — chỉ quét listing chưa liên kết + SKU có trong index. */
+async function autoLinkChannelListingsByExactSku(): Promise<{
   linkedCount: number;
   listings: any[];
   alreadyLinked: number;
   unlinkedRemaining: number;
-} {
+}> {
   const listings = readChannelListingsDb();
   const masterProducts = loadProducts();
-  const skuIndex = new Map<string, any>();
+  const skuIndex = buildMasterSkuIndex(masterProducts);
+  const productIndex = new Map(masterProducts.map((p: any) => [String(p.id), p]));
 
-  for (const p of masterProducts) {
-    const sku = String(p.sku || "").trim().toLowerCase();
-    if (sku && !skuIndex.has(sku)) skuIndex.set(sku, p);
+  let alreadyLinked = 0;
+  const pendingIndices: number[] = [];
+  for (let i = 0; i < listings.length; i++) {
+    const listing = listings[i];
+    if (listing.status === "success" && listing.linkedProductId) {
+      alreadyLinked++;
+      continue;
+    }
+    const sku = String(listing.sku || "").trim().toLowerCase();
+    if (!sku) continue;
+    if (!skuIndex.has(sku)) continue;
+    pendingIndices.push(i);
   }
 
   let linkedCount = 0;
-  let alreadyLinked = 0;
-  const products = loadProducts();
-  const productIndex = new Map(products.map((p: any) => [String(p.id), p]));
+  const updated = [...listings];
 
-  const updated = listings.map((listing: any) => {
-    if (listing.status === "success" && listing.linkedProductId) {
-      alreadyLinked++;
-      return listing;
-    }
+  await runInShopeeBatches(
+    pendingIndices,
+    async (idx) => {
+      const listing = updated[idx];
+      const sku = String(listing.sku || "").trim().toLowerCase();
+      const match = skuIndex.get(sku);
+      if (!match) return;
 
-    const sku = String(listing.sku || "").trim().toLowerCase();
-    if (!sku) return listing;
-
-    const match = skuIndex.get(sku);
-    if (!match) return listing;
-
-    linkedCount++;
-    const linkedListing = sanitizeChannelListingRow({
-      ...listing,
-      status: "success",
-      linkedProductId: String(match.id),
-    });
-
-    const master = productIndex.get(String(match.id));
-    if (master && listing.platform === "shopee") {
-      const channels: string[] = Array.isArray(master.channels) ? [...master.channels] : [];
-      if (!channels.includes("shopee")) channels.push("shopee");
-      productIndex.set(String(match.id), {
-        ...master,
-        channels,
-        shopeeId: listing.channelId,
-        shopeeItemId: listing.channelId,
+      linkedCount++;
+      updated[idx] = sanitizeChannelListingRow({
+        ...listing,
+        status: "success",
+        linkedProductId: String(match.id),
       });
-    }
 
-    return linkedListing;
-  });
+      const master = productIndex.get(String(match.id));
+      if (master && listing.platform === "shopee") {
+        const channels: string[] = Array.isArray(master.channels) ? [...master.channels] : [];
+        if (!channels.includes("shopee")) channels.push("shopee");
+        productIndex.set(String(match.id), {
+          ...master,
+          channels,
+          shopeeId: listing.channelId,
+          shopeeItemId: listing.channelId,
+        });
+      }
+    },
+    { itemDelayMs: 50, batchPauseMs: 500 },
+  );
 
   if (linkedCount > 0) {
     saveProducts(Array.from(productIndex.values()));
@@ -6308,7 +6390,7 @@ async function startServer() {
   // API 2: Liên kết tự động theo SKU — chỉ xử lý nội bộ DB.
   app.post("/api/shopee/channel-products/auto-link", authMiddleware, async (_req, res) => {
     try {
-      const result = autoLinkChannelListingsByExactSku();
+      const result = await autoLinkChannelListingsByExactSku();
       return res.json({
         success: true,
         message:
@@ -6770,23 +6852,22 @@ async function startServer() {
 
     for (let i = 0; i < cleanOrderList.length; i += LABEL_DOWNLOAD_CONCURRENCY) {
       const chunk = cleanOrderList.slice(i, i + LABEL_DOWNLOAD_CONCURRENCY);
-      const results = await Promise.all(
-        chunk.map(async (order) => {
-          try {
-            const one = await shopeeDownloadShippingDocument(shopId, accessToken, [order]);
-            return { order, one };
-          } catch (err: any) {
-            return { order, one: { error: "download_exception", message: err?.message || String(err) } };
+      for (const order of chunk) {
+        try {
+          const one = await shopeeDownloadShippingDocument(shopId, accessToken, [order]);
+          if (one.buffer && isPdfBuffer(one.buffer, one.contentType)) {
+            cacheOne(order.order_sn, one.buffer, one.contentType);
+            console.log(`[Shopee Print] Cache ${order.order_sn} (${one.buffer.length} bytes).`);
+          } else {
+            console.warn(`[Shopee Print] Không tải PDF ${order.order_sn}: ${one.error || one.message || "unknown"}`);
           }
-        }),
-      );
-      for (const { order, one } of results) {
-        if (one.buffer && isPdfBuffer(one.buffer, one.contentType)) {
-          cacheOne(order.order_sn, one.buffer, one.contentType);
-          console.log(`[Shopee Print] Parallel cache ${order.order_sn} (${one.buffer.length} bytes).`);
-        } else {
-          console.warn(`[Shopee Print] Không tải PDF ${order.order_sn}: ${one.error || one.message || "unknown"}`);
+        } catch (err: any) {
+          console.warn(`[Shopee Print] Download failed ${order.order_sn}:`, err?.message || err);
         }
+        await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+      }
+      if (i + LABEL_DOWNLOAD_CONCURRENCY < cleanOrderList.length) {
+        await sleep(SHOPEE_PRODUCT_BATCH_PAUSE_MS);
       }
     }
 
@@ -7272,23 +7353,28 @@ async function startServer() {
     for (const [shopId, groupOrders] of Object.entries(groups)) {
       const accessToken = await getValidShopeeAccessToken(shopId);
       if (!accessToken) continue;
-      await runInBatches(groupOrders, LABEL_DOWNLOAD_CONCURRENCY, async (o) => {
-        if (o.trackingNumber && isCarrierTrackingCode(o.trackingNumber)) return;
-        try {
-          const trackResult = await shopeeGetTrackingNumber(shopId, accessToken, o.orderSn, o.packageNumber);
-          applyShopeeGetTrackingResponse(o, trackResult);
-          const idx = orders.findIndex((x: any) => x.orderSn === o.orderSn);
-          if (idx >= 0) {
-            orders[idx].trackingNumber = o.trackingNumber;
-            orders[idx].internalTrackingCode = o.internalTrackingCode;
-            console.log(`[Shopee Print] Đã lấy tracking cho đơn ${o.orderSn}: carrier=${o.trackingNumber || "—"}, internal=${o.internalTrackingCode || "—"}.`);
-          } else if (!trackResult.response?.tracking_number) {
-            console.error(`[Shopee Print] Không lấy được tracking_number cho đơn ${o.orderSn} (get_tracking_number trả về: ${JSON.stringify(trackResult)}). create_shipping_document có thể sẽ bị từ chối.`);
+      await runInBatches(
+        groupOrders,
+        4,
+        async (o) => {
+          if (o.trackingNumber && isCarrierTrackingCode(o.trackingNumber)) return;
+          try {
+            const trackResult = await shopeeGetTrackingNumber(shopId, accessToken, o.orderSn, o.packageNumber);
+            applyShopeeGetTrackingResponse(o, trackResult);
+            const idx = orders.findIndex((x: any) => x.orderSn === o.orderSn);
+            if (idx >= 0) {
+              orders[idx].trackingNumber = o.trackingNumber;
+              orders[idx].internalTrackingCode = o.internalTrackingCode;
+              console.log(`[Shopee Print] Đã lấy tracking cho đơn ${o.orderSn}: carrier=${o.trackingNumber || "—"}, internal=${o.internalTrackingCode || "—"}.`);
+            } else if (!trackResult.response?.tracking_number) {
+              console.error(`[Shopee Print] Không lấy được tracking_number cho đơn ${o.orderSn} (get_tracking_number trả về: ${JSON.stringify(trackResult)}). create_shipping_document có thể sẽ bị từ chối.`);
+            }
+          } catch (trackErr: any) {
+            console.warn(`[Shopee Print] Tracking fetch failed ${o.orderSn}:`, trackErr?.message || trackErr);
           }
-        } catch (trackErr: any) {
-          console.warn(`[Shopee Print] Tracking fetch failed ${o.orderSn}:`, trackErr?.message || trackErr);
-        }
-      });
+        },
+        { itemDelayMs: SHOPEE_PRODUCT_API_DELAY_MS, batchPauseMs: SHOPEE_PRODUCT_BATCH_PAUSE_MS },
+      );
     }
     saveOrders(orders);
 
