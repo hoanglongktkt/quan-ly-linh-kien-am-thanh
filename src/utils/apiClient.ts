@@ -162,6 +162,55 @@ export async function parseJsonResponse<T = Record<string, unknown>>(
   }
 }
 
+/** Nhận diện lỗi Shopee item/model không tồn tại — dùng để skip thay vì crash luồng sync. */
+export function isShopeeItemNotFoundMessage(text: string): boolean {
+  const t = String(text || '').toLowerCase();
+  return (
+    t.includes('item_not_found') ||
+    t.includes('error_item_not_found') ||
+    t.includes('item_id is not found') ||
+    t.includes('item is not found') ||
+    t.includes('model_not_found') ||
+    t.includes('is not found')
+  );
+}
+
+export type ShopeePullProductsResult = {
+  success: boolean;
+  products?: Array<Record<string, unknown>>;
+  listings?: Array<Record<string, unknown>>;
+  listingsCount?: number;
+  stats?: { itemCount?: number; rowCount?: number; variantItemCount?: number };
+  shopId?: string;
+  message?: string;
+  error?: string;
+  skippedItems?: Array<{ itemId: string; reason: string }>;
+};
+
+/** Kéo sản phẩm Shopee về kho (get_item_list → get_item_base_info → get_model_list cho multi-SKU). */
+export async function pullProducts(
+  shopId: string,
+  opts?: { signal?: AbortSignal; token?: string | null },
+): Promise<ShopeePullProductsResult> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const authToken = opts?.token ?? (typeof localStorage !== 'undefined' ? localStorage.getItem('admin_token') : null);
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
+  const res = await apiFetch('/api/shopee/products/sync', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ shopId }),
+    signal: opts?.signal,
+  });
+
+  const data = await parseJsonResponse<ShopeePullProductsResult>(res);
+  if (!res.ok) {
+    const msg = data.message || data.error || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return { ...data, success: true };
+}
+
 /** Mọi `fetch('/api/...')` dùng apiUrl (relative trên Vercel + cPanel). */
 export function installApiFetchInterceptor(): void {
   if (typeof window === 'undefined') return;
