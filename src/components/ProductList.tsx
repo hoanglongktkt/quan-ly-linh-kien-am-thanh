@@ -44,7 +44,7 @@ interface ProductListProps {
   onReplaceProducts?: (products: Product[]) => void;
   onBulkSave?: (updates: BulkSaveProductUpdate[]) => Promise<boolean>;
   onSyncItemVariants?: (itemId: string) => Promise<Product[] | null>;
-  onRefreshProducts?: () => Promise<void>;
+  onRefreshProducts?: (opts?: { page?: number; append?: boolean; pageSize?: number }) => Promise<void>;
   onProductsUpdated?: (products: Product[]) => void;
   onBulkSelect: (selectedIds: string[]) => void;
   selectedIds: string[];
@@ -55,6 +55,13 @@ interface ProductListProps {
   suppliers?: Supplier[];
   onAddLog?: (log: SyncLog) => void;
   productsLoading?: boolean;
+  productsMeta?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasMore: boolean;
+  };
 }
 
 export default function ProductList({ 
@@ -76,6 +83,7 @@ export default function ProductList({
   suppliers = [],
   onAddLog = () => {},
   productsLoading = false,
+  productsMeta,
 }: ProductListProps) {
   // Listen for external highlight trigger
   React.useEffect(() => {
@@ -516,18 +524,29 @@ export default function ProductList({
                 <span>CƠ SỞ DỮ LIỆU KHO SẢN PHẨM GỐC</span>
               </h4>
               <p className="text-[11px] text-gray-500 leading-relaxed font-semibold">
-                Đây là kho chính chứa toàn bộ thông tin sản phẩm của doanh nghiệp. Bạn có thể tự động kéo danh sách sản phẩm đang bán trên Shopee về để khởi tạo kho chính này tự động chỉ bằng một cú click.
+                Danh sách không tự tải khi mở trang (tránh lỗi 413). Bấm &quot;Tải danh sách&quot; để lấy tối đa 50 sản phẩm/lần, hoặc khởi tạo từ Shopee API.
               </p>
             </div>
             
-            <button
-              onClick={() => setShowShopeeImportModal(true)}
-              type="button"
-              className="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-orange-500/10 flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
-            >
-              <RefreshCw className="w-3.5 h-3.5 text-white animate-spin" style={{ animationDuration: isShopeeImporting ? '2s' : '0s' }} />
-              <span>Khởi tạo từ Shopee API</span>
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => onRefreshProducts?.({ page: 1, append: false })}
+                type="button"
+                disabled={productsLoading || !onRefreshProducts}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-extrabold rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${productsLoading ? 'animate-spin' : ''}`} />
+                <span>{productsLoading ? 'Đang tải...' : 'Tải danh sách'}</span>
+              </button>
+              <button
+                onClick={() => setShowShopeeImportModal(true)}
+                type="button"
+                className="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-orange-500/10 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-white" style={{ animationDuration: isShopeeImporting ? '2s' : '0s' }} />
+                <span>Khởi tạo từ Shopee API</span>
+              </button>
+            </div>
           </div>
 
           {/* Search and Filters Bar */}
@@ -617,6 +636,55 @@ export default function ProductList({
 
       {/* Products Table - Desktop Only */}
       <div className="max-md:hidden md:block bg-white rounded-2xl border border-gray-100 shadow-xs overflow-hidden">
+        {!productsLoading && products.length === 0 && (
+          <div className="p-8 text-center space-y-3 border-b border-gray-50">
+            <p className="text-sm text-gray-500 font-semibold">Chưa tải danh sách sản phẩm.</p>
+            <button
+              type="button"
+              onClick={() => onRefreshProducts?.({ page: 1, append: false })}
+              disabled={!onRefreshProducts}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Tải danh sách (tối đa 50 SP/trang)
+            </button>
+          </div>
+        )}
+        {(productsMeta?.total != null && productsMeta.total > 0) && (
+          <div className="px-4 py-2.5 bg-gray-50/80 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600">
+            <span>
+              Trang <b>{productsMeta.page}</b>/{productsMeta.totalPages} — hiển thị {products.length}/{productsMeta.total} sản phẩm mẹ
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={productsLoading || productsMeta.page <= 1}
+                onClick={() => onRefreshProducts?.({ page: productsMeta.page - 1, append: false })}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
+              >
+                Trang trước
+              </button>
+              <button
+                type="button"
+                disabled={productsLoading || !productsMeta.hasMore}
+                onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: false })}
+                className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
+              >
+                Trang sau
+              </button>
+              {productsMeta.hasMore && (
+                <button
+                  type="button"
+                  disabled={productsLoading}
+                  onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: true })}
+                  className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 font-semibold"
+                >
+                  Tải thêm
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>

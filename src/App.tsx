@@ -106,6 +106,13 @@ export default function App() {
 
   // 1. Initialize State with Local Storage fallback
   const [products, setProducts] = useState<Product[]>([]);
+  const [productsMeta, setProductsMeta] = useState({
+    page: 1,
+    pageSize: 50,
+    total: 0,
+    totalPages: 1,
+    hasMore: false,
+  });
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
 
@@ -346,22 +353,38 @@ export default function App() {
     }
   };
 
-  const fetchProducts = async () => {
+  const fetchProducts = async (opts?: { page?: number; append?: boolean; pageSize?: number }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
 
+    const page = Math.max(1, opts?.page ?? 1);
+    const pageSize = Math.min(50, Math.max(1, opts?.pageSize ?? 50));
+    const append = !!opts?.append;
+
     setProductsLoading(true);
     try {
-      const response = await fetch('/api/products', {
+      const response = await fetch(`/api/products?page=${page}&pageSize=${pageSize}`, {
         method: 'GET',
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!response.ok) return;
 
-      const data: Product[] = await response.json();
+      const data = await response.json();
+      // Legacy: mảng thuần (không dùng nữa)
       if (Array.isArray(data)) {
         setProducts(data);
+        setProductsMeta({ page: 1, pageSize: data.length, total: data.length, totalPages: 1, hasMore: false });
+        return;
       }
+      const list: Product[] = Array.isArray(data.products) ? data.products : [];
+      setProducts((prev) => (append ? [...prev, ...list] : list));
+      setProductsMeta({
+        page: Number(data.page) || page,
+        pageSize: Number(data.pageSize) || pageSize,
+        total: Number(data.total) || list.length,
+        totalPages: Number(data.totalPages) || 1,
+        hasMore: !!data.hasMore,
+      });
     } catch (err) {
       console.error('Fetch products error:', err);
     } finally {
@@ -868,7 +891,8 @@ export default function App() {
       }
 
       fetchOrders();
-      fetchProducts();
+      // KHÔNG auto fetchProducts — tránh HTTP 413 khi products.json quá lớn.
+      // Người dùng bấm "Tải danh sách" trong Kho sản phẩm để tải có phân trang.
       fetchSuppliers();
       fetchImports();
       fetchExpenses();
@@ -1298,6 +1322,7 @@ export default function App() {
                   suppliers={suppliers}
                   onAddLog={handleAddLog}
                   productsLoading={productsLoading}
+                  productsMeta={productsMeta}
                 />
               </div>
             </>

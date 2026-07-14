@@ -124,7 +124,7 @@ async function fetchMappingListingsFromServer(token: string): Promise<{ rows: Ch
 
 export default function ProductLinking({ products, shops, onAddLog, onUpdateProduct, onAddProduct, onRefreshProducts }: ProductLinkingProps) {
   const [listings, setListings] = useState<ChannelListing[]>([]);
-  const [listingsLoading, setListingsLoading] = useState(true);
+  const [listingsLoading, setListingsLoading] = useState(false);
   const [mappingLoadError, setMappingLoadError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const listingsHydratedRef = useRef(false);
@@ -179,70 +179,45 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     purgeLegacyCatalogCache();
   }, []);
 
-  useEffect(() => {
-    const load = async () => {
-      const token = localStorage.getItem('admin_token');
-      if (!token) {
-        setListingsLoading(false);
-        const msg = 'Chưa đăng nhập — không thể tải dữ liệu mapping.';
-        setMappingLoadError(msg);
-        showToast(msg);
+  // KHÔNG auto-fetch mapping khi mount (tránh HTTP 413). Tải thủ công qua nút.
+  const loadMappingListings = useCallback(async () => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      setListingsLoading(false);
+      const msg = 'Chưa đăng nhập — không thể tải dữ liệu mapping.';
+      setMappingLoadError(msg);
+      showToast(msg);
+      return;
+    }
+    setListingsLoading(true);
+    setMappingLoadError(null);
+    try {
+      const serverResult = await fetchMappingListingsFromServer(token);
+      if (serverResult) {
+        listingsHydratedRef.current = true;
+        setListings(serverResult.rows);
+        setMappingLoadError(null);
+        showToast(`Đã tải ${serverResult.rows.length} dòng mapping.`);
         return;
       }
-      setListingsLoading(true);
-      setMappingLoadError(null);
-      try {
-        const serverResult = await fetchMappingListingsFromServer(token);
-        if (serverResult) {
-          listingsHydratedRef.current = true;
-          setListings(serverResult.rows);
-          setMappingLoadError(null);
-          return;
-        }
-
-        if (products.length > 0) {
-          const derived = buildListingsFromProducts(products, shops);
-          if (derived.length > 0) {
-            listingsHydratedRef.current = true;
-            setListings(derived);
-            setMappingLoadError(null);
-            void persistListings(derived);
-            showToast(`Đã tải ${derived.length} sản phẩm từ kho gốc (API mapping tạm thời không khả dụng).`);
-            return;
-          }
-        }
-
-        const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
-        setMappingLoadError(msg);
-        showToast(msg);
-      } catch (err) {
-        const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
-        console.error('[ProductLinking] Tải mapping thất bại:', err);
-        setMappingLoadError(msg);
-        showToast(msg);
-      } finally {
-        setListingsLoading(false);
-      }
-    };
-    void load();
-  }, [showToast, persistListings]);
+      const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối hoặc bấm "Tải dữ liệu từ sàn".';
+      setMappingLoadError(msg);
+      showToast(msg);
+    } catch (err) {
+      const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
+      console.error('[ProductLinking] Tải mapping thất bại:', err);
+      setMappingLoadError(msg);
+      showToast(msg);
+    } finally {
+      setListingsLoading(false);
+    }
+  }, [showToast]);
 
   useEffect(() => {
     if (listings.length > 0) {
       setMappingLoadError(null);
     }
   }, [listings.length]);
-
-  useEffect(() => {
-    if (listingsHydratedRef.current || listings.length > 0 || products.length === 0) return;
-    const derived = buildListingsFromProducts(products, shops);
-    if (derived.length > 0) {
-      listingsHydratedRef.current = true;
-      setListings(derived);
-      setMappingLoadError(null);
-      saveListings(derived);
-    }
-  }, [products, shops, listings.length, saveListings]);
 
   // Tab state matching Image 1
   const [activeSubTab, setActiveSubTab] = useState<'all' | 'success' | 'unlinked' | 'failed'>('all');
@@ -828,6 +803,25 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             </select>
             <Store className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-3 pointer-events-none" />
           </div>
+
+          <button
+            onClick={() => void loadMappingListings()}
+            type="button"
+            disabled={listingsLoading || isFetchingFromChannel}
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-extrabold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            {listingsLoading ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Đang tải DB...</span>
+              </>
+            ) : (
+              <>
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Tải danh sách mapping</span>
+              </>
+            )}
+          </button>
 
           <button
             onClick={handleFetchChannelProducts}

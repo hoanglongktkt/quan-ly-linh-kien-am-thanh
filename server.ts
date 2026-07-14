@@ -5701,8 +5701,34 @@ async function startServer() {
 
   // Real synced orders list — this is what the Order Management UI reads from.
   // --- Products warehouse API (data/products.json) ---
-  app.get("/api/products", authMiddleware, (_req, res) => {
-    return res.json(loadProducts());
+  // Phân trang bắt buộc — mặc định trang 1, tối đa 50 parent/lần (tránh HTTP 413).
+  const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
+  const PRODUCTS_PAGE_SIZE_MAX = 50;
+
+  app.get("/api/products", authMiddleware, (req, res) => {
+    const all = loadProducts();
+    const rawPage = Number(req.query?.page);
+    const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
+    const pageSize = Number.isFinite(rawSize) && rawSize > 0
+      ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize))
+      : PRODUCTS_PAGE_SIZE_DEFAULT;
+
+    const total = all.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * pageSize;
+    const products = all.slice(start, start + pageSize);
+
+    return res.json({
+      success: true,
+      products,
+      page: safePage,
+      pageSize,
+      total,
+      totalPages,
+      hasMore: safePage < totalPages,
+    });
   });
 
   app.post("/api/products", authMiddleware, (req, res) => {
