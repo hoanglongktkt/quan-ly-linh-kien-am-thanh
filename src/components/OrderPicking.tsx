@@ -12,7 +12,6 @@ import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback } from '../
 import {
   Barcode,
   Camera,
-  Check,
   CheckCircle2,
   ImageOff,
   Loader2,
@@ -32,7 +31,15 @@ interface PickLine {
   productId: string;
   productTitle: string;
   productImage?: string;
+  sku: string;
+  variationName?: string;
   quantity: number;
+}
+
+const PROCESSED_STATUS_LABEL = 'Chờ lấy hàng (Đã xử lý)';
+
+function isPickableOrder(order: Order): boolean {
+  return order.status === 'processed';
 }
 
 function vibratePick() {
@@ -59,6 +66,8 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
       productId: item.productId,
       productTitle: item.productTitle,
       productImage: item.productImage,
+      sku: String(item.modelSku || item.productId || '—').trim() || '—',
+      variationName: item.modelName?.trim() || undefined,
       quantity: Math.max(1, Number(item.quantity) || 1),
     }));
   }, [activeOrder]);
@@ -78,6 +87,13 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
     setTimeout(() => inputRef.current?.focus(), 100);
   }, []);
 
+  const rejectWrongStatus = useCallback((order: Order) => {
+    scanFeedback('error');
+    setScanError(`Đơn #${order.orderSn} không ở trạng thái "${PROCESSED_STATUS_LABEL}".`);
+    setActiveOrder(null);
+    setPickedKeys(new Set());
+  }, []);
+
   const lookupOrder = useCallback(
     async (raw: string) => {
       const trimmed = raw.trim();
@@ -88,26 +104,21 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
 
       const token = localStorage.getItem('admin_token');
       let found =
-        orders.find((o) => o.status === 'unprocessed' && findOrderByScanPayload([o], trimmed)) ||
-        null;
+        orders.find((o) => isPickableOrder(o) && findOrderByScanPayload([o], trimmed)) || null;
 
       if (!found) {
         const remote = await lookupOrderByScanCode(trimmed, orders, token);
-        if (remote?.status === 'unprocessed') found = remote;
-        else if (remote && remote.status !== 'unprocessed') {
-          scanFeedback('error');
-          setScanError(`Đơn #${remote.orderSn} không ở trạng thái "Chờ lấy hàng (Chưa xử lý)".`);
-          setActiveOrder(null);
-          setPickedKeys(new Set());
+        if (remote && isPickableOrder(remote)) found = remote;
+        else if (remote) {
+          rejectWrongStatus(remote);
           return;
         }
       }
 
       if (!found) {
         const other = findOrderByScanPayload(orders, trimmed);
-        if (other && other.status !== 'unprocessed') {
-          scanFeedback('error');
-          setScanError(`Đơn #${other.orderSn} không ở trạng thái "Chờ lấy hàng (Chưa xử lý)".`);
+        if (other) {
+          rejectWrongStatus(other);
         } else {
           scanFeedback('error');
           setScanError(`Không tìm thấy đơn hàng khớp mã vận đơn/mã đơn "${trimmed}".`);
@@ -125,11 +136,12 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
 
       scanFeedback('success');
       setScanError('');
+      setScanInput('');
       setActiveOrder(found);
       setPickedKeys(new Set());
       setCameraOpen(false);
     },
-    [orders]
+    [orders, rejectWrongStatus]
   );
 
   const handleScanSubmit = (e: React.FormEvent) => {
@@ -137,14 +149,14 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
     lookupOrder(scanInput);
   };
 
-  const togglePick = (key: string) => {
+  const togglePick = (key: string, checked: boolean) => {
     setPickedKeys((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
+      if (checked) {
         next.add(key);
         vibratePick();
+      } else {
+        next.delete(key);
       }
       return next;
     });
@@ -161,7 +173,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
     try {
       const updated = orders.map((o) =>
         o.id === activeOrder.id
-          ? { ...o, status: 'processed' as const, isPrepared: true }
+          ? { ...o, status: 'shipping' as const, isPrepared: true }
           : o
       );
       onUpdateOrders(updated);
@@ -229,7 +241,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
         <div className="bg-white max-md:rounded-b-2xl md:rounded-2xl border border-gray-100 max-md:border-x-0 max-md:border-t-0 shadow-xs max-md:px-3 max-md:pt-2 max-md:pb-4 p-4 sm:p-5 space-y-3 md:space-y-4">
           <form onSubmit={handleScanSubmit} className="space-y-3">
             <label className="text-xs font-bold text-gray-600 uppercase tracking-wide">
-              Quét hoặc nhập mã đơn
+              Quét hoặc nhập mã đơn ({PROCESSED_STATUS_LABEL})
             </label>
             <div className="flex gap-2">
               <div className="relative flex-1">
@@ -309,6 +321,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
             <div>
               <p className="text-[11px] font-bold text-gray-400 uppercase">Đơn đang nhặt</p>
               <p className="text-base font-extrabold text-gray-900 font-mono">#{activeOrder.orderSn}</p>
+              <p className="text-[11px] font-semibold text-emerald-600 mt-0.5">{PROCESSED_STATUS_LABEL}</p>
             </div>
             <button
               type="button"
@@ -337,54 +350,49 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
             {pickLines.map((line) => {
               const isPicked = pickedKeys.has(line.key);
               return (
-                <li key={line.key}>
-                  <button
-                    type="button"
-                    onClick={() => togglePick(line.key)}
-                    className={`w-full min-h-[72px] flex items-center gap-3 p-3 rounded-2xl border-2 text-left transition-all ${
-                      isPicked
-                        ? 'border-emerald-500 bg-emerald-50 shadow-sm'
-                        : 'border-gray-100 bg-white hover:border-emerald-200 hover:bg-emerald-50/30'
-                    }`}
-                  >
-                    <div
-                      className={`min-h-12 min-w-12 shrink-0 rounded-xl border-2 flex items-center justify-center transition-colors ${
-                        isPicked
-                          ? 'border-emerald-500 bg-emerald-500 text-white'
-                          : 'border-gray-200 bg-gray-50 text-gray-400'
-                      }`}
-                    >
-                      {isPicked ? <Check className="w-6 h-6 stroke-[3]" /> : <Package className="w-5 h-5" />}
+                <li
+                  key={line.key}
+                  className={`flex items-center gap-3 p-3 rounded-2xl border-2 transition-all ${
+                    isPicked
+                      ? 'border-emerald-500 bg-emerald-50 shadow-sm'
+                      : 'border-gray-100 bg-white'
+                  }`}
+                >
+                  {line.productImage ? (
+                    <img
+                      src={line.productImage}
+                      alt=""
+                      className="w-14 h-14 rounded-xl object-cover border border-gray-100 shrink-0"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-14 h-14 rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
+                      <ImageOff className="w-4 h-4 text-gray-400" />
                     </div>
+                  )}
 
-                    {line.productImage ? (
-                      <img
-                        src={line.productImage}
-                        alt=""
-                        className="w-12 h-12 rounded-xl object-cover border border-gray-100 shrink-0"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center shrink-0">
-                        <ImageOff className="w-4 h-4 text-gray-400" />
-                      </div>
-                    )}
-
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-bold line-clamp-2 ${isPicked ? 'text-emerald-900' : 'text-gray-900'}`}>
-                        {line.productTitle}
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-bold line-clamp-2 ${isPicked ? 'text-emerald-900' : 'text-gray-900'}`}>
+                      {line.productTitle}
+                    </p>
+                    <p className="text-xs font-mono text-gray-500 mt-1">SKU: {line.sku}</p>
+                    {line.variationName ? (
+                      <p className="text-xs font-bold text-orange-600 mt-0.5">
+                        Phân loại: {line.variationName}
                       </p>
-                      <p className="text-xs font-mono text-gray-400 mt-0.5">SL: {line.quantity}</p>
-                    </div>
+                    ) : null}
+                    <p className="text-xs text-gray-400 mt-0.5">SL: {line.quantity}</p>
+                  </div>
 
-                    <span
-                      className={`shrink-0 text-[11px] font-extrabold uppercase px-2.5 py-1 rounded-lg ${
-                        isPicked ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-500'
-                      }`}
-                    >
-                      {isPicked ? 'Đã nhặt' : 'Chưa nhặt'}
-                    </span>
-                  </button>
+                  <label className="flex flex-col items-center gap-1 shrink-0 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isPicked}
+                      onChange={(e) => togglePick(line.key, e.target.checked)}
+                      className="w-5 h-5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                    />
+                    <span className="text-[10px] font-bold text-gray-400">Đã nhặt</span>
+                  </label>
                 </li>
               );
             })}
@@ -394,7 +402,7 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
             type="button"
             disabled={!allPicked || submitting}
             onClick={() => void handleMoveToPacking()}
-            className={`w-full min-h-14 py-4 rounded-2xl font-extrabold text-sm flex items-center justify-center gap-2 transition-all ${
+            className={`w-full min-h-14 py-4 rounded-2xl font-extrabold text-base flex items-center justify-center gap-2 transition-all ${
               allPicked
                 ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-500/20'
                 : 'bg-gray-100 text-gray-400 cursor-not-allowed'
@@ -405,12 +413,12 @@ export default function OrderPicking({ orders, onUpdateOrders, onAddLog }: Order
             ) : (
               <CheckCircle2 className="w-5 h-5" />
             )}
-            Chuyển đóng gói
+            Chuyển sang đóng gói
           </button>
 
           {!allPicked && totalLines > 0 && (
             <p className="text-center text-[11px] text-amber-600 font-semibold">
-              Tích &quot;Đã nhặt&quot; cho tất cả {totalLines} dòng sản phẩm để kích hoạt nút.
+              Tích checkbox cho tất cả {totalLines} sản phẩm để kích hoạt nút.
             </p>
           )}
         </div>
