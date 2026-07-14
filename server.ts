@@ -4832,8 +4832,31 @@ async function startServer() {
     }
   });
 
-  // Broken/mock orders (0đ total AND no items — leftovers from earlier test
-  // configuration, not real Shopee orders) are filtered out of the response.
+  app.get("/api/check-new-orders", authMiddleware, (req, res) => {
+    const sinceRaw = String(req.query.since || "").trim();
+    let sinceMs = sinceRaw ? Date.parse(sinceRaw) : Date.now() - 60_000;
+    if (!Number.isFinite(sinceMs)) {
+      return res.status(400).json({ error: "Tham số since không hợp lệ." });
+    }
+
+    const orders = loadOrders().filter(isValidOrder);
+    const newOrders = orders.filter((o: any) => {
+      const ts = Date.parse(String(o.date || o.createdAt || ""));
+      return Number.isFinite(ts) && ts > sinceMs;
+    });
+
+    newOrders.sort(
+      (a: any, b: any) => Date.parse(String(b.date || "")) - Date.parse(String(a.date || ""))
+    );
+
+    return res.json({
+      hasNew: newOrders.length > 0,
+      count: newOrders.length,
+      latestOrderSn: newOrders[0]?.orderSn || undefined,
+      checkedAt: new Date().toISOString(),
+    });
+  });
+
   app.get("/api/orders", authMiddleware, (req, res) => {
     const products = loadProducts();
     let rawOrders = loadOrders().filter(isValidOrder);
