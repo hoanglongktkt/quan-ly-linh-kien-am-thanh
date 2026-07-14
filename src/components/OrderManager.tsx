@@ -16,7 +16,6 @@ import {
   Printer, 
   Clock, 
   Truck, 
-  FileText, 
   XCircle, 
   RotateCcw, 
   Check, 
@@ -27,9 +26,6 @@ import {
   AlertCircle, 
   Sparkles, 
   RefreshCw,
-  Sliders,
-  HelpCircle,
-  Share2,
   ChevronDown,
   ChevronRight,
   CheckSquare,
@@ -475,13 +471,9 @@ export default function OrderManager({
   const [showTikTokDropdown, setShowTikTokDropdown] = useState(false);
   const [showWooDropdown, setShowWooDropdown] = useState(false);
   
-  // Search & Filter state
+  // Search state
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTimeRange, setSelectedTimeRange] = useState<'all' | 'today' | 'week' | 'month'>('week');
-  const [selectedSort, setSelectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
-  // Quick print-status filter for the "Chờ lấy hàng (Đã xử lý)" tab — lets the
-  // seller instantly isolate orders whose label failed to print / never printed.
-  const [printFilter, setPrintFilter] = useState<'all' | 'unprinted' | 'printed'>('all');
+  const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
 
   // Multi-select bulk state
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
@@ -1011,7 +1003,6 @@ export default function OrderManager({
         setShipConfirmOrders(null);
         setSelectedOrderIds([]);
         setActiveSubTab('processed');
-        setPrintFilter('all');
 
         const successCount = syncData.successCount || 0;
         if (successCount === 0) {
@@ -1057,7 +1048,6 @@ export default function OrderManager({
       setShipConfirmOrders(null);
       setSelectedOrderIds([]);
       setActiveSubTab('processed');
-      setPrintFilter('all');
 
       const jobId = data.jobId as string | undefined;
       const total = Number(data.total) || queuedOrders.length;
@@ -1249,123 +1239,6 @@ export default function OrderManager({
     }
   };
 
-  const formatSyncErrors = (errors: any[]): string =>
-    errors
-      .map((e) => {
-        const shop = e.shopId ? `Shop ${e.shopId}` : 'Hệ thống';
-        const code = e.error ? ` [${e.error}]` : '';
-        const msg = e.message || e.error || 'Lỗi không xác định';
-        return `${shop}${code}: ${msg}`;
-      })
-      .join('; ');
-
-  const extractApiErrorMessage = (data: Record<string, unknown>, fallback: string): string => {
-    const parts = [data?.message, data?.error, data?.detail, data?.hint, data?.causeMessage].filter(Boolean);
-    return parts.map(String).join(' — ') || fallback;
-  };
-
-  // Calls Shopee API to sync — job ngầm (202), poll tiến trình, tránh treo server cPanel.
-  const pollOrderSyncJobUntilDone = async (jobId: string): Promise<any | null> => {
-    const deadline = Date.now() + 20 * 60 * 1000;
-    let finalJob: any = null;
-
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        const jobRes = await fetch(`/api/shopee/orders/sync/job/${jobId}`, { headers: authHeaders() });
-        if (!jobRes.ok) break;
-        const job = await jobRes.json();
-        finalJob = job;
-
-        setProgressTotal(job.total || 0);
-        setProgressCompleted(job.completed || 0);
-        setProgressMessage(job.message || 'Đang đồng bộ đơn từ Shopee...');
-
-        if (job.status === 'done' || job.status === 'failed') break;
-      } catch {
-        break;
-      }
-    }
-
-    return finalJob;
-  };
-
-  const handleShopeeSyncOrders = async () => {
-    setIsSyncing(true);
-    setProgressDone(false);
-    setProgressCompleted(0);
-    setProgressTotal(0);
-    setProgressMessage('Đang khởi tạo đồng bộ ngầm (tiết kiệm RAM server)...');
-    onAddLog({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      channel: 'shopee',
-      type: 'stock_sync',
-      status: 'success',
-      message: '[Shopee Sync] Job ngầm — batch 20 đơn, delay 2s, max 60 đơn/shop.',
-    });
-
-    try {
-      const res = await fetch('/api/shopee/orders/sync', {
-        method: 'POST',
-        headers: authHeaders(),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok && res.status !== 202) {
-        throw new Error(extractApiErrorMessage(data, 'Đồng bộ đơn hàng Shopee thất bại.'));
-      }
-
-      const jobId = data.jobId as string | undefined;
-      if (!jobId) {
-        if (data.warning) showToast(String(data.warning));
-        return;
-      }
-
-      const finalJob = await pollOrderSyncJobUntilDone(jobId);
-      if (!finalJob) {
-        throw new Error('Mất kết nối tiến trình đồng bộ — thử lại sau vài phút.');
-      }
-
-      if (finalJob.status === 'failed') {
-        throw new Error(finalJob.error || finalJob.message || 'Đồng bộ Shopee thất bại.');
-      }
-
-      if (finalJob.warning) {
-        showToast(String(finalJob.warning));
-      }
-
-      const synced = Number(finalJob.synced) || 0;
-      const syncErrors = Array.isArray(finalJob.errors) ? finalJob.errors : [];
-      if (syncErrors.length > 0 && synced === 0) {
-        throw new Error(formatSyncErrors(syncErrors));
-      }
-
-      const refreshRes = await fetch('/api/orders', { headers: authHeaders() });
-      if (refreshRes.ok) {
-        onUpdateOrders(await refreshRes.json());
-      }
-
-      const ui = finalJob.uiStatusCounts;
-      const countMsg = ui
-        ? ` — Đang giao: ${ui.shipping}, Chờ lấy (đã xử lý): ${ui.processed}, Chưa xử lý: ${ui.unprocessed}`
-        : '';
-      if (syncErrors.length > 0) {
-        showToast(`Đồng bộ ${synced} đơn, nhưng có cảnh báo: ${formatSyncErrors(syncErrors)}${countMsg}`);
-      } else {
-        showToast(`Đồng bộ thành công ${synced} đơn từ Shopee${countMsg}.`);
-      }
-      markProgressComplete('Đồng bộ hoàn tất!');
-    } catch (err: any) {
-      showToast(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);
-      clearShipProgressOverlay();
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  // Calls the backend's real "/api/orders" endpoint to refresh the list with
-  // whatever has actually been synced in so far (e.g. via the Shopee webhook).
   const handleSyncOrders = async () => {
     setIsSyncing(true);
     onAddLog({
@@ -1442,22 +1315,7 @@ export default function OrderManager({
     // 3. Shop Filter
     if (selectedShopId !== 'all' && order.shopId !== selectedShopId) return false;
 
-    // 3b. Print-status filter (only meaningful in the "Đã xử lý" tab)
-    if (activeSubTab === 'processed' && printFilter !== 'all') {
-      if (printFilter === 'printed' && !order.isPrinted) return false;
-      if (printFilter === 'unprinted' && order.isPrinted) return false;
-    }
-
-    // 4. Time Range Filter
-    if (selectedTimeRange === 'today') {
-      const todayStr = new Date().toISOString().split('T')[0];
-      if (!String(order.date || '').startsWith(todayStr)) return false;
-    } else if (selectedTimeRange === 'week') {
-      const limit = new Date('2026-07-01');
-      if (new Date(order.date || 0) < limit) return false;
-    }
-
-    // 5. Text query search
+    // 4. Text query search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
@@ -2429,30 +2287,8 @@ export default function OrderManager({
           )}
         </div>
 
-        {/* Right Help Utilities & "Cập nhật đơn hàng" button */}
+        {/* Right action buttons */}
         <div className="flex items-center gap-3">
-          <button 
-            onClick={() => alert('Đường dây hỗ trợ kỹ thuật API & Logistics sẵn sàng 24/7!')}
-            className="om-orders-mobile-hide-support p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-all"
-            title="Trợ giúp"
-          >
-            <HelpCircle className="w-5 h-5" />
-          </button>
-          <button 
-            className="om-orders-mobile-hide-support p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-all"
-            title="Xuất Excel"
-          >
-            <Share2 className="w-5 h-5" />
-          </button>
-
-          <button 
-            onClick={() => alert('Đang tập hợp chứng từ Hóa đơn điện tử (HĐĐT)...')}
-            className="max-sm:hidden sm:flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-xl border border-gray-200 transition-all"
-          >
-            <FileText className="w-4 h-4 text-gray-400" />
-            <span>Danh sách xuất HĐĐT</span>
-          </button>
-
           <button
             onClick={() => {
               setShippingAddress(emptyStructuredAddress());
@@ -2709,139 +2545,19 @@ export default function OrderManager({
         </div>
       )}
 
-      {/* 4. FILTER BOX & SEARCH TAGS (Mockup faithful design) */}
+      {/* 4. FILTER BOX — search only */}
       {activeSubTab !== 'order_products' && activeSubTab !== 'reprint' && (
-      <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs space-y-4">
-        <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
-          
-          {/* Main search */}
-          <div className="om-orders-mobile-hide-search relative w-full lg:flex-1">
-            <Search className="absolute left-3.5 top-3.5 text-gray-400 w-4 h-4" />
-            <input 
-              type="text" 
-              placeholder="Tìm kiếm theo mã đơn hàng, tên khách hàng, sản phẩm hoặc mã bưu cục..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 rounded-xl border border-gray-100 focus:border-blue-500 focus:bg-white text-xs outline-none transition-all font-medium"
-            />
-          </div>
-
-          {/* Sàn/Trạng thái/Ngày tạo dropdowns like mockup */}
-          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
-            
-            <div className="om-orders-mobile-hide-date-filter flex items-center gap-1.5 bg-gray-50 border border-gray-200 px-3 py-2 rounded-xl text-xs font-semibold text-gray-600">
-              <span className="text-gray-400 font-bold">Ngày tạo:</span>
-              <select 
-                value={selectedTimeRange} 
-                onChange={(e) => setSelectedTimeRange(e.target.value as any)}
-                className="bg-transparent border-none outline-none text-xs font-extrabold text-gray-800 cursor-pointer"
-              >
-                <option value="week">Tuần này (Mới cập nhật)</option>
-                <option value="today">Hôm nay (Đơn phát sinh)</option>
-                <option value="all">Mọi thời gian</option>
-              </select>
-            </div>
-
-            <div className="om-orders-mobile-hide-sort-filter flex items-center gap-1.5 bg-gray-50 border border-gray-200 px-3 py-2 rounded-xl text-xs font-semibold text-gray-600">
-              <Sliders className="w-3.5 h-3.5 text-gray-400" />
-              <select 
-                value={selectedSort} 
-                onChange={(e) => setSelectedSort(e.target.value as any)}
-                className="bg-transparent border-none outline-none text-xs font-extrabold text-gray-800 cursor-pointer"
-              >
-                <option value="newest">Sắp xếp: Mới nhất</option>
-                <option value="oldest">Sắp xếp: Cũ nhất</option>
-                <option value="highest_value">Sắp xếp: Giá trị lớn nhất</option>
-              </select>
-            </div>
-
-            <button
-              onClick={handleShopeeSyncOrders}
-              disabled={isSyncing || ordersLoading}
-              className="om-orders-mobile-hide-sync-btn px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:opacity-75 text-white rounded-xl text-xs font-extrabold transition-all flex items-center gap-1.5 shadow-sm"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${(isSyncing || ordersLoading) ? 'animate-spin' : ''}`} />
-              <span>ĐỒNG BỘ ĐƠN HÀNG TỪ SHOPEE</span>
-            </button>
-
-            <button 
-              onClick={() => alert('Đã lưu thành công bộ lọc tùy chỉnh của bạn!')}
-              className="om-orders-mobile-hide-save-filter px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-xl text-xs font-extrabold transition-all"
-            >
-              Lưu bộ lọc
-            </button>
-
-            <button 
-              onClick={() => alert('Mở bảng cấu hình tùy biến hiển thị cột dữ liệu')}
-              className="om-orders-mobile-hide-columns-btn px-3.5 py-2 bg-white text-gray-600 hover:bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
-            >
-              <Sliders className="w-3.5 h-3.5 rotate-90" />
-              <span>Cột</span>
-            </button>
-          </div>
+      <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs">
+        <div className="relative w-full">
+          <Search className="absolute left-3.5 top-3.5 text-gray-400 w-4 h-4" />
+          <input 
+            type="text" 
+            placeholder="Tìm kiếm theo mã đơn hàng, tên khách hàng, sản phẩm hoặc mã bưu cục..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 rounded-xl border border-gray-100 focus:border-blue-500 focus:bg-white text-xs outline-none transition-all font-medium"
+          />
         </div>
-
-        {/* Filter tags below (matching mockup exactly) */}
-        <div className="om-orders-mobile-hide-active-filters flex flex-wrap items-center gap-2 pt-1">
-          <span className="text-[11px] text-gray-400 font-bold uppercase tracking-wide">Bộ lọc hoạt động:</span>
-          
-          <span className="inline-flex items-center gap-1.5 bg-blue-50/80 border border-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
-            Trạng thái trên sàn: {getStatusBadge(activeSubTab)?.text || 'Tất cả'}
-            <button onClick={() => setActiveSubTab('all')} className="hover:text-blue-900 font-extrabold">✕</button>
-          </span>
-
-          <span className="inline-flex items-center gap-1.5 bg-blue-50/80 border border-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
-            Thời gian: {selectedTimeRange === 'week' ? 'Tuần này (01/07 - 07/07)' : selectedTimeRange === 'today' ? 'Hôm nay' : 'Mọi thời gian'}
-            <button onClick={() => setSelectedTimeRange('all')} className="hover:text-blue-900 font-extrabold">✕</button>
-          </span>
-
-          {selectedPlatform !== 'all' && (
-            <span className="inline-flex items-center gap-1.5 bg-orange-50 border border-orange-100 text-orange-700 px-3 py-1 rounded-full text-xs font-bold uppercase">
-              Kênh: {selectedPlatform}
-              <button onClick={() => setSelectedPlatform('all')} className="hover:text-orange-950">✕</button>
-            </span>
-          )}
-
-          {searchQuery && (
-            <span className="inline-flex items-center gap-1.5 bg-gray-100 border border-gray-200 text-gray-700 px-3 py-1 rounded-full text-xs font-bold">
-              Từ khóa: "{searchQuery}"
-              <button onClick={() => setSearchQuery('')} className="hover:text-gray-900">✕</button>
-            </span>
-          )}
-        </div>
-
-        {/* Quick print-status filter — only relevant once orders reach "Đã xử lý" */}
-        {activeSubTab === 'processed' && (
-          <div className="om-mobile-hide-print flex items-center gap-2 pt-2 border-t border-gray-100">
-            <span className="text-[11px] text-gray-400 font-bold uppercase tracking-wide flex items-center gap-1">
-              <Printer className="w-3.5 h-3.5" /> Lọc theo in ấn:
-            </span>
-            <button
-              onClick={() => setPrintFilter('all')}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
-                printFilter === 'all' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              Tất cả
-            </button>
-            <button
-              onClick={() => setPrintFilter('unprinted')}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
-                printFilter === 'unprinted' ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-600 border-rose-200 hover:bg-rose-50'
-              }`}
-            >
-              Chưa in ({orders.filter(o => o.status === 'processed' && !o.isPrinted).length})
-            </button>
-            <button
-              onClick={() => setPrintFilter('printed')}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${
-                printFilter === 'printed' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-emerald-600 border-emerald-200 hover:bg-emerald-50'
-              }`}
-            >
-              Đã in ({orders.filter(o => o.status === 'processed' && o.isPrinted).length})
-            </button>
-          </div>
-        )}
       </div>
       )}
 
