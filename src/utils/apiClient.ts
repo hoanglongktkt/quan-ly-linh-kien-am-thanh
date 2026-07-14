@@ -123,7 +123,7 @@ function extractApiErrorMessage(text: string, fallback: string): string {
   return fallback;
 }
 
-/** Parse JSON an toàn — báo lỗi rõ nếu server trả HTML (404/proxy/503). */
+/** Parse JSON an toàn — báo lỗi rõ nếu server trả HTML (404/proxy/503/413). */
 export async function parseJsonResponse<T = Record<string, unknown>>(
   response: Response,
 ): Promise<T> {
@@ -132,12 +132,18 @@ export async function parseJsonResponse<T = Record<string, unknown>>(
   const trimmed = text.trimStart();
 
   if (trimmed.startsWith('<') || trimmed.startsWith('<!DOCTYPE')) {
-    const htmlHint = `Server trả về HTML thay vì JSON (HTTP ${response.status}) — backend có thể bị crash, timeout hoặc proxy lỗi.`;
+    const htmlHint =
+      response.status === 413
+        ? `HTTP 413 Payload Too Large — dữ liệu quá lớn. Hãy dùng phân trang (offset/nextOffset).`
+        : `Server trả về HTML thay vì JSON (HTTP ${response.status}) — backend có thể bị crash, timeout hoặc proxy lỗi.`;
     throw new Error(extractApiErrorMessage(text, htmlHint));
   }
 
   if (!response.ok) {
-    const fallback = `HTTP ${response.status}: ${response.statusText || 'Lỗi API'}`;
+    const fallback =
+      response.status === 413
+        ? 'HTTP 413: Payload Too Large — hãy tải từng trang thay vì toàn bộ shop một lần.'
+        : `HTTP ${response.status}: ${response.statusText || 'Lỗi API'}`;
     const msg = extractApiErrorMessage(text, fallback);
     throw new Error(msg);
   }
@@ -175,30 +181,148 @@ export function isShopeeItemNotFoundMessage(text: string): boolean {
   );
 }
 
+export type ShopeeChannelFetchPageResult = {
+  success: boolean;
+  message?: string;
+  shopId?: string;
+  shopName?: string;
+  offset?: number;
+  nextOffset?: number | null;
+  hasMore?: boolean;
+  pageSize?: number;
+  savedCount?: number;
+  pageStats?: {
+    itemsInPage?: number;
+    rowsInPage?: number;
+    variantItemCount?: number;
+    skippedCount?: number;
+  };
+  skippedItems?: Array<{ itemId: string; reason: string }>;
+  error?: string;
+};
+
+export type ShopeeChannelFetchAllResult = {
+  success: boolean;
+  totalSaved: number;
+  totalPages: number;
+  shopId?: string;
+  shopName?: string;
+  stats: {
+    itemsInPage: number;
+    rowsInPage: number;
+    variantItemCount: number;
+    skippedCount: number;
+  };
+  message?: string;
+};
+
+function buildAuthHeaders(token?: string | null): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const authToken =
+    token ?? (typeof localStorage !== 'undefined' ? localStorage.getItem('admin_token') : null);
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  return headers;
+}
+
+/** Tải MỘT trang dữ liệu sàn Shopee — chỉ kéo + lưu DB, không auto-link. */
+export async function fetchChannelProductsPage(
+  shopId: string,
+  offset = 0,
+  opts?: { signal?: AbortSignal; token?: string | null },
+): Promise<ShopeeChannelFetchPageResult> {
+  const res = await apiFetch('/api/shopee/channel-products/fetch', {
+    method: 'POST',
+    headers: buildAuthHeaders(opts?.token),
+    body: JSON.stringify({ shopId, offset }),
+    signal: opts?.signal,
+  });
+
+  const data = await parseJsonResponse<ShopeeChannelFetchPageResult>(res);
+  if (!res.ok || data.success === false) {
+    throw new Error(data.message || data.error || `HTTP ${res.status}`);
+  }
+  return { ...data, success: true };
+}
+
+/**
+ * Tải toàn bộ dữ liệu sàn theo phân trang — mỗi request chỉ xử lý 1 trang (page_size=20).
+ * Không auto-link SKU; chỉ kéo dữ liệu thô và lưu Database.
+ */
+export async function fetchChannelProductsFromShopee(
+  shopId: string,
+  opts?: {
+    signal?: AbortSignal;
+    token?: string | null;
+    onPage?: (page: ShopeeChannelFetchPageResult, pageNo: number) => void;
+  },
+): Promise<ShopeeChannelFetchAllResult> {
+  let offset = 0;
+  let hasMore = true;
+  let pageNo = 0;
+  let totalSaved = 0;
+  const stats = { itemsInPage: 0, rowsInPage: 0, variantItemCount: 0, skippedCount: 0 };
+  let shopName: string | undefined;
+  let resolvedShopId = shopId;
+
+  while (hasMore) {
+    pageNo++;
+    const page = await fetchChannelProductsPage(resolvedShopId, offset, {
+      signal: opts?.signal,
+      token: opts?.token,
+    });
+
+    opts?.onPage?.(page, pageNo);
+
+    totalSaved += page.savedCount ?? 0;
+    stats.itemsInPage += page.pageStats?.itemsInPage ?? 0;
+    stats.rowsInPage += page.pageStats?.rowsInPage ?? 0;
+    stats.variantItemCount += page.pageStats?.variantItemCount ?? 0;
+    stats.skippedCount += page.pageStats?.skippedCount ?? 0;
+
+    if (page.shopId) resolvedShopId = page.shopId;
+    if (page.shopName) shopName = page.shopName;
+
+    hasMore = !!page.hasMore;
+    offset = page.nextOffset ?? offset + (page.pageSize ?? 20);
+
+    if (!hasMore) break;
+  }
+
+  return {
+    success: true,
+    totalSaved,
+    totalPages: pageNo,
+    shopId: resolvedShopId,
+    shopName,
+    stats,
+    message: `Đã tải ${totalSaved} dòng từ ${pageNo} trang Shopee (không auto-link).`,
+  };
+}
+
 export type ShopeePullProductsResult = {
   success: boolean;
-  products?: Array<Record<string, unknown>>;
-  listings?: Array<Record<string, unknown>>;
-  listingsCount?: number;
-  stats?: { itemCount?: number; rowCount?: number; variantItemCount?: number };
+  productCount?: number;
+  stats?: {
+    itemCount?: number;
+    rowCount?: number;
+    variantItemCount?: number;
+    skippedCount?: number;
+    pageCount?: number;
+  };
   shopId?: string;
   message?: string;
   error?: string;
   skippedItems?: Array<{ itemId: string; reason: string }>;
 };
 
-/** Kéo sản phẩm Shopee về kho (get_item_list → get_item_base_info → get_model_list cho multi-SKU). */
+/** Đồng bộ kho chính từ Shopee — server xử lý phân trang nội bộ, response chỉ trả thống kê. */
 export async function pullProducts(
   shopId: string,
   opts?: { signal?: AbortSignal; token?: string | null },
 ): Promise<ShopeePullProductsResult> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const authToken = opts?.token ?? (typeof localStorage !== 'undefined' ? localStorage.getItem('admin_token') : null);
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
-
   const res = await apiFetch('/api/shopee/products/sync', {
     method: 'POST',
-    headers,
+    headers: buildAuthHeaders(opts?.token),
     body: JSON.stringify({ shopId }),
     signal: opts?.signal,
   });
