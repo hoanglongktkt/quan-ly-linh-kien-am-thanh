@@ -902,8 +902,8 @@ export default function App() {
       }
 
       fetchOrders();
-      // KHÔNG auto fetchProducts — tránh HTTP 413 khi products.json quá lớn.
-      // Người dùng bấm "Tải danh sách" trong Kho sản phẩm để tải có phân trang.
+      // Auto-load Kho gốc khi F5 / đăng nhập (phân trang page 1).
+      void fetchProducts({ page: 1, append: false, pageSize: 50 });
       fetchSuppliers();
       fetchImports();
       fetchExpenses();

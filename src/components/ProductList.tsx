@@ -101,6 +101,19 @@ export default function ProductList({
   // Master sub-tab selection: 'warehouse' (Kho sản phẩm chính) or 'linking' (Liên kết sản phẩm)
   const [subTab, setSubTab] = useState<'warehouse' | 'linking' | 'audit'>('warehouse');
 
+  // F5 / mở tab Kho gốc → tự động tải danh sách từ DB (không bắt user bấm nút).
+  const warehouseLoadedRef = React.useRef(false);
+  useEffect(() => {
+    if (subTab !== 'warehouse') return;
+    if (warehouseLoadedRef.current) return;
+    if (products.length > 0) {
+      warehouseLoadedRef.current = true;
+      return;
+    }
+    warehouseLoadedRef.current = true;
+    void onRefreshProducts?.({ page: 1, append: false });
+  }, [subTab, products.length, onRefreshProducts]);
+
   // Shopee API initialization state
   const [showShopeeImportModal, setShowShopeeImportModal] = useState(false);
   const [shopeeImportShopId, setShopeeImportShopId] = useState('');

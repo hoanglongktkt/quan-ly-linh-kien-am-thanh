@@ -2970,15 +2970,17 @@ async function processShopeeItemsToListingRows(
   let variantItemCount = 0;
   const safeItems = asShopeeArray(items).filter((it) => it != null && it.item_id != null);
 
-  await runInShopeeBatches(safeItems, async (item) => {
+  // for...of + await — KHÔNG dùng forEach(async) (unhandled rejection).
+  for (let i = 0; i < safeItems.length; i++) {
+    const item = safeItems[i];
     try {
       const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
-      if (r.error && r.rows.length === 0) {
+      if (r.error && (!r.rows || r.rows.length === 0)) {
         skippedItems.push({ itemId: String(item?.item_id), reason: r.error });
-        return;
+      } else {
+        if (r.modelCount > 0) variantItemCount++;
+        products.push(...asShopeeArray(r.rows));
       }
-      if (r.modelCount > 0) variantItemCount++;
-      products.push(...asShopeeArray(r.rows));
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
       console.error(`[Shopee Sync] pullProducts item_id=${item?.item_id}: ${reason}`);
@@ -2994,7 +2996,10 @@ async function processShopeeItemsToListingRows(
       }
       skippedItems.push({ itemId: String(item?.item_id ?? "?"), reason });
     }
-  });
+    if (i < safeItems.length - 1) {
+      await sleep(Math.min(SHOPEE_PRODUCT_API_DELAY_MS, 400));
+    }
+  }
 
   return {
     rows: dedupeShopeeParentVariantRows(products),
@@ -3330,27 +3335,27 @@ async function fetchShopeeBaseItemsByIds(shopId: string, accessToken: string, it
     batches.push(ids.slice(i, i + SHOPEE_PRODUCT_BASE_INFO_BATCH));
   }
 
-  await runInShopeeBatches(
-    batches,
-    async (batch, batchIdx) => {
-      try {
-        const baseInfoResult = await shopeeGetItemBaseInfo(shopId, accessToken, batch);
-        if (baseInfoResult?.error) {
-          const errMsg =
-            formatShopeeApiError(baseInfoResult) ||
-            `${baseInfoResult.error}: ${baseInfoResult.message || ""}`;
-          console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx}: ${errMsg}`);
-          // Không throw — bỏ qua batch lỗi để không crash cả quá trình tải
-          return;
-        }
+  // for...of tuần tự — await bắt được lỗi từng batch
+  for (let batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+    const batch = batches[batchIdx];
+    try {
+      const baseInfoResult = await shopeeGetItemBaseInfo(shopId, accessToken, batch);
+      if (baseInfoResult?.error) {
+        const errMsg =
+          formatShopeeApiError(baseInfoResult) ||
+          `${baseInfoResult.error}: ${baseInfoResult.message || ""}`;
+        console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx}: ${errMsg}`);
+      } else {
         allItems.push(...asShopeeArray(baseInfoResult?.response?.item_list).filter((it) => it != null));
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx} exception: ${msg}`);
       }
-    },
-    { batchSize: 1, itemDelayMs: SHOPEE_PRODUCT_API_DELAY_MS, batchPauseMs: SHOPEE_PRODUCT_BATCH_PAUSE_MS },
-  );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx} exception: ${msg}`);
+    }
+    if (batchIdx < batches.length - 1) {
+      await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+    }
+  }
 
   return allItems;
 }
@@ -7746,17 +7751,14 @@ async function startServer() {
         listingsCount,
         skippedItems: pageResult.skippedItems.length > 0 ? pageResult.skippedItems.slice(0, 50) : undefined,
       });
-    } catch (err: unknown) {
-      console.error("DB Save Error:", err);
-      console.error("[Shopee Channel Fetch] Exception:", err);
-      const message = err instanceof Error ? err.message : String(err);
-      const stack = err instanceof Error ? err.stack : undefined;
+    } catch (error: unknown) {
+      console.error("DB Save Error:", error);
+      console.error("[Shopee Channel Fetch] Exception:", error);
+      const message = error instanceof Error ? error.message : String(error);
       if (!res.headersSent) {
         return res.status(500).json({
           success: false,
           message,
-          stack,
-          error: err instanceof Error ? err.toString() : String(err),
         });
       }
     }
