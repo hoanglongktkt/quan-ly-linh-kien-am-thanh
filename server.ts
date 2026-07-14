@@ -2679,15 +2679,17 @@ function getModelDisplayName(model: any, tierVariations: any[]): string {
   if (model?.model_name) return String(model.model_name).trim();
   const tierIndex: number[] = Array.isArray(model?.tier_index) ? model.tier_index : [];
   const parts: string[] = [];
-  tierIndex.forEach((optIdx, tierPos) => {
-    const tier = tierVariations?.[tierPos];
+  const tiers = asShopeeArray(tierVariations);
+  for (let tierPos = 0; tierPos < tierIndex.length; tierPos++) {
+    const optIdx = tierIndex[tierPos];
+    const tier = tiers?.[tierPos];
     let opt = tier?.option_list?.[optIdx]?.option;
     if (!opt && tier?.variation_option_list?.[optIdx]?.variation_option_name) {
-      opt = tier.variation_option_list[optIdx].variation_option_name;
+      opt = tier?.variation_option_list?.[optIdx]?.variation_option_name;
     }
-    if (!opt && Array.isArray(tier?.options)) opt = tier.options[optIdx];
+    if (!opt && Array.isArray(tier?.options)) opt = tier?.options?.[optIdx];
     if (opt) parts.push(String(opt).trim());
-  });
+  }
   if (parts.length > 0) return parts.join(" / ");
   const sku = String(model?.model_sku || "").trim();
   if (sku) return sku;
@@ -3008,7 +3010,45 @@ async function processShopeeItemsToListingRows(
   };
 }
 
-/** Lưu incremental batch channel_listings — Insert/Update theo key platform::channelId. */
+/** Khóa UPSERT mapping: shopee::itemId[::modelId] — tránh duplicate key khi pull lại. */
+function channelListingUpsertKey(itemId: string, modelId?: string | null): string {
+  const mid = String(modelId || "").trim();
+  return mid ? `shopee::${itemId}::${mid}` : `shopee::${itemId}`;
+}
+
+/** Bóc item_id + model_id từ row Shopee / listing (optional chaining an toàn). */
+function resolveUpsertItemModelFromRow(item: any): { itemId: string; modelId: string; channelId: string } | null {
+  if (!item || typeof item !== "object") return null;
+
+  const parsed = parseShopeeChannelLinkIds(
+    item?.shopeeId ?? item?.channelId,
+    item?.shopeeModelId ?? item?.modelId,
+    item?.shopeeItemId ?? item?.itemId
+  );
+
+  const itemId =
+    (parsed.itemId != null ? String(parsed.itemId) : "") ||
+    String(item?.shopeeItemId ?? item?.itemId ?? "").trim() ||
+    String(item?.shopeeId ?? "").split(":")[0]?.trim() ||
+    "";
+  if (!itemId) return null;
+
+  const modelId =
+    (parsed.modelId != null ? String(parsed.modelId) : "") ||
+    String(item?.shopeeModelId ?? item?.modelId ?? "").trim() ||
+    (String(item?.shopeeId || "").includes(":")
+      ? String(item.shopeeId).split(":")[1]?.trim() || ""
+      : "") ||
+    "";
+
+  const channelId = modelId ? `${itemId}:${modelId}` : itemId;
+  return { itemId, modelId, channelId };
+}
+
+/**
+ * UPSERT incremental channel_listings theo khóa item_id + model_id.
+ * Có rồi → cập nhật; chưa có → thêm. Không dùng insert/create thuần (tránh duplicate crash).
+ */
 function upsertChannelListingsBatch(
   batchRows: any[],
   shopId: string,
@@ -3023,10 +3063,9 @@ function upsertChannelListingsBatch(
     const byKey = new Map<string, any>();
     for (const listing of existing) {
       if (!listing || typeof listing !== "object") continue;
-      const platform = String(listing.platform || "").trim();
-      const channelId = String(listing.channelId || "").trim();
-      if (!platform || !channelId) continue;
-      byKey.set(`${platform}::${channelId}`, listing);
+      const ids = resolveUpsertItemModelFromRow(listing);
+      if (!ids) continue;
+      byKey.set(channelListingUpsertKey(ids.itemId, ids.modelId), listing);
     }
 
     let flatRows: any[] = [];
@@ -3034,7 +3073,6 @@ function upsertChannelListingsBatch(
       flatRows = flattenProductsForStockSync(batchRows);
     } catch (flatErr: unknown) {
       console.error("DB Save Error:", flatErr);
-      // Fallback: dùng batch thô nếu flatten lỗi
       flatRows = batchRows.filter((r) => r != null);
     }
 
@@ -3044,14 +3082,15 @@ function upsertChannelListingsBatch(
 
     for (const item of flatRows) {
       try {
-        if (!item || typeof item !== "object") continue;
-        const shopeeChannelId = String(item.shopeeId || item.shopeeItemId || "").trim();
-        if (!shopeeChannelId) continue;
+        const ids = resolveUpsertItemModelFromRow(item);
+        if (!ids) continue;
 
-        const key = `shopee::${shopeeChannelId}`;
+        const key = channelListingUpsertKey(ids.itemId, ids.modelId);
         const prev = byKey.get(key);
         const keepExistingLink =
-          prev?.status === "success" && !!prev?.linkedProductId && !isSyntheticShopeePullProduct({ id: prev.linkedProductId });
+          prev?.status === "success" &&
+          !!prev?.linkedProductId &&
+          !isSyntheticShopeePullProduct({ id: prev.linkedProductId });
 
         if (prev) updated++;
         else inserted++;
@@ -3059,16 +3098,16 @@ function upsertChannelListingsBatch(
         byKey.set(
           key,
           sanitizeChannelListingRow({
-            id: prev?.id || `cl-shopee-${shopeeChannelId}`,
-            title: String(item.title || ""),
-            sku: String(item.sku || ""),
-            imageUrl: item.avatarUrl || item.imageUrl || undefined,
-            channelId: shopeeChannelId,
+            id: prev?.id || `cl-shopee-${ids.channelId}`,
+            title: String(item?.title || ""),
+            sku: String(item?.sku || ""),
+            imageUrl: item?.avatarUrl || item?.imageUrl || undefined,
+            channelId: ids.channelId,
             platform: "shopee",
             shopName: String(shopName || ""),
             shopId: shopId != null ? String(shopId) : undefined,
-            modelId: item.shopeeModelId != null ? String(item.shopeeModelId) : prev?.modelId,
-            itemId: item.shopeeItemId != null ? String(item.shopeeItemId) : prev?.itemId,
+            modelId: ids.modelId || prev?.modelId,
+            itemId: ids.itemId,
             status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
             linkedProductId: keepExistingLink ? prev.linkedProductId : undefined,
           })
@@ -3079,12 +3118,9 @@ function upsertChannelListingsBatch(
       }
     }
 
-    const allRows = Array.from(byKey.values());
-    writeChannelListingsDb(allRows);
-
-    const verified = readChannelListingsDb();
+    writeChannelListingsDb(Array.from(byKey.values()));
     console.log(
-      `Đã lưu DB thành công — channel_listings.json: verified=${verified.length}, batch insert=${inserted}, update=${updated}, touched=${saved}`
+      `Đã lưu DB thành công — channel_listings UPSERT insert=${inserted}, update=${updated}, touched=${saved}, totalKeys=${byKey.size}`
     );
     return saved;
   } catch (err: unknown) {
@@ -3191,29 +3227,35 @@ async function pullShopeeChannelListingsAllPages(
   let variantItemCount = 0;
   const skippedItems: { itemId: string; reason: string }[] = [];
 
-  while (hasMore && pageGuard < 200) {
-    pageGuard++;
-    try {
-      const page = await pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset);
-      totalSaved += page.rowsSaved;
-      parentCount += page.pageStats.rowsInPage;
-      itemCount += page.pageStats.itemsInPage;
-      variantItemCount += page.pageStats.variantItemCount;
-      skippedItems.push(...asShopeeArray(page.skippedItems));
+  try {
+    while (hasMore && pageGuard < 200) {
+      pageGuard++;
+      try {
+        const page = await pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset);
+        totalSaved += page.rowsSaved;
+        parentCount += page.pageStats.rowsInPage;
+        itemCount += page.pageStats.itemsInPage;
+        variantItemCount += page.pageStats.variantItemCount;
+        skippedItems.push(...asShopeeArray(page.skippedItems));
 
-      hasMore = page.hasMore;
-      offset = page.nextOffset;
-      if (!hasMore) break;
-      if (page.pageStats.itemsInPage === 0 && !page.hasMore) break;
-      await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
-    } catch (pageErr: unknown) {
-      const reason = pageErr instanceof Error ? pageErr.message : String(pageErr);
-      skippedItems.push({ itemId: `page_offset_${offset}`, reason });
-      console.error(`[Shopee Channel Fetch] Dừng fetchAll tại offset=${offset}: ${reason}`);
-      // Không crash toàn bộ — trả partial result
-      hasMore = false;
-      break;
+        hasMore = page.hasMore;
+        offset = page.nextOffset;
+        if (!hasMore) break;
+        if (page.pageStats.itemsInPage === 0 && !page.hasMore) break;
+        await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+      } catch (pageErr: unknown) {
+        const reason = pageErr instanceof Error ? pageErr.message : String(pageErr);
+        skippedItems.push({ itemId: `page_offset_${offset}`, reason });
+        console.error(`[Shopee Channel Fetch] Dừng fetchAll tại offset=${offset}: ${reason}`);
+        // Không crash toàn bộ — trả partial result
+        hasMore = false;
+        break;
+      }
     }
+  } catch (outerErr: unknown) {
+    const reason = outerErr instanceof Error ? outerErr.message : String(outerErr);
+    skippedItems.push({ itemId: "fetch_all", reason });
+    console.error(`[Shopee Channel Fetch] fetchAll outer catch: ${reason}`);
   }
 
   return {
@@ -4819,118 +4861,91 @@ function upsertChannelListingsFromShopeeSync(
   shopId: string,
   shopName: string,
 ): any[] {
+  // Reuse UPSERT batch (item_id + model_id) rồi gắn lại linkedProductId theo SKU/kho.
+  upsertChannelListingsBatch(asShopeeArray(syncedProducts), shopId, shopName);
+
   const existing = readChannelListingsDb();
   const masterProducts = loadProducts();
   const byKey = new Map<string, any>();
 
   for (const listing of existing) {
-    if (listing?.platform && listing?.channelId) {
-      byKey.set(`${listing.platform}::${listing.channelId}`, listing);
-    }
+    const ids = resolveUpsertItemModelFromRow(listing);
+    if (!ids) continue;
+    byKey.set(channelListingUpsertKey(ids.itemId, ids.modelId), listing);
   }
 
-  for (const item of syncedProducts) {
-    const shopeeChannelId = String(item.shopeeId || item.shopeeItemId || "").trim();
-    if (!shopeeChannelId) continue;
+  for (const item of asShopeeArray(syncedProducts)) {
+    try {
+      const ids = resolveUpsertItemModelFromRow(item);
+      if (!ids) continue;
 
-    const key = `shopee::${shopeeChannelId}`;
-    const prev = byKey.get(key);
+      const key = channelListingUpsertKey(ids.itemId, ids.modelId);
+      const prev = byKey.get(key);
 
-    const matchedMaster =
-      masterProducts.find(
-        (p) =>
-          (p.shopeeId && String(p.shopeeId) === shopeeChannelId) ||
-          (item.shopeeItemId &&
-            p.shopeeItemId &&
-            String(p.shopeeItemId) === String(item.shopeeItemId) &&
-            (!item.sku ||
-              String(p.sku || "").toLowerCase() === String(item.sku || "").toLowerCase())) ||
-          (item.sku &&
-            String(p.sku || "").toLowerCase() === String(item.sku || "").toLowerCase()),
-      ) || (item.id ? item : undefined);
+      const matchedMaster =
+        masterProducts.find(
+          (p) =>
+            (p?.shopeeId && String(p.shopeeId) === ids.channelId) ||
+            (item?.shopeeItemId &&
+              p?.shopeeItemId &&
+              String(p.shopeeItemId) === String(item.shopeeItemId) &&
+              (!item?.sku ||
+                String(p?.sku || "").toLowerCase() === String(item?.sku || "").toLowerCase())) ||
+            (item?.sku &&
+              String(p?.sku || "").toLowerCase() === String(item?.sku || "").toLowerCase()),
+        ) || (item?.id ? item : undefined);
 
-    const status =
-      matchedMaster?.id || prev?.linkedProductId
-        ? "success"
-        : prev?.status === "failed"
-          ? "failed"
-          : "unlinked";
+      const status =
+        matchedMaster?.id || prev?.linkedProductId
+          ? "success"
+          : prev?.status === "failed"
+            ? "failed"
+            : "unlinked";
 
-    byKey.set(key, sanitizeChannelListingRow({
-      id: prev?.id || `cl-shopee-${shopeeChannelId}`,
-      title: String(item.title || ""),
-      sku: String(item.sku || ""),
-      imageUrl: item.avatarUrl || item.imageUrl,
-      channelId: shopeeChannelId,
-      platform: "shopee",
-      shopName,
-      shopId: String(shopId),
-      status,
-      linkedProductId: matchedMaster?.id || prev?.linkedProductId,
-    }));
+      byKey.set(
+        key,
+        sanitizeChannelListingRow({
+          id: prev?.id || `cl-shopee-${ids.channelId}`,
+          title: String(item?.title || prev?.title || ""),
+          sku: String(item?.sku || prev?.sku || ""),
+          imageUrl: item?.avatarUrl || item?.imageUrl || prev?.imageUrl,
+          channelId: ids.channelId,
+          platform: "shopee",
+          shopName,
+          shopId: String(shopId),
+          itemId: ids.itemId,
+          modelId: ids.modelId || prev?.modelId,
+          status,
+          linkedProductId: matchedMaster?.id || prev?.linkedProductId,
+        })
+      );
+    } catch (rowErr: unknown) {
+      console.error("DB Save Error: (sync upsert skip)", rowErr);
+    }
   }
 
   const merged = Array.from(byKey.values());
-  console.log(`[Mapping Save] Chuẩn bị upsert ${merged.length} dòng -> ${CHANNEL_LISTINGS_DB_PATH}`);
-  if (merged.length > 0) {
-    console.log(`[Mapping Save] Mẫu dữ liệu (2 dòng đầu):`, JSON.stringify(merged.slice(0, 2), null, 2));
-  }
+  console.log(`[Mapping Save] Chuẩn bị UPSERT ${merged.length} dòng -> ${CHANNEL_LISTINGS_DB_PATH}`);
   try {
     writeChannelListingsDb(merged);
-    const verified = readChannelListingsDb();
-    console.log(`[Mapping Save] Kết quả xác minh sau ghi: ${verified.length} dòng trong DB`);
-    if (merged.length > 0 && verified.length === 0) {
-      throw new Error("Ghi file thành công nhưng đọc lại được 0 dòng — kiểm tra đường dẫn APP_ROOT");
-    }
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     console.error(`[Mapping Save] Lỗi lưu Database: ${errMsg}`);
     throw new Error(`Lỗi lưu Database: ${errMsg}`);
   }
-  console.log(`[Channel Listings] Đã lưu ${merged.length} liên kết sàn sau đồng bộ Shopee shop_id=${shopId}`);
+  console.log(`[Channel Listings] Đã UPSERT ${merged.length} liên kết sàn sau đồng bộ Shopee shop_id=${shopId}`);
   return merged;
 }
 
-/** Chỉ lưu sản phẩm sàn từ Shopee — KHÔNG so khớp SKU với Kho chính. */
+/** Chỉ lưu sản phẩm sàn từ Shopee — UPSERT theo item_id + model_id, KHÔNG auto-map SKU. */
 function upsertChannelListingsFromShopeeFetch(
   syncedProducts: any[],
   shopId: string,
   shopName: string,
 ): any[] {
-  const existing = readChannelListingsDb();
-  const byKey = new Map<string, any>();
-
-  for (const listing of existing) {
-    if (listing?.platform && listing?.channelId) {
-      byKey.set(`${listing.platform}::${listing.channelId}`, listing);
-    }
-  }
-
-  for (const item of syncedProducts) {
-    const shopeeChannelId = String(item.shopeeId || item.shopeeItemId || "").trim();
-    if (!shopeeChannelId) continue;
-
-    const key = `shopee::${shopeeChannelId}`;
-    const prev = byKey.get(key);
-    const keepExistingLink = prev?.status === "success" && prev?.linkedProductId;
-
-    byKey.set(key, sanitizeChannelListingRow({
-      id: prev?.id || `cl-shopee-${shopeeChannelId}`,
-      title: String(item.title || ""),
-      sku: String(item.sku || ""),
-      imageUrl: item.avatarUrl || item.imageUrl,
-      channelId: shopeeChannelId,
-      platform: "shopee",
-      shopName,
-      shopId: String(shopId),
-      status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
-      linkedProductId: keepExistingLink ? prev.linkedProductId : undefined,
-    }));
-  }
-
-  const merged = Array.from(byKey.values());
-  writeChannelListingsDb(merged);
-  console.log(`[Shopee Channel Fetch] Đã lưu ${merged.length} sản phẩm sàn (không auto-map SKU) shop_id=${shopId}`);
+  upsertChannelListingsBatch(asShopeeArray(syncedProducts), shopId, shopName);
+  const merged = readChannelListingsDb();
+  console.log(`[Shopee Channel Fetch] Đã UPSERT ${merged.length} sản phẩm sàn shop_id=${shopId}`);
   return merged;
 }
 
@@ -7666,6 +7681,7 @@ async function startServer() {
         return res.status(500).json({
           success: false,
           message: "SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY trong .env chưa hợp lệ.",
+          error: "invalid_partner_config",
           details: "invalid_partner_config",
         });
       }
@@ -7675,6 +7691,7 @@ async function startServer() {
         return res.status(404).json({
           success: false,
           message: "Chưa có shop Shopee nào được ủy quyền.",
+          error: "no_shopee_shop_linked",
           details: "no_shopee_shop_linked",
         });
       }
@@ -7684,6 +7701,7 @@ async function startServer() {
         return res.status(401).json({
           success: false,
           message: `Chưa có access_token hợp lệ cho shop_id=${shopId}.`,
+          error: "no_valid_access_token",
           details: "no_valid_access_token",
         });
       }
@@ -7698,7 +7716,12 @@ async function startServer() {
         console.log(`[Shopee Channel Fetch] shop_id=${shopId} fetchAll=true (tất cả trang)...`);
         const allResult = await pullShopeeChannelListingsAllPages(shopId, accessToken, shopName);
         // Không nhét toàn bộ listings + JOIN kho vào response (dễ OOM/413) — FE gọi GET mapping-products.
-        const listingsCount = readChannelListingsDb().length;
+        let listingsCount = 0;
+        try {
+          listingsCount = readChannelListingsDb().length;
+        } catch {
+          listingsCount = allResult.totalSaved;
+        }
         console.log(
           `Đã lưu DB thành công — fetchAll savedCount=${allResult.totalSaved}, listingsInDb=${listingsCount}`
         );
@@ -7724,7 +7747,12 @@ async function startServer() {
       console.log(`[Shopee Channel Fetch] shop_id=${shopId} offset=${offset} page_size=${SHOPEE_ITEM_LIST_PAGE_SIZE}...`);
 
       const pageResult = await pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset);
-      const listingsCount = readChannelListingsDb().length;
+      let listingsCount = 0;
+      try {
+        listingsCount = readChannelListingsDb().length;
+      } catch {
+        listingsCount = pageResult.rowsSaved;
+      }
       console.log(
         `Đã lưu DB thành công — trang offset=${offset}, listingsInDb=${listingsCount}`
       );
@@ -7754,11 +7782,12 @@ async function startServer() {
     } catch (error: unknown) {
       console.error("DB Save Error:", error);
       console.error("[Shopee Channel Fetch] Exception:", error);
-      const message = error instanceof Error ? error.message : String(error);
+      const errObj = error instanceof Error ? error : new Error(String(error));
       if (!res.headersSent) {
         return res.status(500).json({
           success: false,
-          message,
+          message: errObj.message,
+          error: errObj.toString(),
         });
       }
     }
