@@ -1,31 +1,58 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Product } from '../types';
-import { CheckCircle2, Loader2, Scale, Search, X } from 'lucide-react';
+import {
+  Barcode,
+  CheckCircle2,
+  ChevronDown,
+  ImageOff,
+  Info,
+  Loader2,
+  Scale,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
 
 function getProductTitle(product: Product): string {
-  const raw = product.title || (product as { name?: string; product_name?: string }).name
-    || (product as { product_name?: string }).product_name || '';
+  const raw =
+    product.title ||
+    (product as { name?: string }).name ||
+    (product as { product_name?: string }).product_name ||
+    '';
   return String(raw).trim() || '—';
 }
 
-function getProductDisplayName(product: Product): string {
-  const title = getProductTitle(product);
-  const variant = String(product.modelName || '').trim();
-  if (!variant) return title;
-  if (title.toLowerCase().includes(variant.toLowerCase())) return title;
-  return `${title} - ${variant}`;
+function getProductVariant(product: Product): string {
+  return String(product.modelName || '').trim();
 }
 
 function getProductStock(product: Product): number {
-  const raw = product.stock
-    ?? (product as { stock_quantity?: number }).stock_quantity
-    ?? (product as { quantity?: number }).quantity
-    ?? 0;
+  const raw =
+    product.stock ??
+    (product as { stock_quantity?: number }).stock_quantity ??
+    (product as { quantity?: number }).quantity ??
+    0;
   return Math.max(0, Math.round(Number(raw) || 0));
 }
 
-function getProductKey(product: Product, index: number): string {
-  return product.id || product.sku || `audit-row-${index}`;
+function productImage(product: Product): string | undefined {
+  return product.avatarUrl || product.imageUrl;
+}
+
+function matchesProductQuery(product: Product, q: string): boolean {
+  const title = getProductTitle(product).toLowerCase();
+  const variant = getProductVariant(product).toLowerCase();
+  return (
+    title.includes(q) ||
+    variant.includes(q) ||
+    product.sku.toLowerCase().includes(q) ||
+    (product.barcode || '').toLowerCase().includes(q)
+  );
+}
+
+interface AuditLine {
+  product: Product;
+  actualStock: string;
 }
 
 interface InventoryAuditProps {
@@ -34,9 +61,15 @@ interface InventoryAuditProps {
   onRefreshProducts?: () => Promise<void>;
 }
 
+const PAGE_SIZES = [20, 50, 100];
+
 export default function InventoryAudit({ products, shopId, onRefreshProducts }: InventoryAuditProps) {
   const [search, setSearch] = useState('');
-  const [actualStocks, setActualStocks] = useState<Record<string, string>>({});
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(0);
+  const [auditLines, setAuditLines] = useState<AuditLine[]>([]);
+  const [pageSize, setPageSize] = useState(20);
+  const [currentPage, setCurrentPage] = useState(1);
   const [balancing, setBalancing] = useState(false);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -44,57 +77,128 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
   const mobileSearchRef = useRef<HTMLInputElement>(null);
   const qtyRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
-  const searchResults = useMemo(() => {
+  const addedIds = useMemo(() => new Set(auditLines.map((l) => l.product.id)), [auditLines]);
+
+  const suggestions = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
-    return products
-      .filter(
-        (p) => {
-          const title = getProductTitle(p).toLowerCase();
-          const variant = String(p.modelName || '').toLowerCase();
-          return (
-            title.includes(q) ||
-            variant.includes(q) ||
-            p.sku.toLowerCase().includes(q) ||
-            (p.barcode || '').toLowerCase().includes(q)
-          );
-        }
-      )
-      .slice(0, 50);
+    return products.filter((p) => matchesProductQuery(p, q)).slice(0, 25);
   }, [products, search]);
 
+  const totalPages = Math.max(1, Math.ceil(auditLines.length / pageSize));
+  const pagedLines = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return auditLines.slice(start, start + pageSize);
+  }, [auditLines, currentPage, pageSize]);
+
   const pendingItems = useMemo(() => {
-    return searchResults
-      .map((p, idx) => ({ product: p, rowKey: getProductKey(p, idx) }))
-      .filter(({ rowKey }) => actualStocks[rowKey]?.trim() !== '')
-      .map(({ product, rowKey }) => ({
-        sku: product.sku,
-        actual_stock: Math.max(0, Math.round(Number(actualStocks[rowKey]) || 0)),
+    return auditLines
+      .filter((line) => line.actualStock.trim() !== '')
+      .map((line) => ({
+        sku: line.product.sku,
+        actual_stock: Math.max(0, Math.round(Number(line.actualStock) || 0)),
       }))
       .filter((item) => item.sku && Number.isFinite(item.actual_stock));
-  }, [searchResults, actualStocks]);
+  }, [auditLines]);
 
-  const isMobile = () => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+  const isMobile = () =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+
+  const addProduct = useCallback(
+    (prod: Product) => {
+      setShowSuggestions(false);
+      setSearch('');
+      setHighlightIdx(0);
+
+      if (addedIds.has(prod.id)) {
+        setTimeout(() => qtyRefs.current.get(prod.id)?.focus(), 60);
+        return;
+      }
+
+      setAuditLines((prev) => [...prev, { product: prod, actualStock: '' }]);
+      setCurrentPage(Math.max(1, Math.ceil((auditLines.length + 1) / pageSize)));
+      setTimeout(() => qtyRefs.current.get(prod.id)?.focus(), 80);
+    },
+    [addedIds, auditLines.length, pageSize]
+  );
 
   const updateActual = (id: string, value: string) => {
-    setActualStocks((prev) => ({ ...prev, [id]: value }));
+    setAuditLines((prev) =>
+      prev.map((l) => (l.product.id === id ? { ...l, actualStock: value } : l))
+    );
   };
+
+  const removeLine = (id: string) => {
+    setAuditLines((prev) => prev.filter((l) => l.product.id !== id));
+  };
+
+  const lookupFromSearch = useCallback(
+    (raw: string) => {
+      const q = raw.trim().toLowerCase();
+      if (!q) return;
+      const exact = products.find(
+        (p) => p.sku.toLowerCase() === q || (p.barcode || '').toLowerCase() === q
+      );
+      const prod = exact || products.find((p) => matchesProductQuery(p, q));
+      if (prod) addProduct(prod);
+    },
+    [products, addProduct]
+  );
 
   useEffect(() => {
     if (isMobile()) mobileSearchRef.current?.focus();
   }, []);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F3') {
+        e.preventDefault();
+        if (isMobile()) mobileSearchRef.current?.focus();
+        else searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (suggestions.length) {
+        setShowSuggestions(true);
+        setHighlightIdx((i) => Math.min(i + 1, suggestions.length - 1));
+      }
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightIdx((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (showSuggestions && suggestions[highlightIdx]) {
+        addProduct(suggestions[highlightIdx]);
+      } else if (suggestions.length === 1) {
+        addProduct(suggestions[0]);
+      } else {
+        lookupFromSearch(search);
+      }
+      return;
+    }
     if (e.key === 'Escape') {
+      setShowSuggestions(false);
       setSearch('');
-      mobileSearchRef.current?.blur();
-      searchRef.current?.blur();
     }
   };
 
   const handleBalance = async () => {
     if (pendingItems.length === 0) {
-      setToast({ type: 'error', text: 'Vui lòng tìm sản phẩm và nhập số lượng thực tế.' });
+      setToast({ type: 'error', text: 'Vui lòng thêm sản phẩm và nhập tồn thực tế.' });
       setTimeout(() => setToast(null), 3000);
       return;
     }
@@ -116,11 +220,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       try {
         data = raw ? JSON.parse(raw) : {};
       } catch {
-        throw new Error(
-          res.status === 404
-            ? 'API cân bằng kho chưa sẵn sàng. Hãy restart server.'
-            : 'Server không trả về dữ liệu hợp lệ.'
-        );
+        throw new Error('Server không trả về dữ liệu hợp lệ.');
       }
 
       if (!res.ok || !data.success) {
@@ -129,12 +229,12 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
 
       if (onRefreshProducts) await onRefreshProducts();
 
-      setActualStocks({});
+      setAuditLines([]);
       setSearch('');
+      setCurrentPage(1);
       setToast({ type: 'success', text: data.message || 'Cân bằng kho thành công!' });
       setTimeout(() => setToast(null), 4000);
-      if (isMobile()) mobileSearchRef.current?.focus();
-      else searchRef.current?.focus();
+      searchRef.current?.focus();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Cân bằng kho thất bại.';
       setToast({ type: 'error', text: msg });
@@ -144,194 +244,315 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
     }
   };
 
+  const renderSuggestionItem = (prod: Product, idx: number) => {
+    const img = productImage(prod);
+    const stock = getProductStock(prod);
+    const variant = getProductVariant(prod);
+    const active = idx === highlightIdx;
+
+    return (
+      <button
+        key={prod.id}
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => addProduct(prod)}
+        onMouseEnter={() => setHighlightIdx(idx)}
+        className={`w-full flex items-center gap-3 px-3 py-2.5 text-left border-b border-gray-100 last:border-0 transition-colors ${
+          active ? 'bg-sky-50' : 'hover:bg-sky-50/70'
+        }`}
+      >
+        {img ? (
+          <img src={img} alt="" className="w-11 h-11 rounded object-cover border border-gray-100 shrink-0" referrerPolicy="no-referrer" />
+        ) : (
+          <div className="w-11 h-11 rounded bg-gray-100 text-gray-400 flex items-center justify-center shrink-0">
+            <ImageOff className="w-4 h-4" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-blue-600 line-clamp-2 leading-snug">{getProductTitle(prod)}</p>
+          {variant && <p className="text-xs text-gray-800 mt-0.5">{variant}</p>}
+          <p className="text-[11px] font-mono text-gray-500 mt-0.5">{prod.sku}</p>
+        </div>
+        <div className="shrink-0 text-[11px] text-gray-500 whitespace-nowrap">
+          Tồn: <span className="font-semibold text-gray-700">{stock}</span>
+          <span className="mx-1 text-gray-300">|</span>
+          Có thể bán: <span className="font-semibold text-gray-700">{stock}</span>
+        </div>
+      </button>
+    );
+  };
+
+  const renderAuditRow = (line: AuditLine, globalIdx: number) => {
+    const { product, actualStock } = line;
+    const img = productImage(product);
+    const stock = getProductStock(product);
+    const hasInput = actualStock.trim() !== '';
+    const actualNum = hasInput ? Math.max(0, Math.round(Number(actualStock) || 0)) : null;
+    const diff = actualNum !== null ? actualNum - stock : null;
+    const variant = getProductVariant(product);
+
+    return (
+      <tr key={product.id} className="hover:bg-gray-50/50 border-b border-gray-100">
+        <td className="px-3 py-2.5 text-center text-gray-500 text-sm">{globalIdx + 1}</td>
+        <td className="px-3 py-2.5">
+          {img ? (
+            <img src={img} alt="" className="w-10 h-10 rounded object-cover border border-gray-100" referrerPolicy="no-referrer" />
+          ) : (
+            <div className="w-10 h-10 rounded bg-gray-100 flex items-center justify-center">
+              <ImageOff className="w-4 h-4 text-gray-400" />
+            </div>
+          )}
+        </td>
+        <td className="px-3 py-2.5 min-w-[220px]">
+          <div className="flex items-start gap-1">
+            <p className="text-sm text-gray-900 line-clamp-2 flex-1">{getProductTitle(product)}</p>
+            <Info className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
+          </div>
+          {variant && <p className="text-xs text-gray-700 mt-0.5">{variant}</p>}
+          <p className="text-xs font-mono text-blue-600 mt-0.5">{product.sku}</p>
+        </td>
+        <td className="px-3 py-2.5 text-sm text-gray-500 text-center">{product.unit || '—'}</td>
+        <td className="px-3 py-2.5 text-center text-sm font-semibold text-gray-800">{stock}</td>
+        <td className="px-3 py-2.5 text-center">
+          <input
+            ref={(el) => {
+              if (el) qtyRefs.current.set(product.id, el);
+              else qtyRefs.current.delete(product.id);
+            }}
+            type="number"
+            min={0}
+            value={actualStock}
+            placeholder=""
+            onChange={(e) => updateActual(product.id, e.target.value)}
+            className="w-20 px-1 py-1 text-center text-sm font-mono border-0 border-b-2 border-blue-500 bg-transparent outline-none focus:border-blue-600"
+          />
+        </td>
+        <td className="px-3 py-2.5 text-center text-sm font-mono font-bold">
+          {diff !== null ? (
+            <span className={diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-rose-600' : 'text-gray-500'}>
+              {diff > 0 ? `+${diff}` : diff}
+            </span>
+          ) : (
+            <span className="text-gray-300">—</span>
+          )}
+        </td>
+        <td className="px-3 py-2.5 text-center">
+          <button
+            type="button"
+            onClick={() => removeLine(product.id)}
+            className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded"
+            title="Xóa dòng"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </td>
+      </tr>
+    );
+  };
+
   const toastNode = toast && (
     <div
-      className={`fixed top-5 right-5 max-md:top-3 max-md:left-3 max-md:right-3 z-70 font-bold text-xs px-5 py-3 max-md:px-4 rounded-2xl max-md:rounded-xl shadow-2xl max-md:shadow-lg border flex items-center gap-2 ${
-        toast.type === 'success'
-          ? 'bg-emerald-600 text-white border-emerald-500 max-md:border-0'
-          : 'bg-slate-900 text-white border-slate-700 max-md:bg-rose-600 max-md:border-0'
+      className={`fixed top-5 right-5 z-70 font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border flex items-center gap-2 ${
+        toast.type === 'success' ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-slate-900 text-white border-slate-700'
       }`}
     >
-      <CheckCircle2 className={`w-4 h-4 shrink-0 ${toast.type === 'success' ? 'text-white' : 'text-emerald-400 max-md:text-white'}`} />
-      <span className="flex-1">{toast.text}</span>
+      <CheckCircle2 className="w-4 h-4 shrink-0" />
+      <span>{toast.text}</span>
       <button type="button" onClick={() => setToast(null)} className="ml-1 opacity-70 hover:opacity-100">
         <X className="w-3.5 h-3.5" />
       </button>
     </div>
   );
 
-  const renderTableBody = () => {
-    if (!search.trim()) {
-      return (
-        <tr>
-          <td colSpan={4} className="p-16 text-center">
-            <div className="flex flex-col items-center gap-2 text-gray-400">
-              <Search className="w-8 h-8 opacity-30" />
-              <p className="text-sm font-semibold">Nhập từ khóa để tìm sản phẩm</p>
-              <p className="text-xs">Kết quả sẽ hiển thị ngay dưới dạng bảng</p>
-            </div>
-          </td>
-        </tr>
-      );
-    }
-
-    if (searchResults.length === 0) {
-      return (
-        <tr>
-          <td colSpan={4} className="p-12 text-center text-sm text-gray-400 font-medium">
-            Không tìm thấy sản phẩm phù hợp
-          </td>
-        </tr>
-      );
-    }
-
-    return searchResults.map((product, idx) => {
-      const rowKey = getProductKey(product, idx);
-      const displayName = getProductDisplayName(product);
-      const stockQty = getProductStock(product);
-
-      return (
-      <tr key={rowKey} className="hover:bg-gray-50/40 transition-colors">
-        <td className="p-3 text-center text-gray-500 font-mono text-xs">{idx + 1}</td>
-        <td className="p-3">
-          <p className="font-semibold text-gray-900 text-sm line-clamp-2">{displayName}</p>
-          <p className="text-[11px] font-mono text-gray-500 mt-0.5">SKU: {product.sku || '—'}</p>
-        </td>
-        <td className="p-3 text-center">
-          <span className="inline-flex min-w-[44px] justify-center font-mono font-bold text-gray-800 bg-gray-50 px-2 py-1 rounded border border-gray-100 text-sm">
-            {stockQty}
-          </span>
-        </td>
-        <td className="p-3 text-center">
-          <input
-            type="number"
-            min={0}
-            value={actualStocks[rowKey] ?? ''}
-            placeholder="—"
-            onChange={(e) => updateActual(rowKey, e.target.value)}
-            className="w-28 px-2 py-1.5 text-center font-mono text-sm bg-white border border-gray-200 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 placeholder:text-gray-300"
-          />
-        </td>
-      </tr>
-      );
-    });
-  };
-
   return (
     <>
       {toastNode}
 
-      <div className="ia-desktop space-y-4">
-        <div className="bg-white px-4 py-3 rounded-2xl border border-gray-100 shadow-xs">
-          <h4 className="text-sm font-black text-slate-800 uppercase tracking-wide">Kiểm hàng &amp; cân bằng kho</h4>
-          <p className="text-[11px] text-gray-500 mt-0.5">
-            Tìm sản phẩm theo Tên, SKU hoặc Barcode — nhập tồn thực tế rồi bấm Cân Bằng Kho.
-          </p>
-        </div>
-
-        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-3.5 z-10" />
+      <div className="ia-desktop space-y-0 bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="flex items-stretch border-b border-gray-200 bg-white">
+          <div className="relative flex-1 min-w-0">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 z-10" />
             <input
               ref={searchRef}
               type="text"
-              placeholder="Tìm theo Tên, SKU hoặc quét Barcode..."
+              placeholder="Tìm theo tên, mã SKU, hoặc quét mã Barcode...(F3)"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setShowSuggestions(true);
+                setHighlightIdx(0);
+              }}
+              onFocus={() => search.trim() && setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 180)}
               onKeyDown={handleSearchKeyDown}
-              className="pl-9 pr-4 py-2.5 w-full bg-gray-50/50 hover:bg-gray-50 focus:bg-white text-sm rounded-xl border border-gray-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+              className="w-full pl-9 pr-4 py-3 text-sm border-0 outline-none focus:ring-0"
             />
+            {showSuggestions && suggestions.length > 0 && search.trim() && (
+              <div className="absolute left-0 right-0 top-full z-30 bg-white border border-gray-200 border-t-0 shadow-lg max-h-80 overflow-y-auto">
+                {suggestions.map((prod, idx) => renderSuggestionItem(prod, idx))}
+              </div>
+            )}
           </div>
+          <button
+            type="button"
+            className="px-4 py-3 text-sm text-gray-600 border-l border-gray-200 hover:bg-gray-50 whitespace-nowrap"
+          >
+            Chọn nhiều
+          </button>
+          <button
+            type="button"
+            className="px-4 py-3 text-sm text-gray-600 border-l border-gray-200 hover:bg-gray-50 flex items-center gap-1.5 whitespace-nowrap"
+          >
+            <Barcode className="w-4 h-4" />
+            Barcode
+            <ChevronDown className="w-3.5 h-3.5" />
+          </button>
           <button
             type="button"
             onClick={() => void handleBalance()}
             disabled={balancing || pendingItems.length === 0}
-            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-all shadow-md shadow-blue-600/20 flex items-center justify-center gap-2 shrink-0"
+            className="px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white text-sm font-bold border-l border-blue-700 flex items-center gap-2 whitespace-nowrap"
           >
             {balancing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Scale className="w-4 h-4" />}
-            <span>
-              {balancing ? 'Đang cân bằng...' : `Cân Bằng Kho${pendingItems.length > 0 ? ` (${pendingItems.length})` : ''}`}
-            </span>
+            Cân Bằng Kho{pendingItems.length > 0 ? ` (${pendingItems.length})` : ''}
           </button>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-xs overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-gray-100 bg-slate-50/60 flex items-center justify-between">
-            <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider">Kết quả tìm kiếm</span>
-            <span className="text-[11px] font-bold text-gray-400">
-              {search.trim() ? `${searchResults.length} sản phẩm` : '—'}
-            </span>
-          </div>
-
-          <div className="ia-audit-table-wrap overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[640px]">
-              <thead>
-                <tr className="bg-gray-50/50 border-b border-gray-100 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                  <th className="p-3 w-14 text-center">STT</th>
-                  <th className="p-3">Tên sản phẩm</th>
-                  <th className="p-3 text-center w-36">Số lượng trong kho</th>
-                  <th className="p-3 text-center w-36">Số lượng thực tế</th>
+        <div className="ia-audit-table-wrap overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[960px]">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600">
+                <th className="px-3 py-2.5 w-12 text-center">STT</th>
+                <th className="px-3 py-2.5 w-14">Ảnh</th>
+                <th className="px-3 py-2.5 min-w-[220px]">Tên sản phẩm</th>
+                <th className="px-3 py-2.5 w-20 text-center">Đơn vị</th>
+                <th className="px-3 py-2.5 w-28 text-center">Tồn chi nhánh</th>
+                <th className="px-3 py-2.5 w-28 text-center">Tồn thực tế</th>
+                <th className="px-3 py-2.5 w-20 text-center">Lệch</th>
+                <th className="px-3 py-2.5 w-14 text-center" />
+              </tr>
+            </thead>
+            <tbody>
+              {auditLines.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-16 text-center text-sm text-gray-400">
+                    Tìm và chọn sản phẩm ở ô phía trên để thêm vào phiếu kiểm
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50 text-sm">{renderTableBody()}</tbody>
-            </table>
-          </div>
+              ) : (
+                pagedLines.map((line, idx) => renderAuditRow(line, (currentPage - 1) * pageSize + idx))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-4 py-2.5 border-t border-gray-200 bg-gray-50/80 text-sm text-gray-600">
+          <span>Hiển thị</span>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setCurrentPage(1);
+            }}
+            className="px-2 py-1 border border-gray-200 rounded bg-white text-sm outline-none"
+          >
+            {PAGE_SIZES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          {auditLines.length > pageSize && (
+            <div className="flex items-center gap-1 ml-2">
+              <button
+                type="button"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage((p) => p - 1)}
+                className="px-2 py-1 border border-gray-200 rounded disabled:opacity-40 bg-white"
+              >
+                ‹
+              </button>
+              <span className="px-2 text-xs">
+                {currentPage}/{totalPages}
+              </span>
+              <button
+                type="button"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage((p) => p + 1)}
+                className="px-2 py-1 border border-gray-200 rounded disabled:opacity-40 bg-white"
+              >
+                ›
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="ia-mobile flex flex-col -mx-1 pb-24">
         <div className="ia-mobile-search shrink-0 z-20 px-2 pt-1 pb-2 bg-gray-100">
           <div className="relative w-full">
-            <Search className="w-[18px] h-[18px] text-gray-400/80 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <Search className="w-[18px] h-[18px] text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               ref={mobileSearchRef}
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setShowSuggestions(true);
+                setHighlightIdx(0);
+              }}
+              onFocus={() => search.trim() && setShowSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
               onKeyDown={handleSearchKeyDown}
-              autoFocus
-              enterKeyHint="search"
-              placeholder="Tìm Tên, SKU, Barcode..."
-              className="ia-mobile-search-input w-full min-h-[48px] pl-10 pr-4 text-sm bg-white border border-gray-200 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 transition-all"
+              placeholder="Tìm tên, SKU, Barcode..."
+              className="ia-mobile-search-input w-full min-h-[48px] pl-10 pr-4 text-sm bg-white border border-gray-200 outline-none focus:border-blue-500"
             />
+            {showSuggestions && suggestions.length > 0 && search.trim() && (
+              <ul className="ia-mobile-dropdown absolute left-0 right-0 top-full mt-1 max-h-[45vh] overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-xl z-30">
+                {suggestions.map((prod, idx) => (
+                  <li key={prod.id}>{renderSuggestionItem(prod, idx)}</li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
 
         <div className="ia-mobile-body px-2 pb-2 bg-gray-100">
-          {!search.trim() ? (
-            <div className="py-20 text-center text-gray-400 text-sm">Nhập từ khóa để tìm sản phẩm</div>
-          ) : searchResults.length === 0 ? (
-            <div className="py-20 text-center text-gray-400 text-sm">Không tìm thấy sản phẩm</div>
+          {auditLines.length === 0 ? (
+            <div className="py-16 text-center text-gray-400 text-sm">Chọn sản phẩm từ ô tìm kiếm</div>
           ) : (
             <ul className="ia-mobile-results space-y-2 pb-2">
-              {searchResults.map((product, idx) => {
-                const rowKey = getProductKey(product, idx);
-                const displayName = getProductDisplayName(product);
-                const stockQty = getProductStock(product);
+              {auditLines.map((line) => {
+                const { product, actualStock } = line;
+                const img = productImage(product);
+                const stock = getProductStock(product);
                 return (
-                <li key={rowKey} className="ia-mobile-card ia-mobile-card-row bg-white">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-gray-900 line-clamp-2 leading-snug">{displayName}</p>
-                    <p className="text-[11px] font-mono text-gray-400 mt-0.5">
-                      {product.sku || '—'} · Tồn HT {stockQty}
-                    </p>
-                  </div>
-                  <div className="shrink-0">
+                  <li key={product.id} className="ia-mobile-card ia-mobile-card-row bg-white">
+                    {img ? (
+                      <img src={img} alt="" className="w-11 h-11 rounded-lg object-cover border shrink-0" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-11 h-11 rounded-lg bg-gray-100 flex items-center justify-center shrink-0">
+                        <ImageOff className="w-4 h-4 text-gray-400" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-blue-700 line-clamp-2">{getProductTitle(product)}</p>
+                      {getProductVariant(product) && (
+                        <p className="text-xs text-gray-700">{getProductVariant(product)}</p>
+                      )}
+                      <p className="text-[11px] font-mono text-gray-500">
+                        {product.sku} · Tồn {stock}
+                      </p>
+                    </div>
                     <input
-                      ref={(el) => {
-                        if (el) qtyRefs.current.set(rowKey, el);
-                        else qtyRefs.current.delete(rowKey);
-                      }}
                       type="number"
-                      inputMode="numeric"
                       min={0}
-                      value={actualStocks[rowKey] ?? ''}
+                      value={actualStock}
                       placeholder="0"
-                      onChange={(e) => updateActual(rowKey, e.target.value)}
+                      onChange={(e) => updateActual(product.id, e.target.value)}
                       className="ia-mobile-qty-inline"
                     />
-                  </div>
-                </li>
+                  </li>
                 );
               })}
             </ul>
@@ -343,7 +564,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
             type="button"
             onClick={() => void handleBalance()}
             disabled={balancing || pendingItems.length === 0}
-            className="ia-mobile-balance-btn w-full min-h-[56px] bg-blue-600 active:bg-blue-700 disabled:opacity-50 text-white font-extrabold text-sm uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
+            className="ia-mobile-balance-btn w-full min-h-[56px] bg-blue-600 active:bg-blue-700 disabled:opacity-50 text-white font-extrabold text-sm uppercase flex items-center justify-center gap-2"
           >
             {balancing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Scale className="w-5 h-5" />}
             CÂN BẰNG KHO{pendingItems.length > 0 ? ` (${pendingItems.length})` : ''}
