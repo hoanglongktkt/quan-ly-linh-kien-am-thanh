@@ -472,7 +472,7 @@ export default function ProductList({
         </button>
       </div>
 
-      {subTab === 'linking' ? (
+      <div className={subTab === 'linking' ? 'block' : 'hidden'}>
         <ProductLinking 
           products={products}
           shops={shops}
@@ -481,14 +481,17 @@ export default function ProductList({
           onAddProduct={onAddProduct}
           onRefreshProducts={onRefreshProducts}
         />
-      ) : subTab === 'audit' ? (
+      </div>
+
+      <div className={subTab === 'audit' ? 'block' : 'hidden'}>
         <InventoryAudit
           products={products}
           shopId={shops.find(s => s.platform === 'shopee' && s.connected)?.shopId}
           onRefreshProducts={onRefreshProducts}
         />
-      ) : (
-        <>
+      </div>
+
+      <div className={subTab === 'warehouse' ? 'block space-y-6' : 'hidden'}>
           {/* Main Warehouse explanation & API integration banner */}
           <div className="max-md:hidden md:flex md:flex-row md:items-center bg-slate-50 border border-gray-150 p-4 rounded-2xl justify-between gap-4">
             <div className="space-y-1">
@@ -880,8 +883,7 @@ export default function ProductList({
         />
       )}
 
-        </>
-      )}
+      </div>
 
       {/* Modal: Add Product */}
       {showAddModal && (
