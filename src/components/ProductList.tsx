@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Product, ConnectedShop, SyncLog, Supplier, BulkSaveProductUpdate } from '../types';
+import { Product, ConnectedShop, SyncLog, Supplier, BulkSaveProductUpdate, getProductChildren } from '../types';
 import ProductDetailModal, {
   buildProductGroups,
   formatPriceRange,
@@ -178,7 +178,7 @@ export default function ProductList({
         onUpdateProduct(p, { save: true });
         return;
       }
-      const child = p.children_models?.find((c) => c.id === id);
+      const child = getProductChildren(p).find((c) => c.id === id);
       if (child) {
         onUpdateProduct(child, { save: true });
         return;
@@ -400,7 +400,7 @@ export default function ProductList({
       const total = data.productCount ?? data.stats?.rowCount ?? 0;
       setShopeeImportProgress(prev => [
         ...prev,
-        `📦 ${variantCount} sản phẩm có phân loại (children_models).`,
+        `📦 ${variantCount} sản phẩm có phân loại (children).`,
         `🎉 HOÀN TẤT: ${total} Parent Products trong kho!`,
       ]);
       setShopeeImportToast(data.message || `Khởi tạo kho thành công! ${total} sản phẩm mẹ (${variantCount} có phân loại).`);
@@ -683,13 +683,13 @@ export default function ProductList({
                                 e.stopPropagation();
                                 toggleGroupExpand(group.groupId);
                               }}
-                              className="p-1 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 shrink-0"
+                              className="w-7 h-7 flex items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 font-black text-sm shrink-0"
                               title={isExpanded ? 'Thu gọn phân loại' : 'Mở phân loại'}
                             >
-                              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                              {isExpanded ? '▼' : '>>'}
                             </button>
                           ) : (
-                            <span className="w-6 shrink-0" />
+                            <span className="w-7 shrink-0" />
                           )}
                           {(prod.avatarUrl || prod.imageUrl) ? (
                             <img src={prod.avatarUrl || prod.imageUrl} alt={group.displayTitle} className="w-11 h-11 rounded-lg object-cover border border-gray-100 shrink-0" referrerPolicy="no-referrer" />
@@ -842,7 +842,17 @@ export default function ProductList({
                             </div>
                           </td>
                           <td className="p-3">
-                            <span className="font-mono text-xs text-indigo-700 font-semibold">{child.sku}</span>
+                            <div className="space-y-0.5">
+                              <span className="font-mono text-xs text-indigo-700 font-semibold block">{child.sku}</span>
+                              {child.shopeeModelId && (
+                                <span className="text-[10px] text-gray-500 font-mono block">
+                                  Mã phân loại: {child.shopeeModelId}
+                                </span>
+                              )}
+                              {child.modelName && (
+                                <span className="text-[10px] text-gray-400 block">{child.modelName}</span>
+                              )}
+                            </div>
                           </td>
                           <td className="p-3">
                             <input
@@ -925,9 +935,9 @@ export default function ProductList({
                     <button
                       type="button"
                       onClick={() => toggleGroupExpand(group.groupId)}
-                      className="p-1.5 rounded-lg bg-gray-50 text-gray-500 shrink-0"
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-50 text-gray-600 font-black text-sm shrink-0"
                     >
-                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      {isExpanded ? '▼' : '>>'}
                     </button>
                   )}
                   {(prod.avatarUrl || prod.imageUrl) ? (
@@ -979,7 +989,10 @@ export default function ProductList({
                         />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-gray-800 truncate">{child.modelName || child.title}</p>
-                          <p className="text-[10px] font-mono text-indigo-600">{child.sku}</p>
+                          <p className="text-[10px] font-mono text-indigo-600">SKU: {child.sku}</p>
+                          {child.shopeeModelId && (
+                            <p className="text-[10px] font-mono text-gray-500">Phân loại: {child.shopeeModelId}</p>
+                          )}
                         </div>
                         <span className="text-xs font-mono font-bold text-slate-700">{child.stock}</span>
                       </div>

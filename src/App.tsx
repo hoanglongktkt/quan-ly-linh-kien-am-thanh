@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkUpdatePayload, BulkSaveProductUpdate, ConnectedShop } from './types';
+import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkUpdatePayload, BulkSaveProductUpdate, ConnectedShop, getProductChildren } from './types';
 import { 
   INITIAL_SYNC_LOGS,
 } from './data';
@@ -510,11 +510,11 @@ export default function App() {
     setProducts((prev) =>
       prev.map((p) => {
         if (p.id === updated.id) return updated;
-        const children = Array.isArray(p.children_models) ? p.children_models : [];
+        const children = getProductChildren(p);
         if (!children.some((c) => c.id === updated.id)) return p;
         const nextChildren = children.map((c) => (c.id === updated.id ? updated : c));
         const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
-        return { ...p, children_models: nextChildren, stock: totalStock };
+        return { ...p, children: nextChildren, stock: totalStock };
       })
     );
     if (!opts?.save) return;

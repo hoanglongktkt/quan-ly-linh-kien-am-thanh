@@ -21,6 +21,8 @@ export interface Product {
   parentSku?: string;
   modelName?: string;
   /** Biến thể con (multi-SKU) — chỉ có trên Parent Product. */
+  children?: Product[];
+  /** @deprecated Dùng `children` — giữ để migrate dữ liệu cũ. */
   children_models?: Product[];
   tierLabels?: string[];
   avatarUrl?: string;
@@ -30,6 +32,17 @@ export interface Product {
   description: string;
   imageUrl?: string;
   lastSynced?: string;
+}
+
+/** Lấy danh sách biến thể con — ưu tiên `children`, fallback `children_models`. */
+export function getProductChildren(p: Product): Product[] {
+  if (Array.isArray(p.children) && p.children.length > 0) return p.children;
+  if (Array.isArray(p.children_models) && p.children_models.length > 0) return p.children_models;
+  return [];
+}
+
+export function hasProductVariants(p: Product): boolean {
+  return getProductChildren(p).length > 0;
 }
 
 export interface BulkUpdatePayload {

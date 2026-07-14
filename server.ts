@@ -2206,7 +2206,7 @@ function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): string[]
     const itemId = getShopeeItemIdForStockPush(p);
     if (itemId == null || !idSet.has(itemId)) return p;
 
-    const children = Array.isArray(p.children_models) ? p.children_models : [];
+    const children = getProductChildrenList(p);
     for (const c of children.length ? children : [p]) {
       const sku = String(c.sku || "").trim();
       if (sku) affectedSkus.push(sku);
@@ -2219,7 +2219,7 @@ function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): string[]
       shopeeModelId: undefined,
       shopeeId: undefined,
       shopeeLinkStatus: "invalid",
-      children_models: children.map((c: any) => ({
+      children: children.map((c: any) => ({
         ...c,
         shopeeItemId: undefined,
         shopeeModelId: undefined,
@@ -2575,12 +2575,12 @@ function buildSingleWarehouseRow(item: any): any {
     status: item.item_status !== "NORMAL" ? "draft" : (stock > 0 ? "active" : "out_of_stock"),
     shopeeId: String(itemId),
     shopeeItemId: String(itemId),
-    children_models: [],
+    children: [],
     lastSynced: new Date().toISOString(),
   };
 }
 
-/** Parent Product + children_models — mỗi model là 1 child (giữ model_id để đồng bộ tồn). */
+/** Parent Product + children — mỗi model là 1 child (giữ model_id để đồng bộ tồn). */
 function buildParentWarehouseRow(item: any, children: any[]): any {
   const itemId = item.item_id;
   const avatarUrl = getItemAvatarUrl(item);
@@ -2606,7 +2606,7 @@ function buildParentWarehouseRow(item: any, children: any[]): any {
     status: item.item_status !== "NORMAL" ? "draft" : (totalStock > 0 ? "active" : "out_of_stock"),
     shopeeId: String(itemId),
     shopeeItemId: String(itemId),
-    children_models: children,
+    children,
     lastSynced: new Date().toISOString(),
   };
 }
@@ -2615,7 +2615,7 @@ function buildParentWarehouseRow(item: any, children: any[]): any {
 function flattenProductsForStockSync(products: any[]): any[] {
   const out: any[] = [];
   for (const p of products || []) {
-    const children = Array.isArray(p?.children_models) ? p.children_models : [];
+    const children = getProductChildrenList(p);
     if (children.length > 0) {
       for (const child of children) {
         out.push({
@@ -2909,6 +2909,61 @@ async function pullShopeeChannelListingsPage(
   };
 }
 
+async function pullShopeeChannelListingsAllPages(
+  shopId: string,
+  accessToken: string,
+  shopName: string
+): Promise<{
+  totalSaved: number;
+  parentCount: number;
+  pageCount: number;
+  stats: {
+    itemCount: number;
+    rowCount: number;
+    variantItemCount: number;
+    skippedCount: number;
+  };
+  skippedItems: { itemId: string; reason: string }[];
+}> {
+  let offset = 0;
+  let hasMore = true;
+  let pageGuard = 0;
+  let totalSaved = 0;
+  let parentCount = 0;
+  let itemCount = 0;
+  let variantItemCount = 0;
+  const skippedItems: { itemId: string; reason: string }[] = [];
+
+  while (hasMore && pageGuard < 200) {
+    pageGuard++;
+    const page = await pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset);
+    totalSaved += page.rowsSaved;
+    parentCount += page.pageStats.rowsInPage;
+    itemCount += page.pageStats.itemsInPage;
+    variantItemCount += page.pageStats.variantItemCount;
+    skippedItems.push(...page.skippedItems);
+
+    hasMore = page.hasMore;
+    offset = page.nextOffset;
+    if (!hasMore) break;
+    if (page.pageStats.itemsInPage === 0 && !page.hasMore) break;
+    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+  }
+
+  return {
+    totalSaved,
+    parentCount,
+    pageCount: pageGuard,
+    stats: {
+      itemCount,
+      rowCount: parentCount,
+      variantItemCount,
+      skippedCount: skippedItems.length,
+    },
+    skippedItems,
+  };
+}
+
 function mergeWarehouseProductsBatch(batchRows: any[]): number {
   if (!batchRows.length) return 0;
   const existing = loadProducts();
@@ -2951,7 +3006,11 @@ async function pullShopeeWarehouseAllPages(
   while (hasMore && pageGuard < 200) {
     pageGuard++;
     const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
-    if (page.itemIds.length === 0) break;
+    if (page.itemIds.length === 0) {
+      if (!page.hasMore) break;
+      offset = page.nextOffset;
+      continue;
+    }
 
     itemCount += page.itemIds.length;
     const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, page.itemIds);
@@ -3038,8 +3097,13 @@ async function fetchShopeeListingRowsFromApi(shopId: string, accessToken: string
 async function runFullShopeeWarehouseSync(shopId: string, accessToken: string) {
   try {
     const { stats, skippedItems } = await pullShopeeWarehouseAllPages(shopId, accessToken);
-    const productCount = loadProducts().filter((p: any) => p.shopeeItemId || p.channels?.includes("shopee")).length;
-    return { shopId, stats, skippedItems, productCount };
+    const allProducts = loadProducts();
+    const productCount = allProducts.filter((p: any) => p.shopeeItemId || p.channels?.includes("shopee")).length;
+    const variantSkuCount = allProducts.reduce(
+      (n: number, p: any) => n + getProductChildrenList(p).length,
+      0
+    );
+    return { shopId, stats: { ...stats, variantSkuCount }, skippedItems, productCount };
   } catch (err) {
     const { message, details } = extractHttpClientError(err);
     console.error("[Shopee Product Sync] runFullShopeeWarehouseSync failed:", message, details);
@@ -3076,7 +3140,7 @@ async function syncStockFromShopee(shopId: string, accessToken: string) {
   let updated = 0;
   let compared = 0;
   const next = products.map((p) => {
-    const children = Array.isArray(p.children_models) ? p.children_models : [];
+    const children = getProductChildrenList(p);
     if (children.length > 0) {
       let childChanged = false;
       const nextChildren = children.map((c: any) => {
@@ -3091,7 +3155,7 @@ async function syncStockFromShopee(shopId: string, accessToken: string) {
       });
       if (!childChanged) return p;
       const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-      return { ...p, children_models: nextChildren, stock: totalStock, lastSynced: new Date().toISOString() };
+      return { ...p, children: nextChildren, stock: totalStock, lastSynced: new Date().toISOString() };
     }
 
     const sku = String(p.sku || "").trim();
@@ -3147,7 +3211,7 @@ function replaceProductsForShopeeItem(products: any[], itemId: string, variantPr
   const byId = new Map<string, any>();
   for (const p of products) {
     byId.set(p.id, p);
-    for (const c of p.children_models || []) byId.set(c.id, c);
+    for (const c of getProductChildrenList(p)) byId.set(c.id, c);
   }
   const without = products.filter((p: any) => {
     const pItemId = p.shopeeItemId || String(p.id || "").match(/^shopee-item-(\d+)/)?.[1];
@@ -3156,12 +3220,12 @@ function replaceProductsForShopeeItem(products: any[], itemId: string, variantPr
 
   const mergedParents = variantProducts.map((row) => {
     const prev = byId.get(row.id);
-    const incomingChildren = Array.isArray(row.children_models) ? row.children_models : [];
+    const incomingChildren = getProductChildrenList(row);
     if (incomingChildren.length > 0) {
       const mergedChildren = incomingChildren.map((child: any) =>
         mergeShopeeRowPreservingLocal(byId.get(child.id), child)
       );
-      return mergeShopeeRowPreservingLocal(prev, { ...row, children_models: mergedChildren });
+      return mergeShopeeRowPreservingLocal(prev, { ...row, children: mergedChildren });
     }
     return mergeShopeeRowPreservingLocal(prev, row);
   });
@@ -3180,7 +3244,7 @@ function dedupeShopeeParentVariantRows(products: any[]): any[] {
       continue;
     }
     const key = String(itemId);
-    const isParent = Array.isArray(p.children_models) || /^shopee-item-\d+$/.test(String(p.id));
+    const isParent = getProductChildrenList(p).length > 0 || /^shopee-item-\d+$/.test(String(p.id));
     const isFlatChild = !!p.shopeeModelId || String(p.id).includes("-model-");
 
     if (isFlatChild && !isParent) continue;
@@ -3190,8 +3254,8 @@ function dedupeShopeeParentVariantRows(products: any[]): any[] {
       byItem.set(key, p);
       continue;
     }
-    const prevHasChildren = Array.isArray(prev.children_models) && prev.children_models.length > 0;
-    const nextHasChildren = Array.isArray(p.children_models) && p.children_models.length > 0;
+    const prevHasChildren = getProductChildrenList(prev).length > 0;
+    const nextHasChildren = getProductChildrenList(p).length > 0;
     if (nextHasChildren && !prevHasChildren) byItem.set(key, p);
     else if (isParent && !/^shopee-item-\d+$/.test(String(prev.id))) byItem.set(key, p);
   }
@@ -4229,11 +4293,100 @@ function buildDashboardChart(orders: any[], range: { start: Date; end: Date; key
 
 const PRODUCTS_DB_PATH = path.join(APP_ROOT, "data", "products.json");
 
+function getProductChildrenList(p: any): any[] {
+  if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
+  if (Array.isArray(p?.children_models) && p.children_models.length > 0) return p.children_models;
+  return [];
+}
+
+function normalizeParentProductRow(p: any): any {
+  const children = getProductChildrenList(p).map((c: any) => {
+    const { children: _c, children_models: _cm, ...rest } = c;
+    return rest;
+  });
+  const { children_models: _legacy, ...rest } = p;
+  return {
+    ...rest,
+    children,
+    stock:
+      children.length > 0
+        ? children.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0)
+        : Number(p.stock) || 0,
+  };
+}
+
+/** Gom dữ liệu flat legacy thành Parent + children theo shopeeItemId. */
+function groupFlatProductsToParents(products: any[]): any[] {
+  const result: any[] = [];
+  const flatByItem = new Map<string, any[]>();
+  const consumedItemIds = new Set<string>();
+
+  for (const raw of products) {
+    const p = normalizeParentProductRow(raw);
+    const children = getProductChildrenList(p);
+    if (children.length > 0) {
+      const itemId = String(p.shopeeItemId || "").trim();
+      if (itemId) consumedItemIds.add(itemId);
+      result.push(p);
+      continue;
+    }
+
+    if (p.shopeeModelId || String(p.id || "").includes("-model-")) {
+      const itemId =
+        String(p.shopeeItemId || "").trim() ||
+        String(p.id || "").match(/^shopee-item-(\d+)/)?.[1] ||
+        "";
+      if (itemId) {
+        if (!flatByItem.has(itemId)) flatByItem.set(itemId, []);
+        flatByItem.get(itemId)!.push(p);
+      } else {
+        result.push(p);
+      }
+      continue;
+    }
+
+    const itemId = String(p.shopeeItemId || "").trim();
+    if (itemId && /^shopee-item-\d+$/.test(String(p.id))) {
+      if (!flatByItem.has(itemId)) flatByItem.set(itemId, []);
+      flatByItem.get(itemId)!.push(p);
+      continue;
+    }
+
+    result.push(p);
+  }
+
+  for (const [itemId, rows] of flatByItem) {
+    if (consumedItemIds.has(itemId)) continue;
+    const children = rows.filter((r) => r.shopeeModelId || String(r.id).includes("-model-"));
+    const parentCandidate = rows.find((r) => !r.shopeeModelId && !String(r.id).includes("-model-")) || rows[0];
+    if (children.length === 0) {
+      result.push(...rows);
+      continue;
+    }
+    const baseTitle = String(parentCandidate.title || "").split(" - ")[0] || parentCandidate.title;
+    result.push(
+      normalizeParentProductRow({
+        ...parentCandidate,
+        id: `shopee-item-${itemId}`,
+        title: baseTitle,
+        shopeeId: itemId,
+        shopeeItemId: itemId,
+        shopeeModelId: undefined,
+        children,
+      })
+    );
+  }
+
+  return result;
+}
+
 function loadProducts(): any[] {
   try {
     if (!fs.existsSync(PRODUCTS_DB_PATH)) return [];
     const raw = fs.readFileSync(PRODUCTS_DB_PATH, "utf-8");
-    return raw.trim() ? JSON.parse(raw) : [];
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return groupFlatProductsToParents(parsed);
   } catch (error) {
     console.error("[Products DB] Failed to read products.json:", error);
     return [];
@@ -4242,8 +4395,9 @@ function loadProducts(): any[] {
 
 function saveProducts(products: any[]): void {
   try {
+    const normalized = groupFlatProductsToParents(products).map((p) => normalizeParentProductRow(p));
     fs.mkdirSync(path.dirname(PRODUCTS_DB_PATH), { recursive: true });
-    fs.writeFileSync(PRODUCTS_DB_PATH, JSON.stringify(products, null, 2), "utf-8");
+    fs.writeFileSync(PRODUCTS_DB_PATH, JSON.stringify(normalized, null, 2), "utf-8");
   } catch (error) {
     console.error("[Products DB] Failed to write products.json:", error);
   }
@@ -5599,16 +5753,16 @@ async function startServer() {
       return res.json(merged);
     }
 
-    // Cập nhật Child SKU nằm trong children_models
+    // Cập nhật Child SKU nằm trong children
     for (let i = 0; i < products.length; i++) {
-      const children = Array.isArray(products[i].children_models) ? products[i].children_models : [];
+      const children = getProductChildrenList(products[i]);
       const childIdx = children.findIndex((c: any) => c.id === req.params.id);
       if (childIdx === -1) continue;
       const mergedChild = mergeProductPatch(children[childIdx], patch);
       const nextChildren = [...children];
       nextChildren[childIdx] = mergedChild;
       const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-      products[i] = { ...products[i], children_models: nextChildren, stock: totalStock };
+      products[i] = { ...products[i], children: nextChildren, stock: totalStock };
       saveProducts(products);
       return res.json(mergedChild);
     }
@@ -5639,7 +5793,7 @@ async function startServer() {
       const products = loadProducts();
       let updatedCount = 0;
       const next = products.map((p: any) => {
-        const children = Array.isArray(p.children_models) ? p.children_models : [];
+        const children = getProductChildrenList(p);
         if (children.length > 0) {
           let changed = false;
           const nextChildren = children.map((c: any) => {
@@ -5651,7 +5805,7 @@ async function startServer() {
           });
           if (!changed) return p;
           const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-          return { ...p, children_models: nextChildren, stock: totalStock };
+          return { ...p, children: nextChildren, stock: totalStock };
         }
         const sku = String(p.sku || "").trim();
         if (!skuStockMap.has(sku)) return p;
@@ -5815,7 +5969,7 @@ async function startServer() {
     const products = loadProducts();
     let updatedCount = 0;
     const next = products.map((p: any) => {
-      const children = Array.isArray(p.children_models) ? p.children_models : [];
+      const children = getProductChildrenList(p);
       if (children.length > 0) {
         let changed = false;
         const nextChildren = children.map((c: any) => {
@@ -5829,10 +5983,10 @@ async function startServer() {
           updatedCount++;
           const parentPatched = applyBulkProductUpdate(p, { stock, price });
           const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-          return { ...parentPatched, children_models: nextChildren, stock: totalStock };
+          return { ...parentPatched, children: nextChildren, stock: totalStock };
         }
         const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-        return { ...p, children_models: nextChildren, stock: totalStock };
+        return { ...p, children: nextChildren, stock: totalStock };
       }
       if (!idSet.has(p.id)) return p;
       updatedCount++;
@@ -7080,7 +7234,30 @@ async function startServer() {
       }
 
       const shopName = resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
+      const fetchAll = req.body?.fetchAll !== false;
       const offset = Math.max(0, Number(req.body?.offset) || 0);
+
+      if (fetchAll) {
+        console.log(`[Shopee Channel Fetch] shop_id=${shopId} fetchAll=true (tất cả trang)...`);
+        const allResult = await pullShopeeChannelListingsAllPages(shopId, accessToken, shopName);
+        return res.status(200).json({
+          success: true,
+          message: `Đã tải về ${allResult.parentCount} sản phẩm mẹ (${allResult.totalSaved} dòng SKU) từ ${allResult.pageCount} trang Shopee`,
+          shopId,
+          shopName,
+          fetchAll: true,
+          hasMore: false,
+          nextOffset: null,
+          savedCount: allResult.totalSaved,
+          fetchedCount: allResult.parentCount,
+          parentCount: allResult.parentCount,
+          totalSaved: allResult.totalSaved,
+          pageCount: allResult.pageCount,
+          stats: allResult.stats,
+          skippedItems: allResult.skippedItems.length > 0 ? allResult.skippedItems : undefined,
+        });
+      }
+
       console.log(`[Shopee Channel Fetch] shop_id=${shopId} offset=${offset} page_size=${SHOPEE_ITEM_LIST_PAGE_SIZE}...`);
 
       const pageResult = await pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset);
@@ -7089,18 +7266,21 @@ async function startServer() {
         success: true,
         message:
           pageResult.rowsSaved > 0
-            ? `Đã lưu trang ${pageResult.pageIndex + 1}: ${pageResult.rowsSaved} dòng vào Database`
+            ? `Đã lưu trang ${pageResult.pageIndex + 1}: ${pageResult.pageStats.rowsInPage} parent (${pageResult.rowsSaved} SKU)`
             : pageResult.hasMore
               ? "Trang trống — đang chuyển trang tiếp theo"
               : "Hoàn tất tải dữ liệu từ sàn",
         shopId,
         shopName,
+        fetchAll: false,
         offset: pageResult.currentOffset,
         nextOffset: pageResult.hasMore ? pageResult.nextOffset : null,
         hasMore: pageResult.hasMore,
         pageSize: SHOPEE_ITEM_LIST_PAGE_SIZE,
         pageStats: pageResult.pageStats,
         savedCount: pageResult.rowsSaved,
+        fetchedCount: pageResult.pageStats.rowsInPage,
+        parentCount: pageResult.pageStats.rowsInPage,
         skippedItems: pageResult.skippedItems.length > 0 ? pageResult.skippedItems : undefined,
       });
     } catch (error: unknown) {
@@ -7187,7 +7367,7 @@ async function startServer() {
         productCount: result.productCount,
         stats: result.stats,
         skippedItems: result.skippedItems?.length ? result.skippedItems : undefined,
-        message: `Đã đồng bộ ${result.productCount} dòng kho từ Shopee (${result.stats?.pageCount ?? 0} trang). Hãy tải lại danh sách sản phẩm.`,
+        message: `Đã đồng bộ ${result.productCount} sản phẩm mẹ (${result.stats?.variantSkuCount ?? 0} phân loại) từ Shopee (${result.stats?.pageCount ?? 0} trang). Hãy tải lại danh sách sản phẩm.`,
       });
     } catch (error: unknown) {
       console.error("[Shopee Product Sync] Exception:", error);

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Product } from '../types';
+import { Product, getProductChildren } from '../types';
 import { X, RefreshCw, Check, Package, Plus } from 'lucide-react';
 
 const SAPO = { blue: '#0078D4', bg: '#F4F6F8', border: '#E0E0E0' };
@@ -16,16 +16,17 @@ export function isParentOnlyShopeeRow(p: Product): boolean {
 }
 
 export function getProductVariants(allProducts: Product[], prod: Product): Product[] {
-  if (Array.isArray(prod.children_models) && prod.children_models.length > 0) {
-    return [...prod.children_models].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
+  const direct = getProductChildren(prod);
+  if (direct.length > 0) {
+    return [...direct].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
   }
   const key = getShopeeItemKey(prod);
   if (!key) return [prod];
   const parent = allProducts.find(
-    (p) => getShopeeItemKey(p) === key && Array.isArray(p.children_models) && (p.children_models?.length || 0) > 0
+    (p) => getShopeeItemKey(p) === key && getProductChildren(p).length > 0
   );
-  if (parent?.children_models?.length) {
-    return [...parent.children_models].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
+  if (parent) {
+    return [...getProductChildren(parent)].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
   }
   const variants = allProducts.filter((p) => getShopeeItemKey(p) === key);
   return variants.length > 0
@@ -66,13 +67,13 @@ export function formatPriceRange(min: number, max: number): string {
   return `${fmt(min)} - ${fmt(max)}`;
 }
 
-/** Nhóm Parent-Child: ưu tiên children_models; còn lại gom flat legacy theo item_id. */
+/** Nhóm Parent-Child: ưu tiên children; còn lại gom flat legacy theo item_id. */
 export function buildProductGroups(products: Product[]): ProductGroupRow[] {
   const rows: ProductGroupRow[] = [];
   const consumedKeys = new Set<string>();
 
   for (const p of products) {
-    const children = Array.isArray(p.children_models) ? p.children_models : [];
+    const children = getProductChildren(p);
     if (children.length > 0) {
       const key = getShopeeItemKey(p) || p.id;
       consumedKeys.add(key);
@@ -109,9 +110,8 @@ export function buildProductGroups(products: Product[]): ProductGroupRow[] {
     }
 
     if (consumedKeys.has(key)) continue;
-    // Legacy flat: gom cùng item_id (bỏ qua row parent trống nếu đã có child flat)
     const flatSiblings = products.filter((x) => {
-      if (Array.isArray(x.children_models) && x.children_models.length > 0) return false;
+      if (getProductChildren(x).length > 0) return false;
       return getShopeeItemKey(x) === key;
     });
     consumedKeys.add(key);
