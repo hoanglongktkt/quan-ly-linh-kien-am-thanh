@@ -250,9 +250,10 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [selectedShopFilter, setSelectedShopFilter] = useState<string>('all');
   const [showShopFilterDropdown, setShowShopFilterDropdown] = useState(false);
   
-  // Modals state
-  const [showSyncModal, setShowSyncModal] = useState(false);
+  // Shop selector + fetch / auto-link actions
   const [syncShopId, setSyncShopId] = useState('');
+  const [isFetchingFromChannel, setIsFetchingFromChannel] = useState(false);
+  const [isAutoLinking, setIsAutoLinking] = useState(false);
 
   useEffect(() => {
     const shopeeShops = shops.filter((s) => s.platform === 'shopee');
@@ -264,9 +265,6 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       setSyncShopId(shopeeShops[0].id);
     }
   }, [shops, syncShopId]);
-  const [syncTimeframe, setSyncTimeframe] = useState<'all' | '24h' | 'custom'>('24h');
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState<string[]>([]);
 
   // Manual Mapping Modal state
   const [mappingListing, setMappingListing] = useState<ChannelListing | null>(null);
@@ -518,199 +516,150 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     setInitListing(null);
   };
 
-  // 4. Quick Auto Link ("Liên kết nhanh")
-  const handleQuickLink = () => {
-    let linkCount = 0;
-    const newListings = listings.map(listing => {
-      if (listing.status !== 'success') {
-        // Try to match by SKU
-        if (listing.sku) {
-          const matchedBySku = products.find(p => p.sku.toLowerCase() === listing.sku.toLowerCase());
-          if (matchedBySku) {
-            linkCount++;
-            return {
-              ...listing,
-              status: 'success' as const,
-              linkedProductId: matchedBySku.id
-            };
-          }
-        }
-        
-        // Try to match by name similarity
-        const matchedByName = products.find(p => {
-          const masterTitle = p.title.toLowerCase();
-          const listingTitle = listing.title.toLowerCase();
-          return masterTitle.includes(listingTitle) || listingTitle.includes(masterTitle);
-        });
-
-        if (matchedByName) {
-          linkCount++;
-          return {
-            ...listing,
-            status: 'success' as const,
-            linkedProductId: matchedByName.id,
-            sku: listing.sku || matchedByName.sku
-          };
-        }
-      }
-      return listing;
-    });
-
-    if (linkCount > 0) {
-      saveListings(newListings);
-      newListings.forEach((listing) => {
-        if (listing.status === 'success' && listing.linkedProductId) {
-          const master = products.find((p) => p.id === listing.linkedProductId);
-          if (master) onUpdateProduct(applyProductChannelLink(master, listing), { save: true });
-        }
-      });
-      showToast(`⚡ Thành công: Đã liên kết tự động thành công ${linkCount} sản phẩm có SKU/Tên tương đồng!`);
-      onAddLog({
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        channel: 'all',
-        type: 'product_sync',
-        status: 'success',
-        message: `Đồng bộ liên kết tự động hàng loạt thành công cho ${linkCount} sản phẩm sàn.`
-      });
-    } else {
-      showToast(`Không tìm thấy sản phẩm nào có SKU hoặc Tên tương tự để tự động liên kết.`);
-    }
-  };
-
-  // 5. Trigger Sync listings from channel — pulls the REAL listed items from
-  // Shopee (same v2.product.get_item_list -> get_item_base_info flow used by
-  // "Khởi tạo từ Shopee API" in the warehouse tab) and reconciles them against
-  // the master product list to refresh each listing's mapping status.
-  const handleStartListingSync = async () => {
-    setIsSyncing(true);
-    setSyncProgress(["🔌 Đang kết nối API v2 Shopee (get_item_list)..."]);
-
-    const shop = shops.find(s => s.id === syncShopId) || shops.find(s => s.platform === 'shopee');
-
+  const handleFetchChannelProducts = async () => {
+    const shop = shops.find((s) => s.id === syncShopId) || shops.find((s) => s.platform === 'shopee');
     if (!shop || shop.platform !== 'shopee') {
-      const message = 'Chức năng đồng bộ dữ liệu thật hiện chỉ hỗ trợ gian hàng Shopee.';
-      setSyncProgress(prev => [...prev, `❌ Lỗi: ${message}`]);
-      alert(message);
-      setIsSyncing(false);
+      alert('Chưa có gian hàng Shopee được kết nối.');
       return;
     }
 
+    setIsFetchingFromChannel(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    const timeoutId = setTimeout(() => controller.abort(), 300000);
 
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch('/api/shopee/products/sync', {
+      const res = await fetch('/api/shopee/channel-products/fetch', {
         method: 'POST',
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ shopId: shop.shopId })
+        body: JSON.stringify({ shopId: shop.shopId }),
       });
       const data = await parseJsonResponse<{
-        products?: Product[];
+        success?: boolean;
+        fetchedCount?: number;
+        savedCount?: number;
         listings?: ChannelListing[];
         message?: string;
         error?: string;
       }>(res);
 
-      if (!res.ok) {
-        throw new Error(data?.message || data?.error || 'Đồng bộ dữ liệu sản phẩm sàn thất bại.');
+      if (!res.ok || data.success === false) {
+        throw new Error(data?.message || data?.error || 'Tải dữ liệu từ sàn thất bại.');
       }
 
-      const realItems: Product[] = data.products || [];
-      if (realItems.length === 0) {
-        throw new Error('Shopee không trả về sản phẩm nào (0 item). Vui lòng thử lại.');
-      }
-
-      const serverListings: ChannelListing[] = Array.isArray(data.listings) ? data.listings : [];
-
-      setSyncProgress(prev => [
-        ...prev,
-        `📥 Đã lấy ${realItems.length} sản phẩm thật đang bán từ get_item_list + get_item_base_info...`,
-        "⚙️ Đang đối chiếu với Kho chính & nạp lại danh sách Liên kết...",
-      ]);
-
-      if (serverListings.length > 0) {
+      const count = data.fetchedCount ?? data.savedCount ?? 0;
+      if (Array.isArray(data.listings) && data.listings.length > 0) {
         listingsHydratedRef.current = true;
-        setListings(serverListings);
-        const saved = await persistListings(serverListings);
-        if (!saved) {
-          throw new Error('Đồng bộ Shopee thành công nhưng lưu mapping vào Database thất bại.');
-        }
+        setListings(data.listings);
+        await persistListings(data.listings);
       } else {
-        saveListings(prev => {
-          const byKey = new Map<string, ChannelListing>(prev.map(l => [`${l.platform}::${l.channelId}`, l]));
-
-          realItems.forEach(item => {
-            const channelId = String(item.shopeeId || item.shopeeItemId || '');
-            if (!channelId) return;
-            const key = `shopee::${channelId}`;
-            const existing = byKey.get(key);
-
-            const matchedMaster =
-              products.find(p => (p.shopeeItemId && String(p.shopeeItemId) === channelId) || (p.shopeeId && p.shopeeId === channelId)) ||
-              (item.sku ? products.find(p => p.sku.toLowerCase() === item.sku.toLowerCase()) : undefined);
-
-            const status: ChannelListing['status'] = matchedMaster
-              ? 'success'
-              : (existing?.status === 'failed' ? 'failed' : 'unlinked');
-
-            byKey.set(key, {
-              id: existing?.id || `cl-shopee-${channelId}`,
-              title: item.title,
-              sku: item.sku,
-              imageUrl: item.avatarUrl || item.imageUrl,
-              channelId,
-              platform: 'shopee',
-              shopName: shop.shopName,
-              status,
-              linkedProductId: matchedMaster?.id || existing?.linkedProductId,
-            });
-          });
-
-          return Array.from(byKey.values());
-        });
+        const refreshed = await fetchMappingListingsFromServer(token || '');
+        if (refreshed?.rows?.length) {
+          listingsHydratedRef.current = true;
+          setListings(refreshed.rows);
+        }
       }
 
-      if (onRefreshProducts) {
-        await onRefreshProducts();
-      }
-
-      setSyncProgress(prev => [...prev, `🎉 HOÀN TẤT: Đã đồng bộ ${realItems.length} sản phẩm thật từ gian hàng [${shop.shopName}] và cập nhật trạng thái liên kết!`]);
-      showToast(`Đã đồng bộ thành công ${realItems.length} sản phẩm thật từ gian hàng ${shop.shopName}!`);
-
+      showToast(data.message || `Đã tải về thành công ${count} sản phẩm từ sàn Shopee`);
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'shopee',
         type: 'product_sync',
         status: 'success',
-        message: `Đồng bộ ${realItems.length} sản phẩm thật từ gian hàng [${shop.shopName}] qua API v2 Shopee và cập nhật trạng thái liên kết thành công.`
+        message: data.message || `Tải ${count} sản phẩm sàn từ gian hàng [${shop.shopName}]`,
       });
-
-      setShowSyncModal(false);
-    } catch (err: any) {
-      const message = err?.name === 'AbortError'
-        ? 'Quá thời gian chờ (90s) khi đồng bộ với Shopee. Vui lòng thử lại.'
-        : (err?.message || 'Đồng bộ dữ liệu sản phẩm sàn thất bại.');
-      setSyncProgress(prev => [...prev, `❌ Lỗi: ${message}`]);
-      alert(`Đồng bộ dữ liệu sản phẩm sàn thất bại: ${message}`);
-
+    } catch (err: unknown) {
+      const e = err as { name?: string; message?: string };
+      const message =
+        e?.name === 'AbortError'
+          ? 'Quá thời gian chờ (5 phút) khi tải dữ liệu từ Shopee. Vui lòng thử lại.'
+          : e?.message || 'Tải dữ liệu từ sàn thất bại.';
+      alert(`Tải dữ liệu từ sàn thất bại: ${message}`);
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'shopee',
         type: 'product_sync',
         status: 'failed',
-        message: `Đồng bộ dữ liệu sản phẩm sàn thất bại: ${message}`
+        message: `Tải dữ liệu sàn thất bại: ${message}`,
       });
     } finally {
       clearTimeout(timeoutId);
-      setIsSyncing(false);
+      setIsFetchingFromChannel(false);
+    }
+  };
+
+  const handleAutoLinkBySku = async () => {
+    setIsAutoLinking(true);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await fetch('/api/shopee/channel-products/auto-link', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const data = await parseJsonResponse<{
+        success?: boolean;
+        linkedCount?: number;
+        listings?: ChannelListing[];
+        message?: string;
+        error?: string;
+      }>(res);
+
+      if (!res.ok || data.success === false) {
+        throw new Error(data?.message || data?.error || 'Liên kết tự động thất bại.');
+      }
+
+      const linkedCount = data.linkedCount ?? 0;
+      if (Array.isArray(data.listings)) {
+        listingsHydratedRef.current = true;
+        setListings(data.listings);
+        await persistListings(data.listings);
+
+        data.listings.forEach((listing) => {
+          if (listing.status === 'success' && listing.linkedProductId) {
+            const master = products.find((p) => p.id === listing.linkedProductId);
+            if (master) onUpdateProduct(applyProductChannelLink(master, listing), { save: true });
+          }
+        });
+      }
+
+      if (onRefreshProducts) await onRefreshProducts();
+
+      if (linkedCount > 0) {
+        showToast(data.message || `Đã liên kết thành công ${linkedCount} sản phẩm`);
+      } else {
+        showToast('Không tìm thấy SKU trùng khớp để liên kết tự động.');
+      }
+
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'all',
+        type: 'product_sync',
+        status: linkedCount > 0 ? 'success' : 'failed',
+        message: data.message || `Liên kết tự động: ${linkedCount} sản phẩm`,
+      });
+    } catch (err: unknown) {
+      const message = (err as Error)?.message || 'Liên kết tự động thất bại.';
+      alert(`Liên kết tự động thất bại: ${message}`);
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'all',
+        type: 'product_sync',
+        status: 'failed',
+        message: `Liên kết tự động thất bại: ${message}`,
+      });
+    } finally {
+      setIsAutoLinking(false);
     }
   };
 
@@ -825,24 +774,60 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           </button>
         </div>
 
-        {/* Action Buttons: "Liên kết nhanh" & "Cập nhật dữ liệu sản phẩm" exactly as shown in Image 1 */}
-        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+        {/* Action: Tải dữ liệu sàn + Liên kết tự động (tách riêng) */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
+          <div className="relative min-w-[160px]">
+            <select
+              value={syncShopId}
+              onChange={(e) => setSyncShopId(e.target.value)}
+              disabled={isFetchingFromChannel || isAutoLinking}
+              className="w-full pl-3 pr-8 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-700 focus:outline-none focus:border-blue-500 cursor-pointer disabled:opacity-50"
+            >
+              {shops.filter((s) => s.platform === 'shopee').map((shop) => (
+                <option key={shop.id} value={shop.id}>
+                  {shop.shopName}
+                </option>
+              ))}
+            </select>
+            <Store className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-3 pointer-events-none" />
+          </div>
+
           <button
-            onClick={handleQuickLink}
+            onClick={handleFetchChannelProducts}
             type="button"
-            className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-blue-500 hover:bg-blue-50 text-blue-600 text-xs font-extrabold rounded-xl transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
+            disabled={isFetchingFromChannel || isAutoLinking}
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-blue-500 hover:bg-blue-50 text-blue-600 text-xs font-extrabold rounded-xl transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
-            <Link2 className="w-3.5 h-3.5" />
-            <span>Liên kết nhanh</span>
+            {isFetchingFromChannel ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Đang tải...</span>
+              </>
+            ) : (
+              <>
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                <span>Tải dữ liệu từ sàn</span>
+              </>
+            )}
           </button>
 
           <button
-            onClick={() => setShowSyncModal(true)}
+            onClick={handleAutoLinkBySku}
             type="button"
-            className="flex-1 sm:flex-none px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+            disabled={isFetchingFromChannel || isAutoLinking}
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Cập nhật dữ liệu sản phẩm</span>
+            {isAutoLinking ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Đang liên kết...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Liên kết tự động</span>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -1127,151 +1112,6 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           </table>
         </div>
       </div>
-
-      {/* ========================================================================= */}
-      {/* MODAL: SYNC PRODUCTS FROM CHANNELS (MATCHING IMAGE 2 EXACTLY) */}
-      {/* ========================================================================= */}
-      {showSyncModal && (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col border border-gray-100">
-            {/* Header with 'X' close button */}
-            <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-slate-50">
-              <h3 className="text-sm font-black text-gray-800 uppercase tracking-wider">
-                Cập nhật dữ liệu sản phẩm từ gian hàng
-              </h3>
-              <button
-                onClick={() => { if (!isSyncing) setShowSyncModal(false); }}
-                className="p-1 hover:bg-gray-200 rounded-full transition-all text-gray-400 hover:text-gray-700"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-5">
-              {/* Informative text box exactly like Image 2 */}
-              <div className="bg-amber-50/70 border border-amber-200/50 p-4 rounded-xl text-xs text-amber-800 leading-relaxed font-semibold">
-                Sapo sẽ đồng bộ các cập nhật dữ liệu của sản phẩm trong khoảng thời gian mà bạn đã chọn. 
-                Các thao tác phát sinh ngoài thời gian bạn đã chọn sẽ không được đồng bộ.
-              </div>
-
-              {/* Shop Selector Dropdown */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-black text-gray-700">Lựa chọn gian hàng</label>
-                <div className="relative">
-                  <select
-                    value={syncShopId}
-                    onChange={(e) => setSyncShopId(e.target.value)}
-                    disabled={isSyncing}
-                    className="w-full pl-4 pr-10 py-3 bg-white border border-gray-250 rounded-xl text-xs font-bold text-gray-700 focus:outline-none focus:border-blue-500 cursor-pointer disabled:bg-gray-50"
-                  >
-                    {shops.map(shop => (
-                      <option key={shop.id} value={shop.id}>
-                        {shop.platform.toUpperCase()} - {shop.shopName}
-                      </option>
-                    ))}
-                    <option value="shop-lazada-1">LAZADA - Lazada - Linh Kiện Audio HCM</option>
-                  </select>
-                  <Store className="w-4 h-4 text-gray-400 absolute right-3 top-3.5 pointer-events-none" />
-                </div>
-              </div>
-
-              {/* Timeframe Radios */}
-              <div className="space-y-2.5">
-                <label className="text-xs font-black text-gray-700 block">Lựa chọn thời gian cập nhật</label>
-                
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-gray-100 cursor-pointer transition-all">
-                    <input
-                      type="radio"
-                      name="sync_timeframe"
-                      checked={syncTimeframe === 'all'}
-                      onChange={() => setSyncTimeframe('all')}
-                      disabled={isSyncing}
-                      className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                    />
-                    <div>
-                      <p className="text-xs font-bold text-gray-800">Toàn thời gian</p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">Hệ thống sẽ xử lý chậm khi bạn có nhiều sản phẩm</p>
-                    </div>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-gray-100 cursor-pointer transition-all">
-                    <input
-                      type="radio"
-                      name="sync_timeframe"
-                      checked={syncTimeframe === '24h'}
-                      onChange={() => setSyncTimeframe('24h')}
-                      disabled={isSyncing}
-                      className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                    />
-                    <div>
-                      <p className="text-xs font-bold text-gray-800">Từ 24h trước</p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">Chỉ đồng bộ các sản phẩm phát sinh thay đổi trong vòng 24 giờ qua (Khuyên dùng)</p>
-                    </div>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-3 bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-gray-100 cursor-pointer transition-all">
-                    <input
-                      type="radio"
-                      name="sync_timeframe"
-                      checked={syncTimeframe === 'custom'}
-                      onChange={() => setSyncTimeframe('custom')}
-                      disabled={isSyncing}
-                      className="w-4 h-4 text-blue-600 focus:ring-blue-500 border-gray-300"
-                    />
-                    <div>
-                      <p className="text-xs font-bold text-gray-800">Cập nhật theo sản phẩm</p>
-                      <p className="text-[10px] text-gray-400 mt-0.5">Lựa chọn các sản phẩm sỉ cụ thể để đồng bộ tức thời</p>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              {/* Progress Logger during sync */}
-              {isSyncing && (
-                <div className="p-4 bg-slate-950 rounded-2xl text-xs font-mono text-emerald-400 space-y-1.5 max-h-40 overflow-y-auto shadow-inner border border-slate-800">
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-emerald-400" />
-                    <span className="font-bold">TIẾN TRÌNH API ĐỒNG BỘ:</span>
-                  </div>
-                  {syncProgress.map((p, idx) => (
-                    <p key={idx} className="animate-pulse">{p}</p>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Footer Buttons exactly like Image 2 */}
-            <div className="p-4 bg-slate-50 border-t border-gray-100 flex justify-end gap-3.5">
-              <button
-                type="button"
-                onClick={() => { if (!isSyncing) setShowSyncModal(false); }}
-                disabled={isSyncing}
-                className="px-5 py-2.5 bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50"
-              >
-                Thoát
-              </button>
-              
-              <button
-                type="button"
-                onClick={handleStartListingSync}
-                disabled={isSyncing}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-blue-500/15 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                {isSyncing ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Đang đồng bộ...</span>
-                  </>
-                ) : (
-                  <span>Cập nhật dữ liệu sản phẩm</span>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ========================================================================= */}
       {/* MODAL: TẠO SẢN PHẨM VỀ KHO */}

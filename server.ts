@@ -2358,42 +2358,40 @@ async function fetchShopeeBaseItemsByIds(shopId: string, accessToken: string, it
   return allItems;
 }
 
+async function fetchShopeeListingRowsFromApi(shopId: string, accessToken: string) {
+  const itemIds = await fetchAllShopeeItemIds(shopId, accessToken);
+  console.log(`[Shopee Channel Fetch] get_item_list: ${itemIds.length} item_id`);
+
+  const allItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds);
+  console.log(`[Shopee Channel Fetch] get_item_base_info: ${allItems.length} item`);
+
+  const products: any[] = [];
+  const startedAt = Date.now();
+  let variantItems = 0;
+
+  for (let idx = 0; idx < allItems.length; idx++) {
+    const item = allItems[idx];
+    const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
+    if (r.modelCount > 0) variantItems++;
+    products.push(...r.rows);
+    if (idx % 20 === 0 || idx === allItems.length - 1) {
+      console.log(`[Shopee Channel Fetch] ${idx + 1}/${allItems.length} item -> ${products.length} dong`);
+    }
+    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+  }
+
+  const cleaned = dedupeShopeeParentVariantRows(products);
+  console.log(
+    `[Shopee Channel Fetch] HOAN TAT ${allItems.length} item -> ${cleaned.length} dong (${variantItems} co phan loai) ${Date.now() - startedAt}ms`,
+  );
+  return { rows: cleaned, stats: { itemCount: allItems.length, rowCount: cleaned.length, variantItemCount: variantItems } };
+}
+
 async function runFullShopeeWarehouseSync(shopId: string, accessToken: string) {
   try {
-    const itemIds = await fetchAllShopeeItemIds(shopId, accessToken);
-    console.log(`[Shopee Product Sync] get_item_list: ${itemIds.length} item_id`);
-
-    const allItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds);
-    console.log(`[Shopee Product Sync] get_item_base_info: ${allItems.length} item`);
-
-    const products: any[] = [];
-    const startedAt = Date.now();
-    let variantItems = 0;
-
-    for (let idx = 0; idx < allItems.length; idx++) {
-      const item = allItems[idx];
-      const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
-      if (r.modelCount > 0) variantItems++;
-      products.push(...r.rows);
-      if (idx % 20 === 0 || idx === allItems.length - 1) {
-        console.log(`[Shopee Product Sync] ${idx + 1}/${allItems.length} item -> ${products.length} dong kho`);
-      }
-      await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
-    }
-
-    const cleaned = dedupeShopeeParentVariantRows(products);
-    saveProducts(cleaned);
-    console.log(`[Shopee Product Sync] HOAN TAT ${allItems.length} item -> ${cleaned.length} dong (${variantItems} co phan loai) ${Date.now() - startedAt}ms`);
-
-    return {
-      shopId,
-      products: cleaned,
-      stats: {
-        itemCount: allItems.length,
-        rowCount: cleaned.length,
-        variantItemCount: variantItems,
-      },
-    };
+    const { rows, stats } = await fetchShopeeListingRowsFromApi(shopId, accessToken);
+    saveProducts(rows);
+    return { shopId, products: rows, stats };
   } catch (err) {
     const { message, details } = extractHttpClientError(err);
     console.error("[Shopee Product Sync] runFullShopeeWarehouseSync failed:", message, details);
@@ -3683,6 +3681,114 @@ function upsertChannelListingsFromShopeeSync(
   }
   console.log(`[Channel Listings] Đã lưu ${merged.length} liên kết sàn sau đồng bộ Shopee shop_id=${shopId}`);
   return merged;
+}
+
+/** Chỉ lưu sản phẩm sàn từ Shopee — KHÔNG so khớp SKU với Kho chính. */
+function upsertChannelListingsFromShopeeFetch(
+  syncedProducts: any[],
+  shopId: string,
+  shopName: string,
+): any[] {
+  const existing = readChannelListingsDb();
+  const byKey = new Map<string, any>();
+
+  for (const listing of existing) {
+    if (listing?.platform && listing?.channelId) {
+      byKey.set(`${listing.platform}::${listing.channelId}`, listing);
+    }
+  }
+
+  for (const item of syncedProducts) {
+    const shopeeChannelId = String(item.shopeeId || item.shopeeItemId || "").trim();
+    if (!shopeeChannelId) continue;
+
+    const key = `shopee::${shopeeChannelId}`;
+    const prev = byKey.get(key);
+    const keepExistingLink = prev?.status === "success" && prev?.linkedProductId;
+
+    byKey.set(key, sanitizeChannelListingRow({
+      id: prev?.id || `cl-shopee-${shopeeChannelId}`,
+      title: String(item.title || ""),
+      sku: String(item.sku || ""),
+      imageUrl: item.avatarUrl || item.imageUrl,
+      channelId: shopeeChannelId,
+      platform: "shopee",
+      shopName,
+      shopId: String(shopId),
+      status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
+      linkedProductId: keepExistingLink ? prev.linkedProductId : undefined,
+    }));
+  }
+
+  const merged = Array.from(byKey.values());
+  writeChannelListingsDb(merged);
+  console.log(`[Shopee Channel Fetch] Đã lưu ${merged.length} sản phẩm sàn (không auto-map SKU) shop_id=${shopId}`);
+  return merged;
+}
+
+/** Liên kết tự động theo SKU trùng khớp chính xác — chỉ xử lý nội bộ DB. */
+function autoLinkChannelListingsByExactSku(): {
+  linkedCount: number;
+  listings: any[];
+  alreadyLinked: number;
+  unlinkedRemaining: number;
+} {
+  const listings = readChannelListingsDb();
+  const masterProducts = loadProducts();
+  const skuIndex = new Map<string, any>();
+
+  for (const p of masterProducts) {
+    const sku = String(p.sku || "").trim().toLowerCase();
+    if (sku && !skuIndex.has(sku)) skuIndex.set(sku, p);
+  }
+
+  let linkedCount = 0;
+  let alreadyLinked = 0;
+  const products = loadProducts();
+  const productIndex = new Map(products.map((p: any) => [String(p.id), p]));
+
+  const updated = listings.map((listing: any) => {
+    if (listing.status === "success" && listing.linkedProductId) {
+      alreadyLinked++;
+      return listing;
+    }
+
+    const sku = String(listing.sku || "").trim().toLowerCase();
+    if (!sku) return listing;
+
+    const match = skuIndex.get(sku);
+    if (!match) return listing;
+
+    linkedCount++;
+    const linkedListing = sanitizeChannelListingRow({
+      ...listing,
+      status: "success",
+      linkedProductId: String(match.id),
+    });
+
+    const master = productIndex.get(String(match.id));
+    if (master && listing.platform === "shopee") {
+      const channels: string[] = Array.isArray(master.channels) ? [...master.channels] : [];
+      if (!channels.includes("shopee")) channels.push("shopee");
+      productIndex.set(String(match.id), {
+        ...master,
+        channels,
+        shopeeId: listing.channelId,
+        shopeeItemId: listing.channelId,
+      });
+    }
+
+    return linkedListing;
+  });
+
+  if (linkedCount > 0) {
+    saveProducts(Array.from(productIndex.values()));
+    writeChannelListingsDb(updated);
+  }
+
+  const unlinkedRemaining = updated.filter((l: any) => l.status !== "success" || !l.linkedProductId).length;
+  console.log(`[Auto Link SKU] Đã liên kết ${linkedCount} sản phẩm (còn ${unlinkedRemaining} chưa liên kết)`);
+  return { linkedCount, listings: updated, alreadyLinked, unlinkedRemaining };
 }
 
 const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
@@ -6138,6 +6244,85 @@ async function startServer() {
     } catch (error: any) {
       console.error("[Shopee Force-Sync] \u274C Exception:", error);
       return res.status(500).json({ step: "exception", ok: false, error: error.message || String(error) });
+    }
+  });
+
+  // API 1: Kéo dữ liệu sản phẩm sàn từ Shopee — chỉ lưu DB, không map SKU.
+  app.post("/api/shopee/channel-products/fetch", authMiddleware, async (req, res) => {
+    try {
+      if (!isShopeeConfigValid()) {
+        return res.status(500).json({
+          success: false,
+          message: "SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY trong .env chưa hợp lệ.",
+          details: "invalid_partner_config",
+        });
+      }
+
+      const shopId = resolveShopeeTokenShopId(req.body?.shopId);
+      if (!shopId) {
+        return res.status(404).json({
+          success: false,
+          message: "Chưa có shop Shopee nào được ủy quyền.",
+          details: "no_shopee_shop_linked",
+        });
+      }
+
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        return res.status(401).json({
+          success: false,
+          message: `Chưa có access_token hợp lệ cho shop_id=${shopId}.`,
+          details: "no_valid_access_token",
+        });
+      }
+
+      const shopName = resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
+      console.log(`[Shopee Channel Fetch] Bắt đầu kéo sản phẩm sàn shop_id=${shopId}...`);
+      const { rows, stats } = await fetchShopeeListingRowsFromApi(shopId, accessToken);
+      const listings = upsertChannelListingsFromShopeeFetch(rows, shopId, shopName);
+
+      return res.json({
+        success: true,
+        message: `Đã tải về thành công ${rows.length} sản phẩm từ sàn Shopee`,
+        fetchedCount: rows.length,
+        savedCount: listings.length,
+        shopId,
+        shopName,
+        stats,
+        listings,
+      });
+    } catch (error: unknown) {
+      console.error("[Shopee Channel Fetch] Exception:", error);
+      const { message, details } = extractHttpClientError(error);
+      const isRate = /429|rate.?limit|too many request/i.test(message);
+      if (!res.headersSent) {
+        return res.status(isRate ? 429 : 500).json({
+          success: false,
+          message,
+          details,
+        });
+      }
+    }
+  });
+
+  // API 2: Liên kết tự động theo SKU — chỉ xử lý nội bộ DB.
+  app.post("/api/shopee/channel-products/auto-link", authMiddleware, async (_req, res) => {
+    try {
+      const result = autoLinkChannelListingsByExactSku();
+      return res.json({
+        success: true,
+        message:
+          result.linkedCount > 0
+            ? `Đã liên kết thành công ${result.linkedCount} sản phẩm`
+            : "Không tìm thấy SKU trùng khớp để liên kết tự động",
+        linkedCount: result.linkedCount,
+        alreadyLinked: result.alreadyLinked,
+        unlinkedRemaining: result.unlinkedRemaining,
+        listings: result.listings,
+      });
+    } catch (error: unknown) {
+      console.error("[Auto Link SKU] Exception:", error);
+      return sendApiErrorJson(res, error, 500);
     }
   });
 
