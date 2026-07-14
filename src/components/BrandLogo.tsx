@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { APP_TITLE, APP_TAGLINE, LOGO_PNG, LOGO_SVG } from '../config/brand';
+import { APP_TITLE, APP_TAGLINE, LOGO_SVG } from '../config/brand';
 
 type BrandLogoProps = {
   size?: number;
@@ -7,17 +7,18 @@ type BrandLogoProps = {
 };
 
 export default function BrandLogo({ size = 40, className = '' }: BrandLogoProps) {
-  const [src, setSrc] = useState(LOGO_PNG);
+  const [useFallback, setUseFallback] = useState(false);
 
   return (
     <img
-      src={src}
-      alt={APP_TITLE}
+      src={useFallback ? LOGO_SVG : '/logo.png'}
+      alt="Logo"
       width={size}
       height={size}
-      className={`object-contain shrink-0 ${className}`}
+      className={`block object-contain shrink-0 ${className}`}
+      style={{ width: size, height: size, maxWidth: size, maxHeight: size }}
       onError={() => {
-        if (src !== LOGO_SVG) setSrc(LOGO_SVG);
+        if (!useFallback) setUseFallback(true);
       }}
     />
   );
@@ -36,7 +37,7 @@ export function BrandHeader({
 }: BrandHeaderProps) {
   return (
     <div className="flex items-center gap-3 min-w-0">
-      <BrandLogo size={logoSize} className="rounded-xl shadow-md shadow-indigo-500/15 bg-white/5" />
+      <BrandLogo size={logoSize} className="rounded-xl shadow-md shadow-indigo-500/15 bg-white/5 w-11 h-11" />
       <div className="min-w-0">
         <h1 className={`truncate ${titleClassName}`}>{APP_TITLE}</h1>
         <span className={taglineClassName}>{APP_TAGLINE}</span>

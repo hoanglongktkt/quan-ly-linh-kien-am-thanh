@@ -1010,10 +1010,10 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50/50 md:flex md:flex-row antialiased font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900">
       {/* Sidebar Navigation */}
-      <aside className="max-md:hidden md:flex md:w-64 md:flex-col shrink-0 md:sticky md:top-0 md:self-start md:max-h-screen md:overflow-y-auto bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
+      <aside className="sidebar-panel max-md:hidden md:flex md:w-64 md:flex-col shrink-0 sticky top-0 h-screen overflow-y-auto bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
         {/* Brand Header */}
-        <div className="p-6 border-b border-slate-800">
-          <BrandHeader />
+        <div className="p-6 border-b border-slate-800 shrink-0">
+          <BrandHeader logoSize={44} />
         </div>
 
         {/* Navigation Items */}
@@ -1100,7 +1100,7 @@ export default function App() {
         </nav>
 
         {/* Sidebar Footer */}
-        <div className="p-4 border-t border-slate-800 text-center space-y-1.5 text-[10px] text-slate-500 font-medium">
+        <div className="p-4 border-t border-slate-800 text-center space-y-1.5 text-[10px] text-slate-500 font-medium shrink-0">
           <p>{APP_TITLE}</p>
           <p>© 2026 Linh Kiện Âm Thanh</p>
         </div>

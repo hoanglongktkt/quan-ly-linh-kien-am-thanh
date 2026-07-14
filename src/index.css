@@ -43,6 +43,28 @@ body {
   overscroll-behavior-y: auto;
 }
 
+.sidebar-panel,
+#sidebar-panel {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(51 65 85) transparent;
+}
+
+.sidebar-panel::-webkit-scrollbar,
+#sidebar-panel::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-panel::-webkit-scrollbar-thumb,
+#sidebar-panel::-webkit-scrollbar-thumb {
+  background: rgb(51 65 85);
+  border-radius: 999px;
+}
+
+.sidebar-panel::-webkit-scrollbar-track,
+#sidebar-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 /* Chrome / PC — thanh cuộn mỏng */
 @media (min-width: 1440px) {
   html {
