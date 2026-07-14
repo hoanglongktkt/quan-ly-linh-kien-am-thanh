@@ -3445,9 +3445,6 @@ function writeChannelListingsDb(rows: any[]): void {
       throw new Error(`File không tồn tại sau khi ghi: ${CHANNEL_LISTINGS_DB_PATH}`);
     }
     console.log(`[Channel Listings DB] Đã ghi ${rows.length} dòng -> ${CHANNEL_LISTINGS_DB_PATH}`);
-    // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H3',location:'server.ts:writeChannelListingsDb',message:'channel listings written',data:{count:rows.length,path:CHANNEL_LISTINGS_DB_PATH,appRoot:APP_ROOT,exists:fs.existsSync(CHANNEL_LISTINGS_DB_PATH)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
   } catch (error) {
     console.error(`[Channel Listings DB] Failed to write ${CHANNEL_LISTINGS_DB_PATH}:`, error);
     throw error;
@@ -3679,9 +3676,6 @@ function ensureChannelListingsDb(): any[] {
     try {
       writeChannelListingsDb(rebuilt);
       console.log(`[Channel Listings] Auto-rebuild ${rebuilt.length} dòng từ products.json`);
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H4',location:'server.ts:ensureChannelListingsDb',message:'auto-rebuilt mapping from products',data:{rebuiltCount:rebuilt.length,path:CHANNEL_LISTINGS_DB_PATH},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
     } catch (err: any) {
       console.error(`[Mapping GET] Lỗi lưu Database khi rebuild:`, err?.message || err);
       throw new Error(`Lỗi lưu Database: ${err?.message || String(err)}`);
@@ -4591,9 +4585,6 @@ async function startServer() {
   app.post("/api/products/inventory-balance", authMiddleware, async (req, res) => {
     try {
       const items = req.body?.items;
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'pre-fix',hypothesisId:'H1-H3',location:'server.ts:inventory-balance:entry',message:'balance request received',data:{itemsCount:Array.isArray(items)?items.length:0,sampleItems:Array.isArray(items)?items.slice(0,3):null,shopId:req.body?.shopId||null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ success: false, message: "Chưa có dòng tồn kho nào để cân bằng." });
       }
@@ -4629,9 +4620,6 @@ async function startServer() {
       const unlinkedShopee = updatedProducts.filter(
         (p: any) => p.channels?.includes("shopee") && !p.shopeeItemId
       );
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'pre-fix',hypothesisId:'H1-H2',location:'server.ts:inventory-balance:pre-save',message:'balance db update stats',data:{skuMapSize:skuStockMap.size,updatedCount,unlinkedShopeeCount:unlinkedShopee.length,unlinkedSkus:unlinkedShopee.map((p:any)=>p.sku),requestedSkus:[...skuStockMap.keys()]},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       if (unlinkedShopee.length > 0) {
         return res.status(400).json({
           success: false,
@@ -4643,9 +4631,6 @@ async function startServer() {
       console.log(`[Inventory Balance] Cập nhật kho gốc ${updatedCount} SKU`);
 
       const shopeeResult = await pushStockUpdatesToShopee(updatedProducts, req.body?.shopId);
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'pre-fix',hypothesisId:'H3-H4',location:'server.ts:inventory-balance:shopee',message:'shopee push result',data:{ok:shopeeResult.ok,pushed:shopeeResult.pushed,errors:shopeeResult.errors,warnings:shopeeResult.warnings,staleSkus:shopeeResult.staleSkus},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
 
       if (shopeeResult.staleSkus.length > 0) {
         const staleSet = new Set(shopeeResult.staleSkus.map((s) => s.toLowerCase()));
@@ -6068,9 +6053,6 @@ async function startServer() {
           message: saveErr?.message || "Lỗi lưu Database khi đồng bộ mapping.",
         });
       }
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H2',location:'server.ts:shopee/products/sync',message:'sync completed with listings',data:{productCount:result.products?.length||0,listingsCount:listings.length,dbPath:CHANNEL_LISTINGS_DB_PATH,dbExists:fs.existsSync(CHANNEL_LISTINGS_DB_PATH)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return res.json({ ...result, listings, listingsCount: listings.length });
     } catch (error: any) {
       console.error("[Shopee Product Sync] Exception:", error);
@@ -7727,9 +7709,6 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     try {
       const listings = ensureChannelListingsDb();
       console.log(`[Mapping Products] GET trả về ${listings.length} dòng từ DB (${CHANNEL_LISTINGS_DB_PATH})`);
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H4-H5',location:'server.ts:GET/mapping-products',message:'mapping GET response',data:{count:listings.length,dbPath:CHANNEL_LISTINGS_DB_PATH,dbExists:fs.existsSync(CHANNEL_LISTINGS_DB_PATH)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return res.json({ success: true, listings, count: listings.length });
     } catch (error: any) {
       console.error("[Mapping Products] GET lỗi:", error?.message || error);

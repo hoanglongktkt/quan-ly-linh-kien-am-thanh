@@ -196,9 +196,6 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           listingsHydratedRef.current = true;
           setListings(serverResult.rows);
           setMappingLoadError(null);
-          // #region agent log
-          fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix-v2',hypothesisId:'H5',location:'ProductLinking.tsx:load',message:'mapping loaded from server',data:{count:serverResult.rows.length,source:serverResult.source},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
           return;
         }
 
