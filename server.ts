@@ -3527,7 +3527,22 @@ function upsertChannelListingsFromShopeeSync(
   }
 
   const merged = Array.from(byKey.values());
-  writeChannelListingsDb(merged);
+  console.log(`[Mapping Save] Chuẩn bị upsert ${merged.length} dòng -> ${CHANNEL_LISTINGS_DB_PATH}`);
+  if (merged.length > 0) {
+    console.log(`[Mapping Save] Mẫu dữ liệu (2 dòng đầu):`, JSON.stringify(merged.slice(0, 2), null, 2));
+  }
+  try {
+    writeChannelListingsDb(merged);
+    const verified = readChannelListingsDb();
+    console.log(`[Mapping Save] Kết quả xác minh sau ghi: ${verified.length} dòng trong DB`);
+    if (merged.length > 0 && verified.length === 0) {
+      throw new Error("Ghi file thành công nhưng đọc lại được 0 dòng — kiểm tra đường dẫn APP_ROOT");
+    }
+  } catch (err: any) {
+    const errMsg = err?.message || String(err);
+    console.error(`[Mapping Save] Lỗi lưu Database: ${errMsg}`);
+    throw new Error(`Lỗi lưu Database: ${errMsg}`);
+  }
   console.log(`[Channel Listings] Đã lưu ${merged.length} liên kết sàn sau đồng bộ Shopee shop_id=${shopId}`);
   return merged;
 }
@@ -3656,16 +3671,33 @@ function rebuildChannelListingsFromProducts(): any[] {
 
 function ensureChannelListingsDb(): any[] {
   const existing = readChannelListingsDb();
+  console.log(`[Mapping GET] Đọc DB: ${existing.length} dòng từ ${CHANNEL_LISTINGS_DB_PATH} (exists=${fs.existsSync(CHANNEL_LISTINGS_DB_PATH)})`);
   if (existing.length > 0) return existing;
   const rebuilt = rebuildChannelListingsFromProducts();
+  console.log(`[Mapping GET] DB trống — rebuild từ products.json: ${rebuilt.length} dòng`);
   if (rebuilt.length > 0) {
-    writeChannelListingsDb(rebuilt);
-    console.log(`[Channel Listings] Auto-rebuild ${rebuilt.length} dòng từ products.json`);
-    // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H4',location:'server.ts:ensureChannelListingsDb',message:'auto-rebuilt mapping from products',data:{rebuiltCount:rebuilt.length,path:CHANNEL_LISTINGS_DB_PATH},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
+    try {
+      writeChannelListingsDb(rebuilt);
+      console.log(`[Channel Listings] Auto-rebuild ${rebuilt.length} dòng từ products.json`);
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H4',location:'server.ts:ensureChannelListingsDb',message:'auto-rebuilt mapping from products',data:{rebuiltCount:rebuilt.length,path:CHANNEL_LISTINGS_DB_PATH},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    } catch (err: any) {
+      console.error(`[Mapping GET] Lỗi lưu Database khi rebuild:`, err?.message || err);
+      throw new Error(`Lỗi lưu Database: ${err?.message || String(err)}`);
+    }
   }
   return rebuilt;
+}
+
+function hydrateChannelListingsOnBoot(): void {
+  try {
+    console.log(`[Boot] Khởi tạo mapping DB tại: ${CHANNEL_LISTINGS_DB_PATH}`);
+    const rows = ensureChannelListingsDb();
+    console.log(`[Boot] Mapping DB sẵn sàng: ${rows.length} dòng`);
+  } catch (err: any) {
+    console.error(`[Boot] Không thể khởi tạo mapping DB:`, err?.message || err);
+  }
 }
 
 function enrichOrderShopName(order: any): any {
@@ -6021,10 +6053,20 @@ async function startServer() {
       console.log(`[Shopee Product Sync] Bắt đầu đồng bộ kho cho shop_id=${shopId}...`);
       const result = await runFullShopeeWarehouseSync(shopId, accessToken);
       const shopName = resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
-      let listings = upsertChannelListingsFromShopeeSync(result.products, shopId, shopName);
-      if (listings.length === 0) {
-        listings = rebuildChannelListingsFromProducts();
-        if (listings.length > 0) writeChannelListingsDb(listings);
+      let listings: any[] = [];
+      try {
+        listings = upsertChannelListingsFromShopeeSync(result.products, shopId, shopName);
+        if (listings.length === 0) {
+          listings = rebuildChannelListingsFromProducts();
+          if (listings.length > 0) writeChannelListingsDb(listings);
+        }
+      } catch (saveErr: any) {
+        console.error("[Shopee Product Sync] Lỗi lưu mapping DB:", saveErr?.message || saveErr);
+        return res.status(500).json({
+          success: false,
+          error: "mapping_save_failed",
+          message: saveErr?.message || "Lỗi lưu Database khi đồng bộ mapping.",
+        });
       }
       // #region agent log
       fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H2',location:'server.ts:shopee/products/sync',message:'sync completed with listings',data:{productCount:result.products?.length||0,listingsCount:listings.length,dbPath:CHANNEL_LISTINGS_DB_PATH,dbExists:fs.existsSync(CHANNEL_LISTINGS_DB_PATH)},timestamp:Date.now()})}).catch(()=>{});
@@ -7690,8 +7732,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       // #endregion
       return res.json({ success: true, listings, count: listings.length });
     } catch (error: any) {
-      console.error("[Mapping Products] GET lỗi:", error);
-      return res.status(500).json({ success: false, error: error.message || "Đọc danh sách mapping thất bại" });
+      console.error("[Mapping Products] GET lỗi:", error?.message || error);
+      return res.status(500).json({
+        success: false,
+        message: `Lỗi đọc Database: ${error?.message || "Đọc danh sách mapping thất bại"}`,
+        error: error?.message || "read_failed",
+      });
     }
   });
 
@@ -7699,15 +7745,21 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     try {
       const incoming = req.body?.listings;
       if (!Array.isArray(incoming)) {
-        return res.status(400).json({ success: false, error: "listings_array_required" });
+        return res.status(400).json({ success: false, message: "Thiếu mảng listings trong request body." });
+      }
+      console.log(`[Mapping Save] PUT nhận ${incoming.length} dòng từ Frontend`);
+      if (incoming.length > 0) {
+        console.log(`[Mapping Save] Mẫu PUT (2 dòng đầu):`, JSON.stringify(incoming.slice(0, 2), null, 2));
       }
       const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
       writeChannelListingsDb(sanitized);
-      console.log(`[Mapping Products] Đã upsert ${sanitized.length} dòng vào channel_listings.json`);
+      const verified = readChannelListingsDb();
+      console.log(`[Mapping Save] PUT hoàn tất — xác minh ${verified.length} dòng trong DB`);
       return res.json({ success: true, count: sanitized.length, listings: sanitized });
     } catch (error: any) {
-      console.error("[Mapping Products] Upsert lỗi:", error);
-      return res.status(500).json({ success: false, error: error.message || "Lưu danh sách mapping thất bại" });
+      const errMsg = error?.message || String(error);
+      console.error("[Mapping Save] PUT lỗi:", errMsg);
+      return res.status(500).json({ success: false, message: `Lỗi lưu Database: ${errMsg}`, error: errMsg });
     }
   };
 
@@ -8024,6 +8076,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 
   if (process.env.PORT) {
     startAutoOrderSyncScheduler();
+    hydrateChannelListingsOnBoot();
     app.listen(PORT, () => {
       console.log(`Server optimized for cPanel Phusion Passenger: listening on ${PORT}`);
       console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
@@ -8032,6 +8085,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     });
   } else {
     startAutoOrderSyncScheduler();
+    hydrateChannelListingsOnBoot();
     app.listen(Number(PORT), "0.0.0.0", () => {
       console.log(`Server running locally on port ${PORT}`);
       console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);

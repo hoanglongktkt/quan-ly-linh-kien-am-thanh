@@ -105,11 +105,21 @@ function buildListingsFromProducts(products: Product[], shops: ConnectedShop[]):
 export default function ProductLinking({ products, shops, onAddLog, onUpdateProduct, onAddProduct, onRefreshProducts }: ProductLinkingProps) {
   const [listings, setListings] = useState<ChannelListing[]>([]);
   const [listingsLoading, setListingsLoading] = useState(true);
+  const [mappingLoadError, setMappingLoadError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   const listingsHydratedRef = useRef(false);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 4500);
+  }, []);
 
   const persistListings = useCallback(async (rows: ChannelListing[]): Promise<boolean> => {
     const token = localStorage.getItem('admin_token');
-    if (!token) return false;
+    if (!token) {
+      showToast('Phiên đăng nhập hết hạn. Vui lòng đăng nhập lại.');
+      return false;
+    }
     try {
       const res = await fetch('/api/mapping-products', {
         method: 'PUT',
@@ -119,17 +129,20 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         },
         body: JSON.stringify({ listings: rows }),
       });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        console.error('[ProductLinking] Lưu mapping thất bại:', errBody);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        const msg = data?.message || data?.error || 'Lỗi lưu mapping vào máy chủ.';
+        console.error('[ProductLinking] Lưu mapping thất bại:', data);
+        showToast(msg);
         return false;
       }
       return true;
     } catch (err) {
       console.error('[ProductLinking] Lưu mapping thất bại:', err);
+      showToast('Không thể lưu dữ liệu mapping. Vui lòng kiểm tra kết nối máy chủ.');
       return false;
     }
-  }, []);
+  }, [showToast]);
 
   const saveListings = useCallback(
     (updater: ChannelListing[] | ((prev: ChannelListing[]) => ChannelListing[])) => {
@@ -151,32 +164,43 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       const token = localStorage.getItem('admin_token');
       if (!token) {
         setListingsLoading(false);
+        const msg = 'Chưa đăng nhập — không thể tải dữ liệu mapping.';
+        setMappingLoadError(msg);
+        showToast(msg);
         return;
       }
       setListingsLoading(true);
+      setMappingLoadError(null);
       try {
         const res = await fetch('/api/mapping-products', {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.success) {
-          console.error('[ProductLinking] Tải mapping thất bại:', data);
+          const msg = data?.message || data?.error || 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
+          console.error('[ProductLinking] Tải mapping thất bại:', { status: res.status, data });
+          setMappingLoadError(msg);
+          showToast(msg);
           return;
         }
         const rows: ChannelListing[] = Array.isArray(data.listings) ? data.listings : [];
         listingsHydratedRef.current = true;
         setListings(rows);
+        setMappingLoadError(null);
         // #region agent log
         fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H5',location:'ProductLinking.tsx:load',message:'mapping loaded on mount',data:{count:rows.length,success:data.success},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
       } catch (err) {
+        const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
         console.error('[ProductLinking] Tải mapping thất bại:', err);
+        setMappingLoadError(msg);
+        showToast(msg);
       } finally {
         setListingsLoading(false);
       }
     };
     void load();
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     if (!listingsHydratedRef.current || listings.length > 0 || products.length === 0) return;
@@ -255,16 +279,6 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
   // Selected listings for bulk actions
   const [selectedListingIds, setSelectedListingIds] = useState<string[]>([]);
-  
-  // Toast notifications
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 3500);
-  };
 
   const handleCopyId = (id: string) => {
     navigator.clipboard.writeText(id);
@@ -582,7 +596,10 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       if (serverListings.length > 0) {
         listingsHydratedRef.current = true;
         setListings(serverListings);
-        await persistListings(serverListings);
+        const saved = await persistListings(serverListings);
+        if (!saved) {
+          throw new Error('Đồng bộ Shopee thành công nhưng lưu mapping vào Database thất bại.');
+        }
       } else {
         saveListings(prev => {
           const byKey = new Map<string, ChannelListing>(prev.map(l => [`${l.platform}::${l.channelId}`, l]));
@@ -851,6 +868,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       </div>
 
       {/* LISTINGS TABLE */}
+      {mappingLoadError && !listingsLoading && (
+        <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 font-semibold">
+          <AlertCircle className="w-5 h-5 shrink-0" />
+          <span>{mappingLoadError}</span>
+        </div>
+      )}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
