@@ -9,6 +9,7 @@ import ProductDetailModal, {
 import BulkEditModal from './BulkEditModal';
 import ProductLinking from './ProductLinking';
 import InventoryAudit from './InventoryAudit';
+import { parseJsonResponse } from '../utils/apiClient';
 import { 
   Plus, 
   Search, 
@@ -350,7 +351,12 @@ export default function ProductList({
         },
         body: JSON.stringify({ shopId: apiShopId })
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<{
+        products?: Product[];
+        shopId?: string;
+        message?: string;
+        error?: string;
+      }>(res);
 
       if (!res.ok) {
         throw new Error(data?.message || data?.error || 'Đồng bộ sản phẩm Shopee thất bại.');

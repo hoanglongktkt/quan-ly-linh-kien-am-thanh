@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Product, SyncLog, ConnectedShop } from '../types';
 import { purgeLegacyCatalogCache } from '../utils/catalogStorage';
+import { parseJsonResponse } from '../utils/apiClient';
 import { 
   Check, 
   AlertCircle, 
@@ -609,7 +610,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         },
         body: JSON.stringify({ shopId: shop.shopId })
       });
-      const data = await res.json();
+      const data = await parseJsonResponse<{
+        products?: Product[];
+        listings?: ChannelListing[];
+        message?: string;
+        error?: string;
+      }>(res);
 
       if (!res.ok) {
         throw new Error(data?.message || data?.error || 'Đồng bộ dữ liệu sản phẩm sàn thất bại.');

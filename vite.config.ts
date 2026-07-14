@@ -5,6 +5,23 @@ import {defineConfig} from 'vite';
 
 const BUILD_ID = process.env.VITE_BUILD_ID || new Date().toISOString().replace(/[:.]/g, '-');
 
+/** File/thư mục không cần HMR — tránh EBUSY trên Windows (zip/rar/temp đang bị khóa). */
+const DEV_WATCH_IGNORED = [
+  '**/node_modules/**',
+  '**/data/**',
+  '**/.git/**',
+  '**/dist/**',
+  '**/*.zip',
+  '**/*.rar',
+  '**/*.7z',
+  '**/*.tar',
+  '**/*.gz',
+  '**/*.rartemp',
+  '**/__rzi_*',
+  '**/*.tmp',
+  '**/*.temp',
+];
+
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
@@ -29,7 +46,13 @@ export default defineConfig(() => {
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      watch:
+        process.env.DISABLE_HMR === 'true'
+          ? null
+          : {
+              ignored: DEV_WATCH_IGNORED,
+              ...(process.platform === 'win32' ? { usePolling: true, interval: 1000 } : {}),
+            },
       strictPort: false,
       allowedHosts: [
         'localhost',

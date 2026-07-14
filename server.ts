@@ -1348,6 +1348,35 @@ function formatShopeeApiError(json: any, httpStatus?: number): string {
   return "Lỗi Shopee API không xác định";
 }
 
+/** Trích lỗi từ fetch/axios — ưu tiên error.response.data từ Shopee. */
+function extractHttpClientError(err: unknown): { message: string; details: string; shopeeDetail?: unknown } {
+  const anyErr = err as { response?: { data?: { message?: string; error?: string } }; message?: string };
+  const shopeeData = anyErr?.response?.data;
+  const message =
+    shopeeData?.message ||
+    shopeeData?.error ||
+    (err instanceof Error ? err.message : String(err)) ||
+    "Lỗi máy chủ nội bộ";
+  const details = shopeeData
+    ? JSON.stringify(shopeeData)
+    : err instanceof Error
+      ? err.toString()
+      : String(err);
+  return { message, details, shopeeDetail: shopeeData };
+}
+
+/** Luôn trả JSON lỗi — không để response treo hoặc crash process. */
+function sendApiErrorJson(res: any, err: unknown, status = 500) {
+  if (res.headersSent) return;
+  const { message, details, shopeeDetail } = extractHttpClientError(err);
+  return res.status(status).json({
+    success: false,
+    message,
+    details,
+    ...(shopeeDetail ? { shopee: shopeeDetail } : {}),
+  });
+}
+
 function isShopeeRateLimited(httpStatus: number, json?: any): boolean {
   if (httpStatus === 429) return true;
   const text = `${json?.error || ""} ${json?.message || ""}`.toLowerCase();
@@ -1405,7 +1434,8 @@ async function shopeeFetchJsonWithRetry(
         await new Promise((r) => setTimeout(r, baseDelayMs * (attempt + 1)));
         continue;
       }
-      throw err;
+      const netMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${context}: Không kết nối được Shopee API — ${netMsg}`);
     }
 
     let json: any;
@@ -1467,7 +1497,8 @@ async function shopeePostJsonWithRetry(
         await sleep(baseDelayMs * (attempt + 1));
         continue;
       }
-      throw err;
+      const netMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${context}: Không kết nối được Shopee API — ${netMsg}`);
     }
 
     let json: any;
@@ -2328,40 +2359,46 @@ async function fetchShopeeBaseItemsByIds(shopId: string, accessToken: string, it
 }
 
 async function runFullShopeeWarehouseSync(shopId: string, accessToken: string) {
-  const itemIds = await fetchAllShopeeItemIds(shopId, accessToken);
-  console.log(`[Shopee Product Sync] get_item_list: ${itemIds.length} item_id`);
+  try {
+    const itemIds = await fetchAllShopeeItemIds(shopId, accessToken);
+    console.log(`[Shopee Product Sync] get_item_list: ${itemIds.length} item_id`);
 
-  const allItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds);
-  console.log(`[Shopee Product Sync] get_item_base_info: ${allItems.length} item`);
+    const allItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds);
+    console.log(`[Shopee Product Sync] get_item_base_info: ${allItems.length} item`);
 
-  const products: any[] = [];
-  const startedAt = Date.now();
-  let variantItems = 0;
+    const products: any[] = [];
+    const startedAt = Date.now();
+    let variantItems = 0;
 
-  for (let idx = 0; idx < allItems.length; idx++) {
-    const item = allItems[idx];
-    const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
-    if (r.modelCount > 0) variantItems++;
-    products.push(...r.rows);
-    if (idx % 20 === 0 || idx === allItems.length - 1) {
-      console.log(`[Shopee Product Sync] ${idx + 1}/${allItems.length} item -> ${products.length} dong kho`);
+    for (let idx = 0; idx < allItems.length; idx++) {
+      const item = allItems[idx];
+      const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
+      if (r.modelCount > 0) variantItems++;
+      products.push(...r.rows);
+      if (idx % 20 === 0 || idx === allItems.length - 1) {
+        console.log(`[Shopee Product Sync] ${idx + 1}/${allItems.length} item -> ${products.length} dong kho`);
+      }
+      await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
     }
-    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+
+    const cleaned = dedupeShopeeParentVariantRows(products);
+    saveProducts(cleaned);
+    console.log(`[Shopee Product Sync] HOAN TAT ${allItems.length} item -> ${cleaned.length} dong (${variantItems} co phan loai) ${Date.now() - startedAt}ms`);
+
+    return {
+      shopId,
+      products: cleaned,
+      stats: {
+        itemCount: allItems.length,
+        rowCount: cleaned.length,
+        variantItemCount: variantItems,
+      },
+    };
+  } catch (err) {
+    const { message, details } = extractHttpClientError(err);
+    console.error("[Shopee Product Sync] runFullShopeeWarehouseSync failed:", message, details);
+    throw new Error(message);
   }
-
-  const cleaned = dedupeShopeeParentVariantRows(products);
-  saveProducts(cleaned);
-  console.log(`[Shopee Product Sync] HOAN TAT ${allItems.length} item -> ${cleaned.length} dong (${variantItems} co phan loai) ${Date.now() - startedAt}ms`);
-
-  return {
-    shopId,
-    products: cleaned,
-    stats: {
-      itemCount: allItems.length,
-      rowCount: cleaned.length,
-      variantItemCount: variantItems,
-    },
-  };
 }
 
 async function syncStockFromShopee(shopId: string, accessToken: string) {
@@ -5925,18 +5962,9 @@ async function startServer() {
         status: "pending",
         message: "Đồng bộ đang chạy ngầm — không chặn server, tránh quá tải RAM.",
       });
-    } catch (error: any) {
-      const errorMsg =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        error?.message ||
-        String(error);
-      console.error("[Shopee Sync] API fatal error:", error?.response?.data || errorMsg);
-      return res.status(500).json({
-        error: errorMsg,
-        message: errorMsg,
-        detail: error?.response?.data,
-      });
+    } catch (error: unknown) {
+      console.error("[Shopee Sync] API fatal error:", error);
+      return sendApiErrorJson(res, error, 500);
     }
   });
 
@@ -6033,18 +6061,9 @@ async function startServer() {
       console.log(`[Shopee API] Ho\xE0n t\u1EA5t k\xE9o \u0111\u01A1n: ${pulledCount} \u0111\u01A1n \u0111\xE3 \u0111\u01B0\u1EE3c c\u1EADp nh\u1EADt/th\xEAm m\u1EDBi.`);
 
       return res.json({ pulled: pulledCount, orders: [], errors: errors.length ? errors : undefined });
-    } catch (error: any) {
-      const errorMsg =
-        error?.response?.data?.message ||
-        error?.response?.data?.error ||
-        error?.message ||
-        String(error);
-      console.error("[Shopee API] /api/orders/pull fatal:", error?.response?.data || errorMsg);
-      return res.status(500).json({
-        error: errorMsg,
-        message: errorMsg,
-        detail: error?.response?.data,
-      });
+    } catch (error: unknown) {
+      console.error("[Shopee API] /api/orders/pull fatal:", error);
+      return sendApiErrorJson(res, error, 500);
     }
   });
 
@@ -6128,22 +6147,36 @@ async function startServer() {
   // this project's Product shape. The frontend replaces its entire local
   // product list with this response — no more hardcoded/mock demo products.
   app.post("/api/shopee/products/sync", authMiddleware, async (req, res) => {
-    if (!isShopeeConfigValid()) {
-      return res.status(500).json({ error: "invalid_partner_config", message: "SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY trong .env ch\u01B0a h\u1EE3p l\u1EC7." });
-    }
-
-    const tokens = loadShopeeTokens();
-    const shopId = resolveShopeeTokenShopId(req.body?.shopId);
-    if (!shopId) {
-      return res.status(404).json({ error: "no_shopee_shop_linked", message: "Chưa có shop Shopee nào được ủy quyền." });
-    }
-
-    const accessToken = await getValidShopeeAccessToken(shopId);
-    if (!accessToken) {
-      return res.status(401).json({ error: "no_valid_access_token", message: `Chưa có access_token hợp lệ cho shop_id=${shopId}.` });
-    }
-
     try {
+      if (!isShopeeConfigValid()) {
+        return res.status(500).json({
+          success: false,
+          error: "invalid_partner_config",
+          message: "SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY trong .env chưa hợp lệ.",
+          details: "invalid_partner_config",
+        });
+      }
+
+      const shopId = resolveShopeeTokenShopId(req.body?.shopId);
+      if (!shopId) {
+        return res.status(404).json({
+          success: false,
+          error: "no_shopee_shop_linked",
+          message: "Chưa có shop Shopee nào được ủy quyền.",
+          details: "no_shopee_shop_linked",
+        });
+      }
+
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        return res.status(401).json({
+          success: false,
+          error: "no_valid_access_token",
+          message: `Chưa có access_token hợp lệ cho shop_id=${shopId}.`,
+          details: "no_valid_access_token",
+        });
+      }
+
       console.log(`[Shopee Product Sync] Bắt đầu đồng bộ kho cho shop_id=${shopId}...`);
       const result = await runFullShopeeWarehouseSync(shopId, accessToken);
       const shopName = resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
@@ -6154,57 +6187,56 @@ async function startServer() {
           listings = rebuildChannelListingsFromProducts();
           if (listings.length > 0) writeChannelListingsDb(listings);
         }
-      } catch (saveErr: any) {
-        console.error("[Shopee Product Sync] Lỗi lưu mapping DB:", saveErr?.message || saveErr);
-        return res.status(500).json({
+      } catch (saveErr: unknown) {
+        console.error("[Shopee Product Sync] Lỗi lưu mapping DB:", saveErr);
+        return sendApiErrorJson(res, saveErr, 500);
+      }
+      return res.json({ success: true, ...result, listings, listingsCount: listings.length });
+    } catch (error: unknown) {
+      console.error("[Shopee Product Sync] Exception:", error);
+      const { message, details } = extractHttpClientError(error);
+      const isRate = /429|rate.?limit|too many request/i.test(message);
+      if (!res.headersSent) {
+        return res.status(isRate ? 429 : 500).json({
           success: false,
-          error: "mapping_save_failed",
-          message: saveErr?.message || "Lỗi lưu Database khi đồng bộ mapping.",
+          error: isRate ? "shopee_rate_limit" : "exception",
+          message,
+          details,
         });
       }
-      return res.json({ ...result, listings, listingsCount: listings.length });
-    } catch (error: any) {
-      console.error("[Shopee Product Sync] Exception:", error);
-      const msg = error?.message || String(error);
-      const isRate = /429|rate.?limit|too many request/i.test(msg);
-      return res.status(isRate ? 429 : 500).json({
-        success: false,
-        error: isRate ? "shopee_rate_limit" : "exception",
-        message: msg,
-      });
     }
   });
 
   // Tải/refresh toàn bộ phân loại (model_list / model_sku) cho MỘT sản phẩm Shopee.
   app.post("/api/shopee/products/sync-item-variants", authMiddleware, async (req, res) => {
-    if (!isShopeeConfigValid()) {
-      return res.status(500).json({ error: "invalid_partner_config" });
-    }
-
-    const rawItemId = String(req.body?.itemId || req.body?.shopeeItemId || req.body?.productId || "");
-    const itemIdMatch = rawItemId.match(/(\d{6,})/);
-    if (!itemIdMatch) {
-      return res.status(400).json({ error: "itemId_required", message: "Không xác định được item_id Shopee." });
-    }
-    const itemId = Number(itemIdMatch[1]);
-
-    const shopId = resolveShopeeTokenShopId(req.body?.shopId);
-    if (!shopId) {
-      return res.status(404).json({ error: "no_shopee_shop", message: "Chưa có shop Shopee được ủy quyền." });
-    }
-
-    const accessToken = await getValidShopeeAccessToken(shopId);
-    if (!accessToken) {
-      return res.status(401).json({ error: "no_valid_access_token" });
-    }
-
     try {
+      if (!isShopeeConfigValid()) {
+        return res.status(500).json({ success: false, error: "invalid_partner_config", message: "Cấu hình Shopee Partner không hợp lệ.", details: "invalid_partner_config" });
+      }
+
+      const rawItemId = String(req.body?.itemId || req.body?.shopeeItemId || req.body?.productId || "");
+      const itemIdMatch = rawItemId.match(/(\d{6,})/);
+      if (!itemIdMatch) {
+        return res.status(400).json({ success: false, error: "itemId_required", message: "Không xác định được item_id Shopee.", details: "itemId_required" });
+      }
+      const itemId = Number(itemIdMatch[1]);
+
+      const shopId = resolveShopeeTokenShopId(req.body?.shopId);
+      if (!shopId) {
+        return res.status(404).json({ success: false, error: "no_shopee_shop", message: "Chưa có shop Shopee được ủy quyền.", details: "no_shopee_shop" });
+      }
+
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        return res.status(401).json({ success: false, error: "no_valid_access_token", message: "Chưa có access_token hợp lệ.", details: "no_valid_access_token" });
+      }
+
       const { variantProducts, error, modelCount } = await fetchShopeeItemVariants(shopId, accessToken, itemId);
       if (error && variantProducts.length === 0) {
-        return res.status(400).json({ error, message: error });
+        return res.status(400).json({ success: false, error, message: error, details: String(error) });
       }
       if (variantProducts.length === 0) {
-        return res.status(404).json({ error: "no_variants_found", message: "Không lấy được phân loại từ Shopee." });
+        return res.status(404).json({ success: false, error: "no_variants_found", message: "Không lấy được phân loại từ Shopee.", details: "no_variants_found" });
       }
 
       const allProducts = loadProducts();
@@ -6213,15 +6245,16 @@ async function startServer() {
 
       console.log(`[Shopee Variant Sync] item_id=${itemId} -> ${variantProducts.length} dong (modelCount=${modelCount})`);
       return res.json({
+        success: true,
         itemId: String(itemId),
         variantCount: variantProducts.length,
         modelCount,
         variants: variantProducts,
         products: merged,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[Shopee Variant Sync] Exception:", err);
-      return res.status(500).json({ error: "exception", message: err.message || String(err) });
+      return sendApiErrorJson(res, err, 500);
     }
   });
 
@@ -8139,11 +8172,34 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     return res.send(fs.readFileSync(filePath));
   });
 
+  app.use("/api", (req, res) => {
+    res.status(404).json({
+      success: false,
+      message: `API không tồn tại: ${req.method} ${req.originalUrl}`,
+      details: "not_found",
+    });
+  });
+
+  app.use((err: unknown, req: any, res: any, _next: any) => {
+    if (err instanceof SyntaxError && err && typeof err === "object" && "body" in err) {
+      return res.status(400).json({
+        success: false,
+        message: "JSON body không hợp lệ",
+        details: err.message,
+      });
+    }
+    console.error("[Express] Unhandled error:", req.method, req.originalUrl, err);
+    return sendApiErrorJson(res, err, 500);
+  });
+
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
+    });
+    vite.watcher.on("error", (err: Error) => {
+      console.warn("[Vite] Watcher error (bỏ qua, server vẫn chạy):", err.message);
     });
     app.use(vite.middlewares);
   } else {
@@ -8160,6 +8216,13 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       },
     }));
     app.get("*", (req, res) => {
+      if (req.path.startsWith("/api/")) {
+        return res.status(404).json({
+          success: false,
+          message: `API không tồn tại: ${req.method} ${req.path}`,
+          details: "not_found",
+        });
+      }
       if (req.path.startsWith("/labels/")) {
         return res.status(404).type("text/plain").send("Không tìm thấy file vận đơn.");
       }
@@ -8188,5 +8251,13 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     });
   }
 }
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[Server] unhandledRejection:", reason);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[Server] uncaughtException:", err);
+});
 
 startServer();

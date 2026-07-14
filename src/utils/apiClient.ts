@@ -131,6 +131,11 @@ export async function parseJsonResponse<T = Record<string, unknown>>(
   const contentType = response.headers.get('content-type') || '';
   const trimmed = text.trimStart();
 
+  if (trimmed.startsWith('<') || trimmed.startsWith('<!DOCTYPE')) {
+    const htmlHint = `Server trả về HTML thay vì JSON (HTTP ${response.status}) — backend có thể bị crash, timeout hoặc proxy lỗi.`;
+    throw new Error(extractApiErrorMessage(text, htmlHint));
+  }
+
   if (!response.ok) {
     const fallback = `HTTP ${response.status}: ${response.statusText || 'Lỗi API'}`;
     const msg = extractApiErrorMessage(text, fallback);
@@ -139,8 +144,7 @@ export async function parseJsonResponse<T = Record<string, unknown>>(
 
   if (
     !contentType.includes('application/json') &&
-    (trimmed.startsWith('<') ||
-      trimmed.includes('503 Service Unavailable') ||
+    (trimmed.includes('503 Service Unavailable') ||
       trimmed.includes('The page could not be found'))
   ) {
     throw new Error(extractApiErrorMessage(text, `Phản hồi không hợp lệ (HTTP ${response.status})`));
@@ -148,11 +152,12 @@ export async function parseJsonResponse<T = Record<string, unknown>>(
 
   try {
     return (text ? JSON.parse(text) : {}) as T;
-  } catch {
+  } catch (parseErr) {
+    const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
     throw new Error(
       response.ok
-        ? `Phản hồi API không hợp lệ: ${text.slice(0, 120)}`
-        : extractApiErrorMessage(text, `Phản hồi API không hợp lệ (HTTP ${response.status})`),
+        ? `Phản hồi API không hợp lệ: ${parseMsg} — ${text.slice(0, 120)}`
+        : extractApiErrorMessage(text, `Phản hồi API không hợp lệ (HTTP ${response.status}): ${parseMsg}`),
     );
   }
 }
