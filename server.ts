@@ -1330,19 +1330,28 @@ const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
 const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1000;
 /** Delay tối thiểu giữa mỗi lần gọi API sản phẩm Shopee */
 const SHOPEE_PRODUCT_API_DELAY_MS = 1000;
-/** Số item mỗi trang get_item_list — giữ nhỏ để tránh HTTP 413. */
-const SHOPEE_ITEM_LIST_PAGE_SIZE = 20;
+/** Số item mỗi trang get_item_list — giữ nhỏ để tránh HTTP 413 / OOM cPanel. */
+const SHOPEE_ITEM_LIST_PAGE_SIZE = 10;
 /** Kích thước gói sản phẩm — xử lý xong 1 gói nghỉ batchPause */
-const SHOPEE_PRODUCT_BATCH_SIZE = 20;
-/** Nghỉ 2–3s giữa các gói 20 sản phẩm */
+const SHOPEE_PRODUCT_BATCH_SIZE = 10;
+/** Nghỉ 2–3s giữa các gói sản phẩm */
 const SHOPEE_PRODUCT_BATCH_PAUSE_MS = 2500;
-/** get_item_base_info: tối đa 50/item_id — dùng 20 để giảm tải CPU */
-const SHOPEE_PRODUCT_BASE_INFO_BATCH = 20;
+/** get_item_base_info: batch cực nhỏ (≤10) — tránh spike RAM / cagefs_enter Unable to fork */
+const SHOPEE_PRODUCT_BASE_INFO_BATCH = 10;
+/** Micro-batch upsert Mapping — tối đa 10 item Shopee / lần ghi DB */
+const CHANNEL_FETCH_MICRO_BATCH = 10;
+/** Nhường event loop giữa mỗi item/batch — tránh CPU kill trên CloudLinux */
+const CHANNEL_FETCH_YIELD_MS = 50;
 const SHOPEE_API_MAX_RETRY = 5;
 const SHOPEE_API_RETRY_BASE_MS = 1500;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Nhường CPU cho OS (Event Loop Yielding) — bắt buộc trên cPanel/CloudLinux. */
+async function yieldEventLoop(ms: number = CHANNEL_FETCH_YIELD_MS): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 function shopeeExponentialBackoffMs(attempt: number, baseMs = SHOPEE_API_RETRY_BASE_MS): number {
@@ -1826,7 +1835,11 @@ async function shopeeGetItemBaseInfo(shopId: string, accessToken: string, itemId
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
   const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} (${itemIds.length} items)`);
-  console.log(`[Shopee API] GET ${apiPath} (${itemIds.length} items) -> HTTP ${httpStatus}:`, JSON.stringify(json));
+  // Không dump toàn bộ response vào log (dễ OOM / fork fail trên cPanel).
+  const itemCount = asShopeeArray(json?.response?.item_list).length;
+  console.log(
+    `[Shopee API] GET ${apiPath} (${itemIds.length} ids) -> HTTP ${httpStatus}, items=${itemCount}, error=${json?.error || "none"}`
+  );
   if (json.error) {
     json.message = json.message || formatShopeeApiError(json, httpStatus);
     console.error(`[Shopee API] Lỗi get_item_base_info: ${json.error} — ${json.message}`);
@@ -2972,9 +2985,8 @@ async function processShopeeItemsToListingRows(
   let variantItemCount = 0;
   const safeItems = asShopeeArray(items).filter((it) => it != null && it.item_id != null);
 
-  // for...of + await — KHÔNG dùng forEach(async) (unhandled rejection).
-  for (let i = 0; i < safeItems.length; i++) {
-    const item = safeItems[i];
+  // Strict sequential for...of — CẤM Promise.all / map(async).
+  for (const item of safeItems) {
     try {
       const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
       if (r.error && (!r.rows || r.rows.length === 0)) {
@@ -2998,9 +3010,7 @@ async function processShopeeItemsToListingRows(
       }
       skippedItems.push({ itemId: String(item?.item_id ?? "?"), reason });
     }
-    if (i < safeItems.length - 1) {
-      await sleep(Math.min(SHOPEE_PRODUCT_API_DELAY_MS, 400));
-    }
+    await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
   }
 
   return {
@@ -3048,6 +3058,7 @@ function resolveUpsertItemModelFromRow(item: any): { itemId: string; modelId: st
 /**
  * UPSERT incremental channel_listings theo khóa item_id + model_id.
  * Có rồi → cập nhật; chưa có → thêm. Không dùng insert/create thuần (tránh duplicate crash).
+ * Caller phải await và yield giữa các lần gọi (xem upsertChannelListingsBatchSequential).
  */
 function upsertChannelListingsBatch(
   batchRows: any[],
@@ -3129,6 +3140,22 @@ function upsertChannelListingsBatch(
   }
 }
 
+/** UPSERT tuần tự + yield CPU sau mỗi lần ghi (tránh cagefs_enter Unable to fork). */
+async function upsertChannelListingsBatchSequential(
+  batchRows: any[],
+  shopId: string,
+  shopName: string
+): Promise<number> {
+  const saved = upsertChannelListingsBatch(batchRows, shopId, shopName);
+  await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+  return saved;
+}
+
+/**
+ * Pull 1 trang Shopee → xử lý STRICT SEQUENCE: micro-batch ≤10 id,
+ * mỗi item sync + upsert DB xong 100% rồi mới sang item tiếp (có yield 50ms).
+ * CẤM Promise.all / map(async).
+ */
 async function pullShopeeChannelListingsPage(
   shopId: string,
   accessToken: string,
@@ -3162,23 +3189,54 @@ async function pullShopeeChannelListingsPage(
       };
     }
 
-    const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, page.itemIds);
-    const { rows, skippedItems, variantItemCount } = await processShopeeItemsToListingRows(
-      shopId,
-      accessToken,
-      baseItems
-    );
     let rowsSaved = 0;
-    try {
-      rowsSaved = upsertChannelListingsBatch(rows, shopId, shopName);
-    } catch (saveErr: unknown) {
-      const msg = saveErr instanceof Error ? saveErr.message : String(saveErr);
-      console.error(`[Shopee Channel Fetch] Lưu DB thất bại offset=${offset}:`, msg);
-      throw new Error(`Lưu channel_listings thất bại: ${msg}`);
+    let rowsInPage = 0;
+    let variantItemCount = 0;
+    const skippedItems: { itemId: string; reason: string }[] = [];
+    const allIds = asShopeeArray(page.itemIds).filter((n) => Number.isFinite(Number(n)) && Number(n) > 0);
+
+    // Micro-batch ≤10 id — tuần tự tuyệt đối, không gom cả trang vào RAM.
+    for (let batchStart = 0; batchStart < allIds.length; batchStart += CHANNEL_FETCH_MICRO_BATCH) {
+      const idBatch = allIds.slice(batchStart, batchStart + CHANNEL_FETCH_MICRO_BATCH);
+      const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, idBatch);
+      await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+
+      for (const item of asShopeeArray(baseItems)) {
+        if (!item || item.item_id == null) continue;
+        try {
+          const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
+          if (r.error && (!r.rows || r.rows.length === 0)) {
+            skippedItems.push({ itemId: String(item.item_id), reason: r.error });
+          } else {
+            if (r.modelCount > 0) variantItemCount++;
+            const rows = asShopeeArray(r.rows);
+            rowsInPage += rows.length;
+            // Await upsert dứt điểm TỪNG sản phẩm trước khi sang item tiếp theo.
+            rowsSaved += await upsertChannelListingsBatchSequential(rows, shopId, shopName);
+          }
+        } catch (itemErr: unknown) {
+          const reason = itemErr instanceof Error ? itemErr.message : String(itemErr);
+          console.error(`[Shopee Channel Fetch] item_id=${item?.item_id}: ${reason}`);
+          skippedItems.push({ itemId: String(item?.item_id ?? "?"), reason });
+          try {
+            appendShopeeSyncErrorToDb({
+              itemId: item?.item_id,
+              shopId,
+              action: "channelFetch",
+              error: reason,
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+        await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+      }
+
+      await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
     }
 
     console.log(
-      `[Shopee Channel Fetch] Trang offset=${offset}: ${page.itemIds.length} item -> ${rows.length} dong, da luu ${rowsSaved} vao DB`,
+      `[Shopee Channel Fetch] Trang offset=${offset}: ${allIds.length} item -> ${rowsInPage} dong, da luu ${rowsSaved} vao DB (sequential)`,
     );
 
     return {
@@ -3188,8 +3246,8 @@ async function pullShopeeChannelListingsPage(
       pageIndex: page.pageIndex,
       rowsSaved,
       pageStats: {
-        itemsInPage: page.itemIds.length,
-        rowsInPage: rows.length,
+        itemsInPage: allIds.length,
+        rowsInPage,
         variantItemCount,
         skippedCount: skippedItems.length,
       },
@@ -3242,6 +3300,7 @@ async function pullShopeeChannelListingsAllPages(
         offset = page.nextOffset;
         if (!hasMore) break;
         if (page.pageStats.itemsInPage === 0 && !page.hasMore) break;
+        await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
         await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
       } catch (pageErr: unknown) {
         const reason = pageErr instanceof Error ? pageErr.message : String(pageErr);
