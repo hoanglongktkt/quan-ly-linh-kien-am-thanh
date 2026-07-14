@@ -102,6 +102,25 @@ function buildListingsFromProducts(products: Product[], shops: ConnectedShop[]):
   return rows;
 }
 
+async function fetchMappingListingsFromServer(token: string): Promise<{ rows: ChannelListing[]; source: string } | null> {
+  const endpoints = ['/api/mapping-products', '/api/channel-listings'];
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (res.ok && data.success !== false && Array.isArray(data.listings)) {
+        return { rows: data.listings as ChannelListing[], source: endpoint };
+      }
+      console.warn(`[ProductLinking] ${endpoint} failed:`, { status: res.status, data });
+    } catch (err) {
+      console.warn(`[ProductLinking] ${endpoint} network error:`, err);
+    }
+  }
+  return null;
+}
+
 export default function ProductLinking({ products, shops, onAddLog, onUpdateProduct, onAddProduct, onRefreshProducts }: ProductLinkingProps) {
   const [listings, setListings] = useState<ChannelListing[]>([]);
   const [listingsLoading, setListingsLoading] = useState(true);
@@ -172,24 +191,32 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       setListingsLoading(true);
       setMappingLoadError(null);
       try {
-        const res = await fetch('/api/mapping-products', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.success) {
-          const msg = data?.message || data?.error || 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
-          console.error('[ProductLinking] Tải mapping thất bại:', { status: res.status, data });
-          setMappingLoadError(msg);
-          showToast(msg);
+        const serverResult = await fetchMappingListingsFromServer(token);
+        if (serverResult) {
+          listingsHydratedRef.current = true;
+          setListings(serverResult.rows);
+          setMappingLoadError(null);
+          // #region agent log
+          fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix-v2',hypothesisId:'H5',location:'ProductLinking.tsx:load',message:'mapping loaded from server',data:{count:serverResult.rows.length,source:serverResult.source},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
           return;
         }
-        const rows: ChannelListing[] = Array.isArray(data.listings) ? data.listings : [];
-        listingsHydratedRef.current = true;
-        setListings(rows);
-        setMappingLoadError(null);
-        // #region agent log
-        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H5',location:'ProductLinking.tsx:load',message:'mapping loaded on mount',data:{count:rows.length,success:data.success},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
+
+        if (products.length > 0) {
+          const derived = buildListingsFromProducts(products, shops);
+          if (derived.length > 0) {
+            listingsHydratedRef.current = true;
+            setListings(derived);
+            setMappingLoadError(null);
+            void persistListings(derived);
+            showToast(`Đã tải ${derived.length} sản phẩm từ kho gốc (API mapping tạm thời không khả dụng).`);
+            return;
+          }
+        }
+
+        const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
+        setMappingLoadError(msg);
+        showToast(msg);
       } catch (err) {
         const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
         console.error('[ProductLinking] Tải mapping thất bại:', err);
@@ -200,12 +227,23 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       }
     };
     void load();
-  }, [showToast]);
+  }, [showToast, persistListings]);
 
   useEffect(() => {
-    if (!listingsHydratedRef.current || listings.length > 0 || products.length === 0) return;
+    if (listings.length > 0) {
+      setMappingLoadError(null);
+    }
+  }, [listings.length]);
+
+  useEffect(() => {
+    if (listingsHydratedRef.current || listings.length > 0 || products.length === 0) return;
     const derived = buildListingsFromProducts(products, shops);
-    if (derived.length > 0) saveListings(derived);
+    if (derived.length > 0) {
+      listingsHydratedRef.current = true;
+      setListings(derived);
+      setMappingLoadError(null);
+      saveListings(derived);
+    }
   }, [products, shops, listings.length, saveListings]);
 
   // Tab state matching Image 1
@@ -690,7 +728,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     // 2. Search query
     const matchesSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          item.channelId.includes(searchQuery);
+                          String(item.channelId || '').includes(searchQuery);
     if (!matchesSearch) return false;
 
     // 3. Shop filter
@@ -868,7 +906,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       </div>
 
       {/* LISTINGS TABLE */}
-      {mappingLoadError && !listingsLoading && (
+      {mappingLoadError && !listingsLoading && listings.length === 0 && (
         <div className="flex items-center gap-2 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 font-semibold">
           <AlertCircle className="w-5 h-5 shrink-0" />
           <span>{mappingLoadError}</span>

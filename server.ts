@@ -4243,7 +4243,7 @@ function processShopeeWebhookPayload(body: any): void {
 const authMiddleware = (req: any, res: any, next: any) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Y\xEAu c\u1EA7u cung c\u1EA5p Token x\xE1c th\u1EF1c h\u1EE3p l\u1EC7." });
+    return res.status(401).json({ success: false, error: "Yêu cầu cung cấp Token xác thực hợp lệ.", message: "Yêu cầu cung cấp Token xác thực hợp lệ." });
   }
   const token = authHeader.split(" ")[1];
   try {
@@ -4251,7 +4251,7 @@ const authMiddleware = (req: any, res: any, next: any) => {
     req.user = decoded;
     next();
   } catch (error) {
-    return res.status(401).json({ error: "Token kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c \u0111\xE3 h\u1EBFt h\u1EA1n." });
+    return res.status(401).json({ success: false, error: "Token không hợp lệ hoặc đã hết hạn.", message: "Token không hợp lệ hoặc đã hết hạn." });
   }
 };
 
