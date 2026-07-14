@@ -5615,8 +5615,65 @@ async function startServer() {
           ? "Vào Cài đặt → shop Shopee → bấm OAuth (shop_id phải khớp). Sau OAuth kiểm tra lastOAuth.success=true."
           : "Chưa có shop OAuth — bấm nút OAuth trong Cài đặt.",
       checkedAt: new Date().toISOString(),
+      routes: {
+        mappingProducts: true,
+      },
     });
   });
+
+  // ─── Mapping products — ĐẶT SỚM, TRƯỚC static / SPA catch-all ───
+  const handleMappingProductsGet = (_req: any, res: any) => {
+    try {
+      const listings = ensureChannelListingsDb();
+      console.log(
+        `[Mapping Products] GET trả về ${listings.length} dòng từ DB (${CHANNEL_LISTINGS_DB_PATH})`
+      );
+      return res.status(200).json({ success: true, listings, count: listings.length });
+    } catch (error: any) {
+      console.error("[Mapping Products] GET lỗi:", error?.message || error);
+      return res.status(500).json({
+        success: false,
+        message: `Lỗi đọc Database: ${error?.message || "Đọc danh sách mapping thất bại"}`,
+        error: error?.message || "read_failed",
+      });
+    }
+  };
+
+  const handleMappingProductsUpsert = (req: any, res: any) => {
+    try {
+      const incoming = req.body?.listings;
+      if (!Array.isArray(incoming)) {
+        return res.status(400).json({
+          success: false,
+          message: "Thiếu mảng listings trong request body.",
+        });
+      }
+      console.log(`[Mapping Save] UPSERT nhận ${incoming.length} dòng (${req.method})`);
+      const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
+      writeChannelListingsDb(sanitized);
+      const verified = readChannelListingsDb();
+      return res.status(200).json({
+        success: true,
+        count: sanitized.length,
+        listings: verified,
+      });
+    } catch (error: any) {
+      const errMsg = error?.message || String(error);
+      console.error("[Mapping Save] UPSERT lỗi:", errMsg);
+      return res.status(500).json({
+        success: false,
+        message: `Lỗi lưu Database: ${errMsg}`,
+        error: errMsg,
+      });
+    }
+  };
+
+  app.get("/api/mapping-products", authMiddleware, handleMappingProductsGet);
+  app.put("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
+  app.post("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
+  app.get("/api/channel-listings", authMiddleware, handleMappingProductsGet);
+  app.put("/api/channel-listings", authMiddleware, handleMappingProductsUpsert);
+  app.post("/api/channel-listings", authMiddleware, handleMappingProductsUpsert);
 
     // PDF vận đơn — public (tab in mới không gửi Bearer). LiteSpeed thường chặn /labels/* trước Node;
     // route /api/public/labels/* luôn vào Express.
@@ -9254,54 +9311,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 
   const PRODUCT_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "product_listings.json");
 
-  app.get("/api/channel-listings", authMiddleware, (_req, res) => {
-    try {
-      const listings = ensureChannelListingsDb();
-      return res.json({ success: true, listings, count: listings.length });
-    } catch (error: any) {
-      return res.status(500).json({ success: false, error: error.message || "Đọc danh sách liên kết thất bại" });
-    }
-  });
-
-  app.get("/api/mapping-products", authMiddleware, (_req, res) => {
-    try {
-      const listings = ensureChannelListingsDb();
-      console.log(`[Mapping Products] GET trả về ${listings.length} dòng từ DB (${CHANNEL_LISTINGS_DB_PATH})`);
-      return res.json({ success: true, listings, count: listings.length });
-    } catch (error: any) {
-      console.error("[Mapping Products] GET lỗi:", error?.message || error);
-      return res.status(500).json({
-        success: false,
-        message: `Lỗi đọc Database: ${error?.message || "Đọc danh sách mapping thất bại"}`,
-        error: error?.message || "read_failed",
-      });
-    }
-  });
-
-  const upsertMappingProductsHandler = (req: any, res: any) => {
-    try {
-      const incoming = req.body?.listings;
-      if (!Array.isArray(incoming)) {
-        return res.status(400).json({ success: false, message: "Thiếu mảng listings trong request body." });
-      }
-      console.log(`[Mapping Save] PUT nhận ${incoming.length} dòng từ Frontend`);
-      if (incoming.length > 0) {
-        console.log(`[Mapping Save] Mẫu PUT (2 dòng đầu):`, JSON.stringify(incoming.slice(0, 2), null, 2));
-      }
-      const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
-      writeChannelListingsDb(sanitized);
-      const verified = readChannelListingsDb();
-      console.log(`[Mapping Save] PUT hoàn tất — xác minh ${verified.length} dòng trong DB`);
-      return res.json({ success: true, count: sanitized.length, listings: sanitized });
-    } catch (error: any) {
-      const errMsg = error?.message || String(error);
-      console.error("[Mapping Save] PUT lỗi:", errMsg);
-      return res.status(500).json({ success: false, message: `Lỗi lưu Database: ${errMsg}`, error: errMsg });
-    }
-  };
-
-  app.put("/api/channel-listings", authMiddleware, upsertMappingProductsHandler);
-  app.put("/api/mapping-products", authMiddleware, upsertMappingProductsHandler);
+  // mapping-products / channel-listings đã đăng ký sớm sau /api/health (tránh SPA HTML).
 
   const readProductListingsDb = (): any[] => {
     try {
@@ -9626,18 +9636,20 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       },
     }));
     app.get("*", (req, res) => {
-      if (req.path.startsWith("/api/")) {
+      const pathName = String(req.path || req.originalUrl || "").split("?")[0];
+      if (pathName.startsWith("/api/") || pathName === "/api") {
         return res.status(404).json({
           success: false,
-          message: `API không tồn tại: ${req.method} ${req.path}`,
+          message: `API không tồn tại: ${req.method} ${pathName}`,
           details: "not_found",
         });
       }
-      if (req.path.startsWith("/labels/")) {
+      if (pathName.startsWith("/labels/")) {
         return res.status(404).type("text/plain").send("Không tìm thấy file vận đơn.");
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-      res.sendFile(path.join(distPath, "index.html"));
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
