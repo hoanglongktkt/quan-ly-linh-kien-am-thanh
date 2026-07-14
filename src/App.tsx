@@ -528,6 +528,12 @@ export default function App() {
           weight: updated.weight,
           unit: updated.unit,
           status: updated.status,
+          channels: updated.channels,
+          shopeeId: updated.shopeeId,
+          shopeeItemId: updated.shopeeItemId,
+          shopeeModelId: updated.shopeeModelId,
+          tiktokId: updated.tiktokId,
+          wooId: updated.wooId,
         }),
       });
       if (response.ok) {

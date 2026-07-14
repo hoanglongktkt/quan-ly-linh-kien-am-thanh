@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Product, SyncLog, ConnectedShop } from '../types';
 import { purgeLegacyCatalogCache } from '../utils/catalogStorage';
 import { 
@@ -51,25 +51,121 @@ interface ProductLinkingProps {
   products: Product[];
   shops: ConnectedShop[];
   onAddLog: (log: SyncLog) => void;
-  onUpdateProduct: (product: Product) => void;
+  onUpdateProduct: (product: Product, opts?: { save?: boolean }) => void;
   onAddProduct?: (product: Product) => void;
 }
 
+function applyProductChannelLink(masterProd: Product, listing: ChannelListing): Product {
+  const platform = listing.platform as Product['channels'][number];
+  const channels = masterProd.channels.includes(platform)
+    ? masterProd.channels
+    : [...masterProd.channels, platform];
+
+  const linked: Product = { ...masterProd, channels };
+
+  if (listing.platform === 'shopee') {
+    linked.shopeeId = listing.channelId;
+    linked.shopeeItemId = listing.channelId;
+  } else if (listing.platform === 'tiktok') {
+    linked.tiktokId = listing.channelId;
+  } else if (listing.platform === 'woocommerce') {
+    linked.wooId = listing.channelId;
+  }
+
+  return linked;
+}
+
+function buildListingsFromProducts(products: Product[], shops: ConnectedShop[]): ChannelListing[] {
+  const shopeeShop = shops.find((s) => s.platform === 'shopee');
+  const seen = new Set<string>();
+  const rows: ChannelListing[] = [];
+
+  for (const p of products) {
+    const channelId = p.shopeeItemId || p.shopeeId;
+    if (!channelId) continue;
+    const key = `shopee::${channelId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push({
+      id: `cl-shopee-${channelId}`,
+      title: p.title,
+      sku: p.sku,
+      imageUrl: p.avatarUrl || p.imageUrl,
+      channelId: String(channelId),
+      platform: 'shopee',
+      shopName: shopeeShop?.shopName || 'Shopee',
+      status: 'success',
+      linkedProductId: p.id,
+    });
+  }
+  return rows;
+}
+
 export default function ProductLinking({ products, shops, onAddLog, onUpdateProduct, onAddProduct }: ProductLinkingProps) {
-  // State for channel listings
   const [listings, setListings] = useState<ChannelListing[]>([]);
+  const listingsHydratedRef = useRef(false);
+
+  const persistListings = useCallback(async (rows: ChannelListing[]) => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+    try {
+      await fetch('/api/channel-listings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ listings: rows }),
+      });
+    } catch (err) {
+      console.error('[ProductLinking] Lưu liên kết thất bại:', err);
+    }
+  }, []);
+
+  const saveListings = useCallback(
+    (updater: ChannelListing[] | ((prev: ChannelListing[]) => ChannelListing[])) => {
+      setListings((prev) => {
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        void persistListings(next);
+        return next;
+      });
+    },
+    [persistListings]
+  );
 
   useEffect(() => {
     purgeLegacyCatalogCache();
   }, []);
 
   useEffect(() => {
-    if (products.length === 0) {
-      setListings([]);
-    }
-  }, [products.length]);
+    const load = async () => {
+      const token = localStorage.getItem('admin_token');
+      if (!token) return;
+      try {
+        const res = await fetch('/api/channel-listings', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const rows: ChannelListing[] = Array.isArray(data.listings) ? data.listings : [];
+        listingsHydratedRef.current = true;
+        if (rows.length > 0) {
+          setListings(rows);
+        }
+      } catch (err) {
+        console.error('[ProductLinking] Tải liên kết thất bại:', err);
+      }
+    };
+    void load();
+  }, []);
 
-  // Tab state matching Image 1: "Tất cả sản phẩm", "Liên kết thành công", "Chưa liên kết", "Liên kết thất bại"
+  useEffect(() => {
+    if (!listingsHydratedRef.current || listings.length > 0 || products.length === 0) return;
+    const derived = buildListingsFromProducts(products, shops);
+    if (derived.length > 0) saveListings(derived);
+  }, [products, shops, listings.length, saveListings]);
+
+  // Tab state matching Image 1
   const [activeSubTab, setActiveSubTab] = useState<'all' | 'success' | 'unlinked' | 'failed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedShopFilter, setSelectedShopFilter] = useState<string>('all');
@@ -161,7 +257,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     const listing = listings.find(l => l.id === listingId);
     if (!listing) return;
 
-    setListings(prev => prev.map(item => {
+    saveListings(prev => prev.map(item => {
       if (item.id === listingId) {
         return {
           ...item,
@@ -196,25 +292,19 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     const listing = listings.find(l => l.id === listingId);
     if (!masterProd || !listing) return;
 
-    setListings(prev => prev.map(item => {
+    saveListings(prev => prev.map(item => {
       if (item.id === listingId) {
         return {
           ...item,
           status: 'success',
           linkedProductId: masterProductId,
-          sku: item.sku || masterProd.sku // assign SKU if missing
+          sku: item.sku || masterProd.sku
         };
       }
       return item;
     }));
 
-    // Update master product sync channel if not there
-    if (!masterProd.channels.includes(listing.platform as any)) {
-      onUpdateProduct({
-        ...masterProd,
-        channels: [...masterProd.channels, listing.platform as any]
-      });
-    }
+    onUpdateProduct(applyProductChannelLink(masterProd, listing), { save: true });
 
     setMappingListing(null);
     showToast(`Liên kết thành công sàn [${listing.shopName}] với kho sản phẩm chính!`);
@@ -235,7 +325,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     if (item.sku) {
       const matchedBySku = products.find(p => p.sku.toLowerCase() === item.sku.toLowerCase());
       if (matchedBySku) {
-        setListings(prev => prev.map(listing => {
+        saveListings(prev => prev.map(listing => {
           if (listing.id === item.id) {
             return {
               ...listing,
@@ -245,6 +335,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           }
           return listing;
         }));
+        onUpdateProduct(applyProductChannelLink(matchedBySku, item), { save: true });
         showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" với SKU "${item.sku}"!`);
         onAddLog({
           id: `log-${Date.now()}`,
@@ -266,7 +357,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     });
 
     if (matchedByName) {
-      setListings(prev => prev.map(listing => {
+      saveListings(prev => prev.map(listing => {
         if (listing.id === item.id) {
           return {
             ...listing,
@@ -277,6 +368,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         }
         return listing;
       }));
+      onUpdateProduct(applyProductChannelLink(matchedByName, item), { save: true });
       showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" theo Tên tương đồng!`);
       onAddLog({
         id: `log-${Date.now()}`,
@@ -330,7 +422,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
     if (initAutoLink) {
       const primary = createdProducts[0];
-      setListings((prev) =>
+      saveListings((prev) =>
         prev.map((listing) =>
           listing.id === initListing.id
             ? {
@@ -396,7 +488,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     });
 
     if (linkCount > 0) {
-      setListings(newListings);
+      saveListings(newListings);
+      newListings.forEach((listing) => {
+        if (listing.status === 'success' && listing.linkedProductId) {
+          const master = products.find((p) => p.id === listing.linkedProductId);
+          if (master) onUpdateProduct(applyProductChannelLink(master, listing), { save: true });
+        }
+      });
       showToast(`⚡ Thành công: Đã liên kết tự động thành công ${linkCount} sản phẩm có SKU/Tên tương đồng!`);
       onAddLog({
         id: `log-${Date.now()}`,
@@ -460,7 +558,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         "⚙️ Đang đối chiếu với Kho chính & nạp lại danh sách Liên kết...",
       ]);
 
-      setListings(prev => {
+      saveListings(prev => {
         const byKey = new Map<string, ChannelListing>(prev.map(l => [`${l.platform}::${l.channelId}`, l]));
 
         realItems.forEach(item => {

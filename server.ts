@@ -3821,6 +3821,12 @@ function mergeProductPatch(product: any, patch: any): any {
   if (patch.category !== undefined) merged.category = String(patch.category);
   if (patch.unit !== undefined) merged.unit = String(patch.unit).trim();
   if (patch.status !== undefined) merged.status = patch.status;
+  if (patch.channels !== undefined && Array.isArray(patch.channels)) merged.channels = patch.channels;
+  if (patch.shopeeId !== undefined) merged.shopeeId = patch.shopeeId ? String(patch.shopeeId) : undefined;
+  if (patch.shopeeItemId !== undefined) merged.shopeeItemId = patch.shopeeItemId ? String(patch.shopeeItemId) : undefined;
+  if (patch.shopeeModelId !== undefined) merged.shopeeModelId = patch.shopeeModelId ? String(patch.shopeeModelId) : undefined;
+  if (patch.tiktokId !== undefined) merged.tiktokId = patch.tiktokId ? String(patch.tiktokId) : undefined;
+  if (patch.wooId !== undefined) merged.wooId = patch.wooId ? String(patch.wooId) : undefined;
   if (merged.stock <= 0 && merged.status !== "draft") merged.status = "out_of_stock";
   else if (merged.stock > 0 && merged.status === "out_of_stock") merged.status = "active";
   merged.lastSynced = new Date().toISOString();
@@ -7492,6 +7498,58 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
   });
 
   const PRODUCT_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "product_listings.json");
+  const CHANNEL_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "channel_listings.json");
+
+  const readChannelListingsDb = (): any[] => {
+    try {
+      if (!fs.existsSync(CHANNEL_LISTINGS_DB_PATH)) return [];
+      const raw = fs.readFileSync(CHANNEL_LISTINGS_DB_PATH, "utf-8");
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const writeChannelListingsDb = (rows: any[]) => {
+    const dir = path.dirname(CHANNEL_LISTINGS_DB_PATH);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(CHANNEL_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+  };
+
+  app.get("/api/channel-listings", authMiddleware, (_req, res) => {
+    try {
+      return res.json({ success: true, listings: readChannelListingsDb() });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, error: error.message || "Đọc danh sách liên kết thất bại" });
+    }
+  });
+
+  app.put("/api/channel-listings", authMiddleware, (req, res) => {
+    try {
+      const incoming = req.body?.listings;
+      if (!Array.isArray(incoming)) {
+        return res.status(400).json({ success: false, error: "listings_array_required" });
+      }
+      const sanitized = incoming.map((row: any) => ({
+        id: String(row.id || `cl-${row.platform}-${row.channelId}`),
+        title: String(row.title || ""),
+        sku: String(row.sku || ""),
+        imageUrl: row.imageUrl || undefined,
+        channelId: String(row.channelId || ""),
+        platform: row.platform || "shopee",
+        shopName: String(row.shopName || ""),
+        shopId: row.shopId ? String(row.shopId) : undefined,
+        status: row.status === "success" || row.status === "failed" ? row.status : "unlinked",
+        linkedProductId: row.linkedProductId ? String(row.linkedProductId) : undefined,
+        updatedAt: new Date().toISOString(),
+      }));
+      writeChannelListingsDb(sanitized);
+      return res.json({ success: true, count: sanitized.length, listings: sanitized });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, error: error.message || "Lưu danh sách liên kết thất bại" });
+    }
+  });
 
   const readProductListingsDb = (): any[] => {
     try {
