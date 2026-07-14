@@ -507,7 +507,16 @@ export default function App() {
   };
 
   const handleUpdateProduct = async (updated: Product, opts?: { save?: boolean }) => {
-    setProducts(prev => prev.map(p => p.id === updated.id ? updated : p));
+    setProducts((prev) =>
+      prev.map((p) => {
+        if (p.id === updated.id) return updated;
+        const children = Array.isArray(p.children_models) ? p.children_models : [];
+        if (!children.some((c) => c.id === updated.id)) return p;
+        const nextChildren = children.map((c) => (c.id === updated.id ? updated : c));
+        const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
+        return { ...p, children_models: nextChildren, stock: totalStock };
+      })
+    );
     if (!opts?.save) return;
 
     const token = localStorage.getItem('admin_token');

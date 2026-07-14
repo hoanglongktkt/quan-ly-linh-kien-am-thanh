@@ -20,6 +20,8 @@ export interface Product {
   shopeeModelId?: string;
   parentSku?: string;
   modelName?: string;
+  /** Biến thể con (multi-SKU) — chỉ có trên Parent Product. */
+  children_models?: Product[];
   tierLabels?: string[];
   avatarUrl?: string;
   tiktokId?: string;

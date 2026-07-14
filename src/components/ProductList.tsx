@@ -31,7 +31,9 @@ import {
   ClipboardList,
   X,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  ChevronRight,
+  ChevronDown
 } from 'lucide-react';
 
 interface ProductListProps {
@@ -120,6 +122,17 @@ export default function ProductList({
 
   // Bulk edit modal (Sapo-style)
   const [showBulkModal, setShowBulkModal] = useState(false);
+  /** Parent rows đã mở rộng — chỉ load/render Child khi expand. */
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
+
+  const toggleGroupExpand = (groupId: string) => {
+    setExpandedGroupIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  };
 
   const handleBulkSave = async (updates: BulkSaveProductUpdate[]) => {
     if (!onBulkSave) return false;
@@ -160,8 +173,17 @@ export default function ProductList({
   };
 
   const persistInlineProduct = (id: string) => {
-    const current = products.find(p => p.id === id);
-    if (current) onUpdateProduct(current, { save: true });
+    for (const p of products) {
+      if (p.id === id) {
+        onUpdateProduct(p, { save: true });
+        return;
+      }
+      const child = p.children_models?.find((c) => c.id === id);
+      if (child) {
+        onUpdateProduct(child, { save: true });
+        return;
+      }
+    }
   };
 
   // Add Product Modal state
@@ -353,6 +375,8 @@ export default function ProductList({
       });
       const data = await parseJsonResponse<{
         products?: Product[];
+        productCount?: number;
+        stats?: { rowCount?: number; variantItemCount?: number; pageCount?: number };
         shopId?: string;
         message?: string;
         error?: string;
@@ -362,38 +386,24 @@ export default function ProductList({
         throw new Error(data?.message || data?.error || 'Đồng bộ sản phẩm Shopee thất bại.');
       }
 
-      const realProducts: Product[] = data.products || [];
-      if (realProducts.length === 0) {
-        // Never wipe an existing, working warehouse with an empty result —
-        // treat a 0-item response as a failure so the user can retry safely.
-        throw new Error('Shopee không trả về sản phẩm nào (0 item). Giữ nguyên Kho chính hiện tại, vui lòng thử lại.');
-      }
-
       setShopeeImportProgress(prev => [
         ...prev,
-        `📥 Đã lấy ${realProducts.length} sản phẩm thật từ get_item_list + get_item_base_info...`,
-        "🧹 Đang làm trống Kho chính và nạp dữ liệu thật...",
+        `📥 Đã đồng bộ ${data.productCount ?? data.stats?.rowCount ?? 0} sản phẩm (Parent-Child) từ Shopee...`,
+        "🔄 Đang tải lại Kho chính từ Database...",
       ]);
-
-      // Full re-initialization: wipe the old/mock warehouse list and load only
-      // what Shopee actually returned for this shop.
-      if (onReplaceProducts) {
-        await onReplaceProducts(realProducts);
-      } else {
-        realProducts.forEach(p => onAddProduct(p));
-      }
 
       if (onRefreshProducts) {
         await onRefreshProducts();
       }
 
-      const variantRows = realProducts.filter(p => p.shopeeModelId).length;
+      const variantCount = data.stats?.variantItemCount ?? 0;
+      const total = data.productCount ?? data.stats?.rowCount ?? 0;
       setShopeeImportProgress(prev => [
         ...prev,
-        `📦 Đã tách ${variantRows} dòng phân loại (model_sku) từ Shopee.`,
-        `🎉 HOÀN TẤT: ${realProducts.length} dòng kho (gồm SKU phân loại con)!`,
+        `📦 ${variantCount} sản phẩm có phân loại (children_models).`,
+        `🎉 HOÀN TẤT: ${total} Parent Products trong kho!`,
       ]);
-      setShopeeImportToast(`Khởi tạo kho thành công! ${realProducts.length} dòng (${variantRows} phân loại).`);
+      setShopeeImportToast(data.message || `Khởi tạo kho thành công! ${total} sản phẩm mẹ (${variantCount} có phân loại).`);
 
       onAddLog({
         id: `log-${Date.now()}`,
@@ -401,7 +411,7 @@ export default function ProductList({
         channel: 'shopee',
         type: 'product_sync',
         status: 'success',
-        message: `Đồng bộ ${realProducts.length} sản phẩm thật từ Shopee (shop_id=${data.shopId}) vào Kho chính qua API v2 thành công.`
+        message: `Đồng bộ ${total} Parent Products từ Shopee (shop_id=${data.shopId}) vào Kho chính thành công.`
       });
 
       setShowShopeeImportModal(false);
@@ -636,37 +646,58 @@ export default function ProductList({
                   </td>
                 </tr>
               ) : (
-                filteredGroups.map((group) => {
+                filteredGroups.flatMap((group) => {
                   const prod = group.representative;
                   const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
+                  const isExpanded = expandedGroupIds.has(group.groupId);
+                  const rows: React.ReactNode[] = [];
 
-                  return (
+                  rows.push(
                     <tr
                       key={group.groupId}
                       className="hover:bg-gray-50/50 transition-colors cursor-pointer"
                       onClick={(e) => {
                         const tag = (e.target as HTMLElement).tagName;
                         if (tag === 'INPUT' || tag === 'BUTTON' || (e.target as HTMLElement).closest('button, input')) return;
+                        if (group.hasVariants) {
+                          toggleGroupExpand(group.groupId);
+                          return;
+                        }
                         openProductDetail(prod);
                       }}
                     >
                       <td className="p-4 text-center">
-                        <input 
-                          type="checkbox" 
+                        <input
+                          type="checkbox"
                           checked={isGroupSelected(group)}
                           onChange={() => handleToggleSelectGroup(group)}
                           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
                         />
                       </td>
                       <td className="p-4 max-w-xs">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          {group.hasVariants ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleGroupExpand(group.groupId);
+                              }}
+                              className="p-1 rounded-md text-gray-400 hover:bg-gray-100 hover:text-gray-700 shrink-0"
+                              title={isExpanded ? 'Thu gọn phân loại' : 'Mở phân loại'}
+                            >
+                              {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                            </button>
+                          ) : (
+                            <span className="w-6 shrink-0" />
+                          )}
                           {(prod.avatarUrl || prod.imageUrl) ? (
                             <img src={prod.avatarUrl || prod.imageUrl} alt={group.displayTitle} className="w-11 h-11 rounded-lg object-cover border border-gray-100 shrink-0" referrerPolicy="no-referrer" />
                           ) : (
                             <div className="w-11 h-11 rounded-lg bg-gray-100 text-gray-400 flex items-center justify-center text-xs font-bold shrink-0">SP</div>
                           )}
-                          <div className="space-y-0.5">
-                            <button 
+                          <div className="space-y-0.5 min-w-0">
+                            <button
                               onClick={(e) => { e.stopPropagation(); openProductDetail(prod); }}
                               className="font-bold text-gray-900 hover:text-blue-600 transition-colors text-left line-clamp-1 block text-sm"
                             >
@@ -683,7 +714,7 @@ export default function ProductList({
                       <td className="p-4">
                         {group.hasVariants ? (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
-                            {group.variantCount} phiên bản
+                            {group.variantCount} phân loại
                           </span>
                         ) : (
                           <span className="font-mono text-xs text-gray-600 font-semibold">{prod.sku}</span>
@@ -696,9 +727,9 @@ export default function ProductList({
                               {group.totalStock}
                             </span>
                           ) : (
-                            <input 
-                              type="number" 
-                              value={prod.stock} 
+                            <input
+                              type="number"
+                              value={prod.stock}
                               onClick={(e) => e.stopPropagation()}
                               onChange={(e) => onUpdateProduct({ ...prod, stock: Math.max(0, Number(e.target.value)) })}
                               onBlur={() => persistInlineProduct(prod.id)}
@@ -718,9 +749,9 @@ export default function ProductList({
                         ) : (
                           <>
                             <div className="flex items-center justify-end gap-1.5">
-                              <input 
-                                type="number" 
-                                value={prod.sellingPrice} 
+                              <input
+                                type="number"
+                                value={prod.sellingPrice}
                                 onClick={(e) => e.stopPropagation()}
                                 onChange={(e) => onUpdateProduct({ ...prod, sellingPrice: Math.max(0, Number(e.target.value)) })}
                                 onBlur={() => persistInlineProduct(prod.id)}
@@ -750,7 +781,7 @@ export default function ProductList({
                       </td>
                       <td className="p-4 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          <button 
+                          <button
                             onClick={(e) => { e.stopPropagation(); openProductDetail(prod); }}
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
                             title="Sửa sản phẩm"
@@ -758,7 +789,7 @@ export default function ProductList({
                             <Edit3 className="w-4 h-4" />
                           </button>
                           {!group.hasVariants && (
-                            <button 
+                            <button
                               onClick={(e) => { e.stopPropagation(); onDeleteProduct(prod.id); }}
                               className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all"
                               title="Xóa sản phẩm"
@@ -770,6 +801,102 @@ export default function ProductList({
                       </td>
                     </tr>
                   );
+
+                  if (group.hasVariants && isExpanded) {
+                    for (const child of group.variants) {
+                      rows.push(
+                        <tr key={`${group.groupId}-${child.id}`} className="bg-slate-50/80 hover:bg-slate-100/80">
+                          <td className="p-3 pl-4 text-center">
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.includes(child.id)}
+                              onChange={() => {
+                                if (selectedIds.includes(child.id)) {
+                                  onBulkSelect(selectedIds.filter((id) => id !== child.id));
+                                } else {
+                                  onBulkSelect([...selectedIds, child.id]);
+                                }
+                              }}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                            />
+                          </td>
+                          <td className="p-3 pl-12 max-w-xs">
+                            <div className="flex items-center gap-2 border-l-2 border-indigo-200 pl-3">
+                              {(child.avatarUrl || child.imageUrl) ? (
+                                <img src={child.avatarUrl || child.imageUrl} alt={child.modelName || child.title} className="w-8 h-8 rounded-md object-cover border border-gray-100 shrink-0" referrerPolicy="no-referrer" />
+                              ) : (
+                                <div className="w-8 h-8 rounded-md bg-indigo-50 text-indigo-400 flex items-center justify-center text-[10px] font-bold shrink-0">SK</div>
+                              )}
+                              <div className="min-w-0">
+                                <button
+                                  type="button"
+                                  onClick={() => openProductDetail(child)}
+                                  className="text-xs font-semibold text-gray-800 hover:text-blue-600 line-clamp-1 text-left"
+                                >
+                                  {child.modelName || child.title}
+                                </button>
+                                {child.shopeeModelId && (
+                                  <span className="text-[10px] text-gray-400 font-mono">model_id: {child.shopeeModelId}</span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <span className="font-mono text-xs text-indigo-700 font-semibold">{child.sku}</span>
+                          </td>
+                          <td className="p-3">
+                            <input
+                              type="number"
+                              value={child.stock}
+                              onChange={(e) => onUpdateProduct({ ...child, stock: Math.max(0, Number(e.target.value)) })}
+                              onBlur={() => persistInlineProduct(child.id)}
+                              className="w-16 px-1.5 py-1 text-center bg-white hover:bg-gray-50 focus:bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-mono"
+                            />
+                          </td>
+                          <td className="p-3 text-right font-mono text-xs text-gray-500">
+                            {(child.importPrice || 0).toLocaleString('vi-VN')} đ
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <input
+                                type="number"
+                                value={child.sellingPrice}
+                                onChange={(e) => onUpdateProduct({ ...child, sellingPrice: Math.max(0, Number(e.target.value)) })}
+                                onBlur={() => persistInlineProduct(child.id)}
+                                className="w-24 px-1.5 py-1 text-right bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-bold font-mono"
+                              />
+                              <span className="text-[10px] text-gray-400">đ</span>
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-100">
+                              Shopee
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => openProductDetail(child)}
+                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                                title="Sửa phân loại"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => onTabChange('linking')}
+                                className="px-2 py-1 text-[10px] font-bold text-indigo-600 hover:bg-indigo-50 rounded-md"
+                                title="Liên kết SKU"
+                              >
+                                Liên kết
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    }
+                  }
+
+                  return rows;
                 })
               )}
             </tbody>
@@ -789,10 +916,20 @@ export default function ProductList({
             const isLowStock = group.totalStock > 0 && group.totalStock <= 10;
             const isOutStock = group.totalStock === 0;
             const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
+            const isExpanded = expandedGroupIds.has(group.groupId);
 
             return (
               <div key={group.groupId} className="bg-white rounded-2xl border border-gray-150 p-4 shadow-xs space-y-3">
                 <div className="flex items-center gap-3">
+                  {group.hasVariants && (
+                    <button
+                      type="button"
+                      onClick={() => toggleGroupExpand(group.groupId)}
+                      className="p-1.5 rounded-lg bg-gray-50 text-gray-500 shrink-0"
+                    >
+                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </button>
+                  )}
                   {(prod.avatarUrl || prod.imageUrl) ? (
                     <img 
                       src={prod.avatarUrl || prod.imageUrl} 
@@ -814,7 +951,7 @@ export default function ProductList({
                     </button>
                     {group.hasVariants ? (
                       <span className="text-[10px] font-bold text-indigo-600 block">
-                        {group.variantCount} phiên bản
+                        {group.variantCount} phân loại
                       </span>
                     ) : (
                       <span className="text-[10px] text-gray-400 font-mono font-bold block">
@@ -823,6 +960,32 @@ export default function ProductList({
                     )}
                   </div>
                 </div>
+
+                {group.hasVariants && isExpanded && (
+                  <div className="space-y-2 border-t border-gray-50 pt-2">
+                    {group.variants.map((child) => (
+                      <div key={child.id} className="flex items-center gap-2 bg-slate-50 rounded-xl p-2.5">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(child.id)}
+                          onChange={() => {
+                            if (selectedIds.includes(child.id)) {
+                              onBulkSelect(selectedIds.filter((id) => id !== child.id));
+                            } else {
+                              onBulkSelect([...selectedIds, child.id]);
+                            }
+                          }}
+                          className="rounded border-gray-300 text-blue-600 w-4 h-4"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-gray-800 truncate">{child.modelName || child.title}</p>
+                          <p className="text-[10px] font-mono text-indigo-600">{child.sku}</p>
+                        </div>
+                        <span className="text-xs font-mono font-bold text-slate-700">{child.stock}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-3 gap-2 pt-2.5 border-t border-gray-50 text-xs font-semibold">
                   <div>

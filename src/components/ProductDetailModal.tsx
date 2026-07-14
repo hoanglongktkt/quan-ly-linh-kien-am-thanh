@@ -16,9 +16,18 @@ export function isParentOnlyShopeeRow(p: Product): boolean {
 }
 
 export function getProductVariants(allProducts: Product[], prod: Product): Product[] {
+  if (Array.isArray(prod.children_models) && prod.children_models.length > 0) {
+    return [...prod.children_models].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
+  }
   const key = getShopeeItemKey(prod);
   if (!key) return [prod];
-  const variants = allProducts.filter(p => getShopeeItemKey(p) === key);
+  const parent = allProducts.find(
+    (p) => getShopeeItemKey(p) === key && Array.isArray(p.children_models) && (p.children_models?.length || 0) > 0
+  );
+  if (parent?.children_models?.length) {
+    return [...parent.children_models].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
+  }
+  const variants = allProducts.filter((p) => getShopeeItemKey(p) === key);
   return variants.length > 0
     ? [...variants].sort((a, b) => a.title.localeCompare(b.title, 'vi'))
     : [prod];
@@ -57,53 +66,72 @@ export function formatPriceRange(min: number, max: number): string {
   return `${fmt(min)} - ${fmt(max)}`;
 }
 
+/** Nhóm Parent-Child: ưu tiên children_models; còn lại gom flat legacy theo item_id. */
 export function buildProductGroups(products: Product[]): ProductGroupRow[] {
-  const byKey = new Map<string, Product[]>();
-  const standalone: Product[] = [];
+  const rows: ProductGroupRow[] = [];
+  const consumedKeys = new Set<string>();
 
   for (const p of products) {
-    const key = getShopeeItemKey(p);
-    if (!key) {
-      standalone.push(p);
+    const children = Array.isArray(p.children_models) ? p.children_models : [];
+    if (children.length > 0) {
+      const key = getShopeeItemKey(p) || p.id;
+      consumedKeys.add(key);
+      const prices = children.map((v) => Number(v.sellingPrice) || 0);
+      rows.push({
+        groupId: p.id,
+        representative: p,
+        variants: children,
+        variantCount: children.length,
+        hasVariants: true,
+        displayTitle: p.title,
+        totalStock: children.reduce((sum, v) => sum + (Number(v.stock) || 0), 0),
+        minSellingPrice: Math.min(...prices),
+        maxSellingPrice: Math.max(...prices),
+      });
       continue;
     }
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key)!.push(p);
-  }
 
-  const rows: ProductGroupRow[] = [];
+    const key = getShopeeItemKey(p);
+    if (!key) {
+      const price = Number(p.sellingPrice) || 0;
+      rows.push({
+        groupId: p.id,
+        representative: p,
+        variants: [p],
+        variantCount: 1,
+        hasVariants: false,
+        displayTitle: p.title,
+        totalStock: Number(p.stock) || 0,
+        minSellingPrice: price,
+        maxSellingPrice: price,
+      });
+      continue;
+    }
 
-  for (const [key, variants] of byKey) {
-    const sorted = [...variants].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
-    const hasVariants = sorted.length > 1;
-    const count = hasVariants ? sorted.length : 1;
-    const prices = sorted.map((v) => Number(v.sellingPrice) || 0);
-
+    if (consumedKeys.has(key)) continue;
+    // Legacy flat: gom cùng item_id (bỏ qua row parent trống nếu đã có child flat)
+    const flatSiblings = products.filter((x) => {
+      if (Array.isArray(x.children_models) && x.children_models.length > 0) return false;
+      return getShopeeItemKey(x) === key;
+    });
+    consumedKeys.add(key);
+    const sorted = [...flatSiblings].sort((a, b) => a.title.localeCompare(b.title, 'vi'));
+    const hasVariants = sorted.length > 1 || sorted.some((v) => !!v.shopeeModelId);
+    const variants = hasVariants
+      ? sorted.filter((v) => v.shopeeModelId || sorted.length === 1)
+      : sorted;
+    const list = variants.length ? variants : sorted;
+    const prices = list.map((v) => Number(v.sellingPrice) || 0);
     rows.push({
       groupId: `group-${key}`,
       representative: sorted.find((v) => !v.shopeeModelId) || sorted[0],
-      variants: sorted,
-      variantCount: count,
-      hasVariants,
+      variants: list,
+      variantCount: list.length,
+      hasVariants: list.length > 1,
       displayTitle: getBaseTitle(sorted),
-      totalStock: sorted.reduce((sum, v) => sum + (Number(v.stock) || 0), 0),
+      totalStock: list.reduce((sum, v) => sum + (Number(v.stock) || 0), 0),
       minSellingPrice: Math.min(...prices),
       maxSellingPrice: Math.max(...prices),
-    });
-  }
-
-  for (const p of standalone) {
-    const price = Number(p.sellingPrice) || 0;
-    rows.push({
-      groupId: p.id,
-      representative: p,
-      variants: [p],
-      variantCount: 1,
-      hasVariants: false,
-      displayTitle: p.title,
-      totalStock: Number(p.stock) || 0,
-      minSellingPrice: price,
-      maxSellingPrice: price,
     });
   }
 

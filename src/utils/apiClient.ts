@@ -335,6 +335,47 @@ export async function pullProducts(
   return { ...data, success: true };
 }
 
+/** Nhóm flat SKU thành Parent + children_models theo shopeeItemId (client-side helper). */
+export function nestProductsByItemId(
+  products: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const byItem = new Map<string, Array<Record<string, unknown>>>();
+  const standalone: Array<Record<string, unknown>> = [];
+
+  for (const p of products) {
+    const itemId = String(p.shopeeItemId || '').trim();
+    if (!itemId) {
+      standalone.push(p);
+      continue;
+    }
+    if (!byItem.has(itemId)) byItem.set(itemId, []);
+    byItem.get(itemId)!.push(p);
+  }
+
+  const parents: Array<Record<string, unknown>> = [];
+  for (const [itemId, rows] of byItem) {
+    const children = rows.filter((r) => r.shopeeModelId);
+    const parentRow = rows.find((r) => !r.shopeeModelId) || rows[0];
+    if (children.length === 0) {
+      parents.push({ ...parentRow, children_models: [] });
+      continue;
+    }
+    const totalStock = children.reduce((s, c) => s + (Number(c.stock) || 0), 0);
+    parents.push({
+      ...parentRow,
+      id: `shopee-item-${itemId}`,
+      shopeeId: itemId,
+      shopeeItemId: itemId,
+      shopeeModelId: undefined,
+      stock: totalStock,
+      title: String(parentRow.title || '').split(' - ')[0] || parentRow.title,
+      children_models: children,
+    });
+  }
+
+  return [...parents, ...standalone];
+}
+
 /** Mọi `fetch('/api/...')` dùng apiUrl (relative trên Vercel + cPanel). */
 export function installApiFetchInterceptor(): void {
   if (typeof window === 'undefined') return;
