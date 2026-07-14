@@ -4299,11 +4299,25 @@ function getProductChildrenList(p: any): any[] {
   return [];
 }
 
+function extractShopeeItemIdKey(p: any): string | null {
+  const fromField = String(p?.shopeeItemId || "").trim();
+  if (/^\d{5,}$/.test(fromField)) return fromField;
+  const fromShopeeId = String(p?.shopeeId || "").split(":")[0].trim();
+  if (/^\d{5,}$/.test(fromShopeeId)) return fromShopeeId;
+  const fromId = String(p?.id || "").match(/^shopee-item-(\d+)/);
+  if (fromId?.[1]) return fromId[1];
+  const fromItemId = String(p?.item_id || p?.itemId || "").trim();
+  if (/^\d{5,}$/.test(fromItemId)) return fromItemId;
+  return null;
+}
+
+function stripNestedChildren(row: any): any {
+  const { children: _c, children_models: _cm, ...rest } = row || {};
+  return rest;
+}
+
 function normalizeParentProductRow(p: any): any {
-  const children = getProductChildrenList(p).map((c: any) => {
-    const { children: _c, children_models: _cm, ...rest } = c;
-    return rest;
-  });
+  const children = getProductChildrenList(p).map((c: any) => stripNestedChildren(c));
   const { children_models: _legacy, ...rest } = p;
   return {
     ...rest,
@@ -4315,69 +4329,104 @@ function normalizeParentProductRow(p: any): any {
   };
 }
 
-/** Gom dữ liệu flat legacy thành Parent + children theo shopeeItemId. */
-function groupFlatProductsToParents(products: any[]): any[] {
-  const result: any[] = [];
-  const flatByItem = new Map<string, any[]>();
-  const consumedItemIds = new Set<string>();
+/**
+ * Gom SKU phẳng theo item_id thành Parent Product + children.
+ * Bắt buộc gọi trước khi trả API / lưu DB.
+ */
+function groupProductsByItemId(products: any[]): any[] {
+  if (!Array.isArray(products) || products.length === 0) return [];
+
+  const buckets = new Map<string, any[]>();
+  const standalone: any[] = [];
 
   for (const raw of products) {
-    const p = normalizeParentProductRow(raw);
-    const children = getProductChildrenList(p);
-    if (children.length > 0) {
-      const itemId = String(p.shopeeItemId || "").trim();
-      if (itemId) consumedItemIds.add(itemId);
-      result.push(p);
-      continue;
-    }
-
-    if (p.shopeeModelId || String(p.id || "").includes("-model-")) {
-      const itemId =
-        String(p.shopeeItemId || "").trim() ||
-        String(p.id || "").match(/^shopee-item-(\d+)/)?.[1] ||
-        "";
-      if (itemId) {
-        if (!flatByItem.has(itemId)) flatByItem.set(itemId, []);
-        flatByItem.get(itemId)!.push(p);
-      } else {
-        result.push(p);
+    // Đã là parent có children → giữ nguyên (chuẩn hóa)
+    const existingChildren = getProductChildrenList(raw);
+    if (existingChildren.length > 0) {
+      const itemKey = extractShopeeItemIdKey(raw) || String(raw.id);
+      if (!buckets.has(`__nested__${itemKey}`)) {
+        buckets.set(`__nested__${itemKey}`, [normalizeParentProductRow(raw)]);
       }
       continue;
     }
 
-    const itemId = String(p.shopeeItemId || "").trim();
-    if (itemId && /^shopee-item-\d+$/.test(String(p.id))) {
-      if (!flatByItem.has(itemId)) flatByItem.set(itemId, []);
-      flatByItem.get(itemId)!.push(p);
+    const itemKey = extractShopeeItemIdKey(raw);
+    if (!itemKey) {
+      standalone.push(normalizeParentProductRow({ ...raw, children: [] }));
       continue;
     }
-
-    result.push(p);
+    if (!buckets.has(itemKey)) buckets.set(itemKey, []);
+    buckets.get(itemKey)!.push(stripNestedChildren(raw));
   }
 
-  for (const [itemId, rows] of flatByItem) {
-    if (consumedItemIds.has(itemId)) continue;
-    const children = rows.filter((r) => r.shopeeModelId || String(r.id).includes("-model-"));
-    const parentCandidate = rows.find((r) => !r.shopeeModelId && !String(r.id).includes("-model-")) || rows[0];
-    if (children.length === 0) {
-      result.push(...rows);
+  const parents: any[] = [];
+
+  for (const [key, rows] of buckets) {
+    if (key.startsWith("__nested__")) {
+      parents.push(rows[0]);
       continue;
     }
-    const baseTitle = String(parentCandidate.title || "").split(" - ")[0] || parentCandidate.title;
-    result.push(
+
+    const modelRows = rows.filter(
+      (r) => r.shopeeModelId || String(r.id || "").includes("-model-") || String(r.shopeeId || "").includes(":")
+    );
+    const parentShells = rows.filter((r) => !modelRows.includes(r));
+
+    if (modelRows.length === 0) {
+      // Không có model — 1 dòng parent đơn
+      const base = parentShells[0] || rows[0];
+      parents.push(
+        normalizeParentProductRow({
+          ...base,
+          id: /^shopee-item-\d+$/.test(String(base.id)) ? base.id : `shopee-item-${key}`,
+          shopeeItemId: key,
+          shopeeId: key,
+          shopeeModelId: undefined,
+          children: [],
+        })
+      );
+      continue;
+    }
+
+    const shell = parentShells[0];
+    const first = modelRows[0];
+    const baseTitle = String(shell?.title || first.title || "")
+      .split(" - ")[0]
+      .trim() || `Sản phẩm Shopee ${key}`;
+
+    const children = modelRows.map((m) => {
+      const modelId = m.shopeeModelId || String(m.id || "").match(/-model-(.+)$/)?.[1];
+      return {
+        ...m,
+        shopeeItemId: key,
+        shopeeModelId: modelId ? String(modelId) : m.shopeeModelId,
+        shopeeId: m.shopeeId || (modelId ? `${key}:${modelId}` : key),
+      };
+    });
+
+    parents.push(
       normalizeParentProductRow({
-        ...parentCandidate,
-        id: `shopee-item-${itemId}`,
+        ...(shell || first),
+        id: `shopee-item-${key}`,
         title: baseTitle,
-        shopeeId: itemId,
-        shopeeItemId: itemId,
+        sku: shell?.sku || String(first.parentSku || first.sku || key),
+        barcode: shell?.barcode || shell?.sku || String(first.parentSku || key),
+        shopeeId: key,
+        shopeeItemId: key,
         shopeeModelId: undefined,
+        modelName: undefined,
+        parentSku: undefined,
         children,
       })
     );
   }
 
-  return result;
+  return [...parents, ...standalone];
+}
+
+/** @deprecated alias — dùng groupProductsByItemId */
+function groupFlatProductsToParents(products: any[]): any[] {
+  return groupProductsByItemId(products);
 }
 
 function loadProducts(): any[] {
@@ -4386,7 +4435,7 @@ function loadProducts(): any[] {
     const raw = fs.readFileSync(PRODUCTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     if (!Array.isArray(parsed)) return [];
-    return groupFlatProductsToParents(parsed);
+    return groupProductsByItemId(parsed);
   } catch (error) {
     console.error("[Products DB] Failed to read products.json:", error);
     return [];
@@ -4395,7 +4444,7 @@ function loadProducts(): any[] {
 
 function saveProducts(products: any[]): void {
   try {
-    const normalized = groupFlatProductsToParents(products).map((p) => normalizeParentProductRow(p));
+    const normalized = groupProductsByItemId(products).map((p) => normalizeParentProductRow(p));
     fs.mkdirSync(path.dirname(PRODUCTS_DB_PATH), { recursive: true });
     fs.writeFileSync(PRODUCTS_DB_PATH, JSON.stringify(normalized, null, 2), "utf-8");
   } catch (error) {
@@ -5706,7 +5755,33 @@ async function startServer() {
   const PRODUCTS_PAGE_SIZE_MAX = 50;
 
   app.get("/api/products", authMiddleware, (req, res) => {
-    const all = loadProducts();
+    // Đọc raw để migrate DB từ flat → Parent+children nếu cần
+    let rawList: any[] = [];
+    try {
+      if (fs.existsSync(PRODUCTS_DB_PATH)) {
+        const raw = fs.readFileSync(PRODUCTS_DB_PATH, "utf-8");
+        rawList = raw.trim() ? JSON.parse(raw) : [];
+        if (!Array.isArray(rawList)) rawList = [];
+      }
+    } catch {
+      rawList = [];
+    }
+
+    const all = groupProductsByItemId(rawList);
+    const needsPersist =
+      Array.isArray(rawList) &&
+      rawList.length > 0 &&
+      (rawList.length !== all.length ||
+        rawList.some((p: any) => !Array.isArray(p.children) && (p.shopeeModelId || String(p.id || "").includes("-model-"))));
+    if (needsPersist) {
+      try {
+        saveProducts(all);
+        console.log(`[Products] Migrated flat → parent-child: ${rawList.length} rows → ${all.length} parents`);
+      } catch (err) {
+        console.error("[Products] Migrate nested save failed:", err);
+      }
+    }
+
     const rawPage = Number(req.query?.page);
     const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
     const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
@@ -5719,6 +5794,7 @@ async function startServer() {
     const safePage = Math.min(page, totalPages);
     const start = (safePage - 1) * pageSize;
     const products = all.slice(start, start + pageSize);
+    const parentsWithChildren = products.filter((p: any) => getProductChildrenList(p).length > 0).length;
 
     return res.json({
       success: true,
@@ -5728,6 +5804,8 @@ async function startServer() {
       total,
       totalPages,
       hasMore: safePage < totalPages,
+      grouped: true,
+      parentsWithChildren,
     });
   });
 

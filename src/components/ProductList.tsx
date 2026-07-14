@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Product, ConnectedShop, SyncLog, Supplier, BulkSaveProductUpdate, getProductChildren } from '../types';
 import ProductDetailModal, {
-  buildProductGroups,
   formatPriceRange,
   isJunkCategoryLabel,
   type ProductGroupRow,
@@ -130,14 +129,14 @@ export default function ProductList({
 
   // Bulk edit modal (Sapo-style)
   const [showBulkModal, setShowBulkModal] = useState(false);
-  /** Parent rows đã mở rộng — chỉ load/render Child khi expand. */
-  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
+  /** Parent đã mở — chỉ render children khi expand. */
+  const [expandedParentIds, setExpandedParentIds] = useState<Set<string>>(new Set());
 
-  const toggleGroupExpand = (groupId: string) => {
-    setExpandedGroupIds((prev) => {
+  const toggleParentExpand = (parentId: string) => {
+    setExpandedParentIds((prev) => {
       const next = new Set(prev);
-      if (next.has(groupId)) next.delete(groupId);
-      else next.add(groupId);
+      if (next.has(parentId)) next.delete(parentId);
+      else next.add(parentId);
       return next;
     });
   };
@@ -224,7 +223,28 @@ export default function ProductList({
   const isGroupSelected = (group: ProductGroupRow) =>
     group.variants.length > 0 && group.variants.every((v) => selectedIds.includes(v.id));
 
-  const productGroups = useMemo(() => buildProductGroups(products), [products]);
+  // Backend đã gom Parent + children theo item_id — map thẳng, không flat thêm ở FE
+  const productGroups = useMemo((): ProductGroupRow[] => {
+    return products.map((parent) => {
+      const children = getProductChildren(parent);
+      const hasVariants = children.length > 0;
+      const variants = hasVariants ? children : [parent];
+      const prices = variants.map((v) => Number(v.sellingPrice) || 0);
+      return {
+        groupId: parent.id,
+        representative: parent,
+        variants,
+        variantCount: hasVariants ? children.length : 1,
+        hasVariants,
+        displayTitle: parent.title,
+        totalStock: hasVariants
+          ? children.reduce((sum, v) => sum + (Number(v.stock) || 0), 0)
+          : Number(parent.stock) || 0,
+        minSellingPrice: Math.min(...prices),
+        maxSellingPrice: Math.max(...prices),
+      };
+    });
+  }, [products]);
 
   // Filter Categories
   const categories = ['all', ...Array.from(new Set(products.map(p => p.category).filter(c => !isJunkCategoryLabel(c))))];
@@ -717,7 +737,7 @@ export default function ProductList({
                 filteredGroups.flatMap((group) => {
                   const prod = group.representative;
                   const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
-                  const isExpanded = expandedGroupIds.has(group.groupId);
+                  const isExpanded = expandedParentIds.has(group.groupId);
                   const rows: React.ReactNode[] = [];
 
                   rows.push(
@@ -728,7 +748,7 @@ export default function ProductList({
                         const tag = (e.target as HTMLElement).tagName;
                         if (tag === 'INPUT' || tag === 'BUTTON' || (e.target as HTMLElement).closest('button, input')) return;
                         if (group.hasVariants) {
-                          toggleGroupExpand(group.groupId);
+                          toggleParentExpand(group.groupId);
                           return;
                         }
                         openProductDetail(prod);
@@ -749,7 +769,7 @@ export default function ProductList({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                toggleGroupExpand(group.groupId);
+                                toggleParentExpand(group.groupId);
                               }}
                               className="w-7 h-7 flex items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-indigo-700 font-black text-sm shrink-0"
                               title={isExpanded ? 'Thu gọn phân loại' : 'Mở phân loại'}
@@ -994,7 +1014,7 @@ export default function ProductList({
             const isLowStock = group.totalStock > 0 && group.totalStock <= 10;
             const isOutStock = group.totalStock === 0;
             const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
-            const isExpanded = expandedGroupIds.has(group.groupId);
+            const isExpanded = expandedParentIds.has(group.groupId);
 
             return (
               <div key={group.groupId} className="bg-white rounded-2xl border border-gray-150 p-4 shadow-xs space-y-3">
@@ -1002,7 +1022,7 @@ export default function ProductList({
                   {group.hasVariants && (
                     <button
                       type="button"
-                      onClick={() => toggleGroupExpand(group.groupId)}
+                      onClick={() => toggleParentExpand(group.groupId)}
                       className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-50 text-gray-600 font-black text-sm shrink-0"
                     >
                       {isExpanded ? '▼' : '>>'}
