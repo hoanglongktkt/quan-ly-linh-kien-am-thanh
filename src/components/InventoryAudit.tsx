@@ -216,7 +216,7 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       });
 
       const raw = await res.text();
-      let data: { success?: boolean; message?: string; error?: string } = {};
+      let data: { success?: boolean; message?: string; error?: string; shopeeWarnings?: string[] } = {};
       try {
         data = raw ? JSON.parse(raw) : {};
       } catch {

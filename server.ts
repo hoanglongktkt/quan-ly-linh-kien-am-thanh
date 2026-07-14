@@ -1873,23 +1873,54 @@ async function syncProductToTikTok(product: any): Promise<ChannelSyncLine[]> {
   return [{ ...base, success: false, message: "API TikTok Shop chưa được tích hợp trên server" }];
 }
 
+async function resolveShopeeShopForItemId(
+  itemId: number,
+  preferredShopId?: string
+): Promise<{ shopId: string; accessToken: string } | null> {
+  const tokens = loadShopeeTokens();
+  const shopIds = Object.keys(tokens);
+  if (!shopIds.length) return null;
+
+  const preferred = String(preferredShopId || "").trim();
+  const tryOrder = preferred && tokens[preferred]
+    ? [preferred, ...shopIds.filter((id) => id !== preferred)]
+    : shopIds;
+
+  for (const sid of tryOrder) {
+    const accessToken = await getValidShopeeAccessToken(sid);
+    if (!accessToken) continue;
+    const result = await shopeeGetItemBaseInfo(sid, accessToken, [itemId]);
+    const found = Array.isArray(result?.response?.item_list) && result.response.item_list.length > 0;
+    if (!result?.error && found) {
+      return { shopId: sid, accessToken };
+    }
+  }
+  return null;
+}
+
+function isShopeeItemNotFoundError(result: any): boolean {
+  const err = String(result?.error || "").toLowerCase();
+  const msg = String(result?.message || "").toLowerCase();
+  return (
+    err.includes("item_not_found") ||
+    err.includes("error_item_not_found") ||
+    msg.includes("item_id is not found") ||
+    msg.includes("item is not found")
+  );
+}
+
 async function pushStockUpdatesToShopee(
   updatedProducts: any[],
   requestedShopId?: string
-): Promise<{ ok: boolean; errors: string[]; pushed: number }> {
+): Promise<{ ok: boolean; errors: string[]; warnings: string[]; pushed: number; staleSkus: string[] }> {
   const shopeeRows = updatedProducts.filter((p) => p.shopeeItemId);
   if (shopeeRows.length === 0) {
-    return { ok: true, errors: [], pushed: 0 };
+    return { ok: true, errors: [], warnings: [], pushed: 0, staleSkus: [] };
   }
 
-  const shopId = resolveShopeeTokenShopId(requestedShopId);
-  if (!shopId) {
-    return { ok: false, errors: ["Chưa có shop Shopee được ủy quyền."], pushed: 0 };
-  }
-
-  const accessToken = await getValidShopeeAccessToken(shopId);
-  if (!accessToken) {
-    return { ok: false, errors: [`Chưa có access_token hợp lệ cho shop_id=${shopId}.`], pushed: 0 };
+  const preferredShopId = resolveShopeeTokenShopId(requestedShopId);
+  if (!preferredShopId && !Object.keys(loadShopeeTokens()).length) {
+    return { ok: false, errors: ["Chưa có shop Shopee được ủy quyền."], warnings: [], pushed: 0, staleSkus: [] };
   }
 
   const byItem = new Map<number, any[]>();
@@ -1901,9 +1932,21 @@ async function pushStockUpdatesToShopee(
   }
 
   const errors: string[] = [];
+  const warnings: string[] = [];
+  const staleSkus: string[] = [];
   let pushed = 0;
 
   for (const [itemId, rows] of byItem) {
+    const resolved = await resolveShopeeShopForItemId(itemId, preferredShopId || undefined);
+    if (!resolved) {
+      const skus = rows.map((r) => r.sku).join(", ");
+      warnings.push(
+        `item_id=${itemId} (SKU: ${skus}): Không tìm thấy trên Shopee — đã bỏ qua đẩy tồn. Hãy đồng bộ lại sản phẩm hoặc cập nhật liên kết.`
+      );
+      staleSkus.push(...rows.map((r) => String(r.sku || "").trim()).filter(Boolean));
+      continue;
+    }
+
     const stockList = rows.map((p) => {
       const entry: { model_id?: number; seller_stock: { stock: number }[] } = {
         seller_stock: [{ stock: Math.max(0, Math.round(Number(p.stock) || 0)) }],
@@ -1912,7 +1955,7 @@ async function pushStockUpdatesToShopee(
       return entry;
     });
 
-    const result = await shopeeUpdateStock(shopId, accessToken, itemId, stockList);
+    const result = await shopeeUpdateStock(resolved.shopId, resolved.accessToken, itemId, stockList);
     const failures: any[] =
       result?.response?.failure_list ||
       result?.response?.stock_list?.filter?.((s: any) => s.failed_reason) ||
@@ -1920,13 +1963,23 @@ async function pushStockUpdatesToShopee(
 
     if (result?.error) {
       const skus = rows.map((r) => r.sku).join(", ");
-      errors.push(`item_id=${itemId} (SKU: ${skus}): ${result.error}${result.message ? ` — ${result.message}` : ""}`);
+      if (isShopeeItemNotFoundError(result)) {
+        warnings.push(`item_id=${itemId} (SKU: ${skus}): Liên kết Shopee đã hết hạn — đã bỏ qua đẩy tồn.`);
+        staleSkus.push(...rows.map((r) => String(r.sku || "").trim()).filter(Boolean));
+      } else {
+        errors.push(`item_id=${itemId} (SKU: ${skus}): ${result.error}${result.message ? ` — ${result.message}` : ""}`);
+      }
     }
 
     if (Array.isArray(failures) && failures.length > 0) {
       for (const f of failures) {
         if (f.failed_reason || f.error) {
-          errors.push(`item_id=${itemId} model_id=${f.model_id ?? "?"}: ${f.failed_reason || f.error}`);
+          const line = `item_id=${itemId} model_id=${f.model_id ?? "?"}: ${f.failed_reason || f.error}`;
+          if (String(f.failed_reason || f.error).toLowerCase().includes("not_found")) {
+            warnings.push(line);
+          } else {
+            errors.push(line);
+          }
         }
       }
     }
@@ -1938,7 +1991,7 @@ async function pushStockUpdatesToShopee(
     await new Promise((r) => setTimeout(r, 120));
   }
 
-  return { ok: errors.length === 0, errors, pushed };
+  return { ok: errors.length === 0, errors, warnings, pushed, staleSkus };
 }
 
 function getItemAvatarUrl(item: any): string | undefined {
@@ -4391,20 +4444,56 @@ async function startServer() {
       console.log(`[Inventory Balance] Cập nhật kho gốc ${updatedCount} SKU`);
 
       const shopeeResult = await pushStockUpdatesToShopee(updatedProducts, req.body?.shopId);
+
+      if (shopeeResult.staleSkus.length > 0) {
+        const staleSet = new Set(shopeeResult.staleSkus.map((s) => s.toLowerCase()));
+        const repaired = loadProducts().map((p: any) => {
+          const sku = String(p.sku || "").trim().toLowerCase();
+          if (!staleSet.has(sku)) return p;
+          return {
+            ...p,
+            shopeeItemId: undefined,
+            shopeeModelId: undefined,
+            shopeeId: undefined,
+            channels: Array.isArray(p.channels)
+              ? p.channels.filter((c: string) => c !== "shopee")
+              : p.channels,
+          };
+        });
+        saveProducts(repaired);
+        console.log(`[Inventory Balance] Gỡ liên kết Shopee hết hạn: ${shopeeResult.staleSkus.join(", ")}`);
+      }
+
       if (!shopeeResult.ok) {
         return res.status(400).json({
           success: false,
           message: `Kho gốc đã cập nhật. Đẩy Shopee thất bại: ${shopeeResult.errors.join(" | ")}`,
           shopeeErrors: shopeeResult.errors,
+          shopeeWarnings: shopeeResult.warnings,
         });
       }
 
-      const msg =
-        shopeeResult.pushed > 0
-          ? `Cân bằng kho thành công (${shopeeResult.pushed} SKU đã đồng bộ lên Shopee).`
-          : "Cân bằng kho thành công";
+      const parts: string[] = [];
+      if (shopeeResult.pushed > 0) {
+        parts.push(`${shopeeResult.pushed} SKU đã đồng bộ lên Shopee`);
+      }
+      parts.push("kho gốc đã cập nhật");
+      if (shopeeResult.warnings.length > 0) {
+        parts.push(`${shopeeResult.warnings.length} SKU bỏ qua (liên kết Shopee hết hạn)`);
+      }
+
+      const msg = `Cân bằng kho thành công (${parts.join(", ")}).`;
       console.log(`[Inventory Balance] ${msg}`);
-      return res.status(200).json({ success: true, message: msg });
+      if (shopeeResult.warnings.length > 0) {
+        console.warn("[Inventory Balance] Shopee warnings:", shopeeResult.warnings.join(" | "));
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: msg,
+        shopeeWarnings: shopeeResult.warnings,
+        staleSkus: shopeeResult.staleSkus,
+      });
     } catch (err: any) {
       console.error("[Inventory Balance] Exception:", err);
       return res.status(500).json({ success: false, message: err?.message || "Lỗi server khi cân bằng kho." });
