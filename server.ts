@@ -3441,8 +3441,16 @@ function writeChannelListingsDb(rows: any[]): void {
   try {
     fs.mkdirSync(path.dirname(CHANNEL_LISTINGS_DB_PATH), { recursive: true });
     fs.writeFileSync(CHANNEL_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    if (!fs.existsSync(CHANNEL_LISTINGS_DB_PATH)) {
+      throw new Error(`File không tồn tại sau khi ghi: ${CHANNEL_LISTINGS_DB_PATH}`);
+    }
+    console.log(`[Channel Listings DB] Đã ghi ${rows.length} dòng -> ${CHANNEL_LISTINGS_DB_PATH}`);
+    // #region agent log
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H3',location:'server.ts:writeChannelListingsDb',message:'channel listings written',data:{count:rows.length,path:CHANNEL_LISTINGS_DB_PATH,appRoot:APP_ROOT,exists:fs.existsSync(CHANNEL_LISTINGS_DB_PATH)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
   } catch (error) {
-    console.error("[Channel Listings DB] Failed to write channel_listings.json:", error);
+    console.error(`[Channel Listings DB] Failed to write ${CHANNEL_LISTINGS_DB_PATH}:`, error);
+    throw error;
   }
 }
 
@@ -3612,6 +3620,52 @@ function resolveConnectedShopDisplayName(
   const fallback = String(fallbackName || "").trim();
   if (fallback && !isGenericShopeeShopLabel(fallback)) return fallback;
   return sid ? `Shop ${sid}` : undefined;
+}
+
+function rebuildChannelListingsFromProducts(): any[] {
+  const products = loadProducts();
+  const settings = loadChannelSettings();
+  const defaultShop = (settings.shops || []).find((s: any) => s.platform === "shopee");
+  const defaultShopName = String(defaultShop?.shopName || "Shopee");
+  const defaultShopId = String(defaultShop?.shopId || "");
+  const byKey = new Map<string, any>();
+
+  for (const p of products) {
+    const channelId = String(p.shopeeItemId || p.shopeeId || "").trim();
+    if (!channelId) continue;
+    const key = `shopee::${channelId}`;
+    if (byKey.has(key)) continue;
+    byKey.set(
+      key,
+      sanitizeChannelListingRow({
+        id: `cl-shopee-${channelId}`,
+        title: String(p.title || ""),
+        sku: String(p.sku || ""),
+        imageUrl: p.avatarUrl || p.imageUrl,
+        channelId,
+        platform: "shopee",
+        shopName: defaultShopName,
+        shopId: defaultShopId || undefined,
+        status: "success",
+        linkedProductId: p.id,
+      }),
+    );
+  }
+  return Array.from(byKey.values());
+}
+
+function ensureChannelListingsDb(): any[] {
+  const existing = readChannelListingsDb();
+  if (existing.length > 0) return existing;
+  const rebuilt = rebuildChannelListingsFromProducts();
+  if (rebuilt.length > 0) {
+    writeChannelListingsDb(rebuilt);
+    console.log(`[Channel Listings] Auto-rebuild ${rebuilt.length} dòng từ products.json`);
+    // #region agent log
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H4',location:'server.ts:ensureChannelListingsDb',message:'auto-rebuilt mapping from products',data:{rebuiltCount:rebuilt.length,path:CHANNEL_LISTINGS_DB_PATH},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+  }
+  return rebuilt;
 }
 
 function enrichOrderShopName(order: any): any {
@@ -5967,7 +6021,14 @@ async function startServer() {
       console.log(`[Shopee Product Sync] Bắt đầu đồng bộ kho cho shop_id=${shopId}...`);
       const result = await runFullShopeeWarehouseSync(shopId, accessToken);
       const shopName = resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
-      const listings = upsertChannelListingsFromShopeeSync(result.products, shopId, shopName);
+      let listings = upsertChannelListingsFromShopeeSync(result.products, shopId, shopName);
+      if (listings.length === 0) {
+        listings = rebuildChannelListingsFromProducts();
+        if (listings.length > 0) writeChannelListingsDb(listings);
+      }
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H2',location:'server.ts:shopee/products/sync',message:'sync completed with listings',data:{productCount:result.products?.length||0,listingsCount:listings.length,dbPath:CHANNEL_LISTINGS_DB_PATH,dbExists:fs.existsSync(CHANNEL_LISTINGS_DB_PATH)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       return res.json({ ...result, listings, listingsCount: listings.length });
     } catch (error: any) {
       console.error("[Shopee Product Sync] Exception:", error);
@@ -7613,7 +7674,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 
   app.get("/api/channel-listings", authMiddleware, (_req, res) => {
     try {
-      const listings = readChannelListingsDb();
+      const listings = ensureChannelListingsDb();
       return res.json({ success: true, listings, count: listings.length });
     } catch (error: any) {
       return res.status(500).json({ success: false, error: error.message || "Đọc danh sách liên kết thất bại" });
@@ -7622,8 +7683,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 
   app.get("/api/mapping-products", authMiddleware, (_req, res) => {
     try {
-      const listings = readChannelListingsDb();
-      console.log(`[Mapping Products] GET trả về ${listings.length} dòng từ DB`);
+      const listings = ensureChannelListingsDb();
+      console.log(`[Mapping Products] GET trả về ${listings.length} dòng từ DB (${CHANNEL_LISTINGS_DB_PATH})`);
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'mapping-fix',hypothesisId:'H4-H5',location:'server.ts:GET/mapping-products',message:'mapping GET response',data:{count:listings.length,dbPath:CHANNEL_LISTINGS_DB_PATH,dbExists:fs.existsSync(CHANNEL_LISTINGS_DB_PATH)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       return res.json({ success: true, listings, count: listings.length });
     } catch (error: any) {
       console.error("[Mapping Products] GET lỗi:", error);
