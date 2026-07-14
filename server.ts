@@ -2638,26 +2638,35 @@ function resolveShopeeTokenShopId(requested?: string): string | null {
   return keys[0];
 }
 
+/** Ép mọi giá trị Shopee về mảng an toàn — tránh crash `.map` khi API trả object/null. */
+function asShopeeArray<T = any>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
 function parseModelListFromResponse(modelResult: any): { tierVariations: any[]; models: any[] } {
   const resp = modelResult?.response || {};
+  const modelsRaw = resp?.model_list ?? resp?.model ?? [];
+  const tiersRaw =
+    resp?.tier_variation ?? resp?.standardise_tier_variation ?? resp?.tier_variations ?? [];
   return {
-    tierVariations: resp.tier_variation || resp.standardise_tier_variation || [],
-    models: resp.model || resp.model_list || [],
+    tierVariations: asShopeeArray(tiersRaw),
+    models: asShopeeArray(modelsRaw).filter((m) => m != null),
   };
 }
 
 function extractInlineModelsFromItem(item: any): { tierVariations: any[]; models: any[] } {
-  const tierVariations: any[] =
-    item?.tier_variation || item?.standardise_tier_variation || item?.tier_variations || [];
+  const tierVariations = asShopeeArray(
+    item?.tier_variation ?? item?.standardise_tier_variation ?? item?.tier_variations ?? []
+  );
   let models: any[] = [];
-  if (Array.isArray(item?.model_list) && item.model_list.length > 0) {
-    models = item.model_list;
-  } else if (Array.isArray(item?.model) && item.model.length > 0) {
-    models = item.model;
-  } else if (Array.isArray(item?.models) && item.models.length > 0) {
-    models = item.models;
+  if (asShopeeArray(item?.model_list).length > 0) {
+    models = asShopeeArray(item?.model_list);
+  } else if (asShopeeArray(item?.model).length > 0) {
+    models = asShopeeArray(item?.model);
+  } else if (asShopeeArray(item?.models).length > 0) {
+    models = asShopeeArray(item?.models);
   }
-  return { tierVariations, models };
+  return { tierVariations, models: models.filter((m) => m != null) };
 }
 
 function itemHasShopeeVariants(item: any): boolean {
@@ -2706,26 +2715,27 @@ function parseModelPrice(model: any): number {
 }
 
 function buildSingleWarehouseRow(item: any): any {
-  const itemId = item.item_id;
+  const itemId = item?.item_id;
   const avatarUrl = getItemAvatarUrl(item);
-  const sku = String(item.item_sku || "").trim() || String(itemId);
-  const stock = Number(item.stock_info_v2?.summary_info?.total_available_stock) || 0;
-  const price = Number(item.price_info?.[0]?.current_price ?? item.price_info?.[0]?.original_price) || 0;
+  const sku = String(item?.item_sku || "").trim() || String(itemId);
+  const stock = Number(item?.stock_info_v2?.summary_info?.total_available_stock) || 0;
+  const priceInfo = asShopeeArray(item?.price_info);
+  const price = Number(priceInfo[0]?.current_price ?? priceInfo[0]?.original_price) || 0;
 
   return {
     id: `shopee-item-${itemId}`,
-    title: item.item_name || `Sản phẩm Shopee ${itemId}`,
+    title: item?.item_name || `Sản phẩm Shopee ${itemId}`,
     sku,
     barcode: sku,
-    category: item.category_id ? String(item.category_id) : "Chưa phân loại",
+    category: item?.category_id ? String(item.category_id) : "Chưa phân loại",
     stock,
     importPrice: 0,
     sellingPrice: price,
     channels: ["shopee"],
     imageUrl: avatarUrl,
     avatarUrl,
-    description: item.description || "",
-    status: item.item_status !== "NORMAL" ? "draft" : (stock > 0 ? "active" : "out_of_stock"),
+    description: item?.description || "",
+    status: item?.item_status !== "NORMAL" ? "draft" : (stock > 0 ? "active" : "out_of_stock"),
     shopeeId: String(itemId),
     shopeeItemId: String(itemId),
     children: [],
@@ -2735,31 +2745,32 @@ function buildSingleWarehouseRow(item: any): any {
 
 /** Parent Product + children — mỗi model là 1 child (giữ model_id để đồng bộ tồn). */
 function buildParentWarehouseRow(item: any, children: any[]): any {
-  const itemId = item.item_id;
+  const itemId = item?.item_id;
   const avatarUrl = getItemAvatarUrl(item);
-  const sku = String(item.item_sku || "").trim() || String(itemId);
-  const totalStock = children.reduce((sum, c) => sum + (Number(c.stock) || 0), 0);
-  const prices = children.map((c) => Number(c.sellingPrice) || 0).filter((n) => n > 0);
+  const sku = String(item?.item_sku || "").trim() || String(itemId);
+  const safeChildren = asShopeeArray(children).filter((c) => c != null);
+  const totalStock = safeChildren.reduce((sum, c) => sum + (Number(c?.stock) || 0), 0);
+  const prices = safeChildren.map((c) => Number(c?.sellingPrice) || 0).filter((n) => n > 0);
   const price = prices.length ? Math.min(...prices) : 0;
-  const baseName = item.item_name || `Sản phẩm Shopee ${itemId}`;
+  const baseName = item?.item_name || `Sản phẩm Shopee ${itemId}`;
 
   return {
     id: `shopee-item-${itemId}`,
     title: baseName,
     sku,
     barcode: sku,
-    category: item.category_id ? String(item.category_id) : "Chưa phân loại",
+    category: item?.category_id ? String(item.category_id) : "Chưa phân loại",
     stock: totalStock,
     importPrice: 0,
     sellingPrice: price,
     channels: ["shopee"],
     imageUrl: avatarUrl,
     avatarUrl,
-    description: item.description || "",
-    status: item.item_status !== "NORMAL" ? "draft" : (totalStock > 0 ? "active" : "out_of_stock"),
+    description: item?.description || "",
+    status: item?.item_status !== "NORMAL" ? "draft" : (totalStock > 0 ? "active" : "out_of_stock"),
     shopeeId: String(itemId),
     shopeeItemId: String(itemId),
-    children,
+    children: safeChildren,
     lastSynced: new Date().toISOString(),
   };
 }
@@ -2797,15 +2808,18 @@ function getModelImageUrl(item: any, model: any, tierVariations: any[]): string 
 }
 
 function buildVariantWarehouseRow(item: any, model: any, tierVariations: any[], modelIndex: number): any {
-  const itemId = item.item_id;
-  const modelId = model.model_id != null ? model.model_id : `idx${modelIndex}`;
-  const modelName = getModelDisplayName(model, tierVariations);
-  const baseName = item.item_name || `Sản phẩm Shopee ${itemId}`;
-  const avatarUrl = getModelImageUrl(item, model, tierVariations);
-  const parentSku = String(item.item_sku || "").trim() || undefined;
-  const sku = String(model.model_sku || "").trim() || `${itemId}-M${modelId}`;
-  const stock = parseModelStock(model);
-  const price = parseModelPrice(model);
+  const safeModel = model && typeof model === "object" ? model : {};
+  const itemId = item?.item_id;
+  const modelId = safeModel.model_id != null ? safeModel.model_id : `idx${modelIndex}`;
+  const tiers = asShopeeArray(tierVariations);
+  const modelName = getModelDisplayName(safeModel, tiers);
+  const baseName = item?.item_name || `Sản phẩm Shopee ${itemId}`;
+  const avatarUrl = getModelImageUrl(item, safeModel, tiers);
+  const parentSku = String(item?.item_sku || "").trim() || undefined;
+  const sku = String(safeModel.model_sku || "").trim() || `${itemId}-M${modelId}`;
+  const stock = parseModelStock(safeModel);
+  const price = parseModelPrice(safeModel);
+  const tierIndex = asShopeeArray<number>(safeModel.tier_index);
 
   return {
     id: `shopee-item-${itemId}-model-${modelId}`,
@@ -2814,21 +2828,21 @@ function buildVariantWarehouseRow(item: any, model: any, tierVariations: any[], 
     barcode: sku,
     modelName,
     parentSku,
-    category: item.category_id ? String(item.category_id) : "Chưa phân loại",
+    category: item?.category_id ? String(item.category_id) : "Chưa phân loại",
     stock,
     importPrice: 0,
     sellingPrice: price,
     channels: ["shopee"],
     imageUrl: avatarUrl,
     avatarUrl,
-    description: item.description || "",
-    status: item.item_status !== "NORMAL" ? "draft" : (stock > 0 ? "active" : "out_of_stock"),
+    description: item?.description || "",
+    status: item?.item_status !== "NORMAL" ? "draft" : (stock > 0 ? "active" : "out_of_stock"),
     shopeeId: `${itemId}:${modelId}`,
     shopeeItemId: String(itemId),
     shopeeModelId: String(modelId),
-    tierLabels: model.tier_index?.map((optIdx: number, tierPos: number) =>
-      tierVariations?.[tierPos]?.option_list?.[optIdx]?.option
-    ).filter(Boolean),
+    tierLabels: tierIndex
+      .map((optIdx: number, tierPos: number) => tiers?.[tierPos]?.option_list?.[optIdx]?.option)
+      .filter(Boolean),
     lastSynced: new Date().toISOString(),
   };
 }
@@ -2839,58 +2853,88 @@ async function syncShopeeItemToWarehouseRows(
   item: any,
   opts?: { strict?: boolean }
 ): Promise<{ rows: any[]; modelCount: number; error?: string }> {
-  const itemId = item?.item_id;
-  let { tierVariations, models } = extractInlineModelsFromItem(item);
-  const hasVariants = itemHasShopeeVariants(item);
-
-  const toParentRows = (modelList: any[]) => {
-    const children = modelList.map((model, idx) =>
-      buildVariantWarehouseRow(item, model, tierVariations, idx)
-    );
-    return {
-      rows: [buildParentWarehouseRow(item, children)],
-      modelCount: children.length,
-    };
-  };
-
-  if (models.length > 0) {
-    const result = toParentRows(models);
-    console.log(`[Shopee Sync] item_id=${itemId} -> Parent + ${result.modelCount} children (model_list inline)`);
-    return result;
-  }
-
-  if (!hasVariants) {
-    return { rows: [buildSingleWarehouseRow(item)], modelCount: 0 };
-  }
-
-  const modelResult = await shopeeGetModelListWithRetry(shopId, accessToken, itemId, 3);
-  if (modelResult?.error || isShopeeItemNotFoundError(modelResult)) {
-    const err = `${modelResult?.error || "product.error_item_not_found"}${modelResult?.message ? `: ${modelResult.message}` : ""}`;
-    console.error(`[Shopee Sync] get_model_list item_id=${itemId}: ${err}`);
-    appendShopeeSyncErrorToDb({
-      itemId,
-      shopId,
-      action: "pullProducts",
-      error: err,
-    });
-    if (opts?.strict || isShopeeItemNotFoundError(modelResult)) {
-      return { rows: [], modelCount: 0, error: isShopeeItemNotFoundError(modelResult) ? "item_not_found" : err };
+  try {
+    if (!item || item.item_id == null) {
+      return { rows: [], modelCount: 0, error: "invalid_item" };
     }
-    return { rows: [], modelCount: 0, error: err };
+
+    const itemId = item.item_id;
+    let { tierVariations, models } = extractInlineModelsFromItem(item);
+    const hasVariants = itemHasShopeeVariants(item);
+
+    const toParentRows = (modelList: any[]) => {
+      const safeModels = asShopeeArray(modelList).filter((m) => m != null);
+      const children = safeModels.map((model, idx) =>
+        buildVariantWarehouseRow(item, model, tierVariations, idx)
+      );
+      return {
+        rows: [buildParentWarehouseRow(item, children)],
+        modelCount: children.length,
+      };
+    };
+
+    if (models.length > 0) {
+      const result = toParentRows(models);
+      console.log(`[Shopee Sync] item_id=${itemId} -> Parent + ${result.modelCount} children (model_list inline)`);
+      return result;
+    }
+
+    if (!hasVariants) {
+      return { rows: [buildSingleWarehouseRow(item)], modelCount: 0 };
+    }
+
+    const modelResult = await shopeeGetModelListWithRetry(shopId, accessToken, Number(itemId), 3);
+    if (modelResult?.error || isShopeeItemNotFoundError(modelResult)) {
+      const err = `${modelResult?.error || "product.error_item_not_found"}${modelResult?.message ? `: ${modelResult.message}` : ""}`;
+      console.error(`[Shopee Sync] get_model_list item_id=${itemId}: ${err}`);
+      appendShopeeSyncErrorToDb({
+        itemId,
+        shopId,
+        action: "pullProducts",
+        error: err,
+      });
+      if (opts?.strict || isShopeeItemNotFoundError(modelResult)) {
+        return { rows: [], modelCount: 0, error: isShopeeItemNotFoundError(modelResult) ? "item_not_found" : err };
+      }
+      // Fallback an toàn: lưu 1 dòng parent thay vì crash
+      return { rows: [buildSingleWarehouseRow(item)], modelCount: 0, error: err };
+    }
+
+    const parsed = parseModelListFromResponse(modelResult);
+    tierVariations = parsed.tierVariations;
+    models = parsed.models;
+
+    if (models.length > 0) {
+      const result = toParentRows(models);
+      console.log(`[Shopee Sync] item_id=${itemId} -> Parent + ${result.modelCount} children (get_model_list)`);
+      return result;
+    }
+
+    console.warn(`[Shopee Sync] item_id=${itemId} has_model=true nhưng model_list rỗng — lưu 1 dòng parent`);
+    return { rows: [buildSingleWarehouseRow(item)], modelCount: 0 };
+  } catch (err: unknown) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[Shopee Sync] syncShopeeItemToWarehouseRows item_id=${item?.item_id}: ${reason}`);
+    try {
+      appendShopeeSyncErrorToDb({
+        itemId: item?.item_id,
+        shopId,
+        action: "pullProducts",
+        error: reason,
+      });
+    } catch {
+      /* ignore */
+    }
+    // Không ném ra ngoài — trả lỗi có kiểm soát
+    if (item?.item_id != null) {
+      try {
+        return { rows: [buildSingleWarehouseRow(item)], modelCount: 0, error: reason };
+      } catch {
+        return { rows: [], modelCount: 0, error: reason };
+      }
+    }
+    return { rows: [], modelCount: 0, error: reason };
   }
-
-  const parsed = parseModelListFromResponse(modelResult);
-  tierVariations = parsed.tierVariations;
-  models = parsed.models;
-
-  if (models.length > 0) {
-    const result = toParentRows(models);
-    console.log(`[Shopee Sync] item_id=${itemId} -> Parent + ${result.modelCount} children (get_model_list)`);
-    return result;
-  }
-
-  console.warn(`[Shopee Sync] item_id=${itemId} has_model=true nhưng model_list rỗng — lưu 1 dòng parent`);
-  return { rows: [buildSingleWarehouseRow(item)], modelCount: 0 };
 }
 
 async function fetchShopeeItemListPage(
@@ -2899,13 +2943,15 @@ async function fetchShopeeItemListPage(
   offset: number
 ): Promise<{ itemIds: number[]; hasMore: boolean; nextOffset: number; pageIndex: number }> {
   const listResult = await shopeeGetItemList(shopId, accessToken, offset);
-  if (listResult.error) {
+  if (listResult?.error) {
     throw new Error(formatShopeeApiError(listResult) || `${listResult.error}: ${listResult.message || ""}`);
   }
-  const items = listResult.response?.item || [];
-  const itemIds = items.map((it: any) => Number(it.item_id)).filter((n: number) => Number.isFinite(n) && n > 0);
-  const hasMore = !!listResult.response?.has_next_page && items.length > 0;
-  const nextOffset = listResult.response?.next_offset ?? offset + items.length;
+  const items = asShopeeArray(listResult?.response?.item);
+  const itemIds = items
+    .map((it: any) => Number(it?.item_id))
+    .filter((n: number) => Number.isFinite(n) && n > 0);
+  const hasMore = !!listResult?.response?.has_next_page && items.length > 0;
+  const nextOffset = listResult?.response?.next_offset ?? offset + items.length;
   const pageIndex = Math.floor(offset / SHOPEE_ITEM_LIST_PAGE_SIZE);
   return { itemIds, hasMore, nextOffset, pageIndex };
 }
@@ -2922,26 +2968,31 @@ async function processShopeeItemsToListingRows(
   const products: any[] = [];
   const skippedItems: { itemId: string; reason: string }[] = [];
   let variantItemCount = 0;
+  const safeItems = asShopeeArray(items).filter((it) => it != null && it.item_id != null);
 
-  await runInShopeeBatches(items, async (item) => {
+  await runInShopeeBatches(safeItems, async (item) => {
     try {
       const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
       if (r.error && r.rows.length === 0) {
-        skippedItems.push({ itemId: String(item.item_id), reason: r.error });
+        skippedItems.push({ itemId: String(item?.item_id), reason: r.error });
         return;
       }
       if (r.modelCount > 0) variantItemCount++;
-      products.push(...r.rows);
+      products.push(...asShopeeArray(r.rows));
     } catch (err: unknown) {
       const reason = err instanceof Error ? err.message : String(err);
-      console.error(`[Shopee Sync] pullProducts item_id=${item.item_id}: ${reason}`);
-      appendShopeeSyncErrorToDb({
-        itemId: item.item_id,
-        shopId,
-        action: "pullProducts",
-        error: reason,
-      });
-      skippedItems.push({ itemId: String(item.item_id), reason });
+      console.error(`[Shopee Sync] pullProducts item_id=${item?.item_id}: ${reason}`);
+      try {
+        appendShopeeSyncErrorToDb({
+          itemId: item?.item_id,
+          shopId,
+          action: "pullProducts",
+          error: reason,
+        });
+      } catch {
+        /* ignore */
+      }
+      skippedItems.push({ itemId: String(item?.item_id ?? "?"), reason });
     }
   });
 
@@ -3021,45 +3072,58 @@ async function pullShopeeChannelListingsPage(
   };
   skippedItems: { itemId: string; reason: string }[];
 }> {
-  const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
-  if (page.itemIds.length === 0) {
+  try {
+    const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
+    if (page.itemIds.length === 0) {
+      return {
+        currentOffset: offset,
+        nextOffset: page.nextOffset,
+        hasMore: false,
+        pageIndex: page.pageIndex,
+        rowsSaved: 0,
+        pageStats: { itemsInPage: 0, rowsInPage: 0, variantItemCount: 0, skippedCount: 0 },
+        skippedItems: [],
+      };
+    }
+
+    const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, page.itemIds);
+    const { rows, skippedItems, variantItemCount } = await processShopeeItemsToListingRows(
+      shopId,
+      accessToken,
+      baseItems
+    );
+    let rowsSaved = 0;
+    try {
+      rowsSaved = upsertChannelListingsBatch(rows, shopId, shopName);
+    } catch (saveErr: unknown) {
+      const msg = saveErr instanceof Error ? saveErr.message : String(saveErr);
+      console.error(`[Shopee Channel Fetch] Lưu DB thất bại offset=${offset}:`, msg);
+      throw new Error(`Lưu channel_listings thất bại: ${msg}`);
+    }
+
+    console.log(
+      `[Shopee Channel Fetch] Trang offset=${offset}: ${page.itemIds.length} item -> ${rows.length} dong, da luu ${rowsSaved} vao DB`,
+    );
+
     return {
       currentOffset: offset,
       nextOffset: page.nextOffset,
-      hasMore: false,
+      hasMore: page.hasMore,
       pageIndex: page.pageIndex,
-      rowsSaved: 0,
-      pageStats: { itemsInPage: 0, rowsInPage: 0, variantItemCount: 0, skippedCount: 0 },
-      skippedItems: [],
+      rowsSaved,
+      pageStats: {
+        itemsInPage: page.itemIds.length,
+        rowsInPage: rows.length,
+        variantItemCount,
+        skippedCount: skippedItems.length,
+      },
+      skippedItems,
     };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Shopee Channel Fetch] Page offset=${offset} failed:`, message);
+    throw err instanceof Error ? err : new Error(message);
   }
-
-  const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, page.itemIds);
-  const { rows, skippedItems, variantItemCount } = await processShopeeItemsToListingRows(
-    shopId,
-    accessToken,
-    baseItems
-  );
-  const rowsSaved = upsertChannelListingsBatch(rows, shopId, shopName);
-
-  console.log(
-    `[Shopee Channel Fetch] Trang offset=${offset}: ${page.itemIds.length} item -> ${rows.length} dong, da luu ${rowsSaved} vao DB`,
-  );
-
-  return {
-    currentOffset: offset,
-    nextOffset: page.nextOffset,
-    hasMore: page.hasMore,
-    pageIndex: page.pageIndex,
-    rowsSaved,
-    pageStats: {
-      itemsInPage: page.itemIds.length,
-      rowsInPage: rows.length,
-      variantItemCount,
-      skippedCount: skippedItems.length,
-    },
-    skippedItems,
-  };
 }
 
 async function pullShopeeChannelListingsAllPages(
@@ -3089,18 +3153,27 @@ async function pullShopeeChannelListingsAllPages(
 
   while (hasMore && pageGuard < 200) {
     pageGuard++;
-    const page = await pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset);
-    totalSaved += page.rowsSaved;
-    parentCount += page.pageStats.rowsInPage;
-    itemCount += page.pageStats.itemsInPage;
-    variantItemCount += page.pageStats.variantItemCount;
-    skippedItems.push(...page.skippedItems);
+    try {
+      const page = await pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset);
+      totalSaved += page.rowsSaved;
+      parentCount += page.pageStats.rowsInPage;
+      itemCount += page.pageStats.itemsInPage;
+      variantItemCount += page.pageStats.variantItemCount;
+      skippedItems.push(...asShopeeArray(page.skippedItems));
 
-    hasMore = page.hasMore;
-    offset = page.nextOffset;
-    if (!hasMore) break;
-    if (page.pageStats.itemsInPage === 0 && !page.hasMore) break;
-    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+      hasMore = page.hasMore;
+      offset = page.nextOffset;
+      if (!hasMore) break;
+      if (page.pageStats.itemsInPage === 0 && !page.hasMore) break;
+      await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+    } catch (pageErr: unknown) {
+      const reason = pageErr instanceof Error ? pageErr.message : String(pageErr);
+      skippedItems.push({ itemId: `page_offset_${offset}`, reason });
+      console.error(`[Shopee Channel Fetch] Dừng fetchAll tại offset=${offset}: ${reason}`);
+      // Không crash toàn bộ — trả partial result
+      hasMore = false;
+      break;
+    }
   }
 
   return {
@@ -3216,21 +3289,30 @@ async function fetchAllShopeeItemIds(shopId: string, accessToken: string): Promi
 
 async function fetchShopeeBaseItemsByIds(shopId: string, accessToken: string, itemIds: number[]): Promise<any[]> {
   const allItems: any[] = [];
+  const ids = asShopeeArray(itemIds).filter((n) => Number.isFinite(Number(n)) && Number(n) > 0);
   const batches: number[][] = [];
-  for (let i = 0; i < itemIds.length; i += SHOPEE_PRODUCT_BASE_INFO_BATCH) {
-    batches.push(itemIds.slice(i, i + SHOPEE_PRODUCT_BASE_INFO_BATCH));
+  for (let i = 0; i < ids.length; i += SHOPEE_PRODUCT_BASE_INFO_BATCH) {
+    batches.push(ids.slice(i, i + SHOPEE_PRODUCT_BASE_INFO_BATCH));
   }
 
   await runInShopeeBatches(
     batches,
     async (batch, batchIdx) => {
-      const baseInfoResult = await shopeeGetItemBaseInfo(shopId, accessToken, batch);
-      if (baseInfoResult.error) {
-        const errMsg = formatShopeeApiError(baseInfoResult) || `${baseInfoResult.error}: ${baseInfoResult.message || ""}`;
-        console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx}: ${errMsg}`);
-        throw new Error(errMsg);
+      try {
+        const baseInfoResult = await shopeeGetItemBaseInfo(shopId, accessToken, batch);
+        if (baseInfoResult?.error) {
+          const errMsg =
+            formatShopeeApiError(baseInfoResult) ||
+            `${baseInfoResult.error}: ${baseInfoResult.message || ""}`;
+          console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx}: ${errMsg}`);
+          // Không throw — bỏ qua batch lỗi để không crash cả quá trình tải
+          return;
+        }
+        allItems.push(...asShopeeArray(baseInfoResult?.response?.item_list).filter((it) => it != null));
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx} exception: ${msg}`);
       }
-      allItems.push(...(baseInfoResult.response?.item_list || []));
     },
     { batchSize: 1, itemDelayMs: SHOPEE_PRODUCT_API_DELAY_MS, batchPauseMs: SHOPEE_PRODUCT_BATCH_PAUSE_MS },
   );
@@ -3386,19 +3468,20 @@ function replaceProductsForShopeeItem(products: any[], itemId: string, variantPr
 }
 
 function dedupeShopeeParentVariantRows(products: any[]): any[] {
-  // Parent-Child: mỗi item_id chỉ giữ 1 Parent (có children_models). Loại flat child cũ nếu còn sót.
+  // Parent-Child: mỗi item_id chỉ giữ 1 Parent (có children). Loại flat child cũ nếu còn sót.
   const byItem = new Map<string, any>();
   const others: any[] = [];
 
-  for (const p of products) {
-    const itemId = p.shopeeItemId || String(p.id || "").match(/^shopee-item-(\d+)/)?.[1];
+  for (const p of asShopeeArray(products)) {
+    if (!p || typeof p !== "object") continue;
+    const itemId = p?.shopeeItemId || String(p?.id || "").match(/^shopee-item-(\d+)/)?.[1];
     if (!itemId) {
       others.push(p);
       continue;
     }
     const key = String(itemId);
-    const isParent = getProductChildrenList(p).length > 0 || /^shopee-item-\d+$/.test(String(p.id));
-    const isFlatChild = !!p.shopeeModelId || String(p.id).includes("-model-");
+    const isParent = getProductChildrenList(p).length > 0 || /^shopee-item-\d+$/.test(String(p?.id || ""));
+    const isFlatChild = !!p?.shopeeModelId || String(p?.id || "").includes("-model-");
 
     if (isFlatChild && !isParent) continue;
 
@@ -3410,7 +3493,7 @@ function dedupeShopeeParentVariantRows(products: any[]): any[] {
     const prevHasChildren = getProductChildrenList(prev).length > 0;
     const nextHasChildren = getProductChildrenList(p).length > 0;
     if (nextHasChildren && !prevHasChildren) byItem.set(key, p);
-    else if (isParent && !/^shopee-item-\d+$/.test(String(prev.id))) byItem.set(key, p);
+    else if (isParent && !/^shopee-item-\d+$/.test(String(prev?.id || ""))) byItem.set(key, p);
   }
 
   return [...byItem.values(), ...others];
@@ -7559,17 +7642,12 @@ async function startServer() {
       });
     } catch (error: unknown) {
       console.error("[Shopee Channel Fetch] Exception:", error);
-      const { message, details } = extractHttpClientError(error);
-      const isRate = /429|rate.?limit|too many request/i.test(message);
-      const isPayload = /413|payload too large/i.test(message);
+      const message = error instanceof Error ? error.message : String(error);
       if (!res.headersSent) {
-        return res.status(isRate ? 429 : isPayload ? 413 : 500).json({
+        return res.status(500).json({
           success: false,
-          message: isPayload
-            ? "Phản hồi quá lớn — hãy dùng phân trang (offset/nextOffset) thay vì tải toàn bộ một lần."
-            : message,
-          details,
-          error: isPayload ? "payload_too_large" : isRate ? "shopee_rate_limit" : "exception",
+          message,
+          error: error instanceof Error ? error.toString() : String(error),
         });
       }
     }
