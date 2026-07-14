@@ -6,6 +6,8 @@ coverage/
 cpanel-deploy/
 cpanel-deploy-staging/
 cpanel-deploy.zip
+*.zip
+src.zip
 assets/
 server.cjs
 server.cjs.map
