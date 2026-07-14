@@ -129,21 +129,6 @@ function scheduleWaybillsCleanup(): void {
         fs.existsSync(LEGACY_WAYBILLS_DIR) && LEGACY_WAYBILLS_DIR !== WAYBILLS_DIR
           ? cleanupExpiredWaybills(LEGACY_WAYBILLS_DIR)
           : { scanned: 0, deleted: 0, skipped: 0, errors: 0 };
-      // #region agent log
-      fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "809c09" },
-        body: JSON.stringify({
-          sessionId: "809c09",
-          runId: "waybills-cleanup",
-          hypothesisId: "cleanup",
-          location: "server.ts:scheduleWaybillsCleanup",
-          message: "waybills auto-cleanup finished",
-          data: { primary, legacy, dir: WAYBILLS_DIR },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
     } finally {
       waybillCleanupRunning = false;
     }
@@ -3052,22 +3037,6 @@ async function syncShopeeOrdersFromApi(
 
   const uniqueErrors = dedupeErrors(errors);
 
-  // #region agent log
-  fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "809c09" },
-    body: JSON.stringify({
-      sessionId: "809c09",
-      runId: "sync-memory",
-      hypothesisId: "ram-optimize",
-      location: "server.ts:syncShopeeOrdersFromApi",
-      message: "sync completed low-memory mode",
-      data: { synced: syncedCount, added: addedCount, updated: updatedCount, shops: shopIds.length, errors: uniqueErrors.length },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-
   return {
     synced: syncedCount,
     added: addedCount,
@@ -5253,6 +5222,70 @@ async function startServer() {
       job.updatedAt = Date.now();
       if (activeOrderSyncJobId === jobId) activeOrderSyncJobId = null;
     }
+  }
+
+  let isAutoSyncing = false;
+  const AUTO_SYNC_INTERVAL_MS = Math.max(
+    15,
+    Number(process.env.AUTO_SYNC_INTERVAL_MINUTES) || 30,
+  ) * 60 * 1000;
+
+  async function runAutoOrderSync(): Promise<void> {
+    if (isAutoSyncing) {
+      console.log("[Auto Sync] Bỏ qua — tiến trình đồng bộ tự động trước đó vẫn đang chạy.");
+      return;
+    }
+    if (getRunningOrderSyncJob()) {
+      console.log("[Auto Sync] Bỏ qua — đang có job đồng bộ thủ công/ngầm khác.");
+      return;
+    }
+    if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) return;
+
+    const tokens = loadShopeeTokens();
+    if (Object.keys(tokens).length === 0) return;
+
+    isAutoSyncing = true;
+    const jobId = createOrderSyncJobId();
+    activeOrderSyncJobId = jobId;
+    orderSyncJobs.set(jobId, {
+      id: jobId,
+      status: "pending",
+      total: 0,
+      completed: 0,
+      synced: 0,
+      added: 0,
+      updated: 0,
+      message: "Auto-sync: đang quét đơn Shopee (chế độ tiết kiệm RAM)...",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    console.log(`[Auto Sync] Bắt đầu job ${jobId} (chu kỳ ${AUTO_SYNC_INTERVAL_MS / 60000} phút).`);
+
+    try {
+      await executeOrderSyncBackgroundJob(jobId);
+      const job = orderSyncJobs.get(jobId);
+      if (job?.status === "done") {
+        console.log(`[Auto Sync] Hoàn tất: ${job.synced} đơn (${job.added} mới, ${job.updated} cập nhật).`);
+      } else if (job?.status === "failed") {
+        console.error(`[Auto Sync] Thất bại: ${job.error || job.message}`);
+      }
+    } catch (err: any) {
+      console.error("[Auto Sync] Lỗi không mong đợi:", err?.message || err);
+    } finally {
+      isAutoSyncing = false;
+    }
+  }
+
+  function startAutoOrderSyncScheduler(): void {
+    if (process.env.DISABLE_AUTO_ORDER_SYNC === "1") {
+      console.log("[Auto Sync] Đã tắt (DISABLE_AUTO_ORDER_SYNC=1).");
+      return;
+    }
+    console.log(`[Auto Sync] Lên lịch mỗi ${AUTO_SYNC_INTERVAL_MS / 60000} phút (khóa isAutoSyncing).`);
+    setInterval(() => {
+      void runAutoOrderSync();
+    }, AUTO_SYNC_INTERVAL_MS);
   }
 
   app.post("/api/shopee/orders/sync", authMiddleware, async (req, res) => {
@@ -7479,6 +7512,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
   }
 
   if (process.env.PORT) {
+    startAutoOrderSyncScheduler();
     app.listen(PORT, () => {
       console.log(`Server optimized for cPanel Phusion Passenger: listening on ${PORT}`);
       console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
@@ -7486,6 +7520,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
     });
   } else {
+    startAutoOrderSyncScheduler();
     app.listen(Number(PORT), "0.0.0.0", () => {
       console.log(`Server running locally on port ${PORT}`);
       console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);

@@ -24,9 +24,6 @@ export default async function handler(req, res) {
   }
 
   const filePath = extractLabelPath(req);
-  // #region agent log
-  console.log('[Labels Proxy] path', { filePath, queryPath: req.query.path, url: req.url });
-  // #endregion
   if (!filePath || filePath.includes('..') || !/\.pdf$/i.test(filePath)) {
     return res.status(400).send('Invalid label path');
   }

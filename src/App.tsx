@@ -167,21 +167,8 @@ export default function App() {
   }, [logs]);
 
   useEffect(() => {
-    const payload = JSON.stringify(settings);
-    const saved = safeSetItem('omni_settings', payload);
-    // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:settingsPersist',message:'localStorage omni_settings save',data:{saved,shopsCount:settings.shops?.length??0,payloadBytes:payload.length},timestamp:Date.now(),hypothesisId:'H1',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
+    safeSetItem('omni_settings', JSON.stringify(settings));
   }, [settings]);
-
-  useEffect(() => {
-    const raw = safeGetJson<ChannelSettings | null>('omni_settings', null);
-    const rawShops = raw?.shops ?? [];
-    const stripped = stripLegacyDemoShops(rawShops);
-    // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:mountLoadSettings',message:'settings loaded on mount',data:{rawShopsCount:rawShops.length,afterStripCount:stripped.length,strippedIds:rawShops.filter(s=>!stripped.some(x=>x.id===s.id)).map(s=>s.id)},timestamp:Date.now(),hypothesisId:'H2',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
-  }, []);
 
   // Token Verification on Mount
   useEffect(() => {
@@ -305,9 +292,6 @@ export default function App() {
         const merged = mergeChannelSettings(data.settings);
         const returnedIds = (merged.shops ?? []).map((s) => String(s.shopId));
         const missing = expectedShopIds.filter((id) => !returnedIds.includes(id));
-        // #region agent log
-        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'App.tsx:persistChannelSettings',message:'PUT channels response',data:{expectedShopIds,returnedIds,missing,shopCount:merged.shops?.length??0},timestamp:Date.now(),hypothesisId:'H2-H6',runId:'post-fix-2'})}).catch(()=>{});
-        // #endregion
         if (missing.length > 0) {
           console.error('[Channel Settings] Server thiếu shop sau khi lưu:', missing);
           return false;
@@ -1320,6 +1304,7 @@ export default function App() {
               orders={orders}
               onUpdateOrders={handleUpdateOrders}
               onRefreshOrders={pullOrders}
+              onFetchOrders={fetchOrders}
               ordersLoading={ordersLoading}
               shops={settings.shops || []}
               onAddLog={handleAddLog}

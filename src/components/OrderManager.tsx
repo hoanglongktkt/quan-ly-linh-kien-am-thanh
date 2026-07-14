@@ -156,7 +156,10 @@ function OrderDetailAccordionPanel({ order, shops }: { order: Order; shops: Conn
 interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[]) => void;
+  /** Kéo đơn từ Shopee API (nặng) — dùng cho nút đồng bộ thủ công */
   onRefreshOrders?: () => Promise<void> | void;
+  /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
+  onFetchOrders?: () => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
   onAddLog: (log: SyncLog) => void;
@@ -199,6 +202,7 @@ export default function OrderManager({
   orders, 
   onUpdateOrders, 
   onRefreshOrders,
+  onFetchOrders,
   ordersLoading = false,
   shops, 
   onAddLog, 
@@ -722,27 +726,9 @@ export default function OrderManager({
     }
 
     const total = uniqueIds.length;
-    const logPrint = (message: string, extra: Record<string, unknown> = {}) => {
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '809c09' },
-        body: JSON.stringify({
-          sessionId: '809c09',
-          runId: 'print-fix',
-          hypothesisId: 'print-flow',
-          location: 'OrderManager.tsx:printShopeeDocuments',
-          message,
-          data: { orderCount: total, orderIds: uniqueIds, ...extra },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
-    };
 
     try {
       if (onProgress) onProgress(0, total);
-      logPrint('print start', { openPdf });
 
       // Tuần tự từng đơn để cập nhật tiến trình; cache từng PDF trước khi gộp/mở.
       if (total > 1 && onProgress) {
@@ -750,7 +736,6 @@ export default function OrderManager({
         const stepUrls: string[] = [];
 
         for (let i = 0; i < uniqueIds.length; i++) {
-          logPrint('print step', { step: i + 1, orderId: uniqueIds[i] });
           try {
             const step = await fetchPrintDocumentApi([uniqueIds[i]]);
             if (!step.ok) {
@@ -770,7 +755,6 @@ export default function OrderManager({
           const final = await fetchPrintDocumentApi(uniqueIds);
           if (final.ok) {
             const result = await applyPrintDocumentResponse(final.data, openPdf);
-            logPrint('print merge ok', { success: result.success, mergedUrl: result.mergedUrl || null });
             if (stepErrors.length > 0 && result.success) {
               return { ...result, message: stepErrors.join('; ') };
             }
@@ -784,7 +768,6 @@ export default function OrderManager({
         const fallbackUrl = stepUrls[stepUrls.length - 1] || null;
         if (fallbackUrl && openPdf) {
           await openShopeeLabelFromStream({ url: fallbackUrl });
-          logPrint('print fallback url', { fallbackUrl });
           return {
             success: true,
             mergedUrl: fallbackUrl,
@@ -792,23 +775,18 @@ export default function OrderManager({
           };
         }
 
-        logPrint('print failed', { stepErrors });
         return { success: false, message: stepErrors.join('; ') || 'Không thể tạo vận đơn Shopee.' };
       }
 
       const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds);
       if (!ok) {
-        logPrint('print api error', { status, error: data.error });
         return { success: false, message: data.error || `Không thể tạo vận đơn Shopee (HTTP ${status}).` };
       }
 
       if (onProgress) onProgress(total, total);
-      const result = await applyPrintDocumentResponse(data, openPdf);
-      logPrint('print single ok', { success: result.success, mergedUrl: result.mergedUrl || null });
-      return result;
+      return applyPrintDocumentResponse(data, openPdf);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định khi in vận đơn.';
-      logPrint('print exception', { error: msg });
       return { success: false, message: msg };
     }
   };
@@ -839,6 +817,42 @@ export default function OrderManager({
     if (message) setProgressMessage(message);
     if (progressTotal > 0) setProgressCompleted(progressTotal);
     scheduleCloseProgressOverlay(1800);
+  };
+
+  const buildQueuedOrderKeys = (queued: Order[]) => {
+    const keys = new Set<string>();
+    for (const o of queued) {
+      keys.add(o.id);
+      keys.add(o.orderSn);
+      keys.add(`shopee-${o.orderSn}`);
+    }
+    return keys;
+  };
+
+  const applyLocalShippedOrdersUpdate = (
+    baseOrders: Order[],
+    queuedKeys: Set<string>,
+    opts?: { markPrinted?: boolean }
+  ): Order[] =>
+    baseOrders.map((o) =>
+      queuedKeys.has(o.id) || queuedKeys.has(o.orderSn) || queuedKeys.has(`shopee-${o.orderSn}`)
+        ? {
+            ...o,
+            status: 'processed' as const,
+            isPrepared: true,
+            ...(opts?.markPrinted ? { isPrinted: true } : {}),
+          }
+        : o
+    );
+
+  const refreshOrdersAfterShip = async (queuedOrders: Order[], opts?: { markPrinted?: boolean }) => {
+    const queuedKeys = buildQueuedOrderKeys(queuedOrders);
+    const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, opts);
+    ordersRef.current = patched;
+    onUpdateOrders(patched);
+    if (onFetchOrders) {
+      await onFetchOrders();
+    }
   };
 
   const pollShipJobUntilDone = async (
@@ -935,8 +949,23 @@ export default function OrderManager({
       showToast(finalJob.printDocument.message);
     }
 
-    if (onRefreshOrders) {
-      await onRefreshOrders();
+    const printedSns = new Set<string>(
+      (finalJob?.printDocument?.printedOrderSns as string[] | undefined) ||
+        (finalJob?.results || []).filter((r: any) => r.success).map((r: any) => r.orderSn).filter(Boolean)
+    );
+    const queuedForRefresh = queuedCount > 0
+      ? ordersRef.current.filter(
+          (o) =>
+            printedSns.has(o.orderSn) ||
+            (finalJob?.results || []).some(
+              (r: any) => r.success && (r.orderId === o.id || r.orderSn === o.orderSn)
+            )
+        )
+      : [];
+    if (queuedForRefresh.length > 0) {
+      await refreshOrdersAfterShip(queuedForRefresh, { markPrinted: printedSns.size > 0 });
+    } else if (onFetchOrders) {
+      await onFetchOrders();
     }
   };
 
@@ -951,17 +980,8 @@ export default function OrderManager({
       return;
     }
 
-    const queuedKeys = new Set<string>();
-    for (const o of queuedOrders) {
-      queuedKeys.add(o.id);
-      queuedKeys.add(o.orderSn);
-      queuedKeys.add(`shopee-${o.orderSn}`);
-    }
-    const optimisticOrders = orders.map((o) =>
-      queuedKeys.has(o.id) || queuedKeys.has(o.orderSn) || queuedKeys.has(`shopee-${o.orderSn}`)
-        ? { ...o, status: 'processed' as const, isPrepared: true }
-        : o
-    );
+    const queuedKeys = buildQueuedOrderKeys(queuedOrders);
+    const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys);
     onUpdateOrders(optimisticOrders);
     ordersRef.current = optimisticOrders;
 
@@ -1026,7 +1046,7 @@ export default function OrderManager({
             .filter(Boolean);
           if (shopeeIds.length > 0) await printShopeeDocuments(shopeeIds);
         }
-        if (onRefreshOrders) await onRefreshOrders();
+        await refreshOrdersAfterShip(queuedOrders, { markPrinted: successCount > 0 });
         markProgressComplete('Xác nhận & in đơn hoàn tất!');
         return;
       }
@@ -1034,7 +1054,7 @@ export default function OrderManager({
       const data = await parseJsonResponse<any>(res);
       if (!res.ok && res.status !== 202) {
         showToast(data.message || data.error || data.detail || 'Không thể bắt đầu xác nhận đơn hàng.');
-        if (onRefreshOrders) await onRefreshOrders();
+        if (onFetchOrders) await onFetchOrders();
         clearShipProgressOverlay();
         return;
       }
@@ -1068,7 +1088,7 @@ export default function OrderManager({
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
-      if (onRefreshOrders) await onRefreshOrders();
+      if (onFetchOrders) await onFetchOrders();
       clearShipProgressOverlay();
     }
   };

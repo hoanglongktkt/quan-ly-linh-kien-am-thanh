@@ -322,10 +322,6 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       return;
     }
 
-    // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'Settings.tsx:handleSaveShop:entry',message:'save shop clicked',data:{editing:!!editingShop,shopsCountBefore:shops.length,shopId:shopId.trim(),platform},timestamp:Date.now(),hypothesisId:'H3-H4',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
-
     let nextSettings: ChannelSettings;
 
     if (editingShop) {
@@ -356,9 +352,6 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     }
 
     const ok = await onUpdateSettings(nextSettings);
-    // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'809c09'},body:JSON.stringify({sessionId:'809c09',location:'Settings.tsx:handleSaveShop:result',message:'save shop API result',data:{ok,shopsCountAfter:nextSettings.shops?.length??0},timestamp:Date.now(),hypothesisId:'H3',runId:'post-fix'})}).catch(()=>{});
-    // #endregion
     if (!ok) {
       alert('Lưu gian hàng thất bại — dữ liệu chưa được ghi lên máy chủ. Vui lòng thử lại.');
       return;
