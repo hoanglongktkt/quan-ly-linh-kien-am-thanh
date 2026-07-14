@@ -3423,6 +3423,107 @@ function saveProducts(products: any[]): void {
   }
 }
 
+const CHANNEL_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "channel_listings.json");
+
+function readChannelListingsDb(): any[] {
+  try {
+    if (!fs.existsSync(CHANNEL_LISTINGS_DB_PATH)) return [];
+    const raw = fs.readFileSync(CHANNEL_LISTINGS_DB_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error("[Channel Listings DB] Failed to read channel_listings.json:", error);
+    return [];
+  }
+}
+
+function writeChannelListingsDb(rows: any[]): void {
+  try {
+    fs.mkdirSync(path.dirname(CHANNEL_LISTINGS_DB_PATH), { recursive: true });
+    fs.writeFileSync(CHANNEL_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+  } catch (error) {
+    console.error("[Channel Listings DB] Failed to write channel_listings.json:", error);
+  }
+}
+
+function sanitizeChannelListingRow(row: any): any {
+  return {
+    id: String(row.id || `cl-${row.platform}-${row.channelId}`),
+    title: String(row.title || ""),
+    sku: String(row.sku || ""),
+    imageUrl: row.imageUrl || undefined,
+    channelId: String(row.channelId || ""),
+    platform: row.platform || "shopee",
+    shopName: String(row.shopName || ""),
+    shopId: row.shopId ? String(row.shopId) : undefined,
+    status: row.status === "success" || row.status === "failed" ? row.status : "unlinked",
+    linkedProductId: row.linkedProductId ? String(row.linkedProductId) : undefined,
+    updatedAt: row.updatedAt || new Date().toISOString(),
+  };
+}
+
+function upsertChannelListingsFromShopeeSync(
+  syncedProducts: any[],
+  shopId: string,
+  shopName: string,
+): any[] {
+  const existing = readChannelListingsDb();
+  const masterProducts = loadProducts();
+  const byKey = new Map<string, any>();
+
+  for (const listing of existing) {
+    if (listing?.platform && listing?.channelId) {
+      byKey.set(`${listing.platform}::${listing.channelId}`, listing);
+    }
+  }
+
+  for (const item of syncedProducts) {
+    const shopeeChannelId = String(item.shopeeId || item.shopeeItemId || "").trim();
+    if (!shopeeChannelId) continue;
+
+    const key = `shopee::${shopeeChannelId}`;
+    const prev = byKey.get(key);
+
+    const matchedMaster =
+      masterProducts.find(
+        (p) =>
+          (p.shopeeId && String(p.shopeeId) === shopeeChannelId) ||
+          (item.shopeeItemId &&
+            p.shopeeItemId &&
+            String(p.shopeeItemId) === String(item.shopeeItemId) &&
+            (!item.sku ||
+              String(p.sku || "").toLowerCase() === String(item.sku || "").toLowerCase())) ||
+          (item.sku &&
+            String(p.sku || "").toLowerCase() === String(item.sku || "").toLowerCase()),
+      ) || (item.id ? item : undefined);
+
+    const status =
+      matchedMaster?.id || prev?.linkedProductId
+        ? "success"
+        : prev?.status === "failed"
+          ? "failed"
+          : "unlinked";
+
+    byKey.set(key, sanitizeChannelListingRow({
+      id: prev?.id || `cl-shopee-${shopeeChannelId}`,
+      title: String(item.title || ""),
+      sku: String(item.sku || ""),
+      imageUrl: item.avatarUrl || item.imageUrl,
+      channelId: shopeeChannelId,
+      platform: "shopee",
+      shopName,
+      shopId: String(shopId),
+      status,
+      linkedProductId: matchedMaster?.id || prev?.linkedProductId,
+    }));
+  }
+
+  const merged = Array.from(byKey.values());
+  writeChannelListingsDb(merged);
+  console.log(`[Channel Listings] Đã lưu ${merged.length} liên kết sàn sau đồng bộ Shopee shop_id=${shopId}`);
+  return merged;
+}
+
 const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
 
 function normalizeSupplier(raw: any): any {
@@ -5856,7 +5957,9 @@ async function startServer() {
     try {
       console.log(`[Shopee Product Sync] Bắt đầu đồng bộ kho cho shop_id=${shopId}...`);
       const result = await runFullShopeeWarehouseSync(shopId, accessToken);
-      return res.json(result);
+      const shopName = resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
+      const listings = upsertChannelListingsFromShopeeSync(result.products, shopId, shopName);
+      return res.json({ ...result, listings, listingsCount: listings.length });
     } catch (error: any) {
       console.error("[Shopee Product Sync] Exception:", error);
       return res.status(500).json({ error: "exception", message: error.message || String(error) });
@@ -7498,24 +7601,6 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
   });
 
   const PRODUCT_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "product_listings.json");
-  const CHANNEL_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "channel_listings.json");
-
-  const readChannelListingsDb = (): any[] => {
-    try {
-      if (!fs.existsSync(CHANNEL_LISTINGS_DB_PATH)) return [];
-      const raw = fs.readFileSync(CHANNEL_LISTINGS_DB_PATH, "utf-8");
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const writeChannelListingsDb = (rows: any[]) => {
-    const dir = path.dirname(CHANNEL_LISTINGS_DB_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(CHANNEL_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
-  };
 
   app.get("/api/channel-listings", authMiddleware, (_req, res) => {
     try {
@@ -7531,19 +7616,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       if (!Array.isArray(incoming)) {
         return res.status(400).json({ success: false, error: "listings_array_required" });
       }
-      const sanitized = incoming.map((row: any) => ({
-        id: String(row.id || `cl-${row.platform}-${row.channelId}`),
-        title: String(row.title || ""),
-        sku: String(row.sku || ""),
-        imageUrl: row.imageUrl || undefined,
-        channelId: String(row.channelId || ""),
-        platform: row.platform || "shopee",
-        shopName: String(row.shopName || ""),
-        shopId: row.shopId ? String(row.shopId) : undefined,
-        status: row.status === "success" || row.status === "failed" ? row.status : "unlinked",
-        linkedProductId: row.linkedProductId ? String(row.linkedProductId) : undefined,
-        updatedAt: new Date().toISOString(),
-      }));
+      const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
       writeChannelListingsDb(sanitized);
       return res.json({ success: true, count: sanitized.length, listings: sanitized });
     } catch (error: any) {

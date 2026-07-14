@@ -479,6 +479,7 @@ export default function ProductList({
           onAddLog={onAddLog}
           onUpdateProduct={onUpdateProduct}
           onAddProduct={onAddProduct}
+          onRefreshProducts={onRefreshProducts}
         />
       ) : subTab === 'audit' ? (
         <InventoryAudit
