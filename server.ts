@@ -2730,7 +2730,7 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       orderSn: String(item.order_sn),
       channel: "shopee",
       shopId: String(shopId),
-      shopName: shopName || "Shopee Shop",
+      shopName: resolveConnectedShopDisplayName(shopId, shopName) || `Shop ${shopId}`,
       totalAmount: Number(item?.total_amount || 0),
       revenue: Number(item?.total_amount || 0) * 0.88,
       status: statusMap[rawStatus] || "unprocessed",
@@ -2784,6 +2784,10 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   if (!incoming.shopId && existing.shopId) {
     merged.shopId = existing.shopId;
   }
+  merged.shopName =
+    resolveConnectedShopDisplayName(merged.shopId, incoming.shopName) ||
+    resolveConnectedShopDisplayName(existing.shopId, existing.shopName) ||
+    merged.shopName;
   mergeShopeeTrackingFields(merged, existing, incoming);
   delete merged.customerName;
   delete merged.customerPhone;
@@ -3369,6 +3373,54 @@ const DEFAULT_CHANNEL_SETTINGS: Record<string, any> = {
   shops: [],
 };
 
+const GENERIC_SHOPEE_SHOP_LABELS = new Set(["shopee shop", "gian hàng"]);
+
+function isGenericShopeeShopLabel(name: string | undefined): boolean {
+  const label = String(name || "").trim();
+  if (!label) return true;
+  if (GENERIC_SHOPEE_SHOP_LABELS.has(label.toLowerCase())) return true;
+  if (/^shopee\s+\d+$/i.test(label)) return true;
+  return false;
+}
+
+function getConnectedShopNameMap(): Map<string, string> {
+  const settings = loadChannelSettings();
+  const map = new Map<string, string>();
+  for (const shop of settings.shops || []) {
+    const id = normalizeShopIdKey(shop.shopId || shop.id);
+    const name = String(shop.shopName || "").trim();
+    if (id && name && !isGenericShopeeShopLabel(name)) {
+      map.set(id, name);
+    }
+  }
+  return map;
+}
+
+function resolveConnectedShopDisplayName(
+  shopId: string | number | undefined,
+  fallbackName?: string,
+): string | undefined {
+  const sid = normalizeShopIdKey(shopId);
+  if (sid) {
+    const fromSettings = getConnectedShopNameMap().get(sid);
+    if (fromSettings) return fromSettings;
+  }
+  const fallback = String(fallbackName || "").trim();
+  if (fallback && !isGenericShopeeShopLabel(fallback)) return fallback;
+  return sid ? `Shop ${sid}` : undefined;
+}
+
+function enrichOrderShopName(order: any): any {
+  if (!order || order.channel !== "shopee") return order;
+  const resolved = resolveConnectedShopDisplayName(order.shopId, order.shopName);
+  if (!resolved || order.shopName === resolved) return order;
+  return { ...order, shopName: resolved };
+}
+
+function enrichOrdersWithShopNames(orders: any[]): any[] {
+  return orders.map(enrichOrderShopName);
+}
+
 function logOAuthSaveError(context: string, error: any): void {
   const detail = error?.response?.data ?? error?.message ?? String(error);
   console.error(`Lỗi chi tiết khi lưu shop/OAuth (${context}):`, detail);
@@ -3840,7 +3892,7 @@ function normalizeShopeeOrder(payload: any): any | null {
     orderSn: String(orderSn),
     channel: "shopee",
     shopId: shopId ? String(shopId) : undefined,
-    shopName: data.shop_name || "Shopee Shop",
+    shopName: resolveConnectedShopDisplayName(shopId, data.shop_name) || (shopId ? `Shop ${shopId}` : "Gian hàng"),
     totalAmount: Number(data.total_amount || 0),
     revenue: Number(data.total_amount || 0) * 0.88,
     status: statusMap[rawStatus] || "unprocessed",
@@ -4794,7 +4846,7 @@ async function startServer() {
       return o;
     });
     if (dirty) saveOrders(rawOrders);
-    const orders = enrichOrdersFromCatalog(rawOrders, products);
+    const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
     return res.json(orders);
   });
 

@@ -57,20 +57,10 @@ import {
 import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse, base64ToPdfBlob } from '../utils/apiClient';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
+import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 
 function getOrderWaybillCode(order: Order): string {
   return getCarrierWaybillDisplay(order);
-}
-
-function resolveOrderShopDisplayName(order: Order, shops: ConnectedShop[]): string {
-  const cached = order.shopName?.trim();
-  if (cached) return cached;
-  const sid = order.shopId?.trim();
-  if (sid) {
-    const match = shops.find((s) => s.id === sid || s.shopId === sid);
-    if (match?.shopName?.trim()) return match.shopName.trim();
-  }
-  return sid || 'Gian hàng';
 }
 
 function OrderDetailAccordionPanel({ order, shops }: { order: Order; shops: ConnectedShop[] }) {
@@ -3140,7 +3130,7 @@ export default function OrderManager({
                       <td className="p-4 space-y-1">
                         <div className="flex items-center gap-1.5">
                           <span
-                            className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[160px] inline-block ${
+                            className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[11rem] inline-block ${
                               order.channel === 'shopee'
                                 ? 'bg-orange-50 text-orange-700 border border-orange-200'
                                 : order.channel === 'tiktok'
@@ -3377,7 +3367,7 @@ export default function OrderManager({
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span
-                          className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-[160px] inline-block shrink-0 ${
+                          className={`px-2 py-0.5 text-[10px] font-bold rounded truncate max-w-44 inline-block shrink-0 ${
                             order.channel === 'shopee'
                               ? 'bg-orange-50 text-orange-700 border border-orange-200'
                               : order.channel === 'tiktok'
@@ -3735,7 +3725,7 @@ export default function OrderManager({
                   <div className="border-b border-gray-100 pb-2">
                     <div className="space-y-1 text-gray-600">
                       <p className="font-bold text-black uppercase text-[9px]">Gửi từ:</p>
-                      <p className="font-semibold text-black">{order.shopName || resolveOrderShopDisplayName(order, shops)}</p>
+                      <p className="font-semibold text-black">{resolveOrderShopDisplayName(order, shops)}</p>
                     </div>
                   </div>
 
