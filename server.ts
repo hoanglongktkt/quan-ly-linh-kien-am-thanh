@@ -4293,163 +4293,49 @@ function buildDashboardChart(orders: any[], range: { start: Date; end: Date; key
 
 const PRODUCTS_DB_PATH = path.join(APP_ROOT, "data", "products.json");
 
+/** Lấy children nếu đã có (không gom nhóm nặng). */
 function getProductChildrenList(p: any): any[] {
-  if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
-  if (Array.isArray(p?.children_models) && p.children_models.length > 0) return p.children_models;
+  try {
+    if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
+    if (Array.isArray(p?.children_models) && p.children_models.length > 0) return p.children_models;
+  } catch {
+    /* ignore */
+  }
   return [];
 }
 
-function extractShopeeItemIdKey(p: any): string | null {
-  const fromField = String(p?.shopeeItemId || "").trim();
-  if (/^\d{5,}$/.test(fromField)) return fromField;
-  const fromShopeeId = String(p?.shopeeId || "").split(":")[0].trim();
-  if (/^\d{5,}$/.test(fromShopeeId)) return fromShopeeId;
-  const fromId = String(p?.id || "").match(/^shopee-item-(\d+)/);
-  if (fromId?.[1]) return fromId[1];
-  const fromItemId = String(p?.item_id || p?.itemId || "").trim();
-  if (/^\d{5,}$/.test(fromItemId)) return fromItemId;
-  return null;
-}
-
-function stripNestedChildren(row: any): any {
-  const { children: _c, children_models: _cm, ...rest } = row || {};
-  return rest;
-}
-
-function normalizeParentProductRow(p: any): any {
-  const children = getProductChildrenList(p).map((c: any) => stripNestedChildren(c));
-  const { children_models: _legacy, ...rest } = p;
-  return {
-    ...rest,
-    children,
-    stock:
-      children.length > 0
-        ? children.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0)
-        : Number(p.stock) || 0,
-  };
-}
-
-/**
- * Gom SKU phẳng theo item_id thành Parent Product + children.
- * Bắt buộc gọi trước khi trả API / lưu DB.
- */
-function groupProductsByItemId(products: any[]): any[] {
-  if (!Array.isArray(products) || products.length === 0) return [];
-
-  const buckets = new Map<string, any[]>();
-  const standalone: any[] = [];
-
-  for (const raw of products) {
-    // Đã là parent có children → giữ nguyên (chuẩn hóa)
-    const existingChildren = getProductChildrenList(raw);
-    if (existingChildren.length > 0) {
-      const itemKey = extractShopeeItemIdKey(raw) || String(raw.id);
-      if (!buckets.has(`__nested__${itemKey}`)) {
-        buckets.set(`__nested__${itemKey}`, [normalizeParentProductRow(raw)]);
-      }
-      continue;
-    }
-
-    const itemKey = extractShopeeItemIdKey(raw);
-    if (!itemKey) {
-      standalone.push(normalizeParentProductRow({ ...raw, children: [] }));
-      continue;
-    }
-    if (!buckets.has(itemKey)) buckets.set(itemKey, []);
-    buckets.get(itemKey)!.push(stripNestedChildren(raw));
-  }
-
-  const parents: any[] = [];
-
-  for (const [key, rows] of buckets) {
-    if (key.startsWith("__nested__")) {
-      parents.push(rows[0]);
-      continue;
-    }
-
-    const modelRows = rows.filter(
-      (r) => r.shopeeModelId || String(r.id || "").includes("-model-") || String(r.shopeeId || "").includes(":")
-    );
-    const parentShells = rows.filter((r) => !modelRows.includes(r));
-
-    if (modelRows.length === 0) {
-      // Không có model — 1 dòng parent đơn
-      const base = parentShells[0] || rows[0];
-      parents.push(
-        normalizeParentProductRow({
-          ...base,
-          id: /^shopee-item-\d+$/.test(String(base.id)) ? base.id : `shopee-item-${key}`,
-          shopeeItemId: key,
-          shopeeId: key,
-          shopeeModelId: undefined,
-          children: [],
-        })
-      );
-      continue;
-    }
-
-    const shell = parentShells[0];
-    const first = modelRows[0];
-    const baseTitle = String(shell?.title || first.title || "")
-      .split(" - ")[0]
-      .trim() || `Sản phẩm Shopee ${key}`;
-
-    const children = modelRows.map((m) => {
-      const modelId = m.shopeeModelId || String(m.id || "").match(/-model-(.+)$/)?.[1];
-      return {
-        ...m,
-        shopeeItemId: key,
-        shopeeModelId: modelId ? String(modelId) : m.shopeeModelId,
-        shopeeId: m.shopeeId || (modelId ? `${key}:${modelId}` : key),
-      };
-    });
-
-    parents.push(
-      normalizeParentProductRow({
-        ...(shell || first),
-        id: `shopee-item-${key}`,
-        title: baseTitle,
-        sku: shell?.sku || String(first.parentSku || first.sku || key),
-        barcode: shell?.barcode || shell?.sku || String(first.parentSku || key),
-        shopeeId: key,
-        shopeeItemId: key,
-        shopeeModelId: undefined,
-        modelName: undefined,
-        parentSku: undefined,
-        children,
-      })
-    );
-  }
-
-  return [...parents, ...standalone];
-}
-
-/** @deprecated alias — dùng groupProductsByItemId */
-function groupFlatProductsToParents(products: any[]): any[] {
-  return groupProductsByItemId(products);
-}
-
+/** Đọc DB thô (flat) — không grouping để tránh OOM/crash 502. */
 function loadProducts(): any[] {
   try {
     if (!fs.existsSync(PRODUCTS_DB_PATH)) return [];
     const raw = fs.readFileSync(PRODUCTS_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    if (!Array.isArray(parsed)) return [];
-    return groupProductsByItemId(parsed);
+    if (!raw || !raw.trim()) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     console.error("[Products DB] Failed to read products.json:", error);
     return [];
   }
 }
 
+/** Ghi DB nguyên trạng — không regroup toàn bộ file. */
 function saveProducts(products: any[]): void {
   try {
-    const normalized = groupProductsByItemId(products).map((p) => normalizeParentProductRow(p));
+    const list = Array.isArray(products) ? products : [];
     fs.mkdirSync(path.dirname(PRODUCTS_DB_PATH), { recursive: true });
-    fs.writeFileSync(PRODUCTS_DB_PATH, JSON.stringify(normalized, null, 2), "utf-8");
+    fs.writeFileSync(PRODUCTS_DB_PATH, JSON.stringify(list, null, 2), "utf-8");
   } catch (error) {
     console.error("[Products DB] Failed to write products.json:", error);
   }
+}
+
+/** Alias nhẹ — giữ tương thích chỗ gọi cũ (không còn regroup). */
+function groupProductsByItemId(products: any[]): any[] {
+  return Array.isArray(products) ? products : [];
+}
+
+function groupFlatProductsToParents(products: any[]): any[] {
+  return Array.isArray(products) ? products : [];
 }
 
 const CHANNEL_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "channel_listings.json");
@@ -5750,63 +5636,55 @@ async function startServer() {
 
   // Real synced orders list — this is what the Order Management UI reads from.
   // --- Products warehouse API (data/products.json) ---
-  // Phân trang bắt buộc — mặc định trang 1, tối đa 50 parent/lần (tránh HTTP 413).
+  // Phân trang nhẹ — trả flat list ổn định (gom nhóm UI ở Frontend).
   const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
   const PRODUCTS_PAGE_SIZE_MAX = 50;
 
   app.get("/api/products", authMiddleware, (req, res) => {
-    // Đọc raw để migrate DB từ flat → Parent+children nếu cần
-    let rawList: any[] = [];
     try {
-      if (fs.existsSync(PRODUCTS_DB_PATH)) {
-        const raw = fs.readFileSync(PRODUCTS_DB_PATH, "utf-8");
-        rawList = raw.trim() ? JSON.parse(raw) : [];
-        if (!Array.isArray(rawList)) rawList = [];
-      }
-    } catch {
-      rawList = [];
-    }
+      const all = loadProducts();
+      const rawPage = Number(req.query?.page);
+      const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
+      const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
+      const pageSize = Number.isFinite(rawSize) && rawSize > 0
+        ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize))
+        : PRODUCTS_PAGE_SIZE_DEFAULT;
 
-    const all = groupProductsByItemId(rawList);
-    const needsPersist =
-      Array.isArray(rawList) &&
-      rawList.length > 0 &&
-      (rawList.length !== all.length ||
-        rawList.some((p: any) => !Array.isArray(p.children) && (p.shopeeModelId || String(p.id || "").includes("-model-"))));
-    if (needsPersist) {
+      const total = all.length;
+      const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)) || 1);
+      const safePage = Math.min(page, totalPages);
+      const start = (safePage - 1) * pageSize;
+      const products = all.slice(start, start + pageSize);
+
+      return res.status(200).json({
+        success: true,
+        products,
+        page: safePage,
+        pageSize,
+        total,
+        totalPages,
+        hasMore: safePage < totalPages,
+        grouped: false,
+      });
+    } catch (err: unknown) {
+      console.error("[Products API] GET /api/products failed:", err);
       try {
-        saveProducts(all);
-        console.log(`[Products] Migrated flat → parent-child: ${rawList.length} rows → ${all.length} parents`);
-      } catch (err) {
-        console.error("[Products] Migrate nested save failed:", err);
+        // Fallback tối thiểu — tránh 502
+        return res.status(200).json({
+          success: true,
+          products: [],
+          page: 1,
+          pageSize: PRODUCTS_PAGE_SIZE_DEFAULT,
+          total: 0,
+          totalPages: 1,
+          hasMore: false,
+          grouped: false,
+          message: err instanceof Error ? err.message : "products_read_error",
+        });
+      } catch {
+        return res.status(503).json({ success: false, error: "products_unavailable" });
       }
     }
-
-    const rawPage = Number(req.query?.page);
-    const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
-    const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
-    const pageSize = Number.isFinite(rawSize) && rawSize > 0
-      ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize))
-      : PRODUCTS_PAGE_SIZE_DEFAULT;
-
-    const total = all.length;
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
-    const safePage = Math.min(page, totalPages);
-    const start = (safePage - 1) * pageSize;
-    const products = all.slice(start, start + pageSize);
-    const parentsWithChildren = products.filter((p: any) => getProductChildrenList(p).length > 0).length;
-
-    return res.json({
-      success: true,
-      products,
-      page: safePage,
-      pageSize,
-      total,
-      totalPages,
-      hasMore: safePage < totalPages,
-      grouped: true,
-      parentsWithChildren,
-    });
   });
 
   app.post("/api/products", authMiddleware, (req, res) => {

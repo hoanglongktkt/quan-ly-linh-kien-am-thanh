@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Product, ConnectedShop, SyncLog, Supplier, BulkSaveProductUpdate, getProductChildren } from '../types';
 import ProductDetailModal, {
+  buildProductGroups,
   formatPriceRange,
   isJunkCategoryLabel,
   type ProductGroupRow,
@@ -223,27 +224,24 @@ export default function ProductList({
   const isGroupSelected = (group: ProductGroupRow) =>
     group.variants.length > 0 && group.variants.every((v) => selectedIds.includes(v.id));
 
-  // Backend đã gom Parent + children theo item_id — map thẳng, không flat thêm ở FE
+  // FE gom nhóm theo item_id (API trả flat để server ổn định) — hiển thị Parent + >> children
   const productGroups = useMemo((): ProductGroupRow[] => {
-    return products.map((parent) => {
-      const children = getProductChildren(parent);
-      const hasVariants = children.length > 0;
-      const variants = hasVariants ? children : [parent];
-      const prices = variants.map((v) => Number(v.sellingPrice) || 0);
-      return {
-        groupId: parent.id,
-        representative: parent,
-        variants,
-        variantCount: hasVariants ? children.length : 1,
-        hasVariants,
-        displayTitle: parent.title,
-        totalStock: hasVariants
-          ? children.reduce((sum, v) => sum + (Number(v.stock) || 0), 0)
-          : Number(parent.stock) || 0,
-        minSellingPrice: Math.min(...prices),
-        maxSellingPrice: Math.max(...prices),
-      };
-    });
+    try {
+      return buildProductGroups(products);
+    } catch (err) {
+      console.error('[ProductList] buildProductGroups failed, fallback flat:', err);
+      return products.map((p) => ({
+        groupId: p.id,
+        representative: p,
+        variants: [p],
+        variantCount: 1,
+        hasVariants: false,
+        displayTitle: p.title,
+        totalStock: Number(p.stock) || 0,
+        minSellingPrice: Number(p.sellingPrice) || 0,
+        maxSellingPrice: Number(p.sellingPrice) || 0,
+      }));
+    }
   }, [products]);
 
   // Filter Categories
