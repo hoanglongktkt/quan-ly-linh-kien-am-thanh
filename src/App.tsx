@@ -1013,7 +1013,7 @@ export default function App() {
       <aside className="sidebar-panel max-md:hidden md:flex md:w-64 md:flex-col shrink-0 sticky top-0 h-screen overflow-y-auto bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
         {/* Brand Header */}
         <div className="p-6 border-b border-slate-800 shrink-0">
-          <BrandHeader logoSize={44} />
+          <BrandHeader logoSize={48} />
         </div>
 
         {/* Navigation Items */}

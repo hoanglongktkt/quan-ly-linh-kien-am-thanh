@@ -37,7 +37,7 @@ export function BrandHeader({
 }: BrandHeaderProps) {
   return (
     <div className="flex items-center gap-3 min-w-0">
-      <BrandLogo size={logoSize} className="rounded-xl shadow-md shadow-indigo-500/15 bg-white/5 w-11 h-11" />
+      <BrandLogo size={logoSize} className="rounded-lg bg-transparent" />
       <div className="min-w-0">
         <h1 className={`truncate ${titleClassName}`}>{APP_TITLE}</h1>
         <span className={taglineClassName}>{APP_TAGLINE}</span>
