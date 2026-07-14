@@ -4726,81 +4726,112 @@ function upsertChannelListingsFromShopeeFetch(
   return merged;
 }
 
-/** Index SKU kho chính — tương đương INDEX/WHERE IN trên DB file JSON. */
+/** Index SKU kho chính — tương đương INDEX/WHERE IN trên DB file JSON (gồm cả children). */
 function buildMasterSkuIndex(products: any[]): Map<string, any> {
   const index = new Map<string, any>();
-  for (const p of products) {
+  for (const p of flattenProductsForStockSync(products)) {
     const sku = String(p.sku || "").trim().toLowerCase();
     if (sku && !index.has(sku)) index.set(sku, p);
   }
   return index;
 }
 
-/** Liên kết tự động theo SKU trùng khớp — chỉ quét listing chưa liên kết + SKU có trong index. */
-async function autoLinkChannelListingsByExactSku(): Promise<{
+/**
+ * Liên kết tự động theo SKU — xử lý IN-MEMORY hàng loạt, ghi DB 1 lần.
+ * Không dùng delay/throttle Shopee API (không gọi mạng).
+ */
+function autoLinkChannelListingsByExactSku(): {
   linkedCount: number;
   listings: any[];
   alreadyLinked: number;
   unlinkedRemaining: number;
-}> {
+} {
   const listings = readChannelListingsDb();
   const masterProducts = loadProducts();
   const skuIndex = buildMasterSkuIndex(masterProducts);
-  const productIndex = new Map(masterProducts.map((p: any) => [String(p.id), p]));
+  const byId = new Map<string, any>(masterProducts.map((p: any) => [String(p.id), { ...p }]));
 
   let alreadyLinked = 0;
-  const pendingIndices: number[] = [];
+  let linkedCount = 0;
+  let productsChanged = false;
+
+  const applyLinkOnMaster = (matchId: string, listing: any) => {
+    const id = String(matchId);
+    const direct = byId.get(id);
+    if (direct) {
+      byId.set(
+        id,
+        applyShopeeLinkFieldsToProduct(direct, String(listing.channelId || ""), {
+          modelId: listing.modelId,
+          itemId: listing.itemId,
+        })
+      );
+      productsChanged = true;
+      return;
+    }
+
+    for (const [parentId, parent] of byId) {
+      const children = getProductChildrenList(parent);
+      if (children.length === 0) continue;
+      const idx = children.findIndex((c: any) => String(c.id) === id);
+      if (idx < 0) continue;
+      const nextChildren = children.slice();
+      nextChildren[idx] = applyShopeeLinkFieldsToProduct(children[idx], String(listing.channelId || ""), {
+        modelId: listing.modelId,
+        itemId: listing.itemId,
+      });
+      byId.set(parentId, { ...parent, children: nextChildren });
+      productsChanged = true;
+      return;
+    }
+  };
+
+  const updated = new Array(listings.length);
   for (let i = 0; i < listings.length; i++) {
     const listing = listings[i];
     if (listing.status === "success" && listing.linkedProductId) {
       alreadyLinked++;
+      updated[i] = listing;
       continue;
     }
+
     const sku = String(listing.sku || "").trim().toLowerCase();
-    if (!sku) continue;
-    if (!skuIndex.has(sku)) continue;
-    pendingIndices.push(i);
+    if (!sku) {
+      updated[i] = listing;
+      continue;
+    }
+
+    const match = skuIndex.get(sku);
+    if (!match) {
+      updated[i] = listing;
+      continue;
+    }
+
+    linkedCount++;
+    if (String(listing.platform || "shopee") === "shopee") {
+      applyLinkOnMaster(String(match.id), listing);
+    }
+
+    updated[i] = sanitizeChannelListingRow({
+      ...listing,
+      status: "success",
+      linkedProductId: String(match.id),
+    });
   }
 
-  let linkedCount = 0;
-  const updated = [...listings];
-
-  await runInShopeeBatches(
-    pendingIndices,
-    async (idx) => {
-      const listing = updated[idx];
-      const sku = String(listing.sku || "").trim().toLowerCase();
-      const match = skuIndex.get(sku);
-      if (!match) return;
-
-      linkedCount++;
-      updated[idx] = sanitizeChannelListingRow({
-        ...listing,
-        status: "success",
-        linkedProductId: String(match.id),
-      });
-
-      const master = productIndex.get(String(match.id));
-      if (master && listing.platform === "shopee") {
-        productIndex.set(
-          String(match.id),
-          applyShopeeLinkFieldsToProduct(master, String(listing.channelId || ""), {
-            modelId: listing.modelId,
-            itemId: listing.itemId,
-          })
-        );
-      }
-    },
-    { itemDelayMs: 50, batchPauseMs: 500 },
-  );
-
   if (linkedCount > 0) {
-    saveProducts(Array.from(productIndex.values()));
+    if (productsChanged) {
+      saveProducts(masterProducts.map((p: any) => byId.get(String(p.id)) || p));
+    }
     writeChannelListingsDb(updated);
   }
 
-  const unlinkedRemaining = updated.filter((l: any) => l.status !== "success" || !l.linkedProductId).length;
-  console.log(`[Auto Link SKU] Đã liên kết ${linkedCount} sản phẩm (còn ${unlinkedRemaining} chưa liên kết)`);
+  const unlinkedRemaining = updated.filter(
+    (l: any) => l.status !== "success" || !l.linkedProductId
+  ).length;
+  console.log(
+    `[Auto Link SKU] Hàng loạt xong — linked=${linkedCount}, already=${alreadyLinked}, còn chưa liên kết=${unlinkedRemaining} (in-memory, 1 lần ghi DB)`
+  );
   return { linkedCount, listings: updated, alreadyLinked, unlinkedRemaining };
 }
 
@@ -7487,26 +7518,38 @@ async function startServer() {
     }
   });
 
-  // API 2: Liên kết tự động theo SKU — chỉ xử lý nội bộ DB.
-  app.post("/api/shopee/channel-products/auto-link", authMiddleware, async (_req, res) => {
+  // API 2: Liên kết tự động theo SKU — chỉ xử lý nội bộ DB (in-memory bulk).
+  // Alias routes (cùng handler) — đặt trước SPA catch-all / Vite.
+  const handleAutoLinkBySku = (_req: any, res: any) => {
     try {
-      const result = await autoLinkChannelListingsByExactSku();
-      return res.json({
-        success: true,
-        message:
-          result.linkedCount > 0
-            ? `Đã liên kết thành công ${result.linkedCount} sản phẩm`
-            : "Không tìm thấy SKU trùng khớp để liên kết tự động",
+      const result = autoLinkChannelListingsByExactSku();
+      const data = {
         linkedCount: result.linkedCount,
         alreadyLinked: result.alreadyLinked,
         unlinkedRemaining: result.unlinkedRemaining,
         listings: result.listings,
+      };
+      return res.status(200).json({
+        success: true,
+        data,
+        message:
+          result.linkedCount > 0
+            ? `Đã liên kết thành công ${result.linkedCount} sản phẩm`
+            : "Không tìm thấy SKU trùng khớp để liên kết tự động",
+        ...data,
       });
     } catch (error: unknown) {
       console.error("[Auto Link SKU] Exception:", error);
-      return sendApiErrorJson(res, error, 500);
+      const message = error instanceof Error ? error.message : String(error);
+      if (!res.headersSent) {
+        return res.status(500).json({ success: false, message });
+      }
     }
-  });
+  };
+
+  app.post("/api/shopee/channel-products/auto-link", authMiddleware, handleAutoLinkBySku);
+  app.post("/api/channel-products/auto-link", authMiddleware, handleAutoLinkBySku);
+  app.post("/api/auto-link", authMiddleware, handleAutoLinkBySku);
 
   // Real product sync — "Khởi tạo kho chính từ Shopee API": pulls the shop's
   // REAL listed items (v2.product.get_item_list -> get_item_base_info, plus

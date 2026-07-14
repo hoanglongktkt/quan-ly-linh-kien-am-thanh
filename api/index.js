@@ -8,7 +8,6 @@ import { handleAuthVerify } from '../_lib/handlers/authVerify.js';
 import { handleShopeeCallback } from '../_lib/handlers/shopeeCallback.js';
 import { handleShopeeWebhook } from '../_lib/handlers/shopeeWebhook.js';
 import { handleHealthCpanel } from '../_lib/handlers/healthCpanel.js';
-import { handleChannelAutoLink } from '../_lib/handlers/channelAutoLink.js';
 import { handleLabelProxy } from '../_lib/handlers/labels.js';
 import { proxyRequestToCpanel, resolveProxyTimeoutMs } from '../_lib/cpanelProxy.js';
 
@@ -28,6 +27,8 @@ function resolveRoutePath(req) {
  */
 const ROUTE_ALIASES = {
   'shopee/channel-products/fetch': 'shopee/products/sync',
+  'channel-products/auto-link': 'shopee/channel-products/auto-link',
+  'auto-link': 'shopee/channel-products/auto-link',
 };
 
 /** Route xử lý local trên Vercel — còn lại proxy sang cPanel. */
@@ -38,7 +39,7 @@ const LOCAL_ROUTES = {
   'auth/shopee/callback': handleShopeeCallback,
   'shopee/webhook': handleShopeeWebhook,
   'health/cpanel': handleHealthCpanel,
-  'shopee/channel-products/auto-link': handleChannelAutoLink,
+  // auto-link: proxy cPanel (in-memory bulk) — KHÔNG chạy local (GET products phân trang gây sai + HTML).
 };
 
 export default async function handler(req, res) {

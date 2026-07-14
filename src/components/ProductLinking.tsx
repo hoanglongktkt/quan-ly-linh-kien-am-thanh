@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Product, SyncLog, ConnectedShop } from '../types';
 import { purgeLegacyCatalogCache } from '../utils/catalogStorage';
-import { parseJsonResponse } from '../utils/apiClient';
+import { parseJsonResponse, apiFetch } from '../utils/apiClient';
 import { 
   Check, 
   AlertCircle, 
@@ -638,7 +638,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     setIsAutoLinking(true);
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch('/api/shopee/channel-products/auto-link', {
+      const res = await apiFetch('/api/shopee/channel-products/auto-link', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -647,6 +647,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       });
       const data = await parseJsonResponse<{
         success?: boolean;
+        data?: {
+          linkedCount?: number;
+          listings?: ChannelListing[];
+          alreadyLinked?: number;
+          unlinkedRemaining?: number;
+        };
         linkedCount?: number;
         listings?: ChannelListing[];
         message?: string;
@@ -657,18 +663,20 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         throw new Error(data?.message || data?.error || 'Liên kết tự động thất bại.');
       }
 
-      const linkedCount = data.linkedCount ?? 0;
-      if (Array.isArray(data.listings)) {
-        listingsHydratedRef.current = true;
-        setListings(data.listings);
-        await persistListings(data.listings);
+      const payload = data.data || data;
+      const linkedCount = payload.linkedCount ?? data.linkedCount ?? 0;
+      const nextListings = payload.listings ?? data.listings;
 
-        data.listings.forEach((listing) => {
-          if (listing.status === 'success' && listing.linkedProductId) {
-            const master = products.find((p) => p.id === listing.linkedProductId);
-            if (master) onUpdateProduct(applyProductChannelLink(master, listing), { save: true });
-          }
-        });
+      // Server đã ghi DB — chỉ hydrate UI, KHÔNG PUT lại / lưu từng SP (tránh timeout).
+      if (Array.isArray(nextListings)) {
+        listingsHydratedRef.current = true;
+        setListings(nextListings);
+      } else {
+        const loaded = token ? await fetchMappingListingsFromServer(token) : null;
+        if (loaded?.rows) {
+          listingsHydratedRef.current = true;
+          setListings(loaded.rows);
+        }
       }
 
       if (onRefreshProducts) await onRefreshProducts();
