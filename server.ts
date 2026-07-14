@@ -1319,9 +1319,17 @@ const SHOPEE_SYNC_CHUNK_SIZE = 8;
 const SHOPEE_SYNC_CHUNK_DELAY_MS = 600;
 const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
 const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 800;
+/** Delay giữa các lần gọi API sản phẩm Shopee (pull/push) — tránh 429 */
+const SHOPEE_PRODUCT_API_DELAY_MS = 800;
+/** get_item_base_info: tối đa 50/item_id theo tài liệu Shopee — dùng 30 để an toàn hơn */
+const SHOPEE_PRODUCT_BASE_INFO_BATCH = 30;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 function shopeeSyncDelay(ms: number = SHOPEE_SYNC_BATCH_DELAY_MS): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return sleep(ms);
 }
 
 function shopeeApiErrorResult(err: unknown, context: string): Record<string, any> {
@@ -1430,9 +1438,89 @@ async function shopeeFetchJsonWithRetry(
     httpStatus: 429,
     json: {
       error: "rate_limit_exceeded",
-      message: "Shopee giới hạn tần suất (HTTP 429) — vui lòng thử lại sau 1–2 phút.",
+      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429),
     },
   };
+}
+
+async function shopeePostJsonWithRetry(
+  url: string,
+  body: Record<string, unknown>,
+  context: string,
+  opts?: { maxAttempts?: number; baseDelayMs?: number }
+): Promise<{ json: any; httpStatus: number }> {
+  const maxAttempts = opts?.maxAttempts ?? 4;
+  const baseDelayMs = opts?.baseDelayMs ?? 1200;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res: Response;
+    let rawText = "";
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      rawText = await res.text();
+    } catch (err) {
+      if (attempt < maxAttempts - 1) {
+        await sleep(baseDelayMs * (attempt + 1));
+        continue;
+      }
+      throw err;
+    }
+
+    let json: any;
+    try {
+      json = rawText ? JSON.parse(rawText) : {};
+    } catch (parseErr) {
+      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      return {
+        httpStatus: res.status,
+        json: {
+          error: "json_parse_error",
+          message: `${context}: phản hồi không phải JSON hợp lệ (HTTP ${res.status}): ${parseMsg}`,
+        },
+      };
+    }
+
+    if (isShopeeRateLimited(res.status, json) && attempt < maxAttempts - 1) {
+      const waitMs = Math.min(12_000, baseDelayMs * Math.pow(2, attempt));
+      console.warn(
+        `[Shopee API] ${context} bị rate limit (HTTP ${res.status}), thử lại ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+      );
+      await sleep(waitMs);
+      continue;
+    }
+
+    if (json?.error && !json.message) {
+      json.message = formatShopeeApiError(json, res.status);
+    }
+
+    return { json, httpStatus: res.status };
+  }
+
+  return {
+    httpStatus: 429,
+    json: {
+      error: "rate_limit_exceeded",
+      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429),
+    },
+  };
+}
+
+function buildShopeeUpdateStockEntry(
+  stock: number,
+  modelId?: string | number | null
+): { model_id?: number; seller_stock: { stock: number }[] } {
+  const entry: { model_id?: number; seller_stock: { stock: number }[] } = {
+    seller_stock: [{ stock: Math.max(0, Math.round(Number(stock) || 0)) }],
+  };
+  const mid = Number(modelId);
+  if (Number.isFinite(mid) && mid > 0) {
+    entry.model_id = mid;
+  }
+  return entry;
 }
 
 // Paginate get_order_list for one Shopee order_status — lật trang + quét nhiều cửa sổ 15 ngày.
@@ -1611,16 +1699,16 @@ async function shopeeGetItemList(shopId: string, accessToken: string, offset: nu
     shop_id: shopId,
     sign,
     offset: String(offset),
-    page_size: "100",
+    page_size: "50",
     item_status: "NORMAL",
   });
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const res = await fetch(url);
-  const json: any = await res.json();
-  console.log(`[Shopee API] GET ${apiPath} (offset=${offset}) -> HTTP ${res.status}:`, JSON.stringify(json));
+  const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} offset=${offset}`);
+  console.log(`[Shopee API] GET ${apiPath} (offset=${offset}) -> HTTP ${httpStatus}:`, JSON.stringify(json));
   if (json.error) {
-    console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y danh s\xE1ch s\u1EA3n ph\u1EA9m: ${json.error} - ${json.message}`);
+    json.message = json.message || formatShopeeApiError(json, httpStatus);
+    console.error(`[Shopee API] Lỗi get_item_list: ${json.error} — ${json.message}`);
   }
   return json;
 }
@@ -1643,11 +1731,11 @@ async function shopeeGetItemBaseInfo(shopId: string, accessToken: string, itemId
   });
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const res = await fetch(url);
-  const json: any = await res.json();
-  console.log(`[Shopee API] GET ${apiPath} (${itemIds.length} items) -> HTTP ${res.status}:`, JSON.stringify(json));
+  const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} (${itemIds.length} items)`);
+  console.log(`[Shopee API] GET ${apiPath} (${itemIds.length} items) -> HTTP ${httpStatus}:`, JSON.stringify(json));
   if (json.error) {
-    console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y th\xF4ng tin s\u1EA3n ph\u1EA9m: ${json.error} - ${json.message}`);
+    json.message = json.message || formatShopeeApiError(json, httpStatus);
+    console.error(`[Shopee API] Lỗi get_item_base_info: ${json.error} — ${json.message}`);
   }
   return json;
 }
@@ -1669,18 +1757,21 @@ async function shopeeGetModelList(shopId: string, accessToken: string, itemId: n
   });
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const res = await fetch(url);
-  const json: any = await res.json();
-  console.log(`[Shopee API] GET ${apiPath} (item_id=${itemId}) -> HTTP ${res.status}:`, JSON.stringify(json));
+  const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} item_id=${itemId}`);
+  console.log(`[Shopee API] GET ${apiPath} (item_id=${itemId}) -> HTTP ${httpStatus}:`, JSON.stringify(json));
+  if (json.error) {
+    json.message = json.message || formatShopeeApiError(json, httpStatus);
+  }
   return json;
 }
 
-async function shopeeGetModelListWithRetry(shopId: string, accessToken: string, itemId: number, retries = 2) {
+async function shopeeGetModelListWithRetry(shopId: string, accessToken: string, itemId: number, retries = 3) {
   let last: any = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await new Promise((r) => setTimeout(r, 500 * attempt));
+    if (attempt > 0) await sleep(SHOPEE_PRODUCT_API_DELAY_MS * attempt);
     last = await shopeeGetModelList(shopId, accessToken, itemId);
     if (!last?.error) return last;
+    if (isShopeeRateLimited(0, last)) await sleep(SHOPEE_PRODUCT_API_DELAY_MS * 2);
   }
   return last;
 }
@@ -1698,13 +1789,9 @@ async function shopeeUpdateStock(
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
   const body = { item_id: itemId, stock_list: stockList };
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const json: any = await res.json();
-  console.log(`[Shopee API] POST ${apiPath} (item_id=${itemId}) -> HTTP ${res.status}:`, JSON.stringify(json));
+  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${itemId}:`, JSON.stringify(body));
+  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${itemId}`);
+  console.log(`[Shopee API] POST ${apiPath} RESPONSE item_id=${itemId} HTTP ${httpStatus}:`, JSON.stringify(json));
   return json;
 }
 
@@ -1796,19 +1883,17 @@ async function syncProductToShopee(
     ];
   }
 
-  const stockEntry: { model_id?: number; seller_stock: { stock: number }[] } = {
-    seller_stock: [{ stock: Math.max(0, Math.round(Number(product.stock) || 0)) }],
-  };
+  const stockEntry = buildShopeeUpdateStockEntry(product.stock, product.shopeeModelId);
   const priceEntry: { model_id?: number; original_price: number } = {
     original_price: Math.max(0, Math.round(Number(product.sellingPrice) || 0)),
   };
   if (product.shopeeModelId) {
-    stockEntry.model_id = Number(product.shopeeModelId);
-    priceEntry.model_id = Number(product.shopeeModelId);
+    const mid = Number(product.shopeeModelId);
+    if (Number.isFinite(mid) && mid > 0) priceEntry.model_id = mid;
   }
 
   const stockResult = await shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
-  await new Promise((r) => setTimeout(r, 120));
+  await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
   const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
 
   return [
@@ -1976,13 +2061,7 @@ async function pushStockUpdatesToShopee(
       continue;
     }
 
-    const stockList = rows.map((p) => {
-      const entry: { model_id?: number; seller_stock: { stock: number }[] } = {
-        seller_stock: [{ stock: Math.max(0, Math.round(Number(p.stock) || 0)) }],
-      };
-      if (p.shopeeModelId) entry.model_id = Number(p.shopeeModelId);
-      return entry;
-    });
+    const stockList = rows.map((p) => buildShopeeUpdateStockEntry(p.stock, p.shopeeModelId));
 
     const result = await shopeeUpdateStock(resolved.shopId, resolved.accessToken, itemId, stockList);
     const failures: any[] =
@@ -2017,7 +2096,7 @@ async function pushStockUpdatesToShopee(
       pushed += rows.length;
     }
 
-    await new Promise((r) => setTimeout(r, 120));
+    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
   }
 
   return { ok: errors.length === 0, errors, warnings, pushed, staleSkus: [...new Set(staleSkus)] };
@@ -2217,26 +2296,33 @@ async function fetchAllShopeeItemIds(shopId: string, accessToken: string): Promi
   let pageGuard = 0;
   while (hasNext && pageGuard < 100) {
     const listResult = await shopeeGetItemList(shopId, accessToken, offset);
-    if (listResult.error) throw new Error(`${listResult.error}: ${listResult.message || ""}`);
+    if (listResult.error) {
+      throw new Error(formatShopeeApiError(listResult) || `${listResult.error}: ${listResult.message || ""}`);
+    }
     const items = listResult.response?.item || [];
     allItemIds.push(...items.map((it: any) => it.item_id));
     hasNext = !!listResult.response?.has_next_page && items.length > 0;
     offset = listResult.response?.next_offset ?? offset + items.length;
     pageGuard++;
+    if (hasNext) await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
   }
   return allItemIds;
 }
 
 async function fetchShopeeBaseItemsByIds(shopId: string, accessToken: string, itemIds: number[]): Promise<any[]> {
   const allItems: any[] = [];
-  for (let i = 0; i < itemIds.length; i += 50) {
-    const batch = itemIds.slice(i, i + 50);
+  for (let i = 0; i < itemIds.length; i += SHOPEE_PRODUCT_BASE_INFO_BATCH) {
+    const batch = itemIds.slice(i, i + SHOPEE_PRODUCT_BASE_INFO_BATCH);
     const baseInfoResult = await shopeeGetItemBaseInfo(shopId, accessToken, batch);
     if (baseInfoResult.error) {
-      console.error(`[Shopee Sync] get_item_base_info batch ${i}: ${baseInfoResult.error}`);
-      continue;
+      const errMsg = formatShopeeApiError(baseInfoResult) || `${baseInfoResult.error}: ${baseInfoResult.message || ""}`;
+      console.error(`[Shopee Sync] get_item_base_info batch ${i}: ${errMsg}`);
+      throw new Error(errMsg);
     }
     allItems.push(...(baseInfoResult.response?.item_list || []));
+    if (i + SHOPEE_PRODUCT_BASE_INFO_BATCH < itemIds.length) {
+      await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+    }
   }
   return allItems;
 }
@@ -2249,23 +2335,18 @@ async function runFullShopeeWarehouseSync(shopId: string, accessToken: string) {
   console.log(`[Shopee Product Sync] get_item_base_info: ${allItems.length} item`);
 
   const products: any[] = [];
-  const EXPAND_CONCURRENCY = 6;
   const startedAt = Date.now();
   let variantItems = 0;
 
-  for (let i = 0; i < allItems.length; i += EXPAND_CONCURRENCY) {
-    const chunk = allItems.slice(i, i + EXPAND_CONCURRENCY);
-    const results = await Promise.all(
-      chunk.map((item) => syncShopeeItemToWarehouseRows(shopId, accessToken, item))
-    );
-    results.forEach((r) => {
-      if (r.modelCount > 0) variantItems++;
-      products.push(...r.rows);
-    });
-    if (i % 30 === 0 || i + EXPAND_CONCURRENCY >= allItems.length) {
-      console.log(`[Shopee Product Sync] ${Math.min(i + EXPAND_CONCURRENCY, allItems.length)}/${allItems.length} item -> ${products.length} dong kho`);
+  for (let idx = 0; idx < allItems.length; idx++) {
+    const item = allItems[idx];
+    const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
+    if (r.modelCount > 0) variantItems++;
+    products.push(...r.rows);
+    if (idx % 20 === 0 || idx === allItems.length - 1) {
+      console.log(`[Shopee Product Sync] ${idx + 1}/${allItems.length} item -> ${products.length} dong kho`);
     }
-    await new Promise((r) => setTimeout(r, 80));
+    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
   }
 
   const cleaned = dedupeShopeeParentVariantRows(products);
@@ -2300,20 +2381,14 @@ async function syncStockFromShopee(shopId: string, accessToken: string) {
 
   const stockBySku = new Map<string, number>();
   const allItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds);
-  const CONCURRENCY = 4;
 
-  for (let i = 0; i < allItems.length; i += CONCURRENCY) {
-    const chunk = allItems.slice(i, i + CONCURRENCY);
-    const results = await Promise.all(
-      chunk.map((item) => syncShopeeItemToWarehouseRows(shopId, accessToken, item))
-    );
-    for (const r of results) {
-      for (const row of r.rows) {
-        const sku = String(row.sku || "").trim();
-        if (sku) stockBySku.set(sku, Math.max(0, Number(row.stock) || 0));
-      }
+  for (const item of allItems) {
+    const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
+    for (const row of r.rows) {
+      const sku = String(row.sku || "").trim();
+      if (sku) stockBySku.set(sku, Math.max(0, Number(row.stock) || 0));
     }
-    await new Promise((res) => setTimeout(res, 80));
+    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
   }
 
   let updated = 0;
@@ -6090,7 +6165,13 @@ async function startServer() {
       return res.json({ ...result, listings, listingsCount: listings.length });
     } catch (error: any) {
       console.error("[Shopee Product Sync] Exception:", error);
-      return res.status(500).json({ error: "exception", message: error.message || String(error) });
+      const msg = error?.message || String(error);
+      const isRate = /429|rate.?limit|too many request/i.test(msg);
+      return res.status(isRate ? 429 : 500).json({
+        success: false,
+        error: isRate ? "shopee_rate_limit" : "exception",
+        message: msg,
+      });
     }
   });
 
@@ -7431,7 +7512,7 @@ async function startServer() {
       return res.status(500).json({
         success: false,
         error: error?.message || "Kiểm tra kết nối thất bại",
-        message: "Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau",
+        message: error?.message || "Kiểm tra kết nối thất bại",
       });
     }
   });

@@ -111,6 +111,18 @@ export function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   return fetch(url, init);
 }
 
+/** Trích thông báo lỗi từ body JSON (ưu tiên message/error từ server/Shopee). */
+function extractApiErrorMessage(text: string, fallback: string): string {
+  try {
+    const parsed = JSON.parse(text) as { message?: string; error?: string; detail?: string };
+    const parts = [parsed.message, parsed.error, parsed.detail].filter(Boolean).map(String);
+    if (parts.length > 0) return parts.join(" — ");
+  } catch {
+    /* not JSON */
+  }
+  return fallback;
+}
+
 /** Parse JSON an toàn — báo lỗi rõ nếu server trả HTML (404/proxy/503). */
 export async function parseJsonResponse<T = Record<string, unknown>>(
   response: Response,
@@ -119,21 +131,10 @@ export async function parseJsonResponse<T = Record<string, unknown>>(
   const contentType = response.headers.get('content-type') || '';
   const trimmed = text.trimStart();
 
-  if (response.status === 503 || response.status === 502 || response.status === 504) {
-    let msg = 'Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau';
-    try {
-      const parsed = JSON.parse(text) as { message?: string; error?: string };
-      if (parsed.message || parsed.error) {
-        msg = String(parsed.message || parsed.error);
-      }
-    } catch {
-      /* HTML hoặc body rỗng — giữ thông báo mặc định */
-    }
+  if (!response.ok) {
+    const fallback = `HTTP ${response.status}: ${response.statusText || 'Lỗi API'}`;
+    const msg = extractApiErrorMessage(text, fallback);
     throw new Error(msg);
-  }
-
-  if (response.status >= 500) {
-    throw new Error('Lỗi máy chủ, vui lòng thử lại sau');
   }
 
   if (
@@ -142,7 +143,7 @@ export async function parseJsonResponse<T = Record<string, unknown>>(
       trimmed.includes('503 Service Unavailable') ||
       trimmed.includes('The page could not be found'))
   ) {
-    throw new Error('Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau');
+    throw new Error(extractApiErrorMessage(text, `Phản hồi không hợp lệ (HTTP ${response.status})`));
   }
 
   try {
@@ -151,7 +152,7 @@ export async function parseJsonResponse<T = Record<string, unknown>>(
     throw new Error(
       response.ok
         ? `Phản hồi API không hợp lệ: ${text.slice(0, 120)}`
-        : 'Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau',
+        : extractApiErrorMessage(text, `Phản hồi API không hợp lệ (HTTP ${response.status})`),
     );
   }
 }

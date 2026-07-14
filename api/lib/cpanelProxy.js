@@ -129,7 +129,7 @@ export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
       return res.status(isServerError ? upstream.status : 502).json({
         success: false,
         error: upstream.status === 503 ? 'backend_unavailable' : 'invalid_cpanel_response',
-        message: 'Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau',
+        message: `Backend trả về HTTP ${upstream.status} (không phải JSON hợp lệ)`,
         httpStatus: upstream.status,
         cpanelBackendUrl: backend.url,
         latencyMs: result.latencyMs,
@@ -147,7 +147,7 @@ export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
   return res.status(502).json({
     success: false,
     error: 'Không kết nối được backend cPanel',
-    message: 'Máy chủ đang quá tải hoặc lỗi, vui lòng thử lại sau',
+    message: e?.message || e?.hint || 'Không kết nối được backend API',
     detail: e?.message || 'fetch failed',
     errorCode: e?.code || null,
     hint: e?.hint || null,
