@@ -2,6 +2,32 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product } from '../types';
 import { CheckCircle2, Loader2, Scale, Search, X } from 'lucide-react';
 
+function getProductTitle(product: Product): string {
+  const raw = product.title || (product as { name?: string; product_name?: string }).name
+    || (product as { product_name?: string }).product_name || '';
+  return String(raw).trim() || '—';
+}
+
+function getProductDisplayName(product: Product): string {
+  const title = getProductTitle(product);
+  const variant = String(product.modelName || '').trim();
+  if (!variant) return title;
+  if (title.toLowerCase().includes(variant.toLowerCase())) return title;
+  return `${title} - ${variant}`;
+}
+
+function getProductStock(product: Product): number {
+  const raw = product.stock
+    ?? (product as { stock_quantity?: number }).stock_quantity
+    ?? (product as { quantity?: number }).quantity
+    ?? 0;
+  return Math.max(0, Math.round(Number(raw) || 0));
+}
+
+function getProductKey(product: Product, index: number): string {
+  return product.id || product.sku || `audit-row-${index}`;
+}
+
 interface InventoryAuditProps {
   products: Product[];
   shopId?: string;
@@ -23,20 +49,27 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
     if (!q) return [];
     return products
       .filter(
-        (p) =>
-          p.title.toLowerCase().includes(q) ||
-          p.sku.toLowerCase().includes(q) ||
-          (p.barcode || '').toLowerCase().includes(q)
+        (p) => {
+          const title = getProductTitle(p).toLowerCase();
+          const variant = String(p.modelName || '').toLowerCase();
+          return (
+            title.includes(q) ||
+            variant.includes(q) ||
+            p.sku.toLowerCase().includes(q) ||
+            (p.barcode || '').toLowerCase().includes(q)
+          );
+        }
       )
       .slice(0, 50);
   }, [products, search]);
 
   const pendingItems = useMemo(() => {
     return searchResults
-      .filter((p) => actualStocks[p.id]?.trim() !== '')
-      .map((p) => ({
-        sku: p.sku,
-        actual_stock: Math.max(0, Math.round(Number(actualStocks[p.id]) || 0)),
+      .map((p, idx) => ({ product: p, rowKey: getProductKey(p, idx) }))
+      .filter(({ rowKey }) => actualStocks[rowKey]?.trim() !== '')
+      .map(({ product, rowKey }) => ({
+        sku: product.sku,
+        actual_stock: Math.max(0, Math.round(Number(actualStocks[rowKey]) || 0)),
       }))
       .filter((item) => item.sku && Number.isFinite(item.actual_stock));
   }, [searchResults, actualStocks]);
@@ -152,30 +185,36 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       );
     }
 
-    return searchResults.map((product, idx) => (
-      <tr key={product.id} className="hover:bg-gray-50/40 transition-colors">
+    return searchResults.map((product, idx) => {
+      const rowKey = getProductKey(product, idx);
+      const displayName = getProductDisplayName(product);
+      const stockQty = getProductStock(product);
+
+      return (
+      <tr key={rowKey} className="hover:bg-gray-50/40 transition-colors">
         <td className="p-3 text-center text-gray-500 font-mono text-xs">{idx + 1}</td>
         <td className="p-3">
-          <p className="font-semibold text-gray-900 text-sm line-clamp-2">{product.title}</p>
-          <p className="text-[11px] font-mono text-gray-500 mt-0.5">SKU: {product.sku}</p>
+          <p className="font-semibold text-gray-900 text-sm line-clamp-2">{displayName}</p>
+          <p className="text-[11px] font-mono text-gray-500 mt-0.5">SKU: {product.sku || '—'}</p>
         </td>
         <td className="p-3 text-center">
           <span className="inline-flex min-w-[44px] justify-center font-mono font-bold text-gray-800 bg-gray-50 px-2 py-1 rounded border border-gray-100 text-sm">
-            {product.stock}
+            {stockQty}
           </span>
         </td>
         <td className="p-3 text-center">
           <input
             type="number"
             min={0}
-            value={actualStocks[product.id] ?? ''}
+            value={actualStocks[rowKey] ?? ''}
             placeholder="—"
-            onChange={(e) => updateActual(product.id, e.target.value)}
+            onChange={(e) => updateActual(rowKey, e.target.value)}
             className="w-28 px-2 py-1.5 text-center font-mono text-sm bg-white border border-gray-200 rounded-lg outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 placeholder:text-gray-300"
           />
         </td>
       </tr>
-    ));
+      );
+    });
   };
 
   return (
@@ -265,31 +304,36 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
             <div className="py-20 text-center text-gray-400 text-sm">Không tìm thấy sản phẩm</div>
           ) : (
             <ul className="ia-mobile-results space-y-2 pb-2">
-              {searchResults.map((product) => (
-                <li key={product.id} className="ia-mobile-card ia-mobile-card-row bg-white">
+              {searchResults.map((product, idx) => {
+                const rowKey = getProductKey(product, idx);
+                const displayName = getProductDisplayName(product);
+                const stockQty = getProductStock(product);
+                return (
+                <li key={rowKey} className="ia-mobile-card ia-mobile-card-row bg-white">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-bold text-gray-900 line-clamp-2 leading-snug">{product.title}</p>
+                    <p className="text-sm font-bold text-gray-900 line-clamp-2 leading-snug">{displayName}</p>
                     <p className="text-[11px] font-mono text-gray-400 mt-0.5">
-                      {product.sku} · Tồn HT {product.stock}
+                      {product.sku || '—'} · Tồn HT {stockQty}
                     </p>
                   </div>
                   <div className="shrink-0">
                     <input
                       ref={(el) => {
-                        if (el) qtyRefs.current.set(product.id, el);
-                        else qtyRefs.current.delete(product.id);
+                        if (el) qtyRefs.current.set(rowKey, el);
+                        else qtyRefs.current.delete(rowKey);
                       }}
                       type="number"
                       inputMode="numeric"
                       min={0}
-                      value={actualStocks[product.id] ?? ''}
+                      value={actualStocks[rowKey] ?? ''}
                       placeholder="0"
-                      onChange={(e) => updateActual(product.id, e.target.value)}
+                      onChange={(e) => updateActual(rowKey, e.target.value)}
                       className="ia-mobile-qty-inline"
                     />
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           )}
         </div>

@@ -420,11 +420,7 @@ body {
 
 @media (min-width: 1440px) {
   .ia-desktop .ia-audit-table-wrap {
-    display: none;
-  }
-
-  .ia-desktop-audit-grid {
-    display: grid;
+    display: block;
   }
 }
 
