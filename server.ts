@@ -1342,6 +1342,12 @@ const SHOPEE_PRODUCT_BASE_INFO_BATCH = 10;
 const CHANNEL_FETCH_MICRO_BATCH = 10;
 /** Nhường event loop giữa mỗi item/batch — tránh CPU kill trên CloudLinux */
 const CHANNEL_FETCH_YIELD_MS = 50;
+/** Chunk ghi DB cho sync kho / cập nhật sản phẩm (≤50 item → lưu → nghỉ). */
+const PRODUCT_SYNC_CHUNK_SIZE = 50;
+/** Nghỉ giữa các chunk sync — tránh 503 / cagefs fork. */
+const PRODUCT_SYNC_CHUNK_PAUSE_MS = 100;
+/** Giới hạn số trang get_item_list mỗi phiên sync (không while(true)). */
+const PRODUCT_SYNC_MAX_PAGES = 200;
 const SHOPEE_API_MAX_RETRY = 5;
 const SHOPEE_API_RETRY_BASE_MS = 1500;
 
@@ -3286,8 +3292,10 @@ async function pullShopeeChannelListingsAllPages(
   const skippedItems: { itemId: string; reason: string }[] = [];
 
   try {
-    while (hasMore && pageGuard < 200) {
+    // Giới hạn cứng pageGuard — CẤM while(true) / Promise.all.
+    while (hasMore && pageGuard < PRODUCT_SYNC_MAX_PAGES) {
       pageGuard++;
+      console.log(`Đang cập nhật trang ${pageGuard}... (channel fetch offset=${offset})`);
       try {
         const page = await pullShopeeChannelListingsPage(shopId, accessToken, shopName, offset);
         totalSaved += page.rowsSaved;
@@ -3296,17 +3304,20 @@ async function pullShopeeChannelListingsAllPages(
         variantItemCount += page.pageStats.variantItemCount;
         skippedItems.push(...asShopeeArray(page.skippedItems));
 
+        console.log(
+          `Đang cập nhật trang ${pageGuard}... xong — saved=${page.rowsSaved}, items=${page.pageStats.itemsInPage}, hasMore=${page.hasMore}`
+        );
+
         hasMore = page.hasMore;
         offset = page.nextOffset;
         if (!hasMore) break;
         if (page.pageStats.itemsInPage === 0 && !page.hasMore) break;
         await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
-        await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+        await sleep(PRODUCT_SYNC_CHUNK_PAUSE_MS);
       } catch (pageErr: unknown) {
         const reason = pageErr instanceof Error ? pageErr.message : String(pageErr);
         skippedItems.push({ itemId: `page_offset_${offset}`, reason });
-        console.error(`[Shopee Channel Fetch] Dừng fetchAll tại offset=${offset}: ${reason}`);
-        // Không crash toàn bộ — trả partial result
+        console.error(`[Shopee Channel Fetch] Dừng tại trang ${pageGuard} offset=${offset}: ${reason}`);
         hasMore = false;
         break;
       }
@@ -3342,6 +3353,10 @@ function mergeWarehouseProductsBatch(batchRows: any[]): number {
   return batchRows.length;
 }
 
+/**
+ * Đồng bộ kho Shopee — chunked/paginated:
+ * Tải ≤50 item → Lưu DB → nghỉ 100ms → lặp (không vét cạn 1 lần, không Promise.all).
+ */
 async function pullShopeeWarehouseAllPages(
   shopId: string,
   accessToken: string
@@ -3369,31 +3384,90 @@ async function pullShopeeWarehouseAllPages(
   let rowCount = 0;
   let variantItemCount = 0;
   const skippedItems: { itemId: string; reason: string }[] = [];
+  let pendingRows: any[] = [];
+  let pendingItemCount = 0;
 
-  while (hasMore && pageGuard < 200) {
+  const flushPending = () => {
+    if (pendingRows.length === 0) return 0;
+    const n = mergeWarehouseProductsBatch(pendingRows);
+    pendingRows = [];
+    pendingItemCount = 0;
+    return n;
+  };
+
+  while (hasMore && pageGuard < PRODUCT_SYNC_MAX_PAGES) {
     pageGuard++;
-    const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
-    if (page.itemIds.length === 0) {
-      if (!page.hasMore) break;
+    console.log(`Đang cập nhật trang ${pageGuard}... (warehouse sync offset=${offset})`);
+
+    try {
+      const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
+      if (page.itemIds.length === 0) {
+        console.log(`Đang cập nhật trang ${pageGuard}... trống — hasMore=${page.hasMore}`);
+        if (!page.hasMore) break;
+        offset = page.nextOffset;
+        await sleep(PRODUCT_SYNC_CHUNK_PAUSE_MS);
+        continue;
+      }
+
+      // Micro-batch id ≤ CHANNEL_FETCH_MICRO_BATCH — tuần tự, không gom cả trang khổng lồ.
+      const allIds = asShopeeArray(page.itemIds).filter((n) => Number.isFinite(Number(n)) && Number(n) > 0);
+      for (let batchStart = 0; batchStart < allIds.length; batchStart += CHANNEL_FETCH_MICRO_BATCH) {
+        const idBatch = allIds.slice(batchStart, batchStart + CHANNEL_FETCH_MICRO_BATCH);
+        const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, idBatch);
+        await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+
+        for (const item of asShopeeArray(baseItems)) {
+          if (!item || item.item_id == null) continue;
+          try {
+            const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
+            if (r.error && (!r.rows || r.rows.length === 0)) {
+              skippedItems.push({ itemId: String(item.item_id), reason: r.error });
+            } else {
+              if (r.modelCount > 0) variantItemCount++;
+              const rows = asShopeeArray(r.rows);
+              pendingRows.push(...rows);
+              pendingItemCount += 1;
+              itemCount += 1;
+              rowCount += rows.length;
+
+              // Đủ ~50 sản phẩm → ghi DB → nghỉ 100ms.
+              if (pendingItemCount >= PRODUCT_SYNC_CHUNK_SIZE) {
+                flushPending();
+                console.log(
+                  `Đang cập nhật trang ${pageGuard}... đã lưu chunk ${PRODUCT_SYNC_CHUNK_SIZE} item (tổng item=${itemCount})`
+                );
+                await sleep(PRODUCT_SYNC_CHUNK_PAUSE_MS);
+              }
+            }
+          } catch (itemErr: unknown) {
+            const reason = itemErr instanceof Error ? itemErr.message : String(itemErr);
+            skippedItems.push({ itemId: String(item?.item_id ?? "?"), reason });
+            console.error(`[Shopee Warehouse Sync] item_id=${item?.item_id}: ${reason}`);
+          }
+          await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+        }
+      }
+
+      flushPending();
+      console.log(
+        `Đang cập nhật trang ${pageGuard}... xong — itemsInPage=${allIds.length}, totalItems=${itemCount}, totalRows=${rowCount}`
+      );
+
+      hasMore = page.hasMore;
       offset = page.nextOffset;
-      continue;
+      if (hasMore) await sleep(PRODUCT_SYNC_CHUNK_PAUSE_MS);
+    } catch (pageErr: unknown) {
+      const reason = pageErr instanceof Error ? pageErr.message : String(pageErr);
+      skippedItems.push({ itemId: `page_${pageGuard}`, reason });
+      console.error(`[Shopee Warehouse Sync] Dừng tại trang ${pageGuard}: ${reason}`);
+      flushPending();
+      break;
     }
-
-    itemCount += page.itemIds.length;
-    const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, page.itemIds);
-    const processed = await processShopeeItemsToListingRows(shopId, accessToken, baseItems);
-    mergeWarehouseProductsBatch(processed.rows);
-    rowCount += processed.rows.length;
-    variantItemCount += processed.variantItemCount;
-    skippedItems.push(...processed.skippedItems);
-
-    hasMore = page.hasMore;
-    offset = page.nextOffset;
-    if (hasMore) await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
   }
 
+  flushPending();
   console.log(
-    `[Shopee Warehouse Sync] HOAN TAT ${itemCount} item -> ${rowCount} dong (${variantItemCount} co phan loai) ${Date.now() - startedAt}ms`,
+    `[Shopee Warehouse Sync] HOAN TAT ${itemCount} item -> ${rowCount} dong (${variantItemCount} co phan loai) ${Date.now() - startedAt}ms, pages=${pageGuard}`,
   );
 
   return {
@@ -7799,11 +7873,12 @@ async function startServer() {
       ensureDataDirs();
 
       const shopName = resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
-      const fetchAll = req.body?.fetchAll !== false;
+      // Mặc định phân trang từng trang — chỉ fetchAll khi FE gửi rõ fetchAll: true.
+      const fetchAll = req.body?.fetchAll === true;
       const offset = Math.max(0, Number(req.body?.offset) || 0);
 
       if (fetchAll) {
-        console.log(`[Shopee Channel Fetch] shop_id=${shopId} fetchAll=true (tất cả trang)...`);
+        console.log(`[Shopee Channel Fetch] shop_id=${shopId} fetchAll=true (chunked ≤${PRODUCT_SYNC_CHUNK_SIZE}/lần)...`);
         const allResult = await pullShopeeChannelListingsAllPages(shopId, accessToken, shopName);
         // Không nhét toàn bộ listings + JOIN kho vào response (dễ OOM/413) — FE gọi GET mapping-products.
         let listingsCount = 0;
@@ -7956,7 +8031,7 @@ async function startServer() {
         });
       }
 
-      console.log(`[Shopee Product Sync] Bắt đầu đồng bộ kho cho shop_id=${shopId}...`);
+      console.log(`[Shopee Product Sync] Bắt đầu đồng bộ kho (chunked ${PRODUCT_SYNC_CHUNK_SIZE}) cho shop_id=${shopId}...`);
       const result = await runFullShopeeWarehouseSync(shopId, accessToken);
 
       return res.status(200).json({

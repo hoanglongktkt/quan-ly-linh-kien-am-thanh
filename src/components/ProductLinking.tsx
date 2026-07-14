@@ -548,58 +548,74 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
     setIsFetchingFromChannel(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000);
+    const timeoutId = setTimeout(() => controller.abort(), 600000);
 
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await apiFetch('/api/shopee/channel-products/fetch', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ shopId: shop.shopId, fetchAll: true }),
-      });
-      const data = await parseJsonResponse<{
-        success?: boolean;
-        fetchedCount?: number;
-        savedCount?: number;
-        listings?: ChannelListing[];
-        products?: Product[];
-        listingsCount?: number;
-        message?: string;
-        error?: string;
-      }>(res);
+      let offset = 0;
+      let hasMore = true;
+      let pageIndex = 0;
+      let totalSaved = 0;
+      let lastListingsCount = 0;
+      const maxPages = 200;
 
-      if (!res.ok || data.success === false) {
-        throw new Error(data?.message || data?.error || 'Tải dữ liệu từ sàn thất bại.');
+      // Phân trang từng request — tránh vét cạn 1 lần (503/OOM).
+      while (hasMore && pageIndex < maxPages) {
+        pageIndex += 1;
+        const res = await apiFetch('/api/shopee/channel-products/fetch', {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ shopId: shop.shopId, fetchAll: false, offset }),
+        });
+        const data = await parseJsonResponse<{
+          success?: boolean;
+          fetchedCount?: number;
+          savedCount?: number;
+          listingsCount?: number;
+          hasMore?: boolean;
+          nextOffset?: number | null;
+          message?: string;
+          error?: string;
+        }>(res);
+
+        if (!res.ok || data.success === false) {
+          throw new Error(
+            data?.message || data?.error || `Tải trang ${pageIndex} thất bại.`
+          );
+        }
+
+        totalSaved += Number(data.savedCount || data.fetchedCount || 0);
+        lastListingsCount = Number(data.listingsCount || lastListingsCount);
+        hasMore = data.hasMore === true;
+        offset = data.nextOffset != null ? Number(data.nextOffset) : offset;
+        if (!hasMore) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
       }
 
-      // Server đã ghi channel_listings.json — hydrate UI bằng GET mapping (tránh response khổng lồ).
       await loadMappingListings({ silent: true });
-
       if (onRefreshProducts) await onRefreshProducts();
 
-      const count =
-        data.listingsCount ??
-        data.savedCount ??
-        data.fetchedCount ??
-        (Array.isArray(data.listings) ? data.listings.length : 0);
-      showToast(data.message || `Đã tải và lưu DB thành công ${count} sản phẩm từ sàn Shopee`);
+      const count = lastListingsCount || totalSaved;
+      showToast(
+        `Đã tải phân trang ${pageIndex} trang — lưu DB thành công ${count} sản phẩm từ sàn Shopee`
+      );
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'shopee',
         type: 'product_sync',
         status: 'success',
-        message: data.message || `Tải ${count} sản phẩm sàn từ gian hàng [${shop.shopName}]`,
+        message: `Tải phân trang ${pageIndex} trang (${count} dòng) từ gian hàng [${shop.shopName}]`,
       });
     } catch (err: unknown) {
       const e = err as { name?: string; message?: string };
       const message =
         e?.name === 'AbortError'
-          ? 'Quá thời gian chờ (5 phút) khi tải dữ liệu từ Shopee. Vui lòng thử lại.'
+          ? 'Quá thời gian chờ khi tải dữ liệu từ Shopee. Vui lòng thử lại.'
           : e?.message || 'Tải dữ liệu từ sàn thất bại.';
       alert(`Tải dữ liệu từ sàn thất bại: ${message}`);
       onAddLog({
