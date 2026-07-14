@@ -6,6 +6,34 @@ import {
   matchAdminUnit,
 } from '../utils/vietnamAddress';
 
+function friendlyGeminiError(res: Response, data: unknown): string {
+  const err = data as { error?: string; message?: string };
+  const raw = String(err?.error || err?.message || '').trim();
+
+  if (res.status === 503) {
+    return 'Chưa cấu hình Gemini API Key. Vào Cài đặt → Cấu hình AI để thêm key.';
+  }
+  if (res.status === 401 || res.status === 403) {
+    return 'Gemini API Key không hợp lệ hoặc đã hết hạn. Kiểm tra lại trong Cài đặt.';
+  }
+  if (raw) {
+    const lower = raw.toLowerCase();
+    if (
+      lower.includes('api key') ||
+      lower.includes('api_key') ||
+      lower.includes('invalid api') ||
+      (lower.includes('invalid') && lower.includes('key'))
+    ) {
+      return 'Gemini API Key không hợp lệ. Vào Cài đặt → Cấu hình AI để cập nhật key.';
+    }
+    if (raw.startsWith('{') || raw.includes('"error"') || raw.includes('GoogleGenerativeAI')) {
+      return 'AI tạm thời không phản hồi. Vui lòng nhập địa chỉ thủ công hoặc thử lại sau.';
+    }
+    return raw;
+  }
+  return 'Không thể phân tích địa chỉ bằng AI. Vui lòng nhập thủ công.';
+}
+
 interface StructuredAddressFormProps {
   value: StructuredAddressValue;
   onChange: (v: StructuredAddressValue) => void;
@@ -172,9 +200,9 @@ export default function StructuredAddressForm({
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ address: raw }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setParseError(data.error || 'Lỗi phân tích địa chỉ AI');
+        setParseError(friendlyGeminiError(res, data));
         return;
       }
       await applyParsed(data.parsed || {});

@@ -34,21 +34,13 @@ import {
   Layers,
   Sparkle,
   Plus,
-  Trash2,
-  CreditCard,
   ImageIcon,
   Loader2,
   X,
   ImageOff,
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product } from '../types';
-import StructuredAddressForm from './StructuredAddressForm';
-import {
-  emptyStructuredAddress,
-  formatFullAddress,
-  isStructuredAddressComplete,
-  StructuredAddressValue,
-} from '../utils/vietnamAddress';
+import ManualOrderPage from './ManualOrderPage';
 import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse, base64ToPdfBlob } from '../utils/apiClient';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
@@ -1089,171 +1081,7 @@ export default function OrderManager({
     }
   };
 
-  // Manual Order Creator states
-  const [showCreateOrderModal, setShowCreateOrderModal] = useState(false);
-  const [shippingAddress, setShippingAddress] = useState<StructuredAddressValue>(emptyStructuredAddress());
-  const [submittingManualOrder, setSubmittingManualOrder] = useState(false);
-  const [orderItems, setOrderItems] = useState<{ productId: string; productTitle: string; sku: string; quantity: number; price: number; stock: number }[]>([]);
-  
-  // Single selected item state inside modal
-  const [selectedProdId, setSelectedProdId] = useState('');
-  const [selectedQty, setSelectedQty] = useState(1);
-  const [selectedPrice, setSelectedPrice] = useState(0);
-
-  // Logistics carrier connection state inside modal
-  const [selectedCarrier, setSelectedCarrier] = useState<'self' | 'ghn' | 'spx'>('self');
-  const [carrierNotes, setCarrierNotes] = useState('Cho xem hàng không cho thử');
-  const [packageWeight, setPackageWeight] = useState(500);
-  const [shippingFee, setShippingFee] = useState(30000);
-  const [orderDiscount, setOrderDiscount] = useState(0);
-
-  const handleAddItemToOrder = () => {
-    if (!selectedProdId) {
-      alert('Vui lòng chọn một sản phẩm từ kho!');
-      return;
-    }
-    const prod = products.find(p => p.id === selectedProdId);
-    if (!prod) return;
-
-    if (selectedQty <= 0) {
-      alert('Số lượng sản phẩm phải lớn hơn 0!');
-      return;
-    }
-
-    if (selectedQty > prod.stock) {
-      alert(`⚠️ Tồn kho khả dụng của sản phẩm này chỉ còn ${prod.stock}. Bạn không thể bán vượt quá tồn kho khả dụng.`);
-      return;
-    }
-
-    // Check if product already in items
-    const existing = orderItems.find(it => it.productId === selectedProdId);
-    if (existing) {
-      if (existing.quantity + selectedQty > prod.stock) {
-        alert(`⚠️ Tổng số lượng (${existing.quantity + selectedQty}) vượt quá tồn kho khả dụng của sản phẩm (${prod.stock})!`);
-        return;
-      }
-      setOrderItems(prev => prev.map(it => it.productId === selectedProdId ? { ...it, quantity: it.quantity + selectedQty } : it));
-    } else {
-      setOrderItems(prev => [...prev, {
-        productId: prod.id,
-        productTitle: prod.title,
-        sku: prod.sku,
-        quantity: selectedQty,
-        price: selectedPrice || prod.sellingPrice,
-        stock: prod.stock
-      }]);
-    }
-
-    // Reset item inputs
-    setSelectedProdId('');
-    setSelectedQty(1);
-    setSelectedPrice(0);
-  };
-
-  const handleRemoveItemFromOrder = (prodId: string) => {
-    setOrderItems(prev => prev.filter(it => it.productId !== prodId));
-  };
-
-  const handleSubmitManualOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isStructuredAddressComplete(shippingAddress)) {
-      alert('Vui lòng chọn đầy đủ Tỉnh/Quận/Phường và nhập địa chỉ chi tiết!');
-      return;
-    }
-    if (orderItems.length === 0) {
-      alert('Vui lòng thêm ít nhất 1 sản phẩm vào đơn hàng!');
-      return;
-    }
-
-    setSubmittingManualOrder(true);
-    try {
-      const res = await fetch('/api/orders/manual', {
-        method: 'POST',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shippingAddress: {
-            province: shippingAddress.provinceName,
-            provinceCode: shippingAddress.provinceCode,
-            district: shippingAddress.districtName,
-            districtCode: shippingAddress.districtCode,
-            ward: shippingAddress.wardName,
-            wardCode: shippingAddress.wardCode,
-            street: shippingAddress.street.trim(),
-          },
-          items: orderItems,
-          carrier: selectedCarrier,
-          packageWeight,
-          shippingFee,
-          orderDiscount,
-          carrierNotes,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Tạo đơn hàng thất bại!');
-        return;
-      }
-
-      const newOrder: Order = data.order;
-      const generatedTracking = data.trackingNumber || newOrder.trackingNumber || '';
-
-      if (onUpdateProduct) {
-        orderItems.forEach(item => {
-          const prod = products.find(p => p.id === item.productId);
-          if (prod) {
-            onUpdateProduct({
-              ...prod,
-              stock: Math.max(0, prod.stock - item.quantity),
-            });
-          }
-        });
-      }
-
-      if (data.orders) {
-        onUpdateOrders(data.orders);
-      } else {
-        onUpdateOrders([newOrder, ...orders]);
-      }
-
-      onAddLog({
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        channel: 'manual',
-        type: 'publish',
-        status: 'success',
-        message: `[TẠO ĐƠN THỦ CÔNG] Đã khởi tạo thành công đơn hàng sỉ ngoài sàn #${newOrder.orderSn}. Tổng thu: ${newOrder.totalAmount.toLocaleString('vi-VN')}đ.`
-      });
-
-      if (selectedCarrier !== 'self') {
-        onAddLog({
-          id: `log-${Date.now() + 1}`,
-          timestamp: new Date().toISOString(),
-          channel: selectedCarrier,
-          type: 'stock_sync',
-          status: 'success',
-          message: `[API LOGISTICS] Đã tự động gọi API đẩy đơn sỉ sang đơn vị vận chuyển ${selectedCarrier === 'ghn' ? 'Giao Hàng Nhanh' : 'Shopee SPX Express'}. Tracking ID trả về: ${generatedTracking}`
-        });
-      }
-
-      const fullAddr = formatFullAddress(shippingAddress);
-      if (selectedCarrier === 'ghn') {
-        alert(`🎉 Đã tạo đơn ngoài sàn thành công!\n\n• Mã đơn hàng: ${newOrder.orderSn}\n• Địa chỉ: ${fullAddr}\n• Đơn vị vận chuyển: Giao Hàng Nhanh (GHN)\n• Mã vận đơn API: ${generatedTracking}\n\nĐơn hàng đã được đẩy sang cổng vận chuyển GHN tự động và khấu trừ ${orderItems.reduce((acc, it) => acc + it.quantity, 0)} sản phẩm trong kho.`);
-      } else if (selectedCarrier === 'spx') {
-        alert(`🎉 Đã tạo đơn ngoài sàn thành công!\n\n• Mã đơn hàng: ${newOrder.orderSn}\n• Địa chỉ: ${fullAddr}\n• Đơn vị vận chuyển: Shopee SPX Express\n• Mã vận đơn API: ${generatedTracking}\n\nĐơn hàng đã được đẩy sang cổng vận chuyển Shopee SPX tự động và khấu trừ ${orderItems.reduce((acc, it) => acc + it.quantity, 0)} sản phẩm trong kho.`);
-      } else {
-        alert(`🎉 Đã tạo đơn ngoài sàn thành công!\n\n• Mã đơn hàng: ${newOrder.orderSn}\n• Địa chỉ: ${fullAddr}\n• Đơn vị vận chuyển: Tự giao hàng\n• Mã vận đơn: ${generatedTracking}\n\nĐơn hàng đã được lưu và tự giao, tồn kho đã tự động khấu trừ.`);
-      }
-
-      setShowCreateOrderModal(false);
-      setOrderItems([]);
-      setShippingAddress(emptyStructuredAddress());
-    } catch {
-      alert('Lỗi kết nối server khi tạo đơn hàng!');
-    } finally {
-      setSubmittingManualOrder(false);
-    }
-  };
+  const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   const handleSyncOrders = async () => {
     setIsSyncing(true);
@@ -1885,6 +1713,20 @@ export default function OrderManager({
     );
   }
 
+  if (showCreateOrderPage) {
+    return (
+      <ManualOrderPage
+        products={products}
+        orders={orders}
+        onBack={() => setShowCreateOrderPage(false)}
+        onUpdateOrders={onUpdateOrders}
+        onUpdateProduct={onUpdateProduct}
+        onAddLog={onAddLog}
+        authHeaders={authHeaders}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6 max-md:space-y-4 om-orders-page">
       {toastMessage && (
@@ -2091,14 +1933,7 @@ export default function OrderManager({
         {/* Right action buttons */}
         <div className="flex items-center gap-3">
           <button
-            onClick={() => {
-              setShippingAddress(emptyStructuredAddress());
-              setOrderItems([]);
-              setSelectedCarrier('self');
-              setShippingFee(30000);
-              setOrderDiscount(0);
-              setShowCreateOrderModal(true);
-            }}
+            onClick={() => setShowCreateOrderPage(true)}
             className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-500/15 hover:shadow-emerald-500/30 transition-all flex items-center gap-2 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -3204,299 +3039,6 @@ export default function OrderManager({
         </div>
       )}
 
-      {/* 9. MODAL 3: CREATE MANUAL ORDER (OFF-PLATFORM + LOGISTICS CARRIER) */}
-      {showCreateOrderModal && (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-4xl w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
-            {/* Header */}
-            <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-emerald-600 text-white">
-              <div className="flex items-center gap-2">
-                <Plus className="w-5 h-5" />
-                <div>
-                  <h3 className="text-base font-extrabold">Tạo Đơn Hàng Sỉ Ngoài Sàn (Tự Tạo / Gửi Bưu Cục)</h3>
-                  <p className="text-[11px] text-emerald-100 mt-0.5">Tự động khấu trừ tồn kho thực tế &amp; Liên kết API bưu cục để lấy mã vận đơn</p>
-                </div>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setShowCreateOrderModal(false)}
-                className="text-emerald-100 hover:text-white text-lg font-bold cursor-pointer"
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Content Container (Two columns) */}
-            <div className="p-6 overflow-y-auto grid grid-cols-1 md:grid-cols-12 gap-6 bg-gray-50/50">
-              
-              {/* Column 1: Customer & Carrier Info (col-span-5) */}
-              <div className="md:col-span-5 space-y-4">
-                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs space-y-3">
-                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5 border-b border-gray-100 pb-2">
-                    <Truck className="w-4 h-4 text-emerald-600" /> Địa chỉ giao hàng
-                  </h4>
-
-                  <StructuredAddressForm
-                    value={shippingAddress}
-                    onChange={setShippingAddress}
-                    authHeaders={authHeaders}
-                  />
-                </div>
-
-                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs space-y-3">
-                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5 border-b border-gray-100 pb-2">
-                    <Truck className="w-4 h-4 text-blue-600" /> Kết nối đối tác bưu cục (API Logistics)
-                  </h4>
-
-                  <div>
-                    <label className="text-[11px] font-semibold text-gray-500">Hình thức / Đơn vị giao</label>
-                    <select 
-                      value={selectedCarrier}
-                      onChange={(e) => {
-                        const val = e.target.value as 'self' | 'ghn' | 'spx';
-                        setSelectedCarrier(val);
-                        if (val === 'self') setShippingFee(0);
-                        else setShippingFee(30000);
-                      }}
-                      className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-bold text-gray-700"
-                    >
-                      <option value="self">🏍️ Tự giao hàng / GrabShip / COD ngoài</option>
-                      <option value="ghn">🚚 Giao Hàng Nhanh (GHN API Cổng Sỉ)</option>
-                      <option value="spx">📦 Shopee SPX Express (SPX API Cổng sỉ)</option>
-                    </select>
-                  </div>
-
-                  {selectedCarrier !== 'self' && (
-                    <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl space-y-2.5 animate-in slide-in-from-top-2 duration-150">
-                      <p className="text-[10px] text-blue-700 font-semibold leading-relaxed">
-                        ⚡ Hệ thống đang kết nối qua cổng API Sandbox/Production. Đơn hàng sau khi tạo sẽ tự động khởi tạo vận đơn trên hệ thống {selectedCarrier === 'ghn' ? 'GHN' : 'SPX'} và trả về mã vạch in nhiệt.
-                      </p>
-                      
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[10px] font-semibold text-gray-500">Trọng lượng (Grams)</label>
-                          <input 
-                            type="number"
-                            value={packageWeight}
-                            onChange={(e) => setPackageWeight(Number(e.target.value))}
-                            className="w-full mt-0.5 px-2.5 py-1.5 bg-white rounded-lg border border-gray-200 text-xs font-mono text-gray-800"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[10px] font-semibold text-gray-500">Tiền vận chuyển (đ)</label>
-                          <input 
-                            type="number"
-                            value={shippingFee}
-                            onChange={(e) => setShippingFee(Number(e.target.value))}
-                            className="w-full mt-0.5 px-2.5 py-1.5 bg-white rounded-lg border border-gray-200 text-xs font-mono text-gray-800"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-[10px] font-semibold text-gray-500">Ghi chú bưu tá lấy hàng</label>
-                        <input 
-                          type="text"
-                          value={carrierNotes}
-                          onChange={(e) => setCarrierNotes(e.target.value)}
-                          className="w-full mt-0.5 px-2.5 py-1.5 bg-white rounded-lg border border-gray-200 text-xs text-gray-800"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedCarrier === 'self' && (
-                    <div>
-                      <label className="text-[11px] font-semibold text-gray-500">Phí giao hàng dự kiến (đ)</label>
-                      <input 
-                        type="number"
-                        value={shippingFee}
-                        onChange={(e) => setShippingFee(Number(e.target.value))}
-                        className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-mono font-medium text-gray-800"
-                      />
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="text-[11px] font-semibold text-gray-500">Mã giảm giá đơn hàng (đ)</label>
-                    <input 
-                      type="number"
-                      value={orderDiscount}
-                      onChange={(e) => setOrderDiscount(Number(e.target.value))}
-                      className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-mono font-medium text-gray-800"
-                      placeholder="0"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Column 2: Product selection & Cart (col-span-7) */}
-              <div className="md:col-span-7 space-y-4">
-                {/* Selector */}
-                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs space-y-3">
-                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5 border-b border-gray-100 pb-2">
-                    <Package className="w-4 h-4 text-amber-500" /> Chọn sản phẩm sỉ từ kho
-                  </h4>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                    <div className="sm:col-span-5">
-                      <label className="text-[11px] font-semibold text-gray-500">Sản phẩm khả dụng</label>
-                      <select 
-                        value={selectedProdId}
-                        onChange={(e) => {
-                          const id = e.target.value;
-                          setSelectedProdId(id);
-                          const prod = products.find(p => p.id === id);
-                          if (prod) {
-                            setSelectedPrice(prod.sellingPrice);
-                          }
-                        }}
-                        className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs text-gray-700 font-semibold"
-                      >
-                        <option value="">-- Chọn sản phẩm sỉ --</option>
-                        {products.map(prod => (
-                          <option key={prod.id} value={prod.id} disabled={prod.stock <= 0}>
-                            {prod.title} (SKU: {prod.sku}) - Tồn: {prod.stock}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="sm:col-span-3">
-                      <label className="text-[11px] font-semibold text-gray-500">Số lượng</label>
-                      <input 
-                        type="number"
-                        min={1}
-                        value={selectedQty}
-                        onChange={(e) => setSelectedQty(Math.max(1, Number(e.target.value)))}
-                        className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-mono font-medium text-gray-800"
-                      />
-                    </div>
-
-                    <div className="sm:col-span-4">
-                      <label className="text-[11px] font-semibold text-gray-500">Giá bán sỉ (đ)</label>
-                      <input 
-                        type="number"
-                        value={selectedPrice}
-                        onChange={(e) => setSelectedPrice(Number(e.target.value))}
-                        className="w-full mt-1 px-3 py-2 bg-white rounded-xl border border-gray-200 focus:border-emerald-500 focus:outline-none text-xs font-mono font-medium text-gray-800"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex justify-end pt-1">
-                    <button
-                      type="button"
-                      onClick={handleAddItemToOrder}
-                      className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-extrabold text-xs rounded-xl border border-emerald-150 flex items-center gap-1.5 transition-all cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Thêm vào giỏ</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Items Cart List */}
-                <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-xs space-y-3">
-                  <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider border-b border-gray-100 pb-2">
-                    Danh sách sản phẩm đã chọn ({orderItems.length})
-                  </h4>
-
-                  {orderItems.length === 0 ? (
-                    <div className="py-8 text-center text-gray-400 text-xs">
-                      Chưa có sản phẩm nào được chọn. Chọn sản phẩm phía trên để đưa vào đơn hàng.
-                    </div>
-                  ) : (
-                    <div className="overflow-hidden border border-gray-100 rounded-xl divide-y divide-gray-100">
-                      <div className="bg-gray-50 p-3 grid grid-cols-12 gap-2 text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                        <div className="col-span-6">Tên / SKU</div>
-                        <div className="col-span-2 text-center">Số lượng</div>
-                        <div className="col-span-3 text-right">Đơn giá / Thành tiền</div>
-                        <div className="col-span-1 text-center">Xóa</div>
-                      </div>
-
-                      <div className="max-h-[160px] overflow-y-auto divide-y divide-gray-100">
-                        {orderItems.map((item) => (
-                          <div key={item.productId} className="p-3 grid grid-cols-12 gap-2 items-center text-xs text-gray-700 hover:bg-gray-50/50">
-                            <div className="col-span-6 pr-2">
-                              <p className="font-bold text-gray-800 truncate">{item.productTitle}</p>
-                              <span className="font-mono text-[9px] bg-gray-100 text-gray-500 px-1 py-0.2 rounded font-medium">SKU: {item.sku}</span>
-                            </div>
-                            <div className="col-span-2 text-center font-bold text-gray-900">
-                              x{item.quantity}
-                            </div>
-                            <div className="col-span-3 text-right">
-                              <p className="font-semibold">{item.price.toLocaleString('vi-VN')}đ</p>
-                              <p className="text-[10px] text-emerald-600 font-bold">{(item.price * item.quantity).toLocaleString('vi-VN')}đ</p>
-                            </div>
-                            <div className="col-span-1 text-center">
-                              <button 
-                                type="button"
-                                onClick={() => handleRemoveItemFromOrder(item.productId)}
-                                className="text-gray-400 hover:text-rose-600 p-1 rounded-lg hover:bg-rose-50 transition-all cursor-pointer"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Subtotals Panel */}
-                <div className="bg-emerald-50/35 border border-emerald-100/50 rounded-2xl p-4 space-y-2 text-xs">
-                  <div className="flex justify-between text-gray-600">
-                    <span>Tổng tiền hàng:</span>
-                    <span className="font-semibold text-gray-800">
-                      {orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0).toLocaleString('vi-VN')}đ
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-gray-600">
-                    <span>Phí vận chuyển bưu cục:</span>
-                    <span className="font-semibold text-gray-800">+{shippingFee.toLocaleString('vi-VN')}đ</span>
-                  </div>
-                  {orderDiscount > 0 && (
-                    <div className="flex justify-between text-rose-500">
-                      <span>Mã giảm giá đã áp dụng:</span>
-                      <span className="font-semibold">-{orderDiscount.toLocaleString('vi-VN')}đ</span>
-                    </div>
-                  )}
-                  <div className="border-t border-dashed border-emerald-200/50 my-2 pt-2 flex justify-between text-gray-900 text-sm">
-                    <span className="font-bold flex items-center gap-1">
-                      <CreditCard className="w-4 h-4 text-emerald-600" /> Tổng tiền khách cần thanh toán (Thu COD):
-                    </span>
-                    <span className="font-black text-emerald-700 text-base">
-                      {Math.max(0, orderItems.reduce((sum, item) => sum + (item.price * item.quantity), 0) + shippingFee - orderDiscount).toLocaleString('vi-VN')}đ
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer Buttons */}
-            <div className="p-4 bg-gray-100 border-t border-gray-200 flex justify-end gap-3.5">
-              <button 
-                type="button"
-                onClick={() => setShowCreateOrderModal(false)}
-                className="px-5 py-2.5 bg-white hover:bg-gray-100 border border-gray-300 text-gray-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
-              >
-                Hủy bỏ
-              </button>
-              <button 
-                type="button"
-                onClick={handleSubmitManualOrder}
-                disabled={submittingManualOrder}
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-70 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/30 transition-all flex items-center gap-1.5 cursor-pointer animate-pulse"
-              >
-                {submittingManualOrder ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                <span>{submittingManualOrder ? 'Đang đẩy đơn...' : 'Xác nhận & Đẩy đơn API'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );

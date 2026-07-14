@@ -5161,6 +5161,7 @@ async function startServer() {
         carrier = "self",
         packageWeight = 500,
         shippingFee = 0,
+        shippingFeePayer = "customer",
         orderDiscount = 0,
         carrierNotes = "",
       } = body;
@@ -5180,7 +5181,8 @@ async function startServer() {
         (acc: number, it: any) => acc + Number(it.price || 0) * Number(it.quantity || 0),
         0
       );
-      const totalAmount = subtotal + Number(shippingFee) - Number(orderDiscount);
+      const feeToCollect = shippingFeePayer === "customer" ? Number(shippingFee) : 0;
+      const totalAmount = subtotal + feeToCollect - Number(orderDiscount);
 
       const fullAddress = [addr.street, addr.ward, addr.district, addr.province]
         .filter(Boolean)
@@ -7201,7 +7203,24 @@ Yêu cầu:
       });
     } catch (error: any) {
       console.error("[AI parse-address]", error);
-      return res.status(500).json({ error: error.message || "Lỗi phân tích địa chỉ AI" });
+      const msg = String(error?.message || "");
+      const lower = msg.toLowerCase();
+      if (
+        lower.includes("api key") ||
+        lower.includes("api_key") ||
+        lower.includes("invalid api") ||
+        (lower.includes("invalid") && lower.includes("key"))
+      ) {
+        return res.status(401).json({
+          error: "Gemini API Key không hợp lệ. Vào Cài đặt → Cấu hình AI để cập nhật key.",
+        });
+      }
+      if (msg.startsWith("{") || msg.includes("GoogleGenerativeAI")) {
+        return res.status(502).json({
+          error: "AI tạm thời không phản hồi. Vui lòng nhập địa chỉ thủ công hoặc thử lại sau.",
+        });
+      }
+      return res.status(500).json({ error: msg || "Lỗi phân tích địa chỉ AI" });
     }
   });
 
