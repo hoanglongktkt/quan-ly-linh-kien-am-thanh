@@ -6,7 +6,7 @@ import {
   HTTPS_CAMERA_MESSAGE,
   type LiveQrScannerHandle,
 } from '../utils/cameraScanner';
-import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback, isLikelyTrackingCode, buildOrderScanIndex } from '../utils/orderScan';
+import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback, isLikelyTrackingCode, buildOrderScanIndex, normalizeOrderScanKey } from '../utils/orderScan';
 import { 
   Search, 
   ShoppingBag, 
@@ -224,14 +224,31 @@ export default function OrderManager({
   const [manualScanInput, setManualScanInput] = useState('');
   const [scanToast, setScanToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
-  
+  /** Hàng đợi mã QR — chỉ xử lý khi bấm Kết thúc. */
+  const [scanQueue, setScanQueue] = useState<Array<{ id: string; code: string; at: number }>>([]);
+  const [isFlushingQueue, setIsFlushingQueue] = useState(false);
+
   const ordersRef = React.useRef(orders);
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
+  const enqueueScanRef = React.useRef<(query: string) => void>(() => {});
   const isScanBusyRef = React.useRef(false);
+  const scanQueueRef = React.useRef(scanQueue);
   const orderScanIndex = useMemo(() => buildOrderScanIndex(orders), [orders]);
+  const continuousScanTarget = useMemo(
+    () =>
+      orders.filter((o) =>
+        ['unprocessed', 'processed', 'cancelled', 'return_pending'].includes(o.status)
+      ).length,
+    [orders]
+  );
+
   useEffect(() => {
     ordersRef.current = orders;
   }, [orders]);
+
+  useEffect(() => {
+    scanQueueRef.current = scanQueue;
+  }, [scanQueue]);
 
   const showScanToast = (text: string, type: 'success' | 'error') => {
     setScanToast({ text, type });
@@ -396,16 +413,60 @@ export default function OrderManager({
     applyScanRef.current = handleOrderScan;
   }, [handleOrderScan]);
 
+  /** Continuous mode: chỉ xếp hàng đợi + bíp/rung — không xử lý đơn, không khóa camera. */
+  const enqueueContinuousScan = React.useCallback((rawQuery: string) => {
+    const trimmed = String(rawQuery || '').trim();
+    if (!trimmed || isFlushingQueue) return;
+
+    const key = normalizeOrderScanKey(trimmed);
+    if (!key) return;
+
+    const now = Date.now();
+    if (
+      key === lastQrScanRef.current.key &&
+      now - lastQrScanRef.current.at < 1200
+    ) {
+      return;
+    }
+    lastQrScanRef.current = { key, at: now };
+
+    if (scanQueueRef.current.some((q) => normalizeOrderScanKey(q.code) === key)) {
+      scanFeedback('error');
+      setCameraScanError(true);
+      setCameraScanSuccess(false);
+      setCameraScanResult(`Đã có trong hàng đợi: ${trimmed}`);
+      window.setTimeout(() => setCameraScanError(false), 700);
+      return;
+    }
+
+    const item = { id: `sq-${now}-${Math.random().toString(36).slice(2, 7)}`, code: trimmed, at: now };
+    const next = [item, ...scanQueueRef.current];
+    scanQueueRef.current = next;
+    setScanQueue(next);
+    scanFeedback('success');
+    setCameraScanError(false);
+    setCameraScanSuccess(true);
+    setCameraScanResult(`✓ Đã xếp hàng #${next.length}: ${trimmed}`);
+    window.setTimeout(() => setCameraScanSuccess(false), 450);
+  }, [isFlushingQueue]);
+
+  useEffect(() => {
+    enqueueScanRef.current = enqueueContinuousScan;
+  }, [enqueueContinuousScan]);
+
   useEffect(() => {
     const scannerRef = { current: null as LiveQrScannerHandle | null };
     let isMounted = true;
 
     if (focusScanner) {
-      setCameraScanResult('Đang chờ quét mã QR...');
+      setCameraScanResult('Chế độ quét liên tục — sẵn sàng...');
       setCameraScanSuccess(false);
       setCameraScanError(false);
       setCameraError('');
       lastQrScanRef.current = { key: '', at: 0 };
+      scanQueueRef.current = [];
+      setScanQueue([]);
+      setIsFlushingQueue(false);
 
       const timer = setTimeout(() => {
         if (!isMounted) return;
@@ -418,17 +479,9 @@ export default function OrderManager({
         }
 
         const qrCodeSuccessCallback = (decodedText: string) => {
-          if (!decodedText?.trim() || isScanBusyRef.current) return;
-          const now = Date.now();
-          const dedupeKey = decodedText.trim().toUpperCase();
-          if (
-            dedupeKey === lastQrScanRef.current.key &&
-            now - lastQrScanRef.current.at < 2500
-          ) {
-            return;
-          }
-          lastQrScanRef.current = { key: dedupeKey, at: now };
-          applyScanRef.current(decodedText);
+          if (!decodedText?.trim()) return;
+          // Continuous: xếp hàng đợi ngay — không await backend, không đóng camera.
+          enqueueScanRef.current(decodedText);
         };
 
         void startLiveQrScanner({
@@ -1516,18 +1569,47 @@ export default function OrderManager({
   const handleEndScanSession = () => {
     setSessionStats({ shipped: 0, cancelDetected: 0, returnReceived: 0 });
     setManualScanInput('');
-    setCameraScanResult('Đang chờ quét...');
+    setCameraScanResult('Chế độ quét liên tục — sẵn sàng...');
     setCameraScanSuccess(false);
     setScanToast(null);
     setShowEndConfirm(false);
+    scanQueueRef.current = [];
+    setScanQueue([]);
+    setIsFlushingQueue(false);
     if (onEndScanSession) onEndScanSession();
     else if (onCloseScanner) onCloseScanner();
   };
 
+  /** Kết thúc: xử lý cả hàng đợi rồi mới đóng camera. */
+  const handleFinishContinuousScan = async () => {
+    setShowEndConfirm(false);
+    const queue = [...scanQueueRef.current].reverse();
+    if (queue.length === 0) {
+      handleEndScanSession();
+      return;
+    }
+
+    setIsFlushingQueue(true);
+    setCameraScanResult(`Đang xử lý ${queue.length} mã đã quét...`);
+    try {
+      for (let i = 0; i < queue.length; i++) {
+        setCameraScanResult(`Đang xử lý ${i + 1}/${queue.length}: ${queue[i].code}`);
+        await handleOrderScan(queue[i].code);
+      }
+      showScanToast(`Đã xử lý ${queue.length} mã quét liên tục`, 'success');
+    } finally {
+      scanQueueRef.current = [];
+      setScanQueue([]);
+      setIsFlushingQueue(false);
+      handleEndScanSession();
+    }
+  };
+
   const handleManualScanSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualScanInput.trim() || isScanBusy) return;
-    handleOrderScan(manualScanInput);
+    if (!manualScanInput.trim() || isFlushingQueue) return;
+    enqueueContinuousScan(manualScanInput);
+    setManualScanInput('');
   };
 
   if (focusScanner) {
@@ -1537,18 +1619,16 @@ export default function OrderManager({
         <div className="shrink-0 px-3 pt-3 pb-2 space-y-2">
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-white font-extrabold text-[10px] uppercase tracking-widest">Quét mã QR đơn hàng</span>
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-white font-extrabold text-[10px] uppercase tracking-widest">
+                Quét liên tục · Always-on
+              </span>
             </div>
-            {onCloseScanner && (
-              <button
-                type="button"
-                onClick={onCloseScanner}
-                className="w-9 h-9 rounded-full bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center text-white text-sm font-extrabold border border-zinc-700"
-              >
-                ✕
-              </button>
-            )}
+            <div className="rounded-lg bg-blue-500/20 border border-blue-400/40 px-2.5 py-1">
+              <span className="text-blue-300 font-black text-xs tabular-nums">
+                Đã quét {scanQueue.length}/{continuousScanTarget || '—'}
+              </span>
+            </div>
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div className="rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-2 py-2.5 text-center">
@@ -1568,7 +1648,7 @@ export default function OrderManager({
 
         {/* Camera */}
         <div className="flex-1 min-h-0 px-3 flex flex-col gap-2 pb-2">
-          <div className="flex-1 min-h-[180px] max-h-[42vh] relative rounded-2xl border border-zinc-800 overflow-hidden bg-black">
+          <div className="flex-1 min-h-[160px] max-h-[38vh] relative rounded-2xl border border-zinc-800 overflow-hidden bg-black">
             <div id="camera-reader" className="w-full h-full object-cover" />
             <button
               type="button"
@@ -1589,8 +1669,30 @@ export default function OrderManager({
                 {!cameraScanSuccess && !cameraScanError && <div className="qr-scan-line" />}
               </div>
             </div>
-            <p className="absolute bottom-2 left-0 right-0 text-center text-[10px] font-bold text-white/80 pointer-events-none">
-              Đưa mã QR vào khung · lấy nét tự động · chạm màn hình nếu cần lấy nét lại
+
+            {/* Overlay log mã vừa quét */}
+            {scanQueue.length > 0 && (
+              <div className="absolute top-2 left-2 right-2 z-[8] pointer-events-none space-y-1 max-h-[42%] overflow-hidden">
+                <div className="rounded-lg bg-black/70 border border-white/15 px-2 py-1.5 backdrop-blur-sm">
+                  <p className="text-[10px] font-black text-emerald-300 uppercase tracking-wide mb-1">
+                    Hàng đợi · {scanQueue.length} mã
+                  </p>
+                  <ul className="space-y-0.5">
+                    {scanQueue.slice(0, 5).map((item) => (
+                      <li key={item.id} className="text-[10px] font-mono text-white/90 truncate">
+                        • {item.code}
+                      </li>
+                    ))}
+                    {scanQueue.length > 5 && (
+                      <li className="text-[10px] text-zinc-400">+{scanQueue.length - 5} mã khác...</li>
+                    )}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            <p className="absolute bottom-2 left-0 right-0 text-center text-[10px] font-bold text-white/80 pointer-events-none z-[7]">
+              Quét liên tục — nghe bíp/rung là OK · không cần bấm gì
             </p>
             {cameraError && (
               <div className="absolute inset-0 z-20 bg-black/85 flex flex-col items-center justify-center p-4 text-center text-xs text-rose-400 font-semibold gap-3">
@@ -1610,10 +1712,12 @@ export default function OrderManager({
                 )}
               </div>
             )}
-            {isScanBusy && (
-              <div className="absolute inset-0 bg-black/75 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3 z-10">
+            {isFlushingQueue && (
+              <div className="absolute inset-0 bg-black/80 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3 z-10">
                 <Loader2 className="w-9 h-9 text-blue-400 animate-spin" />
-                <p className="text-xs font-bold text-white/90 px-4 text-center">Đang xử lý mã vừa quét...</p>
+                <p className="text-xs font-bold text-white/90 px-4 text-center">
+                  Đang xử lý hàng đợi ({scanQueue.length} mã)...
+                </p>
               </div>
             )}
           </div>
@@ -1623,17 +1727,17 @@ export default function OrderManager({
               type="text"
               value={manualScanInput}
               onChange={(e) => setManualScanInput(e.target.value)}
-              placeholder="Nhập / dán mã QR hoặc mã đơn..."
-              disabled={isScanBusy}
+              placeholder="Nhập / dán mã → vào hàng đợi..."
+              disabled={isFlushingQueue}
               className="flex-1 min-h-11 px-3 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-sm font-mono outline-none focus:border-blue-500 disabled:opacity-50"
               autoComplete="off"
             />
             <button
               type="submit"
-              disabled={isScanBusy}
+              disabled={isFlushingQueue}
               className="shrink-0 min-h-11 px-4 rounded-xl bg-blue-600 text-white font-bold text-xs uppercase disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              OK
+              Thêm
             </button>
           </form>
 
@@ -1643,7 +1747,7 @@ export default function OrderManager({
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 : cameraScanError
                   ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                : cameraScanResult.startsWith('Đang chờ')
+                : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('liên tục')
                   ? 'text-zinc-500'
                   : 'bg-zinc-800 text-yellow-400 border border-zinc-700'
             }`}
@@ -1663,22 +1767,28 @@ export default function OrderManager({
           </div>
         )}
 
-        <div className="shrink-0 p-3 pt-2 border-t border-zinc-800 bg-zinc-950">
+        <div className="shrink-0 p-3 pt-2 border-t border-zinc-800 bg-zinc-950 space-y-2">
           <button
             type="button"
+            disabled={isFlushingQueue}
             onClick={() => setShowEndConfirm(true)}
-            className="w-full min-h-12 rounded-xl bg-zinc-700 hover:bg-zinc-600 active:bg-rose-700 text-white font-extrabold text-sm uppercase tracking-wide transition-colors"
+            className="w-full min-h-14 rounded-2xl bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-black text-base uppercase tracking-wide transition-colors shadow-lg shadow-rose-900/40 disabled:opacity-50"
           >
-            KẾT THÚC QUÉT
+            Kết thúc{scanQueue.length > 0 ? ` · Xử lý ${scanQueue.length} mã` : ''}
           </button>
+          <p className="text-center text-[10px] text-zinc-500 font-semibold">
+            Camera luôn mở — bấm Kết thúc để đồng bộ và thoát
+          </p>
         </div>
 
         {showEndConfirm && (
           <div className="fixed inset-0 z-70 bg-black/70 flex items-center justify-center p-6">
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm space-y-4">
-              <p className="text-white font-bold text-sm">Kết thúc phiên quét?</p>
+              <p className="text-white font-bold text-sm">Kết thúc phiên quét liên tục?</p>
               <p className="text-zinc-400 text-xs leading-relaxed">
-                Toàn bộ bộ đếm sẽ reset về 0 và bạn sẽ quay về tab Đơn hàng.
+                {scanQueue.length > 0
+                  ? `Hệ thống sẽ xử lý ${scanQueue.length} mã trong hàng đợi, cập nhật đơn hàng, rồi đóng camera.`
+                  : 'Chưa có mã trong hàng đợi — sẽ đóng camera và quay về tab Đơn hàng.'}
               </p>
               <div className="flex gap-2">
                 <button
@@ -1690,7 +1800,7 @@ export default function OrderManager({
                 </button>
                 <button
                   type="button"
-                  onClick={handleEndScanSession}
+                  onClick={() => void handleFinishContinuousScan()}
                   className="flex-1 min-h-11 rounded-xl bg-rose-600 text-white font-bold text-sm"
                 >
                   Xác nhận

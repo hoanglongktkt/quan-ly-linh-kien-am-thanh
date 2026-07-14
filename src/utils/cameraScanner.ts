@@ -260,7 +260,7 @@ function createZxingReader(): BrowserMultiFormatReader {
   hints.set(DecodeHintType.TRY_HARDER, true);
   return new BrowserMultiFormatReader(hints, {
     delayBetweenScanAttempts: DECODE_INTERVAL_MS,
-    delayBetweenScanSuccess: 800,
+    delayBetweenScanSuccess: 600,
   });
 }
 
