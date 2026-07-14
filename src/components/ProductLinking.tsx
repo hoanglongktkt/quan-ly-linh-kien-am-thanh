@@ -576,13 +576,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         throw new Error(data?.message || data?.error || 'Tải dữ liệu từ sàn thất bại.');
       }
 
-      // Server đã ghi channel_listings.json — hydrate UI từ response hoặc GET lại DB.
-      if (Array.isArray(data.listings) && data.listings.length > 0) {
-        listingsHydratedRef.current = true;
-        setListings(data.listings);
-      } else {
-        await loadMappingListings({ silent: true });
-      }
+      // Server đã ghi channel_listings.json — hydrate UI bằng GET mapping (tránh response khổng lồ).
+      await loadMappingListings({ silent: true });
 
       if (onRefreshProducts) await onRefreshProducts();
 
