@@ -4505,6 +4505,9 @@ async function startServer() {
   app.post("/api/products/inventory-balance", authMiddleware, async (req, res) => {
     try {
       const items = req.body?.items;
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'pre-fix',hypothesisId:'H1-H3',location:'server.ts:inventory-balance:entry',message:'balance request received',data:{itemsCount:Array.isArray(items)?items.length:0,sampleItems:Array.isArray(items)?items.slice(0,3):null,shopId:req.body?.shopId||null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ success: false, message: "Chưa có dòng tồn kho nào để cân bằng." });
       }
@@ -4540,6 +4543,9 @@ async function startServer() {
       const unlinkedShopee = updatedProducts.filter(
         (p: any) => p.channels?.includes("shopee") && !p.shopeeItemId
       );
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'pre-fix',hypothesisId:'H1-H2',location:'server.ts:inventory-balance:pre-save',message:'balance db update stats',data:{skuMapSize:skuStockMap.size,updatedCount,unlinkedShopeeCount:unlinkedShopee.length,unlinkedSkus:unlinkedShopee.map((p:any)=>p.sku),requestedSkus:[...skuStockMap.keys()]},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       if (unlinkedShopee.length > 0) {
         return res.status(400).json({
           success: false,
@@ -4551,6 +4557,9 @@ async function startServer() {
       console.log(`[Inventory Balance] Cập nhật kho gốc ${updatedCount} SKU`);
 
       const shopeeResult = await pushStockUpdatesToShopee(updatedProducts, req.body?.shopId);
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'pre-fix',hypothesisId:'H3-H4',location:'server.ts:inventory-balance:shopee',message:'shopee push result',data:{ok:shopeeResult.ok,pushed:shopeeResult.pushed,errors:shopeeResult.errors,warnings:shopeeResult.warnings,staleSkus:shopeeResult.staleSkus},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
 
       if (shopeeResult.staleSkus.length > 0) {
         const staleSet = new Set(shopeeResult.staleSkus.map((s) => s.toLowerCase()));
@@ -7604,13 +7613,25 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 
   app.get("/api/channel-listings", authMiddleware, (_req, res) => {
     try {
-      return res.json({ success: true, listings: readChannelListingsDb() });
+      const listings = readChannelListingsDb();
+      return res.json({ success: true, listings, count: listings.length });
     } catch (error: any) {
       return res.status(500).json({ success: false, error: error.message || "Đọc danh sách liên kết thất bại" });
     }
   });
 
-  app.put("/api/channel-listings", authMiddleware, (req, res) => {
+  app.get("/api/mapping-products", authMiddleware, (_req, res) => {
+    try {
+      const listings = readChannelListingsDb();
+      console.log(`[Mapping Products] GET trả về ${listings.length} dòng từ DB`);
+      return res.json({ success: true, listings, count: listings.length });
+    } catch (error: any) {
+      console.error("[Mapping Products] GET lỗi:", error);
+      return res.status(500).json({ success: false, error: error.message || "Đọc danh sách mapping thất bại" });
+    }
+  });
+
+  const upsertMappingProductsHandler = (req: any, res: any) => {
     try {
       const incoming = req.body?.listings;
       if (!Array.isArray(incoming)) {
@@ -7618,11 +7639,16 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       }
       const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
       writeChannelListingsDb(sanitized);
+      console.log(`[Mapping Products] Đã upsert ${sanitized.length} dòng vào channel_listings.json`);
       return res.json({ success: true, count: sanitized.length, listings: sanitized });
     } catch (error: any) {
-      return res.status(500).json({ success: false, error: error.message || "Lưu danh sách liên kết thất bại" });
+      console.error("[Mapping Products] Upsert lỗi:", error);
+      return res.status(500).json({ success: false, error: error.message || "Lưu danh sách mapping thất bại" });
     }
-  });
+  };
+
+  app.put("/api/channel-listings", authMiddleware, upsertMappingProductsHandler);
+  app.put("/api/mapping-products", authMiddleware, upsertMappingProductsHandler);
 
   const readProductListingsDb = (): any[] => {
     try {

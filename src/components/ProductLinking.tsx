@@ -107,11 +107,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [listingsLoading, setListingsLoading] = useState(true);
   const listingsHydratedRef = useRef(false);
 
-  const persistListings = useCallback(async (rows: ChannelListing[]) => {
+  const persistListings = useCallback(async (rows: ChannelListing[]): Promise<boolean> => {
     const token = localStorage.getItem('admin_token');
-    if (!token) return;
+    if (!token) return false;
     try {
-      await fetch('/api/channel-listings', {
+      const res = await fetch('/api/mapping-products', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -119,8 +119,15 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         },
         body: JSON.stringify({ listings: rows }),
       });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        console.error('[ProductLinking] Lưu mapping thất bại:', errBody);
+        return false;
+      }
+      return true;
     } catch (err) {
-      console.error('[ProductLinking] Lưu liên kết thất bại:', err);
+      console.error('[ProductLinking] Lưu mapping thất bại:', err);
+      return false;
     }
   }, []);
 
@@ -148,16 +155,19 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       }
       setListingsLoading(true);
       try {
-        const res = await fetch('/api/channel-listings', {
+        const res = await fetch('/api/mapping-products', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.success) {
+          console.error('[ProductLinking] Tải mapping thất bại:', data);
+          return;
+        }
         const rows: ChannelListing[] = Array.isArray(data.listings) ? data.listings : [];
         listingsHydratedRef.current = true;
         setListings(rows);
       } catch (err) {
-        console.error('[ProductLinking] Tải liên kết thất bại:', err);
+        console.error('[ProductLinking] Tải mapping thất bại:', err);
       } finally {
         setListingsLoading(false);
       }
@@ -567,6 +577,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       ]);
 
       if (serverListings.length > 0) {
+        listingsHydratedRef.current = true;
         setListings(serverListings);
       } else {
         saveListings(prev => {
@@ -858,7 +869,16 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-xs">
-              {filteredListings.length === 0 ? (
+              {listingsLoading ? (
+                <tr>
+                  <td colSpan={7} className="p-16 text-center text-gray-500">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <RefreshCw className="w-8 h-8 text-blue-500 animate-spin" />
+                      <span className="text-sm font-bold">Đang tải dữ liệu...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : filteredListings.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="p-12 text-center text-gray-400 font-bold">
                     Không tìm thấy sản phẩm liên kết nào khớp với bộ lọc hiện tại.

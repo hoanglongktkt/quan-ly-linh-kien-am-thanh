@@ -204,6 +204,9 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
     }
 
     setBalancing(true);
+    // #region agent log
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'pre-fix',hypothesisId:'H1-H3-H5',location:'InventoryAudit.tsx:handleBalance:start',message:'balance request payload',data:{pendingCount:pendingItems.length,pendingItems,shopId:shopId||null,hasToken:!!localStorage.getItem('admin_token')},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     try {
       const token = localStorage.getItem('admin_token');
       const res = await fetch('/api/products/inventory-balance', {
@@ -216,12 +219,19 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       });
 
       const raw = await res.text();
-      let data: { success?: boolean; message?: string; error?: string; shopeeWarnings?: string[] } = {};
+      let data: { success?: boolean; message?: string; error?: string; shopeeWarnings?: string[]; shopeeErrors?: string[] } = {};
       try {
         data = raw ? JSON.parse(raw) : {};
       } catch {
+        // #region agent log
+        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'pre-fix',hypothesisId:'H5',location:'InventoryAudit.tsx:handleBalance:parse',message:'invalid json response',data:{status:res.status,rawPreview:raw.slice(0,300)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         throw new Error('Server không trả về dữ liệu hợp lệ.');
       }
+
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aebe04'},body:JSON.stringify({sessionId:'aebe04',runId:'pre-fix',hypothesisId:'H2-H4-H5',location:'InventoryAudit.tsx:handleBalance:response',message:'balance api response',data:{status:res.status,ok:res.ok,success:data.success,message:data.message,error:data.error,shopeeErrors:data.shopeeErrors,shopeeWarnings:data.shopeeWarnings},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
 
       if (!res.ok || !data.success) {
         throw new Error(data?.message || data?.error || 'Cân bằng kho thất bại.');
