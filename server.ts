@@ -3342,15 +3342,72 @@ async function pullShopeeChannelListingsAllPages(
   };
 }
 
+/**
+ * UPSERT Kho gốc theo khóa shopeeItemId (item_id) / id.
+ * Có rồi → cập nhật; chưa có → thêm mới. Map đúng title/sku/price/stock từ Shopee.
+ */
 function mergeWarehouseProductsBatch(batchRows: any[]): number {
-  if (!batchRows.length) return 0;
-  const existing = loadProducts();
-  const byId = new Map(existing.map((p: any) => [p.id, p]));
-  for (const row of batchRows) {
-    byId.set(row.id, mergeShopeeRowPreservingLocal(byId.get(row.id), row));
+  try {
+    if (!Array.isArray(batchRows) || batchRows.length === 0) return 0;
+
+    ensureDataDirs();
+    const existing = loadProducts();
+    const byId = new Map<string, any>();
+    const byShopeeItemId = new Map<string, string>();
+
+    for (const p of existing) {
+      if (!p || typeof p !== "object" || p.id == null) continue;
+      const id = String(p.id);
+      byId.set(id, p);
+      const itemId = String(p.shopeeItemId || "").trim();
+      if (itemId) byShopeeItemId.set(itemId, id);
+    }
+
+    let upserted = 0;
+    for (const row of batchRows) {
+      try {
+        if (!row || typeof row !== "object") continue;
+
+        const itemId = String(row.shopeeItemId || row.item_id || "").trim();
+        const existingId = itemId ? byShopeeItemId.get(itemId) : undefined;
+        const id =
+          existingId ||
+          String(row.id || (itemId ? `shopee-item-${itemId}` : `prod-${Date.now()}-${upserted}`));
+
+        const prev = byId.get(id);
+        const mapped = {
+          ...row,
+          id,
+          title: String(row.title || row.item_name || prev?.title || `Shopee ${itemId || id}`),
+          sku: String(row.sku || row.item_sku || prev?.sku || itemId || id),
+          stock: Math.max(0, Number(row.stock ?? prev?.stock) || 0),
+          sellingPrice: Math.max(0, Number(row.sellingPrice ?? row.price ?? prev?.sellingPrice) || 0),
+          importPrice: Math.max(0, Number(row.importPrice ?? prev?.importPrice) || 0),
+          shopeeItemId: itemId || prev?.shopeeItemId,
+          shopeeId: row.shopeeId != null ? String(row.shopeeId) : prev?.shopeeId || itemId,
+          channels: Array.isArray(row.channels) && row.channels.length
+            ? row.channels
+            : prev?.channels || ["shopee"],
+          children: Array.isArray(row.children) ? row.children : prev?.children || [],
+          lastSynced: new Date().toISOString(),
+        };
+
+        const merged = mergeShopeeRowPreservingLocal(prev, mapped);
+        byId.set(id, merged);
+        if (itemId) byShopeeItemId.set(itemId, id);
+        upserted++;
+      } catch (rowErr: unknown) {
+        console.error("Lỗi khi lưu DB chunk: (skip row)", rowErr);
+      }
+    }
+
+    console.log("Dữ liệu sau khi map (trước khi lưu):", upserted);
+    saveProducts([...byId.values()]);
+    return upserted;
+  } catch (error: unknown) {
+    console.error("Lỗi khi lưu DB chunk:", error);
+    throw error instanceof Error ? error : new Error(String(error));
   }
-  saveProducts([...byId.values()]);
-  return batchRows.length;
 }
 
 /**
@@ -3371,11 +3428,19 @@ async function pullShopeeWarehouseAllPages(
   skippedItems: { itemId: string; reason: string }[];
 }> {
   const startedAt = Date.now();
-  const existing = loadProducts();
-  const kept = existing.filter(
-    (p: any) => !p.shopeeItemId && !(Array.isArray(p.channels) && p.channels.includes("shopee"))
-  );
-  saveProducts(kept);
+  try {
+    const existing = loadProducts();
+    const kept = existing.filter(
+      (p: any) => !p.shopeeItemId && !(Array.isArray(p.channels) && p.channels.includes("shopee"))
+    );
+    saveProducts(kept);
+    console.log(
+      `[Shopee Warehouse Sync] Khởi tạo: giữ ${kept.length} SP không-Shopee, xóa tạm SP Shopee cũ trước khi pull`
+    );
+  } catch (error: unknown) {
+    console.error("Lỗi khi lưu DB chunk:", error);
+    throw error instanceof Error ? error : new Error(String(error));
+  }
 
   let offset = 0;
   let hasMore = true;
@@ -3389,18 +3454,25 @@ async function pullShopeeWarehouseAllPages(
 
   const flushPending = () => {
     if (pendingRows.length === 0) return 0;
-    const n = mergeWarehouseProductsBatch(pendingRows);
-    pendingRows = [];
-    pendingItemCount = 0;
-    return n;
+    try {
+      console.log("Dữ liệu sau khi map (trước khi lưu):", pendingRows.length);
+      const n = mergeWarehouseProductsBatch(pendingRows);
+      pendingRows = [];
+      pendingItemCount = 0;
+      return n;
+    } catch (error: unknown) {
+      console.error("Lỗi khi lưu DB chunk:", error);
+      throw error;
+    }
   };
 
   while (hasMore && pageGuard < PRODUCT_SYNC_MAX_PAGES) {
     pageGuard++;
-    console.log(`Đang cập nhật trang ${pageGuard}... (warehouse sync offset=${offset})`);
+    console.log(`Đang cập nhật trang ${pageGuard}... (warehouse sync / khởi tạo offset=${offset})`);
 
     try {
       const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
+      console.log("Dữ liệu thô từ Shopee (số lượng):", page.itemIds.length);
       if (page.itemIds.length === 0) {
         console.log(`Đang cập nhật trang ${pageGuard}... trống — hasMore=${page.hasMore}`);
         if (!page.hasMore) break;
@@ -3414,6 +3486,7 @@ async function pullShopeeWarehouseAllPages(
       for (let batchStart = 0; batchStart < allIds.length; batchStart += CHANNEL_FETCH_MICRO_BATCH) {
         const idBatch = allIds.slice(batchStart, batchStart + CHANNEL_FETCH_MICRO_BATCH);
         const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, idBatch);
+        console.log("Dữ liệu thô từ Shopee (số lượng):", asShopeeArray(baseItems).length);
         await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
 
         for (const item of asShopeeArray(baseItems)) {
@@ -3425,6 +3498,7 @@ async function pullShopeeWarehouseAllPages(
             } else {
               if (r.modelCount > 0) variantItemCount++;
               const rows = asShopeeArray(r.rows);
+              console.log("Dữ liệu sau khi map (trước khi lưu):", rows.length);
               pendingRows.push(...rows);
               pendingItemCount += 1;
               itemCount += 1;
@@ -3432,7 +3506,17 @@ async function pullShopeeWarehouseAllPages(
 
               // Đủ ~50 sản phẩm → ghi DB → nghỉ 100ms.
               if (pendingItemCount >= PRODUCT_SYNC_CHUNK_SIZE) {
-                flushPending();
+                try {
+                  flushPending();
+                } catch (chunkErr: unknown) {
+                  console.error("Lỗi khi lưu DB chunk:", chunkErr);
+                  skippedItems.push({
+                    itemId: `chunk_page_${pageGuard}`,
+                    reason: chunkErr instanceof Error ? chunkErr.message : String(chunkErr),
+                  });
+                  pendingRows = [];
+                  pendingItemCount = 0;
+                }
                 console.log(
                   `Đang cập nhật trang ${pageGuard}... đã lưu chunk ${PRODUCT_SYNC_CHUNK_SIZE} item (tổng item=${itemCount})`
                 );
@@ -3448,7 +3532,17 @@ async function pullShopeeWarehouseAllPages(
         }
       }
 
-      flushPending();
+      try {
+        flushPending();
+      } catch (chunkErr: unknown) {
+        console.error("Lỗi khi lưu DB chunk:", chunkErr);
+        skippedItems.push({
+          itemId: `flush_page_${pageGuard}`,
+          reason: chunkErr instanceof Error ? chunkErr.message : String(chunkErr),
+        });
+        pendingRows = [];
+        pendingItemCount = 0;
+      }
       console.log(
         `Đang cập nhật trang ${pageGuard}... xong — itemsInPage=${allIds.length}, totalItems=${itemCount}, totalRows=${rowCount}`
       );
@@ -3460,14 +3554,26 @@ async function pullShopeeWarehouseAllPages(
       const reason = pageErr instanceof Error ? pageErr.message : String(pageErr);
       skippedItems.push({ itemId: `page_${pageGuard}`, reason });
       console.error(`[Shopee Warehouse Sync] Dừng tại trang ${pageGuard}: ${reason}`);
-      flushPending();
+      try {
+        flushPending();
+      } catch (chunkErr: unknown) {
+        console.error("Lỗi khi lưu DB chunk:", chunkErr);
+      }
       break;
     }
   }
 
-  flushPending();
+  try {
+    flushPending();
+  } catch (chunkErr: unknown) {
+    console.error("Lỗi khi lưu DB chunk:", chunkErr);
+  }
+
+  const verified = loadProducts().filter(
+    (p: any) => p.shopeeItemId || (Array.isArray(p.channels) && p.channels.includes("shopee"))
+  ).length;
   console.log(
-    `[Shopee Warehouse Sync] HOAN TAT ${itemCount} item -> ${rowCount} dong (${variantItemCount} co phan loai) ${Date.now() - startedAt}ms, pages=${pageGuard}`,
+    `[Shopee Warehouse Sync] HOAN TAT ${itemCount} item -> ${rowCount} dong (${variantItemCount} co phan loai), verifiedInDb=${verified}, ${Date.now() - startedAt}ms, pages=${pageGuard}`,
   );
 
   return {
@@ -4769,14 +4875,37 @@ function loadProducts(): any[] {
   }
 }
 
-/** Ghi DB nguyên trạng — không regroup toàn bộ file. */
+/** Ghi DB Kho gốc — compact + atomic; NÉM lỗi nếu ghi thất bại (không nuốt silent). */
 function saveProducts(products: any[]): void {
   try {
-    const list = Array.isArray(products) ? products : [];
+    ensureDataDirs();
+    const list = Array.isArray(products)
+      ? products.filter((p) => p != null && typeof p === "object")
+      : [];
     fs.mkdirSync(path.dirname(PRODUCTS_DB_PATH), { recursive: true });
-    fs.writeFileSync(PRODUCTS_DB_PATH, JSON.stringify(list, null, 2), "utf-8");
+
+    let json: string;
+    try {
+      json = JSON.stringify(list);
+    } catch (serErr: unknown) {
+      const msg = serErr instanceof Error ? serErr.message : String(serErr);
+      throw new Error(`Không serialize được products.json: ${msg}`);
+    }
+
+    const tmpPath = `${PRODUCTS_DB_PATH}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmpPath, json, "utf-8");
+    fs.renameSync(tmpPath, PRODUCTS_DB_PATH);
+
+    if (!fs.existsSync(PRODUCTS_DB_PATH)) {
+      throw new Error(`File không tồn tại sau khi ghi: ${PRODUCTS_DB_PATH}`);
+    }
+    const bytes = fs.statSync(PRODUCTS_DB_PATH).size;
+    console.log(
+      `Đã lưu DB thành công — products.json: ${list.length} dòng (${bytes} bytes) -> ${PRODUCTS_DB_PATH}`
+    );
   } catch (error) {
     console.error("[Products DB] Failed to write products.json:", error);
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
@@ -8031,19 +8160,24 @@ async function startServer() {
         });
       }
 
-      console.log(`[Shopee Product Sync] Bắt đầu đồng bộ kho (chunked ${PRODUCT_SYNC_CHUNK_SIZE}) cho shop_id=${shopId}...`);
+      console.log(`[Shopee Product Sync] Bắt đầu khởi tạo kho (chunked ${PRODUCT_SYNC_CHUNK_SIZE}) cho shop_id=${shopId}...`);
       const result = await runFullShopeeWarehouseSync(shopId, accessToken);
+      const initialized = Number(result.productCount) || 0;
+      console.log(
+        `[Shopee Product Sync] Khởi tạo xong — productCount=${initialized}, rowCount=${result.stats?.rowCount ?? 0}, pages=${result.stats?.pageCount ?? 0}`
+      );
 
       return res.status(200).json({
         success: true,
         shopId: result.shopId,
-        productCount: result.productCount,
+        productCount: initialized,
         stats: result.stats,
         skippedItems: result.skippedItems?.length ? result.skippedItems : undefined,
-        message: `Đã đồng bộ ${result.productCount} sản phẩm mẹ (${result.stats?.variantSkuCount ?? 0} phân loại) từ Shopee (${result.stats?.pageCount ?? 0} trang). Hãy tải lại danh sách sản phẩm.`,
+        message: `Đã khởi tạo xong ${initialized} sản phẩm`,
       });
     } catch (error: unknown) {
       console.error("[Shopee Product Sync] Exception:", error);
+      console.error("Lỗi khi lưu DB chunk:", error);
       const { message, details } = extractHttpClientError(error);
       const isRate = /429|rate.?limit|too many request/i.test(message);
       if (!res.headersSent) {
