@@ -4881,19 +4881,19 @@ function loadLocalInventoryCache(): LocalInventoryCache {
     if (!fs.existsSync(LOCAL_INVENTORY_CACHE_PATH)) {
       return refreshCache();
     }
-    const raw = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
-    if (!raw || !raw.trim()) return refreshCache();
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return refreshCache();
-    const products = Array.isArray(parsed.products) ? parsed.products : [];
-    const listings = Array.isArray(parsed.listings) ? parsed.listings : [];
+    const fileContent = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
+    if (!fileContent || !fileContent.trim()) return refreshCache();
+    const parsed = JSON.parse(fileContent);
+    // File là Object { updatedAt, products, listings } — lấy .products, không dùng thẳng Object.
+    const products = Array.isArray(parsed?.products) ? parsed.products : [];
+    const listings = Array.isArray(parsed?.listings) ? parsed.listings : [];
     // Cache rỗng trong khi DB có SP → khởi tạo lại từ DB.
     if (products.length === 0) {
       const dbProducts = loadProducts();
       if (dbProducts.length > 0) return refreshCache();
     }
     return {
-      updatedAt: String(parsed.updatedAt || new Date().toISOString()),
+      updatedAt: String(parsed?.updatedAt || new Date().toISOString()),
       products,
       listings,
     };
@@ -5547,7 +5547,8 @@ function upsertChannelListingsFromShopeeFetch(
 
 /**
  * Đọc BẮT BUỘC data/local_inventory.json bằng fs.readFileSync.
- * Không query DB cũ để lấy Kho gốc khi auto-link.
+ * File là OBJECT `{ updatedAt, products: [...], listings?: [...] }` — KHÔNG phải Array.
+ * Sau JSON.parse BẮT BUỘC lấy `.products` làm mảng Kho gốc (masterData).
  */
 function readLocalInventoryFileSync(): LocalInventoryCache {
   if (!fs.existsSync(LOCAL_INVENTORY_CACHE_PATH)) {
@@ -5555,49 +5556,76 @@ function readLocalInventoryFileSync(): LocalInventoryCache {
       `Thiếu file Local Cache: ${LOCAL_INVENTORY_CACHE_PATH}. Hãy tải dữ liệu / khởi tạo cache trước.`
     );
   }
-  const raw = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
-  if (!raw || !raw.trim()) {
+  const fileContent = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
+  if (!fileContent || !fileContent.trim()) {
     throw new Error("File data/local_inventory.json đang trống.");
   }
+
   let parsed: any;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(fileContent);
   } catch {
     throw new Error("Không parse được data/local_inventory.json (JSON hỏng).");
   }
-  if (!parsed || typeof parsed !== "object") {
-    throw new Error("Cấu trúc data/local_inventory.json không hợp lệ.");
+
+  // SAI: dùng thẳng `parsed` (Object) để filter/find.
+  // ĐÚNG: const masterData = JSON.parse(fileContent).products;
+  const masterData = Array.isArray(parsed?.products)
+    ? parsed.products
+    : Array.isArray(parsed)
+      ? parsed
+      : null;
+
+  if (!Array.isArray(masterData)) {
+    throw new Error(
+      "Cấu trúc data/local_inventory.json sai — cần Object có thuộc tính products (Array)."
+    );
   }
-  const products = Array.isArray(parsed.products) ? parsed.products : [];
-  const listings = Array.isArray(parsed.listings) ? parsed.listings : [];
-  if (products.length === 0) {
+  if (masterData.length === 0) {
     throw new Error(
       "Local Cache không có sản phẩm Kho gốc (products=[]). Hãy refresh cache / tải kho trước."
     );
   }
+
+  const listings = Array.isArray(parsed?.listings) ? parsed.listings : [];
   console.log(
-    `[Local Cache] readFileSync OK — products=${products.length}, listings=${listings.length} @ ${LOCAL_INVENTORY_CACHE_PATH}`
+    `[Local Cache] parse OK — masterData(products)=${masterData.length}, listings=${listings.length} @ ${LOCAL_INVENTORY_CACHE_PATH}`
   );
   return {
-    updatedAt: String(parsed.updatedAt || new Date().toISOString()),
-    products,
+    updatedAt: String(parsed?.updatedAt || new Date().toISOString()),
+    products: masterData,
     listings,
   };
 }
 
-/** Index SKU kho chính thật — loại trừ sản phẩm ảo kéo từ Shopee (shopee-item-*). */
-function buildMasterSkuIndex(products: any[]): Map<string, any> {
+/**
+ * Index SKU từ mảng Kho gốc (.products) — gồm sản phẩm mẹ + variants/children.
+ */
+function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
   const index = new Map<string, any>();
-  for (const p of flattenProductsForStockSync(products)) {
-    if (isSyntheticShopeePullProduct(p)) continue;
-    const sku = String(p.sku || "").trim().toLowerCase();
-    if (sku && !index.has(sku)) index.set(sku, p);
+  if (!Array.isArray(masterData)) {
+    console.error("[Batch Auto-link] buildMasterSkuIndex nhận không phải Array — bỏ qua.");
+    return index;
   }
+
+  const addSku = (row: any) => {
+    if (!row || isSyntheticShopeePullProduct(row)) return;
+    const sku = String(row.sku || "").trim().toLowerCase();
+    if (sku && !index.has(sku)) index.set(sku, row);
+  };
+
+  for (const parent of masterData) {
+    if (!parent) continue;
+    addSku(parent);
+    for (const child of getProductChildrenList(parent)) addSku(child);
+  }
+  for (const flat of flattenProductsForStockSync(masterData)) addSku(flat);
+
   return index;
 }
 
 /**
- * Batch Auto-link — nguồn SKU Kho gốc = data/local_inventory.json (fs.readFileSync).
+ * Batch Auto-link — nguồn SKU Kho gốc = JSON.parse(...).products
  * Quét cả variants; ghi DB mapping + products rồi refreshCache().
  */
 function batchAutoLinkFromLocalInventoryFile(): {
@@ -5609,12 +5637,17 @@ function batchAutoLinkFromLocalInventoryFile(): {
   masterProductCount: number;
   skuIndexSize: number;
 } {
-  // Bước 1: đọc Local Cache tĩnh trên hosting.
+  // Bước 1: đọc file → bắt buộc dùng .products (masterData).
   const cache = readLocalInventoryFileSync();
-  const masterProducts = cache.products.filter((p: any) => !isSyntheticShopeePullProduct(p));
+  const masterData = cache.products; // = JSON.parse(fileContent).products
+  if (!Array.isArray(masterData)) {
+    throw new Error("masterData phải là Array lấy từ local_inventory.json.products");
+  }
+
+  const masterProducts = masterData.filter((p: any) => !isSyntheticShopeePullProduct(p));
 
   // Listings: ưu tiên trong cùng file cache; nếu thiếu thì lấy channel_listings (mapping DB).
-  let listings =
+  const listings =
     Array.isArray(cache.listings) && cache.listings.length > 0
       ? cache.listings
       : readChannelListingsDb();
@@ -5622,7 +5655,7 @@ function batchAutoLinkFromLocalInventoryFile(): {
     throw new Error("Không có dòng mapping (listings) để liên kết.");
   }
 
-  // Bước 2: so khớp SKU chưa liên kết với Kho gốc (+ variants).
+  // Bước 2: duyệt masterData (mẹ + variants) để khớp SKU chưa liên kết.
   const skuIndex = buildMasterSkuIndex(masterProducts);
   const byId = new Map<string, any>(masterProducts.map((p: any) => [String(p.id), { ...p }]));
 
@@ -5716,7 +5749,7 @@ function batchAutoLinkFromLocalInventoryFile(): {
   ).length;
   const nextCache = loadLocalInventoryCache();
   console.log(
-    `[Batch Auto-link] linked=${linkedCount}, already=${alreadyLinked}, remaining=${unlinkedRemaining}, skuIndex=${skuIndex.size}`
+    `[Batch Auto-link] masterData=${masterProducts.length}, skuIndex=${skuIndex.size}, linked=${linkedCount}, already=${alreadyLinked}, remaining=${unlinkedRemaining}`
   );
   return {
     linkedCount,
