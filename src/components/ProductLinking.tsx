@@ -868,19 +868,22 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   }), [listings]);
 
   const filteredListings = listings.filter(item => {
+    if (!item) return false;
     // 1. Tab Status Filter
-    if (activeSubTab === 'success' && item.status !== 'success') return false;
-    if (activeSubTab === 'unlinked' && item.status !== 'unlinked') return false;
-    if (activeSubTab === 'failed' && item.status !== 'failed') return false;
+    if (activeSubTab === 'success' && item?.status !== 'success') return false;
+    if (activeSubTab === 'unlinked' && item?.status !== 'unlinked') return false;
+    if (activeSubTab === 'failed' && item?.status !== 'failed') return false;
 
     // 2. Search query
-    const matchesSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          item.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          String(item.channelId || '').includes(searchQuery);
+    const q = String(searchQuery || '').toLowerCase();
+    const matchesSearch =
+      String(item?.title || '').toLowerCase().includes(q) ||
+      String(item?.sku || '').toLowerCase().includes(q) ||
+      String(item?.channelId || '').includes(searchQuery || '');
     if (!matchesSearch) return false;
 
     // 3. Shop filter
-    if (selectedShopFilter !== 'all' && item.shopName !== selectedShopFilter) return false;
+    if (selectedShopFilter !== 'all' && item?.shopName !== selectedShopFilter) return false;
 
     return true;
   });
@@ -1174,19 +1177,22 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                     item?.linkedProduct?.sku ||
                     item?.linkedProductSku ||
                     '';
+                  const rowId = item?.id || '';
+                  const rowTitle = item?.title || '';
+                  const rowSku = item?.sku || '';
                   return (
                     <tr
-                      key={item?.id || `row-${Math.random()}`}
+                      key={rowId || `row-${Math.random()}`}
                       className="hover:bg-slate-50/50 transition-colors"
-                      data-listing-id={item?.id || ''}
+                      data-listing-id={rowId}
                       data-channel-id={item?.channelId || ''}
                       data-linked-id={item?.linkedProductId || item?.linkedProduct?.id || ''}
                     >
                       <td className="p-4 text-center">
                         <input
                           type="checkbox"
-                          checked={selectedListingIds.includes(item.id)}
-                          onChange={() => handleToggleSelectListing(item.id)}
+                          checked={selectedListingIds.includes(rowId)}
+                          onChange={() => rowId && handleToggleSelectListing(rowId)}
                           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
                         />
                       </td>
@@ -1199,10 +1205,10 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                       {/* Tên sản phẩm — ID giữ trong data-*, không render ra UI */}
                       <td className="p-4">
                         <div className="flex items-start gap-3">
-                          {item.imageUrl ? (
+                          {item?.imageUrl ? (
                             <img
                               src={item.imageUrl}
-                              alt={item.title}
+                              alt={rowTitle}
                               className="w-12 h-12 rounded-lg object-cover border border-gray-150 shrink-0"
                               referrerPolicy="no-referrer"
                             />
@@ -1213,14 +1219,14 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                           )}
                           <div className="space-y-1">
                             <p className="font-bold text-gray-900 line-clamp-2 max-w-[320px] hover:text-blue-600 leading-tight">
-                              {item.title}
+                              {rowTitle || '—'}
                             </p>
                             
                             {/* SKU under title */}
                             <p className="text-[10px] font-mono text-gray-400 font-bold flex items-center gap-1">
                               <span>SKU:</span>
-                              <span className={item.sku ? 'text-gray-600 font-semibold' : 'text-amber-600 bg-amber-50 px-1 rounded'}>
-                                {item.sku || 'Chưa có SKU'}
+                              <span className={rowSku ? 'text-gray-600 font-semibold' : 'text-amber-600 bg-amber-50 px-1 rounded'}>
+                                {rowSku || 'Chưa có SKU'}
                               </span>
                             </p>
                           </div>
@@ -1230,11 +1236,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                       {/* Gian hàng column showing Platform and Channel Name */}
                       <td className="p-4">
                         <div className="flex items-center gap-1.5 font-bold text-gray-700">
-                          {item.platform === 'shopee' && <span className="bg-orange-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">S</span>}
-                          {item.platform === 'tiktok' && <span className="bg-black text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">T</span>}
-                          {item.platform === 'lazada' && <span className="bg-blue-600 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">L</span>}
-                          {item.platform === 'woocommerce' && <span className="bg-indigo-600 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">W</span>}
-                          <span className="truncate max-w-[140px] text-xs font-semibold">{item.shopName}</span>
+                          {item?.platform === 'shopee' && <span className="bg-orange-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">S</span>}
+                          {item?.platform === 'tiktok' && <span className="bg-black text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">T</span>}
+                          {item?.platform === 'lazada' && <span className="bg-blue-600 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">L</span>}
+                          {item?.platform === 'woocommerce' && <span className="bg-indigo-600 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">W</span>}
+                          <span className="truncate max-w-[140px] text-xs font-semibold">{item?.shopName || '—'}</span>
                         </div>
                       </td>
 
@@ -1292,7 +1298,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                       <td className="p-4 text-center">
                         {effectiveStatus === 'success' && !isBrokenLink ? (
                           <button
-                            onClick={() => handleUnlink(item.id)}
+                            onClick={() => rowId && handleUnlink(rowId)}
                             className="p-2 border border-red-150 hover:bg-red-50 text-rose-600 rounded-xl transition-all cursor-pointer"
                             title="Xóa liên kết sản phẩm này"
                           >

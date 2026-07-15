@@ -5256,13 +5256,14 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
 }
 
 /**
- * Heal liên kết hỏng — chỉ gọi chủ động khi cần.
- * KHÔNG gọi trên mọi GET (tránh OOM / crash cPanel khi ghi file lớn).
+ * Heal liên kết hỏng — CHỈ gọi chủ động qua POST /api/mapping-products/heal.
+ * KHÔNG gọi trên GET (tránh OOM / crash cPanel khi ghi file lớn).
+ * @returns số dòng đã ghi DB
  */
-function persistHealedBrokenMappingLinks(enriched: any[]): void {
+function persistHealedBrokenMappingLinks(enriched: any[]): number {
   try {
     const broken = Array.isArray(enriched) ? enriched.filter((r) => r?.linkBroken === true) : [];
-    if (broken.length === 0) return;
+    if (broken.length === 0) return 0;
 
     const existing = readChannelListingsDb();
     const byId = new Map(
@@ -5293,8 +5294,10 @@ function persistHealedBrokenMappingLinks(enriched: any[]): void {
       writeChannelListingsDb(Array.from(byId.values()));
       console.log(`[Mapping Products] Đã heal ${changed} liên kết hỏng → unlinked trong DB`);
     }
+    return changed;
   } catch (err: unknown) {
     console.error("[Mapping Products] persistHealedBrokenMappingLinks failed:", err);
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }
 
@@ -6328,6 +6331,33 @@ async function startServer() {
     }
   };
 
+  /** Heal chủ động — tách biệt hoàn toàn khỏi GET (không auto-ghi trên đọc). */
+  const handleMappingProductsHeal = (_req: any, res: any) => {
+    try {
+      const enriched = enrichChannelListingsWithMaster(readChannelListingsDb());
+      const healed = persistHealedBrokenMappingLinks(enriched);
+      const listings = enrichChannelListingsWithMaster(readChannelListingsDb());
+      console.log(`[Mapping Products] HEAL xong: healed=${healed}, total=${listings.length}`);
+      return res.status(200).json({
+        success: true,
+        healed,
+        count: listings.length,
+        listings,
+      });
+    } catch (error: any) {
+      const errMsg = error?.message || String(error);
+      console.error("[Mapping Products] HEAL lỗi:", errMsg);
+      return res.status(500).json({
+        success: false,
+        message: `Lỗi heal Database: ${errMsg}`,
+        error: errMsg,
+      });
+    }
+  };
+
+  // Heal trước POST upsert (path cụ thể hơn) — tránh nhầm khi proxy/rewrite.
+  app.post("/api/mapping-products/heal", authMiddleware, handleMappingProductsHeal);
+  app.post("/api/channel-listings/heal", authMiddleware, handleMappingProductsHeal);
   app.get("/api/mapping-products", authMiddleware, handleMappingProductsGet);
   app.put("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
   app.post("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
