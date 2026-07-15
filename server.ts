@@ -326,6 +326,20 @@ function ensureDataDirs(): void {
   if (!fs.existsSync(SHOPEE_TOKENS_PATH)) {
     fs.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
+  // Local Cache Master — đảm bảo file tồn tại + có quyền ghi trên hosting.
+  const localInventoryPath = path.join(dataDir, "local_inventory.json");
+  if (!fs.existsSync(localInventoryPath)) {
+    fs.writeFileSync(
+      localInventoryPath,
+      JSON.stringify({ updatedAt: new Date().toISOString(), products: [], listings: [] }),
+      "utf-8",
+    );
+    try {
+      fs.chmodSync(localInventoryPath, 0o664);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 function saveOAuthAudit(entry: Record<string, any>): void {
@@ -4794,6 +4808,7 @@ function buildDashboardChart(orders: any[], range: { start: Date; end: Date; key
 }
 
 const PRODUCTS_DB_PATH = path.join(APP_ROOT, "data", "products.json");
+const LOCAL_INVENTORY_CACHE_PATH = path.join(APP_ROOT, "data", "local_inventory.json");
 
 /** Lấy children nếu đã có (không gom nhóm nặng). */
 function getProductChildrenList(p: any): any[] {
@@ -4817,6 +4832,81 @@ function loadProducts(): any[] {
   } catch (error) {
     console.error("[Products DB] Failed to read products.json:", error);
     return [];
+  }
+}
+
+type LocalInventoryCache = {
+  updatedAt: string;
+  products: any[];
+  listings: any[];
+};
+
+/**
+ * Local Cache Master — quét DB (products + channel_listings) rồi ghi đè
+ * data/local_inventory.json. Gọi sau Thêm SP / Liên kết / Dọn dẹp.
+ */
+function refreshCache(): LocalInventoryCache {
+  ensureDataDirs();
+  const products = loadProducts();
+  let listings: any[] = [];
+  try {
+    listings = readChannelListingsDb();
+  } catch (err: unknown) {
+    console.error("[Local Cache] Đọc channel_listings khi refresh thất bại:", err);
+    listings = [];
+  }
+
+  const payload: LocalInventoryCache = {
+    updatedAt: new Date().toISOString(),
+    products: Array.isArray(products) ? products : [],
+    listings: Array.isArray(listings) ? listings : [],
+  };
+
+  fs.mkdirSync(path.dirname(LOCAL_INVENTORY_CACHE_PATH), { recursive: true });
+  const tmpPath = `${LOCAL_INVENTORY_CACHE_PATH}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(payload), "utf-8");
+    fs.renameSync(tmpPath, LOCAL_INVENTORY_CACHE_PATH);
+    // Đảm bảo quyền ghi trên hosting (owner read/write).
+    try {
+      fs.chmodSync(LOCAL_INVENTORY_CACHE_PATH, 0o664);
+    } catch {
+      /* Windows / shared host có thể không hỗ trợ chmod */
+    }
+  } catch (error) {
+    try {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    } catch {
+      /* ignore */
+    }
+    console.error("[Local Cache] Ghi local_inventory.json thất bại:", error);
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+
+  console.log(
+    `[Local Cache] refreshCache OK — products=${payload.products.length}, listings=${payload.listings.length} -> ${LOCAL_INVENTORY_CACHE_PATH}`
+  );
+  return payload;
+}
+
+/** Đọc Local Cache Master; nếu thiếu/hỏng thì rebuild từ DB. */
+function loadLocalInventoryCache(): LocalInventoryCache {
+  try {
+    if (!fs.existsSync(LOCAL_INVENTORY_CACHE_PATH)) {
+      return refreshCache();
+    }
+    const raw = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
+    if (!raw || !raw.trim()) return refreshCache();
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return refreshCache();
+    return {
+      updatedAt: String(parsed.updatedAt || new Date().toISOString()),
+      products: Array.isArray(parsed.products) ? parsed.products : [],
+      listings: Array.isArray(parsed.listings) ? parsed.listings : [],
+    };
+  } catch (error) {
+    console.error("[Local Cache] Đọc local_inventory.json thất bại — rebuild:", error);
+    return refreshCache();
   }
 }
 
@@ -4848,6 +4938,12 @@ function saveProducts(products: any[]): void {
     console.log(
       `Đã lưu DB thành công — products.json: ${list.length} dòng (${bytes} bytes) -> ${PRODUCTS_DB_PATH}`
     );
+    // Local Cache Master: luôn đồng bộ cache sau khi ghi Kho gốc.
+    try {
+      refreshCache();
+    } catch (cacheErr: unknown) {
+      console.error("[Local Cache] refreshCache sau saveProducts thất bại:", cacheErr);
+    }
   } catch (error) {
     console.error("[Products DB] Failed to write products.json:", error);
     throw error instanceof Error ? error : new Error(String(error));
@@ -5044,7 +5140,16 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
     const safeListings = Array.isArray(listings) ? listings : [];
     let lookup: Map<string, any>;
     try {
-      lookup = buildMasterProductLookupById(products);
+      const sourceProducts =
+        products ??
+        (() => {
+          try {
+            return loadLocalInventoryCache().products;
+          } catch {
+            return loadProducts();
+          }
+        })();
+      lookup = buildMasterProductLookupById(sourceProducts);
     } catch (lookupErr: unknown) {
       console.error("[Mapping Products] buildMasterProductLookupById failed:", lookupErr);
       lookup = new Map();
@@ -5425,8 +5530,8 @@ function buildMasterSkuIndex(products: any[]): Map<string, any> {
 }
 
 /**
- * Liên kết tự động theo SKU — xử lý IN-MEMORY hàng loạt, ghi DB 1 lần.
- * Không dùng delay/throttle Shopee API (không gọi mạng).
+ * Liên kết tự động theo SKU — load Local Cache Master vào Memory,
+ * Map/Hash O(1), ghi DB 1 lần rồi refreshCache().
  */
 function autoLinkChannelListingsByExactSku(): {
   linkedCount: number;
@@ -5434,8 +5539,15 @@ function autoLinkChannelListingsByExactSku(): {
   alreadyLinked: number;
   unlinkedRemaining: number;
 } {
-  const listings = readChannelListingsDb();
-  const masterProducts = loadProducts().filter((p: any) => !isSyntheticShopeePullProduct(p));
+  const cache = loadLocalInventoryCache();
+  const listings =
+    Array.isArray(cache.listings) && cache.listings.length > 0
+      ? cache.listings
+      : readChannelListingsDb();
+  const masterProducts = (Array.isArray(cache.products) ? cache.products : loadProducts()).filter(
+    (p: any) => !isSyntheticShopeePullProduct(p)
+  );
+  // Map SKU → product: O(1) lookup từ local_inventory.json (in-memory).
   const skuIndex = buildMasterSkuIndex(masterProducts);
   const byId = new Map<string, any>(masterProducts.map((p: any) => [String(p.id), { ...p }]));
 
@@ -5512,16 +5624,22 @@ function autoLinkChannelListingsByExactSku(): {
 
   if (linkedCount > 0) {
     if (productsChanged) {
+      // saveProducts đã gọi refreshCache — vẫn refresh lại sau khi ghi listings.
       saveProducts(masterProducts.map((p: any) => byId.get(String(p.id)) || p));
     }
     writeChannelListingsDb(updated);
+    try {
+      refreshCache();
+    } catch (cacheErr: unknown) {
+      console.error("[Auto Link SKU] refreshCache thất bại:", cacheErr);
+    }
   }
 
   const unlinkedRemaining = updated.filter(
     (l: any) => l.status !== "success" || !l.linkedProductId
   ).length;
   console.log(
-    `[Auto Link SKU] Hàng loạt xong — linked=${linkedCount}, already=${alreadyLinked}, còn chưa liên kết=${unlinkedRemaining} (in-memory, 1 lần ghi DB)`
+    `[Auto Link SKU] Cache+Map xong — linked=${linkedCount}, already=${alreadyLinked}, còn chưa liên kết=${unlinkedRemaining}`
   );
   return {
     linkedCount,
@@ -5640,8 +5758,12 @@ function hydrateChannelListingsOnBoot(): void {
       const rows = readChannelListingsDb();
       console.log(`[Boot] Mapping DB sẵn sàng: ${rows.length} dòng (không rebuild)`);
     }
+    const cache = refreshCache();
+    console.log(
+      `[Boot] Local Cache Master sẵn sàng: products=${cache.products.length}, listings=${cache.listings.length}`
+    );
   } catch (err: any) {
-    console.error(`[Boot] Không thể khởi tạo mapping DB:`, err?.message || err);
+    console.error(`[Boot] Không thể khởi tạo mapping/cache DB:`, err?.message || err);
   }
 }
 
@@ -6284,8 +6406,13 @@ async function startServer() {
   // ─── Mapping products — ĐẶT SỚM, TRƯỚC static / SPA catch-all ───
   const handleMappingProductsGet = (_req: any, res: any) => {
     try {
-      // CHỈ ĐỌC + enrich in-memory. KHÔNG ghi DB trên GET (tránh OOM/crash cPanel).
-      const listings = enrichChannelListingsWithMaster(readChannelListingsForGet());
+      // Local Cache Master: đọc cache trước; enrich bằng products từ cache (không quét DB nặng).
+      const cache = loadLocalInventoryCache();
+      const rawListings =
+        Array.isArray(cache.listings) && cache.listings.length > 0
+          ? cache.listings
+          : readChannelListingsForGet();
+      const listings = enrichChannelListingsWithMaster(rawListings, cache.products);
       const successWithProduct = listings.filter(
         (l) =>
           l?.status === "success" &&
@@ -6294,9 +6421,15 @@ async function startServer() {
       ).length;
       const broken = listings.filter((l) => l?.linkBroken).length;
       console.log(
-        `[Mapping Products] GET trả về ${listings.length} dòng (success+product=${successWithProduct}, brokenInMemory=${broken}) từ ${CHANNEL_LISTINGS_DB_PATH}`
+        `[Mapping Products] GET cache — ${listings.length} dòng (success+product=${successWithProduct}, brokenInMemory=${broken}) updatedAt=${cache.updatedAt}`
       );
-      return res.status(200).json({ success: true, listings, count: listings.length });
+      return res.status(200).json({
+        success: true,
+        listings,
+        count: listings.length,
+        cacheUpdatedAt: cache.updatedAt,
+        source: "local_inventory_cache",
+      });
     } catch (error: any) {
       console.error("[Mapping Products] GET lỗi:", error?.message || error);
       // Fallback an toàn — không để request văng HTML 500.
@@ -6332,12 +6465,14 @@ async function startServer() {
       console.log(`[Mapping Save] UPSERT nhận ${incoming.length} dòng (${req.method})`);
       const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
       writeChannelListingsDb(sanitized);
-      console.log(`Đã lưu DB thành công — mapping upsert ${sanitized.length} dòng`);
-      const verified = enrichChannelListingsWithMaster(readChannelListingsDb());
+      const cache = refreshCache();
+      console.log(`Đã lưu DB thành công — mapping upsert ${sanitized.length} dòng + refreshCache`);
+      const verified = enrichChannelListingsWithMaster(cache.listings, cache.products);
       return res.status(200).json({
         success: true,
         count: verified.length,
         listings: verified,
+        cacheUpdatedAt: cache.updatedAt,
       });
     } catch (error: any) {
       const errMsg = error?.message || String(error);
@@ -6378,8 +6513,12 @@ async function startServer() {
   app.post("/api/mapping-products/purge-broken", authMiddleware, async (_req, res) => {
     try {
       // 1) Tìm kiếm: mapping linkedProduct null/undefined hoặc ID không còn trong Kho gốc
-      const listings = readChannelListingsDb();
-      const masterLookup = buildMasterProductLookupById(loadProducts());
+      const cache = loadLocalInventoryCache();
+      const listings =
+        Array.isArray(cache.listings) && cache.listings.length > 0
+          ? cache.listings
+          : readChannelListingsDb();
+      const masterLookup = buildMasterProductLookupById(cache.products);
       const kept: any[] = [];
       let deletedCount = 0;
 
@@ -6402,16 +6541,12 @@ async function startServer() {
           row?.linkedProduct?.id == null ||
           String(row.linkedProduct.id).trim() === "";
 
-        // Bản ghi "được coi là đã liên kết" nhưng thực tế hỏng:
-        // - status=success mà thiếu ID / thiếu linkedProduct
-        // - hoặc có ID nhưng không tìm thấy trong Kho gốc
         const claimsLink = row?.status === "success" || linkedId !== "";
         const isBroken =
           claimsLink &&
           ((!linkedId && linkedProductMissing) || (linkedId !== "" && !masterLookup.has(linkedId)));
 
         if (isBroken) {
-          // 2) Thực thi: xóa bản ghi mapping lỗi (không đụng Kho gốc)
           deletedCount += 1;
           continue;
         }
@@ -6422,9 +6557,13 @@ async function startServer() {
       if (deletedCount > 0) {
         writeChannelListingsDb(kept);
       }
+      const nextCache = refreshCache();
 
-      // 3) Phản hồi
-      return res.json({ success: true, deletedCount });
+      return res.json({
+        success: true,
+        deletedCount,
+        cacheUpdatedAt: nextCache.updatedAt,
+      });
     } catch (error: any) {
       return res.status(500).json({
         success: false,
@@ -6708,13 +6847,62 @@ async function startServer() {
       imageUrl: body.imageUrl || undefined,
       status: body.status || "active",
       shopeeId: body.shopeeId,
+      shopeeItemId: body.shopeeItemId,
+      shopeeModelId: body.shopeeModelId,
+      modelName: body.modelName,
+      weight: body.weight != null ? Number(body.weight) : undefined,
       tiktokId: body.tiktokId,
       wooId: body.wooId,
       lastSynced: new Date().toISOString(),
     };
     products.unshift(product);
+    // a) Lưu DB → saveProducts tự gọi refreshCache()
     saveProducts(products);
-    return res.status(201).json(product);
+    const cache = loadLocalInventoryCache();
+    // b+c) Trả product + inventory từ Local Cache để UI hiển thị ngay, không reload trang tổng.
+    return res.status(201).json({
+      ...product,
+      localInventory: cache.products,
+      cacheUpdatedAt: cache.updatedAt,
+    });
+  });
+
+  app.get("/api/local-inventory", authMiddleware, (_req, res) => {
+    try {
+      const cache = loadLocalInventoryCache();
+      return res.status(200).json({
+        success: true,
+        updatedAt: cache.updatedAt,
+        products: cache.products,
+        listings: enrichChannelListingsWithMaster(cache.listings, cache.products),
+        count: {
+          products: cache.products.length,
+          listings: cache.listings.length,
+        },
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: error?.message || String(error),
+      });
+    }
+  });
+
+  app.post("/api/local-inventory/refresh", authMiddleware, (_req, res) => {
+    try {
+      const cache = refreshCache();
+      return res.status(200).json({
+        success: true,
+        updatedAt: cache.updatedAt,
+        products: cache.products,
+        listingsCount: cache.listings.length,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        message: error?.message || String(error),
+      });
+    }
   });
 
   app.put("/api/products/replace", authMiddleware, (req, res) => {
@@ -8360,6 +8548,12 @@ async function startServer() {
       } catch {
         listingsCount = pageResult.rowsSaved;
       }
+      // Đồng bộ Local Cache Master sau mỗi trang sync (không quét từng item).
+      try {
+        refreshCache();
+      } catch (cacheErr: unknown) {
+        console.error("[Sync From Shop] refreshCache thất bại:", cacheErr);
+      }
       console.log(
         `Đã lưu DB thành công — trang offset=${offset}, listingsInDb=${listingsCount}`
       );
@@ -8406,14 +8600,17 @@ async function startServer() {
   // API 2: Liên kết tự động theo SKU — tự đọc DB, KHÔNG cần body.listings.
   const handleAutoLinkBySku = (req: any, res: any) => {
     try {
-      // Bỏ qua body — luôn query channel_listings.json + products.json
+      // Bỏ qua body — đọc Local Cache Master (local_inventory.json) + Map SKU O(1).
       void req;
       const result = autoLinkChannelListingsByExactSku();
+      const cache = loadLocalInventoryCache();
       const data = {
         linkedCount: result.linkedCount,
         alreadyLinked: result.alreadyLinked,
         unlinkedRemaining: result.unlinkedRemaining,
         listings: result.listings,
+        localInventory: cache.products,
+        cacheUpdatedAt: cache.updatedAt,
       };
       console.log(
         `Đã lưu DB thành công — auto-link linked=${result.linkedCount}, remaining=${result.unlinkedRemaining}`

@@ -506,26 +506,52 @@ export default function App() {
         });
         if (response.ok) {
           const saved = await response.json();
-          setProducts(prev => [saved, ...prev]);
-          prod = saved;
+          // Hiển thị ngay từ Local Cache Master — không reload trang tổng.
+          if (Array.isArray(saved?.localInventory)) {
+            setProducts(saved.localInventory);
+            prod = {
+              id: saved.id,
+              title: saved.title,
+              sku: saved.sku,
+              stock: saved.stock,
+              importPrice: saved.importPrice,
+              sellingPrice: saved.sellingPrice,
+              channels: saved.channels,
+              category: saved.category,
+              description: saved.description,
+              imageUrl: saved.imageUrl,
+              status: saved.status,
+              shopeeId: saved.shopeeId,
+              shopeeItemId: saved.shopeeItemId,
+              shopeeModelId: saved.shopeeModelId,
+              modelName: saved.modelName,
+              weight: saved.weight,
+              tiktokId: saved.tiktokId,
+              wooId: saved.wooId,
+              lastSynced: saved.lastSynced,
+            } as Product;
+          } else {
+            setProducts((prev) => [saved, ...prev]);
+            prod = saved;
+          }
         } else {
-          setProducts(prev => [prod, ...prev]);
+          setProducts((prev) => [prod, ...prev]);
         }
       } catch {
-        setProducts(prev => [prod, ...prev]);
+        setProducts((prev) => [prod, ...prev]);
       }
     } else {
-      setProducts(prev => [prod, ...prev]);
+      setProducts((prev) => [prod, ...prev]);
     }
 
-    const channelsLabel = prod.channels.map(c => c.toUpperCase()).join(' & ') || 'Hệ thống nội bộ';
+    const channelsLabel = prod.channels.map((c) => c.toUpperCase()).join(' & ') || 'Hệ thống nội bộ';
     handleAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
       channel: prod.channels.length > 0 ? prod.channels[0] : 'all',
       type: 'publish',
       status: 'success',
-      message: `Đã khởi tạo và đăng thành công sản phẩm mới [${prod.title}] lên ${channelsLabel}`
+      message: `Đã khởi tạo và đăng thành công sản phẩm mới [${prod.title}] lên ${channelsLabel}`,
     });
   };
 

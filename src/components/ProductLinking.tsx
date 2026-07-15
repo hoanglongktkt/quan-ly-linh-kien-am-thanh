@@ -628,7 +628,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     showToast(`Không tìm thấy sản phẩm có SKU hoặc Tên tương tự trong Kho chính.`);
   };
 
-  const handleConfirmInitToWarehouse = () => {
+  const handleConfirmInitToWarehouse = async () => {
     if (!initListing || !initTitle.trim()) return;
 
     const validPlatforms = ['shopee', 'tiktok', 'woocommerce'];
@@ -676,9 +676,10 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       };
     });
 
-    createdProducts.forEach((p) => {
-      if (onAddProduct) onAddProduct(p);
-    });
+    // a+b) Lưu DB qua API (server refreshCache) — UI nhận inventory từ cache response.
+    for (const p of createdProducts) {
+      if (onAddProduct) await onAddProduct(p);
+    }
 
     if (initAutoLink) {
       const primary = createdProducts[0];
@@ -689,6 +690,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                 ...listing,
                 status: 'success' as const,
                 linkedProductId: primary.id,
+                linkedProductTitle: primary.title,
+                linkedProductSku: primary.sku,
+                linkedProduct: { id: primary.id, title: primary.title, sku: primary.sku },
                 sku: primary.sku,
               }
             : listing
@@ -834,9 +838,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           listings?: ChannelListing[];
           alreadyLinked?: number;
           unlinkedRemaining?: number;
+          localInventory?: Product[];
         };
         linkedCount?: number;
         listings?: ChannelListing[];
+        localInventory?: Product[];
         message?: string;
         error?: string;
       }>(res);
@@ -848,8 +854,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       const payload = data.data || data;
       const linkedCount = payload.linkedCount ?? data.linkedCount ?? 0;
       const nextListings = payload.listings ?? data.listings;
+      const inventory = payload.localInventory ?? data.localInventory;
 
-      // Server đã ghi DB — chỉ hydrate UI, KHÔNG PUT lại / lưu từng SP (tránh timeout).
+      // Server đã ghi DB + refreshCache — hydrate UI từ cache response.
       if (Array.isArray(nextListings)) {
         listingsHydratedRef.current = true;
         setListings(nextListings);
@@ -861,7 +868,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         }
       }
 
-      if (onRefreshProducts) await onRefreshProducts();
+      if (Array.isArray(inventory) && onRefreshProducts) {
+        await onRefreshProducts();
+      } else if (onRefreshProducts) {
+        await onRefreshProducts();
+      }
 
       if (linkedCount > 0) {
         showToast(data.message || `Đã liên kết thành công ${linkedCount} sản phẩm`);
