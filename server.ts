@@ -6374,30 +6374,61 @@ async function startServer() {
     }
   };
 
-  const handleMappingProductsPurge = (_req: any, res: any) => {
-    try {
-      const result = purgeBrokenChannelListings();
-      return res.status(200).json({
-        success: true,
-        ...result,
-        message:
-          result.purged > 0
-            ? `Đã xóa ${result.purged} mapping lỗi; Kho gốc giữ nguyên ${result.masterProductCount} sản phẩm.`
-            : "Không phát hiện mapping lỗi cần xóa.",
-      });
-    } catch (error: any) {
-      const errMsg = error?.message || String(error);
-      console.error("[Mapping Purge] lỗi:", errMsg);
-      return res.status(500).json({
-        success: false,
-        message: `Dọn dẹp mapping lỗi thất bại: ${errMsg}`,
-        error: errMsg,
-      });
-    }
-  };
-
   // Route cụ thể phải đăng ký trước POST upsert.
-  app.post("/api/mapping-products/purge-broken", authMiddleware, handleMappingProductsPurge);
+  app.post("/api/mapping-products/purge-broken", authMiddleware, async (_req, res) => {
+    try {
+      // 1) Tìm kiếm: mapping linkedProduct null/undefined hoặc ID không còn trong Kho gốc
+      const listings = readChannelListingsDb();
+      const masterLookup = buildMasterProductLookupById(loadProducts());
+      const kept: any[] = [];
+      let deletedCount = 0;
+
+      for (const row of Array.isArray(listings) ? listings : []) {
+        if (!row || typeof row !== "object") {
+          deletedCount += 1;
+          continue;
+        }
+
+        const linkedId =
+          row?.linkedProductId != null && String(row.linkedProductId).trim() !== ""
+            ? String(row.linkedProductId).trim()
+            : row?.linkedProduct?.id != null && String(row.linkedProduct.id).trim() !== ""
+              ? String(row.linkedProduct.id).trim()
+              : "";
+
+        const linkedProductMissing =
+          row?.linkedProduct == null ||
+          typeof row.linkedProduct !== "object" ||
+          row?.linkedProduct?.id == null ||
+          String(row.linkedProduct.id).trim() === "";
+
+        // Bản ghi "được coi là đã liên kết" nhưng thực tế hỏng:
+        // - status=success mà thiếu ID / thiếu linkedProduct
+        // - hoặc có ID nhưng không tìm thấy trong Kho gốc
+        const claimsLink = row?.status === "success" || linkedId !== "";
+        const isBroken =
+          claimsLink &&
+          ((!linkedId && linkedProductMissing) || (linkedId !== "" && !masterLookup.has(linkedId)));
+
+        if (isBroken) {
+          // 2) Thực thi: xóa bản ghi mapping lỗi (không đụng Kho gốc)
+          deletedCount += 1;
+          continue;
+        }
+
+        kept.push(row);
+      }
+
+      if (deletedCount > 0) {
+        writeChannelListingsDb(kept);
+      }
+
+      // 3) Phản hồi
+      return res.json({ success: true, deletedCount });
+    } catch (error: any) {
+      return res.status(500).json({ error: error?.message || String(error) });
+    }
+  });
   app.post("/api/mapping-products/heal", authMiddleware, handleMappingProductsHeal);
   app.get("/api/mapping-products", authMiddleware, handleMappingProductsGet);
   app.put("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
