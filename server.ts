@@ -5090,9 +5090,8 @@ function buildMasterProductLookupById(products?: any[]): Map<string, any> {
 }
 
 /**
- * JOIN mapping ↔ Kho gốc.
- * - status=success nhưng không tìm thấy sản phẩm → hạ về unlinked + syncError (không được báo "thành công").
- * - Có sản phẩm trong kho (kể cả shopee-item-* sau khởi tạo) → luôn trả linkedProduct + snapshot title/sku.
+ * JOIN mapping ↔ Kho gốc — lookup BẮT BUỘC theo record.linkedProductId trong DATA,
+ * không phụ thuộc UI có render ID hay không.
  */
 function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any[] {
   const lookup = buildMasterProductLookupById(products);
@@ -5100,10 +5099,13 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
 
   const enriched = (Array.isArray(listings) ? listings : []).map((row) => {
     const base = sanitizeChannelListingRow(row);
-    const linkedId = base.linkedProductId;
+    // Unique key từ data model: linkedProductId (fallback id của linkedProduct object nếu có).
+    const linkedId =
+      base.linkedProductId ||
+      (row?.linkedProduct?.id != null ? String(row.linkedProduct.id) : undefined);
 
     if (!linkedId) {
-      // Có status success nhưng thiếu ID → coi như liên kết hỏng.
+      // Có status success nhưng thiếu ID trong object dữ liệu → lỗi data flow.
       if (base.status === "success") {
         brokenCount++;
         return {
@@ -5113,7 +5115,7 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
           linkedProductTitle: undefined,
           linkedProductSku: undefined,
           linkedProduct: undefined,
-          syncError: "Lỗi liên kết (Mất dữ liệu): thiếu linkedProductId",
+          syncError: "Lỗi liên kết (Mất dữ liệu): thiếu linkedProductId trong record",
           linkBroken: true,
         };
       }
@@ -5127,11 +5129,11 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
 
     const master = lookup.get(String(linkedId));
     if (!master) {
-      // ID còn nhưng sản phẩm đã xóa khỏi Kho gốc.
       brokenCount++;
-      const snapTitle = base.linkedProductTitle;
-      const snapSku = base.linkedProductSku;
+      const snapTitle = base.linkedProductTitle || String(row?.linkedProduct?.title || "").trim() || undefined;
+      const snapSku = base.linkedProductSku || String(row?.linkedProduct?.sku || "").trim() || undefined;
       if (base.status === "success") {
+        // Giữ snapshot nếu có — UI vẫn có thể hiện tên; nhưng status không được "success" nếu SP đã mất.
         return {
           ...base,
           status: "unlinked",
@@ -5157,7 +5159,6 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
 
     const title = String(master.title || base.linkedProductTitle || "").trim();
     const sku = String(master.sku || base.linkedProductSku || "").trim();
-    // status success nhưng không có tên/SKU gì cả → vẫn báo hỏng hiển thị
     if (base.status === "success" && !title && !sku) {
       brokenCount++;
       return {
@@ -5174,7 +5175,7 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
 
     return {
       ...base,
-      // Giữ snapshot mới nhất để lần save sau không mất tên
+      linkedProductId: String(linkedId),
       linkedProductTitle: title || undefined,
       linkedProductSku: sku || undefined,
       linkedProduct: {

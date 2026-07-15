@@ -37,13 +37,114 @@ interface ChannelListing {
   shopName: string;
   status: 'success' | 'unlinked' | 'failed' | 'invalid';
   linkedProductId?: string;
-  /** Populate từ API JOIN kho gốc */
+  /** Populate từ API JOIN kho gốc — nguồn sự thật cho UI, không lấy từ DOM */
   linkedProductTitle?: string;
   linkedProductSku?: string;
   linkedProduct?: { id: string; title: string; sku: string };
   syncError?: string;
   linkBroken?: boolean;
+  itemId?: string;
+  modelId?: string;
 }
+
+/** Chuẩn hóa 1 dòng mapping từ DATA object — không đọc DOM. */
+function normalizeListingRecord(raw: any): ChannelListing | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const id = String(raw.id || '').trim();
+  const channelId = String(raw.channelId || raw.itemId || '').trim();
+  if (!id && !channelId) return null;
+  const platformRaw = String(raw.platform || 'shopee').toLowerCase();
+  const platform = (['shopee', 'tiktok', 'woocommerce', 'lazada'].includes(platformRaw)
+    ? platformRaw
+    : 'shopee') as ChannelListing['platform'];
+  const statusRaw = String(raw.status || 'unlinked');
+  const status = (['success', 'failed', 'unlinked', 'invalid'].includes(statusRaw)
+    ? statusRaw
+    : 'unlinked') as ChannelListing['status'];
+  const linkedProductId =
+    raw.linkedProductId != null && String(raw.linkedProductId).trim() !== ''
+      ? String(raw.linkedProductId)
+      : undefined;
+  const linkedFromObj = raw.linkedProduct && typeof raw.linkedProduct === 'object' ? raw.linkedProduct : null;
+  return {
+    id: id || `cl-${platform}-${channelId}`,
+    title: String(raw.title ?? ''),
+    sku: String(raw.sku ?? ''),
+    imageUrl: raw.imageUrl ? String(raw.imageUrl) : undefined,
+    channelId: channelId || id,
+    platform,
+    shopName: String(raw.shopName ?? ''),
+    status,
+    linkedProductId,
+    linkedProductTitle:
+      (linkedFromObj?.title && String(linkedFromObj.title)) ||
+      (raw.linkedProductTitle ? String(raw.linkedProductTitle) : undefined),
+    linkedProductSku:
+      (linkedFromObj?.sku && String(linkedFromObj.sku)) ||
+      (raw.linkedProductSku ? String(raw.linkedProductSku) : undefined),
+    linkedProduct: linkedFromObj
+      ? {
+          id: String(linkedFromObj.id || linkedProductId || ''),
+          title: String(linkedFromObj.title || ''),
+          sku: String(linkedFromObj.sku || ''),
+        }
+      : linkedProductId
+        ? {
+            id: linkedProductId,
+            title: String(raw.linkedProductTitle || ''),
+            sku: String(raw.linkedProductSku || ''),
+          }
+        : undefined,
+    syncError: raw.syncError ? String(raw.syncError) : undefined,
+    linkBroken: !!raw.linkBroken,
+    itemId: raw.itemId != null ? String(raw.itemId) : undefined,
+    modelId: raw.modelId != null ? String(raw.modelId) : undefined,
+  };
+}
+
+/**
+ * Resolve tên/SKU SP liên kết — DATA-DRIVEN only.
+ * Ưu tiên object listing (API JOIN), products[] chỉ là fallback (có thể thiếu do phân trang).
+ */
+function resolveLinkedMasterFromData(
+  listing: ChannelListing,
+  products: Product[]
+): {
+  linkedId?: string;
+  title: string;
+  sku: string;
+  isBroken: boolean;
+  effectiveStatus: ChannelListing['status'];
+} {
+  const linkedId = listing.linkedProductId || listing.linkedProduct?.id || undefined;
+  const fromListingTitle = String(listing.linkedProduct?.title || listing.linkedProductTitle || '').trim();
+  const fromListingSku = String(listing.linkedProduct?.sku || listing.linkedProductSku || '').trim();
+
+  let title = fromListingTitle;
+  let sku = fromListingSku;
+
+  // Fallback props chỉ khi listing chưa có snapshot — tuyệt đối không đọc DOM.
+  if (linkedId && (!title || !sku)) {
+    const fromProps = products.find((p) => String(p.id) === String(linkedId));
+    if (fromProps) {
+      if (!title) title = String(fromProps.title || '').trim();
+      if (!sku) sku = String(fromProps.sku || '').trim();
+    }
+  }
+
+  const isBroken =
+    listing.linkBroken === true ||
+    (listing.status === 'success' && (!linkedId || (!title && !sku)));
+
+  return {
+    linkedId,
+    title,
+    sku,
+    isBroken,
+    effectiveStatus: isBroken ? 'unlinked' : listing.status,
+  };
+}
+
 
 interface InitVariantRow {
   id: string;
@@ -116,6 +217,9 @@ function buildListingsFromProducts(products: Product[], shops: ConnectedShop[]):
       shopName: shopeeShop?.shopName || 'Shopee',
       status: 'success',
       linkedProductId: p.id,
+      linkedProductTitle: p.title,
+      linkedProductSku: p.sku,
+      linkedProduct: { id: p.id, title: p.title, sku: p.sku },
     });
   }
   return rows;
@@ -137,7 +241,10 @@ async function fetchMappingListingsFromServer(token: string): Promise<{ rows: Ch
         continue;
       }
       if (res.ok && data.success !== false && Array.isArray(data.listings)) {
-        return { rows: data.listings, source: endpoint };
+        const rows = data.listings
+          .map((row) => normalizeListingRecord(row))
+          .filter((r): r is ChannelListing => r != null);
+        return { rows, source: endpoint };
       }
       console.warn(`[ProductLinking] ${endpoint} failed:`, { status: res.status, data });
     } catch (err) {
@@ -170,13 +277,17 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       return false;
     }
     try {
+      // Gửi DATA model đầy đủ (id/channelId/linkedProductId) — không phụ thuộc UI có render ID.
+      const payload = rows
+        .map((r) => normalizeListingRecord(r))
+        .filter((r): r is ChannelListing => r != null);
       const res = await apiFetch('/api/mapping-products', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ listings: rows }),
+        body: JSON.stringify({ listings: payload }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
@@ -362,28 +473,31 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     setMappingSearch('');
   };
 
-  // 3. Confirm Manual Mapping
+  // 3. Confirm Manual Mapping — dùng listingId + masterProductId từ DATA (state), không lấy từ UI text.
   const handleMapProduct = (listingId: string, masterProductId: string) => {
-    const masterProd = products.find(p => p.id === masterProductId);
-    const listing = listings.find(l => l.id === listingId);
-    if (!masterProd || !listing) return;
+    const masterProd = products.find((p) => String(p.id) === String(masterProductId));
+    const listing = listings.find((l) => String(l.id) === String(listingId));
+    if (!masterProd || !listing) {
+      showToast('Lỗi dữ liệu: thiếu listing.id hoặc sản phẩm kho gốc.');
+      return;
+    }
 
-    saveListings(prev => prev.map(item => {
-      if (item.id === listingId) {
+    saveListings((prev) =>
+      prev.map((item) => {
+        if (String(item.id) !== String(listingId)) return item;
         return {
           ...item,
           status: 'success',
-          linkedProductId: masterProductId,
+          linkedProductId: String(masterProd.id),
           linkedProductTitle: masterProd.title,
           linkedProductSku: masterProd.sku,
-          linkedProduct: { id: masterProd.id, title: masterProd.title, sku: masterProd.sku },
+          linkedProduct: { id: String(masterProd.id), title: masterProd.title, sku: masterProd.sku },
           sku: item.sku || masterProd.sku,
           syncError: undefined,
           linkBroken: false,
         };
-      }
-      return item;
-    }));
+      })
+    );
 
     onUpdateProduct(applyProductChannelLink(masterProd, listing), { save: true });
 
@@ -396,7 +510,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       channel: listing.platform,
       type: 'product_sync',
       status: 'success',
-      message: `Liên kết thủ công sản phẩm sàn [ID: ${listing.channelId}] sang Kho chính sản phẩm [${masterProd.sku}]`
+      message: `Liên kết thủ công sản phẩm sàn [ID: ${listing.channelId}] sang Kho chính sản phẩm [${masterProd.sku}]`,
     });
   };
 
@@ -1023,29 +1137,18 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                 </tr>
               ) : (
                 filteredListings.map(item => {
-                  const fromProps = products.find((p) => p.id === item.linkedProductId);
-                  const linkedTitle =
-                    fromProps?.title ||
-                    item.linkedProduct?.title ||
-                    item.linkedProductTitle ||
-                    '';
-                  const linkedSku =
-                    fromProps?.sku ||
-                    item.linkedProduct?.sku ||
-                    item.linkedProductSku ||
-                    '';
-                  // Không tin tuyệt đối status success — thiếu linkedProduct/tên = liên kết hỏng.
-                  const isBrokenLink =
-                    item.linkBroken === true ||
-                    (item.status === 'success' &&
-                      (!item.linkedProductId || (!linkedTitle && !linkedSku)));
-                  const effectiveStatus = isBrokenLink ? 'unlinked' : item.status;
+                  // Lookup hoàn toàn từ DATA model (listing object) — không đọc DOM/UI text.
+                  const linked = resolveLinkedMasterFromData(item, products);
+                  const linkedTitle = linked.title;
+                  const linkedSku = linked.sku;
+                  const isBrokenLink = linked.isBroken;
+                  const effectiveStatus = linked.effectiveStatus;
                   const showLinked =
                     effectiveStatus === 'success' &&
-                    !!item.linkedProductId &&
+                    !!linked.linkedId &&
                     (!!linkedTitle || !!linkedSku);
                   return (
-                    <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                    <tr key={item.id} className="hover:bg-slate-50/50 transition-colors" data-listing-id={item.id} data-channel-id={item.channelId} data-linked-id={item.linkedProductId || ''}>
                       <td className="p-4 text-center">
                         <input
                           type="checkbox"
@@ -1060,7 +1163,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                         <ChevronsRight className="w-4 h-4 text-blue-400 font-bold" />
                       </td>
 
-                      {/* Tên sản phẩm */}
+                      {/* Tên sản phẩm — ID giữ trong data-*, không render ra UI */}
                       <td className="p-4">
                         <div className="flex items-start gap-3">
                           {item.imageUrl ? (
@@ -1087,19 +1190,6 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                                 {item.sku || 'Chưa có SKU'}
                               </span>
                             </p>
-
-                            {/* ID with copy icon */}
-                            <div className="flex items-center gap-1.5 text-[10px] text-gray-400 font-semibold">
-                              <span>ID: {item.channelId}</span>
-                              <button
-                                type="button"
-                                onClick={() => handleCopyId(item.channelId)}
-                                className="p-0.5 hover:bg-gray-100 rounded text-gray-400 hover:text-blue-500 transition-all cursor-pointer"
-                                title="Sao chép ID"
-                              >
-                                <Copy className="w-3 h-3" />
-                              </button>
-                            </div>
                           </div>
                         </div>
                       </td>
@@ -1258,7 +1348,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                 )}
                 <div className="min-w-0">
                   <span className="text-[10px] font-bold uppercase text-orange-600">{initListing.platform} — {initListing.shopName}</span>
-                  <p className="text-xs text-gray-500 font-mono mt-0.5">ID sàn: {initListing.channelId}</p>
+                  <p className="text-xs text-gray-500 font-mono mt-0.5 sr-only" aria-hidden="true">
+                    {initListing.channelId}
+                  </p>
                 </div>
               </div>
 
@@ -1424,7 +1516,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                   </p>
                   <div className="flex gap-4 text-[10px] text-gray-400 font-bold">
                     <span>Mã SKU Sàn: <strong className="text-gray-700 font-mono">{mappingListing.sku || 'Không có'}</strong></span>
-                    <span>ID: <strong className="text-gray-700 font-mono">{mappingListing.channelId}</strong></span>
+                    <span className="sr-only" aria-hidden="true">{mappingListing.channelId}</span>
                   </div>
                 </div>
               </div>
