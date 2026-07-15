@@ -326,20 +326,6 @@ function ensureDataDirs(): void {
   if (!fs.existsSync(SHOPEE_TOKENS_PATH)) {
     fs.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
-  // Local Cache Master — đảm bảo file tồn tại + có quyền ghi trên hosting.
-  const localInventoryPath = path.join(dataDir, "local_inventory.json");
-  if (!fs.existsSync(localInventoryPath)) {
-    fs.writeFileSync(
-      localInventoryPath,
-      JSON.stringify({ updatedAt: new Date().toISOString(), products: [], listings: [] }),
-      "utf-8",
-    );
-    try {
-      fs.chmodSync(localInventoryPath, 0o664);
-    } catch {
-      /* ignore */
-    }
-  }
 }
 
 function saveOAuthAudit(entry: Record<string, any>): void {
@@ -4899,15 +4885,56 @@ function loadLocalInventoryCache(): LocalInventoryCache {
     if (!raw || !raw.trim()) return refreshCache();
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return refreshCache();
+    const products = Array.isArray(parsed.products) ? parsed.products : [];
+    const listings = Array.isArray(parsed.listings) ? parsed.listings : [];
+    // Cache rỗng trong khi DB có SP → khởi tạo lại từ DB.
+    if (products.length === 0) {
+      const dbProducts = loadProducts();
+      if (dbProducts.length > 0) return refreshCache();
+    }
     return {
       updatedAt: String(parsed.updatedAt || new Date().toISOString()),
-      products: Array.isArray(parsed.products) ? parsed.products : [],
-      listings: Array.isArray(parsed.listings) ? parsed.listings : [],
+      products,
+      listings,
     };
   } catch (error) {
     console.error("[Local Cache] Đọc local_inventory.json thất bại — rebuild:", error);
     return refreshCache();
   }
+}
+
+/**
+ * Khởi tạo Local Cache Master nếu file thiếu / trống / hỏng.
+ * Quét products.json + channel_listings.json rồi GHI local_inventory.json.
+ */
+function initLocalInventoryIfNeeded(force = false): LocalInventoryCache {
+  ensureDataDirs();
+  fs.mkdirSync(path.dirname(LOCAL_INVENTORY_CACHE_PATH), { recursive: true });
+
+  let needsInit = force || !fs.existsSync(LOCAL_INVENTORY_CACHE_PATH);
+  if (!needsInit) {
+    try {
+      const raw = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
+      if (!raw || !raw.trim()) {
+        needsInit = true;
+      } else {
+        const parsed = JSON.parse(raw);
+        const products = Array.isArray(parsed?.products) ? parsed.products : [];
+        const dbProducts = loadProducts();
+        if (!parsed || typeof parsed !== "object") needsInit = true;
+        else if (products.length === 0 && dbProducts.length > 0) needsInit = true;
+      }
+    } catch {
+      needsInit = true;
+    }
+  }
+
+  if (needsInit) {
+    console.log("[Local Cache] Init: quét DB → ghi data/local_inventory.json...");
+    return refreshCache();
+  }
+
+  return loadLocalInventoryCache();
 }
 
 /** Ghi DB Kho gốc — compact + atomic; NÉM lỗi nếu ghi thất bại (không nuốt silent). */
@@ -5758,9 +5785,10 @@ function hydrateChannelListingsOnBoot(): void {
       const rows = readChannelListingsDb();
       console.log(`[Boot] Mapping DB sẵn sàng: ${rows.length} dòng (không rebuild)`);
     }
-    const cache = refreshCache();
+    // Startup: nếu local_inventory.json thiếu/trống → quét DB và tạo file.
+    const cache = initLocalInventoryIfNeeded(true);
     console.log(
-      `[Boot] Local Cache Master sẵn sàng: products=${cache.products.length}, listings=${cache.listings.length}`
+      `[Boot] Local Cache Master sẵn sàng: products=${cache.products.length}, listings=${cache.listings.length} @ ${LOCAL_INVENTORY_CACHE_PATH}`
     );
   } catch (err: any) {
     console.error(`[Boot] Không thể khởi tạo mapping/cache DB:`, err?.message || err);

@@ -16,5 +16,7 @@ server.cjs.map
 *.log
 .env*
 !.env.example
-/data/
+/data/*
+!/data/local_inventory.json
+!/data/.gitkeep
 /storage/

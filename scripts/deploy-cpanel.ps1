@@ -22,6 +22,14 @@ Copy-Item -Recurse -Force "dist\*" "$staging\dist\"
 Copy-Item -Force "dist\server.cjs" "$staging\server.cjs"
 Copy-Item -Recurse -Force "dist\assets\*" "$staging\assets\"
 Copy-Item -Force ".htaccess" "$staging\.htaccess"
+# Local Cache Master — luôn kèm file local_inventory.json khi deploy
+New-Item -ItemType Directory -Path "$staging\data" -Force | Out-Null
+if (Test-Path "data\local_inventory.json") {
+  Copy-Item -Force "data\local_inventory.json" "$staging\data\local_inventory.json"
+} else {
+  node scripts/init-local-inventory.mjs
+  Copy-Item -Force "data\local_inventory.json" "$staging\data\local_inventory.json"
+}
 "KHONG ghi de shopee_tokens.json tren server " | Set-Content -Path "$staging\data\.gitkeep" -Encoding UTF8
 
 @"
