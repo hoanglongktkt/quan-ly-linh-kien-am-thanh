@@ -103,12 +103,12 @@ function normalizeListingRecord(raw: any): ChannelListing | null {
 }
 
 /**
- * Resolve tên/SKU SP liên kết — DATA-DRIVEN only.
- * Ưu tiên object listing (API JOIN), products[] chỉ là fallback (có thể thiếu do phân trang).
+ * Resolve tên/SKU SP liên kết — DATA-DRIVEN + defensive.
+ * Mọi truy cập linkedProduct dùng optional chaining.
  */
 function resolveLinkedMasterFromData(
-  listing: ChannelListing,
-  products: Product[]
+  listing: ChannelListing | null | undefined,
+  products: Product[] | null | undefined
 ): {
   linkedId?: string;
   title: string;
@@ -116,19 +116,35 @@ function resolveLinkedMasterFromData(
   isBroken: boolean;
   effectiveStatus: ChannelListing['status'];
 } {
-  const linkedId = listing.linkedProductId || listing.linkedProduct?.id || undefined;
-  const fromListingTitle = String(listing.linkedProduct?.title || listing.linkedProductTitle || '').trim();
-  const fromListingSku = String(listing.linkedProduct?.sku || listing.linkedProductSku || '').trim();
+  if (!listing || typeof listing !== 'object') {
+    return {
+      title: '',
+      sku: '',
+      isBroken: true,
+      effectiveStatus: 'unlinked',
+    };
+  }
+
+  const linkedId =
+    listing.linkedProductId ||
+    listing.linkedProduct?.id ||
+    undefined;
+  const fromListingTitle = String(
+    listing.linkedProduct?.title || listing.linkedProductTitle || ''
+  ).trim();
+  const fromListingSku = String(
+    listing.linkedProduct?.sku || listing.linkedProductSku || ''
+  ).trim();
 
   let title = fromListingTitle;
   let sku = fromListingSku;
 
-  // Fallback props chỉ khi listing chưa có snapshot — tuyệt đối không đọc DOM.
+  const safeProducts = Array.isArray(products) ? products : [];
   if (linkedId && (!title || !sku)) {
-    const fromProps = products.find((p) => String(p.id) === String(linkedId));
+    const fromProps = safeProducts.find((p) => p && String(p?.id) === String(linkedId));
     if (fromProps) {
-      if (!title) title = String(fromProps.title || '').trim();
-      if (!sku) sku = String(fromProps.sku || '').trim();
+      if (!title) title = String(fromProps?.title || '').trim();
+      if (!sku) sku = String(fromProps?.sku || '').trim();
     }
   }
 
@@ -141,7 +157,7 @@ function resolveLinkedMasterFromData(
     title,
     sku,
     isBroken,
-    effectiveStatus: isBroken ? 'unlinked' : listing.status,
+    effectiveStatus: isBroken ? 'unlinked' : listing.status || 'unlinked',
   };
 }
 
@@ -352,11 +368,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
   }, [showToast]);
 
-  // F5 / mở tab mapping → đọc lại từ Database (GET /api/mapping-products).
+  // F5 / mở tab mapping → đọc lại từ Database (chạy 1 lần, tránh vòng lặp).
   useEffect(() => {
     if (listingsHydratedRef.current) return;
     void loadMappingListings({ silent: true });
-  }, [loadMappingListings]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-once hydrate
+  }, []);
 
   useEffect(() => {
     if (listings.length > 0) {
@@ -1136,19 +1153,35 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                   </td>
                 </tr>
               ) : (
-                filteredListings.map(item => {
-                  // Lookup hoàn toàn từ DATA model (listing object) — không đọc DOM/UI text.
+                filteredListings.map((item) => {
+                  // Lookup hoàn toàn từ DATA model — defensive optional chaining.
                   const linked = resolveLinkedMasterFromData(item, products);
-                  const linkedTitle = linked.title;
-                  const linkedSku = linked.sku;
-                  const isBrokenLink = linked.isBroken;
-                  const effectiveStatus = linked.effectiveStatus;
+                  const linkedTitle = linked?.title || '';
+                  const linkedSku = linked?.sku || '';
+                  const isBrokenLink = linked?.isBroken === true;
+                  const effectiveStatus = linked?.effectiveStatus || 'unlinked';
                   const showLinked =
                     effectiveStatus === 'success' &&
-                    !!linked.linkedId &&
+                    !!linked?.linkedId &&
                     (!!linkedTitle || !!linkedSku);
+                  const displayLinkedName =
+                    linkedTitle ||
+                    item?.linkedProduct?.title ||
+                    item?.linkedProductTitle ||
+                    'Chưa liên kết';
+                  const displayLinkedSku =
+                    linkedSku ||
+                    item?.linkedProduct?.sku ||
+                    item?.linkedProductSku ||
+                    '';
                   return (
-                    <tr key={item.id} className="hover:bg-slate-50/50 transition-colors" data-listing-id={item.id} data-channel-id={item.channelId} data-linked-id={item.linkedProductId || ''}>
+                    <tr
+                      key={item?.id || `row-${Math.random()}`}
+                      className="hover:bg-slate-50/50 transition-colors"
+                      data-listing-id={item?.id || ''}
+                      data-channel-id={item?.channelId || ''}
+                      data-linked-id={item?.linkedProductId || item?.linkedProduct?.id || ''}
+                    >
                       <td className="p-4 text-center">
                         <input
                           type="checkbox"
@@ -1232,26 +1265,26 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                         )}
                       </td>
 
-                      {/* Linked master product info */}
+                      {/* Linked master product info — defensive render */}
                       <td className="p-4">
                         {showLinked ? (
                           <div className="space-y-0.5">
                             <p className="font-extrabold text-blue-600 text-xs hover:underline cursor-pointer line-clamp-1 max-w-[280px]">
-                              {linkedTitle}
+                              {displayLinkedName || 'Chưa liên kết'}
                             </p>
                             <p className="font-mono font-bold text-gray-400 text-[10px]">
-                              SKU: {linkedSku || '—'}
+                              SKU: {displayLinkedSku || '—'}
                             </p>
                           </div>
                         ) : isBrokenLink ? (
                           <div className="space-y-0.5">
                             <span className="text-rose-600 font-bold text-xs">Lỗi dữ liệu</span>
-                            {item.syncError && (
+                            {item?.syncError ? (
                               <p className="text-[10px] text-rose-400 line-clamp-2 max-w-[240px]">{item.syncError}</p>
-                            )}
+                            ) : null}
                           </div>
                         ) : (
-                          <span className="text-gray-400 font-bold text-xs">—</span>
+                          <span className="text-gray-400 font-bold text-xs">Chưa liên kết</span>
                         )}
                       </td>
 
