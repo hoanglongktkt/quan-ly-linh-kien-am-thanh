@@ -909,6 +909,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       });
       const data = await parseJsonResponse<{
         success?: boolean;
+        deletedCount?: number;
         purged?: number;
         remaining?: number;
         message?: string;
@@ -920,9 +921,10 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
       await refreshListingsFromDb();
       setSelectedListingIds([]);
+      const deleted = Number(data.deletedCount ?? data.purged ?? 0);
       showToast(
-        data.purged
-          ? `Đã dọn sạch ${data.purged} mapping lỗi. Còn ${data.remaining ?? 0} dòng hợp lệ.`
+        deleted > 0
+          ? `Đã dọn sạch ${deleted} mapping lỗi.`
           : 'Không phát hiện mapping lỗi cần dọn dẹp.'
       );
     } catch (error: unknown) {

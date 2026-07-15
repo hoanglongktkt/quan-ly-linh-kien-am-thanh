@@ -6374,7 +6374,7 @@ async function startServer() {
     }
   };
 
-  // Route cụ thể phải đăng ký trước POST upsert.
+  // BẮT BUỘC: đăng ký purge-broken (DB JSON channel_listings — KHÔNG dùng MappingModel/Mongo).
   app.post("/api/mapping-products/purge-broken", authMiddleware, async (_req, res) => {
     try {
       // 1) Tìm kiếm: mapping linkedProduct null/undefined hoặc ID không còn trong Kho gốc
@@ -6426,7 +6426,10 @@ async function startServer() {
       // 3) Phản hồi
       return res.json({ success: true, deletedCount });
     } catch (error: any) {
-      return res.status(500).json({ error: error?.message || String(error) });
+      return res.status(500).json({
+        success: false,
+        message: error?.message || String(error),
+      });
     }
   });
   app.post("/api/mapping-products/heal", authMiddleware, handleMappingProductsHeal);
