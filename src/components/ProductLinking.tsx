@@ -35,12 +35,14 @@ interface ChannelListing {
   channelId: string;
   platform: 'shopee' | 'tiktok' | 'woocommerce' | 'lazada';
   shopName: string;
-  status: 'success' | 'unlinked' | 'failed';
+  status: 'success' | 'unlinked' | 'failed' | 'invalid';
   linkedProductId?: string;
   /** Populate từ API JOIN kho gốc */
   linkedProductTitle?: string;
   linkedProductSku?: string;
   linkedProduct?: { id: string; title: string; sku: string };
+  syncError?: string;
+  linkBroken?: boolean;
 }
 
 interface InitVariantRow {
@@ -372,7 +374,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           ...item,
           status: 'success',
           linkedProductId: masterProductId,
-          sku: item.sku || masterProd.sku
+          linkedProductTitle: masterProd.title,
+          linkedProductSku: masterProd.sku,
+          linkedProduct: { id: masterProd.id, title: masterProd.title, sku: masterProd.sku },
+          sku: item.sku || masterProd.sku,
+          syncError: undefined,
+          linkBroken: false,
         };
       }
       return item;
@@ -404,7 +411,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             return {
               ...listing,
               status: 'success' as const,
-              linkedProductId: matchedBySku.id
+              linkedProductId: matchedBySku.id,
+              linkedProductTitle: matchedBySku.title,
+              linkedProductSku: matchedBySku.sku,
+              linkedProduct: { id: matchedBySku.id, title: matchedBySku.title, sku: matchedBySku.sku },
+              syncError: undefined,
+              linkBroken: false,
             };
           }
           return listing;
@@ -437,7 +449,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             ...listing,
             status: 'success' as const,
             linkedProductId: matchedByName.id,
-            sku: listing.sku || matchedByName.sku
+            linkedProductTitle: matchedByName.title,
+            linkedProductSku: matchedByName.sku,
+            linkedProduct: { id: matchedByName.id, title: matchedByName.title, sku: matchedByName.sku },
+            sku: listing.sku || matchedByName.sku,
+            syncError: undefined,
+            linkBroken: false,
           };
         }
         return listing;
@@ -1017,8 +1034,14 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                     item.linkedProduct?.sku ||
                     item.linkedProductSku ||
                     '';
+                  // Không tin tuyệt đối status success — thiếu linkedProduct/tên = liên kết hỏng.
+                  const isBrokenLink =
+                    item.linkBroken === true ||
+                    (item.status === 'success' &&
+                      (!item.linkedProductId || (!linkedTitle && !linkedSku)));
+                  const effectiveStatus = isBrokenLink ? 'unlinked' : item.status;
                   const showLinked =
-                    item.status === 'success' &&
+                    effectiveStatus === 'success' &&
                     !!item.linkedProductId &&
                     (!!linkedTitle || !!linkedSku);
                   return (
@@ -1094,18 +1117,24 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
                       {/* Connection status badge */}
                       <td className="p-4">
-                        {item.status === 'success' && (
+                        {isBrokenLink && (
+                          <span className="text-rose-700 font-bold text-[11px] bg-rose-50 border border-rose-200 px-2 py-1 rounded-lg flex items-center gap-1 w-fit">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                            <span>Lỗi liên kết (Mất dữ liệu)</span>
+                          </span>
+                        )}
+                        {!isBrokenLink && effectiveStatus === 'success' && (
                           <span className="text-blue-600 font-bold text-[11px] bg-blue-50/50 border border-blue-200 px-2 py-1 rounded-lg">
                             Liên kết thành công
                           </span>
                         )}
-                        {item.status === 'unlinked' && (
+                        {!isBrokenLink && effectiveStatus === 'unlinked' && (
                           <span className="text-amber-600 font-bold text-[11px] bg-amber-50/80 border border-amber-200 px-2 py-1 rounded-lg flex items-center gap-1 w-fit">
                             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                             <span>Chưa liên kết</span>
                           </span>
                         )}
-                        {item.status === 'failed' && (
+                        {!isBrokenLink && effectiveStatus === 'failed' && (
                           <span className="text-rose-600 font-bold text-[11px] bg-rose-50/80 border border-rose-200 px-2 py-1 rounded-lg flex items-center gap-1 w-fit">
                             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                             <span>Liên kết thất bại</span>
@@ -1124,6 +1153,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                               SKU: {linkedSku || '—'}
                             </p>
                           </div>
+                        ) : isBrokenLink ? (
+                          <div className="space-y-0.5">
+                            <span className="text-rose-600 font-bold text-xs">Lỗi dữ liệu</span>
+                            {item.syncError && (
+                              <p className="text-[10px] text-rose-400 line-clamp-2 max-w-[240px]">{item.syncError}</p>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-gray-400 font-bold text-xs">—</span>
                         )}
@@ -1131,7 +1167,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
                       {/* Action buttons exactly matching mockup */}
                       <td className="p-4 text-center">
-                        {item.status === 'success' ? (
+                        {effectiveStatus === 'success' && !isBrokenLink ? (
                           <button
                             onClick={() => handleUnlink(item.id)}
                             className="p-2 border border-red-150 hover:bg-red-50 text-rose-600 rounded-xl transition-all cursor-pointer"

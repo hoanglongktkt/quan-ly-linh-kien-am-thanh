@@ -5045,6 +5045,10 @@ function sanitizeChannelListingRow(row: any): any {
   const channelId = String(row?.channelId || "").trim();
   const statusRaw = String(row?.status || "unlinked");
   const status = ["success", "failed", "unlinked", "invalid"].includes(statusRaw) ? statusRaw : "unlinked";
+  const linkedProductId =
+    row?.linkedProductId != null && String(row.linkedProductId).trim() !== ""
+      ? String(row.linkedProductId)
+      : undefined;
   return {
     id: String(row?.id || `cl-${platform}-${channelId || "unknown"}`),
     title: String(row?.title ?? ""),
@@ -5055,9 +5059,15 @@ function sanitizeChannelListingRow(row: any): any {
     shopName: String(row?.shopName ?? ""),
     shopId: row?.shopId != null && String(row.shopId).trim() !== "" ? String(row.shopId) : undefined,
     status,
-    linkedProductId:
-      row?.linkedProductId != null && String(row.linkedProductId).trim() !== ""
-        ? String(row.linkedProductId)
+    linkedProductId,
+    // Snapshot tên/SKU kho gốc — dùng khi JOIN miss (pagination / file lệch).
+    linkedProductTitle:
+      row?.linkedProductTitle != null && String(row.linkedProductTitle).trim() !== ""
+        ? String(row.linkedProductTitle).trim()
+        : undefined,
+    linkedProductSku:
+      row?.linkedProductSku != null && String(row.linkedProductSku).trim() !== ""
+        ? String(row.linkedProductSku).trim()
         : undefined,
     itemId: row?.itemId != null && String(row.itemId).trim() !== "" ? String(row.itemId) : undefined,
     modelId: row?.modelId != null && String(row.modelId).trim() !== "" ? String(row.modelId) : undefined,
@@ -5079,13 +5089,34 @@ function buildMasterProductLookupById(products?: any[]): Map<string, any> {
   return index;
 }
 
-/** Populate tên/SKU kho gốc vào listing (chỉ đọc — không ghi DB). */
+/**
+ * JOIN mapping ↔ Kho gốc.
+ * - status=success nhưng không tìm thấy sản phẩm → hạ về unlinked + syncError (không được báo "thành công").
+ * - Có sản phẩm trong kho (kể cả shopee-item-* sau khởi tạo) → luôn trả linkedProduct + snapshot title/sku.
+ */
 function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any[] {
   const lookup = buildMasterProductLookupById(products);
-  return (Array.isArray(listings) ? listings : []).map((row) => {
+  let brokenCount = 0;
+
+  const enriched = (Array.isArray(listings) ? listings : []).map((row) => {
     const base = sanitizeChannelListingRow(row);
     const linkedId = base.linkedProductId;
+
     if (!linkedId) {
+      // Có status success nhưng thiếu ID → coi như liên kết hỏng.
+      if (base.status === "success") {
+        brokenCount++;
+        return {
+          ...base,
+          status: "unlinked",
+          linkedProductId: undefined,
+          linkedProductTitle: undefined,
+          linkedProductSku: undefined,
+          linkedProduct: undefined,
+          syncError: "Lỗi liên kết (Mất dữ liệu): thiếu linkedProductId",
+          linkBroken: true,
+        };
+      }
       return {
         ...base,
         linkedProductTitle: undefined,
@@ -5093,20 +5124,57 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
         linkedProduct: undefined,
       };
     }
+
     const master = lookup.get(String(linkedId));
-    // Không hiển thị sản phẩm ảo shopee-item-* như Kho gốc
-    if (!master || isSyntheticShopeePullProduct(master)) {
+    if (!master) {
+      // ID còn nhưng sản phẩm đã xóa khỏi Kho gốc.
+      brokenCount++;
+      const snapTitle = base.linkedProductTitle;
+      const snapSku = base.linkedProductSku;
+      if (base.status === "success") {
+        return {
+          ...base,
+          status: "unlinked",
+          linkedProductId: undefined,
+          linkedProductTitle: undefined,
+          linkedProductSku: undefined,
+          linkedProduct: undefined,
+          syncError: `Lỗi liên kết (Mất dữ liệu): không tìm thấy SP id=${linkedId}${snapTitle ? ` (trước đó: ${snapTitle})` : ""}`,
+          linkBroken: true,
+          previousLinkedProductId: linkedId,
+          previousLinkedTitle: snapTitle,
+          previousLinkedSku: snapSku,
+        };
+      }
       return {
         ...base,
         linkedProductTitle: undefined,
         linkedProductSku: undefined,
         linkedProduct: undefined,
+        linkBroken: true,
       };
     }
-    const title = String(master.title || "").trim();
-    const sku = String(master.sku || "").trim();
+
+    const title = String(master.title || base.linkedProductTitle || "").trim();
+    const sku = String(master.sku || base.linkedProductSku || "").trim();
+    // status success nhưng không có tên/SKU gì cả → vẫn báo hỏng hiển thị
+    if (base.status === "success" && !title && !sku) {
+      brokenCount++;
+      return {
+        ...base,
+        status: "unlinked",
+        linkedProductId: undefined,
+        linkedProduct: undefined,
+        linkedProductTitle: undefined,
+        linkedProductSku: undefined,
+        syncError: `Lỗi liên kết (Mất dữ liệu): SP id=${linkedId} thiếu title/sku`,
+        linkBroken: true,
+      };
+    }
+
     return {
       ...base,
+      // Giữ snapshot mới nhất để lần save sau không mất tên
       linkedProductTitle: title || undefined,
       linkedProductSku: sku || undefined,
       linkedProduct: {
@@ -5114,8 +5182,52 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
         title: title || String(master.id),
         sku: sku || "—",
       },
+      syncError: base.status === "success" ? undefined : base.syncError,
+      linkBroken: false,
     };
   });
+
+  if (brokenCount > 0) {
+    console.warn(
+      `[Mapping Products] Có ${brokenCount} dòng status=success nhưng linkedProduct null/mất — đã hạ về unlinked`
+    );
+  }
+  return enriched;
+}
+
+/** Ghi lại các dòng heal (broken → unlinked) vào DB nếu có thay đổi. */
+function persistHealedBrokenMappingLinks(enriched: any[]): void {
+  try {
+    const broken = enriched.filter((r) => r?.linkBroken === true);
+    if (broken.length === 0) return;
+
+    const existing = readChannelListingsDb();
+    const byId = new Map(existing.map((r: any) => [String(r.id), r]));
+    let changed = 0;
+    for (const row of broken) {
+      const id = String(row.id || "");
+      const prev = byId.get(id);
+      if (!prev) continue;
+      byId.set(
+        id,
+        sanitizeChannelListingRow({
+          ...prev,
+          status: "unlinked",
+          linkedProductId: undefined,
+          linkedProductTitle: undefined,
+          linkedProductSku: undefined,
+          syncError: row.syncError,
+        })
+      );
+      changed++;
+    }
+    if (changed > 0) {
+      writeChannelListingsDb(Array.from(byId.values()));
+      console.log(`[Mapping Products] Đã heal ${changed} liên kết hỏng → unlinked trong DB`);
+    }
+  } catch (err: unknown) {
+    console.error("[Mapping Products] persistHealedBrokenMappingLinks failed:", err);
+  }
 }
 
 function upsertChannelListingsFromShopeeSync(
@@ -5302,6 +5414,9 @@ function autoLinkChannelListingsByExactSku(): {
       ...listing,
       status: "success",
       linkedProductId: String(match.id),
+      linkedProductTitle: String(match.title || "").trim() || undefined,
+      linkedProductSku: String(match.sku || "").trim() || undefined,
+      syncError: undefined,
     });
   }
 
@@ -6079,10 +6194,15 @@ async function startServer() {
   // ─── Mapping products — ĐẶT SỚM, TRƯỚC static / SPA catch-all ───
   const handleMappingProductsGet = (_req: any, res: any) => {
     try {
-      // CHỈ ĐỌC DB — không ghi, không rebuild, không auto-link.
+      // CHỈ ĐỌC + enrich JOIN; heal liên kết hỏng (success nhưng thiếu SP) về unlinked.
       const listings = enrichChannelListingsWithMaster(readChannelListingsForGet());
+      persistHealedBrokenMappingLinks(listings);
+      const successWithProduct = listings.filter(
+        (l) => l.status === "success" && l.linkedProduct && (l.linkedProductTitle || l.linkedProductSku)
+      ).length;
+      const broken = listings.filter((l) => l.linkBroken).length;
       console.log(
-        `[Mapping Products] GET (read-only) trả về ${listings.length} dòng từ ${CHANNEL_LISTINGS_DB_PATH}`
+        `[Mapping Products] GET trả về ${listings.length} dòng (success+product=${successWithProduct}, brokenHealed=${broken}) từ ${CHANNEL_LISTINGS_DB_PATH}`
       );
       return res.status(200).json({ success: true, listings, count: listings.length });
     } catch (error: any) {
