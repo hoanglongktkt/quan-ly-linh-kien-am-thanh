@@ -7152,10 +7152,32 @@ async function startServer() {
     const products = loadProducts();
     let updatedCount = 0;
     const next = products.map((p: any) => {
-      const patch = patchMap.get(p.id);
-      if (!patch) return p;
-      updatedCount++;
-      return mergeProductPatch(p, patch);
+      const patch = patchMap.get(String(p.id));
+      if (patch) {
+        updatedCount++;
+        patchMap.delete(String(p.id));
+        return mergeProductPatch(p, patch);
+      }
+
+      const children = getProductChildrenList(p);
+      if (children.length === 0) return p;
+
+      let childChanged = false;
+      const nextChildren = children.map((c: any) => {
+        const childPatch = patchMap.get(String(c.id));
+        if (!childPatch) return c;
+        updatedCount++;
+        patchMap.delete(String(c.id));
+        childChanged = true;
+        return mergeProductPatch(c, childPatch);
+      });
+      if (!childChanged) return p;
+
+      const totalStock = nextChildren.reduce(
+        (s: number, c: any) => s + (Number(c.stock) || 0),
+        0
+      );
+      return { ...p, children: nextChildren, stock: totalStock };
     });
     saveProducts(next);
     return res.json({ updated: updatedCount, products: next });
