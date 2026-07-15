@@ -242,30 +242,24 @@ function buildListingsFromProducts(products: Product[], shops: ConnectedShop[]):
 }
 
 async function fetchMappingListingsFromServer(token: string): Promise<{ rows: ChannelListing[]; source: string } | null> {
-  const endpoints = ['/api/mapping-products', '/api/channel-listings'];
-  for (const endpoint of endpoints) {
-    try {
-      const res = await apiFetch(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const text = await res.text();
-      let data: { success?: boolean; listings?: ChannelListing[] } = {};
-      try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        console.warn(`[ProductLinking] ${endpoint} non-JSON:`, text.slice(0, 120));
-        continue;
-      }
-      if (res.ok && data.success !== false && Array.isArray(data.listings)) {
-        const rows = data.listings
-          .map((row) => normalizeListingRecord(row))
-          .filter((r): r is ChannelListing => r != null);
-        return { rows, source: endpoint };
-      }
-      console.warn(`[ProductLinking] ${endpoint} failed:`, { status: res.status, data });
-    } catch (err) {
-      console.warn(`[ProductLinking] ${endpoint} network error:`, err);
+  try {
+    const endpoint = '/api/mapping-products';
+    const res = await apiFetch(endpoint, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await parseJsonResponse<{ success?: boolean; listings?: ChannelListing[] }>(res);
+    if (res.ok && data.success !== false && Array.isArray(data.listings)) {
+      const rows = data.listings
+        .map((row) => normalizeListingRecord(row))
+        .filter((r): r is ChannelListing => r != null);
+      return { rows, source: endpoint };
     }
+    console.warn('[ProductLinking] Không đọc được dữ liệu liên kết:', {
+      status: res.status,
+      data,
+    });
+  } catch (err) {
+    console.warn('[ProductLinking] Lỗi đọc dữ liệu liên kết:', err);
   }
   return null;
 }
@@ -335,13 +329,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     purgeLegacyCatalogCache();
   }, []);
 
-  const loadMappingListings = useCallback(async (opts?: { silent?: boolean }) => {
+  const refreshListingsFromDb = useCallback(async () => {
     const token = localStorage.getItem('admin_token');
     if (!token) {
       setListingsLoading(false);
-      const msg = 'Chưa đăng nhập — không thể tải dữ liệu mapping.';
+      const msg = 'Chưa đăng nhập — không thể đọc dữ liệu sản phẩm sàn.';
       setMappingLoadError(msg);
-      if (!opts?.silent) showToast(msg);
       return;
     }
     setListingsLoading(true);
@@ -352,26 +345,23 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         listingsHydratedRef.current = true;
         setListings(serverResult.rows);
         setMappingLoadError(null);
-        if (!opts?.silent) showToast(`Đã tải ${serverResult.rows.length} dòng mapping.`);
         return;
       }
-      const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối hoặc bấm "Tải dữ liệu từ sàn".';
+      const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối hoặc tải dữ liệu từ sàn.';
       setMappingLoadError(msg);
-      if (!opts?.silent) showToast(msg);
     } catch (err) {
       const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
-      console.error('[ProductLinking] Tải mapping thất bại:', err);
+      console.error('[ProductLinking] Đọc dữ liệu liên kết thất bại:', err);
       setMappingLoadError(msg);
-      if (!opts?.silent) showToast(msg);
     } finally {
       setListingsLoading(false);
     }
-  }, [showToast]);
+  }, []);
 
   // F5 / mở tab mapping → đọc lại từ Database (chạy 1 lần, tránh vòng lặp).
   useEffect(() => {
     if (listingsHydratedRef.current) return;
-    void loadMappingListings({ silent: true });
+    void refreshListingsFromDb();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-once hydrate
   }, []);
 
@@ -387,21 +377,51 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [selectedShopFilter, setSelectedShopFilter] = useState<string>('all');
   const [showShopFilterDropdown, setShowShopFilterDropdown] = useState(false);
   
-  // Shop selector + fetch / auto-link actions
+  // Popup đồng bộ: chọn shop + khoảng thời gian trước khi tải.
+  const [syncShops, setSyncShops] = useState<ConnectedShop[]>([]);
   const [syncShopId, setSyncShopId] = useState('');
+  const [syncTimeRange, setSyncTimeRange] = useState<'all' | '24h'>('24h');
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [isLoadingSyncShops, setIsLoadingSyncShops] = useState(false);
   const [isFetchingFromChannel, setIsFetchingFromChannel] = useState(false);
   const [isAutoLinking, setIsAutoLinking] = useState(false);
 
-  useEffect(() => {
-    const shopeeShops = shops.filter((s) => s.platform === 'shopee');
-    if (shopeeShops.length === 0) {
+  const handleOpenSyncModal = async () => {
+    setIsSyncModalOpen(true);
+    setIsLoadingSyncShops(true);
+    try {
+      const token = localStorage.getItem('admin_token');
+      if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
+      const res = await apiFetch('/api/settings/channels', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await parseJsonResponse<{
+        success?: boolean;
+        settings?: { shops?: ConnectedShop[] };
+        message?: string;
+      }>(res);
+      if (!res.ok || data.success === false) {
+        throw new Error(data.message || 'Không đọc được danh sách gian hàng.');
+      }
+      const connected = Array.isArray(data.settings?.shops)
+        ? data.settings.shops.filter((shop) => shop?.connected)
+        : [];
+      setSyncShops(connected);
+      const firstSupported = connected.find((shop) => shop.platform === 'shopee');
+      setSyncShopId((current) =>
+        connected.some((shop) => shop.id === current && shop.platform === 'shopee')
+          ? current
+          : firstSupported?.id || ''
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      setSyncShops([]);
       setSyncShopId('');
-      return;
+      showToast(message);
+    } finally {
+      setIsLoadingSyncShops(false);
     }
-    if (!shopeeShops.some((s) => s.id === syncShopId)) {
-      setSyncShopId(shopeeShops[0].id);
-    }
-  }, [shops, syncShopId]);
+  };
 
   // Manual Mapping Modal state
   const [mappingListing, setMappingListing] = useState<ChannelListing | null>(null);
@@ -688,9 +708,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   };
 
   const handleFetchChannelProducts = async () => {
-    const shop = shops.find((s) => s.id === syncShopId) || shops.find((s) => s.platform === 'shopee');
-    if (!shop || shop.platform !== 'shopee') {
-      alert('Chưa có gian hàng Shopee được kết nối.');
+    const shop = syncShops.find((s) => s.id === syncShopId && s.connected);
+    if (!shop) {
+      alert('Vui lòng chọn một gian hàng đã kết nối.');
+      return;
+    }
+    if (shop.platform !== 'shopee') {
+      alert(`Đồng bộ sản phẩm ${shop.platform} chưa được tích hợp trên server.`);
       return;
     }
 
@@ -706,18 +730,24 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       let totalSaved = 0;
       let lastListingsCount = 0;
       const maxPages = 200;
+      const syncTo = Math.floor(Date.now() / 1000);
 
       // Phân trang từng request — tránh vét cạn 1 lần (503/OOM).
       while (hasMore && pageIndex < maxPages) {
         pageIndex += 1;
-        const res = await apiFetch('/api/shopee/channel-products/fetch', {
+        const res = await apiFetch('/api/sync-from-shop', {
           method: 'POST',
           signal: controller.signal,
           headers: {
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ shopId: shop.shopId, fetchAll: false, offset }),
+          body: JSON.stringify({
+            shop_id: shop.shopId,
+            time_range: syncTimeRange,
+            offset,
+            sync_to: syncTo,
+          }),
         });
         const data = await parseJsonResponse<{
           success?: boolean;
@@ -744,12 +774,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         await new Promise<void>((resolve) => setTimeout(resolve, 100));
       }
 
-      await loadMappingListings({ silent: true });
+      await refreshListingsFromDb();
       if (onRefreshProducts) await onRefreshProducts();
 
       const count = lastListingsCount || totalSaved;
+      const rangeLabel = syncTimeRange === 'all' ? 'toàn thời gian' : '24h qua';
       showToast(
-        `Đã tải phân trang ${pageIndex} trang — lưu DB thành công ${count} sản phẩm từ sàn Shopee`
+        `Đã tải ${rangeLabel}: ${pageIndex} trang — lưu DB thành công ${count} sản phẩm từ Shopee`
       );
       onAddLog({
         id: `log-${Date.now()}`,
@@ -757,8 +788,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         channel: 'shopee',
         type: 'product_sync',
         status: 'success',
-        message: `Tải phân trang ${pageIndex} trang (${count} dòng) từ gian hàng [${shop.shopName}]`,
+        message: `Tải ${rangeLabel}, ${pageIndex} trang (${count} dòng) từ gian hàng [${shop.shopName}]`,
       });
+      setIsSyncModalOpen(false);
     } catch (err: unknown) {
       const e = err as { name?: string; message?: string };
       const message =
@@ -975,43 +1007,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
         {/* Action: Tải dữ liệu sàn + Liên kết tự động (tách riêng) */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
-          <div className="relative min-w-[160px]">
-            <select
-              value={syncShopId}
-              onChange={(e) => setSyncShopId(e.target.value)}
-              disabled={isFetchingFromChannel || isAutoLinking}
-              className="w-full pl-3 pr-8 py-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-700 focus:outline-none focus:border-blue-500 cursor-pointer disabled:opacity-50"
-            >
-              {shops.filter((s) => s.platform === 'shopee').map((shop) => (
-                <option key={shop.id} value={shop.id}>
-                  {shop.shopName}
-                </option>
-              ))}
-            </select>
-            <Store className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-3 pointer-events-none" />
-          </div>
-
           <button
-            onClick={() => void loadMappingListings()}
-            type="button"
-            disabled={listingsLoading || isFetchingFromChannel}
-            className="flex-1 sm:flex-none px-4 py-2.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-extrabold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-          >
-            {listingsLoading ? (
-              <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Đang tải DB...</span>
-              </>
-            ) : (
-              <>
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Tải danh sách mapping</span>
-              </>
-            )}
-          </button>
-
-          <button
-            onClick={handleFetchChannelProducts}
+            onClick={() => void handleOpenSyncModal()}
             type="button"
             disabled={isFetchingFromChannel || isAutoLinking}
             className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-blue-500 hover:bg-blue-50 text-blue-600 text-xs font-extrabold rounded-xl transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
@@ -1499,6 +1496,113 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               >
                 <ArrowDownToLine className="w-3.5 h-3.5" />
                 Khởi tạo về Kho
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Popup chọn gian hàng + phạm vi trước khi tải dữ liệu sàn */}
+      {isSyncModalOpen && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-gray-100">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
+                  <Store className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-gray-900">Tải dữ liệu từ sàn</h3>
+                  <p className="text-[11px] text-gray-500 font-semibold">Chọn gian hàng và khoảng thời gian</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isFetchingFromChannel && setIsSyncModalOpen(false)}
+                disabled={isFetchingFromChannel}
+                className="p-1.5 hover:bg-gray-200 rounded-full text-gray-400 disabled:opacity-40"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              <div className="space-y-2">
+                <label className="text-xs font-black text-gray-700">Gian hàng đã kết nối</label>
+                <select
+                  value={syncShopId}
+                  onChange={(e) => setSyncShopId(e.target.value)}
+                  disabled={isFetchingFromChannel || isLoadingSyncShops}
+                  className="w-full px-3.5 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                >
+                  <option value="">
+                    {isLoadingSyncShops ? 'Đang tải danh sách gian hàng...' : 'Chọn gian hàng'}
+                  </option>
+                  {syncShops.map((shop) => (
+                    <option
+                      key={shop.id}
+                      value={shop.id}
+                      disabled={shop.platform !== 'shopee'}
+                    >
+                      {shop.shopName} ({shop.platform.toUpperCase()})
+                      {shop.platform !== 'shopee' ? ' — chưa hỗ trợ đồng bộ' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <fieldset className="space-y-2">
+                <legend className="text-xs font-black text-gray-700 mb-2">Khoảng thời gian</legend>
+                <label className="flex items-start gap-3 p-3.5 border border-gray-200 rounded-xl cursor-pointer hover:border-blue-300">
+                  <input
+                    type="radio"
+                    name="sync-time-range"
+                    value="all"
+                    checked={syncTimeRange === 'all'}
+                    onChange={() => setSyncTimeRange('all')}
+                    disabled={isFetchingFromChannel}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block text-sm font-extrabold text-gray-800">Toàn thời gian</span>
+                    <span className="block text-[11px] text-gray-500 mt-0.5">Initial Sync — tải tất cả sản phẩm</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 p-3.5 border border-gray-200 rounded-xl cursor-pointer hover:border-blue-300">
+                  <input
+                    type="radio"
+                    name="sync-time-range"
+                    value="24h"
+                    checked={syncTimeRange === '24h'}
+                    onChange={() => setSyncTimeRange('24h')}
+                    disabled={isFetchingFromChannel}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block text-sm font-extrabold text-gray-800">24h qua</span>
+                    <span className="block text-[11px] text-gray-500 mt-0.5">Delta Sync — chỉ tải sản phẩm vừa cập nhật</span>
+                  </span>
+                </label>
+              </fieldset>
+            </div>
+
+            <div className="px-5 py-4 bg-slate-50 border-t border-gray-100 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsSyncModalOpen(false)}
+                disabled={isFetchingFromChannel}
+                className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleFetchChannelProducts()}
+                disabled={!syncShopId || isFetchingFromChannel || isLoadingSyncShops}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-extrabold text-xs rounded-xl flex items-center gap-1.5"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                {isFetchingFromChannel ? 'Đang tải...' : 'Bắt đầu tải'}
               </button>
             </div>
           </div>
