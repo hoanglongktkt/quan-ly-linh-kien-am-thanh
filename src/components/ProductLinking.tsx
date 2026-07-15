@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Product, SyncLog, ConnectedShop, getProductChildren } from '../types';
+import { Product, SyncLog, ConnectedShop } from '../types';
 import { purgeLegacyCatalogCache, loadPersistedListings, savePersistedListings, clearInventoryBrowserCache, clearPersistedListings } from '../utils/catalogStorage';
 import { parseJsonResponse, apiFetch } from '../utils/apiClient';
 import { 
@@ -211,40 +211,6 @@ function applyProductChannelLink(masterProd: Product, listing: ChannelListing): 
   }
 
   return linked;
-}
-
-/** Map SKU → Product (gồm cả biến thể con) — O(1) match trên dữ liệu đã load sẵn. */
-function buildClientSkuIndex(products: Product[]): Map<string, Product> {
-  const index = new Map<string, Product>();
-  const add = (p: Product) => {
-    const sku = String(p?.sku || '').trim().toLowerCase();
-    if (sku && !index.has(sku)) index.set(sku, p);
-  };
-  for (const p of products) {
-    if (!p) continue;
-    add(p);
-    for (const child of getProductChildren(p)) add(child);
-  }
-  return index;
-}
-
-function isListingAlreadyLinked(item: ChannelListing): boolean {
-  return (
-    item.status === 'success' &&
-    !!String(item.linkedProductId || item.linkedProduct?.id || '').trim() &&
-    item.linkBroken !== true
-  );
-}
-
-async function runInChunks<T>(
-  items: T[],
-  chunkSize: number,
-  worker: (chunk: T[]) => Promise<void>
-): Promise<void> {
-  const size = Math.max(1, chunkSize);
-  for (let i = 0; i < items.length; i += size) {
-    await worker(items.slice(i, i + size));
-  }
 }
 
 function buildListingsFromProducts(products: Product[], shops: ConnectedShop[]): ChannelListing[] {
@@ -893,126 +859,80 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const handleAutoLinkBySku = async () => {
     setIsAutoLinking(true);
     try {
-      if (!Array.isArray(listings) || listings.length === 0) {
-        showToast('Chưa có dữ liệu sản phẩm sàn trên UI. Hãy tải dữ liệu từ sàn trước.');
-        return;
-      }
-      if (!Array.isArray(products) || products.length === 0) {
-        showToast('Chưa có dữ liệu Kho gốc. Hãy đảm bảo kho đã được tải.');
-        return;
-      }
-
       const token = localStorage.getItem('admin_token');
       if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
 
-      // 1) Duyệt dữ liệu đã load trên RAM — khớp SKU với Kho gốc (local cache).
-      const skuIndex = buildClientSkuIndex(products);
-      const pairs: { listing: ChannelListing; master: Product; linkedProduct: Product }[] = [];
-      let alreadyLinked = 0;
-
-      const nextListings = listings.map((item) => {
-        if (isListingAlreadyLinked(item)) {
-          alreadyLinked += 1;
-          return item;
-        }
-
-        const sku = String(item.sku || '').trim().toLowerCase();
-        if (!sku) return item;
-
-        const master = skuIndex.get(sku);
-        if (!master) return item;
-
-        const linkedProduct = applyProductChannelLink(master, item);
-        pairs.push({ listing: item, master, linkedProduct });
-        return {
-          ...item,
-          status: 'success' as const,
-          linkedProductId: String(master.id),
-          linkedProductTitle: master.title,
-          linkedProductSku: master.sku,
-          linkedProduct: { id: String(master.id), title: master.title, sku: master.sku },
-          syncError: undefined,
-          linkBroken: false,
-        };
+      // Server đọc data/local_inventory.json (Kho gốc) — không dùng state FE rỗng.
+      const res = await apiFetch('/api/mapping-products/batch-auto-link', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({}),
       });
+      const data = await parseJsonResponse<{
+        success?: boolean;
+        data?: {
+          linkedCount?: number;
+          listings?: ChannelListing[];
+          alreadyLinked?: number;
+          unlinkedRemaining?: number;
+          localInventory?: Product[];
+          cacheUpdatedAt?: string;
+          masterProductCount?: number;
+          skuIndexSize?: number;
+        };
+        linkedCount?: number;
+        listings?: ChannelListing[];
+        localInventory?: Product[];
+        message?: string;
+        error?: string;
+      }>(res);
 
-      if (pairs.length === 0) {
+      if (!res.ok || data.success === false) {
+        throw new Error(data?.message || data?.error || 'Liên kết tự động thất bại.');
+      }
+
+      const payload = data.data || data;
+      const linkedCount = Number(payload.linkedCount ?? data.linkedCount ?? 0);
+      const nextListings = payload.listings ?? data.listings;
+      const inventory = payload.localInventory ?? data.localInventory;
+
+      // Cập nhật UI ngay từ kết quả server (Local Cache).
+      if (Array.isArray(nextListings)) {
+        const normalized = nextListings
+          .map((row) => normalizeListingRecord(row))
+          .filter((r): r is ChannelListing => r != null);
+        listingsHydratedRef.current = true;
+        setListings(normalized);
+        savePersistedListings(normalized);
+        setListingsFromCache(false);
+      }
+
+      if (Array.isArray(inventory) && inventory.length > 0 && onRefreshProducts) {
+        // Đồng bộ Kho gốc trên UI từ local_inventory (không phụ thuộc state cũ).
+        await onRefreshProducts({ forceRefresh: true });
+      }
+
+      if (linkedCount > 0) {
+        showToast(data.message || `Đã liên kết thành công ${linkedCount} sản phẩm`);
+      } else {
         showToast(
-          alreadyLinked > 0
-            ? 'Không còn SKU chưa liên kết nào khớp với Kho gốc.'
-            : 'Không tìm thấy SKU trùng khớp để liên kết tự động.'
+          data.message ||
+            'Không tìm thấy SKU trùng khớp trong Local Cache (data/local_inventory.json).'
         );
-        onAddLog({
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          channel: 'all',
-          type: 'product_sync',
-          status: 'failed',
-          message: `Liên kết tự động (client): 0 cặp SKU khớp (đã liên kết sẵn ${alreadyLinked})`,
-        });
-        return;
       }
 
-      // 2) Cập nhật UI ngay — không chờ server.
-      listingsHydratedRef.current = true;
-      setListings(nextListings);
-      savePersistedListings(nextListings);
-      setListingsFromCache(false);
-      for (const pair of pairs) {
-        onUpdateProduct(pair.linkedProduct, { save: false });
-      }
-
-      // 3) Bulk ghi mapping — 1 request duy nhất.
-      const mappingOk = await persistListings(nextListings);
-      if (!mappingOk) {
-        throw new Error('Lưu trạng thái liên kết (mapping) lên server thất bại.');
-      }
-
-      // 4) Bulk cập nhật Kho gốc — ưu tiên 1 request bulk-save; fallback Promise.all theo chunk.
-      const productUpdates = pairs.map(({ linkedProduct }) => ({
-        id: linkedProduct.id,
-        channels: linkedProduct.channels,
-        shopeeId: linkedProduct.shopeeId,
-        shopeeItemId: linkedProduct.shopeeItemId,
-        shopeeModelId: linkedProduct.shopeeModelId,
-        tiktokId: linkedProduct.tiktokId,
-        wooId: linkedProduct.wooId,
-      }));
-
-      let productsSaved = false;
-      try {
-        const bulkRes = await apiFetch('/api/products/bulk-save', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ updates: productUpdates }),
-        });
-        if (bulkRes.ok) productsSaved = true;
-      } catch {
-        productsSaved = false;
-      }
-
-      if (!productsSaved) {
-        await runInChunks(pairs, 8, async (chunk) => {
-          await Promise.all(
-            chunk.map(({ linkedProduct }) =>
-              Promise.resolve(onUpdateProduct(linkedProduct, { save: true }))
-            )
-          );
-        });
-      }
-
-      const linkedCount = pairs.length;
-      showToast(`Đã liên kết thành công ${linkedCount} sản phẩm`);
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'all',
         type: 'product_sync',
-        status: 'success',
-        message: `Liên kết tự động (client batch): ${linkedCount} sản phẩm (đã có sẵn ${alreadyLinked})`,
+        status: linkedCount > 0 ? 'success' : 'failed',
+        message:
+          data.message ||
+          `Liên kết tự động (local_inventory.json): ${linkedCount} sản phẩm`,
       });
     } catch (err: unknown) {
       const message = (err as Error)?.message || 'Liên kết tự động thất bại.';
