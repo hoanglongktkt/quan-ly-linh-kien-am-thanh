@@ -24,7 +24,8 @@ import {
   Plus,
   PlusCircle,
   ArrowDownToLine,
-  Sparkles
+  Sparkles,
+  Trash2
 } from 'lucide-react';
 
 interface ChannelListing {
@@ -385,6 +386,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [isLoadingSyncShops, setIsLoadingSyncShops] = useState(false);
   const [isFetchingFromChannel, setIsFetchingFromChannel] = useState(false);
   const [isAutoLinking, setIsAutoLinking] = useState(false);
+  const [isPurgingBroken, setIsPurgingBroken] = useState(false);
 
   const handleOpenSyncModal = async () => {
     setIsSyncModalOpen(true);
@@ -891,6 +893,46 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
   };
 
+  const handlePurgeBrokenMappings = async () => {
+    const confirmed = window.confirm(
+      'Dọn sạch các mapping đang trỏ tới sản phẩm Kho gốc không còn tồn tại?\n\nDữ liệu Kho gốc sẽ không bị xóa.'
+    );
+    if (!confirmed) return;
+
+    setIsPurgingBroken(true);
+    try {
+      const token = localStorage.getItem('admin_token');
+      if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
+      const res = await apiFetch('/api/mapping-products/purge-broken', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await parseJsonResponse<{
+        success?: boolean;
+        purged?: number;
+        remaining?: number;
+        message?: string;
+        error?: string;
+      }>(res);
+      if (!res.ok || data.success === false) {
+        throw new Error(data.message || data.error || 'Dọn dẹp mapping lỗi thất bại.');
+      }
+
+      await refreshListingsFromDb();
+      setSelectedListingIds([]);
+      showToast(
+        data.purged
+          ? `Đã dọn sạch ${data.purged} mapping lỗi. Còn ${data.remaining ?? 0} dòng hợp lệ.`
+          : 'Không phát hiện mapping lỗi cần dọn dẹp.'
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      alert(`Dọn dẹp lỗi thất bại: ${message}`);
+    } finally {
+      setIsPurgingBroken(false);
+    }
+  };
+
   // Filter listings based on active tab & search & shop filters
   const tabCounts = useMemo(() => ({
     all: listings.length,
@@ -1010,7 +1052,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           <button
             onClick={() => void handleOpenSyncModal()}
             type="button"
-            disabled={isFetchingFromChannel || isAutoLinking}
+            disabled={isFetchingFromChannel || isAutoLinking || isPurgingBroken}
             className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-blue-500 hover:bg-blue-50 text-blue-600 text-xs font-extrabold rounded-xl transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             {isFetchingFromChannel ? (
@@ -1029,7 +1071,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           <button
             onClick={handleAutoLinkBySku}
             type="button"
-            disabled={isFetchingFromChannel || isAutoLinking}
+            disabled={isFetchingFromChannel || isAutoLinking || isPurgingBroken}
             className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             {isAutoLinking ? (
@@ -1041,6 +1083,25 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               <>
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Liên kết tự động</span>
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={() => void handlePurgeBrokenMappings()}
+            type="button"
+            disabled={isFetchingFromChannel || isAutoLinking || isPurgingBroken}
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-rose-300 hover:bg-rose-50 text-rose-600 text-xs font-extrabold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            {isPurgingBroken ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Đang dọn...</span>
+              </>
+            ) : (
+              <>
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Dọn dẹp lỗi</span>
               </>
             )}
           </button>
