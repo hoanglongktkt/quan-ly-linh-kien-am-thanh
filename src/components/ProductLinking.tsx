@@ -862,7 +862,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       const token = localStorage.getItem('admin_token');
       if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
 
-      // Server đọc data/local_inventory.json (Kho gốc) — không dùng state FE rỗng.
+      // Server sequential low-RAM — không Promise.all, không forceRefresh kho.
       const res = await apiFetch('/api/mapping-products/batch-auto-link', {
         method: 'POST',
         headers: {
@@ -878,14 +878,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           listings?: ChannelListing[];
           alreadyLinked?: number;
           unlinkedRemaining?: number;
-          localInventory?: Product[];
-          cacheUpdatedAt?: string;
-          masterProductCount?: number;
-          skuIndexSize?: number;
         };
         linkedCount?: number;
         listings?: ChannelListing[];
-        localInventory?: Product[];
         message?: string;
         error?: string;
       }>(res);
@@ -896,23 +891,25 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
       const payload = data.data || data;
       const linkedCount = Number(payload.linkedCount ?? data.linkedCount ?? 0);
-      const nextListings = payload.listings ?? data.listings;
-      const inventory = payload.localInventory ?? data.localInventory;
+      const patches = payload.listings ?? data.listings;
 
-      // Cập nhật UI ngay từ kết quả server (Local Cache).
-      if (Array.isArray(nextListings)) {
-        const normalized = nextListings
-          .map((row) => normalizeListingRecord(row))
-          .filter((r): r is ChannelListing => r != null);
-        listingsHydratedRef.current = true;
-        setListings(normalized);
-        savePersistedListings(normalized);
+      // Merge patch vào UI — không tải lại toàn bộ kho / mapping.
+      if (Array.isArray(patches) && patches.length > 0) {
+        const byId = new Map<string, ChannelListing>();
+        for (const row of patches) {
+          const n = normalizeListingRecord(row);
+          if (n) byId.set(String(n.id), n);
+        }
+        setListings((prev) => {
+          const next = prev.map((row) => byId.get(String(row.id)) || row);
+          // Thêm dòng mới nếu chưa có trên UI
+          for (const [id, row] of byId) {
+            if (!next.some((r) => String(r.id) === id)) next.push(row);
+          }
+          savePersistedListings(next);
+          return next;
+        });
         setListingsFromCache(false);
-      }
-
-      if (Array.isArray(inventory) && inventory.length > 0 && onRefreshProducts) {
-        // Đồng bộ Kho gốc trên UI từ local_inventory (không phụ thuộc state cũ).
-        await onRefreshProducts({ forceRefresh: true });
       }
 
       if (linkedCount > 0) {
@@ -932,7 +929,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         status: linkedCount > 0 ? 'success' : 'failed',
         message:
           data.message ||
-          `Liên kết tự động (local_inventory.json): ${linkedCount} sản phẩm`,
+          `Liên kết tự động (sequential): ${linkedCount} sản phẩm`,
       });
     } catch (err: unknown) {
       const message = (err as Error)?.message || 'Liên kết tự động thất bại.';

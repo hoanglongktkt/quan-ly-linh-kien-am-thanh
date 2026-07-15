@@ -5606,14 +5606,12 @@ function normalizeSkuKey(sku: unknown): string {
 }
 
 /**
- * Index SKU từ mảng Kho gốc (.products) — gồm sản phẩm mẹ + variants/children/models.
+ * Index SKU nhẹ từ .products — chỉ giữ tham chiếu object sẵn có (không clone).
+ * Gồm sản phẩm mẹ + children/variants/models.
  */
 function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
   const index = new Map<string, any>();
-  if (!Array.isArray(masterData)) {
-    console.error("[Batch Auto-link] buildMasterSkuIndex nhận không phải Array — bỏ qua.");
-    return index;
-  }
+  if (!Array.isArray(masterData)) return index;
 
   const addSku = (row: any) => {
     if (!row || isSyntheticShopeePullProduct(row)) return;
@@ -5623,9 +5621,7 @@ function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
 
   for (const masterItem of masterData) {
     if (!masterItem) continue;
-    // SKU sản phẩm mẹ
     addSku(masterItem);
-    // Biến thể: children / children_models / variants / models
     for (const child of getProductChildrenList(masterItem)) addSku(child);
     if (Array.isArray(masterItem.variants)) {
       for (const v of masterItem.variants) addSku(v);
@@ -5634,11 +5630,10 @@ function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
       for (const m of masterItem.models) addSku(m);
     }
   }
-
   return index;
 }
 
-/** Đã có liên kết (thủ công hoặc auto) → BẢO VỆ, tuyệt đối không ghi đè. */
+/** Đã có liên kết → BẢO VỆ, tuyệt đối không ghi đè. */
 function isListingAlreadyLinkedProtected(listing: any): boolean {
   if (!listing || typeof listing !== "object") return false;
   if (listing.linkBroken === true) return false;
@@ -5653,13 +5648,28 @@ function isListingAlreadyLinkedProtected(listing: any): boolean {
   return false;
 }
 
+/** Ghi products.json 1 lần — KHÔNG gọi refreshCache (tránh đọc/ghi local_inventory trùng). */
+function writeProductsFileOnly(products: any[]): void {
+  ensureDataDirs();
+  const list = Array.isArray(products)
+    ? products.filter((p) => p != null && typeof p === "object")
+    : [];
+  fs.mkdirSync(path.dirname(PRODUCTS_DB_PATH), { recursive: true });
+  const json = JSON.stringify(list);
+  const tmpPath = `${PRODUCTS_DB_PATH}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmpPath, json, "utf-8");
+  fs.renameSync(tmpPath, PRODUCTS_DB_PATH);
+  console.log(`[Batch Auto-link] Ghi products.json xong — ${list.length} dòng (không refreshCache tại đây).`);
+}
+
 /**
- * Batch Auto-link — an toàn dữ liệu:
- * 1) Chỉ xử lý mapping CHƯA liên kết (filter).
- * 2) Kho gốc SKU = local_inventory.json.products (deep variants + normalize).
- * 3) Mapping source of truth = channel_listings DB — KHÔNG ghi đè từ cache.listings cũ.
+ * Batch Auto-link — chậm mà chắc, tiết kiệm RAM (CloudLinux / cagefs):
+ * - fs.readFileSync local_inventory.json ĐÚNG 1 LẦN
+ * - Chỉ xử lý mapping CHƯA liên kết
+ * - for...of tuần tự + await sleep (KHÔNG Promise.all)
+ * - Ghi DB tối đa 1 lần listings + 1 lần products + 1 lần refreshCache
  */
-function batchAutoLinkFromLocalInventoryFile(): {
+async function batchAutoLinkFromLocalInventoryFile(): Promise<{
   linkedCount: number;
   listings: any[];
   alreadyLinked: number;
@@ -5667,167 +5677,199 @@ function batchAutoLinkFromLocalInventoryFile(): {
   cacheUpdatedAt: string;
   masterProductCount: number;
   skuIndexSize: number;
-} {
-  // Bước 1: Kho gốc từ Local Cache — BẮT BUỘC .products
-  const cache = readLocalInventoryFileSync();
-  const masterData = cache.products; // = JSON.parse(fileContent).products
-  if (!Array.isArray(masterData)) {
-    throw new Error("masterData phải là Array lấy từ local_inventory.json.products");
+}> {
+  console.log("[Batch Auto-link] Bắt đầu (sequential, low-RAM)...");
+
+  // ===== 1) ĐỌC FILE 1 LẦN DUY NHẤT =====
+  if (!fs.existsSync(LOCAL_INVENTORY_CACHE_PATH)) {
+    throw new Error(`Thiếu file Local Cache: ${LOCAL_INVENTORY_CACHE_PATH}`);
   }
-  const masterProducts = masterData.filter((p: any) => !isSyntheticShopeePullProduct(p));
-
-  // Mapping: LUÔN đọc DB thật — tránh cache.listings cũ làm XÓA liên kết thủ công.
-  const dbListings = readChannelListingsDb();
-  if (!Array.isArray(dbListings) || dbListings.length === 0) {
-    throw new Error("Không có dòng mapping (listings) để liên kết.");
+  const fileContent = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
+  if (!fileContent || !fileContent.trim()) {
+    throw new Error("File data/local_inventory.json đang trống.");
   }
-
-  const alreadyLinkedRows = dbListings.filter((l) => isListingAlreadyLinkedProtected(l));
-  const unlinkedCandidates = dbListings.filter((l) => !isListingAlreadyLinkedProtected(l));
-  const alreadyLinked = alreadyLinkedRows.length;
-
+  let parsed: any;
+  try {
+    parsed = JSON.parse(fileContent);
+  } catch {
+    throw new Error("Không parse được data/local_inventory.json.");
+  }
+  // Object { updatedAt, products } — BẮT BUỘC lấy .products
+  const masterData = Array.isArray(parsed?.products) ? parsed.products : null;
+  if (!Array.isArray(masterData) || masterData.length === 0) {
+    throw new Error("local_inventory.json.products phải là Array không rỗng.");
+  }
   console.log(
-    `[Batch Auto-link] Bảo vệ ${alreadyLinked} dòng ĐÃ liên kết; chỉ xét ${unlinkedCandidates.length} dòng CHƯA liên kết (tổng DB=${dbListings.length}).`
+    `[Batch Auto-link] Đã đọc local_inventory.json 1 lần — products=${masterData.length}`
   );
 
-  // Bước 2: deep SKU index (mẹ + variants), normalize trim/lowercase.
-  const skuIndex = buildMasterSkuIndex(masterProducts);
-  const byId = new Map<string, any>(masterProducts.map((p: any) => [String(p.id), { ...p }]));
+  // Mapping DB — đọc 1 lần (source of truth, không dùng cache.listings cũ).
+  const dbListings = readChannelListingsDb();
+  if (!Array.isArray(dbListings) || dbListings.length === 0) {
+    throw new Error("Không có dòng mapping (channel_listings) để liên kết.");
+  }
+
+  let alreadyLinked = 0;
+  for (const row of dbListings) {
+    if (isListingAlreadyLinkedProtected(row)) alreadyLinked++;
+  }
+  const unlinkedTotal = dbListings.length - alreadyLinked;
+  console.log(
+    `[Batch Auto-link] Bảo vệ ${alreadyLinked} đã liên kết; sẽ xét tuần tự ${unlinkedTotal} chưa liên kết (tổng=${dbListings.length}).`
+  );
+
+  // Index SKU 1 lần — không clone product.
+  const skuIndex = buildMasterSkuIndex(
+    masterData.filter((p: any) => !isSyntheticShopeePullProduct(p))
+  );
+  // Id → parent trong masterData (tham chiếu, không {...p})
+  const parentById = new Map<string, any>();
+  for (const p of masterData) {
+    if (p?.id != null) parentById.set(String(p.id), p);
+  }
 
   let linkedCount = 0;
   let productsChanged = false;
-  const patches = new Map<string, any>(); // listing key → patched row
+  let scannedUnlinked = 0;
+  const newlyLinkedRows: any[] = [];
 
-  const applyLinkOnMaster = (matchId: string, listing: any) => {
-    const id = String(matchId);
-    const direct = byId.get(id);
-    if (direct) {
-      byId.set(
-        id,
-        applyShopeeLinkFieldsToProduct(direct, String(listing.channelId || ""), {
-          modelId: listing.modelId,
-          itemId: listing.itemId,
-        })
-      );
-      productsChanged = true;
-      return;
-    }
+  // ===== 2) XỬ LÝ TUẦN TỰ — for...of + await, KHÔNG Promise.all =====
+  for (let i = 0; i < dbListings.length; i++) {
+    const listing = dbListings[i];
+    if (isListingAlreadyLinkedProtected(listing)) continue;
 
-    for (const [parentId, parent] of byId) {
-      const children = getProductChildrenList(parent);
-      if (children.length === 0) continue;
-      const idx = children.findIndex((c: any) => String(c.id) === id);
-      if (idx < 0) continue;
-      const nextChildren = children.slice();
-      nextChildren[idx] = applyShopeeLinkFieldsToProduct(children[idx], String(listing.channelId || ""), {
-        modelId: listing.modelId,
-        itemId: listing.itemId,
-      });
-      byId.set(parentId, { ...parent, children: nextChildren });
-      productsChanged = true;
-      return;
-    }
-  };
-
-  const listingRowKey = (row: any): string =>
-    String(row?.id || `${row?.platform || "shopee"}::${row?.channelId || ""}`);
-
-  for (const listing of unlinkedCandidates) {
+    scannedUnlinked++;
     const cleanTargetSku = normalizeSkuKey(listing?.sku);
-    if (!cleanTargetSku) continue;
-
-    // Deep search: Map đã gồm parent.sku + children/variants/models (đã normalize).
-    const match = skuIndex.get(cleanTargetSku);
-    if (!match) continue;
-
-    linkedCount++;
-    if (String(listing.platform || "shopee") === "shopee") {
-      applyLinkOnMaster(String(match.id), listing);
+    if (!cleanTargetSku) {
+      if (scannedUnlinked % 100 === 0) {
+        console.log(
+          `[Batch Auto-link] Tiến trình: đã quét ${scannedUnlinked}/${unlinkedTotal} chưa liên kết, khớp=${linkedCount}`
+        );
+        await sleep(5);
+      }
+      continue;
     }
 
-    const patched = {
+    const match = skuIndex.get(cleanTargetSku);
+    if (!match) {
+      if (scannedUnlinked % 100 === 0) {
+        console.log(
+          `[Batch Auto-link] Tiến trình: đã quét ${scannedUnlinked}/${unlinkedTotal} chưa liên kết, khớp=${linkedCount}`
+        );
+        await sleep(5);
+      }
+      continue;
+    }
+
+    // Cập nhật mapping tại chỗ (1 phần tử) — không tạo mảng phụ khổng lồ.
+    const patched = sanitizeChannelListingRow({
       ...listing,
       status: "success",
       linkedProductId: String(match.id),
       linkedProductTitle: String(match.title || "").trim() || undefined,
       linkedProductSku: String(match.sku || "").trim() || undefined,
-      linkedProduct: {
-        id: String(match.id),
-        title: String(match.title || "").trim(),
-        sku: String(match.sku || "").trim(),
-      },
       syncError: undefined,
       linkBroken: false,
-    };
-    patches.set(listingRowKey(listing), patched);
+    });
+    dbListings[i] = patched;
+    newlyLinkedRows.push(patched);
+    linkedCount++;
+
+    // Cập nhật shopee fields trên Kho gốc (mutate object trong masterData).
+    if (String(listing.platform || "shopee") === "shopee") {
+      const matchId = String(match.id);
+      const direct = parentById.get(matchId);
+      if (direct) {
+        const next = applyShopeeLinkFieldsToProduct(direct, String(listing.channelId || ""), {
+          modelId: listing.modelId,
+          itemId: listing.itemId,
+        });
+        Object.assign(direct, next);
+        productsChanged = true;
+      } else {
+        for (const parent of masterData) {
+          const children = getProductChildrenList(parent);
+          const idx = children.findIndex((c: any) => String(c.id) === matchId);
+          if (idx < 0) continue;
+          children[idx] = applyShopeeLinkFieldsToProduct(children[idx], String(listing.channelId || ""), {
+            modelId: listing.modelId,
+            itemId: listing.itemId,
+          });
+          parent.children = children;
+          productsChanged = true;
+          break;
+        }
+      }
+    }
+
+    // Nhường event loop mỗi sản phẩm khớp — tránh cagefs Unable to fork / spike RAM.
+    if (linkedCount % 25 === 0) {
+      console.log(
+        `[Batch Auto-link] Tiến trình khớp: ${linkedCount} (đã quét ${scannedUnlinked}/${unlinkedTotal})`
+      );
+      await sleep(20);
+    } else {
+      await sleep(1);
+    }
   }
 
-  // BẮT BUỘC log trước khi ghi DB.
   console.log(
-    `[Batch Auto-link] Tìm thấy ${linkedCount} cặp SKU khớp (trên ${unlinkedCandidates.length} chưa liên kết). skuIndex=${skuIndex.size}. Sẽ BỎ QUA / KHÔNG đụng ${alreadyLinked} dòng đã liên kết.`
+    `[Batch Auto-link] Xong vòng khớp — tìm thấy ${linkedCount} cặp. Sẽ ${linkedCount > 0 ? "ghi DB tuần tự" : "KHÔNG ghi DB"}.`
   );
 
-  // Bước 3: merge an toàn — chỉ ghi đè các dòng nằm trong patches.
-  const merged = dbListings.map((row) => {
-    if (isListingAlreadyLinkedProtected(row)) {
-      return row; // tuyệt đối giữ nguyên liên kết cũ
-    }
-    const patch = patches.get(listingRowKey(row));
-    if (!patch) return row; // không khớp SKU → giữ nguyên
-    return sanitizeChannelListingRow(patch);
-  });
-
+  // ===== 3) GHI DB TUẦN TỰ — tối đa 1 lần mỗi file =====
   if (linkedCount > 0) {
+    console.log("[Batch Auto-link] Đang ghi channel_listings.json ...");
+    writeChannelListingsDb(dbListings);
+    await sleep(30);
+
     if (productsChanged) {
-      saveProducts(masterProducts.map((p: any) => byId.get(String(p.id)) || p));
+      console.log("[Batch Auto-link] Đang ghi products.json ...");
+      writeProductsFileOnly(masterData);
+      await sleep(30);
     }
-    writeChannelListingsDb(merged);
+
+    console.log("[Batch Auto-link] Đang refreshCache() 1 lần ...");
     try {
       refreshCache();
     } catch (cacheErr: unknown) {
       console.error("[Batch Auto-link] refreshCache thất bại:", cacheErr);
     }
+    await sleep(10);
   } else {
-    console.log("[Batch Auto-link] Không có cặp khớp — KHÔNG ghi DB (bảo vệ dữ liệu).");
+    console.log("[Batch Auto-link] Không khớp SKU — bỏ qua mọi thao tác ghi.");
   }
 
-  const unlinkedRemaining = merged.filter((l: any) => !isListingAlreadyLinkedProtected(l)).length;
-  const nextCache = loadLocalInventoryCache();
+  let unlinkedRemaining = 0;
+  for (const row of dbListings) {
+    if (!isListingAlreadyLinkedProtected(row)) unlinkedRemaining++;
+  }
+
   console.log(
-    `[Batch Auto-link] Xong — linked=${linkedCount}, alreadyProtected=${alreadyLinked}, remainingUnlinked=${unlinkedRemaining}`
+    `[Batch Auto-link] Hoàn tất — linked=${linkedCount}, protected=${alreadyLinked}, remaining=${unlinkedRemaining}, skuIndex=${skuIndex.size}`
   );
 
-  // Enrich cho UI nhưng KHÔNG cho phép phá liên kết đã bảo vệ.
-  const enriched = enrichChannelListingsWithMaster(merged, masterProducts);
-  const safeListings = enriched.map((row: any, idx: number) => {
-    const original = merged[idx];
-    if (isListingAlreadyLinkedProtected(original) && !isListingAlreadyLinkedProtected(row)) {
-      return original;
-    }
-    return row;
-  });
-
+  // Trả CHỈ các dòng mới liên kết (patch) — tránh serialize cả DB mapping lớn.
   return {
     linkedCount,
-    listings: safeListings,
+    listings: newlyLinkedRows,
     alreadyLinked,
     unlinkedRemaining,
-    cacheUpdatedAt: nextCache.updatedAt,
-    masterProductCount: masterProducts.length,
+    cacheUpdatedAt: new Date().toISOString(),
+    masterProductCount: masterData.length,
     skuIndexSize: skuIndex.size,
   };
 }
-
 /**
  * Liên kết tự động theo SKU — alias giữ tương thích (đọc Local Cache file).
  */
-function autoLinkChannelListingsByExactSku(): {
+async function autoLinkChannelListingsByExactSku(): Promise<{
   linkedCount: number;
   listings: any[];
   alreadyLinked: number;
   unlinkedRemaining: number;
-} {
-  const result = batchAutoLinkFromLocalInventoryFile();
+}> {
+  const result = await batchAutoLinkFromLocalInventoryFile();
   return {
     linkedCount: result.linkedCount,
     listings: result.listings,
@@ -6697,19 +6739,18 @@ async function startServer() {
     }
   };
 
-  // Batch Auto-link — đọc data/local_inventory.json (fs.readFileSync), khớp SKU + variants.
-  app.post("/api/mapping-products/batch-auto-link", authMiddleware, (req, res) => {
+  // Batch Auto-link — sequential low-RAM (1 lần đọc file, không Promise.all).
+  app.post("/api/mapping-products/batch-auto-link", authMiddleware, async (req, res) => {
     try {
       void req;
-      const result = batchAutoLinkFromLocalInventoryFile();
-      const cache = loadLocalInventoryCache();
+      const result = await batchAutoLinkFromLocalInventoryFile();
+      // Không load lại local_inventory / không trả products[] (tránh spike RAM).
       const data = {
         linkedCount: result.linkedCount,
         alreadyLinked: result.alreadyLinked,
         unlinkedRemaining: result.unlinkedRemaining,
         listings: result.listings,
-        localInventory: cache.products,
-        cacheUpdatedAt: result.cacheUpdatedAt || cache.updatedAt,
+        cacheUpdatedAt: result.cacheUpdatedAt,
         masterProductCount: result.masterProductCount,
         skuIndexSize: result.skuIndexSize,
         source: "data/local_inventory.json",
@@ -8845,19 +8886,17 @@ async function startServer() {
     }
   });
 
-  // API 2: Liên kết tự động theo SKU — đọc data/local_inventory.json (không dùng FE state).
-  const handleAutoLinkBySku = (req: any, res: any) => {
+  // API 2: Liên kết tự động theo SKU — sequential low-RAM.
+  const handleAutoLinkBySku = async (req: any, res: any) => {
     try {
       void req;
-      const result = batchAutoLinkFromLocalInventoryFile();
-      const cache = loadLocalInventoryCache();
+      const result = await batchAutoLinkFromLocalInventoryFile();
       const data = {
         linkedCount: result.linkedCount,
         alreadyLinked: result.alreadyLinked,
         unlinkedRemaining: result.unlinkedRemaining,
         listings: result.listings,
-        localInventory: cache.products,
-        cacheUpdatedAt: result.cacheUpdatedAt || cache.updatedAt,
+        cacheUpdatedAt: result.cacheUpdatedAt,
         masterProductCount: result.masterProductCount,
         skuIndexSize: result.skuIndexSize,
         source: "data/local_inventory.json",
