@@ -19,7 +19,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import NewOrderAlertButton from './components/NewOrderAlert';
 import { APP_TITLE } from './config/brand';
-import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
+import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache, loadPersistedProducts, savePersistedProducts, clearPersistedProducts, loadInventoryMeta, saveInventoryMeta, type InventorySourceMode } from './utils/catalogStorage';
 import { sanitizeOrders } from './utils/sanitizeOrder';
 import { safeGetItem, safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
@@ -104,15 +104,25 @@ export default function App() {
   const [adminUser, setAdminUser] = useState<string>('');
   const [authChecking, setAuthChecking] = useState<boolean>(true);
 
-  // 1. Initialize State with Local Storage fallback
-  const [products, setProducts] = useState<Product[]>([]);
-  const [productsMeta, setProductsMeta] = useState({
-    page: 1,
-    pageSize: 50,
-    total: 0,
-    totalPages: 1,
-    hasMore: false,
+  // 1. Initialize State — ưu tiên localStorage (F5 không mất dữ liệu).
+  const [products, setProducts] = useState<Product[]>(() => loadPersistedProducts<Product>());
+  const [productsMeta, setProductsMeta] = useState(() => {
+    const cached = loadPersistedProducts<Product>();
+    const n = cached.length;
+    return {
+      page: 1,
+      pageSize: Math.max(50, n || 50),
+      total: n,
+      totalPages: 1,
+      hasMore: false,
+    };
   });
+  const [inventorySource, setInventorySource] = useState<InventorySourceMode>(() => {
+    const cached = loadPersistedProducts<Product>();
+    if (cached.length > 0) return 'cache';
+    return loadInventoryMeta().source || 'empty';
+  });
+  const productsPersistReadyRef = useRef(loadPersistedProducts().length > 0);
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
 
@@ -241,8 +251,131 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Chỉ dọn key legacy — không xóa persistence inventory mới.
     purgeLegacyCatalogCache();
   }, []);
+
+  // Đồng bộ products → localStorage (duy trì sau F5).
+  useEffect(() => {
+    if (!productsPersistReadyRef.current && products.length === 0) return;
+    productsPersistReadyRef.current = true;
+    if (products.length === 0) return;
+    const ok = savePersistedProducts(products);
+    if (ok) {
+      saveInventoryMeta({
+        updatedAt: new Date().toISOString(),
+        source: inventorySource === 'empty' ? 'cache' : inventorySource,
+        productCount: products.length,
+        listingCount: loadInventoryMeta().listingCount,
+      });
+    }
+  }, [products, inventorySource]);
+
+  const fetchProducts = async (opts?: {
+    page?: number;
+    append?: boolean;
+    pageSize?: number;
+    forceRefresh?: boolean;
+  }) => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) return;
+
+    const forceRefresh = !!opts?.forceRefresh;
+    const page = Math.max(1, opts?.page ?? 1);
+    const pageSize = Math.min(50, Math.max(1, opts?.pageSize ?? 50));
+    const append = !!opts?.append;
+
+    // F5 / lần vào bình thường: dùng localStorage, không gọi server.
+    if (!forceRefresh && !append) {
+      const cached = loadPersistedProducts<Product>();
+      if (cached.length > 0) {
+        setProducts(cached);
+        setProductsMeta({
+          page: 1,
+          pageSize: cached.length,
+          total: cached.length,
+          totalPages: 1,
+          hasMore: false,
+        });
+        setInventorySource('cache');
+        setProductsLoading(false);
+        return;
+      }
+    }
+
+    setProductsLoading(true);
+    try {
+      if (forceRefresh) {
+        // Chỉ xóa cache products — không đụng listings (sync-from-shop đã lưu lại).
+        clearPersistedProducts();
+      }
+
+      // Ưu tiên Local Cache Master trên server (full list).
+      const invRes = await fetch('/api/local-inventory', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (invRes.ok) {
+        const inv = await invRes.json();
+        const list: Product[] = Array.isArray(inv.products) ? inv.products : [];
+        if (list.length > 0 || forceRefresh) {
+          setProducts(list);
+          setProductsMeta({
+            page: 1,
+            pageSize: list.length || pageSize,
+            total: list.length,
+            totalPages: 1,
+            hasMore: false,
+          });
+          setInventorySource('server');
+          savePersistedProducts(list);
+          saveInventoryMeta({
+            updatedAt: String(inv.updatedAt || new Date().toISOString()),
+            source: 'server',
+            productCount: list.length,
+            listingCount: Array.isArray(inv.listings) ? inv.listings.length : 0,
+          });
+          return;
+        }
+      }
+
+      // Fallback phân trang /api/products
+      const response = await fetch(`/api/products?page=${page}&pageSize=${pageSize}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        setProducts(data);
+        setProductsMeta({ page: 1, pageSize: data.length, total: data.length, totalPages: 1, hasMore: false });
+        setInventorySource('server');
+        savePersistedProducts(data);
+        return;
+      }
+      const list: Product[] = Array.isArray(data.products) ? data.products : [];
+      setProducts((prev) => (append ? [...prev, ...list] : list));
+      setProductsMeta({
+        page: Number(data.page) || page,
+        pageSize: Number(data.pageSize) || pageSize,
+        total: Number(data.total) || list.length,
+        totalPages: Number(data.totalPages) || 1,
+        hasMore: !!data.hasMore,
+      });
+      setInventorySource('server');
+      if (!append) savePersistedProducts(list);
+    } catch (err) {
+      console.error('Fetch products error:', err);
+      const cached = loadPersistedProducts<Product>();
+      if (cached.length > 0) {
+        setProducts(cached);
+        setInventorySource('cache');
+      }
+    } finally {
+      setProductsLoading(false);
+    }
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -353,45 +486,6 @@ export default function App() {
     }
   };
 
-  const fetchProducts = async (opts?: { page?: number; append?: boolean; pageSize?: number }) => {
-    const token = localStorage.getItem('admin_token');
-    if (!token) return;
-
-    const page = Math.max(1, opts?.page ?? 1);
-    const pageSize = Math.min(50, Math.max(1, opts?.pageSize ?? 50));
-    const append = !!opts?.append;
-
-    setProductsLoading(true);
-    try {
-      const response = await fetch(`/api/products?page=${page}&pageSize=${pageSize}`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) return;
-
-      const data = await response.json();
-      // Legacy: mảng thuần (không dùng nữa)
-      if (Array.isArray(data)) {
-        setProducts(data);
-        setProductsMeta({ page: 1, pageSize: data.length, total: data.length, totalPages: 1, hasMore: false });
-        return;
-      }
-      const list: Product[] = Array.isArray(data.products) ? data.products : [];
-      setProducts((prev) => (append ? [...prev, ...list] : list));
-      setProductsMeta({
-        page: Number(data.page) || page,
-        pageSize: Number(data.pageSize) || pageSize,
-        total: Number(data.total) || list.length,
-        totalPages: Number(data.totalPages) || 1,
-        hasMore: !!data.hasMore,
-      });
-    } catch (err) {
-      console.error('Fetch products error:', err);
-    } finally {
-      setProductsLoading(false);
-    }
-  };
-
   const formatPullErrors = (errors: any[]): string =>
     errors
       .map((e) => {
@@ -418,7 +512,7 @@ export default function App() {
     try {
       const response = await fetch('/api/orders/pull', {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -509,6 +603,8 @@ export default function App() {
           // Hiển thị ngay từ Local Cache Master — không reload trang tổng.
           if (Array.isArray(saved?.localInventory)) {
             setProducts(saved.localInventory);
+            setInventorySource('server');
+            savePersistedProducts(saved.localInventory);
             prod = {
               id: saved.id,
               title: saved.title,
@@ -928,8 +1024,8 @@ export default function App() {
       }
 
       fetchOrders();
-      // Auto-load Kho gốc khi F5 / đăng nhập (phân trang page 1).
-      void fetchProducts({ page: 1, append: false, pageSize: 50 });
+      // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
+      void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });
       fetchSuppliers();
       fetchImports();
       fetchExpenses();
@@ -1298,6 +1394,22 @@ export default function App() {
 
           <div className="max-md:hidden md:flex items-center gap-4 text-xs font-semibold shrink-0">
             <NewOrderAlertButton authHeaders={apiAuthHeaders} onNewOrders={() => void fetchOrders()} />
+
+            {(inventorySource === 'cache' || (products.length > 0 && inventorySource !== 'server')) && (
+              <div
+                className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl"
+                title="Đang hiển thị dữ liệu đã lưu trên trình duyệt (localStorage)"
+              >
+                <span className="w-2 h-2 rounded-full bg-amber-500" />
+                <span className="text-amber-800 text-[11px] font-extrabold whitespace-nowrap">Đang dùng dữ liệu cũ</span>
+              </div>
+            )}
+            {inventorySource === 'server' && (
+              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span className="text-emerald-700 text-[11px] font-extrabold whitespace-nowrap">Đồng bộ server</span>
+              </div>
+            )}
 
             {/* Shopee Connection badge */}
             <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-xl">

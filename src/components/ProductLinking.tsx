@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Product, SyncLog, ConnectedShop } from '../types';
-import { purgeLegacyCatalogCache } from '../utils/catalogStorage';
+import { purgeLegacyCatalogCache, loadPersistedListings, savePersistedListings, clearInventoryBrowserCache, clearPersistedListings } from '../utils/catalogStorage';
 import { parseJsonResponse, apiFetch } from '../utils/apiClient';
 import { 
   Check, 
@@ -177,8 +177,8 @@ interface ProductLinkingProps {
   shops: ConnectedShop[];
   onAddLog: (log: SyncLog) => void;
   onUpdateProduct: (product: Product, opts?: { save?: boolean }) => void;
-  onAddProduct?: (product: Product) => void;
-  onRefreshProducts?: () => Promise<void>;
+  onAddProduct?: (product: Product) => void | Promise<void>;
+  onRefreshProducts?: (opts?: { page?: number; append?: boolean; pageSize?: number; forceRefresh?: boolean }) => Promise<void>;
 }
 
 function applyProductChannelLink(masterProd: Product, listing: ChannelListing): Product {
@@ -266,11 +266,12 @@ async function fetchMappingListingsFromServer(token: string): Promise<{ rows: Ch
 }
 
 export default function ProductLinking({ products, shops, onAddLog, onUpdateProduct, onAddProduct, onRefreshProducts }: ProductLinkingProps) {
-  const [listings, setListings] = useState<ChannelListing[]>([]);
+  const [listings, setListings] = useState<ChannelListing[]>(() => loadPersistedListings<ChannelListing>());
   const [listingsLoading, setListingsLoading] = useState(false);
+  const [listingsFromCache, setListingsFromCache] = useState(() => loadPersistedListings().length > 0);
   const [mappingLoadError, setMappingLoadError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const listingsHydratedRef = useRef(false);
+  const listingsHydratedRef = useRef(loadPersistedListings().length > 0);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -320,6 +321,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       setListings((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
         void persistListings(next);
+        savePersistedListings(next);
         return next;
       });
     },
@@ -330,7 +332,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     purgeLegacyCatalogCache();
   }, []);
 
-  const refreshListingsFromDb = useCallback(async () => {
+  // Duy trì listings trên localStorage khi state đổi.
+  useEffect(() => {
+    if (listings.length === 0) return;
+    savePersistedListings(listings);
+  }, [listings]);
+
+  const refreshListingsFromDb = useCallback(async (opts?: { forceRefresh?: boolean }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) {
       setListingsLoading(false);
@@ -338,14 +346,37 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       setMappingLoadError(msg);
       return;
     }
+
+    const forceRefresh = !!opts?.forceRefresh;
+    if (!forceRefresh) {
+      const cached = loadPersistedListings<ChannelListing>();
+      if (cached.length > 0) {
+        listingsHydratedRef.current = true;
+        setListings(cached);
+        setListingsFromCache(true);
+        setListingsLoading(false);
+        setMappingLoadError(null);
+        return;
+      }
+    }
+
     setListingsLoading(true);
     setMappingLoadError(null);
     try {
+      if (forceRefresh) clearPersistedListings();
       const serverResult = await fetchMappingListingsFromServer(token);
       if (serverResult) {
         listingsHydratedRef.current = true;
         setListings(serverResult.rows);
+        savePersistedListings(serverResult.rows);
+        setListingsFromCache(false);
         setMappingLoadError(null);
+        return;
+      }
+      const cached = loadPersistedListings<ChannelListing>();
+      if (cached.length > 0) {
+        setListings(cached);
+        setListingsFromCache(true);
         return;
       }
       const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối hoặc tải dữ liệu từ sàn.';
@@ -354,15 +385,20 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       const msg = 'Không thể lấy dữ liệu sản phẩm từ máy chủ. Vui lòng kiểm tra kết nối.';
       console.error('[ProductLinking] Đọc dữ liệu liên kết thất bại:', err);
       setMappingLoadError(msg);
+      const cached = loadPersistedListings<ChannelListing>();
+      if (cached.length > 0) {
+        setListings(cached);
+        setListingsFromCache(true);
+      }
     } finally {
       setListingsLoading(false);
     }
   }, []);
 
-  // F5 / mở tab mapping → đọc lại từ Database (chạy 1 lần, tránh vòng lặp).
+  // F5 / mở tab mapping → ưu tiên localStorage (không ép gọi server).
   useEffect(() => {
     if (listingsHydratedRef.current) return;
-    void refreshListingsFromDb();
+    void refreshListingsFromDb({ forceRefresh: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-once hydrate
   }, []);
 
@@ -780,8 +816,10 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         await new Promise<void>((resolve) => setTimeout(resolve, 100));
       }
 
-      await refreshListingsFromDb();
-      if (onRefreshProducts) await onRefreshProducts();
+      // Chỉ khi "Tải dữ liệu từ sàn": xóa localStorage cũ và tải mới hoàn toàn.
+      clearInventoryBrowserCache();
+      await refreshListingsFromDb({ forceRefresh: true });
+      if (onRefreshProducts) await onRefreshProducts({ forceRefresh: true });
 
       const count = lastListingsCount || totalSaved;
       const rangeLabel = syncTimeRange === 'all' ? 'toàn thời gian' : '24h qua';
@@ -854,24 +892,19 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       const payload = data.data || data;
       const linkedCount = payload.linkedCount ?? data.linkedCount ?? 0;
       const nextListings = payload.listings ?? data.listings;
-      const inventory = payload.localInventory ?? data.localInventory;
 
       // Server đã ghi DB + refreshCache — hydrate UI từ cache response.
       if (Array.isArray(nextListings)) {
         listingsHydratedRef.current = true;
         setListings(nextListings);
+        savePersistedListings(nextListings);
+        setListingsFromCache(false);
       } else {
-        const loaded = token ? await fetchMappingListingsFromServer(token) : null;
-        if (loaded?.rows) {
-          listingsHydratedRef.current = true;
-          setListings(loaded.rows);
-        }
+        await refreshListingsFromDb({ forceRefresh: true });
       }
 
-      if (Array.isArray(inventory) && onRefreshProducts) {
-        await onRefreshProducts();
-      } else if (onRefreshProducts) {
-        await onRefreshProducts();
+      if (onRefreshProducts) {
+        await onRefreshProducts({ forceRefresh: true });
       }
 
       if (linkedCount > 0) {
@@ -1062,6 +1095,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
         {/* Action: Tải dữ liệu sàn + Liên kết tự động (tách riêng) */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
+          {listingsFromCache && listings.length > 0 && (
+            <div className="flex items-center gap-1.5 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-[11px] font-extrabold text-amber-800">
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
+              <span>Đang dùng dữ liệu cũ</span>
+            </div>
+          )}
           <button
             onClick={() => void handleOpenSyncModal()}
             type="button"
