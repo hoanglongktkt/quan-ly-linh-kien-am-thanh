@@ -198,6 +198,10 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
         serverSelectionTimeoutMS: 20000,
         maxPoolSize: 10,
       });
+      fs.writeFileSync(
+        path.join(appRootResolved, "db_status.txt"),
+        "KET_NOI_THANH_CONG_LUC: " + new Date().toISOString()
+      );
     }
 
     mongoReady = mongoose.connection.readyState === 1;
@@ -232,6 +236,14 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
   } catch (err: unknown) {
     mongoReady = false;
     const msg = err instanceof Error ? err.message : String(err);
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code?: unknown }).code)
+        : "undefined";
+    fs.writeFileSync(
+      path.join(appRootResolved, "db_status.txt"),
+      "LOI_KET_NOI: " + msg + " | CODE: " + code
+    );
     console.error("LỖI MONGODB STARTUP:", msg);
     if (err instanceof Error && err.stack) console.error(err.stack);
     return false;
