@@ -5795,9 +5795,9 @@ function persistBatchAutoLinkListingUpdate(
 
 function findChannelListingRowIndex(
   rows: any[],
-  opts?: { listingId?: unknown; channelId?: unknown; platform?: unknown }
+  opts?: { id?: unknown; listingId?: unknown; channelId?: unknown; platform?: unknown }
 ): number {
-  const listingId = String(opts?.listingId || "").trim();
+  const listingId = String(opts?.id || opts?.listingId || "").trim();
   const channelId = String(opts?.channelId || "").trim();
   const platform = String(opts?.platform || "").trim().toLowerCase();
 
@@ -5819,6 +5819,7 @@ function findChannelListingRowIndex(
 }
 
 async function autoLinkSingleListingFromDatabase(opts?: {
+  id?: unknown;
   listingId?: unknown;
   channelId?: unknown;
   platform?: unknown;
@@ -6853,7 +6854,24 @@ async function startServer() {
       }
       console.log(`[Mapping Save] UPSERT nhận ${incoming.length} dòng (${req.method})`);
       const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
-      writeChannelListingsDb(sanitized);
+      if (sanitized.length === 1) {
+        const existing = readChannelListingsDb();
+        const patch = sanitized[0];
+        const existingIndex = findChannelListingRowIndex(existing, {
+          id: patch.id,
+          channelId: patch.channelId,
+          platform: patch.platform,
+        });
+        const nextRows = Array.isArray(existing) ? [...existing] : [];
+        if (existingIndex === -1) {
+          nextRows.push(patch);
+        } else {
+          nextRows[existingIndex] = patch;
+        }
+        writeChannelListingsDb(nextRows);
+      } else {
+        writeChannelListingsDb(sanitized);
+      }
       const cache = refreshCache();
       console.log(`Đã lưu DB thành công — mapping upsert ${sanitized.length} dòng + refreshCache`);
       const verified = enrichChannelListingsWithMaster(cache.listings, cache.products);
@@ -6944,6 +6962,7 @@ async function startServer() {
     try {
       const body = req?.body && typeof req.body === "object" ? req.body : {};
       const result = await autoLinkSingleListingFromDatabase({
+        id: body.id,
         listingId: body.listingId,
         channelId: body.channelId,
         platform: body.platform,

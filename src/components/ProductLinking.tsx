@@ -359,8 +359,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        listingId: item.id,
-        channelId: item.channelId,
+        id: item.id,
       }),
     });
 

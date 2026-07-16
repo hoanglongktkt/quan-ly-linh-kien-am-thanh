@@ -34,7 +34,7 @@ function buildMasterSkuIndex(products) {
 }
 
 function resolveListingIndex(listings, body) {
-  const listingId = String(body?.listingId || '').trim();
+  const listingId = String(body?.id || body?.listingId || '').trim();
   const channelId = String(body?.channelId || '').trim();
   const platform = String(body?.platform || '').trim().toLowerCase();
 
@@ -101,7 +101,7 @@ export async function handleMappingAutoLinkSingle(req, res) {
     try {
       const direct = await fetchJson(backend.url, req, 'mapping-products/auto-link-single', {
         method: 'POST',
-        body: JSON.stringify(req.body || {}),
+        body: JSON.stringify({ id: req.body?.id }),
       });
       return res.status(200).json(direct);
     } catch (directErr) {
@@ -158,10 +158,9 @@ export async function handleMappingAutoLinkSingle(req, res) {
       syncError: undefined,
     };
 
-    const nextListings = listings.map((row, idx) => (idx === rowIndex ? nextListing : row));
     const saved = await fetchJson(backend.url, req, 'mapping-products', {
       method: 'PUT',
-      body: JSON.stringify({ listings: nextListings }),
+      body: JSON.stringify({ listings: [nextListing] }),
     });
 
     const savedListing =
