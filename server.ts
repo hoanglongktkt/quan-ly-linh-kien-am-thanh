@@ -5676,12 +5676,12 @@ async function persistBatchAutoLinkListingUpdate(
 
 /**
  * Batch Auto-link — viết lại theo đúng 4 bước:
- * 1) Đọc data/local_inventory.json đúng 1 lần và lấy thẳng parsed.products
+ * masterData đã được đọc/parse trong handler API trước khi gọi hàm này.
  * 2) Chỉ lấy các dòng DB đang "unlinked" và chưa có liên kết
  * 3) So khớp sâu theo masterItem.sku hoặc masterItem.variants[*].sku
  * 4) Ghi DB tuần tự bằng for...of, tuyệt đối không Promise.all
  */
-async function batchAutoLinkFromLocalInventoryFile(): Promise<{
+async function batchAutoLinkFromLocalInventoryFile(masterData: any[]): Promise<{
   linkedCount: number;
   listings: any[];
   alreadyLinked: number;
@@ -5692,19 +5692,9 @@ async function batchAutoLinkFromLocalInventoryFile(): Promise<{
 }> {
   console.log("[Batch Auto-link] Bắt đầu viết lại logic 4 bước...");
 
-  // ===== 1) BẢO VỆ MÁY CHỦ — ĐỌC FILE 1 LẦN DUY NHẤT =====
-  let masterData: any[];
-  try {
-    const fileContent = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
-    masterData = JSON.parse(fileContent).products;
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Không đọc được data/local_inventory.json: ${message}`);
-  }
   if (!Array.isArray(masterData)) {
     throw new Error("Cấu trúc data/local_inventory.json không hợp lệ: thiếu mảng products.");
   }
-  console.log(`[Batch Auto-link] Đã đọc local_inventory.json 1 lần — products=${masterData.length}`);
 
   // ===== 2) LỌC DỮ LIỆU CŨ — CHỈ LẤY "CHƯA LIÊN KẾT" =====
   const dbListings = readChannelListingsDb();
@@ -5778,24 +5768,6 @@ async function batchAutoLinkFromLocalInventoryFile(): Promise<{
     skuIndexSize: matchedListings.length,
   };
 }
-/**
- * Liên kết tự động theo SKU — alias giữ tương thích (đọc Local Cache file).
- */
-async function autoLinkChannelListingsByExactSku(): Promise<{
-  linkedCount: number;
-  listings: any[];
-  alreadyLinked: number;
-  unlinkedRemaining: number;
-}> {
-  const result = await batchAutoLinkFromLocalInventoryFile();
-  return {
-    linkedCount: result.linkedCount,
-    listings: result.listings,
-    alreadyLinked: result.alreadyLinked,
-    unlinkedRemaining: result.unlinkedRemaining,
-  };
-}
-
 const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
 
 function normalizeSupplier(raw: any): any {
@@ -6657,11 +6629,19 @@ async function startServer() {
     }
   };
 
-  // Batch Auto-link — sequential low-RAM (1 lần đọc file, không Promise.all).
-  app.post("/api/mapping-products/batch-auto-link", authMiddleware, async (req, res) => {
+  // Batch Auto-link — mọi thao tác đọc file và DB nằm trong try/catch của API.
+  const handleBatchAutoLink = async (req: any, res: any) => {
     try {
       void req;
-      const result = await batchAutoLinkFromLocalInventoryFile();
+      // Đọc đúng một lần cho mỗi request; không đọc ở global scope.
+      const fileContent = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
+      const masterData = JSON.parse(fileContent).products;
+      if (!Array.isArray(masterData)) {
+        throw new Error("Cấu trúc data/local_inventory.json không hợp lệ: thiếu mảng products.");
+      }
+      console.log(`[Batch Auto-link] Đã đọc local_inventory.json 1 lần — products=${masterData.length}`);
+
+      const result = await batchAutoLinkFromLocalInventoryFile(masterData);
       // Không load lại local_inventory / không trả products[] (tránh spike RAM).
       const data = {
         linkedCount: result.linkedCount,
@@ -6687,12 +6667,13 @@ async function startServer() {
       });
     } catch (error: unknown) {
       console.error("[Batch Auto-link] Exception:", error);
-      const message = error instanceof Error ? error.message : String(error);
       if (!res.headersSent) {
-        return res.status(500).json({ success: false, message, error: String(error) });
+        const message = error instanceof Error ? error.message : String(error);
+        return res.status(500).json({ message });
       }
     }
-  });
+  };
+  app.post("/api/mapping-products/batch-auto-link", authMiddleware, handleBatchAutoLink);
 
   // BẮT BUỘC: đăng ký purge-broken (DB JSON channel_listings — KHÔNG dùng MappingModel/Mongo).
   app.post("/api/mapping-products/purge-broken", authMiddleware, async (_req, res) => {
@@ -8804,45 +8785,10 @@ async function startServer() {
     }
   });
 
-  // API 2: Liên kết tự động theo SKU — sequential low-RAM.
-  const handleAutoLinkBySku = async (req: any, res: any) => {
-    try {
-      void req;
-      const result = await batchAutoLinkFromLocalInventoryFile();
-      const data = {
-        linkedCount: result.linkedCount,
-        alreadyLinked: result.alreadyLinked,
-        unlinkedRemaining: result.unlinkedRemaining,
-        listings: result.listings,
-        cacheUpdatedAt: result.cacheUpdatedAt,
-        masterProductCount: result.masterProductCount,
-        skuIndexSize: result.skuIndexSize,
-        source: "data/local_inventory.json",
-      };
-      console.log(
-        `Đã lưu DB thành công — auto-link linked=${result.linkedCount}, remaining=${result.unlinkedRemaining}`
-      );
-      return res.status(200).json({
-        success: true,
-        data,
-        message:
-          result.linkedCount > 0
-            ? `Đã liên kết thành công ${result.linkedCount} sản phẩm (từ Local Cache)`
-            : "Không tìm thấy SKU trùng khớp trong data/local_inventory.json",
-        ...data,
-      });
-    } catch (error: unknown) {
-      console.error("[Auto Link SKU] Exception:", error);
-      const message = error instanceof Error ? error.message : String(error);
-      if (!res.headersSent) {
-        return res.status(500).json({ success: false, message, error: String(error) });
-      }
-    }
-  };
-
-  app.post("/api/shopee/channel-products/auto-link", authMiddleware, handleAutoLinkBySku);
-  app.post("/api/channel-products/auto-link", authMiddleware, handleAutoLinkBySku);
-  app.post("/api/auto-link", authMiddleware, handleAutoLinkBySku);
+  // Các alias dùng chung handler đã bọc try/catch và luôn phản hồi JSON khi lỗi.
+  app.post("/api/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+  app.post("/api/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+  app.post("/api/auto-link", authMiddleware, handleBatchAutoLink);
 
   // Real product sync — "Khởi tạo kho chính từ Shopee API": pulls the shop's
   // REAL listed items (v2.product.get_item_list -> get_item_base_info, plus
