@@ -2,11 +2,34 @@ import { buildCpanelTarget } from '../cpanelProxy.js';
 import { resolveCpanelBackend } from '../cpanelBackend.js';
 import { fetchWithDiagnostics } from '../fetchDiagnostics.js';
 
-function normalizeSkuKey(sku) {
+function collectSkuKeys(sku) {
   const raw = String(sku ?? '').trim().toLowerCase();
-  if (!raw) return '';
-  const parts = raw.split('_');
-  return (parts[parts.length - 1] || raw).trim();
+  if (!raw) return [];
+
+  const keys = [];
+  const push = (value) => {
+    const t = String(value || '').trim().toLowerCase();
+    if (t && !keys.includes(t)) keys.push(t);
+  };
+
+  push(raw);
+
+  if (raw.includes('_')) {
+    push(raw.split('_').pop() || raw);
+  }
+
+  const itemPrefixed = raw.match(/^(\d{6,})-(.+)$/);
+  if (itemPrefixed?.[2]) {
+    push(itemPrefixed[2]);
+  }
+
+  return keys;
+}
+
+function normalizeSkuKey(sku) {
+  const keys = collectSkuKeys(sku);
+  if (keys.length === 0) return '';
+  return keys[keys.length - 1] || keys[0] || '';
 }
 
 function getChildren(row) {
@@ -23,14 +46,22 @@ function buildMasterSkuIndex(products) {
   const index = new Map();
   for (const product of Array.isArray(products) ? products : []) {
     const addOne = (row) => {
-      const key = normalizeSkuKey(row?.sku);
-      if (!key || index.has(key)) return;
-      index.set(key, row);
+      for (const key of collectSkuKeys(row?.sku)) {
+        if (!index.has(key)) index.set(key, row);
+      }
     };
     addOne(product);
     for (const child of getChildren(product)) addOne(child);
   }
   return index;
+}
+
+function findMasterProductBySku(masterSkuIndex, listingSku) {
+  for (const key of collectSkuKeys(listingSku)) {
+    const hit = masterSkuIndex.get(key);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function resolveListingIndex(listings, body) {
@@ -140,12 +171,12 @@ export async function handleMappingAutoLinkSingle(req, res) {
       return res.status(200).json({ success: false, listing: current, message: 'SKU sản phẩm sàn đang trống hoặc không hợp lệ.' });
     }
 
-    const masterItem = buildMasterSkuIndex(products).get(normalizedSku);
+    const masterItem = findMasterProductBySku(buildMasterSkuIndex(products), current?.sku);
     if (!masterItem) {
       return res.status(200).json({
         success: false,
         listing: current,
-        message: `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}".`,
+        message: `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}" (gốc: "${String(current?.sku || '').trim()}").`,
       });
     }
 

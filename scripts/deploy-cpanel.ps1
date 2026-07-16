@@ -9,10 +9,8 @@ $buildId = (Get-Date -Format "yyyyMMdd-HHmmss")
 $env:VITE_BUILD_ID = $buildId
 
 Write-Host "==> Build ID: $buildId"
-Write-Host "==> npm run build:cpanel"
-npm run build:cpanel
-
-Copy-Item -Force "dist\server.cjs" "server.cjs"
+Write-Host "==> npm run build (local compile → dist/server.cjs + root server.cjs)"
+npm run build
 
 $staging = Join-Path $root "cpanel-deploy-staging"
 Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
@@ -27,22 +25,21 @@ New-Item -ItemType Directory -Path "$staging\data" -Force | Out-Null
 "KHONG ghi de shopee_tokens.json tren server " | Set-Content -Path "$staging\data\.gitkeep" -Encoding UTF8
 
 @"
-DEPLOY cPanel — Build $buildId
+DEPLOY cPanel — Build Local, Deploy JS — $buildId
 ================================
-TRƯỚC KHI GIẢI NÉN trên hosting, XÓA các file JS/CSS cũ trong:
-  /home/yrkrhmtl/quanly.linhkienamthanh.net/assets/
+1) Build LOCAL: npm run build
+   → dist/server.cjs (Node backend đã biên dịch)
+   → dist/index.html + dist/assets/* (frontend)
+   → server.cjs (bản copy ở root cho Passenger)
 
-Sau đó giải nén zip vào thư mục quanly.linhkienamthanh.net (Ghi đè).
-Restart Node.js App trên cPanel.
+2) Application startup file trên cPanel:
+   → server.cjs
+   (KHÔNG dùng tsx / server.ts)
 
-QUAN TRỌNG MongoDB Atlas:
-  - Thêm env MONGODB_URI (Connection String Atlas) trên cPanel Node.js App
-  - npm install (cần mongoose — pure JS, không biên dịch native)
-  - Migrate 1 lần: npm run migrate:mongo (từ JSON/legacy)
+3) Trên hosting chỉ cần: npm install --omit=dev
+   (không cài esbuild/tsx/vite — tránh SIGABRT)
 
-LƯU Ý: Domain quanly.linhkienamthanh.net hiện trỏ Vercel (frontend).
-Upload cPanel KHÔNG đổi giao diện trên domain đó.
-Để cập nhật UI trên domain: git push → Vercel Redeploy.
+4) Restart Node.js App trên cPanel.
 "@ | Set-Content -Path "$staging\HUONG-DAN-DEPLOY.txt" -Encoding UTF8
 
 $zip = Join-Path $root "cpanel-deploy.zip"

@@ -5684,20 +5684,48 @@ function readLocalInventoryFileSync(): LocalInventoryCache {
 }
 
 /**
- * Chuẩn hóa SKU trước khi so sánh:
- * - nếu có "_" thì lấy phần sau cùng sau dấu "_"
- * - luôn trim + lowercase
+ * Tập khóa SKU dùng để so khớp (exact sau chuẩn hóa).
+ * Giữ nguyên SKU gốc + các biến thể tiền tố phổ biến trên sàn:
+ * - `shop_SKU` → `SKU` (sau `_` cuối)
+ * - `{itemId}-{SKU}` (Shopee) → `SKU` khi phần đầu toàn số (≥6 chữ số)
+ */
+function collectSkuKeys(sku: unknown): string[] {
+  const raw = String(sku ?? "").trim().toLowerCase();
+  if (!raw) return [];
+
+  const keys: string[] = [];
+  const push = (value: string) => {
+    const t = String(value || "").trim().toLowerCase();
+    if (t && !keys.includes(t)) keys.push(t);
+  };
+
+  push(raw);
+
+  if (raw.includes("_")) {
+    push(raw.split("_").pop() || raw);
+  }
+
+  const itemPrefixed = raw.match(/^(\d{6,})-(.+)$/);
+  if (itemPrefixed?.[2]) {
+    push(itemPrefixed[2]);
+  }
+
+  return keys;
+}
+
+/**
+ * Chuẩn hóa SKU trước khi so sánh (khóa "lõi" — exact 100% sau khi bỏ tiền tố sàn).
  */
 function normalizeSkuKey(sku: unknown): string {
-  const raw = String(sku ?? "").trim().toLowerCase();
-  if (!raw) return "";
-  const parts = raw.split("_");
-  return (parts[parts.length - 1] || raw).trim();
+  const keys = collectSkuKeys(sku);
+  if (keys.length === 0) return "";
+  // Ưu tiên khóa lõi (sau cùng trong danh sách biến thể).
+  return keys[keys.length - 1] || keys[0] || "";
 }
 
 /**
  * Index SKU nhẹ từ .products — chỉ giữ tham chiếu object sẵn có (không clone).
- * Gồm sản phẩm mẹ + children/variants/models.
+ * Gồm sản phẩm mẹ + children/variants/models. Index mọi biến thể khóa để khớp 2 chiều.
  */
 function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
   const index = new Map<string, any>();
@@ -5705,8 +5733,9 @@ function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
 
   const addSku = (row: any) => {
     if (!row || isSyntheticShopeePullProduct(row)) return;
-    const sku = normalizeSkuKey(row.sku);
-    if (sku && !index.has(sku)) index.set(sku, row);
+    for (const key of collectSkuKeys(row.sku)) {
+      if (!index.has(key)) index.set(key, row);
+    }
   };
 
   for (const masterItem of masterData) {
@@ -5721,6 +5750,18 @@ function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
     }
   }
   return index;
+}
+
+/** Tìm sản phẩm kho theo SKU sàn — thử exact + biến thể tiền tố/hậu tố. */
+function findMasterProductBySku(
+  masterSkuIndex: Map<string, any>,
+  listingSku: unknown
+): any | null {
+  for (const key of collectSkuKeys(listingSku)) {
+    const hit = masterSkuIndex.get(key);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 /** Đã có liên kết → BẢO VỆ, tuyệt đối không ghi đè. */
@@ -5833,12 +5874,12 @@ async function autoLinkSingleListingFromDatabase(opts?: {
   }
 
   const masterSkuIndex = buildMasterSkuIndex(masterProducts);
-  const masterItem = masterSkuIndex.get(normalizedSku);
+  const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku);
   if (!masterItem) {
     return {
       success: false,
       listing: enrichChannelListingsWithMaster([current], masterProducts)[0],
-      message: `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}".`,
+      message: `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}" (gốc: "${String(current?.sku || "").trim()}").`,
     };
   }
 
@@ -5946,7 +5987,7 @@ async function batchAutoLinkFromDatabase(opts?: {
 
       const targetSku = normalizeSkuKey(item?.sku);
       if (targetSku) {
-        const masterItem = masterSkuIndex.get(targetSku);
+        const masterItem = findMasterProductBySku(masterSkuIndex, item?.sku);
         if (masterItem) {
           const patched = persistBatchAutoLinkListingUpdate(dbListings, rowIndex, {
             ...item,
