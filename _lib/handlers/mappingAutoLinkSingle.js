@@ -149,13 +149,20 @@ export async function handleMappingAutoLinkSingle(req, res) {
       });
     }
 
+    // Micro payload tối đa: chỉ gửi đúng các field cần thiết cho sanitizeChannelListingRow.
     const nextListing = {
-      ...current,
+      id: current?.id,
+      channelId: current?.channelId,
+      platform: current?.platform,
+      sku: current?.sku,
+      title: current?.title,
+      shopName: current?.shopName,
       status: 'success',
       linkedProductId: String(masterItem?.id || '').trim() || undefined,
       linkedProductTitle: String(masterItem?.title || '').trim() || undefined,
       linkedProductSku: String(masterItem?.sku || '').trim() || undefined,
       syncError: undefined,
+      linkBroken: false,
     };
 
     const saved = await fetchJson(backend.url, req, 'mapping-products', {
