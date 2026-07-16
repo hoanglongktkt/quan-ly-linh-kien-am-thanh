@@ -5793,6 +5793,121 @@ function persistBatchAutoLinkListingUpdate(
   return patched;
 }
 
+function findChannelListingRowIndex(
+  rows: any[],
+  opts?: { listingId?: unknown; channelId?: unknown; platform?: unknown }
+): number {
+  const listingId = String(opts?.listingId || "").trim();
+  const channelId = String(opts?.channelId || "").trim();
+  const platform = String(opts?.platform || "").trim().toLowerCase();
+
+  if (listingId) {
+    const byId = rows.findIndex((row) => String(row?.id || "").trim() === listingId);
+    if (byId !== -1) return byId;
+  }
+
+  if (channelId) {
+    return rows.findIndex((row) => {
+      const safe = sanitizeChannelListingRow(row);
+      if (String(safe.channelId || "").trim() !== channelId) return false;
+      if (!platform) return true;
+      return String(safe.platform || "").trim().toLowerCase() === platform;
+    });
+  }
+
+  return -1;
+}
+
+async function autoLinkSingleListingFromDatabase(opts?: {
+  listingId?: unknown;
+  channelId?: unknown;
+  platform?: unknown;
+}): Promise<{
+  success: boolean;
+  listing?: any;
+  message: string;
+  matchedProductId?: string;
+}> {
+  const dbListings = readChannelListingsDb();
+  if (!Array.isArray(dbListings) || dbListings.length === 0) {
+    throw new Error("Không có dữ liệu channel_listings để liên kết.");
+  }
+
+  const rowIndex = findChannelListingRowIndex(dbListings, opts);
+  if (rowIndex === -1) {
+    throw new Error("Không tìm thấy sản phẩm sàn cần liên kết.");
+  }
+
+  const current = sanitizeChannelListingRow(dbListings[rowIndex]);
+  const masterProducts = loadProducts();
+  if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
+    throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
+  }
+
+  if (isListingAlreadyLinkedProtected(current)) {
+    const enrichedExisting = enrichChannelListingsWithMaster([current], masterProducts)[0];
+    return {
+      success: true,
+      listing: enrichedExisting,
+      matchedProductId:
+        current.linkedProductId != null && String(current.linkedProductId).trim() !== ""
+          ? String(current.linkedProductId).trim()
+          : undefined,
+      message: "Sản phẩm này đã được liên kết trước đó.",
+    };
+  }
+
+  const normalizedSku = normalizeSkuKey(current?.sku);
+  if (!normalizedSku) {
+    return {
+      success: false,
+      listing: enrichChannelListingsWithMaster([current], masterProducts)[0],
+      message: "SKU sản phẩm sàn đang trống hoặc không hợp lệ.",
+    };
+  }
+
+  const masterSkuIndex = buildMasterSkuIndex(masterProducts);
+  const masterItem = masterSkuIndex.get(normalizedSku);
+  if (!masterItem) {
+    return {
+      success: false,
+      listing: enrichChannelListingsWithMaster([current], masterProducts)[0],
+      message: `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}".`,
+    };
+  }
+
+  const patched = persistBatchAutoLinkListingUpdate(dbListings, rowIndex, {
+    ...current,
+    status: "success",
+    linkedProductId:
+      masterItem?.id != null && String(masterItem.id).trim() !== ""
+        ? String(masterItem.id).trim()
+        : undefined,
+    linkedProductTitle: String(masterItem?.title || "").trim() || undefined,
+    linkedProductSku: String(masterItem?.sku || "").trim() || undefined,
+    syncError: undefined,
+  });
+
+  writeChannelListingsDb(dbListings);
+  const cache = refreshCache();
+  await sleep(1);
+
+  const verifiedListings = enrichChannelListingsWithMaster(cache.listings, cache.products);
+  const verifiedListing =
+    verifiedListings.find((row) => String(row?.id || "").trim() === String(patched.id).trim()) ||
+    enrichChannelListingsWithMaster([patched], cache.products)[0];
+
+  return {
+    success: true,
+    listing: verifiedListing,
+    matchedProductId:
+      masterItem?.id != null && String(masterItem.id).trim() !== ""
+        ? String(masterItem.id).trim()
+        : undefined,
+    message: "Liên kết tự động thành công.",
+  };
+}
+
 /**
  * Batch Auto-link — chỉ dùng Database hiện tại:
  * 1) Lấy channel_listings chưa liên kết
@@ -6824,6 +6939,28 @@ async function startServer() {
       }
     }
   };
+  const handleSingleAutoLink = async (req: any, res: any) => {
+    try {
+      const body = req?.body && typeof req.body === "object" ? req.body : {};
+      const result = await autoLinkSingleListingFromDatabase({
+        listingId: body.listingId,
+        channelId: body.channelId,
+        platform: body.platform,
+      });
+
+      return res.status(200).json({
+        success: result.success,
+        listing: result.listing,
+        matchedProductId: result.matchedProductId,
+        message: result.message,
+      });
+    } catch (error: unknown) {
+      console.error("[Auto-link Single] Exception:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, message });
+    }
+  };
+  app.post("/api/mapping-products/auto-link-single", authMiddleware, handleSingleAutoLink);
   app.post("/api/mapping-products/batch-auto-link", authMiddleware, handleBatchAutoLink);
 
   // BẮT BUỘC: đăng ký purge-broken (DB JSON channel_listings — KHÔNG dùng MappingModel/Mongo).
