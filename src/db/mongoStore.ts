@@ -92,9 +92,7 @@ function ensureModels(): void {
 
 function requireMongo(): void {
   if (!isMongoReady()) {
-    throw new Error(
-      "MongoDB chưa sẵn sàng. Kiểm tra MONGODB_URI trong .env / cPanel Environment Variables rồi restart Node.js."
-    );
+    throw new Error("Chưa kết nối được Database, vui lòng kiểm tra App Logs");
   }
   ensureModels();
 }
@@ -173,9 +171,10 @@ export function setStoreAppRoot(appRoot: string): void {
 
 /**
  * Kết nối MongoDB Atlas ngay khi boot.
- * Log rõ ràng success / failure theo yêu cầu.
+ * KHÔNG throw / KHÔNG process.exit — failure chỉ log, app vẫn chạy.
+ * @returns true nếu kết nối OK
  */
-export async function initMongo(appRoot?: string): Promise<void> {
+export async function initMongo(appRoot?: string): Promise<boolean> {
   if (appRoot) appRootResolved = appRoot;
   if (!appRootResolved) appRootResolved = process.cwd();
 
@@ -186,9 +185,10 @@ export async function initMongo(appRoot?: string): Promise<void> {
   if (!uri) {
     mongoReady = false;
     console.error(
-      "[MongoDB] Connection FAILED: thiếu MONGODB_URI / MONGO_URL trong .env hoặc Environment Variables."
+      "LỖI MONGODB STARTUP:",
+      "thiếu MONGODB_URI / MONGO_URL trong .env hoặc Environment Variables."
     );
-    throw new Error("Missing MONGODB_URI — không thể khởi tạo database.");
+    return false;
   }
 
   try {
@@ -202,7 +202,11 @@ export async function initMongo(appRoot?: string): Promise<void> {
 
     mongoReady = mongoose.connection.readyState === 1;
     if (!mongoReady) {
-      throw new Error(`mongoose readyState=${mongoose.connection.readyState} (expect 1)`);
+      console.error(
+        "LỖI MONGODB STARTUP:",
+        `mongoose readyState=${mongoose.connection.readyState} (expect 1)`
+      );
+      return false;
     }
 
     const [productCount, listingCount] = await Promise.all([
@@ -217,15 +221,20 @@ export async function initMongo(appRoot?: string): Promise<void> {
 
     // One-time migrate từ JSON local nếu Atlas trống
     if (productCount === 0 && listingCount === 0) {
-      await maybeMigrateJsonFallbackToMongo();
+      try {
+        await maybeMigrateJsonFallbackToMongo();
+      } catch (migrateErr: unknown) {
+        const msg = migrateErr instanceof Error ? migrateErr.message : String(migrateErr);
+        console.error("LỖI MONGODB STARTUP:", `migrate fallback failed: ${msg}`);
+      }
     }
+    return true;
   } catch (err: unknown) {
     mongoReady = false;
     const msg = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error ? err.stack : undefined;
-    console.error("[MongoDB] Connection FAILED:", msg);
-    if (stack) console.error(stack);
-    throw err instanceof Error ? err : new Error(msg);
+    console.error("LỖI MONGODB STARTUP:", msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    return false;
   }
 }
 

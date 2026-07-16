@@ -51,11 +51,25 @@ function resolveAppRoot(): string {
 
 const APP_ROOT = resolveAppRoot();
 
-// Load .env từ APP_ROOT trước (cPanel/Passenger), rồi cwd.
-dotenv.config({ path: path.join(APP_ROOT, ".env") });
-dotenv.config();
+// Load .env — ưu tiên APP_ROOT (cPanel/Passenger), rồi cwd, rồi mặc định dotenv.
+const dotenvCandidates = [
+  path.join(APP_ROOT, ".env"),
+  path.join(process.cwd(), ".env"),
+  path.resolve(".env"),
+];
+for (const envPath of dotenvCandidates) {
+  if (fs.existsSync(envPath)) {
+    const loaded = dotenv.config({ path: envPath });
+    if (loaded.error) {
+      console.error(`[Config] dotenv lỗi khi đọc ${envPath}:`, loaded.error.message);
+    } else {
+      console.log(`[Config] dotenv loaded: ${envPath}`);
+    }
+  }
+}
+dotenv.config(); // fallback: process.cwd()/.env nếu còn biến thiếu
 console.log(
-  `[Config] APP_ROOT=${APP_ROOT} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
+  `[Config] APP_ROOT=${APP_ROOT} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
 );
 /** Thư mục tập trung lưu PDF vận đơn (tương đương public/waybills/ trên hosting, nhưng ngoài Vite publicDir). */
 const WAYBILLS_DIR = path.join(APP_ROOT, "storage", "waybills");
@@ -5471,7 +5485,7 @@ async function maybeMigrateJsonToMongoOnBoot(): Promise<void> {
     await seedStoreFromArrays(products, listings);
 
     console.log(
-      `[Mongo Migrate] Xong — products=$ await countProducts()}, listings=$ await countChannelListings()} (mongoReady=${isMongoReady()})`
+      `[Mongo Migrate] Xong — products=${await countProducts()}, listings=${await countChannelListings()} (mongoReady=${isMongoReady()})`
     );
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
@@ -7148,6 +7162,29 @@ async function startServer() {
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+  /** DB chưa sẵn sàng → 500 JSON (không crash process). Auth/health/oauth vẫn chạy. */
+  app.use((req, res, next) => {
+    const pathName = String(req.path || req.originalUrl || "").split("?")[0];
+    if (!pathName.startsWith("/api/")) return next();
+    const allowWithoutDb =
+      pathName === "/api/login" ||
+      pathName.startsWith("/api/health") ||
+      pathName.startsWith("/api/auth/") ||
+      pathName === "/api/shopee/callback" ||
+      pathName === "/api/shopee/oauth/complete" ||
+      pathName === "/api/shopee/webhook" ||
+      pathName.startsWith("/api/public/");
+    if (allowWithoutDb) return next();
+    if (!isMongoReady()) {
+      return res.status(500).json({
+        success: false,
+        error: "database_unavailable",
+        message: "Chưa kết nối được Database, vui lòng kiểm tra App Logs",
+      });
+    }
+    return next();
+  });
 
   app.post("/api/login", (req, res) => {
     const { username, password } = req.body;
@@ -11623,16 +11660,15 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 
   async function startListening(): Promise<void> {
     try {
-      await initMongo(APP_ROOT);
-      await hydrateChannelListingsOnBoot();
-    } catch (err) {
-      console.error("[Boot] MongoDB init failed — server sẽ không listen:", err);
-      // Không chạy API với DB trống (tránh mất dữ liệu khi refresh).
-      if (process.env.ALLOW_START_WITHOUT_MONGO !== "1") {
-        process.exitCode = 1;
-        return;
+      const ok = await initMongo(APP_ROOT);
+      if (ok && isMongoReady()) {
+        await hydrateChannelListingsOnBoot();
       }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("LỖI MONGODB STARTUP:", msg);
     }
+    // Luôn listen — không process.exit / không chặn boot vì Mongo fail.
     startAutoOrderSyncScheduler();
     if (process.env.PORT) {
       app.listen(PORT, () => {
