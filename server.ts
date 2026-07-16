@@ -25,6 +25,39 @@ import {
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
 
+/** Hard Crash Catcher — ghi file để xem trên cPanel khi Passenger kill process. */
+function writeCpanelCrashLog(kind: string, err: unknown): void {
+  try {
+    const stack =
+      err instanceof Error
+        ? err.stack || err.message
+        : typeof err === "string"
+          ? err
+          : JSON.stringify(err);
+    const line = `${kind}: ${stack}\n---\n${new Date().toISOString()}\n`;
+    const targets = [
+      path.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? path.join(__dirname, "cpanel_error_log.txt") : "",
+    ].filter(Boolean);
+    for (const file of targets) {
+      try {
+        fs.writeFileSync(file, line);
+      } catch {
+        /* ignore */
+      }
+    }
+    console.error(line);
+  } catch {
+    /* ignore */
+  }
+}
+process.on("uncaughtException", (err) => {
+  writeCpanelCrashLog("Exception", err);
+});
+process.on("unhandledRejection", (err) => {
+  writeCpanelCrashLog("Rejection", err);
+});
+
 /** Thư mục gốc app — Passenger/cPanel có thể khác process.cwd(). */
 function resolveAppRoot(): string {
   const candidates = [
@@ -71,6 +104,26 @@ dotenv.config(); // fallback: process.cwd()/.env nếu còn biến thiếu
 console.log(
   `[Config] APP_ROOT=${APP_ROOT} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
 );
+
+/** Ghi crash log thêm vào APP_ROOT (cPanel app root). */
+function writeCpanelCrashLogToAppRoot(kind: string, err: unknown): void {
+  try {
+    const stack =
+      err instanceof Error
+        ? err.stack || err.message
+        : typeof err === "string"
+          ? err
+          : JSON.stringify(err);
+    fs.writeFileSync(
+      path.join(APP_ROOT, "cpanel_error_log.txt"),
+      `${kind}: ${stack}\n---\n${new Date().toISOString()}\n`
+    );
+  } catch {
+    /* ignore */
+  }
+}
+process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
+process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
 /** Thư mục tập trung lưu PDF vận đơn (tương đương public/waybills/ trên hosting, nhưng ngoài Vite publicDir). */
 const WAYBILLS_DIR = path.join(APP_ROOT, "storage", "waybills");
 const LEGACY_WAYBILLS_DIR = path.join(APP_ROOT, "storage", "labels");
@@ -11658,46 +11711,57 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     });
   }
 
-  async function startListening(): Promise<void> {
+  /**
+   * Kết nối MongoDB NGẦM — không block app.listen / Passenger boot.
+   */
+  async function connectDB(): Promise<void> {
     try {
       const ok = await initMongo(APP_ROOT);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
       }
+      console.log(`[MongoDB] connectDB xong — ready=${isMongoReady()} uri=${getMongoUriMasked()}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("LỖI MONGODB STARTUP:", msg);
-    }
-    // Luôn listen — không process.exit / không chặn boot vì Mongo fail.
-    startAutoOrderSyncScheduler();
-    if (process.env.PORT) {
-      app.listen(PORT, () => {
-        console.log(`Server optimized for cPanel Phusion Passenger: listening on ${PORT}`);
-        console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
-        console.log(`[Config] NODE_ENV=${process.env.NODE_ENV || "unset"}`);
-        console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
-        console.log(`[MongoDB] ${getMongoUriMasked()} ready=${isMongoReady()}`);
-      });
-    } else {
-      app.listen(Number(PORT), "0.0.0.0", () => {
-        console.log(`Server running locally on port ${PORT}`);
-        console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
-        console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
-        console.log("[Dashboard] API route ready: GET /api/dashboard?date_range=...");
-        console.log(`[MongoDB] ${getMongoUriMasked()} ready=${isMongoReady()}`);
-      });
+      writeCpanelCrashLog("Rejection", err);
     }
   }
 
-  void startListening();
+  /**
+   * cPanel / Phusion Passenger: BẮT BUỘC listen NGAY — không await DB trước listen.
+   */
+  function startListening(): void {
+    startAutoOrderSyncScheduler();
+
+    const onReady = () => {
+      console.log(
+        process.env.PORT
+          ? `Server optimized for cPanel Phusion Passenger: listening on ${PORT}`
+          : `Server running locally on port ${PORT}`
+      );
+      console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
+      console.log(`[Config] NODE_ENV=${process.env.NODE_ENV || "unset"}`);
+      console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
+      if (!process.env.PORT) {
+        console.log("[Dashboard] API route ready: GET /api/dashboard?date_range=...");
+      }
+      console.log(`[MongoDB] listen OK — connecting DB in background (ready=${isMongoReady()})`);
+      // DB non-blocking: fire-and-forget sau khi port đã mở
+      void connectDB();
+    };
+
+    if (process.env.PORT) {
+      app.listen(PORT, onReady);
+    } else {
+      app.listen(Number(PORT), "0.0.0.0", onReady);
+    }
+  }
+
+  startListening();
 }
 
-process.on("unhandledRejection", (reason) => {
-  console.error("[Server] unhandledRejection:", reason);
+startServer().catch((err) => {
+  writeCpanelCrashLog("Exception", err);
+  console.error("[Boot] startServer failed:", err);
 });
-
-process.on("uncaughtException", (err) => {
-  console.error("[Server] uncaughtException:", err);
-});
-
-startServer();
