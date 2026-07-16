@@ -395,6 +395,136 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     return rows;
   }, [products]);
 
+  // Sync dữ liệu sàn -> Mapping table
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [syncPlatform, setSyncPlatform] = useState<'shopee' | 'tiktok'>('shopee');
+  const [syncShopId, setSyncShopId] = useState('');
+  const [syncTimeRange, setSyncTimeRange] = useState<'all' | '24h'>('24h');
+  const [isFetchingFromChannel, setIsFetchingFromChannel] = useState(false);
+  const syncPlatformShops = useMemo(
+    () => shops.filter((shop) => shop.connected && shop.platform === syncPlatform),
+    [shops, syncPlatform]
+  );
+
+  useEffect(() => {
+    if (syncPlatformShops.length === 0) {
+      setSyncShopId('');
+      return;
+    }
+    if (!syncPlatformShops.some((shop) => shop.id === syncShopId)) {
+      setSyncShopId(syncPlatformShops[0].id);
+    }
+  }, [syncPlatformShops, syncShopId]);
+
+  const handleOpenSyncModal = () => {
+    setSyncPlatform('shopee');
+    setSyncTimeRange('24h');
+    setShowSyncModal(true);
+  };
+
+  const handleFetchChannelProducts = async () => {
+    if (syncPlatform === 'tiktok') return;
+    const shop = syncPlatformShops.find((s) => s.id === syncShopId);
+    if (!shop) {
+      alert('Vui lòng chọn một gian hàng đã kết nối.');
+      return;
+    }
+
+    setIsFetchingFromChannel(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 600000);
+
+    try {
+      const token = localStorage.getItem('admin_token');
+      if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
+
+      let offset = 0;
+      let hasMore = true;
+      let pageIndex = 0;
+      let totalSaved = 0;
+      let lastListingsCount = 0;
+      const maxPages = 200;
+      const syncTo = Math.floor(Date.now() / 1000);
+
+      while (hasMore && pageIndex < maxPages) {
+        pageIndex += 1;
+        const res = await apiFetch('/api/sync-from-shop', {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            shop_id: shop.shopId,
+            time_range: syncTimeRange,
+            offset,
+            sync_to: syncTo,
+          }),
+        });
+        const data = await parseJsonResponse<{
+          success?: boolean;
+          fetchedCount?: number;
+          savedCount?: number;
+          listingsCount?: number;
+          hasMore?: boolean;
+          nextOffset?: number | null;
+          message?: string;
+          error?: string;
+        }>(res);
+
+        if (!res.ok || data.success === false) {
+          throw new Error(
+            data?.message || data?.error || `Tải trang ${pageIndex} thất bại.`
+          );
+        }
+
+        totalSaved += Number(data.savedCount || data.fetchedCount || 0);
+        lastListingsCount = Number(data.listingsCount || lastListingsCount);
+        hasMore = data.hasMore === true;
+        offset = data.nextOffset != null ? Number(data.nextOffset) : offset;
+        if (!hasMore) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      }
+
+      await refreshListingsFromDb({ forceRefresh: true });
+      if (onRefreshProducts) await onRefreshProducts({ forceRefresh: true });
+
+      const count = lastListingsCount || totalSaved;
+      const rangeLabel = syncTimeRange === 'all' ? 'toàn thời gian' : '24h qua';
+      showToast(
+        `Đã tải ${rangeLabel}: ${pageIndex} trang — lưu DB thành công ${count} sản phẩm từ Shopee`
+      );
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'shopee',
+        type: 'product_sync',
+        status: 'success',
+        message: `Tải ${rangeLabel}, ${pageIndex} trang (${count} dòng) từ gian hàng [${shop.shopName}]`,
+      });
+      setShowSyncModal(false);
+    } catch (err: unknown) {
+      const e = err as { name?: string; message?: string };
+      const message =
+        e?.name === 'AbortError'
+          ? 'Quá thời gian chờ khi tải dữ liệu từ Shopee. Vui lòng thử lại.'
+          : e?.message || 'Tải dữ liệu từ sàn thất bại.';
+      alert(`Tải dữ liệu từ sàn thất bại: ${message}`);
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'shopee',
+        type: 'product_sync',
+        status: 'failed',
+        message: `Tải dữ liệu sàn thất bại: ${message}`,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+      setIsFetchingFromChannel(false);
+    }
+  };
+
   // Khởi tạo về Kho modal state
   const [initListing, setInitListing] = useState<ChannelListing | null>(null);
   const [initTitle, setInitTitle] = useState('');
@@ -933,12 +1063,31 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           </button>
         </div>
 
-        {/* Action: Tải dữ liệu sàn + Liên kết tự động (tách riêng) */}
+        {/* Action: Sync mapping + auto-link + cleanup */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto">
+          <button
+            onClick={handleOpenSyncModal}
+            type="button"
+            disabled={isFetchingFromChannel || isAutoLinking || isPurgingBroken}
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-blue-500 hover:bg-blue-50 text-blue-600 text-xs font-extrabold rounded-xl transition-all shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            {isFetchingFromChannel ? (
+              <>
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Đang tải...</span>
+              </>
+            ) : (
+              <>
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                <span>Tải sản phẩm từ sàn</span>
+              </>
+            )}
+          </button>
+
           <button
             onClick={handleAutoLinkBySku}
             type="button"
-            disabled={isAutoLinking || isPurgingBroken}
+            disabled={isFetchingFromChannel || isAutoLinking || isPurgingBroken}
             className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             {isAutoLinking ? (
@@ -957,7 +1106,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           <button
             onClick={() => void handlePurgeBrokenMappings()}
             type="button"
-            disabled={isAutoLinking || isPurgingBroken}
+            disabled={isFetchingFromChannel || isAutoLinking || isPurgingBroken}
             className="flex-1 sm:flex-none px-4 py-2.5 bg-white border border-rose-300 hover:bg-rose-50 text-rose-600 text-xs font-extrabold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             {isPurgingBroken ? (
@@ -1424,6 +1573,125 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               >
                 <ArrowDownToLine className="w-3.5 h-3.5" />
                 Khởi tạo về Kho
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Popup chọn sàn/gian hàng trước khi tải dữ liệu về bảng Mapping */}
+      {showSyncModal && (
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-gray-100">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-slate-50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
+                  <Store className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <h3 className="font-black text-gray-900">Tải sản phẩm từ sàn</h3>
+                  <p className="text-[11px] text-gray-500 font-semibold">Chọn sàn và gian hàng để đổ dữ liệu vào Mapping</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isFetchingFromChannel && setShowSyncModal(false)}
+                disabled={isFetchingFromChannel}
+                className="p-1.5 hover:bg-gray-200 rounded-full text-gray-400 disabled:opacity-40"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              <div className="space-y-2">
+                <label className="text-xs font-black text-gray-700">Sàn</label>
+                <select
+                  value={syncPlatform}
+                  onChange={(e) => setSyncPlatform(e.target.value as 'shopee' | 'tiktok')}
+                  disabled={isFetchingFromChannel}
+                  className="w-full px-3.5 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                >
+                  <option value="shopee">Shopee</option>
+                  <option value="tiktok">TikTok</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-black text-gray-700">Gian hàng đã kết nối</label>
+                <select
+                  value={syncShopId}
+                  onChange={(e) => setSyncShopId(e.target.value)}
+                  disabled={isFetchingFromChannel}
+                  className="w-full px-3.5 py-3 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                >
+                  <option value="">Chọn gian hàng</option>
+                  {syncPlatformShops.map((shop) => (
+                    <option key={shop.id} value={shop.id}>
+                      {shop.shopName} ({shop.platform.toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <fieldset className="space-y-2">
+                <legend className="text-xs font-black text-gray-700 mb-2">Khoảng thời gian</legend>
+                <label className="flex items-start gap-3 p-3.5 border border-gray-200 rounded-xl cursor-pointer hover:border-blue-300">
+                  <input
+                    type="radio"
+                    name="sync-time-range"
+                    value="all"
+                    checked={syncTimeRange === 'all'}
+                    onChange={() => setSyncTimeRange('all')}
+                    disabled={isFetchingFromChannel}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block text-sm font-extrabold text-gray-800">Toàn thời gian</span>
+                    <span className="block text-[11px] text-gray-500 mt-0.5">Initial Sync — tải tất cả sản phẩm</span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 p-3.5 border border-gray-200 rounded-xl cursor-pointer hover:border-blue-300">
+                  <input
+                    type="radio"
+                    name="sync-time-range"
+                    value="24h"
+                    checked={syncTimeRange === '24h'}
+                    onChange={() => setSyncTimeRange('24h')}
+                    disabled={isFetchingFromChannel}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block text-sm font-extrabold text-gray-800">24h qua</span>
+                    <span className="block text-[11px] text-gray-500 mt-0.5">Delta Sync — chỉ tải sản phẩm vừa cập nhật</span>
+                  </span>
+                </label>
+              </fieldset>
+
+              {syncPlatform === 'tiktok' && (
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-xs text-amber-800 font-semibold">
+                  Tính năng chưa tích hợp API
+                </div>
+              )}
+            </div>
+
+            <div className="px-5 py-4 bg-slate-50 border-t border-gray-100 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setShowSyncModal(false)}
+                disabled={isFetchingFromChannel}
+                className="px-5 py-2.5 bg-white border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl disabled:opacity-50"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleFetchChannelProducts()}
+                disabled={!syncShopId || isFetchingFromChannel || syncPlatform === 'tiktok'}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-extrabold text-xs rounded-xl flex items-center gap-1.5"
+              >
+                <ArrowDownToLine className="w-3.5 h-3.5" />
+                {isFetchingFromChannel ? 'Đang tải...' : 'Bắt đầu tải'}
               </button>
             </div>
           </div>
