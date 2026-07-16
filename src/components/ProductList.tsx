@@ -120,24 +120,29 @@ export default function ProductList({
     void onRefreshProducts?.({ page: 1, append: false });
   }, [subTab, products.length, onRefreshProducts]);
 
-  // Shopee API initialization state
-  const [showShopeeImportModal, setShowShopeeImportModal] = useState(false);
-  const [shopeeImportShopId, setShopeeImportShopId] = useState('');
+  // Marketplace initialization state
+  const [showInitModal, setShowInitModal] = useState(false);
+  const [initPlatform, setInitPlatform] = useState<'shopee' | 'tiktok'>('shopee');
+  const [initShopId, setInitShopId] = useState('');
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [initProgress, setInitProgress] = useState<string[]>([]);
+  const [initToast, setInitToast] = useState<string | null>(null);
+  const [isClearingInventory, setIsClearingInventory] = useState(false);
+
+  const initPlatformShops = useMemo(
+    () => shops.filter((s) => s.platform === initPlatform),
+    [shops, initPlatform]
+  );
 
   useEffect(() => {
-    const shopeeShops = shops.filter((s) => s.platform === 'shopee');
-    if (shopeeShops.length === 0) {
-      setShopeeImportShopId('');
+    if (initPlatformShops.length === 0) {
+      setInitShopId('');
       return;
     }
-    if (!shopeeShops.some((s) => s.id === shopeeImportShopId)) {
-      setShopeeImportShopId(shopeeShops[0].id);
+    if (!initPlatformShops.some((s) => s.id === initShopId)) {
+      setInitShopId(initPlatformShops[0].id);
     }
-  }, [shops, shopeeImportShopId]);
-  const [isShopeeImporting, setIsShopeeImporting] = useState(false);
-  const [shopeeImportProgress, setShopeeImportProgress] = useState<string[]>([]);
-  const [shopeeImportToast, setShopeeImportToast] = useState<string | null>(null);
-  const [isClearingInventory, setIsClearingInventory] = useState(false);
+  }, [initPlatformShops, initShopId]);
 
   // Search & Filter state
   const [search, setSearch] = useState('');
@@ -421,7 +426,7 @@ export default function ProductList({
       warehouseLoadedRef.current = false;
       clearInventoryBrowserCache();
       await onRefreshProducts?.({ page: 1, append: false, forceRefresh: true });
-      setShopeeImportToast(data.message || 'Đã xóa toàn bộ Kho gốc và Mapping.');
+      setInitToast(data.message || 'Đã xóa toàn bộ Kho gốc và Mapping.');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Xóa toàn bộ kho thất bại.';
       alert(message);
@@ -430,103 +435,115 @@ export default function ProductList({
     }
   };
 
-  const handleTriggerShopeeImport = async () => {
-    setIsShopeeImporting(true);
-    setShopeeImportProgress(["🔌 Đang kết nối API v2 Shopee (get_item_list)..."]);
+  const handleConfirmMarketplaceInit = async () => {
+    if (initPlatform === 'tiktok') return;
 
-    const shop = shops.find(s => s.id === shopeeImportShopId) || shops.find(s => s.platform === 'shopee' && s.connected);
+    setIsInitializing(true);
+    setInitProgress(["🔌 Đang kết nối API sàn để khởi tạo Kho chính..."]);
+
+    const shop =
+      initPlatformShops.find((s) => s.id === initShopId) ||
+      shops.find((s) => s.platform === initPlatform && s.connected);
     if (!shop?.shopId) {
-      alert('Chưa có gian hàng Shopee nào được kết nối. Vui lòng cấu hình trong Cài đặt trước.');
-      setIsShopeeImporting(false);
+      alert(`Chưa có gian hàng ${initPlatform === 'shopee' ? 'Shopee' : 'TikTok'} nào được kết nối.`);
+      setIsInitializing(false);
       return;
     }
-    const apiShopId = shop.shopId;
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 300000);
 
     try {
       const token = localStorage.getItem('admin_token');
-      const res = await fetch('/api/shopee/products/sync', {
+      const endpoint =
+        initPlatform === 'shopee' ? '/api/shopee/products/sync' : '/api/tiktok/products/sync';
+      const res = await fetch(endpoint, {
         method: 'POST',
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ shopId: apiShopId })
+        body: JSON.stringify({ shopId: shop.shopId }),
       });
       const data = await parseJsonResponse<{
-        products?: Product[];
+        success?: boolean;
         productCount?: number;
         stats?: { rowCount?: number; variantItemCount?: number; pageCount?: number };
         shopId?: string;
         message?: string;
         error?: string;
+        forceRefresh?: boolean;
+        refresh?: { forceRefresh?: boolean };
       }>(res);
 
-      if (!res.ok) {
-        throw new Error(data?.message || data?.error || 'Đồng bộ sản phẩm Shopee thất bại.');
+      if (!res.ok || data.success === false) {
+        throw new Error(data?.message || data?.error || 'Khởi tạo sản phẩm thất bại.');
       }
 
-      setShopeeImportProgress(prev => [
+      const total = data.productCount ?? data.stats?.rowCount ?? 0;
+      const variantCount = data.stats?.variantItemCount ?? 0;
+      setInitProgress((prev) => [
         ...prev,
-        `📥 Đã đồng bộ ${data.productCount ?? data.stats?.rowCount ?? 0} sản phẩm (Parent-Child) từ Shopee...`,
+        `📥 Đã đồng bộ ${total} sản phẩm từ ${initPlatform === 'shopee' ? 'Shopee' : 'TikTok'}...`,
         "🔄 Đang tải lại Kho chính từ Database...",
       ]);
 
-      if (onRefreshProducts) {
-        await onRefreshProducts();
-      }
+      const shouldForceRefresh =
+        data.forceRefresh === true || data.refresh?.forceRefresh === true;
+      await onRefreshProducts?.({ page: 1, append: false, forceRefresh: shouldForceRefresh });
 
-      const variantCount = data.stats?.variantItemCount ?? 0;
-      const total = data.productCount ?? data.stats?.rowCount ?? 0;
-      setShopeeImportProgress(prev => [
+      setInitProgress((prev) => [
         ...prev,
         `📦 ${variantCount} sản phẩm có phân loại (children).`,
-        `🎉 HOÀN TẤT: ${total} Parent Products trong kho!`,
+        `🎉 HOÀN TẤT: ${total} sản phẩm đã được khởi tạo vào Kho chính!`,
       ]);
-      setShopeeImportToast(data.message || `Khởi tạo kho thành công! ${total} sản phẩm mẹ (${variantCount} có phân loại).`);
+      setInitToast(
+        data.message || `Khởi tạo kho thành công! ${total} sản phẩm (${variantCount} có phân loại).`
+      );
 
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
-        channel: 'shopee',
+        channel: initPlatform,
         type: 'product_sync',
         status: 'success',
-        message: `Đồng bộ ${total} Parent Products từ Shopee (shop_id=${data.shopId}) vào Kho chính thành công.`
+        message: `Khởi tạo ${total} sản phẩm từ ${shop.shopName} vào Kho chính thành công.`,
       });
 
-      setShowShopeeImportModal(false);
+      setShowInitModal(false);
     } catch (err: any) {
-      const message = err?.name === 'AbortError'
-        ? 'Quá thời gian chờ (5 phút) khi đồng bộ với Shopee. Kho chính hiện tại được giữ nguyên, vui lòng thử lại.'
-        : (err?.message || 'Đồng bộ sản phẩm Shopee thất bại.');
-      setShopeeImportProgress(prev => [...prev, `❌ Lỗi: ${message}`]);
-      alert(`Đồng bộ sản phẩm Shopee thất bại: ${message}`);
+      const message =
+        err?.name === 'AbortError'
+          ? `Quá thời gian chờ (5 phút) khi khởi tạo từ ${
+              initPlatform === 'shopee' ? 'Shopee' : 'TikTok'
+            }.`
+          : err?.message || 'Khởi tạo sản phẩm thất bại.';
+      setInitProgress((prev) => [...prev, `❌ Lỗi: ${message}`]);
+      alert(`Khởi tạo sản phẩm thất bại: ${message}`);
 
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
-        channel: 'shopee',
+        channel: initPlatform,
         type: 'product_sync',
         status: 'failed',
-        message: `Đồng bộ sản phẩm Shopee thất bại: ${message}`
+        message: `Khởi tạo sản phẩm thất bại: ${message}`,
       });
     } finally {
       clearTimeout(timeoutId);
-      setIsShopeeImporting(false);
+      setIsInitializing(false);
     }
   };
 
   return (
     <div className="space-y-6">
       {/* Toast Notification for Shopee Import */}
-      {shopeeImportToast && (
+      {initToast && (
         <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 animate-bounce flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          <span>{shopeeImportToast}</span>
-          <button onClick={() => setShopeeImportToast(null)} className="ml-1 text-gray-400 hover:text-white cursor-pointer">
+          <span>{initToast}</span>
+          <button onClick={() => setInitToast(null)} className="ml-1 text-gray-400 hover:text-white cursor-pointer">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -605,15 +622,6 @@ export default function ProductList({
             
             <div className="flex items-center gap-2 shrink-0">
               <button
-                onClick={() => onRefreshProducts?.({ page: 1, append: false })}
-                type="button"
-                disabled={productsLoading || !onRefreshProducts}
-                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-extrabold rounded-xl transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${productsLoading ? 'animate-spin' : ''}`} />
-                <span>{productsLoading ? 'Đang tải...' : 'Tải danh sách'}</span>
-              </button>
-              <button
                 onClick={() => void handleClearAllInventory()}
                 type="button"
                 disabled={isClearingInventory}
@@ -623,12 +631,12 @@ export default function ProductList({
                 <span>{isClearingInventory ? 'Đang xóa...' : 'Xóa toàn bộ Kho'}</span>
               </button>
               <button
-                onClick={() => setShowShopeeImportModal(true)}
+                onClick={() => setShowInitModal(true)}
                 type="button"
                 className="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-orange-500/10 flex items-center justify-center gap-1.5 cursor-pointer"
               >
-                <RefreshCw className="w-3.5 h-3.5 text-white" style={{ animationDuration: isShopeeImporting ? '2s' : '0s' }} />
-                <span>Khởi tạo từ Shopee API</span>
+                <RefreshCw className="w-3.5 h-3.5 text-white" style={{ animationDuration: isInitializing ? '2s' : '0s' }} />
+                <span>Khởi tạo từ sàn</span>
               </button>
             </div>
           </div>
@@ -722,16 +730,9 @@ export default function ProductList({
       <div className="max-md:hidden md:block bg-white rounded-2xl border border-gray-100 shadow-xs overflow-hidden">
         {!productsLoading && products.length === 0 && (
           <div className="p-8 text-center space-y-3 border-b border-gray-50">
-            <p className="text-sm text-gray-500 font-semibold">Chưa tải danh sách sản phẩm.</p>
-            <button
-              type="button"
-              onClick={() => onRefreshProducts?.({ page: 1, append: false })}
-              disabled={!onRefreshProducts}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Tải danh sách (tối đa 50 SP/trang)
-            </button>
+            <p className="text-sm text-gray-500 font-semibold">
+              Chưa có dữ liệu trong Kho gốc. Hãy dùng nút "Khởi tạo từ sàn" để lấy dữ liệu.
+            </p>
           </div>
         )}
         {(productsMeta?.total != null && productsMeta.total > 0) && (
@@ -1436,19 +1437,19 @@ export default function ProductList({
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL: INITIALIZE MAIN WAREHOUSE FROM SHOPEE API */}
+      {/* MODAL: INITIALIZE MAIN WAREHOUSE FROM MARKETPLACE */}
       {/* ========================================================================= */}
-      {showShopeeImportModal && (
+      {showInitModal && (
         <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in">
           <div className="bg-white rounded-3xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col border border-gray-100">
             {/* Header with 'X' close button */}
             <div className="p-5 border-b border-gray-100 flex items-center justify-between bg-orange-50">
               <h3 className="text-sm font-black text-orange-700 uppercase tracking-wider flex items-center gap-2">
                 <Store className="w-4 h-4 text-orange-600" />
-                <span>Khởi tạo kho chính từ Shopee API</span>
+                <span>Khởi tạo Kho chính từ sàn</span>
               </h3>
               <button
-                onClick={() => { if (!isShopeeImporting) setShowShopeeImportModal(false); }}
+                onClick={() => { if (!isInitializing) setShowInitModal(false); }}
                 className="p-1 hover:bg-orange-100 rounded-full transition-all text-orange-500 hover:text-orange-800 cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -1458,41 +1459,65 @@ export default function ProductList({
             {/* Modal Body */}
             <div className="p-6 space-y-5">
               <div className="bg-orange-50/70 border border-orange-200/50 p-4 rounded-xl text-xs text-orange-800 leading-relaxed font-semibold">
-                Hệ thống sẽ kết nối trực tiếp với API sàn Shopee để lấy danh mục sản phẩm đang bán. 
-                Các sản phẩm này sẽ được tự động khởi tạo thành các sản phẩm gốc trong Kho chính và đồng thời ánh xạ liên kết sang danh mục liên kết.
+                Hệ thống sẽ kết nối tới sàn bạn chọn để lấy dữ liệu sản phẩm và lưu trực tiếp vào Kho gốc.
+                Sau khi khởi tạo thành công, bảng Kho gốc sẽ được tải lại ngay mà không cần làm mới trang.
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-black text-gray-700">Chọn sàn khởi tạo</label>
+                <div className="relative">
+                  <select
+                    value={initPlatform}
+                    onChange={(e) => setInitPlatform(e.target.value as 'shopee' | 'tiktok')}
+                    disabled={isInitializing}
+                    className="w-full pl-4 pr-10 py-3 bg-white border border-gray-250 rounded-xl text-xs font-bold text-gray-700 focus:outline-none focus:border-blue-500 cursor-pointer disabled:bg-gray-50"
+                  >
+                    <option value="shopee">Shopee</option>
+                    <option value="tiktok">TikTok</option>
+                  </select>
+                  <Store className="w-4 h-4 text-gray-400 absolute right-3 top-3.5 pointer-events-none" />
+                </div>
               </div>
 
               {/* Shop Selector */}
               <div className="space-y-1.5">
-                <label className="text-xs font-black text-gray-700">Lựa chọn gian hàng Shopee nguồn</label>
+                <label className="text-xs font-black text-gray-700">
+                  {`Lựa chọn gian hàng ${initPlatform === 'shopee' ? 'Shopee' : 'TikTok'} nguồn`}
+                </label>
                 <div className="relative">
                   <select
-                    value={shopeeImportShopId}
-                    onChange={(e) => setShopeeImportShopId(e.target.value)}
-                    disabled={isShopeeImporting}
+                    value={initShopId}
+                    onChange={(e) => setInitShopId(e.target.value)}
+                    disabled={isInitializing}
                     className="w-full pl-4 pr-10 py-3 bg-white border border-gray-250 rounded-xl text-xs font-bold text-gray-700 focus:outline-none focus:border-blue-500 cursor-pointer disabled:bg-gray-50"
                   >
-                    {shops.filter(s => s.platform === 'shopee').map(shop => (
+                    {initPlatformShops.map((shop) => (
                       <option key={shop.id} value={shop.id}>
                         {shop.shopName} (Mã shop: {shop.shopId})
                       </option>
                     ))}
-                    {shops.filter(s => s.platform === 'shopee').length === 0 && (
-                      <option value="" disabled>Chưa có gian hàng Shopee</option>
+                    {initPlatformShops.length === 0 && (
+                      <option value="" disabled>{`Chưa có gian hàng ${initPlatform === 'shopee' ? 'Shopee' : 'TikTok'}`}</option>
                     )}
                   </select>
                   <Store className="w-4 h-4 text-gray-400 absolute right-3 top-3.5 pointer-events-none" />
                 </div>
               </div>
 
+              {initPlatform === 'tiktok' && (
+                <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl text-xs text-amber-800 font-semibold">
+                  Tính năng chưa tích hợp API
+                </div>
+              )}
+
               {/* Progress Logger during import */}
-              {isShopeeImporting && (
+              {isInitializing && (
                 <div className="p-4 bg-slate-950 rounded-2xl text-xs font-mono text-orange-400 space-y-1.5 max-h-40 overflow-y-auto shadow-inner border border-slate-800">
                   <div className="flex items-center gap-2 mb-1.5">
                     <RefreshCw className="w-3.5 h-3.5 animate-spin text-orange-400" />
-                    <span className="font-bold">TIẾN TRÌNH KẾT NỐI SHOPEE API:</span>
+                    <span className="font-bold">{`TIẾN TRÌNH KẾT NỐI ${initPlatform.toUpperCase()} API:`}</span>
                   </div>
-                  {shopeeImportProgress.map((p, idx) => (
+                  {initProgress.map((p, idx) => (
                     <p key={idx} className="animate-pulse">{p}</p>
                   ))}
                 </div>
@@ -1503,8 +1528,8 @@ export default function ProductList({
             <div className="p-4 bg-slate-50 border-t border-gray-100 flex justify-end gap-3.5">
               <button
                 type="button"
-                onClick={() => { if (!isShopeeImporting) setShowShopeeImportModal(false); }}
-                disabled={isShopeeImporting}
+                onClick={() => { if (!isInitializing) setShowInitModal(false); }}
+                disabled={isInitializing}
                 className="px-5 py-2.5 bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl transition-all cursor-pointer disabled:opacity-50"
               >
                 Thoát
@@ -1512,17 +1537,17 @@ export default function ProductList({
               
               <button
                 type="button"
-                onClick={handleTriggerShopeeImport}
-                disabled={isShopeeImporting}
+                onClick={handleConfirmMarketplaceInit}
+                disabled={isInitializing || initPlatform === 'tiktok' || !initShopId}
                 className="px-5 py-2.5 bg-orange-600 hover:bg-orange-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-md shadow-orange-500/15 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
-                {isShopeeImporting ? (
+                {isInitializing ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                     <span>Đang khởi tạo...</span>
                   </>
                 ) : (
-                  <span>Khởi tạo ngay</span>
+                  <span>Xác nhận khởi tạo</span>
                 )}
               </button>
             </div>

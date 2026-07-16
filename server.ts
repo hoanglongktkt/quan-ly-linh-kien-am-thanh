@@ -8836,6 +8836,8 @@ async function startServer() {
         stats: result.stats,
         skippedItems: result.skippedItems?.length ? result.skippedItems : undefined,
         message: `Đã khởi tạo xong ${initialized} sản phẩm`,
+        forceRefresh: true,
+        refresh: { forceRefresh: true },
       });
     } catch (error: unknown) {
       console.error("[Shopee Product Sync] Exception:", error);
@@ -8850,6 +8852,7 @@ async function startServer() {
           details,
         });
       }
+      return;
     }
   });
 
