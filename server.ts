@@ -5599,9 +5599,9 @@ function upsertChannelListingsFromShopeeSync(
               p?.shopeeItemId &&
               String(p.shopeeItemId) === String(item.shopeeItemId) &&
               (!item?.sku ||
-                String(p?.sku || "").toLowerCase() === String(item?.sku || "").toLowerCase())) ||
+                normalizeSkuKey(p?.sku) === normalizeSkuKey(item?.sku))) ||
             (item?.sku &&
-              String(p?.sku || "").toLowerCase() === String(item?.sku || "").toLowerCase()),
+              normalizeSkuKey(p?.sku) === normalizeSkuKey(item?.sku)),
         ) || (item?.id ? item : undefined);
 
       const status =
@@ -5712,10 +5712,15 @@ function readLocalInventoryFileSync(): LocalInventoryCache {
 }
 
 /**
- * Chuẩn hóa SKU trước khi so sánh (trim + lowercase).
+ * Chuẩn hóa SKU trước khi so sánh:
+ * - nếu có "_" thì lấy phần sau cùng sau dấu "_"
+ * - luôn trim + lowercase
  */
 function normalizeSkuKey(sku: unknown): string {
-  return String(sku ?? "").trim().toLowerCase();
+  const raw = String(sku ?? "").trim().toLowerCase();
+  if (!raw) return "";
+  const parts = raw.split("_");
+  return (parts[parts.length - 1] || raw).trim();
 }
 
 /**

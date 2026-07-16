@@ -47,6 +47,13 @@ interface ChannelListing {
   modelId?: string;
 }
 
+function normalizeSKU(sku: unknown): string {
+  const raw = String(sku ?? '').trim().toLowerCase();
+  if (!raw) return '';
+  const parts = raw.split('_');
+  return (parts[parts.length - 1] || raw).trim();
+}
+
 /** Chuẩn hóa 1 dòng mapping từ DATA object — không đọc DOM. */
 function normalizeListingRecord(raw: any): ChannelListing | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -517,7 +524,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     // 1. Try to match by SKU
     if (item.sku) {
       const matchedBySku = flattenedMasterProducts.find(
-        (p) => String(p.sku || '').trim().toLowerCase() === String(item.sku || '').trim().toLowerCase()
+        (p) => normalizeSKU(p.sku) === normalizeSKU(item.sku)
       );
       if (matchedBySku) {
         saveListings(prev => prev.map(listing => {
@@ -854,10 +861,17 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   };
 
   // Master product search in manual mapping modal
-  const filteredMasterProducts = flattenedMasterProducts.filter(p =>
-    p.title.toLowerCase().includes(mappingSearch.toLowerCase()) || 
-    p.sku.toLowerCase().includes(mappingSearch.toLowerCase())
-  );
+  const normalizedSearch = normalizeSKU(mappingSearch);
+  const filteredMasterProducts = flattenedMasterProducts.filter((p) => {
+    const titleMatch = p.title.toLowerCase().includes(mappingSearch.toLowerCase());
+    const rawSku = String(p.sku || '').toLowerCase();
+    const normalizedSku = normalizeSKU(p.sku);
+    const skuMatch = rawSku.includes(mappingSearch.toLowerCase());
+    const normalizedSkuMatch = normalizedSearch
+      ? normalizedSku.includes(normalizedSearch) || normalizedSearch.includes(normalizedSku)
+      : false;
+    return titleMatch || skuMatch || normalizedSkuMatch;
+  });
 
   return (
     <div className="space-y-6">
