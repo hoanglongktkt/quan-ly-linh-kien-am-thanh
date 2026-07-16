@@ -870,7 +870,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       } else {
         showToast(
           data.message ||
-            'Không tìm thấy SKU trùng khớp trong Local Cache (data/local_inventory.json).'
+            'Không tìm thấy SKU trùng khớp trong Database hiện tại.'
         );
       }
 

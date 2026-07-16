@@ -5793,16 +5793,13 @@ async function persistBatchAutoLinkListingUpdate(
 }
 
 /**
- * Batch Auto-link — viết lại theo đúng 4 bước:
- * masterData đã được đọc/parse trong handler API trước khi gọi hàm này.
- * 2) Chỉ lấy các dòng DB đang "unlinked" và chưa có liên kết
- * 3) So khớp sâu theo masterItem.sku hoặc masterItem.variants[*].sku
+ * Batch Auto-link — chỉ dùng Database hiện tại:
+ * 1) Lấy channel_listings chưa liên kết
+ * 2) Lấy toàn bộ Kho gốc từ products DB
+ * 3) So khớp SKU đã chuẩn hóa
  * 4) Ghi DB tuần tự bằng for...of, tuyệt đối không Promise.all
  */
-async function batchAutoLinkFromLocalInventoryFile(
-  masterData: any[],
-  sourcePath: string = LOCAL_INVENTORY_CACHE_PATH
-): Promise<{
+async function batchAutoLinkFromDatabase(): Promise<{
   linkedCount: number;
   listings: any[];
   alreadyLinked: number;
@@ -5812,35 +5809,26 @@ async function batchAutoLinkFromLocalInventoryFile(
   skuIndexSize: number;
 }> {
   try {
-    console.log("[Batch Auto-link] Bắt đầu viết lại logic 4 bước...");
-    console.log(`[Batch Auto-link] Master Data source path: ${sourcePath}`);
-
-    if (masterData == null) {
-      throw new Error("masterData đang null/undefined trước khi so khớp SKU.");
-    }
-    if (!Array.isArray(masterData)) {
-      throw new Error("Cấu trúc data/local_inventory.json không hợp lệ: thiếu mảng products.");
-    }
-    if (masterData.length === 0) {
-      throw new Error(
-        "Local Cache không có sản phẩm Kho gốc (products=[]). Hãy refresh cache / tải kho trước."
-      );
-    }
+    console.log("[Batch Auto-link] Bắt đầu đối chiếu từ Database hiện tại...");
 
     // ===== 2) LỌC DỮ LIỆU CŨ — CHỈ LẤY "CHƯA LIÊN KẾT" =====
     const dbListings = readChannelListingsDb();
     if (!Array.isArray(dbListings) || dbListings.length === 0) {
       throw new Error("Không có dữ liệu channel_listings để liên kết.");
     }
+    const masterProducts = loadProducts();
+    if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
+      throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
+    }
 
     let alreadyLinked = 0;
     let linkedCount = 0;
     let unlinkedTotal = 0;
     const newlyLinkedRows: any[] = [];
-    // Dùng đúng helper matching hiện có: trim().toLowerCase() và SKU parent/children/variants/models.
-    const masterSkuIndex = buildMasterSkuIndex(masterData);
+    // Dùng đúng helper matching hiện có: trim().toLowerCase() và cắt prefix trước "_".
+    const masterSkuIndex = buildMasterSkuIndex(masterProducts);
     console.log(
-      `[Batch Auto-link] Master Data loaded: products=${masterData.length}, skuIndex=${masterSkuIndex.size}`
+      `[Batch Auto-link] DB loaded: masterProducts=${masterProducts.length}, skuIndex=${masterSkuIndex.size}, listings=${dbListings.length}`
     );
 
     // ===== 3, 4) SO KHỚP SÂU + GHI DB TUẦN TỰ — KHÔNG TẠO MẢNG TRUNG GIAN =====
@@ -5887,7 +5875,7 @@ async function batchAutoLinkFromLocalInventoryFile(
       alreadyLinked,
       unlinkedRemaining,
       cacheUpdatedAt: new Date().toISOString(),
-      masterProductCount: masterData.length,
+      masterProductCount: masterProducts.length,
       skuIndexSize: masterSkuIndex.size,
     };
   } catch (error: unknown) {
@@ -6760,26 +6748,7 @@ async function startServer() {
   const handleBatchAutoLink = async (req: any, res: any) => {
     try {
       void req;
-      const sourcePath = LOCAL_INVENTORY_CACHE_PATH;
-      console.log(`[Batch Auto-link] Reading master source file: ${sourcePath}`);
-
-      let cache = readLocalInventoryFileSync();
-      if (!Array.isArray(cache?.products) || cache.products.length === 0) {
-        console.warn(
-          `[Batch Auto-link] Master source is empty at ${sourcePath}. Trying refreshCache() before matching...`
-        );
-        cache = refreshCache();
-      }
-      const masterData = cache?.products;
-      if (masterData == null) {
-        throw new Error(`Không lấy được masterData từ file nguồn ${sourcePath}.`);
-      }
-      console.log(
-        `[Batch Auto-link] Source ready: path=${sourcePath}, products=${Array.isArray(masterData) ? masterData.length : 0}`
-      );
-
-      const result = await batchAutoLinkFromLocalInventoryFile(masterData, sourcePath);
-      // Không load lại local_inventory / không trả products[] (tránh spike RAM).
+      const result = await batchAutoLinkFromDatabase();
       const data = {
         linkedCount: result.linkedCount,
         alreadyLinked: result.alreadyLinked,
@@ -6788,7 +6757,7 @@ async function startServer() {
         cacheUpdatedAt: result.cacheUpdatedAt,
         masterProductCount: result.masterProductCount,
         skuIndexSize: result.skuIndexSize,
-        source: "data/local_inventory.json",
+        source: "database",
       };
       console.log(
         `Đã lưu DB thành công — batch-auto-link linked=${result.linkedCount}, remaining=${result.unlinkedRemaining}`
@@ -6798,8 +6767,8 @@ async function startServer() {
         data,
         message:
           result.linkedCount > 0
-            ? `Đã liên kết thành công ${result.linkedCount} sản phẩm (từ Local Cache)`
-            : "Không tìm thấy SKU trùng khớp trong data/local_inventory.json",
+            ? `Đã liên kết thành công ${result.linkedCount} sản phẩm`
+            : "Không tìm thấy SKU trùng khớp trong Database hiện tại",
         ...data,
       });
     } catch (error: unknown) {
