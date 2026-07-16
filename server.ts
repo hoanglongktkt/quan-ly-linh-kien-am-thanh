@@ -10,10 +10,8 @@ import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import {
   initMongo,
   loadProductsFromStore,
-  saveProductsToStore,
   saveProductsToStoreAsync,
   loadChannelListingsFromStore,
-  saveChannelListingsToStore,
   saveChannelListingsToStoreAsync,
   upsertChannelListingToStore,
   buildLocalInventoryCacheFromStore,
@@ -26,8 +24,6 @@ import {
   getMongoUriMasked,
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
-
-dotenv.config();
 
 /** Thư mục gốc app — Passenger/cPanel có thể khác process.cwd(). */
 function resolveAppRoot(): string {
@@ -44,7 +40,8 @@ function resolveAppRoot(): string {
     if (
       fs.existsSync(path.join(abs, "server.cjs")) ||
       fs.existsSync(path.join(abs, "data")) ||
-      fs.existsSync(path.join(abs, ".htaccess"))
+      fs.existsSync(path.join(abs, ".htaccess")) ||
+      fs.existsSync(path.join(abs, ".env"))
     ) {
       return abs;
     }
@@ -53,6 +50,13 @@ function resolveAppRoot(): string {
 }
 
 const APP_ROOT = resolveAppRoot();
+
+// Load .env từ APP_ROOT trước (cPanel/Passenger), rồi cwd.
+dotenv.config({ path: path.join(APP_ROOT, ".env") });
+dotenv.config();
+console.log(
+  `[Config] APP_ROOT=${APP_ROOT} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
+);
 /** Thư mục tập trung lưu PDF vận đơn (tương đương public/waybills/ trên hosting, nhưng ngoài Vite publicDir). */
 const WAYBILLS_DIR = path.join(APP_ROOT, "storage", "waybills");
 const LEGACY_WAYBILLS_DIR = path.join(APP_ROOT, "storage", "labels");
@@ -2040,7 +2044,7 @@ async function syncProductToShopee(
   }
   if (productRequiresShopeeModelId(product, 1) && modelId == null) {
     const msg = "Phân loại (variant) thiếu model_id — bắt buộc truyền item_id + model_id khi update_stock";
-    appendShopeeSyncErrorToDb({
+    await appendShopeeSyncErrorToDb({
       itemId,
       modelId: undefined,
       sku: product.sku,
@@ -2064,9 +2068,9 @@ async function syncProductToShopee(
 
   const preCheck = await verifyShopeeItemExists(shopId, accessToken, itemId);
   if (!preCheck.exists) {
-    markShopeeItemsInvalidInDb([itemId], preCheck.detail || "product.error_item_not_found");
+    await markShopeeItemsInvalidInDb([itemId], preCheck.detail || "product.error_item_not_found");
     const msg = `Shopee item không tồn tại (${preCheck.detail || "product.error_item_not_found"}) — đã đánh dấu invalid`;
-    appendShopeeSyncErrorToDb({
+    await appendShopeeSyncErrorToDb({
       itemId,
       modelId: modelId ?? product.shopeeModelId,
       sku: product.sku,
@@ -2101,7 +2105,7 @@ async function syncProductToShopee(
     stockResult = await shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
   } catch (err: unknown) {
     const netMsg = extractShopeeStockPushErrorMessage(err, err instanceof Error ? err.message : String(err));
-    appendShopeeSyncErrorToDb({
+    await appendShopeeSyncErrorToDb({
       itemId,
       modelId: modelId ?? product.shopeeModelId,
       sku: product.sku,
@@ -2125,8 +2129,8 @@ async function syncProductToShopee(
 
   if (isShopeeItemNotFoundError(stockResult)) {
     const detail = `${stockResult?.error || "product.error_item_not_found"}${stockResult?.message ? ` — ${stockResult.message}` : ""}`;
-    markShopeeItemsInvalidInDb([itemId], detail);
-    appendShopeeSyncErrorToDb({
+    await markShopeeItemsInvalidInDb([itemId], detail);
+    await appendShopeeSyncErrorToDb({
       itemId,
       modelId: product.shopeeModelId,
       sku: product.sku,
@@ -2145,7 +2149,7 @@ async function syncProductToShopee(
   await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
   const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
   if (isShopeeItemNotFoundError(priceResult)) {
-    markShopeeItemsInvalidInDb([itemId], priceResult?.error || "product.error_item_not_found");
+    await markShopeeItemsInvalidInDb([itemId], priceResult?.error || "product.error_item_not_found");
   }
 
   return [
@@ -2279,11 +2283,11 @@ async function refreshShopeeLiveItemIdSet(shopId: string, accessToken: string): 
   return new Set(ids);
 }
 
-function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): string[] {
+async function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): string[] {
   const idSet = new Set(itemIds.map(Number).filter((n) => Number.isFinite(n) && n > 0));
   if (idSet.size === 0) return [];
 
-  const products = loadProducts();
+  const products = await loadProducts();
   const affectedSkus: string[] = [];
 
   const nextProducts = products.map((p: any) => {
@@ -2316,10 +2320,10 @@ function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): string[]
     };
   });
 
-  if (affectedSkus.length > 0) saveProducts(nextProducts);
+  if (affectedSkus.length > 0) await saveProducts(nextProducts);
 
   try {
-    const listings = readChannelListingsDb();
+    const listings = await readChannelListingsDb();
     let listingChanged = false;
     const nextListings = listings.map((row: any) => {
       const cid = Number(row.channelId);
@@ -2332,7 +2336,7 @@ function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): string[]
         updatedAt: new Date().toISOString(),
       };
     });
-    if (listingChanged) writeChannelListingsDb(nextListings);
+    if (listingChanged) await writeChannelListingsDb(nextListings);
   } catch (err) {
     console.error("[Shopee Stock] Không cập nhật channel_listings:", err);
   }
@@ -2540,7 +2544,7 @@ async function pushStockUpdatesToShopee(
         `get_item_base_info thất bại (${preCheck.detail || "product.error_item_not_found"}) — đã bỏ qua đẩy tồn.`
       );
       for (const p of rows) {
-        appendShopeeSyncErrorToDb({
+        await appendShopeeSyncErrorToDb({
           itemId,
           modelId: p.shopeeModelId,
           sku: p.sku,
@@ -2563,7 +2567,7 @@ async function pushStockUpdatesToShopee(
       if (productRequiresShopeeModelId(p, rows.length) && modelId == null) {
         const line = `SKU ${p.sku || p.id}: phân loại (variant) thiếu model_id — bắt buộc truyền item_id + model_id khi update_stock.`;
         errors.push(line);
-        appendShopeeSyncErrorToDb({
+        await appendShopeeSyncErrorToDb({
           itemId,
           modelId: undefined,
           sku: p.sku,
@@ -2591,7 +2595,7 @@ async function pushStockUpdatesToShopee(
       const skus = extractSkusFromShopeeRows(rows).join(", ");
       errors.push(`item_id=${itemId} (SKU: ${skus}): update_stock lỗi — ${netMsg}`);
       for (const p of rows) {
-        appendShopeeSyncErrorToDb({
+        await appendShopeeSyncErrorToDb({
           itemId,
           modelId: resolveShopeeModelIdForStockPush(p) ?? p.shopeeModelId,
           sku: p.sku,
@@ -2624,7 +2628,7 @@ async function pushStockUpdatesToShopee(
         errors.push(`item_id=${itemId} (SKU: ${skus}): ${detail}`);
       }
       for (const p of rows) {
-        appendShopeeSyncErrorToDb({
+        await appendShopeeSyncErrorToDb({
           itemId,
           modelId: resolveShopeeModelIdForStockPush(p) ?? p.shopeeModelId,
           sku: p.sku,
@@ -2646,7 +2650,7 @@ async function pushStockUpdatesToShopee(
         } else {
           errors.push(line);
         }
-        appendShopeeSyncErrorToDb({
+        await appendShopeeSyncErrorToDb({
           itemId,
           modelId: f.model_id,
           shopId: resolved.shopId,
@@ -2669,7 +2673,7 @@ async function pushStockUpdatesToShopee(
   }
 
   if (invalidItemIds.size > 0) {
-    const dbSkus = markShopeeItemsInvalidInDb(
+    const dbSkus = await markShopeeItemsInvalidInDb(
       [...invalidItemIds],
       "Sản phẩm không tồn tại trên Shopee (product.error_item_not_found)"
     );
@@ -2728,7 +2732,7 @@ function findProductRowById(products: any[], productId: string): any | null {
  * Gắn Shopee item/model từ DB Mapping (channel_listings) nếu sản phẩm kho đã liên kết.
  * Không đụng logic Mapping UI — chỉ đọc.
  */
-function resolveProductWithShopeeMapping(product: any): any | null {
+async function resolveProductWithShopeeMapping(product: any): any | null {
   if (!product || typeof product !== "object") return null;
 
   if (getShopeeItemIdForStockPush(product) != null) {
@@ -2737,7 +2741,7 @@ function resolveProductWithShopeeMapping(product: any): any | null {
 
   let listings: any[] = [];
   try {
-    listings = readChannelListingsDb();
+    listings = await readChannelListingsDb();
   } catch (err) {
     console.error("[Shopee Sync Queue] Không đọc được channel_listings:", err);
     return null;
@@ -2779,7 +2783,7 @@ async function executeShopeeStockPriceSyncJob(
   product: any,
   opts: { syncStock: boolean; syncPrice: boolean }
 ): Promise<{ ok: boolean; message: string }> {
-  const mapped = resolveProductWithShopeeMapping(product);
+  const mapped = await resolveProductWithShopeeMapping(product);
   if (!mapped) {
     return { ok: false, message: "Chưa liên kết Mapping Shopee — bỏ qua sync." };
   }
@@ -2808,7 +2812,7 @@ async function executeShopeeStockPriceSyncJob(
       const parsed = parseShopeeApiResult(stockResult, mapped, "update_stock");
       lines.push(parsed.message);
       if (!parsed.success) {
-        appendShopeeSyncErrorToDb({
+        await appendShopeeSyncErrorToDb({
           itemId,
           modelId: modelId ?? mapped.shopeeModelId,
           sku: mapped.sku,
@@ -2821,7 +2825,7 @@ async function executeShopeeStockPriceSyncJob(
       }
     } catch (err: unknown) {
       const msg = extractShopeeStockPushErrorMessage(err, err instanceof Error ? err.message : String(err));
-      appendShopeeSyncErrorToDb({
+      await appendShopeeSyncErrorToDb({
         itemId,
         modelId: modelId ?? mapped.shopeeModelId,
         sku: mapped.sku,
@@ -2845,7 +2849,7 @@ async function executeShopeeStockPriceSyncJob(
       const parsed = parseShopeeApiResult(priceResult, mapped, "update_price");
       lines.push(parsed.message);
       if (!parsed.success) {
-        appendShopeeSyncErrorToDb({
+        await appendShopeeSyncErrorToDb({
           itemId,
           modelId: modelId ?? mapped.shopeeModelId,
           sku: mapped.sku,
@@ -2858,7 +2862,7 @@ async function executeShopeeStockPriceSyncJob(
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      appendShopeeSyncErrorToDb({
+      await appendShopeeSyncErrorToDb({
         itemId,
         modelId: modelId ?? mapped.shopeeModelId,
         sku: mapped.sku,
@@ -2884,7 +2888,7 @@ async function processShopeeSyncQueue(): Promise<void> {
       shopeeSyncQueueKeys.delete(job.key);
 
       try {
-        const products = loadProducts();
+        const products = await loadProducts();
         const row = findProductRowById(products, job.productId);
         if (!row) {
           console.warn(`[Shopee Sync Queue] Bỏ qua — không thấy productId=${job.productId}`);
@@ -2892,7 +2896,7 @@ async function processShopeeSyncQueue(): Promise<void> {
           continue;
         }
 
-        const mapped = resolveProductWithShopeeMapping(row);
+        const mapped = await resolveProductWithShopeeMapping(row);
         if (!mapped) {
           console.log(
             `[Shopee Sync Queue] Skip SKU=${row.sku || job.productId} — chưa Mapping Shopee`
@@ -2955,10 +2959,10 @@ async function processShopeeSyncQueue(): Promise<void> {
 }
 
 /** Đưa sync stock/price vào hàng đợi (chỉ khi đã Mapping + có thay đổi thật). */
-function enqueueShopeeStockPriceSync(
+async function enqueueShopeeStockPriceSync(
   products: any[],
   opts: { syncStock?: boolean; syncPrice?: boolean }
-): number {
+): Promise<number> {
   const syncStock = opts.syncStock === true;
   const syncPrice = opts.syncPrice === true;
   if (!syncStock && !syncPrice) return 0;
@@ -2969,7 +2973,7 @@ function enqueueShopeeStockPriceSync(
     const productId = String(raw.id || "").trim();
     if (!productId) continue;
 
-    const mapped = resolveProductWithShopeeMapping(raw);
+    const mapped = await resolveProductWithShopeeMapping(raw);
     if (!mapped) continue;
 
     const key = `${productId}|stock=${syncStock}|price=${syncPrice}`;
@@ -3000,7 +3004,7 @@ function enqueueShopeeStockPriceSync(
 }
 
 /** Sau khi lưu kho: so sánh trước/sau, enqueue sync nếu Mapping Shopee. */
-function enqueueShopeeSyncAfterProductChange(
+async function enqueueShopeeSyncAfterProductChange(
   beforeRows: any[],
   afterRows: any[]
 ): number {
@@ -3019,7 +3023,7 @@ function enqueueShopeeSyncAfterProductChange(
   }
 
   if (changedProducts.length === 0) return 0;
-  return enqueueShopeeStockPriceSync(changedProducts, {
+  return await enqueueShopeeStockPriceSync(changedProducts, {
     syncStock: stockChanged,
     syncPrice: priceChanged,
   });
@@ -3294,7 +3298,7 @@ async function syncShopeeItemToWarehouseRows(
     if (modelResult?.error || isShopeeItemNotFoundError(modelResult)) {
       const err = `${modelResult?.error || "product.error_item_not_found"}${modelResult?.message ? `: ${modelResult.message}` : ""}`;
       console.error(`[Shopee Sync] get_model_list item_id=${itemId}: ${err}`);
-      appendShopeeSyncErrorToDb({
+      await appendShopeeSyncErrorToDb({
         itemId,
         shopId,
         action: "pullProducts",
@@ -3323,7 +3327,7 @@ async function syncShopeeItemToWarehouseRows(
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`[Shopee Sync] syncShopeeItemToWarehouseRows item_id=${item?.item_id}: ${reason}`);
     try {
-      appendShopeeSyncErrorToDb({
+      await appendShopeeSyncErrorToDb({
         itemId: item?.item_id,
         shopId,
         action: "pullProducts",
@@ -3392,7 +3396,7 @@ async function processShopeeItemsToListingRows(
       const reason = err instanceof Error ? err.message : String(err);
       console.error(`[Shopee Sync] pullProducts item_id=${item?.item_id}: ${reason}`);
       try {
-        appendShopeeSyncErrorToDb({
+        await appendShopeeSyncErrorToDb({
           itemId: item?.item_id,
           shopId,
           action: "pullProducts",
@@ -3463,7 +3467,7 @@ async function upsertChannelListingsBatch(
 
     ensureDataDirs();
 
-    const existing = readChannelListingsDb();
+    const existing = await readChannelListingsDb();
     const byKey = new Map<string, any>();
     for (const listing of existing) {
       if (!listing || typeof listing !== "object") continue;
@@ -3613,7 +3617,7 @@ async function pullShopeeChannelListingsPage(
           console.error(`[Shopee Channel Fetch] item_id=${item?.item_id}: ${reason}`);
           skippedItems.push({ itemId: String(item?.item_id ?? "?"), reason });
           try {
-            appendShopeeSyncErrorToDb({
+            await appendShopeeSyncErrorToDb({
               itemId: item?.item_id,
               shopId,
               action: "channelFetch",
@@ -3658,12 +3662,12 @@ async function pullShopeeChannelListingsPage(
  * UPSERT Kho gốc theo khóa shopeeItemId (item_id) / id.
  * Có rồi → cập nhật; chưa có → thêm mới. Map đúng title/sku/price/stock từ Shopee.
  */
-function mergeWarehouseProductsBatch(batchRows: any[]): number {
+async function mergeWarehouseProductsBatch(batchRows: any[]): number {
   try {
     if (!Array.isArray(batchRows) || batchRows.length === 0) return 0;
 
     ensureDataDirs();
-    const existing = loadProducts();
+    const existing = await loadProducts();
     const byId = new Map<string, any>();
     const byShopeeItemId = new Map<string, string>();
 
@@ -3714,7 +3718,7 @@ function mergeWarehouseProductsBatch(batchRows: any[]): number {
     }
 
     console.log("Dữ liệu sau khi map (trước khi lưu):", upserted);
-    saveProducts([...byId.values()]);
+    await saveProducts([...byId.values()]);
     return upserted;
   } catch (error: unknown) {
     console.error("Lỗi khi lưu DB chunk:", error);
@@ -3741,11 +3745,11 @@ async function pullShopeeWarehouseAllPages(
 }> {
   const startedAt = Date.now();
   try {
-    const existing = loadProducts();
+    const existing = await loadProducts();
     const kept = existing.filter(
       (p: any) => !p.shopeeItemId && !(Array.isArray(p.channels) && p.channels.includes("shopee"))
     );
-    saveProducts(kept);
+    await saveProducts(kept);
     console.log(
       `[Shopee Warehouse Sync] Khởi tạo: giữ ${kept.length} SP không-Shopee, xóa tạm SP Shopee cũ trước khi pull`
     );
@@ -3764,11 +3768,11 @@ async function pullShopeeWarehouseAllPages(
   let pendingRows: any[] = [];
   let pendingItemCount = 0;
 
-  const flushPending = () => {
+  const flushPending = async () => {
     if (pendingRows.length === 0) return 0;
     try {
       console.log("Dữ liệu sau khi map (trước khi lưu):", pendingRows.length);
-      const n = mergeWarehouseProductsBatch(pendingRows);
+      const n = await mergeWarehouseProductsBatch(pendingRows);
       pendingRows = [];
       pendingItemCount = 0;
       return n;
@@ -3881,7 +3885,7 @@ async function pullShopeeWarehouseAllPages(
     console.error("Lỗi khi lưu DB chunk:", chunkErr);
   }
 
-  const verified = loadProducts().filter(
+  const verified = (await loadProducts()).filter(
     (p: any) => p.shopeeItemId || (Array.isArray(p.channels) && p.channels.includes("shopee"))
   ).length;
   console.log(
@@ -3900,13 +3904,13 @@ async function pullShopeeWarehouseAllPages(
   };
 }
 
-function clearExistingShopeeWarehouseProducts(): void {
+async function clearExistingShopeeWarehouseProducts(): Promise<void> {
   try {
-    const existing = loadProducts();
+    const existing = await loadProducts();
     const kept = existing.filter(
       (p: any) => !p.shopeeItemId && !(Array.isArray(p.channels) && p.channels.includes("shopee"))
     );
-    saveProducts(kept);
+    await saveProducts(kept);
     console.log(
       `[Shopee Warehouse Sync] Reset: giữ ${kept.length} SP không-Shopee, xóa tạm SP Shopee cũ trước khi pull`
     );
@@ -3937,7 +3941,7 @@ async function syncShopeeWarehouseSinglePage(
 }> {
   const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
   if (page.itemIds.length === 0) {
-    const productCount = loadProducts().filter(
+    const productCount = (await loadProducts()).filter(
       (p: any) => p.shopeeItemId || (Array.isArray(p.channels) && p.channels.includes("shopee"))
     ).length;
     return {
@@ -3987,8 +3991,8 @@ async function syncShopeeWarehouseSinglePage(
   }
 
   const dedupedRows = dedupeShopeeParentVariantRows(pageRows);
-  const savedCount = dedupedRows.length > 0 ? mergeWarehouseProductsBatch(dedupedRows) : 0;
-  const productCount = loadProducts().filter(
+  const savedCount = dedupedRows.length > 0 ? await mergeWarehouseProductsBatch(dedupedRows) : 0;
+  const productCount = (await loadProducts()).filter(
     (p: any) => p.shopeeItemId || (Array.isArray(p.channels) && p.channels.includes("shopee"))
   ).length;
 
@@ -4069,7 +4073,7 @@ async function fetchShopeeBaseItemsByIds(shopId: string, accessToken: string, it
 async function fetchShopeeListingRowsFromApi(shopId: string, accessToken: string) {
   const result = await pullShopeeWarehouseAllPages(shopId, accessToken);
   return {
-    rows: loadProducts().filter((p: any) => p.shopeeItemId || p.channels?.includes("shopee")),
+    rows: (await loadProducts()).filter((p: any) => p.shopeeItemId || p.channels?.includes("shopee")),
     stats: result.stats,
     skippedItems: result.skippedItems,
   };
@@ -4078,7 +4082,7 @@ async function fetchShopeeListingRowsFromApi(shopId: string, accessToken: string
 async function runFullShopeeWarehouseSync(shopId: string, accessToken: string) {
   try {
     const { stats, skippedItems } = await pullShopeeWarehouseAllPages(shopId, accessToken);
-    const allProducts = loadProducts();
+    const allProducts = await loadProducts();
     const productCount = allProducts.filter((p: any) => p.shopeeItemId || p.channels?.includes("shopee")).length;
     const variantSkuCount = allProducts.reduce(
       (n: number, p: any) => n + getProductChildrenList(p).length,
@@ -4093,7 +4097,7 @@ async function runFullShopeeWarehouseSync(shopId: string, accessToken: string) {
 }
 
 async function syncStockFromShopee(shopId: string, accessToken: string) {
-  const products = loadProducts();
+  const products = await loadProducts();
   const localShopee = products.filter((p) => p.shopeeItemId);
   const itemIds = [
     ...new Set(
@@ -4148,7 +4152,7 @@ async function syncStockFromShopee(shopId: string, accessToken: string) {
     return mergeProductPatch(p, { stock: newStock });
   });
 
-  saveProducts(next);
+  await saveProducts(next);
   console.log(`[Sync Stock] Shopee shop_id=${shopId}: ${compared} SKU so sánh, ${updated} SKU cập nhật`);
   return { updated, compared, products: next };
 }
@@ -5288,73 +5292,66 @@ function getProductChildrenList(p: any): any[] {
   return [];
 }
 
-/** Đọc products từ MongoDB cache (RAM). */
-function loadProducts(): any[] {
+/** Đọc products TRỰC TIẾP từ MongoDB (Model.find). */
+async function loadProducts(): Promise<any[]> {
   try {
-    return loadProductsFromStore();
+    return await loadProductsFromStore();
   } catch (error) {
-    console.error("[Products DB] Failed to read from MongoDB store:", error);
-    return [];
+    console.error("[Products DB] Failed to read from MongoDB:", error);
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
 /**
- * Local Cache Master — đọc từ MongoDB in-memory cache.
+ * Local Cache Master — luôn query MongoDB.
  */
-function refreshCache(): LocalInventoryCache {
+async function refreshCache(): Promise<LocalInventoryCache> {
   ensureDataDirs();
-  const payload = buildLocalInventoryCacheFromStore();
+  const payload = await buildLocalInventoryCacheFromStore();
   console.log(
-    `[Local Cache] refreshCache OK (MongoDB) — products=${payload.products.length}, listings=${payload.listings.length}`
+    `[Local Cache] refreshCache OK (MongoDB find) — products=${payload.products.length}, listings=${payload.listings.length}`
   );
   return payload;
 }
 
-/** Đọc Local Cache từ MongoDB store. */
-function loadLocalInventoryCache(): LocalInventoryCache {
+/** Đọc Local Cache từ MongoDB. */
+async function loadLocalInventoryCache(): Promise<LocalInventoryCache> {
   try {
-    return buildLocalInventoryCacheFromStore();
+    return await buildLocalInventoryCacheFromStore();
   } catch (error) {
-    console.error("[Local Cache] Đọc MongoDB store thất bại:", error);
-    return { updatedAt: new Date().toISOString(), products: [], listings: [] };
+    console.error("[Local Cache] Đọc MongoDB thất bại:", error);
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
 /**
- * Đảm bảo cache sẵn sàng (migrate legacy JSON nếu Mongo trống).
+ * Đảm bảo Mongo sẵn sàng + migrate legacy nếu cần.
  */
 async function initLocalInventoryIfNeeded(_force = false): Promise<LocalInventoryCache> {
   ensureDataDirs();
   await maybeMigrateJsonToMongoOnBoot();
-  return loadLocalInventoryCache();
+  return await loadLocalInventoryCache();
 }
 
-/** Ghi products vào DB bền vững (JSON sync + Atlas async, await flush). */
-function saveProducts(products: any[]): void {
+/** Ghi products — await insertMany MongoDB. */
+async function saveProducts(products: any[]): Promise<void> {
   try {
     ensureDataDirs();
     const list = Array.isArray(products)
       ? products.filter((p) => p != null && typeof p === "object")
       : [];
-    saveProductsToStore(list);
+    await saveProductsToStoreAsync(list);
     console.log(
-      `Đã lưu DB thành công — products: ${list.length} dòng -> ${getMongoUriMasked()} (JSON+Atlas)`
+      `Đã lưu DB thành công — MongoDB products insertMany: ${list.length} dòng -> ${getMongoUriMasked()}`
     );
   } catch (error) {
-    console.error("[Products DB] Failed to write store:", error);
+    console.error("[Products DB] Failed to write MongoDB:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
 async function saveProductsAsync(products: any[]): Promise<void> {
-  ensureDataDirs();
-  const list = Array.isArray(products)
-    ? products.filter((p) => p != null && typeof p === "object")
-    : [];
-  await saveProductsToStoreAsync(list);
-  console.log(
-    `Đã lưu DB thành công (await) — products: ${list.length} dòng -> ${getMongoUriMasked()}`
-  );
+  await saveProducts(products);
 }
 
 /** Alias nhẹ — giữ tương thích chỗ gọi cũ (không còn regroup). */
@@ -5410,8 +5407,8 @@ function findLatestMigratedJson(baseName: string): string | null {
 /** Boot-time: nếu Mongo trống mà còn JSON/legacy → migrate lên Atlas. */
 async function maybeMigrateJsonToMongoOnBoot(): Promise<void> {
   try {
-    const productCount = countProducts();
-    const listingCount = countChannelListings();
+    const productCount = await countProducts();
+    const listingCount = await countChannelListings();
     const legacyProducts =
       PRODUCTS_DB_PATH && fs.existsSync(PRODUCTS_DB_PATH)
         ? PRODUCTS_DB_PATH
@@ -5474,7 +5471,7 @@ async function maybeMigrateJsonToMongoOnBoot(): Promise<void> {
     await seedStoreFromArrays(products, listings);
 
     console.log(
-      `[Mongo Migrate] Xong — products=${countProducts()}, listings=${countChannelListings()} (mongoReady=${isMongoReady()})`
+      `[Mongo Migrate] Xong — products=$ await countProducts()}, listings=$ await countChannelListings()} (mongoReady=${isMongoReady()})`
     );
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
@@ -5505,7 +5502,7 @@ function readShopeeSyncErrorsDb(): any[] {
   }
 }
 
-function appendShopeeSyncErrorToDb(entry: {
+async function appendShopeeSyncErrorToDb(entry: {
   itemId?: number | string;
   modelId?: number | string;
   sku?: string;
@@ -5513,7 +5510,7 @@ function appendShopeeSyncErrorToDb(entry: {
   action: string;
   error: string;
   productId?: string;
-}): void {
+}): Promise<void> {
   const row = {
     id: `se-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: new Date().toISOString(),
@@ -5540,7 +5537,7 @@ function appendShopeeSyncErrorToDb(entry: {
   if (!channelId) return;
 
   try {
-    const listings = readChannelListingsDb();
+    const listings = await readChannelListingsDb();
     const key = `shopee::${channelId}`;
     let changed = false;
     const nextListings = listings.map((listing: any) => {
@@ -5553,34 +5550,23 @@ function appendShopeeSyncErrorToDb(entry: {
         updatedAt: row.timestamp,
       };
     });
-    if (changed) writeChannelListingsDb(nextListings);
+    if (changed) await writeChannelListingsDb(nextListings);
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to update channel_listings:", err);
   }
 }
 
-function readChannelListingsDb(): any[] {
+async function readChannelListingsDb(): Promise<any[]> {
   try {
-    return loadChannelListingsFromStore();
+    return await loadChannelListingsFromStore();
   } catch (error) {
-    console.error("[Channel Listings DB] Failed to read from MongoDB store:", error);
-    return [];
+    console.error("[Channel Listings DB] Failed to read from MongoDB:", error);
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 
-function writeChannelListingsDb(rows: any[]): void {
-  try {
-    ensureDataDirs();
-    const payload = Array.isArray(rows) ? rows.filter((r) => r != null && typeof r === "object") : [];
-    saveChannelListingsToStore(payload);
-    console.log(
-      `Đã lưu DB thành công — channel_listings: ${payload.length} dòng -> ${getMongoUriMasked()} (JSON+Atlas)`
-    );
-  } catch (error) {
-    console.error("DB Save Error:", error);
-    console.error(`[Channel Listings DB] Failed to write store:`, error);
-    throw error instanceof Error ? error : new Error(String(error));
-  }
+async function writeChannelListingsDb(rows: any[]): Promise<void> {
+  await writeChannelListingsDbAsync(rows);
 }
 
 async function writeChannelListingsDbAsync(rows: any[]): Promise<void> {
@@ -5588,7 +5574,7 @@ async function writeChannelListingsDbAsync(rows: any[]): Promise<void> {
   const payload = Array.isArray(rows) ? rows.filter((r) => r != null && typeof r === "object") : [];
   await saveChannelListingsToStoreAsync(payload);
   console.log(
-    `Đã lưu DB thành công (await) — channel_listings: ${payload.length} dòng -> ${getMongoUriMasked()}`
+    `Đã lưu DB thành công — MongoDB channel_listings insertMany: ${payload.length} dòng -> ${getMongoUriMasked()}`
   );
 }
 
@@ -5637,7 +5623,7 @@ function sanitizeChannelListingRow(row: any): any {
 /** Index id → product (parent + children) để JOIN mapping ↔ kho gốc. */
 function buildMasterProductLookupById(products?: any[]): Map<string, any> {
   const index = new Map<string, any>();
-  for (const p of Array.isArray(products) ? products : loadProducts()) {
+  for (const p of Array.isArray(products) ? products : []) {
     if (!p) continue;
     if (p.id != null) index.set(String(p.id), p);
     for (const c of getProductChildrenList(p)) {
@@ -5657,15 +5643,7 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
     const safeListings = Array.isArray(listings) ? listings : [];
     let lookup: Map<string, any>;
     try {
-      const sourceProducts =
-        products ??
-        (() => {
-          try {
-            return loadLocalInventoryCache().products;
-          } catch {
-            return loadProducts();
-          }
-        })();
+      const sourceProducts = Array.isArray(products) ? products : [];
       lookup = buildMasterProductLookupById(sourceProducts);
     } catch (lookupErr: unknown) {
       console.error("[Mapping Products] buildMasterProductLookupById failed:", lookupErr);
@@ -5827,12 +5805,12 @@ function enrichChannelListingsWithMaster(listings: any[], products?: any[]): any
  * KHÔNG gọi trên GET (tránh OOM / crash cPanel khi ghi file lớn).
  * @returns số dòng đã ghi DB
  */
-function persistHealedBrokenMappingLinks(enriched: any[]): number {
+async function persistHealedBrokenMappingLinks(enriched: any[]): Promise<number> {
   try {
     const broken = Array.isArray(enriched) ? enriched.filter((r) => r?.linkBroken === true) : [];
     if (broken.length === 0) return 0;
 
-    const existing = readChannelListingsDb();
+    const existing = await readChannelListingsDb();
     const byId = new Map(
       (Array.isArray(existing) ? existing : [])
         .filter((r: any) => r?.id != null)
@@ -5858,7 +5836,7 @@ function persistHealedBrokenMappingLinks(enriched: any[]): number {
       changed++;
     }
     if (changed > 0) {
-      writeChannelListingsDb(Array.from(byId.values()));
+      await writeChannelListingsDb(Array.from(byId.values()));
       console.log(`[Mapping Products] Đã heal ${changed} liên kết hỏng → unlinked trong DB`);
     }
     return changed;
@@ -5873,9 +5851,9 @@ function persistHealedBrokenMappingLinks(enriched: any[]): number {
  * - Giữ nguyên mọi dòng chưa từng liên kết.
  * - Chỉ xóa dòng có linkedProductId/linkedProduct.id hoặc status=success,
  *   nhưng không còn trỏ tới sản phẩm parent/child trong Kho gốc.
- * - Hàm này chỉ ghi channel_listings (MongoDB), tuyệt đối không gọi saveProducts().
+ * - Hàm này chỉ ghi channel_listings (MongoDB), tuyệt đối không gọi (await saveProducts()).
  */
-function purgeBrokenChannelListings(): {
+async function purgeBrokenChannelListings(): Promise<{
   scanned: number;
   purged: number;
   remaining: number;
@@ -5883,9 +5861,9 @@ function purgeBrokenChannelListings(): {
   missingMasterProduct: number;
   malformed: number;
   masterProductCount: number;
-} {
-  const listings = readChannelListingsDb();
-  const masterProducts = loadProducts();
+}> {
+  const listings = await readChannelListingsDb();
+  const masterProducts = await loadProducts();
   const masterLookup = buildMasterProductLookupById(masterProducts);
   const kept: any[] = [];
   let missingLinkedId = 0;
@@ -5925,7 +5903,7 @@ function purgeBrokenChannelListings(): {
 
   const purged = listings.length - kept.length;
   if (purged > 0) {
-    writeChannelListingsDb(kept);
+    await writeChannelListingsDb(kept);
   }
   console.log(
     `[Mapping Purge] scanned=${listings.length}, purged=${purged}, remaining=${kept.length}, missingLinkedId=${missingLinkedId}, missingMaster=${missingMasterProduct}, malformed=${malformed}, masterUntouched=${masterProducts.length}`,
@@ -5950,8 +5928,8 @@ async function upsertChannelListingsFromShopeeSync(
   // Reuse UPSERT batch (item_id + model_id) rồi gắn lại linkedProductId theo SKU/kho.
   await upsertChannelListingsBatch(asShopeeArray(syncedProducts), shopId, shopName);
 
-  const existing = readChannelListingsDb();
-  const masterProducts = loadProducts();
+  const existing = await readChannelListingsDb();
+  const masterProducts = await loadProducts();
   const byKey = new Map<string, any>();
 
   for (const listing of existing) {
@@ -6030,7 +6008,7 @@ async function upsertChannelListingsFromShopeeFetch(
   shopName: string,
 ): Promise<any[]> {
   await upsertChannelListingsBatch(asShopeeArray(syncedProducts), shopId, shopName);
-  const merged = readChannelListingsDb();
+  const merged = await readChannelListingsDb();
   console.log(`[Shopee Channel Fetch] Đã UPSERT ${merged.length} sản phẩm sàn shop_id=${shopId}`);
   return merged;
 }
@@ -6038,8 +6016,8 @@ async function upsertChannelListingsFromShopeeFetch(
 /**
  * Đọc Local Cache Master từ MongoDB (`products` + `channel_listings`).
  */
-function readLocalInventoryFileSync(): LocalInventoryCache {
-  const cache = loadLocalInventoryCache();
+async function readLocalInventoryFileSync(): LocalInventoryCache {
+  const cache = await loadLocalInventoryCache();
   if (!Array.isArray(cache.products) || cache.products.length === 0) {
     throw new Error(
       "MongoDB không có sản phẩm Kho gốc (products=[]). Hãy khởi tạo/sync dữ liệu trước."
@@ -6215,12 +6193,12 @@ function isListingAlreadyLinkedProtected(listing: any): boolean {
 }
 
 /** Ghi products MongoDB 1 lần — không cần refresh file cache. */
-function writeProductsFileOnly(products: any[]): void {
+async function writeProductsFileOnly(products: any[]): Promise<void> {
   ensureDataDirs();
   const list = Array.isArray(products)
     ? products.filter((p) => p != null && typeof p === "object")
     : [];
-  saveProductsToStore(list);
+  await saveProductsToStoreAsync(list);
   console.log(`[Batch Auto-link] Ghi MongoDB products xong — ${list.length} dòng.`);
 }
 
@@ -6270,7 +6248,7 @@ async function autoLinkSingleListingFromDatabase(opts?: {
   message: string;
   matchedProductId?: string;
 }> {
-  const dbListings = readChannelListingsDb();
+  const dbListings = await readChannelListingsDb();
   if (!Array.isArray(dbListings) || dbListings.length === 0) {
     throw new Error("Không có dữ liệu channel_listings để liên kết.");
   }
@@ -6281,7 +6259,7 @@ async function autoLinkSingleListingFromDatabase(opts?: {
   }
 
   const current = sanitizeChannelListingRow(dbListings[rowIndex]);
-  const masterProducts = loadProducts();
+  const masterProducts = await loadProducts();
   if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
     throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
   }
@@ -6332,7 +6310,7 @@ async function autoLinkSingleListingFromDatabase(opts?: {
 
   await upsertChannelListingToStore(patched);
   await flushDbWrites();
-  const cache = refreshCache();
+  const cache = await refreshCache();
   await sleep(1);
 
   const verifiedListings = enrichChannelListingsWithMaster(cache.listings, cache.products);
@@ -6378,11 +6356,11 @@ async function batchAutoLinkFromDatabase(opts?: {
     console.log("[Batch Auto-link] Bắt đầu đối chiếu từ Database hiện tại...");
 
     // ===== 2) LỌC DỮ LIỆU CŨ — CHỈ LẤY "CHƯA LIÊN KẾT" =====
-    const dbListings = readChannelListingsDb();
+    const dbListings = await readChannelListingsDb();
     if (!Array.isArray(dbListings) || dbListings.length === 0) {
       throw new Error("Không có dữ liệu channel_listings để liên kết.");
     }
-    const masterProducts = loadProducts();
+    const masterProducts = await loadProducts();
     if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
       throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
     }
@@ -6448,7 +6426,7 @@ async function batchAutoLinkFromDatabase(opts?: {
     }
 
     if (wroteChanges) {
-      writeChannelListingsDb(dbListings);
+      await writeChannelListingsDb(dbListings);
       await sleep(1);
     }
 
@@ -6570,8 +6548,8 @@ function resolveConnectedShopDisplayName(
 }
 
 /** Chỉ ĐỌC mapping từ MongoDB — tuyệt đối không ghi / không rebuild / không auto-link. */
-function readChannelListingsForGet(): any[] {
-  const existing = readChannelListingsDb();
+async function readChannelListingsForGet(): any[] {
+  const existing = await readChannelListingsDb();
   console.log(
     `[Mapping GET] Đọc DB (read-only): ${existing.length} dòng từ MongoDB @ ${getMongoUriMasked()}`
   );
@@ -7183,7 +7161,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/auth/verify", authMiddleware, (req: any, res) => {
+  app.get("/api/auth/verify", authMiddleware, async (req: any, res) => {
     res.json({ valid: true, username: req.user.username });
   });
 
@@ -7232,11 +7210,11 @@ async function startServer() {
     try {
       // BẮT BUỘC đọc lại từ DB bền vững (Mongo/JSON) — không tin mảng RAM trống sau restart.
       await reloadCachesFromDb();
-      const cache = loadLocalInventoryCache();
+      const cache = await loadLocalInventoryCache();
       const rawListings =
         Array.isArray(cache.listings) && cache.listings.length > 0
           ? cache.listings
-          : readChannelListingsForGet();
+          : await readChannelListingsForGet();
       const listings = enrichChannelListingsWithMaster(rawListings, cache.products);
       const successWithProduct = listings.filter(
         (l) =>
@@ -7259,7 +7237,7 @@ async function startServer() {
       console.error("[Mapping Products] GET lỗi:", error?.message || error);
       // Fallback an toàn — không để request văng HTML 500.
       try {
-        const raw = readChannelListingsForGet();
+        const raw = await readChannelListingsForGet();
         const safe = (Array.isArray(raw) ? raw : []).map((r) => sanitizeChannelListingRow(r));
         return res.status(200).json({
           success: true,
@@ -7290,7 +7268,7 @@ async function startServer() {
       console.log(`[Mapping Save] UPSERT nhận ${incoming.length} dòng (${req.method})`);
       const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
       if (sanitized.length === 1) {
-        const existing = readChannelListingsDb();
+        const existing = await readChannelListingsDb();
         const patch = sanitized[0];
         const existingIndex = findChannelListingRowIndex(existing, {
           id: patch.id,
@@ -7308,7 +7286,7 @@ async function startServer() {
         await writeChannelListingsDbAsync(sanitized);
       }
       await flushDbWrites();
-      const cache = refreshCache();
+      const cache = await refreshCache();
       console.log(`Đã lưu DB thành công — mapping upsert ${sanitized.length} dòng + refreshCache`);
       const verified = enrichChannelListingsWithMaster(cache.listings, cache.products);
       return res.status(200).json({
@@ -7330,11 +7308,12 @@ async function startServer() {
   };
 
   /** Heal chủ động — tách biệt hoàn toàn khỏi GET (không auto-ghi trên đọc). */
-  const handleMappingProductsHeal = (_req: any, res: any) => {
+  const handleMappingProductsHeal = async (_req: any, res: any) => {
     try {
-      const enriched = enrichChannelListingsWithMaster(readChannelListingsDb());
-      const healed = persistHealedBrokenMappingLinks(enriched);
-      const listings = enrichChannelListingsWithMaster(readChannelListingsDb());
+      const products = await loadProducts();
+      const enriched = enrichChannelListingsWithMaster(await readChannelListingsDb(), products);
+      const healed = await persistHealedBrokenMappingLinks(enriched);
+      const listings = enrichChannelListingsWithMaster(await readChannelListingsDb(), products);
       console.log(`[Mapping Products] HEAL xong: healed=${healed}, total=${listings.length}`);
       return res.status(200).json({
         success: true,
@@ -7424,11 +7403,11 @@ async function startServer() {
   app.post("/api/mapping-products/purge-broken", authMiddleware, async (_req, res) => {
     try {
       // 1) Tìm kiếm: mapping linkedProduct null/undefined hoặc ID không còn trong Kho gốc
-      const cache = loadLocalInventoryCache();
+      const cache = await loadLocalInventoryCache();
       const listings =
         Array.isArray(cache.listings) && cache.listings.length > 0
           ? cache.listings
-          : readChannelListingsDb();
+          : await readChannelListingsDb();
       const masterLookup = buildMasterProductLookupById(cache.products);
       const kept: any[] = [];
       let deletedCount = 0;
@@ -7466,9 +7445,9 @@ async function startServer() {
       }
 
       if (deletedCount > 0) {
-        writeChannelListingsDb(kept);
+        await writeChannelListingsDb(kept);
       }
-      const nextCache = refreshCache();
+      const nextCache = await refreshCache();
 
       return res.json({
         success: true,
@@ -7695,7 +7674,7 @@ async function startServer() {
   app.get("/api/products", authMiddleware, async (req, res) => {
     try {
       await reloadCachesFromDb();
-      const all = loadProducts();
+      const all = await loadProducts();
       const rawPage = Number(req.query?.page);
       const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
       const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
@@ -7741,12 +7720,12 @@ async function startServer() {
     }
   });
 
-  app.post("/api/products", authMiddleware, (req, res) => {
+  app.post("/api/products", authMiddleware, async (req, res) => {
     const body = req.body || {};
     if (!body.title || !body.sku) {
       return res.status(400).json({ error: "title_and_sku_required" });
     }
-    const products = loadProducts();
+    const products = await loadProducts();
     const product = {
       id: body.id || `prod-${Date.now()}`,
       title: String(body.title),
@@ -7769,9 +7748,9 @@ async function startServer() {
       lastSynced: new Date().toISOString(),
     };
     products.unshift(product);
-    // a) Lưu DB → saveProducts tự gọi refreshCache()
-    saveProducts(products);
-    const cache = loadLocalInventoryCache();
+    // a) Lưu DB → saveProducts tự gọi await refreshCache()
+    await saveProducts(products);
+    const cache = await loadLocalInventoryCache();
     // b+c) Trả product + inventory từ Local Cache để UI hiển thị ngay, không reload trang tổng.
     return res.status(201).json({
       ...product,
@@ -7783,7 +7762,7 @@ async function startServer() {
   app.get("/api/local-inventory", authMiddleware, async (_req, res) => {
     try {
       await reloadCachesFromDb();
-      const cache = loadLocalInventoryCache();
+      const cache = await loadLocalInventoryCache();
       return res.status(200).json({
         success: true,
         updatedAt: cache.updatedAt,
@@ -7803,9 +7782,9 @@ async function startServer() {
     }
   });
 
-  app.post("/api/local-inventory/refresh", authMiddleware, (_req, res) => {
+  app.post("/api/local-inventory/refresh", authMiddleware, async (_req, res) => {
     try {
-      const cache = refreshCache();
+      const cache = await refreshCache();
       return res.status(200).json({
         success: true,
         updatedAt: cache.updatedAt,
@@ -7820,27 +7799,27 @@ async function startServer() {
     }
   });
 
-  app.put("/api/products/replace", authMiddleware, (req, res) => {
+  app.put("/api/products/replace", authMiddleware, async (req, res) => {
     const incoming = req.body?.products;
     if (!Array.isArray(incoming)) {
       return res.status(400).json({ error: "products_array_required" });
     }
-    saveProducts(incoming);
+    await saveProducts(incoming);
     return res.json({ count: incoming.length, products: incoming });
   });
 
-  app.patch("/api/products/:id", authMiddleware, (req, res) => {
-    const products = loadProducts();
+  app.patch("/api/products/:id", authMiddleware, async (req, res) => {
+    const products = await loadProducts();
     const patch = req.body || {};
     const topIndex = products.findIndex((p: any) => p.id === req.params.id);
     if (topIndex !== -1) {
       const before = products[topIndex];
       const merged = mergeProductPatch(before, patch);
       products[topIndex] = merged;
-      saveProducts(products);
+      await saveProducts(products);
       const changes = detectStockPriceChanges(before, merged);
       if (changes.stock || changes.price) {
-        enqueueShopeeStockPriceSync([merged], {
+        await enqueueShopeeStockPriceSync([merged], {
           syncStock: changes.stock,
           syncPrice: changes.price,
         });
@@ -7859,10 +7838,10 @@ async function startServer() {
       nextChildren[childIdx] = mergedChild;
       const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
       products[i] = { ...products[i], children: nextChildren, stock: totalStock };
-      saveProducts(products);
+      await saveProducts(products);
       const changes = detectStockPriceChanges(beforeChild, mergedChild);
       if (changes.stock || changes.price) {
-        enqueueShopeeStockPriceSync([mergedChild], {
+        await enqueueShopeeStockPriceSync([mergedChild], {
           syncStock: changes.stock,
           syncPrice: changes.price,
         });
@@ -7893,7 +7872,7 @@ async function startServer() {
         return res.status(400).json({ success: false, message: "Dữ liệu cân bằng kho không hợp lệ." });
       }
 
-      const products = loadProducts();
+      const products = await loadProducts();
       let updatedCount = 0;
       const next = products.map((p: any) => {
         const children = getProductChildrenList(p);
@@ -7924,11 +7903,11 @@ async function startServer() {
         skuStockMap.has(String(p.sku || "").trim())
       );
 
-      saveProducts(next);
+      await saveProducts(next);
       console.log(`[Inventory Balance] Cập nhật kho gốc ${updatedCount} SKU`);
 
       // Đồng bộ Shopee qua hàng đợi (rate-limit) — chỉ SKU đã Mapping / có item_id.
-      const queued = enqueueShopeeStockPriceSync(updatedProducts, {
+      const queued = await enqueueShopeeStockPriceSync(updatedProducts, {
         syncStock: true,
         syncPrice: false,
       });
@@ -7960,7 +7939,7 @@ async function startServer() {
   app.post("/api/sync-stock", authMiddleware, async (req, res) => {
     try {
       // Đồng bộ 1 CHIỀU: Kho gốc (Master) → Sàn. Không kéo tồn từ Sàn đè Kho gốc.
-      const products = loadProducts();
+      const products = await loadProducts();
       const shopId = resolveShopeeTokenShopId(req.body?.shopId);
       const warnings: string[] = [];
 
@@ -8010,7 +7989,7 @@ async function startServer() {
         },
         tiktok: { updated: 0, message: "TikTok Shop API chưa được tích hợp trên server." },
         warnings,
-        products: loadProducts(),
+        products: await loadProducts(),
       });
     } catch (err: unknown) {
       console.error("[Sync Stock]", err);
@@ -8018,7 +7997,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/products/bulk-save", authMiddleware, (req, res) => {
+  app.post("/api/products/bulk-save", authMiddleware, async (req, res) => {
     const updates = req.body?.updates;
     if (!Array.isArray(updates) || updates.length === 0) {
       return res.status(400).json({ error: "updates_required" });
@@ -8027,7 +8006,7 @@ async function startServer() {
     for (const u of updates) {
       if (u?.id) patchMap.set(String(u.id), u);
     }
-    const products = loadProducts();
+    const products = await loadProducts();
     const beforeFlat = flattenProductsForStockSync(products);
     let updatedCount = 0;
     const changedRows: any[] = [];
@@ -8067,7 +8046,7 @@ async function startServer() {
       );
       return { ...p, children: nextChildren, stock: totalStock };
     });
-    saveProducts(next);
+    await saveProducts(next);
     if (changedRows.length > 0) {
       const anyStock = changedRows.some((row) => {
         const before = beforeFlat.find((b: any) => String(b.id) === String(row.id));
@@ -8077,15 +8056,15 @@ async function startServer() {
         const before = beforeFlat.find((b: any) => String(b.id) === String(row.id));
         return detectStockPriceChanges(before || {}, row).price;
       });
-      enqueueShopeeStockPriceSync(changedRows, { syncStock: anyStock, syncPrice: anyPrice });
+      await enqueueShopeeStockPriceSync(changedRows, { syncStock: anyStock, syncPrice: anyPrice });
     }
     return res.json({ updated: updatedCount, products: next });
   });
 
-  app.delete("/api/products/:id", authMiddleware, (req, res) => {
+  app.delete("/api/products/:id", authMiddleware, async (req, res) => {
     try {
       const id = String(req.params.id);
-      const products = loadProducts();
+      const products = await loadProducts();
       let found = false;
       const next: any[] = [];
 
@@ -8114,7 +8093,7 @@ async function startServer() {
       if (!found) {
         return res.status(404).json({ error: "product_not_found" });
       }
-      saveProducts(next);
+      await saveProducts(next);
       return res.json({ deleted: id, success: true });
     } catch (err: unknown) {
       console.error("[Products] DELETE failed:", err);
@@ -8125,23 +8104,23 @@ async function startServer() {
     }
   });
 
-  app.post("/api/products/clear-all", authMiddleware, (_req, res) => {
-    saveProducts([]);
+  app.post("/api/products/clear-all", authMiddleware, async (_req, res) => {
+    await saveProducts([]);
     return res.json({ success: true, cleared: true, products: [] });
   });
 
   /** Xóa sạch Kho gốc + Mapping (để test sync sạch). */
-  const handleInventoryClearAll = (_req: any, res: any) => {
+  const handleInventoryClearAll = async (_req: any, res: any) => {
     try {
-      saveProducts([]);
-      writeChannelListingsDb([]);
+      await saveProducts([]);
+      await writeChannelListingsDb([]);
       try {
         writeProductListingsDb([]);
       } catch {
         /* optional */
       }
-      // saveProducts([]) refresh cache trước khi mapping bị xóa; refresh lại để cache đồng bộ cả hai DB.
-      refreshCache();
+      // await saveProducts([]) refresh cache trước khi mapping bị xóa; refresh lại để cache đồng bộ cả hai DB.
+      await refreshCache();
       console.log("[Inventory] Đã xóa sạch Kho gốc (products) + Mapping (channel_listings).");
       return res.status(200).json({
         success: true,
@@ -8163,7 +8142,7 @@ async function startServer() {
   app.delete("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
   app.post("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
 
-  app.post("/api/products/bulk-update", authMiddleware, (req, res) => {
+  app.post("/api/products/bulk-update", authMiddleware, async (req, res) => {
     const { productIds, stock, price } = req.body || {};
     if (!Array.isArray(productIds) || productIds.length === 0) {
       return res.status(400).json({ error: "productIds_required" });
@@ -8172,7 +8151,7 @@ async function startServer() {
       return res.status(400).json({ error: "stock_or_price_required" });
     }
     const idSet = new Set(productIds.map(String));
-    const products = loadProducts();
+    const products = await loadProducts();
     let updatedCount = 0;
     const changedRows: any[] = [];
     const next = products.map((p: any) => {
@@ -8204,9 +8183,9 @@ async function startServer() {
       changedRows.push(merged);
       return merged;
     });
-    saveProducts(next);
+    await saveProducts(next);
     if (changedRows.length > 0) {
-      enqueueShopeeStockPriceSync(changedRows, {
+      await enqueueShopeeStockPriceSync(changedRows, {
         syncStock: !!stock,
         syncPrice: !!price,
       });
@@ -8226,7 +8205,7 @@ async function startServer() {
         : ["shopee"];
 
       const idSet = new Set(productIds.map(String));
-      const products = flattenProductsForStockSync(loadProducts()).filter((p: any) => idSet.has(p.id));
+      const products = flattenProductsForStockSync(await loadProducts()).filter((p: any) => idSet.has(p.id));
       if (products.length === 0) {
         return res.status(404).json({ error: "Không tìm thấy sản phẩm nào trong kho." });
       }
@@ -8296,12 +8275,12 @@ async function startServer() {
       );
 
       if (syncedProductIds.size > 0) {
-        const allProducts = loadProducts();
+        const allProducts = await loadProducts();
         const now = new Date().toISOString();
         const next = allProducts.map((p: any) =>
           syncedProductIds.has(p.id) ? { ...p, lastSynced: now } : p
         );
-        saveProducts(next);
+        await saveProducts(next);
       }
 
       return res.json({
@@ -8310,7 +8289,7 @@ async function startServer() {
         successCount,
         failCount,
         total: logs.length,
-        products: loadProducts(),
+        products: await loadProducts(),
       });
     } catch (error: any) {
       console.error("[Bulk Channel Sync]", error);
@@ -8322,11 +8301,11 @@ async function startServer() {
   });
 
   // --- Suppliers API (data/suppliers.json) ---
-  app.get("/api/suppliers", authMiddleware, (_req, res) => {
+  app.get("/api/suppliers", authMiddleware, async (_req, res) => {
     return res.json(loadSuppliers());
   });
 
-  app.post("/api/suppliers", authMiddleware, (req, res) => {
+  app.post("/api/suppliers", authMiddleware, async (req, res) => {
     const body = req.body || {};
     if (!body.name?.trim() || !body.supplierCode?.trim()) {
       return res.status(400).json({ error: "name_and_supplierCode_required" });
@@ -8350,7 +8329,7 @@ async function startServer() {
     return res.status(201).json({ supplier, suppliers });
   });
 
-  app.put("/api/suppliers/:id", authMiddleware, (req, res) => {
+  app.put("/api/suppliers/:id", authMiddleware, async (req, res) => {
     const suppliers = loadSuppliers();
     const index = suppliers.findIndex((s) => s.id === req.params.id);
     if (index === -1) {
@@ -8376,7 +8355,7 @@ async function startServer() {
     return res.json({ supplier: updated, suppliers });
   });
 
-  app.delete("/api/suppliers/:id", authMiddleware, (req, res) => {
+  app.delete("/api/suppliers/:id", authMiddleware, async (req, res) => {
     const suppliers = loadSuppliers();
     const target = suppliers.find((s) => s.id === req.params.id);
     if (!target) {
@@ -8390,20 +8369,20 @@ async function startServer() {
     return res.json({ deleted: req.params.id, suppliers: next });
   });
 
-  app.post("/api/suppliers/clear-all", authMiddleware, (_req, res) => {
+  app.post("/api/suppliers/clear-all", authMiddleware, async (_req, res) => {
     saveSuppliers([]);
     console.log("[Suppliers] Đã xóa sạch toàn bộ dữ liệu nhà cung cấp.");
     return res.json({ success: true, cleared: true, suppliers: [] });
   });
 
   // --- Imports API (data/imports.json) ---
-  app.get("/api/imports", authMiddleware, (_req, res) => {
+  app.get("/api/imports", authMiddleware, async (_req, res) => {
     return res.json(loadImports());
   });
 
-  app.get("/api/imports/product-context/:productId", authMiddleware, (req, res) => {
+  app.get("/api/imports/product-context/:productId", authMiddleware, async (req, res) => {
     const productId = String(req.params.productId);
-    const products = loadProducts();
+    const products = await loadProducts();
     const product = products.find((p: any) => p.id === productId);
     if (!product) {
       return res.status(404).json({ error: "product_not_found" });
@@ -8432,7 +8411,7 @@ async function startServer() {
     });
   });
 
-  app.post("/api/imports", authMiddleware, (req, res) => {
+  app.post("/api/imports", authMiddleware, async (req, res) => {
     const body = req.body || {};
     if (!body.supplierId || !body.productId || !body.quantity || !body.newImportPrice) {
       return res.status(400).json({ error: "import_fields_required" });
@@ -8465,18 +8444,18 @@ async function startServer() {
     return res.status(201).json({ import: entry, imports });
   });
 
-  app.post("/api/imports/clear-all", authMiddleware, (_req, res) => {
+  app.post("/api/imports/clear-all", authMiddleware, async (_req, res) => {
     saveImports([]);
     console.log("[Imports] Đã xóa sạch toàn bộ lịch sử nhập hàng.");
     return res.json({ success: true, cleared: true, imports: [] });
   });
 
   // --- Expenses API (data/expenses.json) ---
-  app.get("/api/expenses", authMiddleware, (_req, res) => {
+  app.get("/api/expenses", authMiddleware, async (_req, res) => {
     return res.json(loadExpenses());
   });
 
-  app.post("/api/expenses", authMiddleware, (req, res) => {
+  app.post("/api/expenses", authMiddleware, async (req, res) => {
     const body = req.body || {};
     if (!body.title?.trim() || !body.amount || !body.category || !body.date) {
       return res.status(400).json({ error: "expense_fields_required" });
@@ -8495,7 +8474,7 @@ async function startServer() {
     return res.status(201).json({ expense: entry, expenses });
   });
 
-  app.delete("/api/expenses/:id", authMiddleware, (req, res) => {
+  app.delete("/api/expenses/:id", authMiddleware, async (req, res) => {
     const expenses = loadExpenses();
     const next = expenses.filter((e: any) => e.id !== req.params.id);
     if (next.length === expenses.length) {
@@ -8505,21 +8484,21 @@ async function startServer() {
     return res.json({ deleted: req.params.id, expenses: next });
   });
 
-  app.post("/api/expenses/clear-all", authMiddleware, (_req, res) => {
+  app.post("/api/expenses/clear-all", authMiddleware, async (_req, res) => {
     saveExpenses([]);
     console.log("[Expenses] Đã xóa sạch toàn bộ chi phí doanh nghiệp.");
     return res.json({ success: true, cleared: true, expenses: [] });
   });
 
   // --- Dashboard API ---
-  app.get("/api/dashboard", authMiddleware, (req, res) => {
+  app.get("/api/dashboard", authMiddleware, async (req, res) => {
     try {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       const dateRange = String(req.query.date_range || "last_7_days");
       const range = getDashboardDateRange(dateRange);
       const allOrders = loadOrders();
       const orders = allOrders.filter(isDashboardOrder);
-      const products = loadProducts();
+      const products = await loadProducts();
 
       const ordersInRange = orders.filter((o: any) =>
         isDateInRange(String(o.date || ""), range.start, range.end)
@@ -8629,7 +8608,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/check-new-orders", authMiddleware, (req, res) => {
+  app.get("/api/check-new-orders", authMiddleware, async (req, res) => {
     const sinceRaw = String(req.query.since || "").trim();
     let sinceMs = sinceRaw ? Date.parse(sinceRaw) : Date.now() - 60_000;
     if (!Number.isFinite(sinceMs)) {
@@ -8654,8 +8633,8 @@ async function startServer() {
     });
   });
 
-  app.get("/api/orders", authMiddleware, (req, res) => {
-    const products = loadProducts();
+  app.get("/api/orders", authMiddleware, async (req, res) => {
+    const products = await loadProducts();
     let rawOrders = loadOrders().filter(isValidOrder);
     let dirty = false;
     rawOrders = rawOrders.map((o: any) => {
@@ -8677,7 +8656,7 @@ async function startServer() {
       .replace(/[\s\-_#./\\|:;,]+/g, "");
   }
 
-  function buildScanLookupKeys(raw: string): string[] {
+  async function buildScanLookupKeys(raw: string): string[] {
     const text = String(raw || "").trim();
     if (!text) return [];
     const keys = new Set<string>();
@@ -8743,8 +8722,8 @@ async function startServer() {
   }
 
   /** Flexible OR: orderSn OR trackingNumber OR packageNumber — index O(1) first, suffix fallback. */
-  function findOrderByScanLookup(orders: any[], raw: string): any | null {
-    const scanKeys = buildScanLookupKeys(raw);
+  async function findOrderByScanLookup(orders: any[], raw: string): any | null {
+    const scanKeys = await buildScanLookupKeys(raw);
     if (!scanKeys.length) return null;
 
     const idx = getOrderLookupIndex(orders);
@@ -8797,14 +8776,14 @@ async function startServer() {
   }
 
   // Lookup order by scanned QR/barcode — matches orderSn OR trackingNumber OR internalTrackingCode OR packageNumber.
-  app.get("/api/orders/lookup", authMiddleware, (req, res) => {
+  app.get("/api/orders/lookup", authMiddleware, async (req, res) => {
     const code = String(req.query.code || req.query.q || "").trim();
     if (!code) {
       return res.status(400).json({ error: "Thi\u1EBFu m\u00E3 qu\u00E9t (code)." });
     }
-    const products = loadProducts();
+    const products = await loadProducts();
     const orders = enrichOrdersFromCatalog(loadOrders().filter(isValidOrder), products);
-    const found = findOrderByScanLookup(orders, code);
+    const found = await findOrderByScanLookup(orders, code);
     if (!found) {
       return res.status(404).json({
         error: "Kh\u00F4ng t\u00ECm th\u1EA5y \u0111\u01A1n h\u00E0ng kh\u1EDBp m\u00E3 qu\u00E9t.",
@@ -8816,7 +8795,7 @@ async function startServer() {
 
   // Cleanup utility: permanently DELETE broken/mock order records (0đ total AND
   // no items) from the local database so they stop polluting the data file.
-  app.post("/api/orders/cleanup-mock", authMiddleware, (req, res) => {
+  app.post("/api/orders/cleanup-mock", authMiddleware, async (req, res) => {
     const orders = loadOrders();
     const validOrders = orders.filter(isValidOrder);
     const removedOrders = orders.filter((o: any) => !isValidOrder(o));
@@ -8835,7 +8814,7 @@ async function startServer() {
   });
 
   // Update a real order's status/tracking after a warehouse/UI action.
-  app.patch("/api/orders/:id", authMiddleware, (req, res) => {
+  app.patch("/api/orders/:id", authMiddleware, async (req, res) => {
     const orders = loadOrders();
     const index = orders.findIndex((o: any) => o.id === req.params.id);
     if (index === -1) {
@@ -8972,7 +8951,7 @@ async function startServer() {
     return `DIRECT-${Math.floor(100000 + Math.random() * 900000)}`;
   };
 
-  app.post("/api/orders/manual", authMiddleware, (req, res) => {
+  app.post("/api/orders/manual", authMiddleware, async (req, res) => {
     try {
       const body = req.body || {};
       const {
@@ -9249,7 +9228,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/shopee/orders/sync/job/:jobId", authMiddleware, (req, res) => {
+  app.get("/api/shopee/orders/sync/job/:jobId", authMiddleware, async (req, res) => {
     const job = orderSyncJobs.get(String(req.params.jobId || ""));
     if (!job) {
       return res.status(404).json({
@@ -9508,13 +9487,13 @@ async function startServer() {
       let listingsCount = 0;
       try {
         await flushDbWrites();
-        listingsCount = readChannelListingsDb().length;
+        listingsCount = (await readChannelListingsDb()).length;
       } catch {
         listingsCount = pageResult.rowsSaved;
       }
       // Đồng bộ Local Cache Master sau mỗi trang sync (không quét từng item).
       try {
-        refreshCache();
+        await refreshCache();
       } catch (cacheErr: unknown) {
         console.error("[Sync From Shop] refreshCache thất bại:", cacheErr);
       }
@@ -9607,7 +9586,7 @@ async function startServer() {
       const reset = req.body?.reset === true || offset === 0;
 
       if (reset) {
-        clearExistingShopeeWarehouseProducts();
+        await clearExistingShopeeWarehouseProducts();
       }
 
       console.log(
@@ -9691,9 +9670,9 @@ async function startServer() {
         return res.status(404).json({ success: false, error: "no_variants_found", message: "Không lấy được phân loại từ Shopee.", details: "no_variants_found" });
       }
 
-      const allProducts = loadProducts();
+      const allProducts = await loadProducts();
       const merged = replaceProductsForShopeeItem(allProducts, String(itemId), variantProducts);
-      saveProducts(merged);
+      await saveProducts(merged);
 
       console.log(`[Shopee Variant Sync] item_id=${itemId} -> ${variantProducts.length} dong (modelCount=${modelCount})`);
       return res.json({
@@ -10471,7 +10450,7 @@ async function startServer() {
     });
   });
 
-  app.get("/api/shopee/ship-order/job/:jobId", authMiddleware, (req, res) => {
+  app.get("/api/shopee/ship-order/job/:jobId", authMiddleware, async (req, res) => {
     const job = shipOrderJobs.get(String(req.params.jobId || ""));
     if (!job) {
       return res.status(404).json({
@@ -10732,7 +10711,7 @@ async function startServer() {
     });
   };
 
-  app.get("/api/settings/channels", authMiddleware, (_req, res) => {
+  app.get("/api/settings/channels", authMiddleware, async (_req, res) => {
     try {
       const settings = loadChannelSettings();
       return res.json({
@@ -10751,7 +10730,7 @@ async function startServer() {
     }
   });
 
-  app.put("/api/settings/channels", authMiddleware, (req, res) => {
+  app.put("/api/settings/channels", authMiddleware, async (req, res) => {
     try {
       const incoming = req.body?.settings;
       if (!incoming || typeof incoming !== "object") {
@@ -10797,7 +10776,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/settings/gemini-status", authMiddleware, (_req, res) => {
+  app.get("/api/settings/gemini-status", authMiddleware, async (_req, res) => {
     const key = process.env.GEMINI_API_KEY || "";
     const configured = Boolean(key && key !== "chua_co_key_tam_thoi");
     return res.json({
@@ -10807,7 +10786,7 @@ async function startServer() {
     });
   });
 
-  app.post("/api/settings/update-gemini-key", authMiddleware, (req, res) => {
+  app.post("/api/settings/update-gemini-key", authMiddleware, async (req, res) => {
     try {
       const { apiKey } = req.body || {};
       const trimmed = String(apiKey || "").trim();
@@ -10928,7 +10907,7 @@ async function startServer() {
     return { online: false, message: "Nền tảng không hỗ trợ" };
   }
 
-  app.get("/api/shopee/oauth-shops", authMiddleware, (_req, res) => {
+  app.get("/api/shopee/oauth-shops", authMiddleware, async (_req, res) => {
     const tokens = loadShopeeTokens();
     const shopIds = listShopeeOAuthShopIds();
     const details = shopIds.map((id) => ({
@@ -10950,7 +10929,7 @@ async function startServer() {
     });
   });
 
-  app.get("/api/shopee/auth-url", authMiddleware, (req, res) => {
+  app.get("/api/shopee/auth-url", authMiddleware, async (req, res) => {
     if (!isShopeeConfigValid()) {
       return res.status(500).json({
         success: false,
@@ -11277,11 +11256,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   });
 
-  app.get("/api/multi-channel/listing", authMiddleware, (_req, res) => {
+  app.get("/api/multi-channel/listing", authMiddleware, async (_req, res) => {
     return res.json({ success: true, listings: readListingsDb() });
   });
 
-  app.post("/api/multi-channel/listing", authMiddleware, (req, res) => {
+  app.post("/api/multi-channel/listing", authMiddleware, async (req, res) => {
     try {
       const payload = req.body || {};
       const listings = readListingsDb();
@@ -11331,10 +11310,10 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     return "pending";
   };
 
-  app.get("/api/product-listings", authMiddleware, (_req, res) => {
+  app.get("/api/product-listings", authMiddleware, async (_req, res) => {
     try {
       const rows = readProductListingsDb();
-      const products = loadProducts();
+      const products = await loadProducts();
       const byProduct = new Map<string, any[]>();
 
       for (const row of rows) {
@@ -11374,13 +11353,13 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   });
 
-  app.post("/api/product-listings/clear-all", authMiddleware, (_req, res) => {
+  app.post("/api/product-listings/clear-all", authMiddleware, async (_req, res) => {
     writeProductListingsDb([]);
     return res.json({ success: true, cleared: true, groups: [] });
   });
 
-  app.post("/api/catalog/wipe-all", authMiddleware, (_req, res) => {
-    saveProducts([]);
+  app.post("/api/catalog/wipe-all", authMiddleware, async (_req, res) => {
+    await saveProducts([]);
     saveImports([]);
     writeListingsDb([]);
     writeProductListingsDb([]);
@@ -11395,7 +11374,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     });
   });
 
-  app.post("/api/multi-channel/publish", authMiddleware, (req, res) => {
+  app.post("/api/multi-channel/publish", authMiddleware, async (req, res) => {
     try {
       const payload = req.body || {};
       const {
@@ -11407,7 +11386,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       } = payload;
 
       const productId = warehouseProductId || payload.product_id || "unknown";
-      const product = loadProducts().find((p: any) => p.id === productId);
+      const product = (await loadProducts()).find((p: any) => p.id === productId);
       const batchId = `batch-${Date.now()}`;
       const now = new Date().toISOString();
       const allRows = readProductListingsDb();
@@ -11499,12 +11478,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     fs.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
 
-  app.get("/api/publish-edit", authMiddleware, (_req, res) => {
+  app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
     return res.json({ success: true, config: db.config, meta: db.meta });
   });
 
-  app.post("/api/publish-edit/config", authMiddleware, (req, res) => {
+  app.post("/api/publish-edit/config", authMiddleware, async (req, res) => {
     try {
       const db = readPublishEditDb();
       db.config = { ...db.config, ...req.body, updated_at: new Date().toISOString() };
@@ -11515,7 +11494,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   });
 
-  app.post("/api/publish-edit/batch-titles", authMiddleware, (req, res) => {
+  app.post("/api/publish-edit/batch-titles", authMiddleware, async (req, res) => {
     try {
       const { assignments = [] } = req.body || {};
       const db = readPublishEditDb();
@@ -11535,7 +11514,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   });
 
-  app.post("/api/publish-edit/save-framed-image", authMiddleware, (req, res) => {
+  app.post("/api/publish-edit/save-framed-image", authMiddleware, async (req, res) => {
     try {
       const { productId, imageDataUrl, framedHash } = req.body || {};
       if (!productId || !imageDataUrl) {
@@ -11550,11 +11529,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       fs.writeFileSync(path.join(FRAMED_IMAGES_DIR, filename), buf);
 
       const imageUrl = `/api/framed-images/${productId}`;
-      const products = loadProducts();
+      const products = await loadProducts();
       const idx = products.findIndex((p: any) => p.id === productId);
       if (idx >= 0) {
         products[idx] = { ...products[idx], imageUrl };
-        saveProducts(products);
+        await saveProducts(products);
       }
 
       const db = readPublishEditDb();
@@ -11647,7 +11626,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       await initMongo(APP_ROOT);
       await hydrateChannelListingsOnBoot();
     } catch (err) {
-      console.error("[Boot] MongoDB init failed:", err);
+      console.error("[Boot] MongoDB init failed — server sẽ không listen:", err);
+      // Không chạy API với DB trống (tránh mất dữ liệu khi refresh).
+      if (process.env.ALLOW_START_WITHOUT_MONGO !== "1") {
+        process.exitCode = 1;
+        return;
+      }
     }
     startAutoOrderSyncScheduler();
     if (process.env.PORT) {
