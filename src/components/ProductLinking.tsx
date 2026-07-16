@@ -381,6 +381,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   
   // Chỉ giữ các thao tác live data từ Database hiện tại.
   const [isAutoLinking, setIsAutoLinking] = useState(false);
+  const [autoLinkProgress, setAutoLinkProgress] = useState({ current: 0, total: 0 });
   const [isPurgingBroken, setIsPurgingBroken] = useState(false);
 
   // Manual Mapping Modal state
@@ -650,7 +651,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   };
 
   // Handler to auto link a single channel product
-  const handleAutoLinkIndividual = (item: ChannelListing) => {
+  const handleAutoLinkIndividual = async (
+    item: ChannelListing,
+    opts?: { silent?: boolean }
+  ): Promise<boolean> => {
+    const silent = opts?.silent === true;
+
     // 1. Try to match by SKU
     if (item.sku) {
       const matchedBySku = flattenedMasterProducts.find(
@@ -672,17 +678,19 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           }
           return listing;
         }));
-        onUpdateProduct(applyProductChannelLink(matchedBySku, item), { save: true });
-        showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" với SKU "${item.sku}"!`);
-        onAddLog({
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
-          type: 'product_sync',
-          status: 'success',
-          message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính sản phẩm [${matchedBySku.sku}]`
-        });
-        return;
+        await Promise.resolve(onUpdateProduct(applyProductChannelLink(matchedBySku, item), { save: true }));
+        if (!silent) {
+          showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" với SKU "${item.sku}"!`);
+          onAddLog({
+            id: `log-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
+            type: 'product_sync',
+            status: 'success',
+            message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính sản phẩm [${matchedBySku.sku}]`
+          });
+        }
+        return true;
       }
     }
 
@@ -710,20 +718,25 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         }
         return listing;
       }));
-      onUpdateProduct(applyProductChannelLink(matchedByName, item), { save: true });
-      showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" theo Tên tương đồng!`);
-      onAddLog({
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
-        type: 'product_sync',
-        status: 'success',
-        message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính [${matchedByName.title}]`
-      });
-      return;
+      await Promise.resolve(onUpdateProduct(applyProductChannelLink(matchedByName, item), { save: true }));
+      if (!silent) {
+        showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" theo Tên tương đồng!`);
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
+          type: 'product_sync',
+          status: 'success',
+          message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính [${matchedByName.title}]`
+        });
+      }
+      return true;
     }
 
-    showToast(`Không tìm thấy sản phẩm có SKU hoặc Tên tương tự trong Kho chính.`);
+    if (!silent) {
+      showToast(`Không tìm thấy sản phẩm có SKU hoặc Tên tương tự trong Kho chính.`);
+    }
+    return false;
   };
 
   const handleConfirmInitToWarehouse = async () => {
@@ -813,88 +826,32 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
   const handleAutoLinkBySku = async () => {
     setIsAutoLinking(true);
+    setAutoLinkProgress({ current: 0, total: 0 });
     try {
-      const token = localStorage.getItem('admin_token');
-      if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
-      const batchLimit = 50;
-      let cursor = 0;
-      let loopGuard = 0;
-      let totalLinked = 0;
-      let remaining = 0;
-      let lastMessage = '';
-
-      while (true) {
-        loopGuard += 1;
-        if (loopGuard > 1000) {
-          throw new Error('Liên kết tự động bị dừng để tránh lặp vô hạn.');
-        }
-
-        const res = await apiFetch('/api/mapping-products/batch-auto-link', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ cursor, limit: batchLimit }),
-        });
-        const data = await parseJsonResponse<{
-          success?: boolean;
-          data?: {
-            linkedCount?: number;
-            listings?: ChannelListing[];
-            alreadyLinked?: number;
-            unlinkedRemaining?: number;
-            scannedCount?: number;
-            nextCursor?: number;
-            hasMore?: boolean;
-          };
-          linkedCount?: number;
-          listings?: ChannelListing[];
-          message?: string;
-          error?: string;
-        }>(res);
-
-        if (!res.ok || data.success === false) {
-          throw new Error(data?.message || data?.error || 'Liên kết tự động thất bại.');
-        }
-
-        const payload = data.data || data;
-        const linkedCount = Number(payload.linkedCount ?? data.linkedCount ?? 0);
-        const patches = payload.listings ?? data.listings;
-        const scannedCount = Number(payload.scannedCount ?? 0);
-        const nextCursor = Number(payload.nextCursor ?? cursor);
-        const hasMore = payload.hasMore === true;
-        remaining = Number(payload.unlinkedRemaining ?? 0);
-        lastMessage = data.message || '';
-        totalLinked += linkedCount;
-
-        if (Array.isArray(patches) && patches.length > 0) {
-          const byId = new Map<string, ChannelListing>();
-          for (const row of patches) {
-            const n = normalizeListingRecord(row);
-            if (n) byId.set(String(n.id), n);
-          }
-          setListings((prev) => {
-            const next = prev.map((row) => byId.get(String(row.id)) || row);
-            for (const [id, row] of byId) {
-              if (!next.some((r) => String(r.id) === id)) next.push(row);
-            }
-            return next;
-          });
-        }
-
-        if (!hasMore || remaining <= 0 || scannedCount <= 0 || nextCursor <= cursor) {
-          cursor = nextCursor;
-          break;
-        }
-
-        cursor = nextCursor;
+      const unlinkedVisibleListings = filteredListings.filter((item) => item?.status === 'unlinked');
+      if (unlinkedVisibleListings.length === 0) {
+        showToast('Không có sản phẩm chưa liên kết trong danh sách đang hiển thị.');
+        return;
       }
 
+      let processed = 0;
+      let totalLinked = 0;
+      const total = unlinkedVisibleListings.length;
+      setAutoLinkProgress({ current: 0, total });
+
+      for (const item of unlinkedVisibleListings) {
+        const linked = await handleAutoLinkIndividual(item, { silent: true });
+        processed += 1;
+        if (linked) totalLinked += 1;
+        setAutoLinkProgress({ current: processed, total });
+      }
+
+      await refreshListingsFromDb({ forceRefresh: true });
+
       if (totalLinked > 0) {
-        showToast(`Đã liên kết thành công ${totalLinked} sản phẩm`);
+        showToast(`Đã liên kết thành công ${totalLinked}/${total} sản phẩm`);
       } else {
-        showToast(lastMessage || 'Không tìm thấy SKU trùng khớp trong Database hiện tại.');
+        showToast(`Đã chạy xong ${total} sản phẩm nhưng không tìm thấy SKU/Tên phù hợp.`);
       }
 
       onAddLog({
@@ -905,8 +862,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         status: totalLinked > 0 ? 'success' : 'failed',
         message:
           totalLinked > 0
-            ? `Liên kết tự động (batch): ${totalLinked} sản phẩm`
-            : lastMessage || 'Liên kết tự động không tìm thấy SKU trùng khớp.',
+            ? `Liên kết tự động frontend: ${totalLinked}/${total} sản phẩm`
+            : `Liên kết tự động frontend không tìm thấy SKU/Tên phù hợp trong ${total} sản phẩm.`,
       });
     } catch (err: unknown) {
       const message = (err as Error)?.message || 'Liên kết tự động thất bại.';
@@ -921,6 +878,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       });
     } finally {
       setIsAutoLinking(false);
+      setAutoLinkProgress({ current: 0, total: 0 });
     }
   };
 
@@ -1117,7 +1075,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             {isAutoLinking ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Đang liên kết...</span>
+                <span>
+                  {autoLinkProgress.total > 0
+                    ? `Đang liên kết (${autoLinkProgress.current}/${autoLinkProgress.total})...`
+                    : 'Đang liên kết...'}
+                </span>
               </>
             ) : (
               <>
@@ -1407,7 +1369,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
                             {/* 1. Liên kết tự động */}
                             <div className="relative group">
                               <button
-                                onClick={() => handleAutoLinkIndividual(item)}
+                                onClick={() => void handleAutoLinkIndividual(item)}
                                 className="p-1.5 border border-blue-200 hover:border-blue-500 rounded-lg text-blue-600 hover:bg-blue-50 transition-all cursor-pointer flex items-center justify-center bg-white"
                                 type="button"
                               >
