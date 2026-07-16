@@ -11,14 +11,17 @@ import {
   initMongo,
   loadProductsFromStore,
   saveProductsToStore,
+  saveProductsToStoreAsync,
   loadChannelListingsFromStore,
   saveChannelListingsToStore,
+  saveChannelListingsToStoreAsync,
   upsertChannelListingToStore,
   buildLocalInventoryCacheFromStore,
   countProducts,
   countChannelListings,
   seedStoreFromArrays,
   flushDbWrites,
+  reloadCachesFromDb,
   isMongoReady,
   getMongoUriMasked,
   type LocalInventoryCache,
@@ -3450,11 +3453,11 @@ function resolveUpsertItemModelFromRow(item: any): { itemId: string; modelId: st
  * Có rồi → cập nhật; chưa có → thêm. Không dùng insert/create thuần (tránh duplicate crash).
  * Caller phải await và yield giữa các lần gọi (xem upsertChannelListingsBatchSequential).
  */
-function upsertChannelListingsBatch(
+async function upsertChannelListingsBatch(
   batchRows: any[],
   shopId: string,
   shopName: string
-): number {
+): Promise<number> {
   try {
     if (!Array.isArray(batchRows) || batchRows.length === 0) return 0;
 
@@ -3519,7 +3522,7 @@ function upsertChannelListingsBatch(
       }
     }
 
-    writeChannelListingsDb(Array.from(byKey.values()));
+    await writeChannelListingsDbAsync(Array.from(byKey.values()));
     console.log(
       `Đã lưu DB thành công — channel_listings UPSERT insert=${inserted}, update=${updated}, touched=${saved}, totalKeys=${byKey.size}`
     );
@@ -3536,7 +3539,7 @@ async function upsertChannelListingsBatchSequential(
   shopId: string,
   shopName: string
 ): Promise<number> {
-  const saved = upsertChannelListingsBatch(batchRows, shopId, shopName);
+  const saved = await upsertChannelListingsBatch(batchRows, shopId, shopName);
   await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
   return saved;
 }
@@ -5326,7 +5329,7 @@ async function initLocalInventoryIfNeeded(_force = false): Promise<LocalInventor
   return loadLocalInventoryCache();
 }
 
-/** Ghi products vào MongoDB (RAM + Atlas). */
+/** Ghi products vào DB bền vững (JSON sync + Atlas async, await flush). */
 function saveProducts(products: any[]): void {
   try {
     ensureDataDirs();
@@ -5335,12 +5338,23 @@ function saveProducts(products: any[]): void {
       : [];
     saveProductsToStore(list);
     console.log(
-      `Đã lưu DB thành công — MongoDB products: ${list.length} dòng -> ${getMongoUriMasked()}`
+      `Đã lưu DB thành công — products: ${list.length} dòng -> ${getMongoUriMasked()} (JSON+Atlas)`
     );
   } catch (error) {
-    console.error("[Products DB] Failed to write MongoDB:", error);
+    console.error("[Products DB] Failed to write store:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
+}
+
+async function saveProductsAsync(products: any[]): Promise<void> {
+  ensureDataDirs();
+  const list = Array.isArray(products)
+    ? products.filter((p) => p != null && typeof p === "object")
+    : [];
+  await saveProductsToStoreAsync(list);
+  console.log(
+    `Đã lưu DB thành công (await) — products: ${list.length} dòng -> ${getMongoUriMasked()}`
+  );
 }
 
 /** Alias nhẹ — giữ tương thích chỗ gọi cũ (không còn regroup). */
@@ -5560,13 +5574,22 @@ function writeChannelListingsDb(rows: any[]): void {
     const payload = Array.isArray(rows) ? rows.filter((r) => r != null && typeof r === "object") : [];
     saveChannelListingsToStore(payload);
     console.log(
-      `Đã lưu DB thành công — MongoDB channel_listings: ${payload.length} dòng -> ${getMongoUriMasked()}`
+      `Đã lưu DB thành công — channel_listings: ${payload.length} dòng -> ${getMongoUriMasked()} (JSON+Atlas)`
     );
   } catch (error) {
     console.error("DB Save Error:", error);
-    console.error(`[Channel Listings DB] Failed to write MongoDB:`, error);
+    console.error(`[Channel Listings DB] Failed to write store:`, error);
     throw error instanceof Error ? error : new Error(String(error));
   }
+}
+
+async function writeChannelListingsDbAsync(rows: any[]): Promise<void> {
+  ensureDataDirs();
+  const payload = Array.isArray(rows) ? rows.filter((r) => r != null && typeof r === "object") : [];
+  await saveChannelListingsToStoreAsync(payload);
+  console.log(
+    `Đã lưu DB thành công (await) — channel_listings: ${payload.length} dòng -> ${getMongoUriMasked()}`
+  );
 }
 
 /** Sản phẩm kéo từ Shopee dạng shopee-item-* — KHÔNG phải Kho gốc thủ công. */
@@ -5919,13 +5942,13 @@ function purgeBrokenChannelListings(): {
   };
 }
 
-function upsertChannelListingsFromShopeeSync(
+async function upsertChannelListingsFromShopeeSync(
   syncedProducts: any[],
   shopId: string,
   shopName: string,
-): any[] {
+): Promise<any[]> {
   // Reuse UPSERT batch (item_id + model_id) rồi gắn lại linkedProductId theo SKU/kho.
-  upsertChannelListingsBatch(asShopeeArray(syncedProducts), shopId, shopName);
+  await upsertChannelListingsBatch(asShopeeArray(syncedProducts), shopId, shopName);
 
   const existing = readChannelListingsDb();
   const masterProducts = loadProducts();
@@ -5990,7 +6013,7 @@ function upsertChannelListingsFromShopeeSync(
   const merged = Array.from(byKey.values());
   console.log(`[Mapping Save] Chuẩn bị UPSERT ${merged.length} dòng -> MongoDB @ ${getMongoUriMasked()}`);
   try {
-    writeChannelListingsDb(merged);
+    await writeChannelListingsDbAsync(merged);
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     console.error(`[Mapping Save] Lỗi lưu Database: ${errMsg}`);
@@ -6001,12 +6024,12 @@ function upsertChannelListingsFromShopeeSync(
 }
 
 /** Chỉ lưu sản phẩm sàn từ Shopee — UPSERT theo item_id + model_id, KHÔNG auto-map SKU. */
-function upsertChannelListingsFromShopeeFetch(
+async function upsertChannelListingsFromShopeeFetch(
   syncedProducts: any[],
   shopId: string,
   shopName: string,
-): any[] {
-  upsertChannelListingsBatch(asShopeeArray(syncedProducts), shopId, shopName);
+): Promise<any[]> {
+  await upsertChannelListingsBatch(asShopeeArray(syncedProducts), shopId, shopName);
   const merged = readChannelListingsDb();
   console.log(`[Shopee Channel Fetch] Đã UPSERT ${merged.length} sản phẩm sàn shop_id=${shopId}`);
   return merged;
@@ -7205,9 +7228,10 @@ async function startServer() {
   });
 
   // ─── Mapping products — ĐẶT SỚM, TRƯỚC static / SPA catch-all ───
-  const handleMappingProductsGet = (_req: any, res: any) => {
+  const handleMappingProductsGet = async (_req: any, res: any) => {
     try {
-      // Local Cache Master: đọc cache trước; enrich bằng products từ cache (không quét DB nặng).
+      // BẮT BUỘC đọc lại từ DB bền vững (Mongo/JSON) — không tin mảng RAM trống sau restart.
+      await reloadCachesFromDb();
       const cache = loadLocalInventoryCache();
       const rawListings =
         Array.isArray(cache.listings) && cache.listings.length > 0
@@ -7222,14 +7246,14 @@ async function startServer() {
       ).length;
       const broken = listings.filter((l) => l?.linkBroken).length;
       console.log(
-        `[Mapping Products] GET cache — ${listings.length} dòng (success+product=${successWithProduct}, brokenInMemory=${broken}) updatedAt=${cache.updatedAt}`
+        `[Mapping Products] GET db — ${listings.length} dòng (success+product=${successWithProduct}, broken=${broken}) mongo=${isMongoReady()}`
       );
       return res.status(200).json({
         success: true,
         listings,
         count: listings.length,
         cacheUpdatedAt: cache.updatedAt,
-        source: "local_inventory_cache",
+        source: isMongoReady() ? "mongodb" : "json_fallback",
       });
     } catch (error: any) {
       console.error("[Mapping Products] GET lỗi:", error?.message || error);
@@ -7241,19 +7265,19 @@ async function startServer() {
           success: true,
           listings: safe,
           count: safe.length,
-          message: "enrich_fallback",
+          source: "fallback_memory",
+          message: error?.message || String(error),
         });
-      } catch {
+      } catch (fallbackErr: any) {
         return res.status(500).json({
           success: false,
-          message: `Lỗi đọc Database: ${error?.message || "Đọc danh sách mapping thất bại"}`,
-          error: error?.message || "read_failed",
+          message: fallbackErr?.message || error?.message || String(error),
         });
       }
     }
   };
 
-  const handleMappingProductsUpsert = (req: any, res: any) => {
+  const handleMappingProductsUpsert = async (req: any, res: any) => {
     try {
       const incoming = req.body?.listings;
       if (!Array.isArray(incoming)) {
@@ -7279,10 +7303,11 @@ async function startServer() {
         } else {
           nextRows[existingIndex] = patch;
         }
-        writeChannelListingsDb(nextRows);
+        await writeChannelListingsDbAsync(nextRows);
       } else {
-        writeChannelListingsDb(sanitized);
+        await writeChannelListingsDbAsync(sanitized);
       }
+      await flushDbWrites();
       const cache = refreshCache();
       console.log(`Đã lưu DB thành công — mapping upsert ${sanitized.length} dòng + refreshCache`);
       const verified = enrichChannelListingsWithMaster(cache.listings, cache.products);
@@ -7291,6 +7316,7 @@ async function startServer() {
         count: verified.length,
         listings: verified,
         cacheUpdatedAt: cache.updatedAt,
+        source: isMongoReady() ? "mongodb" : "json_fallback",
       });
     } catch (error: any) {
       const errMsg = error?.message || String(error);
@@ -7666,8 +7692,9 @@ async function startServer() {
   const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
   const PRODUCTS_PAGE_SIZE_MAX = 50;
 
-  app.get("/api/products", authMiddleware, (req, res) => {
+  app.get("/api/products", authMiddleware, async (req, res) => {
     try {
+      await reloadCachesFromDb();
       const all = loadProducts();
       const rawPage = Number(req.query?.page);
       const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
@@ -7691,6 +7718,7 @@ async function startServer() {
         totalPages,
         hasMore: safePage < totalPages,
         grouped: false,
+        source: isMongoReady() ? "mongodb" : "json_fallback",
       });
     } catch (err: unknown) {
       console.error("[Products API] GET /api/products failed:", err);
@@ -7752,8 +7780,9 @@ async function startServer() {
     });
   });
 
-  app.get("/api/local-inventory", authMiddleware, (_req, res) => {
+  app.get("/api/local-inventory", authMiddleware, async (_req, res) => {
     try {
+      await reloadCachesFromDb();
       const cache = loadLocalInventoryCache();
       return res.status(200).json({
         success: true,
@@ -7764,6 +7793,7 @@ async function startServer() {
           products: cache.products.length,
           listings: cache.listings.length,
         },
+        source: isMongoReady() ? "mongodb" : "json_fallback",
       });
     } catch (error: any) {
       return res.status(500).json({
@@ -9477,6 +9507,7 @@ async function startServer() {
       );
       let listingsCount = 0;
       try {
+        await flushDbWrites();
         listingsCount = readChannelListingsDb().length;
       } catch {
         listingsCount = pageResult.rowsSaved;
@@ -9488,7 +9519,7 @@ async function startServer() {
         console.error("[Sync From Shop] refreshCache thất bại:", cacheErr);
       }
       console.log(
-        `Đã lưu DB thành công — trang offset=${offset}, listingsInDb=${listingsCount}`
+        `Đã lưu DB thành công — trang offset=${offset}, listingsInDb=${listingsCount} mongo=${isMongoReady()}`
       );
 
       return res.status(200).json({
@@ -11613,7 +11644,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
 
   async function startListening(): Promise<void> {
     try {
-      await initMongo();
+      await initMongo(APP_ROOT);
       await hydrateChannelListingsOnBoot();
     } catch (err) {
       console.error("[Boot] MongoDB init failed:", err);

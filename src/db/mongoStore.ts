@@ -1,11 +1,12 @@
 /**
  * MongoDB Atlas — Single Source of Truth cho products + channel_listings.
- * Dùng Mongoose (pure JS, không cần native addon).
- *
- * Env: MONGODB_URI (hoặc MONGO_URL)
- * Runtime: in-memory cache + persist async lên Atlas.
+ * Đọc/ghi BẮT BUỘC qua Atlas khi có MONGODB_URI.
+ * Fallback: data/products.json + data/channel_listings.json nếu chưa cấu hình Mongo
+ * (tránh mất dữ liệu khi restart — không chỉ giữ RAM).
  */
 import mongoose, { Schema, type Model } from "mongoose";
+import fs from "fs";
+import path from "path";
 
 export type LocalInventoryCache = {
   updatedAt: string;
@@ -71,10 +72,19 @@ let MetaModel: Model<MetaDoc>;
 let productsCache: any[] = [];
 let listingsCache: any[] = [];
 let mongoReady = false;
+let appRootResolved = "";
 let writeChain: Promise<void> = Promise.resolve();
 
 function getMongoUri(): string {
   return String(process.env.MONGODB_URI || process.env.MONGO_URL || "").trim();
+}
+
+function productsFallbackPath(): string {
+  return path.join(appRootResolved || process.cwd(), "data", "products.json");
+}
+
+function listingsFallbackPath(): string {
+  return path.join(appRootResolved || process.cwd(), "data", "channel_listings.json");
 }
 
 function ensureModels(): void {
@@ -123,6 +133,27 @@ function toListingDocs(rows: any[]): ListingDoc[] {
   return out;
 }
 
+function readJsonArrayFile(filePath: string): any[] {
+  try {
+    if (!fs.existsSync(filePath)) return [];
+    const raw = fs.readFileSync(filePath, "utf-8");
+    if (!raw || !raw.trim()) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    console.error(`[Store] Không đọc được ${filePath}:`, err);
+    return [];
+  }
+}
+
+function writeJsonArrayFileAtomic(filePath: string, rows: any[]): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(rows), "utf-8");
+  fs.renameSync(tmp, filePath);
+}
+
 function enqueueWrite(task: () => Promise<void>): Promise<void> {
   writeChain = writeChain.then(task).catch((err) => {
     console.error("[MongoDB] Persist failed:", err);
@@ -140,16 +171,49 @@ export function getMongoUriMasked(): string {
   return uri.replace(/\/\/([^:]+):([^@]+)@/, "//$1:***@");
 }
 
-/** Kết nối Atlas + nạp cache vào RAM. */
-export async function initMongo(): Promise<void> {
+export function setStoreAppRoot(appRoot: string): void {
+  appRootResolved = appRoot;
+}
+
+/** Nạp lại cache từ MongoDB (ưu tiên) hoặc file JSON fallback. */
+export async function reloadCachesFromDb(): Promise<LocalInventoryCache> {
+  if (isMongoReady()) {
+    ensureModels();
+    const [productDocs, listingDocs] = await Promise.all([
+      ProductModel.find({}).lean(),
+      ChannelListingModel.find({}).lean(),
+    ]);
+    productsCache = productDocs
+      .map((d) => (d?.data && typeof d.data === "object" ? d.data : null))
+      .filter(Boolean) as any[];
+    listingsCache = listingDocs
+      .map((d) => (d?.data && typeof d.data === "object" ? d.data : null))
+      .filter(Boolean) as any[];
+    console.log(
+      `[MongoDB] reload — products=${productsCache.length}, listings=${listingsCache.length}`
+    );
+  } else {
+    productsCache = readJsonArrayFile(productsFallbackPath());
+    listingsCache = readJsonArrayFile(listingsFallbackPath());
+    console.log(
+      `[Store Fallback] reload JSON — products=${productsCache.length}, listings=${listingsCache.length}`
+    );
+  }
+  return buildLocalInventoryCacheFromStore();
+}
+
+/** Kết nối Atlas + nạp cache bền vững. */
+export async function initMongo(appRoot?: string): Promise<void> {
+  if (appRoot) appRootResolved = appRoot;
+  if (!appRootResolved) appRootResolved = process.cwd();
+
   const uri = getMongoUri();
   if (!uri) {
     console.warn(
-      "[MongoDB] Thiếu MONGODB_URI — chạy memory-only. Thêm Connection String Atlas vào .env rồi restart."
+      "[MongoDB] Thiếu MONGODB_URI — dùng fallback JSON (data/products.json + channel_listings.json). Thêm MONGODB_URI trên cPanel để dùng Atlas."
     );
     mongoReady = false;
-    productsCache = [];
-    listingsCache = [];
+    await reloadCachesFromDb();
     return;
   }
 
@@ -162,19 +226,21 @@ export async function initMongo(): Promise<void> {
     });
   }
 
-  const [productDocs, listingDocs] = await Promise.all([
-    ProductModel.find({}).lean(),
-    ChannelListingModel.find({}).lean(),
-  ]);
-
-  productsCache = productDocs
-    .map((d) => (d?.data && typeof d.data === "object" ? d.data : null))
-    .filter(Boolean) as any[];
-  listingsCache = listingDocs
-    .map((d) => (d?.data && typeof d.data === "object" ? d.data : null))
-    .filter(Boolean) as any[];
-
   mongoReady = true;
+  await reloadCachesFromDb();
+
+  // Nếu Atlas trống nhưng còn JSON local → đẩy lên Atlas 1 lần
+  if (productsCache.length === 0 && listingsCache.length === 0) {
+    const fromProducts = readJsonArrayFile(productsFallbackPath());
+    const fromListings = readJsonArrayFile(listingsFallbackPath());
+    if (fromProducts.length > 0 || fromListings.length > 0) {
+      console.log(
+        `[MongoDB] Atlas trống — migrate từ JSON fallback products=${fromProducts.length} listings=${fromListings.length}`
+      );
+      await seedStoreFromArrays(fromProducts, fromListings);
+    }
+  }
+
   console.log(
     `[MongoDB] Connected ${getMongoUriMasked()} — products=${productsCache.length}, listings=${listingsCache.length}`
   );
@@ -210,11 +276,8 @@ async function setMeta(key: string, value: string): Promise<void> {
   await MetaModel.findByIdAndUpdate(key, { value }, { upsert: true });
 }
 
-async function persistProducts(list: any[]): Promise<void> {
-  if (!isMongoReady()) {
-    console.warn("[MongoDB] saveProducts skipped — chưa kết nối Atlas");
-    return;
-  }
+async function persistProductsToMongo(list: any[]): Promise<void> {
+  if (!isMongoReady()) return;
   ensureModels();
   const docs = toProductDocs(list);
   await ProductModel.deleteMany({});
@@ -222,14 +285,11 @@ async function persistProducts(list: any[]): Promise<void> {
     await ProductModel.insertMany(docs, { ordered: false });
   }
   await setMeta("products_updated_at", new Date().toISOString());
-  console.log(`[MongoDB] saveProducts — ${docs.length} dòng`);
+  console.log(`[MongoDB] saveProducts Atlas — ${docs.length} dòng`);
 }
 
-async function persistListings(list: any[]): Promise<void> {
-  if (!isMongoReady()) {
-    console.warn("[MongoDB] saveChannelListings skipped — chưa kết nối Atlas");
-    return;
-  }
+async function persistListingsToMongo(list: any[]): Promise<void> {
+  if (!isMongoReady()) return;
   ensureModels();
   const docs = toListingDocs(list);
   await ChannelListingModel.deleteMany({});
@@ -237,16 +297,41 @@ async function persistListings(list: any[]): Promise<void> {
     await ChannelListingModel.insertMany(docs, { ordered: false });
   }
   await setMeta("listings_updated_at", new Date().toISOString());
-  console.log(`[MongoDB] saveChannelListings — ${docs.length} dòng`);
+  console.log(`[MongoDB] saveChannelListings Atlas — ${docs.length} dòng`);
 }
 
-/** Ghi products: cập nhật RAM ngay + queue persist Atlas. */
+function mirrorProductsToJson(list: any[]): void {
+  try {
+    writeJsonArrayFileAtomic(productsFallbackPath(), list);
+  } catch (err) {
+    console.error("[Store] Ghi products.json thất bại:", err);
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+
+function mirrorListingsToJson(list: any[]): void {
+  try {
+    writeJsonArrayFileAtomic(listingsFallbackPath(), list);
+  } catch (err) {
+    console.error("[Store] Ghi channel_listings.json thất bại:", err);
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+
+/** Ghi products: RAM + JSON đồng bộ ngay + Atlas async (await qua Async API). */
 export function saveProductsToStore(products: any[]): void {
   const list = Array.isArray(products)
     ? products.filter((p) => p != null && typeof p === "object")
     : [];
   productsCache = list;
-  void enqueueWrite(() => persistProducts(list));
+  mirrorProductsToJson(list);
+  if (!isMongoReady()) {
+    console.warn(
+      `[MongoDB] saveProducts → JSON OK (${list.length}). Set MONGODB_URI để lưu Atlas.`
+    );
+    return;
+  }
+  void enqueueWrite(() => persistProductsToMongo(list));
 }
 
 export async function saveProductsToStoreAsync(products: any[]): Promise<void> {
@@ -254,7 +339,14 @@ export async function saveProductsToStoreAsync(products: any[]): Promise<void> {
     ? products.filter((p) => p != null && typeof p === "object")
     : [];
   productsCache = list;
-  await enqueueWrite(() => persistProducts(list));
+  mirrorProductsToJson(list);
+  if (!isMongoReady()) {
+    console.warn(
+      `[MongoDB] saveProductsAsync → JSON OK (${list.length}). Set MONGODB_URI để lưu Atlas.`
+    );
+    return;
+  }
+  await enqueueWrite(() => persistProductsToMongo(list));
 }
 
 export function saveChannelListingsToStore(rows: any[]): void {
@@ -262,7 +354,14 @@ export function saveChannelListingsToStore(rows: any[]): void {
     ? rows.filter((r) => r != null && typeof r === "object")
     : [];
   listingsCache = list;
-  void enqueueWrite(() => persistListings(list));
+  mirrorListingsToJson(list);
+  if (!isMongoReady()) {
+    console.warn(
+      `[MongoDB] saveChannelListings → JSON OK (${list.length}). Set MONGODB_URI để lưu Atlas.`
+    );
+    return;
+  }
+  void enqueueWrite(() => persistListingsToMongo(list));
 }
 
 export async function saveChannelListingsToStoreAsync(rows: any[]): Promise<void> {
@@ -270,10 +369,17 @@ export async function saveChannelListingsToStoreAsync(rows: any[]): Promise<void
     ? rows.filter((r) => r != null && typeof r === "object")
     : [];
   listingsCache = list;
-  await enqueueWrite(() => persistListings(list));
+  mirrorListingsToJson(list);
+  if (!isMongoReady()) {
+    console.warn(
+      `[MongoDB] saveChannelListingsAsync → JSON OK (${list.length}). Set MONGODB_URI để lưu Atlas.`
+    );
+    return;
+  }
+  await enqueueWrite(() => persistListingsToMongo(list));
 }
 
-/** Upsert 1 listing — RAM + Atlas (không rewrite cả bảng). */
+/** Upsert 1 listing — RAM + Atlas (+ JSON mirror toàn bảng nhẹ qua persistListings cache). */
 export async function upsertChannelListingToStore(row: any): Promise<any> {
   if (!row || typeof row !== "object") {
     throw new Error("upsertChannelListing: row không hợp lệ");
@@ -285,8 +391,11 @@ export async function upsertChannelListingToStore(row: any): Promise<any> {
   if (idx >= 0) listingsCache[idx] = row;
   else listingsCache.push(row);
 
+  // Mirror JSON ngay
+  mirrorListingsToJson(listingsCache);
+
   if (!isMongoReady()) {
-    console.warn("[MongoDB] upsert listing skipped — chưa kết nối Atlas");
+    console.warn("[MongoDB] upsert listing → chỉ JSON fallback (thiếu Atlas)");
     return row;
   }
 
@@ -310,6 +419,11 @@ export async function upsertChannelListingToStore(row: any): Promise<any> {
 
 export async function deleteAllProductsFromStore(): Promise<void> {
   productsCache = [];
+  try {
+    writeJsonArrayFileAtomic(productsFallbackPath(), []);
+  } catch {
+    /* ignore */
+  }
   if (!isMongoReady()) return;
   ensureModels();
   await ProductModel.deleteMany({});
@@ -318,6 +432,11 @@ export async function deleteAllProductsFromStore(): Promise<void> {
 
 export async function deleteAllChannelListingsFromStore(): Promise<void> {
   listingsCache = [];
+  try {
+    writeJsonArrayFileAtomic(listingsFallbackPath(), []);
+  } catch {
+    /* ignore */
+  }
   if (!isMongoReady()) return;
   ensureModels();
   await ChannelListingModel.deleteMany({});
@@ -328,7 +447,7 @@ export async function flushDbWrites(): Promise<void> {
   await writeChain;
 }
 
-/** Seed cache từ mảng (migrate boot) rồi persist nếu đã connect. */
+/** Seed cache từ mảng rồi persist bền vững. */
 export async function seedStoreFromArrays(
   products: any[],
   listings: any[]
@@ -339,7 +458,10 @@ export async function seedStoreFromArrays(
   listingsCache = Array.isArray(listings)
     ? listings.filter((r) => r != null && typeof r === "object")
     : [];
-  if (!isMongoReady()) return;
-  await persistProducts(productsCache);
-  await persistListings(listingsCache);
+  mirrorProductsToJson(productsCache);
+  mirrorListingsToJson(listingsCache);
+  if (isMongoReady()) {
+    await persistProductsToMongo(productsCache);
+    await persistListingsToMongo(listingsCache);
+  }
 }
