@@ -20,3 +20,11 @@ server.cjs.map
 !/data/local_inventory.json
 !/data/.gitkeep
 /storage/
+database.sqlite
+database.sqlite-wal
+database.sqlite-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+data/*.migrated.*
+data/*.legacy.*

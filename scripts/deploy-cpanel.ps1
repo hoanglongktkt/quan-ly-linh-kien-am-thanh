@@ -22,14 +22,8 @@ Copy-Item -Recurse -Force "dist\*" "$staging\dist\"
 Copy-Item -Force "dist\server.cjs" "$staging\server.cjs"
 Copy-Item -Recurse -Force "dist\assets\*" "$staging\assets\"
 Copy-Item -Force ".htaccess" "$staging\.htaccess"
-# Local Cache Master — luôn kèm file local_inventory.json khi deploy
+# MongoDB Atlas — không đóng gói DB file; cấu hình MONGODB_URI trên cPanel
 New-Item -ItemType Directory -Path "$staging\data" -Force | Out-Null
-if (Test-Path "data\local_inventory.json") {
-  Copy-Item -Force "data\local_inventory.json" "$staging\data\local_inventory.json"
-} else {
-  node scripts/init-local-inventory.mjs
-  Copy-Item -Force "data\local_inventory.json" "$staging\data\local_inventory.json"
-}
 "KHONG ghi de shopee_tokens.json tren server " | Set-Content -Path "$staging\data\.gitkeep" -Encoding UTF8
 
 @"
@@ -40,6 +34,11 @@ TRƯỚC KHI GIẢI NÉN trên hosting, XÓA các file JS/CSS cũ trong:
 
 Sau đó giải nén zip vào thư mục quanly.linhkienamthanh.net (Ghi đè).
 Restart Node.js App trên cPanel.
+
+QUAN TRỌNG MongoDB Atlas:
+  - Thêm env MONGODB_URI (Connection String Atlas) trên cPanel Node.js App
+  - npm install (cần mongoose — pure JS, không biên dịch native)
+  - Migrate 1 lần: npm run migrate:mongo (từ JSON/legacy)
 
 LƯU Ý: Domain quanly.linhkienamthanh.net hiện trỏ Vercel (frontend).
 Upload cPanel KHÔNG đổi giao diện trên domain đó.

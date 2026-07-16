@@ -7,6 +7,22 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
+import {
+  initMongo,
+  loadProductsFromStore,
+  saveProductsToStore,
+  loadChannelListingsFromStore,
+  saveChannelListingsToStore,
+  upsertChannelListingToStore,
+  buildLocalInventoryCacheFromStore,
+  countProducts,
+  countChannelListings,
+  seedStoreFromArrays,
+  flushDbWrites,
+  isMongoReady,
+  getMongoUriMasked,
+  type LocalInventoryCache,
+} from "./src/db/mongoStore.ts";
 
 dotenv.config();
 
@@ -4909,8 +4925,9 @@ function buildDashboardChart(orders: any[], range: { start: Date; end: Date; key
   return Array.from(buckets.values());
 }
 
-const PRODUCTS_DB_PATH = path.join(APP_ROOT, "data", "products.json");
-const LOCAL_INVENTORY_CACHE_PATH = path.join(APP_ROOT, "data", "local_inventory.json");
+const PRODUCTS_DB_PATH = path.join(APP_ROOT, "data", "products.json"); // legacy — chỉ dùng khi migrate
+const LOCAL_INVENTORY_CACHE_PATH = path.join(APP_ROOT, "data", "local_inventory.json"); // legacy
+const SQLITE_LEGACY_PATH = path.join(APP_ROOT, "database.sqlite"); // legacy — không dùng runtime
 
 /** Lấy children nếu đã có (không gom nhóm nặng). */
 function getProductChildrenList(p: any): any[] {
@@ -4923,172 +4940,60 @@ function getProductChildrenList(p: any): any[] {
   return [];
 }
 
-/** Đọc DB thô (flat) — không grouping để tránh OOM/crash 502. */
+/** Đọc products từ MongoDB cache (RAM). */
 function loadProducts(): any[] {
   try {
-    if (!fs.existsSync(PRODUCTS_DB_PATH)) return [];
-    const raw = fs.readFileSync(PRODUCTS_DB_PATH, "utf-8");
-    if (!raw || !raw.trim()) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return loadProductsFromStore();
   } catch (error) {
-    console.error("[Products DB] Failed to read products.json:", error);
+    console.error("[Products DB] Failed to read from MongoDB store:", error);
     return [];
   }
 }
 
-type LocalInventoryCache = {
-  updatedAt: string;
-  products: any[];
-  listings: any[];
-};
-
 /**
- * Local Cache Master — quét DB (products + channel_listings) rồi ghi đè
- * data/local_inventory.json. Gọi sau Thêm SP / Liên kết / Dọn dẹp.
+ * Local Cache Master — đọc từ MongoDB in-memory cache.
  */
 function refreshCache(): LocalInventoryCache {
   ensureDataDirs();
-  const products = loadProducts();
-  let listings: any[] = [];
-  try {
-    listings = readChannelListingsDb();
-  } catch (err: unknown) {
-    console.error("[Local Cache] Đọc channel_listings khi refresh thất bại:", err);
-    listings = [];
-  }
-
-  const payload: LocalInventoryCache = {
-    updatedAt: new Date().toISOString(),
-    products: Array.isArray(products) ? products : [],
-    listings: Array.isArray(listings) ? listings : [],
-  };
-
-  fs.mkdirSync(path.dirname(LOCAL_INVENTORY_CACHE_PATH), { recursive: true });
-  const tmpPath = `${LOCAL_INVENTORY_CACHE_PATH}.${process.pid}.${Date.now()}.tmp`;
-  try {
-    fs.writeFileSync(tmpPath, JSON.stringify(payload), "utf-8");
-    fs.renameSync(tmpPath, LOCAL_INVENTORY_CACHE_PATH);
-    // Đảm bảo quyền ghi trên hosting (owner read/write).
-    try {
-      fs.chmodSync(LOCAL_INVENTORY_CACHE_PATH, 0o664);
-    } catch {
-      /* Windows / shared host có thể không hỗ trợ chmod */
-    }
-  } catch (error) {
-    try {
-      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore */
-    }
-    console.error("[Local Cache] Ghi local_inventory.json thất bại:", error);
-    throw error instanceof Error ? error : new Error(String(error));
-  }
-
+  const payload = buildLocalInventoryCacheFromStore();
   console.log(
-    `[Local Cache] refreshCache OK — products=${payload.products.length}, listings=${payload.listings.length} -> ${LOCAL_INVENTORY_CACHE_PATH}`
+    `[Local Cache] refreshCache OK (MongoDB) — products=${payload.products.length}, listings=${payload.listings.length}`
   );
   return payload;
 }
 
-/** Đọc Local Cache Master; nếu thiếu/hỏng thì rebuild từ DB. */
+/** Đọc Local Cache từ MongoDB store. */
 function loadLocalInventoryCache(): LocalInventoryCache {
   try {
-    if (!fs.existsSync(LOCAL_INVENTORY_CACHE_PATH)) {
-      return refreshCache();
-    }
-    const fileContent = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
-    if (!fileContent || !fileContent.trim()) return refreshCache();
-    const parsed = JSON.parse(fileContent);
-    // File là Object { updatedAt, products, listings } — lấy .products, không dùng thẳng Object.
-    const products = Array.isArray(parsed?.products) ? parsed.products : [];
-    const listings = Array.isArray(parsed?.listings) ? parsed.listings : [];
-    // Cache rỗng trong khi DB có SP → khởi tạo lại từ DB.
-    if (products.length === 0) {
-      const dbProducts = loadProducts();
-      if (dbProducts.length > 0) return refreshCache();
-    }
-    return {
-      updatedAt: String(parsed?.updatedAt || new Date().toISOString()),
-      products,
-      listings,
-    };
+    return buildLocalInventoryCacheFromStore();
   } catch (error) {
-    console.error("[Local Cache] Đọc local_inventory.json thất bại — rebuild:", error);
-    return refreshCache();
+    console.error("[Local Cache] Đọc MongoDB store thất bại:", error);
+    return { updatedAt: new Date().toISOString(), products: [], listings: [] };
   }
 }
 
 /**
- * Khởi tạo Local Cache Master nếu file thiếu / trống / hỏng.
- * Quét products.json + channel_listings.json rồi GHI local_inventory.json.
+ * Đảm bảo cache sẵn sàng (migrate legacy JSON nếu Mongo trống).
  */
-function initLocalInventoryIfNeeded(force = false): LocalInventoryCache {
+async function initLocalInventoryIfNeeded(_force = false): Promise<LocalInventoryCache> {
   ensureDataDirs();
-  fs.mkdirSync(path.dirname(LOCAL_INVENTORY_CACHE_PATH), { recursive: true });
-
-  let needsInit = force || !fs.existsSync(LOCAL_INVENTORY_CACHE_PATH);
-  if (!needsInit) {
-    try {
-      const raw = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
-      if (!raw || !raw.trim()) {
-        needsInit = true;
-      } else {
-        const parsed = JSON.parse(raw);
-        const products = Array.isArray(parsed?.products) ? parsed.products : [];
-        const dbProducts = loadProducts();
-        if (!parsed || typeof parsed !== "object") needsInit = true;
-        else if (products.length === 0 && dbProducts.length > 0) needsInit = true;
-      }
-    } catch {
-      needsInit = true;
-    }
-  }
-
-  if (needsInit) {
-    console.log("[Local Cache] Init: quét DB → ghi data/local_inventory.json...");
-    return refreshCache();
-  }
-
+  await maybeMigrateJsonToMongoOnBoot();
   return loadLocalInventoryCache();
 }
 
-/** Ghi DB Kho gốc — compact + atomic; NÉM lỗi nếu ghi thất bại (không nuốt silent). */
+/** Ghi products vào MongoDB (RAM + Atlas). */
 function saveProducts(products: any[]): void {
   try {
     ensureDataDirs();
     const list = Array.isArray(products)
       ? products.filter((p) => p != null && typeof p === "object")
       : [];
-    fs.mkdirSync(path.dirname(PRODUCTS_DB_PATH), { recursive: true });
-
-    let json: string;
-    try {
-      json = JSON.stringify(list);
-    } catch (serErr: unknown) {
-      const msg = serErr instanceof Error ? serErr.message : String(serErr);
-      throw new Error(`Không serialize được products.json: ${msg}`);
-    }
-
-    const tmpPath = `${PRODUCTS_DB_PATH}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmpPath, json, "utf-8");
-    fs.renameSync(tmpPath, PRODUCTS_DB_PATH);
-
-    if (!fs.existsSync(PRODUCTS_DB_PATH)) {
-      throw new Error(`File không tồn tại sau khi ghi: ${PRODUCTS_DB_PATH}`);
-    }
-    const bytes = fs.statSync(PRODUCTS_DB_PATH).size;
+    saveProductsToStore(list);
     console.log(
-      `Đã lưu DB thành công — products.json: ${list.length} dòng (${bytes} bytes) -> ${PRODUCTS_DB_PATH}`
+      `Đã lưu DB thành công — MongoDB products: ${list.length} dòng -> ${getMongoUriMasked()}`
     );
-    // Local Cache Master: luôn đồng bộ cache sau khi ghi Kho gốc.
-    try {
-      refreshCache();
-    } catch (cacheErr: unknown) {
-      console.error("[Local Cache] refreshCache sau saveProducts thất bại:", cacheErr);
-    }
   } catch (error) {
-    console.error("[Products DB] Failed to write products.json:", error);
+    console.error("[Products DB] Failed to write MongoDB:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
@@ -5102,9 +5007,132 @@ function groupFlatProductsToParents(products: any[]): any[] {
   return Array.isArray(products) ? products : [];
 }
 
-const CHANNEL_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "channel_listings.json");
+const CHANNEL_LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "channel_listings.json"); // legacy
 const SHOPEE_SYNC_ERRORS_DB_PATH = path.join(APP_ROOT, "data", "shopee_sync_errors.json");
 const SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
+
+function renameLegacyJsonIfExists(filePath: string): void {
+  if (!fs.existsSync(filePath)) return;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dest = `${filePath}.migrated.${stamp}`;
+  try {
+    fs.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${path.basename(filePath)} → ${path.basename(dest)}`);
+  } catch (err) {
+    console.warn(`[Mongo Migrate] Không rename được ${filePath}:`, err);
+  }
+}
+
+function readLegacyJsonArray(filePath: string): any[] {
+  try {
+    if (!fs.existsSync(filePath)) return [];
+    const raw = fs.readFileSync(filePath, "utf-8");
+    if (!raw || !raw.trim()) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Tìm file backup migrate mới nhất (products.json.migrated.*) */
+function findLatestMigratedJson(baseName: string): string | null {
+  const dataDir = path.join(APP_ROOT, "data");
+  if (!fs.existsSync(dataDir)) return null;
+  const prefix = `${baseName}.migrated.`;
+  const matches = fs
+    .readdirSync(dataDir)
+    .filter((f) => f.startsWith(prefix))
+    .sort();
+  if (matches.length === 0) return null;
+  return path.join(dataDir, matches[matches.length - 1]);
+}
+
+/** Boot-time: nếu Mongo trống mà còn JSON/legacy → migrate lên Atlas. */
+async function maybeMigrateJsonToMongoOnBoot(): Promise<void> {
+  try {
+    const productCount = countProducts();
+    const listingCount = countChannelListings();
+    const legacyProducts =
+      PRODUCTS_DB_PATH && fs.existsSync(PRODUCTS_DB_PATH)
+        ? PRODUCTS_DB_PATH
+        : findLatestMigratedJson("products.json");
+    const legacyListings = fs.existsSync(CHANNEL_LISTINGS_DB_PATH)
+      ? CHANNEL_LISTINGS_DB_PATH
+      : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy =
+      !!legacyProducts ||
+      !!legacyListings ||
+      fs.existsSync(LOCAL_INVENTORY_CACHE_PATH) ||
+      !!findLatestMigratedJson("local_inventory.json");
+
+    if (!hasLegacy) {
+      console.log(
+        `[MongoDB] Ready — products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
+      );
+      return;
+    }
+
+    if (productCount > 0 || listingCount > 0) {
+      console.log(
+        `[MongoDB] Đã có dữ liệu (products=${productCount}, listings=${listingCount}) — archive JSON legacy.`
+      );
+      renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
+      renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
+      renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
+      return;
+    }
+
+    console.log("[Mongo Migrate] Mongo trống + còn JSON legacy — bắt đầu migrate...");
+    let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
+    let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
+
+    const invPath = fs.existsSync(LOCAL_INVENTORY_CACHE_PATH)
+      ? LOCAL_INVENTORY_CACHE_PATH
+      : findLatestMigratedJson("local_inventory.json");
+    if (invPath) {
+      try {
+        const inv = JSON.parse(fs.readFileSync(invPath, "utf-8"));
+        const invProducts = Array.isArray(inv?.products) ? inv.products : [];
+        const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
+        const byId = new Map<string, any>();
+        for (const p of [...invProducts, ...products]) {
+          const id = String(p?.id || "").trim();
+          if (id) byId.set(id, p);
+        }
+        products = Array.from(byId.values());
+        const byListingId = new Map<string, any>();
+        for (const r of [...invListings, ...listings]) {
+          const id = String(r?.id || "").trim();
+          if (id) byListingId.set(id, r);
+        }
+        listings = Array.from(byListingId.values());
+      } catch (err) {
+        console.warn("[Mongo Migrate] Không đọc được local_inventory:", err);
+      }
+    }
+
+    await seedStoreFromArrays(products, listings);
+
+    console.log(
+      `[Mongo Migrate] Xong — products=${countProducts()}, listings=${countChannelListings()} (mongoReady=${isMongoReady()})`
+    );
+    renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
+    renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
+    renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
+    if (fs.existsSync(SQLITE_LEGACY_PATH)) {
+      try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        fs.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        console.log("[Mongo Migrate] Archived database.sqlite (không còn dùng)");
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch (err) {
+    console.error("[Mongo Migrate] Boot migrate thất bại:", err);
+  }
+}
 
 function readShopeeSyncErrorsDb(): any[] {
   try {
@@ -5174,12 +5202,9 @@ function appendShopeeSyncErrorToDb(entry: {
 
 function readChannelListingsDb(): any[] {
   try {
-    if (!fs.existsSync(CHANNEL_LISTINGS_DB_PATH)) return [];
-    const raw = fs.readFileSync(CHANNEL_LISTINGS_DB_PATH, "utf-8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return loadChannelListingsFromStore();
   } catch (error) {
-    console.error("[Channel Listings DB] Failed to read channel_listings.json:", error);
+    console.error("[Channel Listings DB] Failed to read from MongoDB store:", error);
     return [];
   }
 }
@@ -5187,33 +5212,14 @@ function readChannelListingsDb(): any[] {
 function writeChannelListingsDb(rows: any[]): void {
   try {
     ensureDataDirs();
-    const dir = path.dirname(CHANNEL_LISTINGS_DB_PATH);
-    fs.mkdirSync(dir, { recursive: true });
     const payload = Array.isArray(rows) ? rows.filter((r) => r != null && typeof r === "object") : [];
-
-    // Compact JSON (không pretty-print) — tránh OOM / timeout khi có hàng nghìn dòng
-    let json: string;
-    try {
-      json = JSON.stringify(payload);
-    } catch (serErr: unknown) {
-      const msg = serErr instanceof Error ? serErr.message : String(serErr);
-      console.error("DB Save Error:", serErr);
-      throw new Error(`Không serialize được channel_listings: ${msg}`);
-    }
-
-    // Ghi atomic: temp → rename (tránh file dở dang nếu process bị kill)
-    const tmpPath = `${CHANNEL_LISTINGS_DB_PATH}.${process.pid}.${Date.now()}.tmp`;
-    fs.writeFileSync(tmpPath, json, "utf-8");
-    fs.renameSync(tmpPath, CHANNEL_LISTINGS_DB_PATH);
-
-    if (!fs.existsSync(CHANNEL_LISTINGS_DB_PATH)) {
-      throw new Error(`File không tồn tại sau khi ghi: ${CHANNEL_LISTINGS_DB_PATH}`);
-    }
-    const bytes = fs.statSync(CHANNEL_LISTINGS_DB_PATH).size;
-    console.log(`Đã lưu DB thành công — ${payload.length} dòng (${bytes} bytes) -> ${CHANNEL_LISTINGS_DB_PATH}`);
+    saveChannelListingsToStore(payload);
+    console.log(
+      `Đã lưu DB thành công — MongoDB channel_listings: ${payload.length} dòng -> ${getMongoUriMasked()}`
+    );
   } catch (error) {
     console.error("DB Save Error:", error);
-    console.error(`[Channel Listings DB] Failed to write ${CHANNEL_LISTINGS_DB_PATH}:`, error);
+    console.error(`[Channel Listings DB] Failed to write MongoDB:`, error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
@@ -5499,7 +5505,7 @@ function persistHealedBrokenMappingLinks(enriched: any[]): number {
  * - Giữ nguyên mọi dòng chưa từng liên kết.
  * - Chỉ xóa dòng có linkedProductId/linkedProduct.id hoặc status=success,
  *   nhưng không còn trỏ tới sản phẩm parent/child trong Kho gốc.
- * - Hàm này chỉ ghi channel_listings.json, tuyệt đối không gọi saveProducts().
+ * - Hàm này chỉ ghi channel_listings (MongoDB), tuyệt đối không gọi saveProducts().
  */
 function purgeBrokenChannelListings(): {
   scanned: number;
@@ -5637,7 +5643,7 @@ function upsertChannelListingsFromShopeeSync(
   }
 
   const merged = Array.from(byKey.values());
-  console.log(`[Mapping Save] Chuẩn bị UPSERT ${merged.length} dòng -> ${CHANNEL_LISTINGS_DB_PATH}`);
+  console.log(`[Mapping Save] Chuẩn bị UPSERT ${merged.length} dòng -> MongoDB @ ${getMongoUriMasked()}`);
   try {
     writeChannelListingsDb(merged);
   } catch (err: any) {
@@ -5662,56 +5668,19 @@ function upsertChannelListingsFromShopeeFetch(
 }
 
 /**
- * Đọc BẮT BUỘC data/local_inventory.json bằng fs.readFileSync.
- * File là OBJECT `{ updatedAt, products: [...], listings?: [...] }` — KHÔNG phải Array.
- * Sau JSON.parse BẮT BUỘC lấy `.products` làm mảng Kho gốc (masterData).
+ * Đọc Local Cache Master từ MongoDB (`products` + `channel_listings`).
  */
 function readLocalInventoryFileSync(): LocalInventoryCache {
-  if (!fs.existsSync(LOCAL_INVENTORY_CACHE_PATH)) {
+  const cache = loadLocalInventoryCache();
+  if (!Array.isArray(cache.products) || cache.products.length === 0) {
     throw new Error(
-      `Thiếu file Local Cache: ${LOCAL_INVENTORY_CACHE_PATH}. Hãy tải dữ liệu / khởi tạo cache trước.`
+      "MongoDB không có sản phẩm Kho gốc (products=[]). Hãy khởi tạo/sync dữ liệu trước."
     );
   }
-  const fileContent = fs.readFileSync(LOCAL_INVENTORY_CACHE_PATH, "utf-8");
-  if (!fileContent || !fileContent.trim()) {
-    throw new Error("File data/local_inventory.json đang trống.");
-  }
-
-  let parsed: any;
-  try {
-    parsed = JSON.parse(fileContent);
-  } catch {
-    throw new Error("Không parse được data/local_inventory.json (JSON hỏng).");
-  }
-
-  // SAI: dùng thẳng `parsed` (Object) để filter/find.
-  // ĐÚNG: const masterData = JSON.parse(fileContent).products;
-  const masterData = Array.isArray(parsed?.products)
-    ? parsed.products
-    : Array.isArray(parsed)
-      ? parsed
-      : null;
-
-  if (!Array.isArray(masterData)) {
-    throw new Error(
-      "Cấu trúc data/local_inventory.json sai — cần Object có thuộc tính products (Array)."
-    );
-  }
-  if (masterData.length === 0) {
-    throw new Error(
-      "Local Cache không có sản phẩm Kho gốc (products=[]). Hãy refresh cache / tải kho trước."
-    );
-  }
-
-  const listings = Array.isArray(parsed?.listings) ? parsed.listings : [];
   console.log(
-    `[Local Cache] parse OK — masterData(products)=${masterData.length}, listings=${listings.length} @ ${LOCAL_INVENTORY_CACHE_PATH}`
+    `[Local Cache] MongoDB OK — masterData(products)=${cache.products.length}, listings=${cache.listings.length}`
   );
-  return {
-    updatedAt: String(parsed?.updatedAt || new Date().toISOString()),
-    products: masterData,
-    listings,
-  };
+  return cache;
 }
 
 /**
@@ -5769,18 +5738,14 @@ function isListingAlreadyLinkedProtected(listing: any): boolean {
   return false;
 }
 
-/** Ghi products.json 1 lần — KHÔNG gọi refreshCache (tránh đọc/ghi local_inventory trùng). */
+/** Ghi products MongoDB 1 lần — không cần refresh file cache. */
 function writeProductsFileOnly(products: any[]): void {
   ensureDataDirs();
   const list = Array.isArray(products)
     ? products.filter((p) => p != null && typeof p === "object")
     : [];
-  fs.mkdirSync(path.dirname(PRODUCTS_DB_PATH), { recursive: true });
-  const json = JSON.stringify(list);
-  const tmpPath = `${PRODUCTS_DB_PATH}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmpPath, json, "utf-8");
-  fs.renameSync(tmpPath, PRODUCTS_DB_PATH);
-  console.log(`[Batch Auto-link] Ghi products.json xong — ${list.length} dòng (không refreshCache tại đây).`);
+  saveProductsToStore(list);
+  console.log(`[Batch Auto-link] Ghi MongoDB products xong — ${list.length} dòng.`);
 }
 
 function persistBatchAutoLinkListingUpdate(
@@ -5889,7 +5854,8 @@ async function autoLinkSingleListingFromDatabase(opts?: {
     syncError: undefined,
   });
 
-  writeChannelListingsDb(dbListings);
+  await upsertChannelListingToStore(patched);
+  await flushDbWrites();
   const cache = refreshCache();
   await sleep(1);
 
@@ -6127,32 +6093,24 @@ function resolveConnectedShopDisplayName(
   return sid ? `Shop ${sid}` : undefined;
 }
 
-/** Chỉ ĐỌC file mapping — tuyệt đối không ghi / không rebuild / không auto-link. */
+/** Chỉ ĐỌC mapping từ MongoDB — tuyệt đối không ghi / không rebuild / không auto-link. */
 function readChannelListingsForGet(): any[] {
   const existing = readChannelListingsDb();
   console.log(
-    `[Mapping GET] Đọc DB (read-only): ${existing.length} dòng từ ${CHANNEL_LISTINGS_DB_PATH} (exists=${fs.existsSync(CHANNEL_LISTINGS_DB_PATH)})`
+    `[Mapping GET] Đọc DB (read-only): ${existing.length} dòng từ MongoDB @ ${getMongoUriMasked()}`
   );
   return existing;
 }
 
-function hydrateChannelListingsOnBoot(): void {
+async function hydrateChannelListingsOnBoot(): Promise<void> {
   try {
     ensureDataDirs();
-    if (!fs.existsSync(CHANNEL_LISTINGS_DB_PATH)) {
-      writeChannelListingsDb([]);
-      console.log(`[Boot] Tạo file mapping trống: ${CHANNEL_LISTINGS_DB_PATH}`);
-    } else {
-      const rows = readChannelListingsDb();
-      console.log(`[Boot] Mapping DB sẵn sàng: ${rows.length} dòng (không rebuild)`);
-    }
-    // Startup: nếu local_inventory.json thiếu/trống → quét DB và tạo file.
-    const cache = initLocalInventoryIfNeeded(true);
+    const cache = await initLocalInventoryIfNeeded(true);
     console.log(
-      `[Boot] Local Cache Master sẵn sàng: products=${cache.products.length}, listings=${cache.listings.length} @ ${LOCAL_INVENTORY_CACHE_PATH}`
+      `[Boot] MongoDB sẵn sàng: products=${cache.products.length}, listings=${cache.listings.length} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
     );
   } catch (err: any) {
-    console.error(`[Boot] Không thể khởi tạo mapping/cache DB:`, err?.message || err);
+    console.error(`[Boot] Không thể khởi tạo MongoDB mapping/cache:`, err?.message || err);
   }
 }
 
@@ -6983,7 +6941,7 @@ async function startServer() {
   app.post("/api/mapping-products/auto-link-single", authMiddleware, handleSingleAutoLink);
   app.post("/api/mapping-products/batch-auto-link", authMiddleware, handleBatchAutoLink);
 
-  // BẮT BUỘC: đăng ký purge-broken (DB JSON channel_listings — KHÔNG dùng MappingModel/Mongo).
+  // BẮT BUỘC: đăng ký purge-broken (MongoDB channel_listings).
   app.post("/api/mapping-products/purge-broken", authMiddleware, async (_req, res) => {
     try {
       // 1) Tìm kiếm: mapping linkedProduct null/undefined hoặc ID không còn trong Kho gốc
@@ -7250,7 +7208,7 @@ async function startServer() {
   });
 
   // Real synced orders list — this is what the Order Management UI reads from.
-  // --- Products warehouse API (data/products.json) ---
+  // --- Products warehouse API (MongoDB products) ---
   // Phân trang nhẹ — trả flat list ổn định (gom nhóm UI ở Frontend).
   const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
   const PRODUCTS_PAGE_SIZE_MAX = 50;
@@ -11176,25 +11134,34 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     });
   }
 
-  if (process.env.PORT) {
+  async function startListening(): Promise<void> {
+    try {
+      await initMongo();
+      await hydrateChannelListingsOnBoot();
+    } catch (err) {
+      console.error("[Boot] MongoDB init failed:", err);
+    }
     startAutoOrderSyncScheduler();
-    hydrateChannelListingsOnBoot();
-    app.listen(PORT, () => {
-      console.log(`Server optimized for cPanel Phusion Passenger: listening on ${PORT}`);
-      console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
-      console.log(`[Config] NODE_ENV=${process.env.NODE_ENV || "unset"}`);
-      console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
-    });
-  } else {
-    startAutoOrderSyncScheduler();
-    hydrateChannelListingsOnBoot();
-    app.listen(Number(PORT), "0.0.0.0", () => {
-      console.log(`Server running locally on port ${PORT}`);
-      console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
-      console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
-      console.log("[Dashboard] API route ready: GET /api/dashboard?date_range=...");
-    });
+    if (process.env.PORT) {
+      app.listen(PORT, () => {
+        console.log(`Server optimized for cPanel Phusion Passenger: listening on ${PORT}`);
+        console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
+        console.log(`[Config] NODE_ENV=${process.env.NODE_ENV || "unset"}`);
+        console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
+        console.log(`[MongoDB] ${getMongoUriMasked()} ready=${isMongoReady()}`);
+      });
+    } else {
+      app.listen(Number(PORT), "0.0.0.0", () => {
+        console.log(`Server running locally on port ${PORT}`);
+        console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
+        console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
+        console.log("[Dashboard] API route ready: GET /api/dashboard?date_range=...");
+        console.log(`[MongoDB] ${getMongoUriMasked()} ready=${isMongoReady()}`);
+      });
+    }
   }
+
+  void startListening();
 }
 
 process.on("unhandledRejection", (reason) => {

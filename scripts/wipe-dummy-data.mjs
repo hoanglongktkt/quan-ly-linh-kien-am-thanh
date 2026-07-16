@@ -1,75 +1,77 @@
 #!/usr/bin/env node
 /**
- * Xóa sạch dữ liệu ảo (products, orders, bảng liên quan) trên backend cPanel.
- * Database = file JSON trong thư mục data/ (KHÔNG dùng SQL/MongoDB).
+ * Xóa sạch dữ liệu ảo trên backend.
+ * Products + channel_listings: MongoDB Atlas.
+ * Còn lại: JSON trong data/.
  *
- * Chạy trên cPanel (SSH hoặc Terminal):
- *   cd ~/quanly.linhkienamthanh.net && node scripts/wipe-dummy-data.mjs
- *
- * Hoặc local:
  *   npm run wipe:dummy-data
  */
-import fs from 'node:fs';
-import path from 'node:path';
+import mongoose from "mongoose";
+import fs from "node:fs";
+import path from "node:path";
+import dotenv from "dotenv";
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const ROOT = process.cwd();
+dotenv.config({ path: path.join(ROOT, ".env") });
 
-/** File cần wipe — items/variants/images nằm trong orders.json & products.json */
+const DATA_DIR = path.join(ROOT, "data");
+const URI = String(process.env.MONGODB_URI || process.env.MONGO_URL || "").trim();
+
 const WIPE_FILES = [
-  'products.json',
-  'orders.json',
-  'imports.json',
-  'multi_channel_listings.json',
-  'product_listings.json',
-  'suppliers.json',
-  'expenses.json',
+  "orders.json",
+  "imports.json",
+  "multi_channel_listings.json",
+  "product_listings.json",
+  "suppliers.json",
+  "expenses.json",
+  "channel_listings.json",
+  "products.json",
+  "local_inventory.json",
 ];
 
-/** Giữ lại token OAuth Shopee thật */
-const PRESERVE_FILES = new Set(['shopee_tokens.json']);
+const PRESERVE_FILES = new Set(["shopee_tokens.json"]);
+const MARKERS_TO_REMOVE = [".expenses-cleared-v2"];
+const withBackup = process.argv.includes("--backup");
 
-const MARKERS_TO_REMOVE = ['.expenses-cleared-v2'];
-
-const withBackup = process.argv.includes('--backup');
+async function wipeMongo() {
+  if (!URI) {
+    console.log("⏭  Bỏ qua MongoDB (thiếu MONGODB_URI)");
+    return;
+  }
+  await mongoose.connect(URI, { serverSelectionTimeoutMS: 15000 });
+  const db = mongoose.connection.db;
+  const prevProducts = await db.collection("products").countDocuments();
+  const prevListings = await db.collection("channel_listings").countDocuments();
+  await db.collection("products").deleteMany({});
+  await db.collection("channel_listings").deleteMany({});
+  await mongoose.disconnect();
+  console.log(
+    `✅ Đã xóa MongoDB products (trước: ${prevProducts}) + channel_listings (trước: ${prevListings})`
+  );
+}
 
 function wipeFile(filename) {
   if (PRESERVE_FILES.has(filename)) {
     console.log(`⏭  Bỏ qua (giữ nguyên): ${filename}`);
-    return { file: filename, skipped: true };
+    return;
   }
-
   const filePath = path.join(DATA_DIR, filename);
   fs.mkdirSync(DATA_DIR, { recursive: true });
-
-  let previousCount = 0;
-  if (fs.existsSync(filePath)) {
-    try {
-      const raw = fs.readFileSync(filePath, 'utf8').trim();
-      const parsed = raw ? JSON.parse(raw) : [];
-      previousCount = Array.isArray(parsed) ? parsed.length : 0;
-    } catch {
-      previousCount = -1;
-    }
-
-    if (withBackup) {
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const backupPath = `${filePath}.bak-${stamp}`;
-      fs.copyFileSync(filePath, backupPath);
-      console.log(`📦 Backup: ${path.basename(backupPath)}`);
-    }
+  if (!fs.existsSync(filePath)) {
+    console.log(`⏭  Không tồn tại: ${filename}`);
+    return;
   }
-
-  fs.writeFileSync(filePath, '[]\n', 'utf8');
-  console.log(`✅ Đã xóa: ${filename} (trước đó: ${previousCount >= 0 ? previousCount : '?'} bản ghi)`);
-  return { file: filename, previousCount, wiped: true };
+  if (withBackup) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    fs.copyFileSync(filePath, `${filePath}.bak-${stamp}`);
+  }
+  fs.writeFileSync(filePath, "[]\n", "utf8");
+  console.log(`✅ Đã xóa: ${filename}`);
 }
 
-console.log('=== WIPE DUMMY DATA ===');
-console.log('Thư mục:', DATA_DIR);
-console.log('');
-
-const results = WIPE_FILES.map(wipeFile);
-
+console.log("=== WIPE DUMMY DATA ===");
+await wipeMongo();
+for (const f of WIPE_FILES) wipeFile(f);
 for (const marker of MARKERS_TO_REMOVE) {
   const markerPath = path.join(DATA_DIR, marker);
   if (fs.existsSync(markerPath)) {
@@ -77,13 +79,4 @@ for (const marker of MARKERS_TO_REMOVE) {
     console.log(`🗑  Đã xóa marker: ${marker}`);
   }
 }
-
-console.log('');
-console.log('=== HOÀN TẤT ===');
-console.log('ID: Hệ thống dùng chuỗi (prod-..., shopee-...) — không có AUTO_INCREMENT SQL.');
-console.log('     Sau khi wipe, sản phẩm/đơn mới sẽ có ID mới tự sinh.');
-console.log('');
-console.log('⚠️  Trên trình duyệt, mở Console (F12) và chạy:');
-console.log("     ['omni_products','omni_orders','omni_logs','omni_channel_listings'].forEach(k=>localStorage.removeItem(k));location.reload();");
-console.log('');
-console.log(JSON.stringify({ ok: true, results }, null, 2));
+console.log("=== XONG ===");
