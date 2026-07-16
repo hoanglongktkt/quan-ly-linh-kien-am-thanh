@@ -1346,6 +1346,9 @@ const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
 const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1000;
 /** Delay tối thiểu giữa mỗi lần gọi API sản phẩm Shopee */
 const SHOPEE_PRODUCT_API_DELAY_MS = 1000;
+/** Hàng đợi sync stock/price → Shopee (tránh 429). */
+const SHOPEE_SYNC_QUEUE_GAP_MS = 750;
+const SHOPEE_SYNC_QUEUE_MAX_RETRY = 3;
 /** Số item mỗi trang get_item_list — giữ nhỏ để tránh HTTP 413 / OOM cPanel. */
 const SHOPEE_ITEM_LIST_PAGE_SIZE = 10;
 /** Kích thước gói sản phẩm — xử lý xong 1 gói nghỉ batchPause */
@@ -1958,13 +1961,11 @@ async function shopeeUpdatePrice(
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
   const body = { item_id: itemId, price_list: priceList };
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${itemId}:`, JSON.stringify(body));
+  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${itemId}`, {
+    maxAttempts: SHOPEE_SYNC_QUEUE_MAX_RETRY,
   });
-  const json: any = await res.json();
-  console.log(`[Shopee API] POST ${apiPath} (item_id=${itemId}) -> HTTP ${res.status}:`, JSON.stringify(json));
+  console.log(`[Shopee API] POST ${apiPath} RESPONSE item_id=${itemId} HTTP ${httpStatus}:`, JSON.stringify(json));
   return json;
 }
 
@@ -2675,6 +2676,350 @@ async function pushStockUpdatesToShopee(
   }
 
   return { ok: errors.length === 0, errors, warnings, pushed, staleSkus: [...new Set(staleSkus)] };
+}
+
+// ---------------------------------------------------------------------------
+// Shopee Sync Queue — rate-limit (750ms) + retry (tối đa 3) cho stock/price
+// ---------------------------------------------------------------------------
+
+type ShopeeSyncQueueJob = {
+  key: string;
+  productId: string;
+  syncStock: boolean;
+  syncPrice: boolean;
+  attempts: number;
+  enqueuedAt: string;
+};
+
+const shopeeSyncQueue: ShopeeSyncQueueJob[] = [];
+const shopeeSyncQueueKeys = new Set<string>();
+let shopeeSyncQueueRunning = false;
+
+function detectStockPriceChanges(
+  before: any,
+  after: any
+): { stock: boolean; price: boolean } {
+  const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
+  const stockAfter = Math.max(0, Math.round(Number(after?.stock) || 0));
+  const priceBefore = Math.max(0, Math.round(Number(before?.sellingPrice) || 0));
+  const priceAfter = Math.max(0, Math.round(Number(after?.sellingPrice) || 0));
+  return {
+    stock: stockBefore !== stockAfter,
+    price: priceBefore !== priceAfter,
+  };
+}
+
+function findProductRowById(products: any[], productId: string): any | null {
+  const id = String(productId || "").trim();
+  if (!id) return null;
+  for (const p of Array.isArray(products) ? products : []) {
+    if (String(p?.id || "").trim() === id) return p;
+    for (const child of getProductChildrenList(p)) {
+      if (String(child?.id || "").trim() === id) return child;
+    }
+  }
+  return null;
+}
+
+/**
+ * Gắn Shopee item/model từ DB Mapping (channel_listings) nếu sản phẩm kho đã liên kết.
+ * Không đụng logic Mapping UI — chỉ đọc.
+ */
+function resolveProductWithShopeeMapping(product: any): any | null {
+  if (!product || typeof product !== "object") return null;
+
+  if (getShopeeItemIdForStockPush(product) != null) {
+    return product;
+  }
+
+  let listings: any[] = [];
+  try {
+    listings = readChannelListingsDb();
+  } catch (err) {
+    console.error("[Shopee Sync Queue] Không đọc được channel_listings:", err);
+    return null;
+  }
+
+  const productId = String(product.id || "").trim();
+  if (!productId) return null;
+
+  const match = listings.find((row) => {
+    if (!row || typeof row !== "object") return false;
+    const platform = String(row.platform || "shopee").trim().toLowerCase();
+    if (platform && platform !== "shopee") return false;
+    const linkedId =
+      row.linkedProductId != null && String(row.linkedProductId).trim() !== ""
+        ? String(row.linkedProductId).trim()
+        : row.linkedProduct?.id != null
+          ? String(row.linkedProduct.id).trim()
+          : "";
+    if (!linkedId || linkedId !== productId) return false;
+    const status = String(row.status || "").trim().toLowerCase();
+    return status === "success" || linkedId !== "";
+  });
+
+  if (!match) return null;
+
+  const channelId = String(match.channelId || match.itemId || "").trim();
+  if (!channelId && match.itemId == null) return null;
+
+  const enriched = applyShopeeLinkFieldsToProduct(product, channelId || String(match.itemId), {
+    modelId: match.modelId ?? match.shopeeModelId,
+    itemId: match.itemId,
+  });
+
+  if (getShopeeItemIdForStockPush(enriched) == null) return null;
+  return enriched;
+}
+
+async function executeShopeeStockPriceSyncJob(
+  product: any,
+  opts: { syncStock: boolean; syncPrice: boolean }
+): Promise<{ ok: boolean; message: string }> {
+  const mapped = resolveProductWithShopeeMapping(product);
+  if (!mapped) {
+    return { ok: false, message: "Chưa liên kết Mapping Shopee — bỏ qua sync." };
+  }
+
+  const shopId = resolveShopeeTokenShopId();
+  if (!shopId) {
+    return { ok: false, message: "Chưa có shop Shopee được ủy quyền." };
+  }
+  const accessToken = await getValidShopeeAccessToken(shopId);
+  if (!accessToken) {
+    return { ok: false, message: `Chưa có access_token hợp lệ cho shop_id=${shopId}.` };
+  }
+
+  const itemId = getShopeeItemIdForStockPush(mapped);
+  const modelId = resolveShopeeModelIdForStockPush(mapped);
+  if (itemId == null) {
+    return { ok: false, message: "Thiếu Shopee item_id sau khi resolve Mapping." };
+  }
+
+  const lines: string[] = [];
+
+  if (opts.syncStock) {
+    const stockEntry = buildShopeeUpdateStockEntry(mapped.stock, modelId);
+    try {
+      const stockResult = await shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
+      const parsed = parseShopeeApiResult(stockResult, mapped, "update_stock");
+      lines.push(parsed.message);
+      if (!parsed.success) {
+        appendShopeeSyncErrorToDb({
+          itemId,
+          modelId: modelId ?? mapped.shopeeModelId,
+          sku: mapped.sku,
+          shopId,
+          action: "update_stock",
+          error: parsed.message,
+          productId: mapped.id,
+        });
+        return { ok: false, message: parsed.message };
+      }
+    } catch (err: unknown) {
+      const msg = extractShopeeStockPushErrorMessage(err, err instanceof Error ? err.message : String(err));
+      appendShopeeSyncErrorToDb({
+        itemId,
+        modelId: modelId ?? mapped.shopeeModelId,
+        sku: mapped.sku,
+        shopId,
+        action: "update_stock",
+        error: msg,
+        productId: mapped.id,
+      });
+      return { ok: false, message: msg };
+    }
+  }
+
+  if (opts.syncPrice) {
+    await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
+    const priceEntry: { model_id?: number; original_price: number } = {
+      original_price: Math.max(0, Math.round(Number(mapped.sellingPrice) || 0)),
+    };
+    if (modelId != null) priceEntry.model_id = modelId;
+    try {
+      const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
+      const parsed = parseShopeeApiResult(priceResult, mapped, "update_price");
+      lines.push(parsed.message);
+      if (!parsed.success) {
+        appendShopeeSyncErrorToDb({
+          itemId,
+          modelId: modelId ?? mapped.shopeeModelId,
+          sku: mapped.sku,
+          shopId,
+          action: "update_price",
+          error: parsed.message,
+          productId: mapped.id,
+        });
+        return { ok: false, message: parsed.message };
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendShopeeSyncErrorToDb({
+        itemId,
+        modelId: modelId ?? mapped.shopeeModelId,
+        sku: mapped.sku,
+        shopId,
+        action: "update_price",
+        error: msg,
+        productId: mapped.id,
+      });
+      return { ok: false, message: msg };
+    }
+  }
+
+  return { ok: true, message: lines.join(" | ") || "Sync Shopee OK" };
+}
+
+async function processShopeeSyncQueue(): Promise<void> {
+  if (shopeeSyncQueueRunning) return;
+  shopeeSyncQueueRunning = true;
+
+  try {
+    while (shopeeSyncQueue.length > 0) {
+      const job = shopeeSyncQueue.shift()!;
+      shopeeSyncQueueKeys.delete(job.key);
+
+      try {
+        const products = loadProducts();
+        const row = findProductRowById(products, job.productId);
+        if (!row) {
+          console.warn(`[Shopee Sync Queue] Bỏ qua — không thấy productId=${job.productId}`);
+          await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
+          continue;
+        }
+
+        const mapped = resolveProductWithShopeeMapping(row);
+        if (!mapped) {
+          console.log(
+            `[Shopee Sync Queue] Skip SKU=${row.sku || job.productId} — chưa Mapping Shopee`
+          );
+          await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
+          continue;
+        }
+
+        const result = await executeShopeeStockPriceSyncJob(mapped, {
+          syncStock: job.syncStock,
+          syncPrice: job.syncPrice,
+        });
+
+        if (result.ok) {
+          console.log(
+            `[Shopee Sync Queue] OK productId=${job.productId} sku=${mapped.sku} stock=${job.syncStock} price=${job.syncPrice} — ${result.message}`
+          );
+        } else {
+          job.attempts += 1;
+          console.error(
+            `[Shopee Sync Queue] FAIL attempt ${job.attempts}/${SHOPEE_SYNC_QUEUE_MAX_RETRY} productId=${job.productId} sku=${mapped.sku}: ${result.message}`
+          );
+          if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
+            const retryKey = `${job.productId}|stock=${job.syncStock}|price=${job.syncPrice}`;
+            job.key = retryKey;
+            if (!shopeeSyncQueueKeys.has(retryKey)) {
+              shopeeSyncQueueKeys.add(retryKey);
+              shopeeSyncQueue.push(job);
+            }
+          } else {
+            console.error(
+              `[Shopee Sync Queue] DROPPED sau ${SHOPEE_SYNC_QUEUE_MAX_RETRY} lần — productId=${job.productId} sku=${mapped.sku}: ${result.message}`
+            );
+          }
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[Shopee Sync Queue] Exception job=${job.productId}:`, err);
+        job.attempts += 1;
+        if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
+          if (!shopeeSyncQueueKeys.has(job.key)) {
+            shopeeSyncQueueKeys.add(job.key);
+            shopeeSyncQueue.push(job);
+          }
+        } else {
+          console.error(`[Shopee Sync Queue] DROPPED exception — ${job.productId}: ${msg}`);
+        }
+      }
+
+      await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
+    }
+  } finally {
+    shopeeSyncQueueRunning = false;
+    if (shopeeSyncQueue.length > 0) {
+      setTimeout(() => {
+        void processShopeeSyncQueue();
+      }, SHOPEE_SYNC_QUEUE_GAP_MS);
+    }
+  }
+}
+
+/** Đưa sync stock/price vào hàng đợi (chỉ khi đã Mapping + có thay đổi thật). */
+function enqueueShopeeStockPriceSync(
+  products: any[],
+  opts: { syncStock?: boolean; syncPrice?: boolean }
+): number {
+  const syncStock = opts.syncStock === true;
+  const syncPrice = opts.syncPrice === true;
+  if (!syncStock && !syncPrice) return 0;
+
+  let enqueued = 0;
+  for (const raw of Array.isArray(products) ? products : []) {
+    if (!raw || typeof raw !== "object") continue;
+    const productId = String(raw.id || "").trim();
+    if (!productId) continue;
+
+    const mapped = resolveProductWithShopeeMapping(raw);
+    if (!mapped) continue;
+
+    const key = `${productId}|stock=${syncStock}|price=${syncPrice}`;
+    if (shopeeSyncQueueKeys.has(key)) {
+      // Merge: nếu job cũ đang chờ, giữ nguyên (đã cùng flags)
+      continue;
+    }
+
+    shopeeSyncQueueKeys.add(key);
+    shopeeSyncQueue.push({
+      key,
+      productId,
+      syncStock,
+      syncPrice,
+      attempts: 0,
+      enqueuedAt: new Date().toISOString(),
+    });
+    enqueued += 1;
+  }
+
+  if (enqueued > 0) {
+    console.log(
+      `[Shopee Sync Queue] Enqueued ${enqueued} job(s) — queue size=${shopeeSyncQueue.length} (gap=${SHOPEE_SYNC_QUEUE_GAP_MS}ms)`
+    );
+    void processShopeeSyncQueue();
+  }
+  return enqueued;
+}
+
+/** Sau khi lưu kho: so sánh trước/sau, enqueue sync nếu Mapping Shopee. */
+function enqueueShopeeSyncAfterProductChange(
+  beforeRows: any[],
+  afterRows: any[]
+): number {
+  let stockChanged = false;
+  let priceChanged = false;
+  const changedProducts: any[] = [];
+
+  for (const after of afterRows) {
+    if (!after?.id) continue;
+    const before = beforeRows.find((b) => String(b?.id) === String(after.id));
+    const changes = detectStockPriceChanges(before || {}, after);
+    if (!changes.stock && !changes.price) continue;
+    if (changes.stock) stockChanged = true;
+    if (changes.price) priceChanged = true;
+    changedProducts.push(after);
+  }
+
+  if (changedProducts.length === 0) return 0;
+  return enqueueShopeeStockPriceSync(changedProducts, {
+    syncStock: stockChanged,
+    syncPrice: priceChanged,
+  });
 }
 
 function getItemAvatarUrl(item: any): string | undefined {
@@ -7459,9 +7804,17 @@ async function startServer() {
     const patch = req.body || {};
     const topIndex = products.findIndex((p: any) => p.id === req.params.id);
     if (topIndex !== -1) {
-      const merged = mergeProductPatch(products[topIndex], patch);
+      const before = products[topIndex];
+      const merged = mergeProductPatch(before, patch);
       products[topIndex] = merged;
       saveProducts(products);
+      const changes = detectStockPriceChanges(before, merged);
+      if (changes.stock || changes.price) {
+        enqueueShopeeStockPriceSync([merged], {
+          syncStock: changes.stock,
+          syncPrice: changes.price,
+        });
+      }
       return res.json(merged);
     }
 
@@ -7470,12 +7823,20 @@ async function startServer() {
       const children = getProductChildrenList(products[i]);
       const childIdx = children.findIndex((c: any) => c.id === req.params.id);
       if (childIdx === -1) continue;
-      const mergedChild = mergeProductPatch(children[childIdx], patch);
+      const beforeChild = children[childIdx];
+      const mergedChild = mergeProductPatch(beforeChild, patch);
       const nextChildren = [...children];
       nextChildren[childIdx] = mergedChild;
       const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
       products[i] = { ...products[i], children: nextChildren, stock: totalStock };
       saveProducts(products);
+      const changes = detectStockPriceChanges(beforeChild, mergedChild);
+      if (changes.stock || changes.price) {
+        enqueueShopeeStockPriceSync([mergedChild], {
+          syncStock: changes.stock,
+          syncPrice: changes.price,
+        });
+      }
       return res.json(mergedChild);
     }
 
@@ -7533,57 +7894,32 @@ async function startServer() {
         skuStockMap.has(String(p.sku || "").trim())
       );
 
-      const unlinkedShopee = updatedProducts.filter((p: any) => {
-        const onShopee = p.channels?.includes("shopee");
-        return onShopee && getShopeeItemIdForStockPush(p) == null;
-      });
-      if (unlinkedShopee.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: `SKU chưa liên kết Shopee (thiếu item_id): ${unlinkedShopee.map((p: any) => p.sku).join(", ")}`,
-        });
-      }
-
       saveProducts(next);
       console.log(`[Inventory Balance] Cập nhật kho gốc ${updatedCount} SKU`);
 
-      const shopeeResult = await pushStockUpdatesToShopee(updatedProducts, req.body?.shopId);
-
-      if (!shopeeResult.ok) {
-        const onlyStale = shopeeResult.errors.every((e) => isStaleShopeeItemErrorText(e));
-        if (!onlyStale) {
-          const detailMsg = shopeeResult.errors.join(" | ");
-          return res.status(400).json({
-            success: false,
-            message: `Kho gốc đã cập nhật. Đẩy Shopee thất bại: ${detailMsg}`,
-            error: detailMsg,
-            shopeeErrors: shopeeResult.errors,
-            shopeeWarnings: shopeeResult.warnings,
-          });
-        }
-        shopeeResult.warnings.push(...shopeeResult.errors);
-      }
+      // Đồng bộ Shopee qua hàng đợi (rate-limit) — chỉ SKU đã Mapping / có item_id.
+      const queued = enqueueShopeeStockPriceSync(updatedProducts, {
+        syncStock: true,
+        syncPrice: false,
+      });
 
       const parts: string[] = [];
       parts.push("kho gốc đã cập nhật");
-      if (shopeeResult.pushed > 0) {
-        parts.push(`${shopeeResult.pushed} SKU đã đồng bộ lên Shopee`);
-      }
-      if (shopeeResult.warnings.length > 0) {
-        parts.push(`${shopeeResult.warnings.length} SKU bỏ qua (liên kết Shopee hết hạn/không tồn tại)`);
+      if (queued > 0) {
+        parts.push(`${queued} SKU đã xếp hàng đồng bộ tồn kho lên Shopee`);
+      } else {
+        parts.push("không có SKU Mapping Shopee để đồng bộ (hoặc chưa liên kết)");
       }
 
       const msg = `Cân bằng kho thành công (${parts.join(", ")}).`;
       console.log(`[Inventory Balance] ${msg}`);
-      if (shopeeResult.warnings.length > 0) {
-        console.warn("[Inventory Balance] Shopee warnings:", shopeeResult.warnings.join(" | "));
-      }
 
       return res.status(200).json({
         success: true,
         message: msg,
-        shopeeWarnings: shopeeResult.warnings,
-        staleSkus: shopeeResult.staleSkus,
+        shopeeQueued: queued,
+        shopeeWarnings: [],
+        staleSkus: [],
       });
     } catch (err: unknown) {
       console.error("[Inventory Balance] Exception:", err);
@@ -7662,13 +7998,19 @@ async function startServer() {
       if (u?.id) patchMap.set(String(u.id), u);
     }
     const products = loadProducts();
+    const beforeFlat = flattenProductsForStockSync(products);
     let updatedCount = 0;
+    const changedRows: any[] = [];
     const next = products.map((p: any) => {
       const patch = patchMap.get(String(p.id));
       if (patch) {
         updatedCount++;
         patchMap.delete(String(p.id));
-        return mergeProductPatch(p, patch);
+        const merged = mergeProductPatch(p, patch);
+        const before = beforeFlat.find((b: any) => String(b.id) === String(p.id));
+        const changes = detectStockPriceChanges(before || p, merged);
+        if (changes.stock || changes.price) changedRows.push(merged);
+        return merged;
       }
 
       const children = getProductChildrenList(p);
@@ -7681,7 +8023,11 @@ async function startServer() {
         updatedCount++;
         patchMap.delete(String(c.id));
         childChanged = true;
-        return mergeProductPatch(c, childPatch);
+        const mergedChild = mergeProductPatch(c, childPatch);
+        const beforeChild = beforeFlat.find((b: any) => String(b.id) === String(c.id));
+        const changes = detectStockPriceChanges(beforeChild || c, mergedChild);
+        if (changes.stock || changes.price) changedRows.push(mergedChild);
+        return mergedChild;
       });
       if (!childChanged) return p;
 
@@ -7692,6 +8038,17 @@ async function startServer() {
       return { ...p, children: nextChildren, stock: totalStock };
     });
     saveProducts(next);
+    if (changedRows.length > 0) {
+      const anyStock = changedRows.some((row) => {
+        const before = beforeFlat.find((b: any) => String(b.id) === String(row.id));
+        return detectStockPriceChanges(before || {}, row).stock;
+      });
+      const anyPrice = changedRows.some((row) => {
+        const before = beforeFlat.find((b: any) => String(b.id) === String(row.id));
+        return detectStockPriceChanges(before || {}, row).price;
+      });
+      enqueueShopeeStockPriceSync(changedRows, { syncStock: anyStock, syncPrice: anyPrice });
+    }
     return res.json({ updated: updatedCount, products: next });
   });
 
@@ -7787,6 +8144,7 @@ async function startServer() {
     const idSet = new Set(productIds.map(String));
     const products = loadProducts();
     let updatedCount = 0;
+    const changedRows: any[] = [];
     const next = products.map((p: any) => {
       const children = getProductChildrenList(p);
       if (children.length > 0) {
@@ -7795,12 +8153,15 @@ async function startServer() {
           if (!idSet.has(c.id)) return c;
           updatedCount++;
           changed = true;
-          return applyBulkProductUpdate(c, { stock, price });
+          const merged = applyBulkProductUpdate(c, { stock, price });
+          changedRows.push(merged);
+          return merged;
         });
         if (!changed && !idSet.has(p.id)) return p;
         if (idSet.has(p.id)) {
           updatedCount++;
           const parentPatched = applyBulkProductUpdate(p, { stock, price });
+          changedRows.push(parentPatched);
           const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
           return { ...parentPatched, children: nextChildren, stock: totalStock };
         }
@@ -7809,9 +8170,17 @@ async function startServer() {
       }
       if (!idSet.has(p.id)) return p;
       updatedCount++;
-      return applyBulkProductUpdate(p, { stock, price });
+      const merged = applyBulkProductUpdate(p, { stock, price });
+      changedRows.push(merged);
+      return merged;
     });
     saveProducts(next);
+    if (changedRows.length > 0) {
+      enqueueShopeeStockPriceSync(changedRows, {
+        syncStock: !!stock,
+        syncPrice: !!price,
+      });
+    }
     return res.json({ updated: updatedCount, products: next });
   });
 
