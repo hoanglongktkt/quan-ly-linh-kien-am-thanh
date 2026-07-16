@@ -9,6 +9,7 @@ import { handleShopeeCallback } from '../_lib/handlers/shopeeCallback.js';
 import { handleShopeeWebhook } from '../_lib/handlers/shopeeWebhook.js';
 import { handleHealthCpanel } from '../_lib/handlers/healthCpanel.js';
 import { handleChannelAutoLink } from '../_lib/handlers/channelAutoLink.js';
+import { handleMappingAutoLinkSingle } from '../_lib/handlers/mappingAutoLinkSingle.js';
 import { handleLabelProxy } from '../_lib/handlers/labels.js';
 import { proxyRequestToCpanel, resolveProxyTimeoutMs } from '../_lib/cpanelProxy.js';
 
@@ -41,6 +42,7 @@ const LOCAL_ROUTES = {
   'shopee/channel-products/auto-link': handleChannelAutoLink,
   'channel-products/auto-link': handleChannelAutoLink,
   'auto-link': handleChannelAutoLink,
+  'mapping-products/auto-link-single': handleMappingAutoLinkSingle,
 };
 
 export default async function handler(req, res) {
