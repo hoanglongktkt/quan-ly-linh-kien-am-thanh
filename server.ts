@@ -5702,17 +5702,20 @@ async function batchAutoLinkFromLocalInventoryFile(masterData: any[]): Promise<{
     throw new Error("Không có dữ liệu channel_listings để liên kết.");
   }
 
-  const unlinkedListings = dbListings
-    .map((item, index) => ({ item: sanitizeChannelListingRow(item), index }))
-    .filter(({ item }) => item.status === "unlinked" && !isListingAlreadyLinkedProtected(item));
-  const alreadyLinked = dbListings.length - unlinkedListings.length;
-  console.log(
-    `[Batch Auto-link] Bảo vệ ${alreadyLinked} đã liên kết; sẽ xử lý ${unlinkedListings.length} sản phẩm chưa liên kết.`
-  );
+  let alreadyLinked = 0;
+  let linkedCount = 0;
+  let unlinkedTotal = 0;
+  const newlyLinkedRows: any[] = [];
 
-  // ===== 3) LOGIC SO KHỚP CHUẨN — DEEP MATCHING =====
-  const matchedListings: Array<{ rowIndex: number; listing: any; masterItem: any }> = [];
-  for (const { item, index } of unlinkedListings) {
+  // ===== 3, 4) SO KHỚP SÂU + GHI DB TUẦN TỰ — KHÔNG TẠO MẢNG TRUNG GIAN =====
+  for (const [rowIndex, rawListing] of dbListings.entries()) {
+    const item = sanitizeChannelListingRow(rawListing);
+    if (item.status !== "unlinked" || isListingAlreadyLinkedProtected(item)) {
+      alreadyLinked += 1;
+      continue;
+    }
+
+    unlinkedTotal += 1;
     const targetSku = String(item?.sku || "").trim().toLowerCase();
     if (!targetSku) continue;
 
@@ -5723,31 +5726,22 @@ async function batchAutoLinkFromLocalInventoryFile(masterData: any[]): Promise<{
       const variants = Array.isArray(entry?.variants) ? entry.variants : [];
       return variants.some((variant: any) => String(variant?.sku || "").trim().toLowerCase() === targetSku);
     });
+    if (!masterItem) continue;
 
-    if (masterItem) {
-      matchedListings.push({ rowIndex: index, listing: item, masterItem });
-    }
-  }
-  console.log(`[Batch Auto-link] Tìm thấy ${matchedListings.length} sản phẩm khớp SKU sâu.`);
-
-  // ===== 4) XỬ LÝ TUẦN TỰ — for...of + await update DB =====
-  let linkedCount = 0;
-  const newlyLinkedRows: any[] = [];
-  for (const match of matchedListings) {
-    const patched = await persistBatchAutoLinkListingUpdate(dbListings, match.rowIndex, {
-      ...match.listing,
+    const patched = await persistBatchAutoLinkListingUpdate(dbListings, rowIndex, {
+      ...item,
       status: "success",
       linkedProductId:
-        match.masterItem?.id != null && String(match.masterItem.id).trim() !== ""
-          ? String(match.masterItem.id).trim()
+        masterItem?.id != null && String(masterItem.id).trim() !== ""
+          ? String(masterItem.id).trim()
           : undefined,
-      linkedProductTitle: String(match.masterItem?.title || "").trim() || undefined,
-      linkedProductSku: String(match.masterItem?.sku || "").trim() || undefined,
+      linkedProductTitle: String(masterItem?.title || "").trim() || undefined,
+      linkedProductSku: String(masterItem?.sku || "").trim() || undefined,
       syncError: undefined,
     });
     newlyLinkedRows.push(patched);
     linkedCount += 1;
-    console.log(`[Batch Auto-link] Đã lưu tuần tự thành công ${linkedCount}/${matchedListings.length}`);
+    console.log(`[Batch Auto-link] Đã lưu tuần tự thành công: ${linkedCount}`);
   }
 
   const unlinkedRemaining = dbListings.filter((row) => {
@@ -5755,7 +5749,7 @@ async function batchAutoLinkFromLocalInventoryFile(masterData: any[]): Promise<{
     return safeRow.status === "unlinked" && !isListingAlreadyLinkedProtected(safeRow);
   }).length;
   console.log(
-    `[Batch Auto-link] Hoàn tất — linked=${linkedCount}, protected=${alreadyLinked}, remaining=${unlinkedRemaining}`
+    `[Batch Auto-link] Hoàn tất — linked=${linkedCount}, protected=${alreadyLinked}, unlinked=${unlinkedTotal}, remaining=${unlinkedRemaining}`
   );
 
   return {
@@ -5765,7 +5759,7 @@ async function batchAutoLinkFromLocalInventoryFile(masterData: any[]): Promise<{
     unlinkedRemaining,
     cacheUpdatedAt: new Date().toISOString(),
     masterProductCount: masterData.length,
-    skuIndexSize: matchedListings.length,
+    skuIndexSize: linkedCount,
   };
 }
 const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
@@ -6669,7 +6663,7 @@ async function startServer() {
       console.error("[Batch Auto-link] Exception:", error);
       if (!res.headersSent) {
         const message = error instanceof Error ? error.message : String(error);
-        return res.status(500).json({ message });
+        return res.status(500).json({ success: false, message });
       }
     }
   };
