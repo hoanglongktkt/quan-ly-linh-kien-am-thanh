@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Product } from '../types';
+import { Product, getProductChildren } from '../types';
 import {
   Barcode,
   CheckCircle2,
@@ -39,13 +39,48 @@ function productImage(product: Product): string | undefined {
   return product.avatarUrl || product.imageUrl;
 }
 
+/**
+ * Flatten Kho chính → từng dòng SKU kiểm được:
+ * - Có children/variants → liệt kê từng phân loại (giống Kho chính)
+ * - Không có biến thể → giữ sản phẩm cha
+ */
+function flattenInventorySkus(products: Product[]): Product[] {
+  const rows: Product[] = [];
+  for (const parent of Array.isArray(products) ? products : []) {
+    if (!parent) continue;
+    const children = getProductChildren(parent);
+    if (children.length > 0) {
+      for (const child of children) {
+        if (!child) continue;
+        rows.push({
+          ...child,
+          title: String(child.title || parent.title || '').trim() || parent.title,
+          modelName:
+            String(child.modelName || '').trim() ||
+            String(child.title || '').trim() ||
+            undefined,
+          avatarUrl: child.avatarUrl || child.imageUrl || parent.avatarUrl || parent.imageUrl,
+          imageUrl: child.imageUrl || child.avatarUrl || parent.imageUrl || parent.avatarUrl,
+          unit: child.unit || parent.unit,
+          category: child.category || parent.category,
+        });
+      }
+    } else {
+      rows.push(parent);
+    }
+  }
+  return rows;
+}
+
 function matchesProductQuery(product: Product, q: string): boolean {
   const title = getProductTitle(product).toLowerCase();
   const variant = getProductVariant(product).toLowerCase();
   return (
     title.includes(q) ||
     variant.includes(q) ||
-    product.sku.toLowerCase().includes(q) ||
+    String(product.sku || '')
+      .toLowerCase()
+      .includes(q) ||
     (product.barcode || '').toLowerCase().includes(q)
   );
 }
@@ -77,13 +112,16 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
   const mobileSearchRef = useRef<HTMLInputElement>(null);
   const qtyRefs = useRef<Map<string, HTMLInputElement>>(new Map());
 
+  /** Danh sách SKU kiểm kho = cha không phân loại + từng SKU phân loại. */
+  const inventorySkus = useMemo(() => flattenInventorySkus(products), [products]);
+
   const addedIds = useMemo(() => new Set(auditLines.map((l) => l.product.id)), [auditLines]);
 
   const suggestions = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return [];
-    return products.filter((p) => matchesProductQuery(p, q)).slice(0, 25);
-  }, [products, search]);
+    return inventorySkus.filter((p) => matchesProductQuery(p, q)).slice(0, 25);
+  }, [inventorySkus, search]);
 
   const totalPages = Math.max(1, Math.ceil(auditLines.length / pageSize));
   const pagedLines = useMemo(() => {
@@ -136,13 +174,14 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
     (raw: string) => {
       const q = raw.trim().toLowerCase();
       if (!q) return;
-      const exact = products.find(
-        (p) => p.sku.toLowerCase() === q || (p.barcode || '').toLowerCase() === q
+      const exact = inventorySkus.find(
+        (p) =>
+          String(p.sku || '').toLowerCase() === q || (p.barcode || '').toLowerCase() === q
       );
-      const prod = exact || products.find((p) => matchesProductQuery(p, q));
+      const prod = exact || inventorySkus.find((p) => matchesProductQuery(p, q));
       if (prod) addProduct(prod);
     },
-    [products, addProduct]
+    [inventorySkus, addProduct]
   );
 
   useEffect(() => {
