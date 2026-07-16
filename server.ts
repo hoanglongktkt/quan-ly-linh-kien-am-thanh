@@ -5695,6 +5695,11 @@ async function batchAutoLinkFromLocalInventoryFile(masterData: any[]): Promise<{
   if (!Array.isArray(masterData)) {
     throw new Error("Cấu trúc data/local_inventory.json không hợp lệ: thiếu mảng products.");
   }
+  if (masterData.length === 0) {
+    throw new Error(
+      "Local Cache không có sản phẩm Kho gốc (products=[]). Hãy refresh cache / tải kho trước."
+    );
+  }
 
   // ===== 2) LỌC DỮ LIỆU CŨ — CHỈ LẤY "CHƯA LIÊN KẾT" =====
   const dbListings = readChannelListingsDb();
@@ -5706,6 +5711,8 @@ async function batchAutoLinkFromLocalInventoryFile(masterData: any[]): Promise<{
   let linkedCount = 0;
   let unlinkedTotal = 0;
   const newlyLinkedRows: any[] = [];
+  // Dùng đúng helper matching hiện có: trim().toLowerCase() và SKU parent/children/variants/models.
+  const masterSkuIndex = buildMasterSkuIndex(masterData);
 
   // ===== 3, 4) SO KHỚP SÂU + GHI DB TUẦN TỰ — KHÔNG TẠO MẢNG TRUNG GIAN =====
   for (const [rowIndex, rawListing] of dbListings.entries()) {
@@ -5716,16 +5723,9 @@ async function batchAutoLinkFromLocalInventoryFile(masterData: any[]): Promise<{
     }
 
     unlinkedTotal += 1;
-    const targetSku = String(item?.sku || "").trim().toLowerCase();
+    const targetSku = normalizeSkuKey(item?.sku);
     if (!targetSku) continue;
-
-    const masterItem = masterData.find((entry: any) => {
-      const masterSku = String(entry?.sku || "").trim().toLowerCase();
-      if (masterSku && masterSku === targetSku) return true;
-
-      const variants = Array.isArray(entry?.variants) ? entry.variants : [];
-      return variants.some((variant: any) => String(variant?.sku || "").trim().toLowerCase() === targetSku);
-    });
+    const masterItem = masterSkuIndex.get(targetSku);
     if (!masterItem) continue;
 
     const patched = await persistBatchAutoLinkListingUpdate(dbListings, rowIndex, {
@@ -5759,7 +5759,7 @@ async function batchAutoLinkFromLocalInventoryFile(masterData: any[]): Promise<{
     unlinkedRemaining,
     cacheUpdatedAt: new Date().toISOString(),
     masterProductCount: masterData.length,
-    skuIndexSize: linkedCount,
+    skuIndexSize: masterSkuIndex.size,
   };
 }
 const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
