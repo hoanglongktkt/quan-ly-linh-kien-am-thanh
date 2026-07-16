@@ -361,7 +361,6 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       body: JSON.stringify({
         listingId: item.id,
         channelId: item.channelId,
-        platform: item.platform,
       }),
     });
 
