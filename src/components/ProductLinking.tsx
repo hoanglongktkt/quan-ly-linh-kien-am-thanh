@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Product, SyncLog, ConnectedShop } from '../types';
+import { Product, SyncLog, ConnectedShop, getProductChildren } from '../types';
 import { purgeLegacyCatalogCache, loadPersistedListings, savePersistedListings, clearInventoryBrowserCache, clearPersistedListings } from '../utils/catalogStorage';
 import { parseJsonResponse, apiFetch } from '../utils/apiClient';
 import { 
@@ -464,6 +464,14 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   // Manual Mapping Modal state
   const [mappingListing, setMappingListing] = useState<ChannelListing | null>(null);
   const [mappingSearch, setMappingSearch] = useState('');
+  const flattenedMasterProducts = useMemo(() => {
+    const rows: Product[] = [];
+    for (const product of products) {
+      rows.push(product);
+      rows.push(...getProductChildren(product));
+    }
+    return rows;
+  }, [products]);
 
   // Khởi tạo về Kho modal state
   const [initListing, setInitListing] = useState<ChannelListing | null>(null);
@@ -550,7 +558,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
   // 3. Confirm Manual Mapping — dùng listingId + masterProductId từ DATA (state), không lấy từ UI text.
   const handleMapProduct = (listingId: string, masterProductId: string) => {
-    const masterProd = products.find((p) => String(p.id) === String(masterProductId));
+    const masterProd = flattenedMasterProducts.find((p) => String(p.id) === String(masterProductId));
     const listing = listings.find((l) => String(l.id) === String(listingId));
     if (!masterProd || !listing) {
       showToast('Lỗi dữ liệu: thiếu listing.id hoặc sản phẩm kho gốc.');
@@ -593,7 +601,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const handleAutoLinkIndividual = (item: ChannelListing) => {
     // 1. Try to match by SKU
     if (item.sku) {
-      const matchedBySku = products.find(p => p.sku.toLowerCase() === item.sku.toLowerCase());
+      const matchedBySku = flattenedMasterProducts.find(
+        (p) => String(p.sku || '').trim().toLowerCase() === String(item.sku || '').trim().toLowerCase()
+      );
       if (matchedBySku) {
         saveListings(prev => prev.map(listing => {
           if (listing.id === item.id) {
@@ -625,7 +635,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
 
     // 2. Try to match by Name similarity
-    const matchedByName = products.find(p => {
+    const matchedByName = flattenedMasterProducts.find(p => {
       const masterTitle = p.title.toLowerCase();
       const listingTitle = item.title.toLowerCase();
       return masterTitle.includes(listingTitle) || listingTitle.includes(masterTitle);
@@ -1038,7 +1048,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   };
 
   // Master product search in manual mapping modal
-  const filteredMasterProducts = products.filter(p => 
+  const filteredMasterProducts = flattenedMasterProducts.filter(p =>
     p.title.toLowerCase().includes(mappingSearch.toLowerCase()) || 
     p.sku.toLowerCase().includes(mappingSearch.toLowerCase())
   );
@@ -1278,7 +1288,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               ) : (
                 filteredListings.map((item) => {
                   // Lookup hoàn toàn từ DATA model — defensive optional chaining.
-                  const linked = resolveLinkedMasterFromData(item, products);
+                  const linked = resolveLinkedMasterFromData(item, flattenedMasterProducts);
                   const linkedTitle = linked?.title || '';
                   const linkedSku = linked?.sku || '';
                   const isBrokenLink = linked?.isBroken === true;

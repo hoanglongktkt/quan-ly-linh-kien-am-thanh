@@ -457,41 +457,68 @@ export default function ProductList({
       const token = localStorage.getItem('admin_token');
       const endpoint =
         initPlatform === 'shopee' ? '/api/shopee/products/sync' : '/api/tiktok/products/sync';
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ shopId: shop.shopId }),
-      });
-      const data = await parseJsonResponse<{
-        success?: boolean;
-        productCount?: number;
-        stats?: { rowCount?: number; variantItemCount?: number; pageCount?: number };
-        shopId?: string;
-        message?: string;
-        error?: string;
-        forceRefresh?: boolean;
-        refresh?: { forceRefresh?: boolean };
-      }>(res);
+      let offset = 0;
+      let hasMore = true;
+      let pageIndex = 0;
+      let total = 0;
+      let variantCount = 0;
+      let shouldForceRefresh = false;
 
-      if (!res.ok || data.success === false) {
-        throw new Error(data?.message || data?.error || 'Khởi tạo sản phẩm thất bại.');
+      while (hasMore) {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ shopId: shop.shopId, offset, reset: pageIndex === 0 }),
+        });
+        const data = await parseJsonResponse<{
+          success?: boolean;
+          productCount?: number;
+          stats?: {
+            rowCount?: number;
+            variantItemCount?: number;
+            pageCount?: number;
+            itemsInPage?: number;
+            savedCount?: number;
+            skippedCount?: number;
+          };
+          shopId?: string;
+          message?: string;
+          error?: string;
+          forceRefresh?: boolean;
+          refresh?: { forceRefresh?: boolean };
+          nextOffset?: number;
+          hasMore?: boolean;
+          pageIndex?: number;
+        }>(res);
+
+        if (!res.ok || data.success === false) {
+          throw new Error(data?.message || data?.error || 'Khởi tạo sản phẩm thất bại.');
+        }
+
+        pageIndex = Number(data.pageIndex ?? pageIndex + 1);
+        total = Number(data.productCount ?? total);
+        variantCount += Number(data.stats?.variantItemCount ?? 0);
+        shouldForceRefresh =
+          data.forceRefresh === true || data.refresh?.forceRefresh === true || shouldForceRefresh;
+        setInitProgress((prev) => [
+          ...prev,
+          `📄 Đã xử lý trang ${pageIndex}: ${Number(data.stats?.itemsInPage ?? 0)} sản phẩm, lưu ${Number(data.stats?.savedCount ?? 0)} dòng`,
+        ]);
+
+        hasMore = data.hasMore === true;
+        offset = Number(data.nextOffset ?? offset);
       }
 
-      const total = data.productCount ?? data.stats?.rowCount ?? 0;
-      const variantCount = data.stats?.variantItemCount ?? 0;
       setInitProgress((prev) => [
         ...prev,
-        `📥 Đã đồng bộ ${total} sản phẩm từ ${initPlatform === 'shopee' ? 'Shopee' : 'TikTok'}...`,
         "🔄 Đang tải lại Kho chính từ Database...",
       ]);
 
-      const shouldForceRefresh =
-        data.forceRefresh === true || data.refresh?.forceRefresh === true;
-      await onRefreshProducts?.({ page: 1, append: false, forceRefresh: shouldForceRefresh });
+      await onRefreshProducts?.({ page: 1, append: false, forceRefresh: shouldForceRefresh || true });
 
       setInitProgress((prev) => [
         ...prev,
@@ -499,7 +526,7 @@ export default function ProductList({
         `🎉 HOÀN TẤT: ${total} sản phẩm đã được khởi tạo vào Kho chính!`,
       ]);
       setInitToast(
-        data.message || `Khởi tạo kho thành công! ${total} sản phẩm (${variantCount} có phân loại).`
+        `Khởi tạo kho thành công! ${total} sản phẩm (${variantCount} có phân loại).`
       );
 
       onAddLog({

@@ -3533,6 +3533,119 @@ async function pullShopeeWarehouseAllPages(
   };
 }
 
+function clearExistingShopeeWarehouseProducts(): void {
+  try {
+    const existing = loadProducts();
+    const kept = existing.filter(
+      (p: any) => !p.shopeeItemId && !(Array.isArray(p.channels) && p.channels.includes("shopee"))
+    );
+    saveProducts(kept);
+    console.log(
+      `[Shopee Warehouse Sync] Reset: giữ ${kept.length} SP không-Shopee, xóa tạm SP Shopee cũ trước khi pull`
+    );
+  } catch (error: unknown) {
+    console.error("[Shopee Warehouse Sync] Reset failed:", error);
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+async function syncShopeeWarehouseSinglePage(
+  shopId: string,
+  accessToken: string,
+  offset: number,
+): Promise<{
+  currentOffset: number;
+  nextOffset: number;
+  hasMore: boolean;
+  pageIndex: number;
+  pageStats: {
+    itemsInPage: number;
+    rowsInPage: number;
+    variantItemCount: number;
+    skippedCount: number;
+    savedCount: number;
+  };
+  skippedItems: { itemId: string; reason: string }[];
+  productCount: number;
+}> {
+  const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
+  if (page.itemIds.length === 0) {
+    const productCount = loadProducts().filter(
+      (p: any) => p.shopeeItemId || (Array.isArray(p.channels) && p.channels.includes("shopee"))
+    ).length;
+    return {
+      currentOffset: offset,
+      nextOffset: page.nextOffset,
+      hasMore: false,
+      pageIndex: page.pageIndex,
+      pageStats: {
+        itemsInPage: 0,
+        rowsInPage: 0,
+        variantItemCount: 0,
+        skippedCount: 0,
+        savedCount: 0,
+      },
+      skippedItems: [],
+      productCount,
+    };
+  }
+
+  const allIds = asShopeeArray(page.itemIds).filter((n) => Number.isFinite(Number(n)) && Number(n) > 0);
+  const pageRows: any[] = [];
+  let variantItemCount = 0;
+  const skippedItems: { itemId: string; reason: string }[] = [];
+
+  for (let batchStart = 0; batchStart < allIds.length; batchStart += CHANNEL_FETCH_MICRO_BATCH) {
+    const idBatch = allIds.slice(batchStart, batchStart + CHANNEL_FETCH_MICRO_BATCH);
+    const baseItems = await fetchShopeeBaseItemsByIds(shopId, accessToken, idBatch);
+    await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+
+    for (const item of asShopeeArray(baseItems)) {
+      if (!item || item.item_id == null) continue;
+      try {
+        const r = await syncShopeeItemToWarehouseRows(shopId, accessToken, item);
+        if (r.error && (!r.rows || r.rows.length === 0)) {
+          skippedItems.push({ itemId: String(item.item_id), reason: r.error });
+        } else {
+          if (r.modelCount > 0) variantItemCount++;
+          pageRows.push(...asShopeeArray(r.rows));
+        }
+      } catch (itemErr: unknown) {
+        const reason = itemErr instanceof Error ? itemErr.message : String(itemErr);
+        console.error(`[Shopee Warehouse Sync] page offset=${offset} item_id=${item?.item_id}: ${reason}`);
+        skippedItems.push({ itemId: String(item?.item_id ?? "?"), reason });
+      }
+      await yieldEventLoop(CHANNEL_FETCH_YIELD_MS);
+    }
+  }
+
+  const dedupedRows = dedupeShopeeParentVariantRows(pageRows);
+  const savedCount = dedupedRows.length > 0 ? mergeWarehouseProductsBatch(dedupedRows) : 0;
+  const productCount = loadProducts().filter(
+    (p: any) => p.shopeeItemId || (Array.isArray(p.channels) && p.channels.includes("shopee"))
+  ).length;
+
+  console.log(
+    `[Shopee Warehouse Sync] Page ${page.pageIndex + 1} offset=${offset}: items=${allIds.length}, rows=${dedupedRows.length}, saved=${savedCount}, totalShopee=${productCount}`
+  );
+
+  return {
+    currentOffset: offset,
+    nextOffset: page.nextOffset,
+    hasMore: page.hasMore,
+    pageIndex: page.pageIndex,
+    pageStats: {
+      itemsInPage: allIds.length,
+      rowsInPage: dedupedRows.length,
+      variantItemCount,
+      skippedCount: skippedItems.length,
+      savedCount,
+    },
+    skippedItems,
+    productCount,
+  };
+}
+
 async function fetchAllShopeeItemIds(shopId: string, accessToken: string): Promise<number[]> {
   const allItemIds: number[] = [];
   let offset = 0;
@@ -8822,22 +8935,45 @@ async function startServer() {
         });
       }
 
-      console.log(`[Shopee Product Sync] Bắt đầu khởi tạo kho (chunked ${PRODUCT_SYNC_CHUNK_SIZE}) cho shop_id=${shopId}...`);
-      const result = await runFullShopeeWarehouseSync(shopId, accessToken);
+      const rawOffset = Number(req.body?.offset ?? 0);
+      const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
+      const reset = req.body?.reset === true || offset === 0;
+
+      if (reset) {
+        clearExistingShopeeWarehouseProducts();
+      }
+
+      console.log(
+        `[Shopee Product Sync] Bắt đầu đồng bộ 1 trang shop_id=${shopId}, offset=${offset}, page_size=${SHOPEE_ITEM_LIST_PAGE_SIZE}`
+      );
+      const result = await syncShopeeWarehouseSinglePage(shopId, accessToken, offset);
       const initialized = Number(result.productCount) || 0;
       console.log(
-        `[Shopee Product Sync] Khởi tạo xong — productCount=${initialized}, rowCount=${result.stats?.rowCount ?? 0}, pages=${result.stats?.pageCount ?? 0}`
+        `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} — productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}`
       );
 
       return res.status(200).json({
         success: true,
-        shopId: result.shopId,
+        shopId,
         productCount: initialized,
-        stats: result.stats,
+        stats: {
+          rowCount: result.pageStats.rowsInPage,
+          variantItemCount: result.pageStats.variantItemCount,
+          pageCount: result.pageIndex + 1,
+          itemsInPage: result.pageStats.itemsInPage,
+          savedCount: result.pageStats.savedCount,
+          skippedCount: result.pageStats.skippedCount,
+        },
+        currentOffset: result.currentOffset,
+        nextOffset: result.nextOffset,
+        hasMore: result.hasMore,
+        pageIndex: result.pageIndex + 1,
         skippedItems: result.skippedItems?.length ? result.skippedItems : undefined,
-        message: `Đã khởi tạo xong ${initialized} sản phẩm`,
-        forceRefresh: true,
-        refresh: { forceRefresh: true },
+        message: result.hasMore
+          ? `Đã lưu trang ${result.pageIndex + 1} (${result.pageStats.itemsInPage} sản phẩm), tiếp tục trang sau`
+          : `Đã khởi tạo xong ${initialized} sản phẩm`,
+        forceRefresh: !result.hasMore,
+        refresh: { forceRefresh: !result.hasMore },
       });
     } catch (error: unknown) {
       console.error("[Shopee Product Sync] Exception:", error);
