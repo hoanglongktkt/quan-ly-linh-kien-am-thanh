@@ -6,6 +6,7 @@ import { PDFDocument } from "pdf-lib";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import {
   initMongo,
@@ -1541,10 +1542,19 @@ function sendApiErrorJson(res: any, err: unknown, status = 500) {
   const { message, details, shopeeDetail } = extractHttpClientError(err);
   return res.status(status).json({
     success: false,
+    error: message || "Internal Server Error",
     message,
     details,
     ...(shopeeDetail ? { shopee: shopeeDetail } : {}),
   });
+}
+
+function sendStrictApiErrorJson(res: any, err: unknown) {
+  const message =
+    err && typeof err === "object" && "message" in err && typeof err.message === "string"
+      ? err.message
+      : "Internal Server Error";
+  return res.status(500).json({ success: false, error: message || "Internal Server Error" });
 }
 
 function isShopeeRateLimited(httpStatus: number, json?: any): boolean {
@@ -7193,6 +7203,32 @@ const authMiddleware = (req: any, res: any, next: any) => {
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT || 3000;
+  const appWithRouteMethods = app as any;
+  for (const method of ["get", "post", "put", "patch", "delete"] as const) {
+    const registerRoute = appWithRouteMethods[method].bind(app);
+    appWithRouteMethods[method] = (routePath: unknown, ...handlers: any[]) => {
+      if (typeof routePath !== "string" || !routePath.startsWith("/api/")) {
+        return registerRoute(routePath, ...handlers);
+      }
+      return registerRoute(
+        routePath,
+        ...handlers.map((handler) => {
+          if (typeof handler !== "function" || handler.length === 4) return handler;
+          return (req: any, res: any, next: any) => {
+            try {
+              return Promise.resolve(handler(req, res, next)).catch((err: unknown) => {
+                if (res.headersSent) return next(err);
+                return sendStrictApiErrorJson(res, err);
+              });
+            } catch (err: unknown) {
+              if (res.headersSent) return next(err);
+              return sendStrictApiErrorJson(res, err);
+            }
+          };
+        })
+      );
+    };
+  }
 
   app.use((req, res, next) => {
     const origin = req.headers.origin as string | undefined;
@@ -7216,7 +7252,7 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-  /** DB chưa sẵn sàng → 500 JSON (không crash process). Auth/health/oauth vẫn chạy. */
+  /** DB chưa sẵn sàng → JSON 503 (không crash process). Auth/health/oauth vẫn chạy. */
   app.use((req, res, next) => {
     const pathName = String(req.path || req.originalUrl || "").split("?")[0];
     if (!pathName.startsWith("/api/")) return next();
@@ -7229,11 +7265,10 @@ async function startServer() {
       pathName === "/api/shopee/webhook" ||
       pathName.startsWith("/api/public/");
     if (allowWithoutDb) return next();
-    if (!isMongoReady()) {
-      return res.status(500).json({
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
         success: false,
-        error: "database_unavailable",
-        message: "Chưa kết nối được Database, vui lòng kiểm tra App Logs",
+        error: "Database chưa kết nối (readyState: " + mongoose.connection.readyState + ")",
       });
     }
     return next();
