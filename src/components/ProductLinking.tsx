@@ -816,62 +816,85 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     try {
       const token = localStorage.getItem('admin_token');
       if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
+      const batchLimit = 50;
+      let cursor = 0;
+      let loopGuard = 0;
+      let totalLinked = 0;
+      let remaining = 0;
+      let lastMessage = '';
 
-      // Server sequential low-RAM — không Promise.all, không forceRefresh kho.
-      const res = await apiFetch('/api/mapping-products/batch-auto-link', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({}),
-      });
-      const data = await parseJsonResponse<{
-        success?: boolean;
-        data?: {
+      while (true) {
+        loopGuard += 1;
+        if (loopGuard > 1000) {
+          throw new Error('Liên kết tự động bị dừng để tránh lặp vô hạn.');
+        }
+
+        const res = await apiFetch('/api/mapping-products/batch-auto-link', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ cursor, limit: batchLimit }),
+        });
+        const data = await parseJsonResponse<{
+          success?: boolean;
+          data?: {
+            linkedCount?: number;
+            listings?: ChannelListing[];
+            alreadyLinked?: number;
+            unlinkedRemaining?: number;
+            scannedCount?: number;
+            nextCursor?: number;
+            hasMore?: boolean;
+          };
           linkedCount?: number;
           listings?: ChannelListing[];
-          alreadyLinked?: number;
-          unlinkedRemaining?: number;
-        };
-        linkedCount?: number;
-        listings?: ChannelListing[];
-        message?: string;
-        error?: string;
-      }>(res);
+          message?: string;
+          error?: string;
+        }>(res);
 
-      if (!res.ok || data.success === false) {
-        throw new Error(data?.message || data?.error || 'Liên kết tự động thất bại.');
-      }
-
-      const payload = data.data || data;
-      const linkedCount = Number(payload.linkedCount ?? data.linkedCount ?? 0);
-      const patches = payload.listings ?? data.listings;
-
-      // Merge patch vào UI — không tải lại toàn bộ kho / mapping.
-      if (Array.isArray(patches) && patches.length > 0) {
-        const byId = new Map<string, ChannelListing>();
-        for (const row of patches) {
-          const n = normalizeListingRecord(row);
-          if (n) byId.set(String(n.id), n);
+        if (!res.ok || data.success === false) {
+          throw new Error(data?.message || data?.error || 'Liên kết tự động thất bại.');
         }
-        setListings((prev) => {
-          const next = prev.map((row) => byId.get(String(row.id)) || row);
-          // Thêm dòng mới nếu chưa có trên UI
-          for (const [id, row] of byId) {
-            if (!next.some((r) => String(r.id) === id)) next.push(row);
+
+        const payload = data.data || data;
+        const linkedCount = Number(payload.linkedCount ?? data.linkedCount ?? 0);
+        const patches = payload.listings ?? data.listings;
+        const scannedCount = Number(payload.scannedCount ?? 0);
+        const nextCursor = Number(payload.nextCursor ?? cursor);
+        const hasMore = payload.hasMore === true;
+        remaining = Number(payload.unlinkedRemaining ?? 0);
+        lastMessage = data.message || '';
+        totalLinked += linkedCount;
+
+        if (Array.isArray(patches) && patches.length > 0) {
+          const byId = new Map<string, ChannelListing>();
+          for (const row of patches) {
+            const n = normalizeListingRecord(row);
+            if (n) byId.set(String(n.id), n);
           }
-          return next;
-        });
+          setListings((prev) => {
+            const next = prev.map((row) => byId.get(String(row.id)) || row);
+            for (const [id, row] of byId) {
+              if (!next.some((r) => String(r.id) === id)) next.push(row);
+            }
+            return next;
+          });
+        }
+
+        if (!hasMore || remaining <= 0 || scannedCount <= 0 || nextCursor <= cursor) {
+          cursor = nextCursor;
+          break;
+        }
+
+        cursor = nextCursor;
       }
 
-      if (linkedCount > 0) {
-        showToast(data.message || `Đã liên kết thành công ${linkedCount} sản phẩm`);
+      if (totalLinked > 0) {
+        showToast(`Đã liên kết thành công ${totalLinked} sản phẩm`);
       } else {
-        showToast(
-          data.message ||
-            'Không tìm thấy SKU trùng khớp trong Database hiện tại.'
-        );
+        showToast(lastMessage || 'Không tìm thấy SKU trùng khớp trong Database hiện tại.');
       }
 
       onAddLog({
@@ -879,10 +902,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         timestamp: new Date().toISOString(),
         channel: 'all',
         type: 'product_sync',
-        status: linkedCount > 0 ? 'success' : 'failed',
+        status: totalLinked > 0 ? 'success' : 'failed',
         message:
-          data.message ||
-          `Liên kết tự động (sequential): ${linkedCount} sản phẩm`,
+          totalLinked > 0
+            ? `Liên kết tự động (batch): ${totalLinked} sản phẩm`
+            : lastMessage || 'Liên kết tự động không tìm thấy SKU trùng khớp.',
       });
     } catch (err: unknown) {
       const message = (err as Error)?.message || 'Liên kết tự động thất bại.';

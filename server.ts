@@ -1346,6 +1346,9 @@ const CHANNEL_FETCH_YIELD_MS = 50;
 const PRODUCT_SYNC_CHUNK_SIZE = 50;
 /** Nghỉ giữa các chunk sync — tránh 503 / cagefs fork. */
 const PRODUCT_SYNC_CHUNK_PAUSE_MS = 100;
+/** Batch auto-link mỗi request — giữ nhỏ để tránh spike RAM/CPU trên host yếu. */
+const AUTO_LINK_BATCH_LIMIT_DEFAULT = 50;
+const AUTO_LINK_BATCH_LIMIT_MAX = 100;
 /** Giới hạn số trang get_item_list mỗi phiên sync (không while(true)). */
 const PRODUCT_SYNC_MAX_PAGES = 200;
 const SHOPEE_API_MAX_RETRY = 5;
@@ -5780,15 +5783,13 @@ function writeProductsFileOnly(products: any[]): void {
   console.log(`[Batch Auto-link] Ghi products.json xong — ${list.length} dòng (không refreshCache tại đây).`);
 }
 
-async function persistBatchAutoLinkListingUpdate(
+function persistBatchAutoLinkListingUpdate(
   dbListings: any[],
   rowIndex: number,
   nextRow: any
-): Promise<any> {
+): any {
   const patched = sanitizeChannelListingRow(nextRow);
   dbListings[rowIndex] = patched;
-  writeChannelListingsDb(dbListings);
-  await sleep(1);
   return patched;
 }
 
@@ -5799,7 +5800,10 @@ async function persistBatchAutoLinkListingUpdate(
  * 3) So khớp SKU đã chuẩn hóa
  * 4) Ghi DB tuần tự bằng for...of, tuyệt đối không Promise.all
  */
-async function batchAutoLinkFromDatabase(): Promise<{
+async function batchAutoLinkFromDatabase(opts?: {
+  cursor?: number;
+  limit?: number;
+}): Promise<{
   linkedCount: number;
   listings: any[];
   alreadyLinked: number;
@@ -5807,6 +5811,10 @@ async function batchAutoLinkFromDatabase(): Promise<{
   cacheUpdatedAt: string;
   masterProductCount: number;
   skuIndexSize: number;
+  scannedCount: number;
+  requestedLimit: number;
+  nextCursor: number;
+  hasMore: boolean;
 }> {
   try {
     console.log("[Batch Auto-link] Bắt đầu đối chiếu từ Database hiện tại...");
@@ -5821,52 +5829,78 @@ async function batchAutoLinkFromDatabase(): Promise<{
       throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
     }
 
+    const requestedCursor = Number.isFinite(Number(opts?.cursor))
+      ? Math.max(0, Math.floor(Number(opts?.cursor)))
+      : 0;
+    const requestedLimitRaw = Number.isFinite(Number(opts?.limit))
+      ? Math.floor(Number(opts?.limit))
+      : AUTO_LINK_BATCH_LIMIT_DEFAULT;
+    const requestedLimit = Math.min(AUTO_LINK_BATCH_LIMIT_MAX, Math.max(1, requestedLimitRaw));
+
     let alreadyLinked = 0;
     let linkedCount = 0;
     let unlinkedTotal = 0;
+    let scannedCount = 0;
+    let nextCursor = dbListings.length;
+    let wroteChanges = false;
     const newlyLinkedRows: any[] = [];
     // Dùng đúng helper matching hiện có: trim().toLowerCase() và cắt prefix trước "_".
     const masterSkuIndex = buildMasterSkuIndex(masterProducts);
     console.log(
-      `[Batch Auto-link] DB loaded: masterProducts=${masterProducts.length}, skuIndex=${masterSkuIndex.size}, listings=${dbListings.length}`
+      `[Batch Auto-link] DB loaded: masterProducts=${masterProducts.length}, skuIndex=${masterSkuIndex.size}, listings=${dbListings.length}, cursor=${requestedCursor}, limit=${requestedLimit}`
     );
 
-    // ===== 3, 4) SO KHỚP SÂU + GHI DB TUẦN TỰ — KHÔNG TẠO MẢNG TRUNG GIAN =====
-    for (const [rowIndex, rawListing] of dbListings.entries()) {
-      const item = sanitizeChannelListingRow(rawListing);
+    // ===== 3, 4) SO KHỚP SÂU + GHI DB TUẦN TỰ THEO BATCH NHỎ =====
+    for (let rowIndex = requestedCursor; rowIndex < dbListings.length; rowIndex += 1) {
+      const item = sanitizeChannelListingRow(dbListings[rowIndex]);
       if (item.status !== "unlinked" || isListingAlreadyLinkedProtected(item)) {
         alreadyLinked += 1;
         continue;
       }
 
       unlinkedTotal += 1;
-      const targetSku = normalizeSkuKey(item?.sku);
-      if (!targetSku) continue;
-      const masterItem = masterSkuIndex.get(targetSku);
-      if (!masterItem) continue;
+      scannedCount += 1;
+      nextCursor = rowIndex + 1;
 
-      const patched = await persistBatchAutoLinkListingUpdate(dbListings, rowIndex, {
-        ...item,
-        status: "success",
-        linkedProductId:
-          masterItem?.id != null && String(masterItem.id).trim() !== ""
-            ? String(masterItem.id).trim()
-            : undefined,
-        linkedProductTitle: String(masterItem?.title || "").trim() || undefined,
-        linkedProductSku: String(masterItem?.sku || "").trim() || undefined,
-        syncError: undefined,
-      });
-      newlyLinkedRows.push(patched);
-      linkedCount += 1;
-      console.log(`[Batch Auto-link] Đã lưu tuần tự thành công: ${linkedCount}`);
+      const targetSku = normalizeSkuKey(item?.sku);
+      if (targetSku) {
+        const masterItem = masterSkuIndex.get(targetSku);
+        if (masterItem) {
+          const patched = persistBatchAutoLinkListingUpdate(dbListings, rowIndex, {
+            ...item,
+            status: "success",
+            linkedProductId:
+              masterItem?.id != null && String(masterItem.id).trim() !== ""
+                ? String(masterItem.id).trim()
+                : undefined,
+            linkedProductTitle: String(masterItem?.title || "").trim() || undefined,
+            linkedProductSku: String(masterItem?.sku || "").trim() || undefined,
+            syncError: undefined,
+          });
+          newlyLinkedRows.push(patched);
+          linkedCount += 1;
+          wroteChanges = true;
+          console.log(`[Batch Auto-link] Đã xử lý tuần tự thành công: ${linkedCount}`);
+        }
+      }
+
+      if (scannedCount >= requestedLimit) {
+        break;
+      }
+    }
+
+    if (wroteChanges) {
+      writeChannelListingsDb(dbListings);
+      await sleep(1);
     }
 
     const unlinkedRemaining = dbListings.filter((row) => {
       const safeRow = sanitizeChannelListingRow(row);
       return safeRow.status === "unlinked" && !isListingAlreadyLinkedProtected(safeRow);
     }).length;
+    const hasMore = nextCursor < dbListings.length;
     console.log(
-      `[Batch Auto-link] Hoàn tất — linked=${linkedCount}, protected=${alreadyLinked}, unlinked=${unlinkedTotal}, remaining=${unlinkedRemaining}`
+      `[Batch Auto-link] Hoàn tất — linked=${linkedCount}, protected=${alreadyLinked}, scanned=${scannedCount}, unlinked=${unlinkedTotal}, remaining=${unlinkedRemaining}, nextCursor=${nextCursor}, hasMore=${hasMore}`
     );
 
     return {
@@ -5877,6 +5911,10 @@ async function batchAutoLinkFromDatabase(): Promise<{
       cacheUpdatedAt: new Date().toISOString(),
       masterProductCount: masterProducts.length,
       skuIndexSize: masterSkuIndex.size,
+      scannedCount,
+      requestedLimit,
+      nextCursor,
+      hasMore,
     };
   } catch (error: unknown) {
     console.error("[Batch Auto-link] Matching failed:", error);
@@ -6747,8 +6785,11 @@ async function startServer() {
   // Batch Auto-link — mọi thao tác đọc file và DB nằm trong try/catch của API.
   const handleBatchAutoLink = async (req: any, res: any) => {
     try {
-      void req;
-      const result = await batchAutoLinkFromDatabase();
+      const body = req?.body && typeof req.body === "object" ? req.body : {};
+      const result = await batchAutoLinkFromDatabase({
+        cursor: body.cursor,
+        limit: body.limit,
+      });
       const data = {
         linkedCount: result.linkedCount,
         alreadyLinked: result.alreadyLinked,
@@ -6757,10 +6798,14 @@ async function startServer() {
         cacheUpdatedAt: result.cacheUpdatedAt,
         masterProductCount: result.masterProductCount,
         skuIndexSize: result.skuIndexSize,
+        scannedCount: result.scannedCount,
+        limit: result.requestedLimit,
+        nextCursor: result.nextCursor,
+        hasMore: result.hasMore,
         source: "database",
       };
       console.log(
-        `Đã lưu DB thành công — batch-auto-link linked=${result.linkedCount}, remaining=${result.unlinkedRemaining}`
+        `Đã lưu DB thành công — batch-auto-link linked=${result.linkedCount}, scanned=${result.scannedCount}, remaining=${result.unlinkedRemaining}, nextCursor=${result.nextCursor}`
       );
       return res.status(200).json({
         success: true,
