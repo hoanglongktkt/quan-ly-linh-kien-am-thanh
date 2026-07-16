@@ -7373,6 +7373,8 @@ async function startServer() {
       } catch {
         /* optional */
       }
+      // saveProducts([]) refresh cache trước khi mapping bị xóa; refresh lại để cache đồng bộ cả hai DB.
+      refreshCache();
       console.log("[Inventory] Đã xóa sạch Kho gốc (products) + Mapping (channel_listings).");
       return res.status(200).json({
         success: true,

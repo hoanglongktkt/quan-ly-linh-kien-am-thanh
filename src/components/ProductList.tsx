@@ -10,6 +10,7 @@ import BulkEditModal from './BulkEditModal';
 import ProductLinking from './ProductLinking';
 import InventoryAudit from './InventoryAudit';
 import { parseJsonResponse } from '../utils/apiClient';
+import { clearInventoryBrowserCache } from '../utils/catalogStorage';
 import { 
   Plus, 
   Search, 
@@ -44,7 +45,12 @@ interface ProductListProps {
   onReplaceProducts?: (products: Product[]) => void;
   onBulkSave?: (updates: BulkSaveProductUpdate[]) => Promise<boolean>;
   onSyncItemVariants?: (itemId: string) => Promise<Product[] | null>;
-  onRefreshProducts?: (opts?: { page?: number; append?: boolean; pageSize?: number }) => Promise<void>;
+  onRefreshProducts?: (opts?: {
+    page?: number;
+    append?: boolean;
+    pageSize?: number;
+    forceRefresh?: boolean;
+  }) => Promise<void>;
   onProductsUpdated?: (products: Product[]) => void;
   onBulkSelect: (selectedIds: string[]) => void;
   selectedIds: string[];
@@ -413,7 +419,8 @@ export default function ProductList({
       onBulkSelect([]);
       setExpandedParentIds(new Set());
       warehouseLoadedRef.current = false;
-      await onRefreshProducts?.({ page: 1, append: false });
+      clearInventoryBrowserCache();
+      await onRefreshProducts?.({ page: 1, append: false, forceRefresh: true });
       setShopeeImportToast(data.message || 'Đã xóa toàn bộ Kho gốc và Mapping.');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Xóa toàn bộ kho thất bại.';
