@@ -248,6 +248,20 @@ function buildListingsFromProducts(products: Product[], shops: ConnectedShop[]):
   return rows;
 }
 
+function buildLinkedListing(item: ChannelListing, masterProduct: Product): ChannelListing {
+  return {
+    ...item,
+    status: 'success',
+    linkedProductId: String(masterProduct.id),
+    linkedProductTitle: masterProduct.title,
+    linkedProductSku: masterProduct.sku,
+    linkedProduct: { id: String(masterProduct.id), title: masterProduct.title, sku: masterProduct.sku },
+    sku: item.sku || masterProduct.sku,
+    syncError: undefined,
+    linkBroken: false,
+  };
+}
+
 async function fetchMappingListingsFromServer(token: string): Promise<{ rows: ChannelListing[]; source: string } | null> {
   try {
     const endpoint = '/api/mapping-products';
@@ -273,6 +287,7 @@ async function fetchMappingListingsFromServer(token: string): Promise<{ rows: Ch
 
 export default function ProductLinking({ products, shops, onAddLog, onUpdateProduct, onAddProduct, onRefreshProducts }: ProductLinkingProps) {
   const [listings, setListings] = useState<ChannelListing[]>([]);
+  const listingsRef = useRef<ChannelListing[]>([]);
   const [listingsLoading, setListingsLoading] = useState(false);
   const [mappingLoadError, setMappingLoadError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -282,15 +297,15 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     setTimeout(() => setToastMessage(null), 4500);
   }, []);
 
-  const persistListings = useCallback(async (rows: ChannelListing[]): Promise<boolean> => {
+  const persistListings = useCallback(async (rows: ChannelListing[]): Promise<ChannelListing[] | null> => {
     const token = localStorage.getItem('admin_token');
     if (!token) {
       showToast('Phiên đăng nhập hết hạn. Vui lòng đăng nhập lại.');
-      return false;
+      return null;
     }
     if (!Array.isArray(rows)) {
       console.error('[ProductLinking] persistListings: rows không phải mảng');
-      return false;
+      return null;
     }
     try {
       // Gửi DATA model đầy đủ (id/channelId/linkedProductId) — không phụ thuộc UI có render ID.
@@ -305,18 +320,23 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         },
         body: JSON.stringify({ listings: payload }),
       });
-      const data = await res.json().catch(() => ({}));
+      const data = await parseJsonResponse<{ success?: boolean; listings?: ChannelListing[]; message?: string; error?: string }>(res);
       if (!res.ok || !data.success) {
         const msg = data?.message || data?.error || 'Lỗi lưu mapping vào máy chủ.';
         console.error('[ProductLinking] Lưu mapping thất bại:', data);
         showToast(msg);
-        return false;
+        return null;
       }
-      return true;
+      const savedRows = Array.isArray(data.listings)
+        ? data.listings
+            .map((row) => normalizeListingRecord(row))
+            .filter((r): r is ChannelListing => r != null)
+        : payload;
+      return savedRows;
     } catch (err) {
       console.error('[ProductLinking] Lưu mapping thất bại:', err);
       showToast('Không thể lưu dữ liệu mapping. Vui lòng kiểm tra kết nối máy chủ.');
-      return false;
+      return null;
     }
   }, [showToast]);
 
@@ -324,11 +344,85 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     (updater: ChannelListing[] | ((prev: ChannelListing[]) => ChannelListing[])) => {
       setListings((prev) => {
         const next = typeof updater === 'function' ? updater(prev) : updater;
+        listingsRef.current = next;
         void persistListings(next);
         return next;
       });
     },
     [persistListings]
+  );
+
+  useEffect(() => {
+    listingsRef.current = listings;
+  }, [listings]);
+
+  const persistProductLinkToServer = useCallback(
+    async (updated: Product): Promise<Product> => {
+      const token = localStorage.getItem('admin_token');
+      if (!token) {
+        throw new Error('Phiên đăng nhập đã hết hạn.');
+      }
+
+      const res = await apiFetch(`/api/products/${encodeURIComponent(updated.id)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: updated.title,
+          sku: updated.sku,
+          barcode: updated.barcode,
+          stock: updated.stock,
+          sellingPrice: updated.sellingPrice,
+          wholesalePrice: updated.wholesalePrice,
+          importPrice: updated.importPrice,
+          weight: updated.weight,
+          unit: updated.unit,
+          status: updated.status,
+          channels: updated.channels,
+          shopeeId: updated.shopeeId,
+          shopeeItemId: updated.shopeeItemId,
+          shopeeModelId: updated.shopeeModelId,
+          tiktokId: updated.tiktokId,
+          wooId: updated.wooId,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || data?.error || 'Lưu sản phẩm vào Database thất bại.');
+      }
+
+      const saved = data as Product;
+      await Promise.resolve(onUpdateProduct(saved, { save: false }));
+      return saved;
+    },
+    [onUpdateProduct]
+  );
+
+  const commitLinkedListing = useCallback(
+    async (item: ChannelListing, masterProduct: Product): Promise<ChannelListing> => {
+      const currentRows = listingsRef.current;
+      const rowIndex = currentRows.findIndex((row) => String(row.id) === String(item.id));
+      if (rowIndex === -1) {
+        throw new Error('Không tìm thấy dòng mapping để lưu.');
+      }
+
+      const nextListing = buildLinkedListing(item, masterProduct);
+      const nextRows = currentRows.map((row, idx) => (idx === rowIndex ? nextListing : row));
+
+      await persistProductLinkToServer(applyProductChannelLink(masterProduct, item));
+      const savedRows = await persistListings(nextRows);
+      if (!savedRows) {
+        throw new Error('Lưu mapping vào Database thất bại.');
+      }
+
+      listingsRef.current = savedRows;
+      setListings(savedRows);
+      return savedRows.find((row) => String(row.id) === String(nextListing.id)) || nextListing;
+    },
+    [persistListings, persistProductLinkToServer]
   );
 
   const refreshListingsFromDb = useCallback(async (opts?: { forceRefresh?: boolean }) => {
@@ -656,87 +750,71 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     opts?: { silent?: boolean }
   ): Promise<boolean> => {
     const silent = opts?.silent === true;
-
-    // 1. Try to match by SKU
-    if (item.sku) {
-      const matchedBySku = flattenedMasterProducts.find(
-        (p) => normalizeSKU(p.sku) === normalizeSKU(item.sku)
-      );
-      if (matchedBySku) {
-        saveListings(prev => prev.map(listing => {
-          if (listing.id === item.id) {
-            return {
-              ...listing,
-              status: 'success' as const,
-              linkedProductId: matchedBySku.id,
-              linkedProductTitle: matchedBySku.title,
-              linkedProductSku: matchedBySku.sku,
-              linkedProduct: { id: matchedBySku.id, title: matchedBySku.title, sku: matchedBySku.sku },
-              syncError: undefined,
-              linkBroken: false,
-            };
+    try {
+      // 1. Try to match by SKU
+      if (item.sku) {
+        const matchedBySku = flattenedMasterProducts.find(
+          (p) => normalizeSKU(p.sku) === normalizeSKU(item.sku)
+        );
+        if (matchedBySku) {
+          await commitLinkedListing(item, matchedBySku);
+          if (!silent) {
+            showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" với SKU "${item.sku}"!`);
+            onAddLog({
+              id: `log-${Date.now()}`,
+              timestamp: new Date().toISOString(),
+              channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
+              type: 'product_sync',
+              status: 'success',
+              message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính sản phẩm [${matchedBySku.sku}]`
+            });
           }
-          return listing;
-        }));
-        await Promise.resolve(onUpdateProduct(applyProductChannelLink(matchedBySku, item), { save: true }));
+          return true;
+        }
+      }
+
+      // 2. Try to match by Name similarity
+      const matchedByName = flattenedMasterProducts.find(p => {
+        const masterTitle = p.title.toLowerCase();
+        const listingTitle = item.title.toLowerCase();
+        return masterTitle.includes(listingTitle) || listingTitle.includes(masterTitle);
+      });
+
+      if (matchedByName) {
+        await commitLinkedListing(item, matchedByName);
         if (!silent) {
-          showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" với SKU "${item.sku}"!`);
+          showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" theo Tên tương đồng!`);
           onAddLog({
             id: `log-${Date.now()}`,
             timestamp: new Date().toISOString(),
             channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
             type: 'product_sync',
             status: 'success',
-            message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính sản phẩm [${matchedBySku.sku}]`
+            message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính [${matchedByName.title}]`
           });
         }
         return true;
       }
-    }
 
-    // 2. Try to match by Name similarity
-    const matchedByName = flattenedMasterProducts.find(p => {
-      const masterTitle = p.title.toLowerCase();
-      const listingTitle = item.title.toLowerCase();
-      return masterTitle.includes(listingTitle) || listingTitle.includes(masterTitle);
-    });
-
-    if (matchedByName) {
-      saveListings(prev => prev.map(listing => {
-        if (listing.id === item.id) {
-          return {
-            ...listing,
-            status: 'success' as const,
-            linkedProductId: matchedByName.id,
-            linkedProductTitle: matchedByName.title,
-            linkedProductSku: matchedByName.sku,
-            linkedProduct: { id: matchedByName.id, title: matchedByName.title, sku: matchedByName.sku },
-            sku: listing.sku || matchedByName.sku,
-            syncError: undefined,
-            linkBroken: false,
-          };
-        }
-        return listing;
-      }));
-      await Promise.resolve(onUpdateProduct(applyProductChannelLink(matchedByName, item), { save: true }));
       if (!silent) {
-        showToast(`⚡ Liên kết tự động thành công sản phẩm "${item.title}" theo Tên tương đồng!`);
+        showToast(`Không tìm thấy sản phẩm có SKU hoặc Tên tương tự trong Kho chính.`);
+      }
+      return false;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!silent) {
+        showToast(`Liên kết thất bại: ${message}`);
         onAddLog({
           id: `log-${Date.now()}`,
           timestamp: new Date().toISOString(),
           channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
           type: 'product_sync',
-          status: 'success',
-          message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính [${matchedByName.title}]`
+          status: 'failed',
+          message: `Liên kết tự động thất bại sản phẩm sàn [ID: ${item.channelId}]: ${message}`,
         });
       }
-      return true;
+      return false;
     }
-
-    if (!silent) {
-      showToast(`Không tìm thấy sản phẩm có SKU hoặc Tên tương tự trong Kho chính.`);
-    }
-    return false;
   };
 
   const handleConfirmInitToWarehouse = async () => {
