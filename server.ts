@@ -5724,6 +5724,35 @@ function normalizeSkuKey(sku: unknown): string {
 }
 
 /**
+ * So khớp SKU “lỏng” giống Search thủ công trong modal:
+ * - trim + toLowerCase cả hai phía
+ * - exact trên các biến thể khóa
+ * - includes hai chiều (M15 ↔ ...M15..., core ↔ raw)
+ */
+function skusLooselyMatch(listingSku: unknown, masterSku: unknown): boolean {
+  const listingKeys = collectSkuKeys(listingSku);
+  const masterKeys = collectSkuKeys(masterSku);
+  if (listingKeys.length === 0 || masterKeys.length === 0) return false;
+
+  const listingRaw = String(listingSku ?? "").trim().toLowerCase();
+  const masterRaw = String(masterSku ?? "").trim().toLowerCase();
+
+  for (const lk of listingKeys) {
+    for (const mk of masterKeys) {
+      if (lk === mk) return true;
+      if (lk.includes(mk) || mk.includes(lk)) return true;
+    }
+  }
+
+  if (listingRaw && masterRaw) {
+    if (listingRaw === masterRaw) return true;
+    if (listingRaw.includes(masterRaw) || masterRaw.includes(listingRaw)) return true;
+  }
+
+  return false;
+}
+
+/**
  * Index SKU nhẹ từ .products — chỉ giữ tham chiếu object sẵn có (không clone).
  * Gồm sản phẩm mẹ + children/variants/models. Index mọi biến thể khóa để khớp 2 chiều.
  */
@@ -5752,15 +5781,53 @@ function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
   return index;
 }
 
-/** Tìm sản phẩm kho theo SKU sàn — thử exact + biến thể tiền tố/hậu tố. */
+/** Tìm sản phẩm kho theo SKU sàn — exact trước, rồi lỏng giống Search modal. */
 function findMasterProductBySku(
   masterSkuIndex: Map<string, any>,
-  listingSku: unknown
+  listingSku: unknown,
+  masterData?: any[]
 ): any | null {
+  // 1) Exact qua index (đã trim/lowercase + biến thể tiền tố)
   for (const key of collectSkuKeys(listingSku)) {
     const hit = masterSkuIndex.get(key);
     if (hit) return hit;
   }
+
+  const listingCore = normalizeSkuKey(listingSku);
+  if (!listingCore) return null;
+
+  const candidates: any[] = [];
+  const pushCandidate = (row: any) => {
+    if (!row || typeof row !== "object" || isSyntheticShopeePullProduct(row)) return;
+    candidates.push(row);
+  };
+
+  if (Array.isArray(masterData)) {
+    for (const masterItem of masterData) {
+      if (!masterItem) continue;
+      pushCandidate(masterItem);
+      for (const child of getProductChildrenList(masterItem)) pushCandidate(child);
+      if (Array.isArray(masterItem.variants)) {
+        for (const v of masterItem.variants) pushCandidate(v);
+      }
+      if (Array.isArray(masterItem.models)) {
+        for (const m of masterItem.models) pushCandidate(m);
+      }
+    }
+  } else {
+    for (const row of masterSkuIndex.values()) pushCandidate(row);
+  }
+
+  // 2) Exact core (normalizeSkuKey) — M15 === m15
+  for (const row of candidates) {
+    if (normalizeSkuKey(row?.sku) === listingCore) return row;
+  }
+
+  // 3) Loose includes — cùng logic Search thủ công
+  for (const row of candidates) {
+    if (skusLooselyMatch(listingSku, row?.sku)) return row;
+  }
+
   return null;
 }
 
@@ -5874,7 +5941,7 @@ async function autoLinkSingleListingFromDatabase(opts?: {
   }
 
   const masterSkuIndex = buildMasterSkuIndex(masterProducts);
-  const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku);
+  const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku, masterProducts);
   if (!masterItem) {
     return {
       success: false,
@@ -5987,7 +6054,7 @@ async function batchAutoLinkFromDatabase(opts?: {
 
       const targetSku = normalizeSkuKey(item?.sku);
       if (targetSku) {
-        const masterItem = findMasterProductBySku(masterSkuIndex, item?.sku);
+        const masterItem = findMasterProductBySku(masterSkuIndex, item?.sku, masterProducts);
         if (masterItem) {
           const patched = persistBatchAutoLinkListingUpdate(dbListings, rowIndex, {
             ...item,

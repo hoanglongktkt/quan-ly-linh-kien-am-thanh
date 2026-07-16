@@ -50,8 +50,62 @@ interface ChannelListing {
 function normalizeSKU(sku: unknown): string {
   const raw = String(sku ?? '').trim().toLowerCase();
   if (!raw) return '';
-  const parts = raw.split('_');
-  return (parts[parts.length - 1] || raw).trim();
+  let core = raw;
+  if (core.includes('_')) {
+    core = (core.split('_').pop() || core).trim();
+  }
+  const itemPrefixed = core.match(/^(\d{6,})-(.+)$/);
+  if (itemPrefixed?.[2]) {
+    core = itemPrefixed[2].trim();
+  }
+  return core;
+}
+
+/** So khớp SKU giống Search thủ công trong modal (trim + lower + includes). */
+function skusMatchLikeSearch(listingSku: unknown, masterSku: unknown): boolean {
+  const listingRaw = String(listingSku ?? '').trim().toLowerCase();
+  const masterRaw = String(masterSku ?? '').trim().toLowerCase();
+  if (!listingRaw || !masterRaw) return false;
+
+  const listingNorm = normalizeSKU(listingSku);
+  const masterNorm = normalizeSKU(masterSku);
+
+  if (listingRaw === masterRaw || listingNorm === masterNorm) return true;
+  if (listingRaw.includes(masterRaw) || masterRaw.includes(listingRaw)) return true;
+  if (
+    listingNorm &&
+    masterNorm &&
+    (listingNorm.includes(masterNorm) || masterNorm.includes(listingNorm))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function findMasterProductLikeSearch(
+  listingSku: unknown,
+  masters: Product[]
+): Product | null {
+  const listingRaw = String(listingSku ?? '').trim().toLowerCase();
+  if (!listingRaw || !Array.isArray(masters) || masters.length === 0) return null;
+
+  const listingNorm = normalizeSKU(listingSku);
+
+  // Ưu tiên exact (sau trim/lower/normalize) — giống Search khi gõ đúng SKU
+  for (const p of masters) {
+    const rawSku = String(p?.sku ?? '').trim().toLowerCase();
+    const normSku = normalizeSKU(p?.sku);
+    if (rawSku === listingRaw || (listingNorm && normSku === listingNorm)) {
+      return p;
+    }
+  }
+
+  // Loose — cùng includes logic với filteredMasterProducts
+  for (const p of masters) {
+    if (skusMatchLikeSearch(listingSku, p?.sku)) return p;
+  }
+
+  return null;
 }
 
 /** Chuẩn hóa 1 dòng mapping từ DATA object — không đọc DOM. */
@@ -705,12 +759,31 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   };
 
   // Handler to auto link a single channel product
+  // Ưu tiên khớp trên Kho chính đang hiển thị (cùng nguồn với Search thủ công),
+  // rồi mới fallback API server.
   const handleAutoLinkIndividual = async (
     item: ChannelListing,
     opts?: { silent?: boolean }
   ): Promise<boolean> => {
     const silent = opts?.silent === true;
     try {
+      const localMatch = findMasterProductLikeSearch(item?.sku, flattenedMasterProducts);
+      if (localMatch?.id) {
+        handleMapProduct(String(item.id), String(localMatch.id));
+        if (!silent) {
+          showToast(`⚡ Liên kết tự động thành công với Kho chính [${localMatch.sku}]`);
+          onAddLog({
+            id: `log-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
+            type: 'product_sync',
+            status: 'success',
+            message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính [${localMatch.sku}]`,
+          });
+        }
+        return true;
+      }
+
       const result = await requestSingleAutoLink(item);
       if (result.success && result.listing) {
         mergeListingIntoState(result.listing);
@@ -995,11 +1068,15 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
   // Master product search in manual mapping modal
   const normalizedSearch = normalizeSKU(mappingSearch);
+  const searchRaw = String(mappingSearch || '').trim().toLowerCase();
   const filteredMasterProducts = flattenedMasterProducts.filter((p) => {
-    const titleMatch = p.title.toLowerCase().includes(mappingSearch.toLowerCase());
-    const rawSku = String(p.sku || '').toLowerCase();
+    const titleMatch = String(p.title || '')
+      .trim()
+      .toLowerCase()
+      .includes(searchRaw);
+    const rawSku = String(p.sku || '').trim().toLowerCase();
     const normalizedSku = normalizeSKU(p.sku);
-    const skuMatch = rawSku.includes(mappingSearch.toLowerCase());
+    const skuMatch = !!searchRaw && (rawSku.includes(searchRaw) || searchRaw.includes(rawSku));
     const normalizedSkuMatch = normalizedSearch
       ? normalizedSku.includes(normalizedSearch) || normalizedSearch.includes(normalizedSku)
       : false;

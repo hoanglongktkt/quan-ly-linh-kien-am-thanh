@@ -42,6 +42,29 @@ function getChildren(row) {
   return buckets.filter((item) => item && typeof item === 'object');
 }
 
+function skusLooselyMatch(listingSku, masterSku) {
+  const listingKeys = collectSkuKeys(listingSku);
+  const masterKeys = collectSkuKeys(masterSku);
+  if (listingKeys.length === 0 || masterKeys.length === 0) return false;
+
+  const listingRaw = String(listingSku ?? '').trim().toLowerCase();
+  const masterRaw = String(masterSku ?? '').trim().toLowerCase();
+
+  for (const lk of listingKeys) {
+    for (const mk of masterKeys) {
+      if (lk === mk) return true;
+      if (lk.includes(mk) || mk.includes(lk)) return true;
+    }
+  }
+
+  if (listingRaw && masterRaw) {
+    if (listingRaw === masterRaw) return true;
+    if (listingRaw.includes(masterRaw) || masterRaw.includes(listingRaw)) return true;
+  }
+
+  return false;
+}
+
 function buildMasterSkuIndex(products) {
   const index = new Map();
   for (const product of Array.isArray(products) ? products : []) {
@@ -56,11 +79,32 @@ function buildMasterSkuIndex(products) {
   return index;
 }
 
-function findMasterProductBySku(masterSkuIndex, listingSku) {
+function findMasterProductBySku(masterSkuIndex, listingSku, products) {
   for (const key of collectSkuKeys(listingSku)) {
     const hit = masterSkuIndex.get(key);
     if (hit) return hit;
   }
+
+  const listingCore = normalizeSkuKey(listingSku);
+  if (!listingCore) return null;
+
+  const candidates = [];
+  for (const product of Array.isArray(products) ? products : []) {
+    candidates.push(product);
+    for (const child of getChildren(product)) candidates.push(child);
+  }
+  if (candidates.length === 0) {
+    for (const row of masterSkuIndex.values()) candidates.push(row);
+  }
+
+  for (const row of candidates) {
+    if (normalizeSkuKey(row?.sku) === listingCore) return row;
+  }
+
+  for (const row of candidates) {
+    if (skusLooselyMatch(listingSku, row?.sku)) return row;
+  }
+
   return null;
 }
 
@@ -171,7 +215,7 @@ export async function handleMappingAutoLinkSingle(req, res) {
       return res.status(200).json({ success: false, listing: current, message: 'SKU sản phẩm sàn đang trống hoặc không hợp lệ.' });
     }
 
-    const masterItem = findMasterProductBySku(buildMasterSkuIndex(products), current?.sku);
+    const masterItem = findMasterProductBySku(buildMasterSkuIndex(products), current?.sku, products);
     if (!masterItem) {
       return res.status(200).json({
         success: false,
