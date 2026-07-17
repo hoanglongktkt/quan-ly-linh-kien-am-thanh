@@ -1239,29 +1239,35 @@ export default function ProductList({
                       </span>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => openProductDetail(prod)}
+                    className="w-9 h-9 flex items-center justify-center rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-100 shrink-0 transition-all"
+                    title="Sửa sản phẩm"
+                    aria-label="Sửa sản phẩm"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
                 </div>
 
                 {group.hasVariants && isExpanded && (
                   <div className="space-y-2 border-t border-gray-50 pt-2">
                     {group.variants.map((child) => (
                       <div key={child.id} className="flex items-center gap-2 bg-slate-50 rounded-xl p-2.5">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.includes(child.id)}
-                          onChange={() => {
-                            if (selectedIds.includes(child.id)) {
-                              onBulkSelect(selectedIds.filter((id) => id !== child.id));
-                            } else {
-                              onBulkSelect([...selectedIds, child.id]);
-                            }
-                          }}
-                          className="rounded border-gray-300 text-blue-600 w-4 h-4"
-                        />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-gray-800 truncate">{child.modelName || child.title}</p>
                           <p className="text-[10px] font-mono text-indigo-600">SKU: {child.sku}</p>
                         </div>
                         <span className="text-xs font-mono font-bold text-slate-700">{child.stock}</span>
+                        <button
+                          type="button"
+                          onClick={() => openProductDetail(child)}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg bg-white text-blue-600 hover:bg-blue-50 border border-blue-100 shrink-0 transition-all"
+                          title="Sửa phân loại"
+                          aria-label="Sửa phân loại"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ))}
                   </div>
