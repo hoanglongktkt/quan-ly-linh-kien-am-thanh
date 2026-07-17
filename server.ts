@@ -4450,6 +4450,37 @@ function dedupeShopeeParentVariantRows(products: any[]): any[] {
 // "pickup" (Shopee courier picks up from seller's address), "dropoff" (seller
 // drops the parcel at a branch) or "non_integrated" (3rd-party carrier, manual
 // tracking number), plus the concrete address/time-slot/branch options.
+const SHOPEE_LOGISTICS_TIMEOUT_MS = 20_000;
+
+async function fetchShopeeLogisticsJson(
+  url: string,
+  init: RequestInit,
+  context: string,
+): Promise<{ response: Response; json: any }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SHOPEE_LOGISTICS_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const raw = await response.text();
+    let json: any;
+    try {
+      json = raw ? JSON.parse(raw) : {};
+    } catch {
+      throw new Error(
+        `Shopee ${context} trả về dữ liệu không phải JSON (HTTP ${response.status}): ${raw.slice(0, 300)}`,
+      );
+    }
+    return { response, json };
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Shopee ${context} timeout sau ${SHOPEE_LOGISTICS_TIMEOUT_MS / 1000} giây.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function shopeeGetShippingParameter(shopId: string, accessToken: string, orderSn: string, packageNumber?: string) {
   const apiPath = "/api/v2/logistics/get_shipping_parameter";
   const timestamp = Math.floor(Date.now() / 1000);
@@ -4466,9 +4497,8 @@ async function shopeeGetShippingParameter(shopId: string, accessToken: string, o
   if (packageNumber) params.set("package_number", packageNumber);
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const res = await fetch(url);
-  const json: any = await res.json();
-  console.log(`[Shopee API] GET ${apiPath} (order_sn=${orderSn}) -> HTTP ${res.status}:`, JSON.stringify(json));
+  const { response, json } = await fetchShopeeLogisticsJson(url, {}, "get_shipping_parameter");
+  console.log(`[Shopee API] GET ${apiPath} (order_sn=${orderSn}) -> HTTP ${response.status}:`, JSON.stringify(json));
   return json;
 }
 
@@ -4490,13 +4520,12 @@ async function shopeeShipOrder(shopId: string, accessToken: string, orderSn: str
   const body: Record<string, any> = { order_sn: orderSn, ...shipmentBody };
   delete body.package_number; // absolute guard — never send this key, no matter what shipmentBody contains
 
-  const res = await fetch(url, {
+  const { response, json } = await fetchShopeeLogisticsJson(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
-  const json: any = await res.json();
-  console.log(`[Shopee API] POST ${apiPath} (order_sn=${orderSn}) body=${JSON.stringify(body)} -> HTTP ${res.status}:`, JSON.stringify(json));
+  }, "ship_order");
+  console.log(`[Shopee API] POST ${apiPath} (order_sn=${orderSn}) body=${JSON.stringify(body)} -> HTTP ${response.status}:`, JSON.stringify(json));
   return json;
 }
 
@@ -4534,7 +4563,14 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ su
       console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 dropoff. info_needed=${JSON.stringify(infoNeeded)}`);
       return { success: false, error: "dropoff_not_supported", message: "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Tự mang hàng ra bưu cục\". Vui lòng chọn \"Lấy hàng\" (pickup) thay thế." };
     }
-    const branch = paramResult.response?.dropoff?.branch_list?.[0];
+    const dropoffRequirements = Array.isArray(infoNeeded.dropoff) ? infoNeeded.dropoff : [];
+    const branch = paramResult.response?.dropoff?.branch_list?.find(
+      (item: any) => item?.branch_id !== undefined && item?.branch_id !== null,
+    );
+    if (dropoffRequirements.includes("branch_id") && !branch) {
+      console.error(`[Shopee LỖI] Đơn ${order.orderSn} bắt buộc branch_id nhưng Shopee không trả về branch hợp lệ. dropoff=${JSON.stringify(paramResult.response?.dropoff)}`);
+      return { success: false, error: "no_dropoff_branch_available", message: "Shopee yêu cầu branch_id nhưng không trả về bưu cục dropoff khả dụng cho đơn này." };
+    }
     shipmentBody = { dropoff: branch ? { branch_id: branch.branch_id } : {} };
   } else {
     if (!Object.prototype.hasOwnProperty.call(infoNeeded, "pickup")) {
@@ -4545,7 +4581,12 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ su
     // get_shipping_parameter response — no manual slot-picking needed.
     const address = paramResult.response?.pickup?.address_list?.[0];
     const timeSlot = address?.time_slot_list?.[0];
-    if (!address || !timeSlot) {
+    if (
+      address?.address_id === undefined ||
+      address?.address_id === null ||
+      timeSlot?.pickup_time_id === undefined ||
+      timeSlot?.pickup_time_id === null
+    ) {
       console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng c\xF3 address/time_slot pickup kh\u1EA3 d\u1EE5ng. pickup=${JSON.stringify(paramResult.response?.pickup)}`);
       return { success: false, error: "no_pickup_slot_available", message: "Shopee không trả về địa chỉ/lịch hẹn lấy hàng (pickup) khả dụng cho đơn này." };
     }
@@ -9975,7 +10016,20 @@ async function startServer() {
       }
 
       console.log(`[Ship Order Bulk] \u0110ang x\u1EED l\xFD \u0111\u01A1n ${order.orderSn} (id=${order.id}, ${shipMethod})...`);
-      const result = await arrangeShipment(order, shipMethod);
+      let result: Awaited<ReturnType<typeof arrangeShipment>>;
+      try {
+        result = await arrangeShipment(order, shipMethod);
+      } catch (error: any) {
+        console.error(
+          `[Ship Order Bulk] Exception khi chuẩn bị đơn ${order.orderSn} (id=${order.id}, method=${shipMethod}):`,
+          error?.stack || error,
+        );
+        result = {
+          success: false,
+          error: "internal_server_error",
+          message: "Lỗi nội bộ server: " + (error?.message || String(error)),
+        };
+      }
       const treatedAsSuccess = result.success || isAlreadyShippedError(result);
 
       if (!treatedAsSuccess) {
@@ -10029,37 +10083,42 @@ async function startServer() {
   // Single order: arrange pickup/dropoff (per the seller's explicit choice in the
   // "Xác nhận đơn hàng" modal) so it moves to "Chờ lấy hàng".
   app.post("/api/shopee/ship-order", authMiddleware, async (req, res) => {
-    const { orderId, method } = req.body;
-    const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
-    const orders = loadOrders();
-    const order = orders.find((o: any) => o.id === orderId);
-    if (!order) {
-      return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
-    }
+    try {
+      const { orderId, method } = req.body;
+      const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
+      const orders = loadOrders();
+      const order = orders.find((o: any) => o.id === orderId);
+      if (!order) {
+        return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
+      }
 
-    console.log(`[Ship Order] Y\xEAu c\u1EA7u chu\u1EA9n b\u1EB1 h\xE0ng (${shipMethod}) cho \u0111\u01A1n ${order.orderSn} (channel=${order.channel})...`);
-    const result = await arrangeShipment(order, shipMethod);
-    console.log("D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0:", JSON.stringify(result));
+      console.log(`[Ship Order] Y\xEAu c\u1EA7u chu\u1EA9n b\u1EB1 h\xE0ng (${shipMethod}) cho \u0111\u01A1n ${order.orderSn} (channel=${order.channel})...`);
+      const result = await arrangeShipment(order, shipMethod);
+      console.log("D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0:", JSON.stringify(result));
 
-    if (!result.success) {
-      console.error(`[Ship Order] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`);
-    }
+      if (!result.success) {
+        console.error(`[Ship Order] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`);
+      }
 
-    if (result.success) {
-      const index = orders.findIndex((o: any) => o.id === orderId);
-      orders[index] = {
-        ...orders[index],
-        isPrepared: true,
-        // Move the order into "Chờ lấy hàng (Đã xử lý)" the INSTANT ship_order
-        // succeeds — no need to wait for the print step to flip this anymore.
-        status: "processed",
-        trackingNumber: orders[index].trackingNumber || result.trackingNumber,
-        shopId: orders[index].shopId || result.shopId, // self-heal orders that lost shop_id from an old webhook bug
-      };
-      saveOrders(orders);
-      return res.json({ success: true, mode: result.mode, order: orders[index] });
+      if (result.success) {
+        const index = orders.findIndex((o: any) => o.id === orderId);
+        orders[index] = {
+          ...orders[index],
+          isPrepared: true,
+          // Move the order into "Chờ lấy hàng (Đã xử lý)" the INSTANT ship_order
+          // succeeds — no need to wait for the print step to flip this anymore.
+          status: "processed",
+          trackingNumber: orders[index].trackingNumber || result.trackingNumber,
+          shopId: orders[index].shopId || result.shopId, // self-heal orders that lost shop_id from an old webhook bug
+        };
+        saveOrders(orders);
+        return res.json({ success: true, mode: result.mode, order: orders[index] });
+      }
+      return res.status(400).json({ success: false, ...result });
+    } catch (error: any) {
+      console.error("[Ship Order] Lỗi nội bộ endpoint /api/shopee/ship-order:", error?.stack || error);
+      return res.status(500).json({ success: false, message: "Lỗi nội bộ server: " + error.message });
     }
-    return res.status(400).json({ success: false, ...result });
   });
 
   // Bulk: arrange shipment for multiple orders at once ("Xác nhận Chuẩn bị hàng loạt"),
@@ -10068,6 +10127,7 @@ async function startServer() {
   // After all ship_order calls finish, automatically creates + downloads one merged
   // NORMAL_AIR_WAYBILL PDF for every successfully prepared Shopee order.
   app.post("/api/shopee/ship-order/bulk", authMiddleware, async (req, res) => {
+    try {
     const { orderIds, orderSns, method } = req.body;
     const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
     const idList = Array.isArray(orderIds) ? orderIds : [];
@@ -10132,6 +10192,10 @@ async function startServer() {
       orders: orders.filter(isValidOrder),
       printDocument,
     });
+    } catch (error: any) {
+      console.error("[Ship Order Bulk] Lỗi nội bộ endpoint /api/shopee/ship-order/bulk:", error?.stack || error);
+      return res.status(500).json({ success: false, message: "Lỗi nội bộ server: " + error.message });
+    }
   });
 
   // --- Shopee logistics: "In đơn hàng" (create + poll + download AWB PDF) ---
@@ -10655,6 +10719,7 @@ async function startServer() {
 
   // Non-blocking bulk ship: ghi nhận ngay trạng thái processed, Shopee + in vận đơn chạy ngầm.
   app.post("/api/shopee/ship-order/bulk-async", authMiddleware, async (req, res) => {
+    try {
     const { orderIds, orderSns, method } = req.body;
     const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
     const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
@@ -10711,6 +10776,10 @@ async function startServer() {
       total: toShip.length,
       orders: orders.filter(isValidOrder),
     });
+    } catch (error: any) {
+      console.error("[Ship Order Bulk Async] Lỗi nội bộ endpoint /api/shopee/ship-order/bulk-async:", error?.stack || error);
+      return res.status(500).json({ success: false, message: "Lỗi nội bộ server: " + error.message });
+    }
   });
 
   app.get("/api/shopee/ship-order/job/:jobId", authMiddleware, async (req, res) => {
