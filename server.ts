@@ -7764,49 +7764,80 @@ async function startServer() {
   // Đồng bộ nhanh tồn/giá lên Shopee — đăng ký SỚM (trước mọi route :id) để tránh 404.
   const handleProductSyncShopee = async (req: any, res: any) => {
     try {
-      const productId = String(
-        req.params?.id || req.body?.id || req.body?.productId || ""
-      ).trim();
-      if (!productId) {
+      const requestedIds = Array.isArray(req.body?.productIds)
+        ? req.body.productIds
+        : [req.params?.id || req.body?.id || req.body?.productId];
+      const productIds = [
+        ...new Set(requestedIds.map((id: unknown) => String(id || "").trim()).filter(Boolean)),
+      ];
+      if (productIds.length === 0) {
         return res.status(400).json({
           success: false,
-          error: "Thiếu product id. Gửi POST /api/products/:id/sync-shopee hoặc body { id }.",
+          error:
+            "Thiếu product id. Gửi body { id }, { productId } hoặc { productIds: [...] }.",
         });
       }
       const products = await loadProducts();
-      const row = findProductRowById(products, productId);
-      if (!row) {
-        return res.status(404).json({
-          success: false,
-          error: "Không tìm thấy sản phẩm trong kho.",
+      const results: Array<{
+        productId: string;
+        success: boolean;
+        message: string;
+      }> = [];
+
+      for (const productId of productIds) {
+        const row = findProductRowById(products, productId);
+        if (!row) {
+          results.push({
+            productId,
+            success: false,
+            message: "Không tìm thấy sản phẩm trong kho.",
+          });
+          continue;
+        }
+        const shopee = await pushProductStockPriceToShopeeImmediate(row, {
+          syncStock: true,
+          syncPrice: true,
+        });
+        if (shopee.skipped || !shopee.ok) {
+          results.push({
+            productId,
+            success: false,
+            message:
+              shopee.message ||
+              (shopee.skipped
+                ? "Chưa liên kết Mapping Shopee."
+                : "Shopee từ chối đồng bộ tồn/giá"),
+          });
+          continue;
+        }
+
+        row.lastSynced = new Date().toISOString();
+        results.push({
+          productId,
+          success: true,
+          message: shopee.message,
         });
       }
-      const shopee = await pushProductStockPriceToShopeeImmediate(row, {
-        syncStock: true,
-        syncPrice: true,
-      });
-      if (shopee.skipped) {
-        return res.status(400).json({
-          success: false,
-          error: shopee.message || "Chưa liên kết Mapping Shopee.",
-          shopeeSynced: false,
-          shopeeMessage: shopee.message,
-        });
+
+      const succeeded = results.filter((result) => result.success);
+      if (succeeded.length > 0) {
+        await saveProducts(products);
       }
-      if (!shopee.ok) {
+      const failed = results.filter((result) => !result.success);
+      if (failed.length > 0) {
         return res.status(400).json({
           success: false,
-          error: shopee.message || "Shopee từ chối đồng bộ tồn/giá",
-          shopeeSynced: false,
-          shopeeMessage: shopee.message,
+          error: failed.map((result) => `${result.productId}: ${result.message}`).join(" | "),
+          shopeeSynced: succeeded.length > 0,
+          results,
         });
       }
       return res.json({
         success: true,
-        product: row,
         shopeeSynced: true,
-        shopeeMessage: shopee.message,
-        message: shopee.message,
+        shopeeMessage: results.map((result) => result.message).join(" | "),
+        message: `Đã đồng bộ ${succeeded.length} sản phẩm lên Shopee và lưu MongoDB.`,
+        results,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
