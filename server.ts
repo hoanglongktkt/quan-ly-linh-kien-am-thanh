@@ -1329,7 +1329,8 @@ async function runShopeeConnectivityDiagnostics(shopIdInput?: string) {
   }
 }
 
-// v2.order.get_order_list — pulls order_sn updated within the last 15 days.
+// v2.order.get_order_list — pulls order_sn updated within the last 30 days
+// (Shopee giới hạn mỗi request tối đa 15 ngày → caller phải lặp 2 cửa sổ).
 // Supports optional order_status filter and cursor pagination (Shopee returns
 // at most page_size orders per call; more/next_cursor must be followed).
 async function shopeeGetOrderList(
@@ -1348,7 +1349,7 @@ async function shopeeGetOrderList(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
 
   const timeTo = opts?.timeTo ?? timestamp;
-  const timeFrom = opts?.timeFrom ?? timeTo - 15 * 24 * 60 * 60;
+  const timeFrom = opts?.timeFrom ?? timeTo - 30 * 24 * 60 * 60;
 
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
@@ -1356,7 +1357,8 @@ async function shopeeGetOrderList(
     access_token: accessToken,
     shop_id: shopId,
     sign,
-    time_range_field: opts?.timeRangeField || "create_time",
+    // update_time: bắt được đơn đổi trạng thái (Đang giao / Hủy) dù đã tạo từ trước.
+    time_range_field: opts?.timeRangeField || "update_time",
     time_from: String(timeFrom),
     time_to: String(timeTo),
     page_size: String(SHOPEE_ORDER_LIST_PAGE_SIZE),
@@ -1369,7 +1371,7 @@ async function shopeeGetOrderList(
   try {
     const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `get_order_list shop_id=${shopId}`);
     console.log(
-      `[Shopee API] GET ${apiPath} (shop_id=${shopId}, status=${opts?.orderStatus || "ALL"}, field=${opts?.timeRangeField || "create_time"}, from=${timeFrom}, to=${timeTo}, cursor=${opts?.cursor || ""}) -> HTTP ${httpStatus}:`,
+      `[Shopee API] GET ${apiPath} (shop_id=${shopId}, status=${opts?.orderStatus || "ALL"}, field=${opts?.timeRangeField || "update_time"}, from=${timeFrom}, to=${timeTo}, cursor=${opts?.cursor || ""}) -> HTTP ${httpStatus}:`,
       JSON.stringify(json).slice(0, 500),
     );
 
@@ -1409,10 +1411,11 @@ function parseShopeeOrderListPagination(result: any): { more: boolean; nextCurso
 }
 
 const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
-const SHOPEE_ORDER_LIST_MAX_WINDOWS = 1;
+/** 2 cửa sổ × 15 ngày = quét đủ 30 ngày (giới hạn Shopee mỗi request ≤ 15 ngày). */
+const SHOPEE_ORDER_LIST_MAX_WINDOWS = 2;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
-const SHOPEE_ORDER_LIST_MAX_PAGES = 5;
-const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 60;
+const SHOPEE_ORDER_LIST_MAX_PAGES = 8;
+const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 120;
 /** Xử lý tuần tự từng đơn trong chunk — không Promise.all */
 const SHOPEE_SYNC_CHUNK_SIZE = 8;
 /** Delay sau mỗi lần lưu DB khi đồng bộ đơn hàng (200–500ms). */
@@ -1742,7 +1745,7 @@ function buildShopeeUpdateStockEntry(
   return entry;
 }
 
-// Paginate get_order_list for one Shopee order_status — lật trang + quét nhiều cửa sổ 15 ngày.
+// Paginate get_order_list for one Shopee order_status — lật trang + quét 2 cửa sổ 15 ngày (= 30 ngày).
 async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: string, orderStatus: string): Promise<string[]> {
   const orderSnSet = new Set<string>();
   const now = Math.floor(Date.now() / 1000);
@@ -1754,12 +1757,16 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
     let page = 0;
     let windowCount = 0;
 
+    console.log(
+      `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${SHOPEE_ORDER_LIST_MAX_WINDOWS} time_from=${timeFrom} time_to=${timeTo} (update_time, ~15 ngày)`,
+    );
+
     while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
       page++;
       const listResult = await shopeeGetOrderList(shopId, accessToken, {
         orderStatus,
         cursor,
-        timeRangeField: "create_time",
+        timeRangeField: "update_time",
         timeFrom,
         timeTo,
       });
@@ -1801,7 +1808,6 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
     }
 
     if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-    if (windowCount === 0 && windowIdx > 0) break;
     if (windowIdx < SHOPEE_ORDER_LIST_MAX_WINDOWS - 1) {
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
@@ -1810,7 +1816,7 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
   return Array.from(orderSnSet);
 }
 
-// Paginate get_order_list without status filter (all statuses in time window).
+// Paginate get_order_list without status filter — quét 30 ngày (2 × 15 ngày) theo update_time.
 async function shopeeFetchAllOrderSns(shopId: string, accessToken: string): Promise<string[]> {
   const orderSnSet = new Set<string>();
   const now = Math.floor(Date.now() / 1000);
@@ -1822,11 +1828,15 @@ async function shopeeFetchAllOrderSns(shopId: string, accessToken: string): Prom
     let page = 0;
     let windowCount = 0;
 
+    console.log(
+      `[Orders Pull] shop_id=${shopId}: cửa sổ ${windowIdx + 1}/${SHOPEE_ORDER_LIST_MAX_WINDOWS} time_from=${timeFrom} time_to=${timeTo} (update_time, ~15 ngày)`,
+    );
+
     while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
       page++;
       const listResult = await shopeeGetOrderList(shopId, accessToken, {
         cursor,
-        timeRangeField: "create_time",
+        timeRangeField: "update_time",
         timeFrom,
         timeTo,
       });
@@ -1844,7 +1854,7 @@ async function shopeeFetchAllOrderSns(shopId: string, accessToken: string): Prom
 
       const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       console.log(
-        `[Shopee API] shop_id=${shopId} window=${windowIdx + 1} page=${page}: +${pageList.length} (tổng ${orderSnSet.size}), more=${more}`,
+        `[Shopee API] shop_id=${shopId} window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size}), more=${more}`,
       );
 
       if (!more) break;
@@ -1855,7 +1865,6 @@ async function shopeeFetchAllOrderSns(shopId: string, accessToken: string): Prom
     }
 
     if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-    if (windowCount === 0 && windowIdx > 0) break;
     if (windowIdx < SHOPEE_ORDER_LIST_MAX_WINDOWS - 1) {
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
@@ -4926,8 +4935,16 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   if (!existing) return incoming;
 
   const merged = { ...existing, ...incoming, id: existing.id };
+  // Luôn ghi đè trạng thái từ Shopee (shipping / cancelled / ...) — không giữ status local cũ.
   merged.status = incoming.status;
-  merged.isPrepared = incoming.status === "processed" || incoming.status === "shipping";
+  merged.isPrepared =
+    incoming.status === "processed" ||
+    incoming.status === "shipping" ||
+    incoming.status === "completed" ||
+    incoming.status === "return_pending";
+  if (incoming.status === "cancelled") {
+    merged.isPrepared = false;
+  }
   merged.isPrinted = Boolean(existing.isPrinted);
 
   const incomingItems = Array.isArray(incoming.items) ? incoming.items : [];
@@ -4963,9 +4980,10 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
 }
 
 // TO_CONFIRM_RECEIVE is returned inside SHIPPED pages — not a valid order_status filter.
-const SHOPEE_SYNC_STATUSES = ["READY_TO_SHIP", "PROCESSED", "RETRY_SHIP", "SHIPPED"] as const;
+// CANCELLED/IN_CANCEL bắt buộc để tab "Đơn hủy" không bị lệch số liệu.
+const SHOPEE_SYNC_STATUSES = ["READY_TO_SHIP", "PROCESSED", "RETRY_SHIP", "SHIPPED", "CANCELLED", "IN_CANCEL"] as const;
 
-const SHOPEE_SYNC_UI_STATUSES = new Set(["pending_confirm", "unprocessed", "processed", "shipping"]);
+const SHOPEE_SYNC_UI_STATUSES = new Set(["pending_confirm", "unprocessed", "processed", "shipping", "cancelled"]);
 
 function upsertShopeeOrdersIntoStore(
   orders: any[],
