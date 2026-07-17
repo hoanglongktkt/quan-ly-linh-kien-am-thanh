@@ -575,10 +575,10 @@ export default function App() {
         return { ...p, children: nextChildren, stock: totalStock };
       })
     );
-    if (!opts?.save) return;
+    if (!opts?.save) return { success: true };
 
     const token = localStorage.getItem('admin_token');
-    if (!token) return;
+    if (!token) return { success: false, error: 'Chưa đăng nhập.' };
 
     try {
       const response = await fetch(`/api/products/${encodeURIComponent(updated.id)}`, {
@@ -603,12 +603,37 @@ export default function App() {
           wooId: updated.wooId,
         }),
       });
-      if (response.ok) {
-        const saved = await response.json();
-        setProducts(prev => prev.map(p => p.id === saved.id ? saved : p));
+      const data = await parseJsonResponse(response);
+      if (!response.ok || data?.success === false) {
+        const error =
+          data?.error || data?.message || data?.shopeeMessage || `Lỗi cập nhật sản phẩm (HTTP ${response.status})`;
+        return {
+          success: false,
+          error,
+          shopeeSynced: false,
+          shopeeMessage: data?.shopeeMessage || error,
+        };
       }
-    } catch (err) {
+      if (data?.id) {
+        setProducts((prev) =>
+          prev.map((p) => {
+            if (p.id === data.id) return { ...p, ...data };
+            const children = getProductChildren(p);
+            if (!children.some((c) => c.id === data.id)) return p;
+            const nextChildren = children.map((c) => (c.id === data.id ? { ...c, ...data } : c));
+            const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
+            return { ...p, children: nextChildren, stock: totalStock };
+          })
+        );
+      }
+      return {
+        success: true,
+        shopeeSynced: Boolean(data?.shopeeSynced),
+        shopeeMessage: data?.shopeeMessage,
+      };
+    } catch (err: any) {
       console.error('Update product error:', err);
+      return { success: false, error: err?.message || 'Lỗi cập nhật sản phẩm.' };
     }
   };
 

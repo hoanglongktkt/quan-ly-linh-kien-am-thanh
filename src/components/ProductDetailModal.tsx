@@ -142,7 +142,10 @@ interface ProductDetailModalProps {
   product: Product;
   allProducts: Product[];
   onClose: () => void;
-  onUpdateProduct: (product: Product, opts?: { save?: boolean }) => void | Promise<void>;
+  onUpdateProduct: (
+    product: Product,
+    opts?: { save?: boolean }
+  ) => void | Promise<void | { success?: boolean; error?: string; shopeeSynced?: boolean; shopeeMessage?: string }>;
   onSyncItemVariants?: (itemId: string) => Promise<Product[] | null>;
   onProductsRefresh?: (products: Product[]) => void;
 }
@@ -239,11 +242,24 @@ export default function ProductDetailModal({
       status: editStock <= 0 ? 'out_of_stock' : active.status === 'draft' ? 'draft' : 'active',
       lastSynced: new Date().toISOString(),
     };
-    await onUpdateProduct(updated, { save: true });
-    setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
-    setSaving(false);
-    setToast('Đã lưu vào kho gốc.');
-    setTimeout(() => setToast(null), 2500);
+    try {
+      const result = await onUpdateProduct(updated, { save: true });
+      setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+      if (result && typeof result === 'object' && result.success === false) {
+        setToast(result.error || result.shopeeMessage || 'Lưu kho thành công nhưng đồng bộ Shopee thất bại.');
+      } else if (result && typeof result === 'object' && result.shopeeSynced) {
+        setToast(result.shopeeMessage || 'Đã lưu kho và đồng bộ Shopee thành công.');
+      } else if (result && typeof result === 'object' && result.shopeeMessage) {
+        setToast(`Đã lưu vào kho gốc. ${result.shopeeMessage}`);
+      } else {
+        setToast('Đã lưu vào kho gốc.');
+      }
+    } catch (err: any) {
+      setToast(err?.message || 'Cập nhật sản phẩm thất bại.');
+    } finally {
+      setSaving(false);
+      setTimeout(() => setToast(null), 4500);
+    }
   };
 
   const labelCls = 'text-[12px] text-[#6B7280] mb-1 block';

@@ -2955,6 +2955,28 @@ async function executeShopeeStockPriceSyncJob(
   return { ok: true, message: lines.join(" | ") || "Sync Shopee OK" };
 }
 
+/** Đẩy stock/price lên Shopee ngay (không qua queue) — dùng cho PATCH sản phẩm / nút sync nhanh. */
+async function pushProductStockPriceToShopeeImmediate(
+  product: any,
+  opts: { syncStock: boolean; syncPrice: boolean }
+): Promise<{ ok: boolean; skipped?: boolean; message: string }> {
+  if (!opts.syncStock && !opts.syncPrice) {
+    return { ok: true, skipped: true, message: "Không có thay đổi tồn/giá cần đồng bộ Shopee." };
+  }
+  const mapped = await resolveProductWithShopeeMapping(product);
+  if (!mapped) {
+    return {
+      ok: true,
+      skipped: true,
+      message: "Chưa liên kết Mapping Shopee — chỉ lưu kho nội bộ.",
+    };
+  }
+  return executeShopeeStockPriceSyncJob(mapped, {
+    syncStock: opts.syncStock,
+    syncPrice: opts.syncPrice,
+  });
+}
+
 async function processShopeeSyncQueue(): Promise<void> {
   if (shopeeSyncQueueRunning) return;
   shopeeSyncQueueRunning = true;
@@ -7918,47 +7940,118 @@ async function startServer() {
   });
 
   app.patch("/api/products/:id", authMiddleware, async (req, res) => {
-    const products = await loadProducts();
-    const patch = req.body || {};
-    const topIndex = products.findIndex((p: any) => p.id === req.params.id);
-    if (topIndex !== -1) {
-      const before = products[topIndex];
-      const merged = mergeProductPatch(before, patch);
-      products[topIndex] = merged;
-      await saveProducts(products);
-      const changes = detectStockPriceChanges(before, merged);
-      if (changes.stock || changes.price) {
-        await enqueueShopeeStockPriceSync([merged], {
+    try {
+      const products = await loadProducts();
+      const patch = req.body || {};
+      const topIndex = products.findIndex((p: any) => p.id === req.params.id);
+      if (topIndex !== -1) {
+        const before = products[topIndex];
+        const merged = mergeProductPatch(before, patch);
+        products[topIndex] = merged;
+        await saveProducts(products);
+        const changes = detectStockPriceChanges(before, merged);
+        const shopee = await pushProductStockPriceToShopeeImmediate(merged, {
           syncStock: changes.stock,
           syncPrice: changes.price,
         });
+        if (!shopee.ok) {
+          return res.status(400).json({
+            success: false,
+            error: shopee.message || "Shopee từ chối cập nhật tồn/giá",
+            product: merged,
+            shopeeSynced: false,
+            shopeeMessage: shopee.message,
+          });
+        }
+        return res.json({
+          ...merged,
+          success: true,
+          shopeeSynced: !shopee.skipped,
+          shopeeMessage: shopee.message,
+        });
       }
-      return res.json(merged);
-    }
 
-    // Cập nhật Child SKU nằm trong children
-    for (let i = 0; i < products.length; i++) {
-      const children = getProductChildrenList(products[i]);
-      const childIdx = children.findIndex((c: any) => c.id === req.params.id);
-      if (childIdx === -1) continue;
-      const beforeChild = children[childIdx];
-      const mergedChild = mergeProductPatch(beforeChild, patch);
-      const nextChildren = [...children];
-      nextChildren[childIdx] = mergedChild;
-      const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-      products[i] = { ...products[i], children: nextChildren, stock: totalStock };
-      await saveProducts(products);
-      const changes = detectStockPriceChanges(beforeChild, mergedChild);
-      if (changes.stock || changes.price) {
-        await enqueueShopeeStockPriceSync([mergedChild], {
+      // Cập nhật Child SKU nằm trong children
+      for (let i = 0; i < products.length; i++) {
+        const children = getProductChildrenList(products[i]);
+        const childIdx = children.findIndex((c: any) => c.id === req.params.id);
+        if (childIdx === -1) continue;
+        const beforeChild = children[childIdx];
+        const mergedChild = mergeProductPatch(beforeChild, patch);
+        const nextChildren = [...children];
+        nextChildren[childIdx] = mergedChild;
+        const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
+        products[i] = { ...products[i], children: nextChildren, stock: totalStock };
+        await saveProducts(products);
+        const changes = detectStockPriceChanges(beforeChild, mergedChild);
+        const shopee = await pushProductStockPriceToShopeeImmediate(mergedChild, {
           syncStock: changes.stock,
           syncPrice: changes.price,
         });
+        if (!shopee.ok) {
+          return res.status(400).json({
+            success: false,
+            error: shopee.message || "Shopee từ chối cập nhật tồn/giá",
+            product: mergedChild,
+            shopeeSynced: false,
+            shopeeMessage: shopee.message,
+          });
+        }
+        return res.json({
+          ...mergedChild,
+          success: true,
+          shopeeSynced: !shopee.skipped,
+          shopeeMessage: shopee.message,
+        });
       }
-      return res.json(mergedChild);
-    }
 
-    return res.status(404).json({ error: "product_not_found" });
+      return res.status(404).json({ success: false, error: "product_not_found" });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[Products API] PATCH /api/products/:id failed:", err);
+      return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+    }
+  });
+
+  app.post("/api/products/:id/sync-shopee", authMiddleware, async (req, res) => {
+    try {
+      const products = await loadProducts();
+      const row = findProductRowById(products, String(req.params.id || ""));
+      if (!row) {
+        return res.status(404).json({ success: false, error: "Không tìm thấy sản phẩm trong kho." });
+      }
+      const shopee = await pushProductStockPriceToShopeeImmediate(row, {
+        syncStock: true,
+        syncPrice: true,
+      });
+      if (shopee.skipped) {
+        return res.status(400).json({
+          success: false,
+          error: shopee.message || "Chưa liên kết Mapping Shopee.",
+          shopeeSynced: false,
+          shopeeMessage: shopee.message,
+        });
+      }
+      if (!shopee.ok) {
+        return res.status(400).json({
+          success: false,
+          error: shopee.message || "Shopee từ chối đồng bộ tồn/giá",
+          shopeeSynced: false,
+          shopeeMessage: shopee.message,
+        });
+      }
+      return res.json({
+        success: true,
+        product: row,
+        shopeeSynced: true,
+        shopeeMessage: shopee.message,
+        message: shopee.message,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[Products API] POST /api/products/:id/sync-shopee failed:", err);
+      return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+    }
   });
 
   app.post("/api/products/inventory-balance", authMiddleware, async (req, res) => {

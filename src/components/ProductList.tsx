@@ -152,6 +152,54 @@ export default function ProductList({
 
   // Detail Modal state
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
+  const [syncingProductId, setSyncingProductId] = useState<string | null>(null);
+  const [actionToast, setActionToast] = useState<string | null>(null);
+
+  const handleQuickSyncShopee = async (productId: string) => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      setActionToast('Chưa đăng nhập.');
+      setTimeout(() => setActionToast(null), 3500);
+      return;
+    }
+    setSyncingProductId(productId);
+    try {
+      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/sync-shopee`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      const data = await parseJsonResponse(response);
+      if (!response.ok || data?.success === false) {
+        throw new Error(data?.error || data?.message || data?.shopeeMessage || `Đồng bộ Shopee thất bại (HTTP ${response.status})`);
+      }
+      setActionToast(data?.shopeeMessage || data?.message || 'Đã đẩy tồn/giá lên Shopee.');
+      onAddLog({
+        id: `sync-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'shopee',
+        type: 'stock_sync',
+        status: 'success',
+        message: data?.shopeeMessage || `Đồng bộ nhanh sản phẩm ${productId} lên Shopee thành công.`,
+      });
+    } catch (err: any) {
+      const msg = err?.message || 'Đồng bộ Shopee thất bại.';
+      setActionToast(msg);
+      onAddLog({
+        id: `sync-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'shopee',
+        type: 'stock_sync',
+        status: 'failed',
+        message: msg,
+      });
+    } finally {
+      setSyncingProductId(null);
+      setTimeout(() => setActionToast(null), 4500);
+    }
+  };
 
   // Bulk edit modal (Sapo-style)
   const [showBulkModal, setShowBulkModal] = useState(false);
@@ -575,6 +623,15 @@ export default function ProductList({
           </button>
         </div>
       )}
+      {actionToast && (
+        <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-2 max-w-sm">
+          <RefreshCw className={`w-4 h-4 ${syncingProductId ? 'animate-spin text-orange-400' : 'text-orange-400'}`} />
+          <span>{actionToast}</span>
+          <button onClick={() => setActionToast(null)} className="ml-1 text-gray-400 hover:text-white cursor-pointer">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* TOP NAVIGATION SUB-TABS */}
       <div className="flex border-b border-gray-150 overflow-x-auto">
@@ -971,6 +1028,17 @@ export default function ProductList({
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              void handleQuickSyncShopee(prod.id);
+                            }}
+                            disabled={syncingProductId === prod.id}
+                            className="p-1.5 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-all disabled:opacity-60"
+                            title="Cập nhật / Đồng bộ lên Shopee"
+                          >
+                            <RefreshCw className={`w-4 h-4 ${syncingProductId === prod.id ? 'animate-spin text-orange-600' : ''}`} />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               if (group.hasVariants) {
                                 const ok = confirm(
                                   `Xóa sản phẩm "${group.displayTitle}" và ${group.variantCount} phân loại khỏi Kho gốc?`
@@ -1076,6 +1144,14 @@ export default function ProductList({
                                 title="Sửa phân loại"
                               >
                                 <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => void handleQuickSyncShopee(child.id)}
+                                disabled={syncingProductId === child.id}
+                                className="p-1.5 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-lg transition-all disabled:opacity-60"
+                                title="Cập nhật / Đồng bộ lên Shopee"
+                              >
+                                <RefreshCw className={`w-3.5 h-3.5 ${syncingProductId === child.id ? 'animate-spin text-orange-600' : ''}`} />
                               </button>
                               <button
                                 onClick={() => {
