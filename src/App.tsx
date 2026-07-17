@@ -413,11 +413,6 @@ export default function App() {
       })
       .join('; ');
 
-  const extractApiErrorMessage = (data: Record<string, unknown>, fallback: string): string => {
-    const parts = [data?.message, data?.error, data?.detail, data?.hint, data?.causeMessage].filter(Boolean);
-    return parts.map(String).join(' — ') || fallback;
-  };
-
   // Actively pull real orders straight from Shopee (v2.order.get_order_list +
   // get_order_detail) via the backend, then refresh local state with the result.
   // Bound to the "Cập nhật đơn hàng" button.
@@ -425,16 +420,39 @@ export default function App() {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
 
+    const invalidServerResponseMessage =
+      'Máy chủ đang bận hoặc phản hồi không hợp lệ. Vui lòng thử lại sau.';
+    const readOrderSyncJson = async (response: Response): Promise<Record<string, any>> => {
+      const contentType = response.headers.get('content-type') || '';
+      if (!response.ok || !contentType.includes('application/json')) {
+        try {
+          const responsePreview = (await response.text()).slice(0, 200);
+          console.error('[Orders Sync] Invalid server response:', {
+            status: response.status,
+            contentType,
+            responsePreview,
+          });
+        } catch (readError) {
+          console.error('[Orders Sync] Cannot read invalid server response:', readError);
+        }
+        throw new Error(invalidServerResponseMessage);
+      }
+
+      try {
+        return await response.json();
+      } catch (parseError) {
+        console.error('[Orders Sync] Invalid JSON response:', parseError);
+        throw new Error(invalidServerResponseMessage);
+      }
+    };
+
     setOrdersLoading(true);
     try {
       const response = await fetch('/api/orders/pull', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(extractApiErrorMessage(data, 'Kéo đơn hàng thất bại.'));
-      }
+      const data = await readOrderSyncJson(response);
       const pulled = Number(data.pulled) || 0;
       const pullErrors = Array.isArray(data.errors) ? data.errors : [];
       if (pullErrors.length > 0 && pulled === 0) {
@@ -443,15 +461,9 @@ export default function App() {
       const refreshRes = await fetch('/api/orders', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (refreshRes.ok) {
-        const freshOrders = await refreshRes.json();
-        if (Array.isArray(freshOrders)) {
-          const sanitized = sanitizeOrders(freshOrders);
-          setOrders(sanitized);
-          void saveOrdersCache(sanitized);
-        }
-      } else if (Array.isArray(data.orders) && data.orders.length > 0) {
-        const sanitized = sanitizeOrders(data.orders);
+      const freshOrders = await readOrderSyncJson(refreshRes);
+      if (Array.isArray(freshOrders)) {
+        const sanitized = sanitizeOrders(freshOrders);
         setOrders(sanitized);
         void saveOrdersCache(sanitized);
       }
@@ -1330,7 +1342,7 @@ export default function App() {
           <div className="md:hidden shrink-0">
             <BrandLogo size={36} className="rounded-lg" />
           </div>
-          <div className={`flex-1 min-w-0 ${activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
+          <div className={`flex-1 min-w-0 ${activeTab === 'dashboard' || activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
             <h2 className={`text-lg font-extrabold text-gray-900 tracking-tight ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-title' : ''}`}>
               {activeTab === 'dashboard' && 'Bảng Điều Khiển Tổng Quan'}
               {activeTab === 'products' && 'Quản Lý Danh Sách Sản Phẩm'}
@@ -1387,7 +1399,6 @@ export default function App() {
                 onEditProductShortcut={handleEditProductShortcut}
                 onUpdateProduct={handleUpdateProduct}
                 onNavigateToImport={handleNavigateToImport}
-                onRefreshProducts={fetchProducts}
               />
             </ErrorBoundary>
           )}

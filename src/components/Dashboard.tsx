@@ -21,7 +21,6 @@ import {
   Pencil,
   X,
   ImageOff,
-  RefreshCw,
 } from 'lucide-react';
 
 export type DashboardDateRange =
@@ -117,7 +116,6 @@ interface DashboardProps {
   onEditProductShortcut?: (productId: string) => void;
   onUpdateProduct?: (updated: Product, opts?: { save?: boolean }) => Promise<void>;
   onNavigateToImport?: (productId: string) => void;
-  onRefreshProducts?: () => Promise<void>;
 }
 
 export default function Dashboard({
@@ -127,7 +125,6 @@ export default function Dashboard({
   onEditProductShortcut,
   onUpdateProduct,
   onNavigateToImport,
-  onRefreshProducts,
 }: DashboardProps) {
   const [dateRange, setDateRange] = useState<DashboardDateRange>('today');
   const [data, setData] = useState<DashboardData | null>(null);
@@ -137,7 +134,6 @@ export default function Dashboard({
   const [stockEditItem, setStockEditItem] = useState<{ id: string; title: string; stock: number } | null>(null);
   const [stockInput, setStockInput] = useState('');
   const [stockSaving, setStockSaving] = useState(false);
-  const [syncingStock, setSyncingStock] = useState(false);
   const ordersRef = useRef(orders);
   const productsRef = useRef(products);
   ordersRef.current = orders;
@@ -278,43 +274,6 @@ export default function Dashboard({
     }
   };
 
-  const handleSyncStock = async () => {
-    const token = localStorage.getItem('admin_token');
-    if (!token) {
-      alert('Chưa đăng nhập.');
-      return;
-    }
-
-    setSyncingStock(true);
-    try {
-      const res = await fetch('/api/sync-stock', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        const parts = [
-          data?.message,
-          data?.error,
-          ...(Array.isArray(data.shopeeErrors) ? data.shopeeErrors : []),
-          ...(Array.isArray(data.warnings) ? data.warnings.slice(0, 5) : []),
-        ].filter(Boolean);
-        throw new Error(Array.from(new Set(parts)).join('\n') || 'Đồng bộ tồn kho thất bại.');
-      }
-      if (onRefreshProducts) await onRefreshProducts();
-      refreshInventoryList();
-      alert(data.message || 'Đồng bộ thành công');
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Đồng bộ tồn kho thất bại.');
-    } finally {
-      setSyncingStock(false);
-    }
-  };
-
   const lowStockThreshold = data?.inventory.lowStockThreshold ?? 5;
   const lowStockProducts = useMemo(() => {
     const resolveImage = (id: string) => {
@@ -393,18 +352,8 @@ export default function Dashboard({
 
   return (
     <div className="space-y-6" id="dashboard-tab">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <button
-          type="button"
-          onClick={() => void handleSyncStock()}
-          disabled={syncingStock}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 min-h-11 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-sm font-bold rounded-xl shadow-md shadow-emerald-600/20 transition-all"
-        >
-          <RefreshCw className={`w-4 h-4 ${syncingStock ? 'animate-spin' : ''}`} />
-          {syncingStock ? 'Đang đồng bộ...' : 'Đồng Bộ Tồn Kho'}
-        </button>
-
-        <div className="flex items-center gap-2">
+      <div className="flex justify-end">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <Calendar className="w-4 h-4 text-gray-400 shrink-0" />
           <select
             value={dateRange}
