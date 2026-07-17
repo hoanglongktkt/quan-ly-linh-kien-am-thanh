@@ -308,6 +308,58 @@ export async function loadProductsFromStore(): Promise<any[]> {
   return docsToProducts(docs);
 }
 
+/** Đọc 1 product theo id nội bộ / shopeeItemId — không quét toàn bộ catalog. */
+export async function loadProductByIdFromStore(productId: string): Promise<any | null> {
+  requireMongo();
+  const id = String(productId || "").trim();
+  if (!id) return null;
+
+  const direct = await ProductModel.findById(id).lean();
+  if (direct?.data && typeof direct.data === "object") return direct.data;
+
+  const byItem = await ProductModel.findOne({ "data.shopeeItemId": id }).lean();
+  if (byItem?.data && typeof byItem.data === "object") return byItem.data;
+
+  const byChild = await ProductModel.findOne({ "data.children.id": id }).lean();
+  if (byChild?.data && typeof byChild.data === "object") {
+    const children = Array.isArray(byChild.data.children) ? byChild.data.children : [];
+    const child = children.find((c: any) => String(c?.id || "").trim() === id);
+    if (child) return child;
+  }
+
+  const byModel = await ProductModel.findOne({ "data.shopeeModelId": id }).lean();
+  if (byModel?.data && typeof byModel.data === "object") return byModel.data;
+
+  return null;
+}
+
+/** Chỉ kéo products liên quan tới danh sách id / shopeeItemId (dùng $in, không find({})). */
+export async function loadProductsByIdsFromStore(
+  productIds: string[],
+  shopeeItemIds: string[] = [],
+): Promise<any[]> {
+  requireMongo();
+  const ids = [...new Set(productIds.map((v) => String(v || "").trim()).filter(Boolean))];
+  const itemIds = [...new Set(shopeeItemIds.map((v) => String(v || "").trim()).filter(Boolean))];
+  if (ids.length === 0 && itemIds.length === 0) return [];
+
+  const orClauses: Record<string, unknown>[] = [];
+  if (ids.length > 0) {
+    orClauses.push({ _id: { $in: ids } });
+    orClauses.push({ "data.id": { $in: ids } });
+    orClauses.push({ sku: { $in: ids } });
+  }
+  if (itemIds.length > 0) {
+    orClauses.push({ "data.shopeeItemId": { $in: itemIds } });
+    orClauses.push({ "data.shopeeModelId": { $in: itemIds } });
+    const parentIds = itemIds.map((itemId) => `shopee-item-${itemId}`);
+    orClauses.push({ _id: { $in: parentIds } });
+  }
+
+  const docs = await ProductModel.find(orClauses.length === 1 ? orClauses[0] : { $or: orClauses }).lean();
+  return docsToProducts(docs);
+}
+
 /** Đọc channel_listings TRỰC TIẾP từ MongoDB — Model.find({}) */
 export async function loadChannelListingsFromStore(): Promise<any[]> {
   requireMongo();

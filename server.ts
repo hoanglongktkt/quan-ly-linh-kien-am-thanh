@@ -11,6 +11,8 @@ import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import {
   initMongo,
   loadProductsFromStore,
+  loadProductByIdFromStore,
+  loadProductsByIdsFromStore,
   saveProductsToStoreAsync,
   loadChannelListingsFromStore,
   saveChannelListingsToStoreAsync,
@@ -3121,8 +3123,7 @@ async function processShopeeSyncQueue(): Promise<void> {
       shopeeSyncQueueKeys.delete(job.key);
 
       try {
-        const products = await loadProducts();
-        const row = findProductRowById(products, job.productId);
+        const row = await loadProductById(job.productId);
         if (!row) {
           console.warn(`[Shopee Sync Queue] Bỏ qua — không thấy productId=${job.productId}`);
           await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
@@ -4553,6 +4554,84 @@ async function shopeeGetShippingParameter(shopId: string, accessToken: string, o
   return json;
 }
 
+// v2.logistics.get_address_list — danh sách địa chỉ kho/lấy hàng mới nhất của shop.
+async function shopeeGetAddressList(shopId: string, accessToken: string) {
+  const apiPath = "/api/v2/logistics/get_address_list";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const params = new URLSearchParams({
+    partner_id: SHOPEE_PARTNER_ID,
+    timestamp: String(timestamp),
+    access_token: accessToken,
+    shop_id: shopId,
+    sign,
+  });
+  const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  const { response, json } = await fetchShopeeLogisticsJson(url, {}, "get_address_list");
+  console.log(`[Shopee API] GET ${apiPath} (shop_id=${shopId}) -> HTTP ${response.status}:`, JSON.stringify(json));
+  return json;
+}
+
+function isShopeePickupAddressActive(addr: any): boolean {
+  if (!addr || addr.address_id === undefined || addr.address_id === null) return false;
+  const status = String(addr.address_status || addr.status || "").toLowerCase();
+  if (status && /disabled|invalid|deleted|inactive/.test(status)) return false;
+  const flags = Array.isArray(addr.address_flag) ? addr.address_flag.map(String) : [];
+  if (flags.length > 0 && !flags.some((f) => /pickup|default|warehouse|return/.test(f.toLowerCase()))) {
+    return false;
+  }
+  return true;
+}
+
+/** Chọn address_id + pickup_time_id hợp lệ — ưu tiên địa chỉ kho mới từ get_address_list. */
+function resolvePickupShipmentFromParams(
+  paramPickup: any,
+  shopAddressList: any[],
+): { address_id: number | string; pickup_time_id: string | number } | null {
+  const paramAddresses = Array.isArray(paramPickup?.address_list) ? paramPickup.address_list : [];
+  const activeShopIds = new Set(
+    shopAddressList.filter(isShopeePickupAddressActive).map((a) => a.address_id),
+  );
+
+  const tryAddress = (addr: any): { address_id: number | string; pickup_time_id: string | number } | null => {
+    if (addr?.address_id === undefined || addr?.address_id === null) return null;
+    if (activeShopIds.size > 0 && !activeShopIds.has(addr.address_id)) return null;
+    const slots = Array.isArray(addr.time_slot_list) ? addr.time_slot_list : [];
+    const slot = slots.find(
+      (s: any) => s?.pickup_time_id !== undefined && s?.pickup_time_id !== null && s?.pickup_time_id !== "",
+    ) || slots[0];
+    if (!slot || slot.pickup_time_id === undefined || slot.pickup_time_id === null) {
+      // Shopee cho phép pickup_time_id rỗng với một số kênh — vẫn gửi address_id.
+      return { address_id: addr.address_id, pickup_time_id: slot?.pickup_time_id ?? "" };
+    }
+    return { address_id: addr.address_id, pickup_time_id: slot.pickup_time_id };
+  };
+
+  // 1) Ưu tiên địa chỉ pickup mặc định từ get_address_list, khớp với get_shipping_parameter.
+  for (const shopAddr of shopAddressList) {
+    if (!isShopeePickupAddressActive(shopAddr)) continue;
+    const paramAddr = paramAddresses.find((p) => p.address_id === shopAddr.address_id);
+    if (paramAddr) {
+      const picked = tryAddress(paramAddr);
+      if (picked) return picked;
+    }
+  }
+
+  // 2) Thử lần lượt mọi address trong get_shipping_parameter (không chỉ [0]).
+  for (const paramAddr of paramAddresses) {
+    const picked = tryAddress(paramAddr);
+    if (picked) return picked;
+  }
+
+  // 3) Fallback: address_id từ get_address_list + slot rỗng (Shopee tự xếp lịch).
+  const fallbackShop = shopAddressList.find(isShopeePickupAddressActive);
+  if (fallbackShop) {
+    return { address_id: fallbackShop.address_id, pickup_time_id: "" };
+  }
+
+  return null;
+}
+
 // v2.logistics.ship_order — arranges the actual shipment (pickup/dropoff/non_integrated)
 // so the order moves to "Chờ lấy hàng" (LOGISTICS_REQUEST_CREATED) on Shopee.
 //
@@ -4633,20 +4712,38 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ su
       console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 pickup. info_needed=${JSON.stringify(infoNeeded)}`);
       return { success: false, error: "pickup_not_supported", message: "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Lấy hàng\". Vui lòng chọn \"Tự mang hàng ra bưu cục\" (dropoff) thay thế." };
     }
-    // Automatically pull the soonest available pickup_time_id, per Shopee's
-    // get_shipping_parameter response — no manual slot-picking needed.
-    const address = paramResult.response?.pickup?.address_list?.[0];
-    const timeSlot = address?.time_slot_list?.[0];
-    if (
-      address?.address_id === undefined ||
-      address?.address_id === null ||
-      timeSlot?.pickup_time_id === undefined ||
-      timeSlot?.pickup_time_id === null
-    ) {
-      console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng c\xF3 address/time_slot pickup kh\u1EA3 d\u1EE5ng. pickup=${JSON.stringify(paramResult.response?.pickup)}`);
-      return { success: false, error: "no_pickup_slot_available", message: "Shopee không trả về địa chỉ/lịch hẹn lấy hàng (pickup) khả dụng cho đơn này." };
+    // Lấy danh sách địa chỉ kho mới nhất + khớp với get_shipping_parameter (tránh address_id cũ).
+    const addressListResult = await shopeeGetAddressList(shopId, accessToken);
+    const shopAddressList =
+      addressListResult.response?.address_list ||
+      addressListResult.address_list ||
+      [];
+    if (addressListResult.error) {
+      console.warn(
+        `[Shopee Ship] get_address_list cảnh báo đơn ${order.orderSn}: ${addressListResult.error} — fallback get_shipping_parameter`,
+      );
     }
-    shipmentBody = { pickup: { address_id: address.address_id, pickup_time_id: timeSlot.pickup_time_id } };
+
+    const pickupChoice = resolvePickupShipmentFromParams(paramResult.response?.pickup, shopAddressList);
+    if (!pickupChoice) {
+      console.error(
+        `[Shopee LỖI] Đơn ${order.orderSn} không có address/time_slot pickup khả dụng. pickup=${JSON.stringify(paramResult.response?.pickup)} shopAddresses=${JSON.stringify(shopAddressList)}`,
+      );
+      return {
+        success: false,
+        error: "no_pickup_slot_available",
+        message: "Shopee không trả về địa chỉ kho/lịch hẹn lấy hàng (pickup) khả dụng. Vui lòng cập nhật địa chỉ lấy hàng trên Shopee Seller Centre rồi thử lại.",
+      };
+    }
+    shipmentBody = {
+      pickup: {
+        address_id: pickupChoice.address_id,
+        pickup_time_id: pickupChoice.pickup_time_id,
+      },
+    };
+    console.log(
+      `[Shopee Ship] Đơn ${order.orderSn} pickup address_id=${pickupChoice.address_id} pickup_time_id=${pickupChoice.pickup_time_id}`,
+    );
   }
 
   const shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
@@ -5636,6 +5733,54 @@ async function loadProducts(): Promise<any[]> {
   } catch (error) {
     console.error("[Products DB] Failed to read from MongoDB:", error);
     throw error instanceof Error ? error : new Error(String(error));
+  }
+}
+
+async function loadProductById(productId: string): Promise<any | null> {
+  try {
+    return await loadProductByIdFromStore(productId);
+  } catch (error) {
+    console.error(`[Products DB] loadProductById failed id=${productId}:`, error);
+    return null;
+  }
+}
+
+function collectCatalogLookupKeysFromOrders(orders: any[]): { productIds: string[]; shopeeItemIds: string[] } {
+  const productIds = new Set<string>();
+  const shopeeItemIds = new Set<string>();
+  for (const order of Array.isArray(orders) ? orders : []) {
+    for (const item of Array.isArray(order?.items) ? order.items : []) {
+      const pid = String(item?.productId || "").trim();
+      if (pid) {
+        shopeeItemIds.add(pid);
+        productIds.add(pid);
+        productIds.add(`shopee-item-${pid}`);
+      }
+      const modelId = String(item?.modelId || item?.shopeeModelId || "").trim();
+      if (modelId) {
+        shopeeItemIds.add(modelId);
+        productIds.add(modelId);
+      }
+      const sku = String(item?.modelSku || item?.sku || "").trim();
+      if (sku) productIds.add(sku);
+    }
+  }
+  return { productIds: [...productIds], shopeeItemIds: [...shopeeItemIds] };
+}
+
+/** Chỉ tải catalog cho các SKU/item có trong lô đơn — tránh ProductModel.find({}). */
+async function loadProductsForOrders(orders: any[]): Promise<any[]> {
+  const { productIds, shopeeItemIds } = collectCatalogLookupKeysFromOrders(orders);
+  if (productIds.length === 0 && shopeeItemIds.length === 0) return [];
+  try {
+    const rows = await loadProductsByIdsFromStore(productIds, shopeeItemIds);
+    console.log(
+      `[Products DB] loadProductsForOrders — ${orders.length} đơn → query ${productIds.length} id / ${shopeeItemIds.length} itemId → ${rows.length} sản phẩm`,
+    );
+    return rows;
+  } catch (error) {
+    console.error("[Products DB] loadProductsForOrders failed:", error);
+    return [];
   }
 }
 
@@ -9074,7 +9219,6 @@ async function startServer() {
   });
 
   app.get("/api/orders", authMiddleware, async (req, res) => {
-    const products = await loadProducts();
     let rawOrders = loadOrders().filter(isValidOrder);
     let dirty = false;
     rawOrders = rawOrders.map((o: any) => {
@@ -9085,6 +9229,7 @@ async function startServer() {
       return o;
     });
     if (dirty) saveOrders(rawOrders);
+    const products = await loadProductsForOrders(rawOrders);
     const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
     return res.json(orders);
   });
@@ -9221,15 +9366,16 @@ async function startServer() {
     if (!code) {
       return res.status(400).json({ error: "Thi\u1EBFu m\u00E3 qu\u00E9t (code)." });
     }
-    const products = await loadProducts();
-    const orders = enrichOrdersFromCatalog(loadOrders().filter(isValidOrder), products);
-    const found = await findOrderByScanLookup(orders, code);
-    if (!found) {
+    const rawOrders = loadOrders().filter(isValidOrder);
+    const foundRaw = await findOrderByScanLookup(rawOrders, code);
+    if (!foundRaw) {
       return res.status(404).json({
         error: "Kh\u00F4ng t\u00ECm th\u1EA5y \u0111\u01A1n h\u00E0ng kh\u1EDBp m\u00E3 qu\u00E9t.",
         scannedCode: code,
       });
     }
+    const products = await loadProductsForOrders([foundRaw]);
+    const found = enrichOrdersFromCatalog([foundRaw], products)[0];
     return res.json(found);
   });
 
