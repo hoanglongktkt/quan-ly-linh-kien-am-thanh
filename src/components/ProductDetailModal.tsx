@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product, getProductChildren } from '../types';
 import { X, RefreshCw, Check, Package, Plus } from 'lucide-react';
 
@@ -65,6 +65,34 @@ export function formatPriceRange(min: number, max: number): string {
   const fmt = (n: number) => `${Math.round(n).toLocaleString('vi-VN')}đ`;
   if (min === max) return fmt(min);
   return `${fmt(min)} - ${fmt(max)}`;
+}
+
+function formatMoneyInput(value: number): string {
+  return Number.isFinite(value) ? value.toLocaleString('en-US') : '0';
+}
+
+function parseMoneyInput(raw: string): number {
+  const normalized = raw.replace(/,/g, '').replace(/[^\d.]/g, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function countDigits(value: string): number {
+  return (value.match(/\d/g) || []).length;
+}
+
+function getCaretFromDigitCount(value: string, digitsBeforeCaret: number): number {
+  if (digitsBeforeCaret <= 0) return 0;
+  let digitsSeen = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (/\d/.test(value[index])) {
+      digitsSeen += 1;
+      if (digitsSeen >= digitsBeforeCaret) {
+        return index + 1;
+      }
+    }
+  }
+  return value.length;
 }
 
 /** Nhóm Parent-Child: ưu tiên children; còn lại gom flat legacy theo item_id. */
@@ -158,6 +186,7 @@ export default function ProductDetailModal({
   onSyncItemVariants,
   onProductsRefresh,
 }: ProductDetailModalProps) {
+  const priceSelectionRef = useRef<{ input: HTMLInputElement; caret: number } | null>(null);
   const [localProducts, setLocalProducts] = useState(allProducts);
   const variants = useMemo(() => getProductVariants(localProducts, product), [localProducts, product]);
   const [activeId, setActiveId] = useState(product.id);
@@ -179,6 +208,13 @@ export default function ProductDetailModal({
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => { setLocalProducts(allProducts); }, [allProducts]);
+
+  useEffect(() => {
+    if (!priceSelectionRef.current) return;
+    const { input, caret } = priceSelectionRef.current;
+    input.setSelectionRange(caret, caret);
+    priceSelectionRef.current = null;
+  });
 
   useEffect(() => {
     if (!active) return;
@@ -275,6 +311,20 @@ export default function ProductDetailModal({
   const inputCls = 'w-full px-3 py-[8px] text-[13px] border border-[#E0E0E0] rounded-[4px] bg-white focus:border-[#0078D4] focus:ring-1 focus:ring-[#0078D4]/20 outline-none';
   const cardCls = 'bg-white border rounded-[4px]' ;
   const cardHeader = 'px-4 py-2.5 border-b text-[13px] font-semibold text-[#212121]';
+
+  const handleMoneyInputChange =
+    (setter: React.Dispatch<React.SetStateAction<number>>) =>
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const { value, selectionStart } = event.target;
+      const digitsBeforeCaret = countDigits(value.slice(0, selectionStart ?? value.length));
+      const numericValue = Math.max(0, parseMoneyInput(value));
+      const formattedValue = formatMoneyInput(numericValue);
+
+      setter(numericValue);
+
+      const nextCaret = getCaretFromDigitCount(formattedValue, digitsBeforeCaret);
+      priceSelectionRef.current = { input: event.target, caret: nextCaret };
+    };
 
   const marginPct = editSellingPrice > 0
     ? (((editSellingPrice - editImportPrice) / editSellingPrice) * 100).toFixed(0)
@@ -424,16 +474,16 @@ export default function ProductDetailModal({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className={labelCls}>Giá bán lẻ</label>
-                    <input type="number" value={editSellingPrice} onChange={e => setEditSellingPrice(Math.max(0, Number(e.target.value)))} className={`${inputCls} text-right font-semibold`} />
+                    <input type="text" inputMode="decimal" value={formatMoneyInput(editSellingPrice)} onChange={handleMoneyInputChange(setEditSellingPrice)} className={`${inputCls} text-right font-semibold`} />
                   </div>
                   <div>
                     <label className={labelCls}>Giá bán buôn</label>
-                    <input type="number" value={editWholesalePrice} onChange={e => setEditWholesalePrice(Math.max(0, Number(e.target.value)))} className={`${inputCls} text-right`} />
+                    <input type="text" inputMode="decimal" value={formatMoneyInput(editWholesalePrice)} onChange={handleMoneyInputChange(setEditWholesalePrice)} className={`${inputCls} text-right`} />
                   </div>
                 </div>
                 <div className="sm:w-1/2">
                   <label className={labelCls}>Giá nhập</label>
-                  <input type="number" value={editImportPrice} onChange={e => setEditImportPrice(Math.max(0, Number(e.target.value)))} className={`${inputCls} text-right`} />
+                  <input type="text" inputMode="decimal" value={formatMoneyInput(editImportPrice)} onChange={handleMoneyInputChange(setEditImportPrice)} className={`${inputCls} text-right`} />
                 </div>
                 <div className="grid grid-cols-2 gap-3 pt-1">
                   <div className="p-3 bg-[#F9FAFB] border rounded-[4px]" style={{ borderColor: SAPO.border }}>
