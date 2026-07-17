@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --sourcemap --outfile=dist/server.cjs --external:sharp --external:fsevents --external:mongoose --external:mongodb --external:bson && node -e \"require('fs').copyFileSync('dist/server.cjs','server.cjs'); console.log('OK: dist/server.cjs + server.cjs')\"",
-    "build:cpanel": "npm run build",
+    "build:cpanel": "node -e \"const fs=require('fs'); const file='server.cjs'; if (!fs.existsSync(file) || fs.statSync(file).size === 0) { throw new Error('Missing prebuilt server.cjs. Run npm run build locally, then commit and push server.cjs.'); } console.log('Using prebuilt server.cjs; cPanel must not compile source files.')\"",
     "build:vercel": "vite build",
     "deploy:cpanel": "powershell -ExecutionPolicy Bypass -File scripts/deploy-cpanel.ps1",
     "migrate:mongo": "node scripts/migrate-json-to-mongo.mjs",
