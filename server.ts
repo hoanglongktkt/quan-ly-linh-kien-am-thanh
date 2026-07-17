@@ -1451,11 +1451,32 @@ const AUTO_LINK_BATCH_LIMIT_DEFAULT = 50;
 const AUTO_LINK_BATCH_LIMIT_MAX = 100;
 /** Giới hạn số trang get_item_list mỗi phiên sync (không while(true)). */
 const PRODUCT_SYNC_MAX_PAGES = 200;
-const SHOPEE_API_MAX_RETRY = 5;
+const SHOPEE_API_MAX_RETRY = 3;
 const SHOPEE_API_RETRY_BASE_MS = 1500;
+/** Timeout mọi HTTP Shopee — tránh treo process vô hạn trên cPanel. */
+const SHOPEE_HTTP_TIMEOUT_MS = 12_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = SHOPEE_HTTP_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Nhường CPU cho OS (Event Loop Yielding) — bắt buộc trên cPanel/CloudLinux. */
@@ -1615,7 +1636,7 @@ async function shopeeFetchJsonWithRetry(
     let res: Response;
     let rawText = "";
     try {
-      res = await fetch(url);
+      res = await fetchWithTimeout(url);
       rawText = await res.text();
     } catch (err) {
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
@@ -1676,7 +1697,7 @@ async function shopeePostJsonWithRetry(
     let res: Response;
     let rawText = "";
     try {
-      res = await fetch(url, {
+      res = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -2876,6 +2897,21 @@ type ShopeeSyncQueueJob = {
 const shopeeSyncQueue: ShopeeSyncQueueJob[] = [];
 const shopeeSyncQueueKeys = new Set<string>();
 let shopeeSyncQueueRunning = false;
+/** Chỉ 1 job nặng (sync đơn / ship-order) chạy cùng lúc — tránh NPROC 100% trên cPanel. */
+let cpanelHeavyJobActive: string | null = null;
+
+function tryAcquireHeavyJob(name: string): boolean {
+  if (cpanelHeavyJobActive) {
+    console.warn(`[Heavy Job] Từ chối "${name}" — "${cpanelHeavyJobActive}" đang chạy`);
+    return false;
+  }
+  cpanelHeavyJobActive = name;
+  return true;
+}
+
+function releaseHeavyJob(name: string): void {
+  if (cpanelHeavyJobActive === name) cpanelHeavyJobActive = null;
+}
 
 function detectStockPriceChanges(
   before: any,
@@ -4676,7 +4712,7 @@ async function shopeeGetTrackingNumber(shopId: string, accessToken: string, orde
   if (packageNumber) params.set("package_number", packageNumber);
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   const json: any = await res.json();
   console.log(`[Shopee API] GET ${apiPath} (order_sn=${orderSn}) -> HTTP ${res.status}:`, JSON.stringify(json));
   return json;
@@ -4689,7 +4725,7 @@ async function shopeeCreateShippingDocument(shopId: string, accessToken: string,
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
@@ -4706,7 +4742,7 @@ async function shopeeGetShippingDocumentResult(shopId: string, accessToken: stri
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
@@ -4725,11 +4761,11 @@ async function shopeeDownloadShippingDocument(shopId: string, accessToken: strin
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ order_list: orderList, shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE }),
-  });
+  }, 30_000);
 
   const contentType = res.headers.get("content-type") || "";
   console.log(`[Shopee API] POST ${apiPath} (${orderList.length} orders) -> HTTP ${res.status}, content-type=${contentType}`);
@@ -9476,6 +9512,15 @@ async function startServer() {
     const job = orderSyncJobs.get(jobId);
     if (!job) return;
 
+    if (!tryAcquireHeavyJob(`order-sync:${jobId}`)) {
+      job.status = "failed";
+      job.error = "heavy_job_busy";
+      job.message = "Hệ thống đang xử lý tác vụ nặng khác — vui lòng thử lại sau.";
+      job.updatedAt = Date.now();
+      if (activeOrderSyncJobId === jobId) activeOrderSyncJobId = null;
+      return;
+    }
+
     try {
       job.status = "running";
       job.message = "Đang quét đơn từ Shopee (chế độ tiết kiệm RAM)...";
@@ -9507,10 +9552,9 @@ async function startServer() {
     } finally {
       job.updatedAt = Date.now();
       if (activeOrderSyncJobId === jobId) activeOrderSyncJobId = null;
+      releaseHeavyJob(`order-sync:${jobId}`);
     }
   }
-
-  // Auto-sync theo chu kỳ đã GỠ BỎ hoàn toàn để tránh quá tải NPROC/cPanel.
   // Đồng bộ đơn hàng chỉ chạy khi user chủ động gọi API thủ công.
 
   app.post("/api/shopee/orders/sync", authMiddleware, async (req, res) => {
@@ -10601,7 +10645,7 @@ async function startServer() {
     // AWB before it's ready to be fetched (matches the create -> 2s -> fetch flow).
     let status = "PROCESSING";
     let attempts = 0;
-    while (status === "PROCESSING" && attempts < 10) {
+    while (status === "PROCESSING" && attempts < 6) {
       await new Promise(r => setTimeout(r, 2000));
       const pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, cleanOrderList);
       const items: any[] = pollResult.response?.result_list || [];
@@ -10749,6 +10793,13 @@ async function startServer() {
     const job = shipOrderJobs.get(jobId);
     if (!job) return;
 
+    if (!tryAcquireHeavyJob(`ship-order:${jobId}`)) {
+      job.status = "failed";
+      job.error = "heavy_job_busy";
+      job.updatedAt = Date.now();
+      return;
+    }
+
     try {
       job.status = "running";
       job.updatedAt = Date.now();
@@ -10793,8 +10844,10 @@ async function startServer() {
       job.status = "failed";
       job.error = err?.message || String(err);
       console.error(`[Ship Order Job ${jobId}] Failed:`, err);
+    } finally {
+      job.updatedAt = Date.now();
+      releaseHeavyJob(`ship-order:${jobId}`);
     }
-    job.updatedAt = Date.now();
   }
 
   // Non-blocking bulk ship: ghi nhận ngay trạng thái processed, Shopee + in vận đơn chạy ngầm.

@@ -218,8 +218,10 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     ensureModels();
     if (mongoose.connection.readyState === 0) {
       await mongoose.connect(uri, {
-        serverSelectionTimeoutMS: 20000,
-        maxPoolSize: 10,
+        serverSelectionTimeoutMS: 10000,
+        maxPoolSize: 3,
+        minPoolSize: 1,
+        maxIdleTimeMS: 30000,
       });
       fs.writeFileSync(
         path.join(appRootResolved, "db_status.txt"),
