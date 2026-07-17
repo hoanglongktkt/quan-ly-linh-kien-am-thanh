@@ -151,6 +151,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(() => resolveTabFromPath());
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [focusScanner, setFocusScanner] = useState<boolean>(false);
+  // Mobile: tab 'products' có 2 màn — Kiểm hàng (audit) và Danh sách sản phẩm (list).
+  const [mobileProductsView, setMobileProductsView] = useState<'audit' | 'list'>('audit');
   
   // Selected products for bulk editing
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -1392,14 +1394,14 @@ export default function App() {
 
           {activeTab === 'products' && (
             <>
-              <div className="max-md:block md:hidden">
+              <div className={`${mobileProductsView === 'audit' ? 'max-md:block' : 'max-md:hidden'} md:hidden`}>
                 <InventoryAudit
                   products={products}
                   shopId={settings.shops?.find((s) => s.platform === 'shopee' && s.connected)?.shopId}
                   onRefreshProducts={fetchProducts}
                 />
               </div>
-              <div className="max-md:hidden md:block">
+              <div className={`${mobileProductsView === 'list' ? 'max-md:block' : 'max-md:hidden'} md:block`}>
                 <ProductList
                   products={products}
                   onAddProduct={handleAddProduct}
@@ -1519,16 +1521,29 @@ export default function App() {
       {/* Mobile Bottom Navigation Bar */}
       <div className={`fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 z-50 max-md:flex md:hidden items-stretch justify-between py-1.5 px-1 shadow-xl safe-area-pb ${focusScanner ? 'max-md:hidden' : ''}`}>
         <button
-          onClick={() => navigateTab('products')}
+          onClick={() => { setMobileProductsView('audit'); navigateTab('products'); }}
           type="button"
           className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
-            activeTab === 'products'
+            activeTab === 'products' && mobileProductsView === 'audit'
               ? 'text-blue-500 font-extrabold'
               : 'text-slate-400 hover:text-white font-medium'
           }`}
         >
           <Scale className="w-5 h-5" />
           <span className="text-[9px] uppercase tracking-wide font-extrabold">Kiểm hàng</span>
+        </button>
+
+        <button
+          onClick={() => { setMobileProductsView('list'); navigateTab('products'); }}
+          type="button"
+          className={`flex flex-1 flex-col items-center justify-center gap-0.5 min-h-12 px-1 py-2 app-touch-target cursor-pointer transition-all ${
+            activeTab === 'products' && mobileProductsView === 'list'
+              ? 'text-blue-500 font-extrabold'
+              : 'text-slate-400 hover:text-white font-medium'
+          }`}
+        >
+          <Package className="w-5 h-5" />
+          <span className="text-[9px] uppercase tracking-wide font-extrabold">Sản Phẩm</span>
         </button>
 
         <button
