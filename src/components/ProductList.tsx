@@ -163,31 +163,21 @@ export default function ProductList({
       return;
     }
     setSyncingProductId(productId);
+    setActionToast('Đang đồng bộ giá và tồn kho lên Shopee...');
     try {
-      let response = await fetch(`/api/products/${encodeURIComponent(productId)}/sync-shopee`, {
+      const response = await fetch('/api/products/sync-shopee', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ id: productId }),
+        body: JSON.stringify({ productIds: [productId] }),
       });
-      // Fallback nếu proxy/cPanel cũ chưa nhận nested path
-      if (response.status === 404) {
-        response = await fetch('/api/products/sync-shopee', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ id: productId }),
-        });
-      }
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
         throw new Error(data?.error || data?.message || data?.shopeeMessage || `Đồng bộ Shopee thất bại (HTTP ${response.status})`);
       }
-      setActionToast(data?.shopeeMessage || data?.message || 'Đã đẩy tồn/giá lên Shopee.');
+      setActionToast(data?.shopeeMessage || data?.message || 'Đồng bộ Shopee thành công!');
       onAddLog({
         id: `sync-${Date.now()}`,
         timestamp: new Date().toISOString(),

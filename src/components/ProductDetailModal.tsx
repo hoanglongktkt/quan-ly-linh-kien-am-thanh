@@ -228,6 +228,7 @@ export default function ProductDetailModal({
   const handleSave = async () => {
     if (!active) return;
     setSaving(true);
+    setToast('Đang lưu sản phẩm và đồng bộ Shopee...');
     const updated: Product = {
       ...active,
       title: editTitle.trim() || active.title,
@@ -248,7 +249,7 @@ export default function ProductDetailModal({
       if (result && typeof result === 'object' && result.success === false) {
         setToast(result.error || result.shopeeMessage || 'Lưu kho thành công nhưng đồng bộ Shopee thất bại.');
       } else if (result && typeof result === 'object' && result.shopeeSynced) {
-        setToast(result.shopeeMessage || 'Đã lưu kho và đồng bộ Shopee thành công.');
+        setToast(result.shopeeMessage || 'Đồng bộ Shopee thành công!');
       } else if (result && typeof result === 'object' && result.shopeeMessage) {
         setToast(`Đã lưu vào kho gốc. ${result.shopeeMessage}`);
       } else {
@@ -452,7 +453,9 @@ export default function ProductDetailModal({
             </div>
 
             {toast && (
-              <div className="text-[12px] text-[#0078D4] bg-[#E8F4FD] border border-[#B3D9F2] rounded-[4px] px-3 py-2">{toast}</div>
+              <div className="fixed top-5 right-5 z-70 max-w-md text-[13px] font-medium text-[#075985] bg-[#E8F4FD] border border-[#7DD3FC] rounded-[6px] px-4 py-3 shadow-xl">
+                {toast}
+              </div>
             )}
           </div>
         </div>

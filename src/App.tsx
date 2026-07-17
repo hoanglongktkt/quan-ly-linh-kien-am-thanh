@@ -614,6 +614,29 @@ export default function App() {
           shopeeMessage: data?.shopeeMessage || error,
         };
       }
+
+      let syncResult = data;
+      if (!data?.shopeeSynced) {
+        const syncResponse = await fetch('/api/products/sync-shopee', {
+          method: 'POST',
+          headers: apiAuthHeaders(),
+          body: JSON.stringify({ productIds: [updated.id] }),
+        });
+        syncResult = await parseJsonResponse(syncResponse);
+        if (!syncResponse.ok || syncResult?.success === false) {
+          const error =
+            syncResult?.error ||
+            syncResult?.message ||
+            `Lưu kho thành công nhưng đồng bộ Shopee thất bại (HTTP ${syncResponse.status})`;
+          return {
+            success: false,
+            error,
+            shopeeSynced: false,
+            shopeeMessage: error,
+          };
+        }
+      }
+
       if (data?.id) {
         setProducts((prev) =>
           prev.map((p) => {
@@ -628,8 +651,11 @@ export default function App() {
       }
       return {
         success: true,
-        shopeeSynced: Boolean(data?.shopeeSynced),
-        shopeeMessage: data?.shopeeMessage,
+        shopeeSynced: true,
+        shopeeMessage:
+          syncResult?.shopeeMessage ||
+          syncResult?.message ||
+          'Đồng bộ Shopee thành công!',
       };
     } catch (err: any) {
       console.error('Update product error:', err);
