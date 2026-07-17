@@ -331,7 +331,7 @@ export default function ProductDetailModal({
     : '0';
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-0 sm:p-3">
+    <div className="fixed inset-0 z-80 flex items-center justify-center bg-black/45 p-0 sm:p-3">
       <div className="bg-white w-full max-w-[1100px] h-full sm:h-[92vh] flex flex-col overflow-hidden sm:rounded-[6px] shadow-xl" style={{ border: `1px solid ${SAPO.border}` }}>
         <div className="flex items-center justify-between px-5 py-3 border-b shrink-0" style={{ borderColor: SAPO.border }}>
           <div>
@@ -511,7 +511,7 @@ export default function ProductDetailModal({
             </div>
 
             {toast && (
-              <div className="fixed top-5 left-3 right-3 sm:left-auto sm:right-5 sm:max-w-md z-[90] text-[13px] font-medium text-[#075985] bg-[#E8F4FD] border border-[#7DD3FC] rounded-[6px] px-4 py-3 shadow-xl">
+              <div className="fixed top-5 left-3 right-3 sm:left-auto sm:right-5 sm:max-w-md z-90 text-[13px] font-medium text-[#075985] bg-[#E8F4FD] border border-[#7DD3FC] rounded-[6px] px-4 py-3 shadow-xl">
                 {toast}
               </div>
             )}
