@@ -35,6 +35,14 @@ type MetaDoc = {
   value: string;
 };
 
+type OrderDoc = {
+  _id: string;
+  orderSn?: string | null;
+  status?: string | null;
+  shopId?: string | null;
+  data: any;
+};
+
 const ProductSchema = new Schema<ProductDoc>(
   {
     _id: { type: String, required: true },
@@ -65,9 +73,21 @@ const MetaSchema = new Schema<MetaDoc>(
   { collection: "meta", versionKey: false }
 );
 
+const OrderSchema = new Schema<OrderDoc>(
+  {
+    _id: { type: String, required: true },
+    orderSn: { type: String, default: null, index: true },
+    status: { type: String, default: null, index: true },
+    shopId: { type: String, default: null, index: true },
+    data: { type: Schema.Types.Mixed, required: true },
+  },
+  { collection: "orders", versionKey: false }
+);
+
 let ProductModel: Model<ProductDoc>;
 let ChannelListingModel: Model<ListingDoc>;
 let MetaModel: Model<MetaDoc>;
+let OrderModel: Model<OrderDoc>;
 
 let mongoReady = false;
 let appRootResolved = "";
@@ -88,6 +108,9 @@ function ensureModels(): void {
   MetaModel =
     (mongoose.models.AppMeta as Model<MetaDoc>) ||
     mongoose.model<MetaDoc>("AppMeta", MetaSchema);
+  OrderModel =
+    (mongoose.models.Order as Model<OrderDoc>) ||
+    mongoose.model<OrderDoc>("Order", OrderSchema);
 }
 
 function requireMongo(): void {
@@ -395,6 +418,46 @@ export async function deleteAllChannelListingsFromStore(): Promise<void> {
   requireMongo();
   await ChannelListingModel.deleteMany({});
   await setMeta("listings_updated_at", new Date().toISOString());
+}
+
+/** Upsert lô đơn hàng bằng bulkWrite (1 lệnh / tối đa ~25 đơn). */
+export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
+  requireMongo();
+  const list = Array.isArray(orders)
+    ? orders.filter((o) => o != null && typeof o === "object")
+    : [];
+  const ops = [];
+  for (const order of list) {
+    const id = String(order.id || "").trim();
+    const orderSn = String(order.orderSn || "").trim();
+    if (!id && !orderSn) continue;
+    const _id = id || `shopee-${orderSn}`;
+    ops.push({
+      updateOne: {
+        filter: { _id },
+        update: {
+          $set: {
+            _id,
+            orderSn: orderSn || null,
+            status: order.status != null ? String(order.status) : null,
+            shopId: order.shopId != null ? String(order.shopId) : null,
+            data: { ...order, id: _id },
+          },
+        },
+        upsert: true,
+      },
+    });
+  }
+  if (ops.length === 0) return 0;
+
+  await enqueueWrite(async () => {
+    const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
+    await setMeta("orders_updated_at", new Date().toISOString());
+    console.log(
+      `[MongoDB] bulkWrite orders — upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
+    );
+  });
+  return ops.length;
 }
 
 export async function flushDbWrites(): Promise<void> {
