@@ -4451,6 +4451,21 @@ function dedupeShopeeParentVariantRows(products: any[]): any[] {
 // drops the parcel at a branch) or "non_integrated" (3rd-party carrier, manual
 // tracking number), plus the concrete address/time-slot/branch options.
 const SHOPEE_LOGISTICS_TIMEOUT_MS = 20_000;
+const SHIP_ORDER_OPERATION_TIMEOUT_MS = 45_000;
+
+async function withOperationTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timeout sau ${ms / 1000} giây.`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 async function fetchShopeeLogisticsJson(
   url: string,
@@ -4538,7 +4553,11 @@ type ShipMethod = "pickup" | "dropoff";
 // for this specific order's logistics channel (info_needed doesn't list it).
 async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ success: boolean; error?: string; message?: string; mode?: string; shopId?: string }> {
   try {
-  const shopId = resolveOrderShopId(order);
+  const shopCheck = validateOrderShopForShipment(order);
+  if (!shopCheck.ok) {
+    return { success: false, error: shopCheck.error, message: shopCheck.message };
+  }
+  const shopId = shopCheck.shopId;
   if (!shopId) {
     return { success: false, error: "missing_shop_id", message: "Đơn hàng thiếu shop_id, không xác định được shop Shopee để gọi API." };
   }
@@ -7089,35 +7108,50 @@ function mergeProductPatch(product: any, patch: any): any {
 // connected in this project, that's unambiguously the right shop — use it
 // instead of letting a missing field wrongly block real ship_order/print calls.
 function resolveOrderShopId(order: any): string | undefined {
+  if (order?.shopId) return normalizeShopIdKey(order.shopId) || undefined;
   if (order?.channel !== "shopee") return undefined;
-  const tokens = loadShopeeTokens();
-  const oauthShops = listShopeeOAuthShopIds();
+  const shopIds = listShopeeOAuthShopIds();
+  return shopIds.length === 1 ? shopIds[0] : undefined;
+}
 
-  if (order?.shopId) {
-    const stored = normalizeShopIdKey(order.shopId);
-    if (stored && getShopeeTokenRecord(tokens, stored)) return stored;
-
-    // Webhook/sync đôi khi ghi nhầm shop_id (VD: merchant id) — tự sửa nếu chỉ có 1 shop OAuth.
-    if (oauthShops.length === 1) {
-      const healed = oauthShops[0];
-      if (stored && stored !== healed) {
-        console.warn(
-          `[Shopee] Self-heal shop_id đơn ${order.orderSn || order.id}: ${stored} → ${healed} (không có token cho shop_id cũ)`,
-        );
-      }
-      return healed;
-    }
-
-    for (const sid of oauthShops) {
-      const rec = getShopeeTokenRecord(tokens, sid);
-      const shopList = Array.isArray(rec?.shop_id_list) ? rec.shop_id_list.map(normalizeShopIdKey) : [];
-      if (shopList.includes(stored) || normalizeShopIdKey(rec?.oauth_shop_id) === stored) return sid;
-    }
-
-    return stored || undefined;
+/** Kiểm tra shopId đơn có khớp token OAuth — không tự sửa/migrate hàng loạt. */
+function validateOrderShopForShipment(order: any): {
+  ok: boolean;
+  shopId?: string;
+  error?: string;
+  message?: string;
+} {
+  if (order?.channel !== "shopee") {
+    return { ok: true, shopId: resolveOrderShopId(order) };
   }
 
-  return oauthShops.length === 1 ? oauthShops[0] : undefined;
+  const oauthShops = listShopeeOAuthShopIds();
+  const stored = order?.shopId ? normalizeShopIdKey(order.shopId) : "";
+
+  if (!stored) {
+    if (oauthShops.length === 1) {
+      return { ok: true, shopId: oauthShops[0] };
+    }
+    return {
+      ok: false,
+      error: "missing_shop_id",
+      message: "Đơn hàng thiếu shop_id, không xác định được shop Shopee.",
+    };
+  }
+
+  const tokens = loadShopeeTokens();
+  if (getShopeeTokenRecord(tokens, stored)) {
+    return { ok: true, shopId: stored };
+  }
+
+  console.warn(
+    `[Shopee Ship] shopId lệch — đơn ${order.orderSn || order.id}: shopId=${stored}, token OAuth=[${oauthShops.join(", ")}] — bỏ qua, không gọi Shopee`,
+  );
+  return {
+    ok: false,
+    error: "shop_id_mismatch",
+    message: "Đơn hàng thuộc Shop khác, không thể thao tác.",
+  };
 }
 
 // Resolve an order row by internal id OR Shopee order_sn (bulk UI may send either).
@@ -7395,7 +7429,7 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-  /** DB chưa sẵn sàng → JSON 503 (không crash process). Auth/health/oauth vẫn chạy. */
+  /** DB chưa sẵn sàng → trả 503 NGAY (sync, không await/chờ). Auth/health/oauth/ship-order vẫn chạy. */
   app.use((req, res, next) => {
     const pathName = String(req.path || req.originalUrl || "").split("?")[0];
     if (!pathName.startsWith("/api/")) return next();
@@ -7413,7 +7447,9 @@ async function startServer() {
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({
         success: false,
-        error: "Database chưa kết nối (readyState: " + mongoose.connection.readyState + ")",
+        message: "Database đang kết nối, vui lòng thử lại sau",
+        error: "database_connecting",
+        readyState: mongoose.connection.readyState,
       });
     }
     return next();
@@ -10046,7 +10082,7 @@ async function startServer() {
     for (let i = 0; i < toShip.length; i++) {
       const { index, order } = toShip[i];
       const resolvedShopId = resolveOrderShopId(order);
-      if (resolvedShopId) {
+      if (resolvedShopId && !order.shopId) {
         orders[index].shopId = resolvedShopId;
         order.shopId = resolvedShopId;
       }
@@ -10054,7 +10090,11 @@ async function startServer() {
       console.log(`[Ship Order Bulk] \u0110ang x\u1EED l\xFD \u0111\u01A1n ${order.orderSn} (id=${order.id}, ${shipMethod})...`);
       let result: Awaited<ReturnType<typeof arrangeShipment>>;
       try {
-        result = await arrangeShipment(order, shipMethod);
+        result = await withOperationTimeout(
+          arrangeShipment(order, shipMethod),
+          SHIP_ORDER_OPERATION_TIMEOUT_MS,
+          `Ship order ${order.orderSn}`,
+        );
       } catch (error: any) {
         console.error(
           `[Ship Order Bulk] Exception khi chuẩn bị đơn ${order.orderSn} (id=${order.id}, method=${shipMethod}):`,
@@ -10129,7 +10169,11 @@ async function startServer() {
       }
 
       console.log(`[Ship Order] Y\xEAu c\u1EA7u chu\u1EA9n b\u1EB1 h\xE0ng (${shipMethod}) cho \u0111\u01A1n ${order.orderSn} (channel=${order.channel})...`);
-      const result = await arrangeShipment(order, shipMethod);
+      const result = await withOperationTimeout(
+        arrangeShipment(order, shipMethod),
+        SHIP_ORDER_OPERATION_TIMEOUT_MS,
+        `Ship order ${order.orderSn}`,
+      );
       console.log("D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0:", JSON.stringify(result));
 
       if (!result.success) {
