@@ -2,6 +2,26 @@ import { buildCpanelTarget } from '../cpanelProxy.js';
 import { resolveCpanelBackend } from '../cpanelBackend.js';
 import { fetchWithDiagnostics } from '../fetchDiagnostics.js';
 
+function pickShopeeErrorMessage(data, upstreamStatus) {
+  const candidates = [
+    data?.error,
+    data?.message,
+    data?.shopeeMessage,
+    ...(Array.isArray(data?.results)
+      ? data.results.filter((r) => !r?.success).map((r) => r?.message)
+      : []),
+    ...(Array.isArray(data?.logs)
+      ? data.logs.filter((l) => !l?.success).map((l) => l?.message)
+      : []),
+  ]
+    .map((v) => String(v ?? '').trim())
+    .filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
+
+  if (candidates.length > 0) return candidates[0];
+  if (upstreamStatus >= 400) return `Shopee API lỗi HTTP ${upstreamStatus}`;
+  return 'Shopee từ chối cập nhật giá/tồn kho (thiếu chi tiết lỗi trong JSON).';
+}
+
 async function fetchJson(backendUrl, req, pathPart, body) {
   const target = buildCpanelTarget(backendUrl, pathPart, {});
   const result = await fetchWithDiagnostics(
@@ -31,9 +51,7 @@ async function fetchJson(backendUrl, req, pathPart, body) {
   }
 
   if (!result.upstream.ok || data?.success === false) {
-    const error = new Error(
-      data?.error || data?.message || `HTTP ${result.upstream.status}`,
-    );
+    const error = new Error(pickShopeeErrorMessage(data, result.upstream.status));
     error.httpStatus =
       result.upstream.ok && data?.success === false ? 400 : result.upstream.status;
     throw error;
@@ -58,12 +76,13 @@ export async function handleProductSyncShopee(req, res) {
       return res.status(400).json({
         success: false,
         error: 'Thiếu id hoặc productIds.',
+        message: 'Thiếu id hoặc productIds.',
       });
     }
 
     const backend = resolveCpanelBackend();
     if (!backend.ok) {
-      return res.status(503).json({ success: false, error: backend.error });
+      return res.status(503).json({ success: false, error: backend.error, message: backend.error });
     }
 
     try {
@@ -106,10 +125,10 @@ export async function handleProductSyncShopee(req, res) {
       successLogs.length === 0 ||
       fallback?.successCount === 0
     ) {
-      const error = new Error(
+      const detail =
         failedLogs.map((log) => log?.message).filter(Boolean).join(' | ') ||
-          'Shopee không xác nhận cập nhật giá/tồn kho.',
-      );
+        'Shopee không xác nhận cập nhật giá/tồn kho.';
+      const error = new Error(detail);
       error.httpStatus = 400;
       throw error;
     }
@@ -123,7 +142,8 @@ export async function handleProductSyncShopee(req, res) {
   } catch (err) {
     console.error('[Product Sync Shopee]', err);
     const status = err?.httpStatus >= 400 ? err.httpStatus : 500;
-    const detail = err?.message || 'Đồng bộ Shopee thất bại.';
+    const detail = String(err?.message || 'Đồng bộ Shopee thất bại.').replace(/^HTTP\s+\d+$/i, '').trim()
+      || 'Shopee từ chối cập nhật giá/tồn kho.';
     return res.status(status).json({
       success: false,
       message: status === 400 ? `Lỗi từ Shopee: ${detail}` : detail,

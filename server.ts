@@ -1510,12 +1510,14 @@ function shopeeApiErrorResult(err: unknown, context: string): Record<string, any
 }
 
 function formatShopeeApiError(json: any, httpStatus?: number): string {
-  const parts = [json?.message, json?.error, json?.msg].filter(Boolean).map(String);
+  const parts = [json?.message, json?.error, json?.msg]
+    .map((v) => String(v ?? "").trim())
+    .filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
   if (httpStatus === 429) {
     return parts[0] || "Shopee giới hạn tần suất (HTTP 429 Too Many Requests) — vui lòng thử lại sau 1–2 phút.";
   }
   if (parts.length > 0) return parts.join(" — ");
-  if (httpStatus && httpStatus >= 400) return `Shopee API HTTP ${httpStatus}`;
+  if (httpStatus && httpStatus >= 400) return `Shopee API lỗi HTTP ${httpStatus}`;
   return "Lỗi Shopee API không xác định";
 }
 
@@ -2033,6 +2035,23 @@ async function shopeeUpdateStock(
   return json;
 }
 
+/** Chuẩn hóa 1 dòng price_list — original_price/model_id phải là NUMBER (không string). */
+function buildShopeeUpdatePriceEntry(
+  sellingPrice: unknown,
+  modelId?: string | number | null
+): { model_id?: number; original_price: number } {
+  // VN và hầu hết region (trừ SG/MY/BR/...): giá phải là số nguyên.
+  const originalPrice = Math.max(0, Math.round(Number(sellingPrice) || 0));
+  const entry: { model_id?: number; original_price: number } = {
+    original_price: originalPrice,
+  };
+  const mid = Number(modelId);
+  if (Number.isFinite(mid) && mid > 0) {
+    entry.model_id = mid;
+  }
+  return entry;
+}
+
 async function shopeeUpdatePrice(
   shopId: string,
   accessToken: string,
@@ -2044,12 +2063,47 @@ async function shopeeUpdatePrice(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  const body = { item_id: itemId, price_list: priceList };
-  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${itemId}:`, JSON.stringify(body));
-  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${itemId}`, {
+  const numericItemId = Number(itemId);
+  const normalizedPriceList = (Array.isArray(priceList) ? priceList : []).map((row) => {
+    const originalPrice = Math.max(0, Math.round(Number(row?.original_price) || 0));
+    const entry: { model_id?: number; original_price: number } = {
+      original_price: originalPrice,
+    };
+    const mid = Number(row?.model_id);
+    if (Number.isFinite(mid) && mid > 0) entry.model_id = mid;
+    return entry;
+  });
+  if (!Number.isFinite(numericItemId) || numericItemId <= 0) {
+    return {
+      error: "error_param",
+      message: "item_id không hợp lệ khi gọi update_price",
+      response: { failure_list: [], success_list: [] },
+    };
+  }
+  if (normalizedPriceList.length === 0) {
+    return {
+      error: "error_param",
+      message: "price_list rỗng khi gọi update_price",
+      response: { failure_list: [], success_list: [] },
+    };
+  }
+
+  const body = { item_id: numericItemId, price_list: normalizedPriceList };
+  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${numericItemId}:`, JSON.stringify(body));
+  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${numericItemId}`, {
     maxAttempts: SHOPEE_SYNC_QUEUE_MAX_RETRY,
   });
-  console.log(`[Shopee API] POST ${apiPath} RESPONSE item_id=${itemId} HTTP ${httpStatus}:`, JSON.stringify(json));
+  console.log(
+    `[Shopee API] POST ${apiPath} RESPONSE item_id=${numericItemId} HTTP ${httpStatus}:`,
+    JSON.stringify(json)
+  );
+  // HTTP 200 vẫn có thể chứa error/message/failure_list trong JSON body.
+  if (json && typeof json === "object") {
+    const businessError = String(json.error || "").trim();
+    if (businessError && !String(json.message || "").trim()) {
+      json.message = formatShopeeApiError(json, httpStatus >= 400 ? httpStatus : undefined);
+    }
+  }
   return json;
 }
 
@@ -2067,15 +2121,28 @@ function parseShopeeApiResult(
   product: any,
   action: string
 ): ChannelSyncLine {
-  const failures: any[] = result?.response?.failure_list || [];
-  if (result?.error) {
+  const businessError = String(result?.error ?? "").trim();
+  const businessMessage = String(result?.message ?? result?.msg ?? "").trim();
+  const failures: any[] = Array.isArray(result?.response?.failure_list)
+    ? result.response.failure_list
+    : [];
+  const successes: any[] = Array.isArray(result?.response?.success_list)
+    ? result.response.success_list
+    : [];
+
+  // Bắt buộc đọc error/message trong JSON dù HTTP status = 200.
+  if (businessError) {
+    const detail =
+      businessMessage && !/^HTTP\s+\d+$/i.test(businessMessage)
+        ? `${businessError} — ${businessMessage}`
+        : businessError;
     return {
       productId: product.id,
       sku: product.sku,
       channel: "shopee",
       action,
       success: false,
-      message: `${result.error}${result.message ? ` — ${result.message}` : ""}`,
+      message: detail,
     };
   }
   if (failures.length > 0) {
@@ -2086,7 +2153,31 @@ function parseShopeeApiResult(
       channel: "shopee",
       action,
       success: false,
-      message: String(f.failed_reason || f.error || JSON.stringify(f)),
+      message: String(f.failed_reason || f.error || f.message || JSON.stringify(f)),
+    };
+  }
+  // update_price/update_stock: nếu không có success_list và cũng không có failure_list rõ ràng
+  // nhưng message báo lỗi → vẫn fail.
+  if (businessMessage && /fail|error|invalid|reject/i.test(businessMessage)) {
+    return {
+      productId: product.id,
+      sku: product.sku,
+      channel: "shopee",
+      action,
+      success: false,
+      message: businessMessage,
+    };
+  }
+  if (action === "update_price" && successes.length === 0 && failures.length === 0) {
+    return {
+      productId: product.id,
+      sku: product.sku,
+      channel: "shopee",
+      action,
+      success: false,
+      message:
+        businessMessage ||
+        "Shopee không xác nhận cập nhật giá (success_list rỗng).",
     };
   }
   return {
@@ -2170,12 +2261,7 @@ async function syncProductToShopee(
   }
 
   const stockEntry = buildShopeeUpdateStockEntry(product.stock, modelId);
-  const priceEntry: { model_id?: number; original_price: number } = {
-    original_price: Math.max(0, Math.round(Number(product.sellingPrice) || 0)),
-  };
-  if (modelId != null) {
-    priceEntry.model_id = modelId;
-  }
+  const priceEntry = buildShopeeUpdatePriceEntry(product.sellingPrice, modelId);
 
   let stockResult: any;
   try {
@@ -2917,10 +3003,7 @@ async function executeShopeeStockPriceSyncJob(
 
   if (opts.syncPrice) {
     await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
-    const priceEntry: { model_id?: number; original_price: number } = {
-      original_price: Math.max(0, Math.round(Number(mapped.sellingPrice) || 0)),
-    };
-    if (modelId != null) priceEntry.model_id = modelId;
+    const priceEntry = buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
     try {
       const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
       const parsed = parseShopeeApiResult(priceResult, mapped, "update_price");
@@ -2938,7 +3021,10 @@ async function executeShopeeStockPriceSyncJob(
         return { ok: false, message: parsed.message };
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = extractShopeeStockPushErrorMessage(
+        err,
+        err instanceof Error ? err.message : String(err)
+      );
       await appendShopeeSyncErrorToDb({
         itemId,
         modelId: modelId ?? mapped.shopeeModelId,
@@ -7831,8 +7917,8 @@ async function startServer() {
           .join(" | ");
         return res.status(400).json({
           success: false,
-          message: `Lỗi từ Shopee: ${detail}`,
-          error: `Lỗi từ Shopee: ${detail}`,
+          message: `Shopee báo lỗi: ${detail}`,
+          error: `Shopee báo lỗi: ${detail}`,
           shopeeSynced: succeeded.length > 0,
           results,
         });
@@ -8450,8 +8536,24 @@ async function startServer() {
         await saveProducts(next);
       }
 
-      return res.json({
+      return res.status(failCount === 0 ? 200 : 400).json({
         success: failCount === 0,
+        message:
+          failCount === 0
+            ? "Đồng bộ thành công"
+            : `Lỗi từ Shopee: ${logs
+                .filter((l) => !l.success)
+                .map((l) => l.message)
+                .filter(Boolean)
+                .join(" | ") || "Shopee từ chối cập nhật giá/tồn kho"}`,
+        error:
+          failCount === 0
+            ? undefined
+            : `Lỗi từ Shopee: ${logs
+                .filter((l) => !l.success)
+                .map((l) => l.message)
+                .filter(Boolean)
+                .join(" | ") || "Shopee từ chối cập nhật giá/tồn kho"}`,
         logs,
         successCount,
         failCount,
