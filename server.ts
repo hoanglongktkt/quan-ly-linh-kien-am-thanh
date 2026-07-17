@@ -8879,31 +8879,6 @@ async function startServer() {
     }
   });
 
-  app.get("/api/check-new-orders", authMiddleware, async (req, res) => {
-    const sinceRaw = String(req.query.since || "").trim();
-    let sinceMs = sinceRaw ? Date.parse(sinceRaw) : Date.now() - 60_000;
-    if (!Number.isFinite(sinceMs)) {
-      return res.status(400).json({ error: "Tham số since không hợp lệ." });
-    }
-
-    const orders = loadOrders().filter(isValidOrder);
-    const newOrders = orders.filter((o: any) => {
-      const ts = Date.parse(String(o.date || o.createdAt || ""));
-      return Number.isFinite(ts) && ts > sinceMs;
-    });
-
-    newOrders.sort(
-      (a: any, b: any) => Date.parse(String(b.date || "")) - Date.parse(String(a.date || ""))
-    );
-
-    return res.json({
-      hasNew: newOrders.length > 0,
-      count: newOrders.length,
-      latestOrderSn: newOrders[0]?.orderSn || undefined,
-      checkedAt: new Date().toISOString(),
-    });
-  });
-
   app.get("/api/orders", authMiddleware, async (req, res) => {
     const products = await loadProducts();
     let rawOrders = loadOrders().filter(isValidOrder);
@@ -9377,69 +9352,8 @@ async function startServer() {
     }
   }
 
-  let isAutoSyncing = false;
-  const AUTO_SYNC_INTERVAL_MS = Math.max(
-    15,
-    Number(process.env.AUTO_SYNC_INTERVAL_MINUTES) || 30,
-  ) * 60 * 1000;
-
-  async function runAutoOrderSync(): Promise<void> {
-    if (isAutoSyncing) {
-      console.log("[Auto Sync] Bỏ qua — tiến trình đồng bộ tự động trước đó vẫn đang chạy.");
-      return;
-    }
-    if (getRunningOrderSyncJob()) {
-      console.log("[Auto Sync] Bỏ qua — đang có job đồng bộ thủ công/ngầm khác.");
-      return;
-    }
-    if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) return;
-
-    const tokens = loadShopeeTokens();
-    if (Object.keys(tokens).length === 0) return;
-
-    isAutoSyncing = true;
-    const jobId = createOrderSyncJobId();
-    activeOrderSyncJobId = jobId;
-    orderSyncJobs.set(jobId, {
-      id: jobId,
-      status: "pending",
-      total: 0,
-      completed: 0,
-      synced: 0,
-      added: 0,
-      updated: 0,
-      message: "Auto-sync: đang quét đơn Shopee (chế độ tiết kiệm RAM)...",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
-
-    console.log(`[Auto Sync] Bắt đầu job ${jobId} (chu kỳ ${AUTO_SYNC_INTERVAL_MS / 60000} phút).`);
-
-    try {
-      await executeOrderSyncBackgroundJob(jobId);
-      const job = orderSyncJobs.get(jobId);
-      if (job?.status === "done") {
-        console.log(`[Auto Sync] Hoàn tất: ${job.synced} đơn (${job.added} mới, ${job.updated} cập nhật).`);
-      } else if (job?.status === "failed") {
-        console.error(`[Auto Sync] Thất bại: ${job.error || job.message}`);
-      }
-    } catch (err: any) {
-      console.error("[Auto Sync] Lỗi không mong đợi:", err?.message || err);
-    } finally {
-      isAutoSyncing = false;
-    }
-  }
-
-  function startAutoOrderSyncScheduler(): void {
-    if (process.env.DISABLE_AUTO_ORDER_SYNC === "1") {
-      console.log("[Auto Sync] Đã tắt (DISABLE_AUTO_ORDER_SYNC=1).");
-      return;
-    }
-    console.log(`[Auto Sync] Lên lịch mỗi ${AUTO_SYNC_INTERVAL_MS / 60000} phút (khóa isAutoSyncing).`);
-    setInterval(() => {
-      void runAutoOrderSync();
-    }, AUTO_SYNC_INTERVAL_MS);
-  }
+  // Auto-sync theo chu kỳ đã GỠ BỎ hoàn toàn để tránh quá tải NPROC/cPanel.
+  // Đồng bộ đơn hàng chỉ chạy khi user chủ động gọi API thủ công.
 
   app.post("/api/shopee/orders/sync", authMiddleware, async (req, res) => {
     try {
@@ -11943,7 +11857,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
    * cPanel / Phusion Passenger: BẮT BUỘC listen NGAY — không await DB trước listen.
    */
   function startListening(): void {
-    startAutoOrderSyncScheduler();
+    console.log("[Orders Sync] Auto-sync định kỳ đã tắt — chỉ đồng bộ khi user bấm nút.");
 
     const onReady = () => {
       console.log(

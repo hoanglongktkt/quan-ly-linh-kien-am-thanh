@@ -17,7 +17,6 @@ import PublishManager from './components/PublishManager';
 import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
-import NewOrderAlertButton from './components/NewOrderAlert';
 import { APP_TITLE } from './config/brand';
 import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
 import { sanitizeOrders } from './utils/sanitizeOrder';
@@ -1337,9 +1336,6 @@ export default function App() {
             <Menu className="w-5 h-5" />
           </button>
           <div className="md:hidden shrink-0">
-            <NewOrderAlertButton authHeaders={apiAuthHeaders} onNewOrders={() => void fetchOrders()} />
-          </div>
-          <div className="md:hidden shrink-0">
             <BrandLogo size={36} className="rounded-lg" />
           </div>
           <div className={`flex-1 min-w-0 ${activeTab === 'dashboard' || activeTab === 'picking' || activeTab === 'products' ? 'max-md:hidden' : ''}`}>
@@ -1371,8 +1367,6 @@ export default function App() {
           </div>
 
           <div className="max-md:hidden md:flex items-center gap-4 text-xs font-semibold shrink-0">
-            <NewOrderAlertButton authHeaders={apiAuthHeaders} onNewOrders={() => void fetchOrders()} />
-
             {/* Shopee Connection badge */}
             <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-xl">
               <span className={`w-2 h-2 rounded-full ${settings.shopeeConnected ? 'bg-emerald-500' : 'bg-gray-300'}`}></span>
