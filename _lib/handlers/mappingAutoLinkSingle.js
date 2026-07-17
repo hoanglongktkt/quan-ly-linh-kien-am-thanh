@@ -2,34 +2,8 @@ import { buildCpanelTarget } from '../cpanelProxy.js';
 import { resolveCpanelBackend } from '../cpanelBackend.js';
 import { fetchWithDiagnostics } from '../fetchDiagnostics.js';
 
-function collectSkuKeys(sku) {
-  const raw = String(sku ?? '').trim().toLowerCase();
-  if (!raw) return [];
-
-  const keys = [];
-  const push = (value) => {
-    const t = String(value || '').trim().toLowerCase();
-    if (t && !keys.includes(t)) keys.push(t);
-  };
-
-  push(raw);
-
-  if (raw.includes('_')) {
-    push(raw.split('_').pop() || raw);
-  }
-
-  const itemPrefixed = raw.match(/^(\d{6,})-(.+)$/);
-  if (itemPrefixed?.[2]) {
-    push(itemPrefixed[2]);
-  }
-
-  return keys;
-}
-
 function normalizeSkuKey(sku) {
-  const keys = collectSkuKeys(sku);
-  if (keys.length === 0) return '';
-  return keys[keys.length - 1] || keys[0] || '';
+  return String(sku ?? '').trim().toLowerCase();
 }
 
 function getChildren(row) {
@@ -42,36 +16,19 @@ function getChildren(row) {
   return buckets.filter((item) => item && typeof item === 'object');
 }
 
-function skusLooselyMatch(listingSku, masterSku) {
-  const listingKeys = collectSkuKeys(listingSku);
-  const masterKeys = collectSkuKeys(masterSku);
-  if (listingKeys.length === 0 || masterKeys.length === 0) return false;
-
-  const listingRaw = String(listingSku ?? '').trim().toLowerCase();
-  const masterRaw = String(masterSku ?? '').trim().toLowerCase();
-
-  for (const lk of listingKeys) {
-    for (const mk of masterKeys) {
-      if (lk === mk) return true;
-      if (lk.includes(mk) || mk.includes(lk)) return true;
-    }
-  }
-
-  if (listingRaw && masterRaw) {
-    if (listingRaw === masterRaw) return true;
-    if (listingRaw.includes(masterRaw) || masterRaw.includes(listingRaw)) return true;
-  }
-
-  return false;
+/** Exact match only — trim + toLowerCase. */
+function skusExactMatch(listingSku, masterSku) {
+  const a = normalizeSkuKey(listingSku);
+  const b = normalizeSkuKey(masterSku);
+  return a !== '' && b !== '' && a === b;
 }
 
 function buildMasterSkuIndex(products) {
   const index = new Map();
   for (const product of Array.isArray(products) ? products : []) {
     const addOne = (row) => {
-      for (const key of collectSkuKeys(row?.sku)) {
-        if (!index.has(key)) index.set(key, row);
-      }
+      const key = normalizeSkuKey(row?.sku);
+      if (key && !index.has(key)) index.set(key, row);
     };
     addOne(product);
     for (const child of getChildren(product)) addOne(child);
@@ -79,33 +36,10 @@ function buildMasterSkuIndex(products) {
   return index;
 }
 
-function findMasterProductBySku(masterSkuIndex, listingSku, products) {
-  for (const key of collectSkuKeys(listingSku)) {
-    const hit = masterSkuIndex.get(key);
-    if (hit) return hit;
-  }
-
-  const listingCore = normalizeSkuKey(listingSku);
-  if (!listingCore) return null;
-
-  const candidates = [];
-  for (const product of Array.isArray(products) ? products : []) {
-    candidates.push(product);
-    for (const child of getChildren(product)) candidates.push(child);
-  }
-  if (candidates.length === 0) {
-    for (const row of masterSkuIndex.values()) candidates.push(row);
-  }
-
-  for (const row of candidates) {
-    if (normalizeSkuKey(row?.sku) === listingCore) return row;
-  }
-
-  for (const row of candidates) {
-    if (skusLooselyMatch(listingSku, row?.sku)) return row;
-  }
-
-  return null;
+function findMasterProductBySku(masterSkuIndex, listingSku) {
+  const key = normalizeSkuKey(listingSku);
+  if (!key) return null;
+  return masterSkuIndex.get(key) || null;
 }
 
 function resolveListingIndex(listings, body) {

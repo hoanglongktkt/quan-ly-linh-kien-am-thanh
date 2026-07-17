@@ -6129,77 +6129,27 @@ async function readLocalInventoryFileSync(): LocalInventoryCache {
 }
 
 /**
- * Tập khóa SKU dùng để so khớp (exact sau chuẩn hóa).
- * Giữ nguyên SKU gốc + các biến thể tiền tố phổ biến trên sàn:
- * - `shop_SKU` → `SKU` (sau `_` cuối)
- * - `{itemId}-{SKU}` (Shopee) → `SKU` khi phần đầu toàn số (≥6 chữ số)
- */
-function collectSkuKeys(sku: unknown): string[] {
-  const raw = String(sku ?? "").trim().toLowerCase();
-  if (!raw) return [];
-
-  const keys: string[] = [];
-  const push = (value: string) => {
-    const t = String(value || "").trim().toLowerCase();
-    if (t && !keys.includes(t)) keys.push(t);
-  };
-
-  push(raw);
-
-  if (raw.includes("_")) {
-    push(raw.split("_").pop() || raw);
-  }
-
-  const itemPrefixed = raw.match(/^(\d{6,})-(.+)$/);
-  if (itemPrefixed?.[2]) {
-    push(itemPrefixed[2]);
-  }
-
-  return keys;
-}
-
-/**
- * Chuẩn hóa SKU trước khi so sánh (khóa "lõi" — exact 100% sau khi bỏ tiền tố sàn).
+ * SKU khớp tuyệt đối — CHỈ trim + toLowerCase.
+ * Cấm includes / regex / cắt tiền tố một phần (tránh M15 ↔ 1).
  */
 function normalizeSkuKey(sku: unknown): string {
-  const keys = collectSkuKeys(sku);
-  if (keys.length === 0) return "";
-  // Ưu tiên khóa lõi (sau cùng trong danh sách biến thể).
-  return keys[keys.length - 1] || keys[0] || "";
+  return String(sku ?? "").trim().toLowerCase();
 }
 
-/**
- * So khớp SKU “lỏng” giống Search thủ công trong modal:
- * - trim + toLowerCase cả hai phía
- * - exact trên các biến thể khóa
- * - includes hai chiều (M15 ↔ ...M15..., core ↔ raw)
- */
+function skusExactMatch(listingSku: unknown, masterSku: unknown): boolean {
+  const a = normalizeSkuKey(listingSku);
+  const b = normalizeSkuKey(masterSku);
+  return a !== "" && b !== "" && a === b;
+}
+
+/** @deprecated tên cũ — luôn exact match */
 function skusLooselyMatch(listingSku: unknown, masterSku: unknown): boolean {
-  const listingKeys = collectSkuKeys(listingSku);
-  const masterKeys = collectSkuKeys(masterSku);
-  if (listingKeys.length === 0 || masterKeys.length === 0) return false;
-
-  const listingRaw = String(listingSku ?? "").trim().toLowerCase();
-  const masterRaw = String(masterSku ?? "").trim().toLowerCase();
-
-  for (const lk of listingKeys) {
-    for (const mk of masterKeys) {
-      if (lk === mk) return true;
-      if (lk.includes(mk) || mk.includes(lk)) return true;
-    }
-  }
-
-  if (listingRaw && masterRaw) {
-    if (listingRaw === masterRaw) return true;
-    if (listingRaw.includes(masterRaw) || masterRaw.includes(listingRaw)) return true;
-  }
-
-  return false;
+  return skusExactMatch(listingSku, masterSku);
 }
 
 /**
- * Index SKU nhẹ từ .products — chỉ giữ tham chiếu object sẵn có (không clone).
- * Gồm sản phẩm mẹ + children/variants/models. Index mọi biến thể khóa để khớp 2 chiều.
+ * Index SKU từ .products — khóa = trim().toLowerCase() tuyệt đối.
+ * Gồm sản phẩm mẹ + children/variants/models.
  */
 function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
   const index = new Map<string, any>();
@@ -6207,9 +6157,8 @@ function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
 
   const addSku = (row: any) => {
     if (!row || isSyntheticShopeePullProduct(row)) return;
-    for (const key of collectSkuKeys(row.sku)) {
-      if (!index.has(key)) index.set(key, row);
-    }
+    const key = normalizeSkuKey(row.sku);
+    if (key && !index.has(key)) index.set(key, row);
   };
 
   for (const masterItem of masterData) {
@@ -6226,54 +6175,15 @@ function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
   return index;
 }
 
-/** Tìm sản phẩm kho theo SKU sàn — exact trước, rồi lỏng giống Search modal. */
+/** Tìm sản phẩm kho theo SKU sàn — CHỈ exact match. */
 function findMasterProductBySku(
   masterSkuIndex: Map<string, any>,
   listingSku: unknown,
-  masterData?: any[]
+  _masterData?: any[]
 ): any | null {
-  // 1) Exact qua index (đã trim/lowercase + biến thể tiền tố)
-  for (const key of collectSkuKeys(listingSku)) {
-    const hit = masterSkuIndex.get(key);
-    if (hit) return hit;
-  }
-
-  const listingCore = normalizeSkuKey(listingSku);
-  if (!listingCore) return null;
-
-  const candidates: any[] = [];
-  const pushCandidate = (row: any) => {
-    if (!row || typeof row !== "object" || isSyntheticShopeePullProduct(row)) return;
-    candidates.push(row);
-  };
-
-  if (Array.isArray(masterData)) {
-    for (const masterItem of masterData) {
-      if (!masterItem) continue;
-      pushCandidate(masterItem);
-      for (const child of getProductChildrenList(masterItem)) pushCandidate(child);
-      if (Array.isArray(masterItem.variants)) {
-        for (const v of masterItem.variants) pushCandidate(v);
-      }
-      if (Array.isArray(masterItem.models)) {
-        for (const m of masterItem.models) pushCandidate(m);
-      }
-    }
-  } else {
-    for (const row of masterSkuIndex.values()) pushCandidate(row);
-  }
-
-  // 2) Exact core (normalizeSkuKey) — M15 === m15
-  for (const row of candidates) {
-    if (normalizeSkuKey(row?.sku) === listingCore) return row;
-  }
-
-  // 3) Loose includes — cùng logic Search thủ công
-  for (const row of candidates) {
-    if (skusLooselyMatch(listingSku, row?.sku)) return row;
-  }
-
-  return null;
+  const key = normalizeSkuKey(listingSku);
+  if (!key) return null;
+  return masterSkuIndex.get(key) || null;
 }
 
 /** Đã có liên kết → BẢO VỆ, tuyệt đối không ghi đè. */
@@ -7851,6 +7761,62 @@ async function startServer() {
     }
   });
 
+  // Đồng bộ nhanh tồn/giá lên Shopee — đăng ký SỚM (trước mọi route :id) để tránh 404.
+  const handleProductSyncShopee = async (req: any, res: any) => {
+    try {
+      const productId = String(
+        req.params?.id || req.body?.id || req.body?.productId || ""
+      ).trim();
+      if (!productId) {
+        return res.status(400).json({
+          success: false,
+          error: "Thiếu product id. Gửi POST /api/products/:id/sync-shopee hoặc body { id }.",
+        });
+      }
+      const products = await loadProducts();
+      const row = findProductRowById(products, productId);
+      if (!row) {
+        return res.status(404).json({
+          success: false,
+          error: "Không tìm thấy sản phẩm trong kho.",
+        });
+      }
+      const shopee = await pushProductStockPriceToShopeeImmediate(row, {
+        syncStock: true,
+        syncPrice: true,
+      });
+      if (shopee.skipped) {
+        return res.status(400).json({
+          success: false,
+          error: shopee.message || "Chưa liên kết Mapping Shopee.",
+          shopeeSynced: false,
+          shopeeMessage: shopee.message,
+        });
+      }
+      if (!shopee.ok) {
+        return res.status(400).json({
+          success: false,
+          error: shopee.message || "Shopee từ chối đồng bộ tồn/giá",
+          shopeeSynced: false,
+          shopeeMessage: shopee.message,
+        });
+      }
+      return res.json({
+        success: true,
+        product: row,
+        shopeeSynced: true,
+        shopeeMessage: shopee.message,
+        message: shopee.message,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[Products API] sync-shopee failed:", err);
+      return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+    }
+  };
+  app.post("/api/products/sync-shopee", authMiddleware, handleProductSyncShopee);
+  app.post("/api/products/:id/sync-shopee", authMiddleware, handleProductSyncShopee);
+
   app.post("/api/products", authMiddleware, async (req, res) => {
     const body = req.body || {};
     if (!body.title || !body.sku) {
@@ -8009,47 +7975,6 @@ async function startServer() {
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[Products API] PATCH /api/products/:id failed:", err);
-      return res.status(500).json({ success: false, error: message || "Internal Server Error" });
-    }
-  });
-
-  app.post("/api/products/:id/sync-shopee", authMiddleware, async (req, res) => {
-    try {
-      const products = await loadProducts();
-      const row = findProductRowById(products, String(req.params.id || ""));
-      if (!row) {
-        return res.status(404).json({ success: false, error: "Không tìm thấy sản phẩm trong kho." });
-      }
-      const shopee = await pushProductStockPriceToShopeeImmediate(row, {
-        syncStock: true,
-        syncPrice: true,
-      });
-      if (shopee.skipped) {
-        return res.status(400).json({
-          success: false,
-          error: shopee.message || "Chưa liên kết Mapping Shopee.",
-          shopeeSynced: false,
-          shopeeMessage: shopee.message,
-        });
-      }
-      if (!shopee.ok) {
-        return res.status(400).json({
-          success: false,
-          error: shopee.message || "Shopee từ chối đồng bộ tồn/giá",
-          shopeeSynced: false,
-          shopeeMessage: shopee.message,
-        });
-      }
-      return res.json({
-        success: true,
-        product: row,
-        shopeeSynced: true,
-        shopeeMessage: shopee.message,
-        message: shopee.message,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Products API] POST /api/products/:id/sync-shopee failed:", err);
       return res.status(500).json({ success: false, error: message || "Internal Server Error" });
     }
   });

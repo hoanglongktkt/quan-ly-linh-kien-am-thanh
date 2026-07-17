@@ -164,13 +164,25 @@ export default function ProductList({
     }
     setSyncingProductId(productId);
     try {
-      const response = await fetch(`/api/products/${encodeURIComponent(productId)}/sync-shopee`, {
+      let response = await fetch(`/api/products/${encodeURIComponent(productId)}/sync-shopee`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ id: productId }),
       });
+      // Fallback nếu proxy/cPanel cũ chưa nhận nested path
+      if (response.status === 404) {
+        response = await fetch('/api/products/sync-shopee', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ id: productId }),
+        });
+      }
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
         throw new Error(data?.error || data?.message || data?.shopeeMessage || `Đồng bộ Shopee thất bại (HTTP ${response.status})`);

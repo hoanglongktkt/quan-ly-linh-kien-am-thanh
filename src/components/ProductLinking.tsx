@@ -48,59 +48,23 @@ interface ChannelListing {
 }
 
 function normalizeSKU(sku: unknown): string {
-  const raw = String(sku ?? '').trim().toLowerCase();
-  if (!raw) return '';
-  let core = raw;
-  if (core.includes('_')) {
-    core = (core.split('_').pop() || core).trim();
-  }
-  const itemPrefixed = core.match(/^(\d{6,})-(.+)$/);
-  if (itemPrefixed?.[2]) {
-    core = itemPrefixed[2].trim();
-  }
-  return core;
+  return String(sku ?? '').trim().toLowerCase();
 }
 
-/** So khớp SKU giống Search thủ công trong modal (trim + lower + includes). */
+/** So khớp SKU tuyệt đối — chỉ trim + toLowerCase (không includes / regex). */
 function skusMatchLikeSearch(listingSku: unknown, masterSku: unknown): boolean {
-  const listingRaw = String(listingSku ?? '').trim().toLowerCase();
-  const masterRaw = String(masterSku ?? '').trim().toLowerCase();
-  if (!listingRaw || !masterRaw) return false;
-
-  const listingNorm = normalizeSKU(listingSku);
-  const masterNorm = normalizeSKU(masterSku);
-
-  if (listingRaw === masterRaw || listingNorm === masterNorm) return true;
-  if (listingRaw.includes(masterRaw) || masterRaw.includes(listingRaw)) return true;
-  if (
-    listingNorm &&
-    masterNorm &&
-    (listingNorm.includes(masterNorm) || masterNorm.includes(listingNorm))
-  ) {
-    return true;
-  }
-  return false;
+  const listingRaw = normalizeSKU(listingSku);
+  const masterRaw = normalizeSKU(masterSku);
+  return listingRaw !== '' && masterRaw !== '' && listingRaw === masterRaw;
 }
 
 function findMasterProductLikeSearch(
   listingSku: unknown,
   masters: Product[]
 ): Product | null {
-  const listingRaw = String(listingSku ?? '').trim().toLowerCase();
+  const listingRaw = normalizeSKU(listingSku);
   if (!listingRaw || !Array.isArray(masters) || masters.length === 0) return null;
 
-  const listingNorm = normalizeSKU(listingSku);
-
-  // Ưu tiên exact (sau trim/lower/normalize) — giống Search khi gõ đúng SKU
-  for (const p of masters) {
-    const rawSku = String(p?.sku ?? '').trim().toLowerCase();
-    const normSku = normalizeSKU(p?.sku);
-    if (rawSku === listingRaw || (listingNorm && normSku === listingNorm)) {
-      return p;
-    }
-  }
-
-  // Loose — cùng includes logic với filteredMasterProducts
   for (const p of masters) {
     if (skusMatchLikeSearch(listingSku, p?.sku)) return p;
   }
