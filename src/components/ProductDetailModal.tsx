@@ -331,7 +331,7 @@ export default function ProductDetailModal({
     : '0';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-1 sm:p-3">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-0 sm:p-3">
       <div className="bg-white w-full max-w-[1100px] h-full sm:h-[92vh] flex flex-col overflow-hidden sm:rounded-[6px] shadow-xl" style={{ border: `1px solid ${SAPO.border}` }}>
         <div className="flex items-center justify-between px-5 py-3 border-b shrink-0" style={{ borderColor: SAPO.border }}>
           <div>
@@ -393,7 +393,7 @@ export default function ProductDetailModal({
           </aside>
 
           {/* Main form */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 pb-28 sm:pb-4 space-y-3">
             {/* Mobile variant picker */}
             <div className="sm:hidden">
               <label className={labelCls}>Phiên bản ({variants.length})</label>
@@ -511,25 +511,32 @@ export default function ProductDetailModal({
             </div>
 
             {toast && (
-              <div className="fixed top-5 right-5 z-70 max-w-md text-[13px] font-medium text-[#075985] bg-[#E8F4FD] border border-[#7DD3FC] rounded-[6px] px-4 py-3 shadow-xl">
+              <div className="fixed top-5 left-3 right-3 sm:left-auto sm:right-5 sm:max-w-md z-[90] text-[13px] font-medium text-[#075985] bg-[#E8F4FD] border border-[#7DD3FC] rounded-[6px] px-4 py-3 shadow-xl">
                 {toast}
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t bg-white shrink-0" style={{ borderColor: SAPO.border }}>
-          <button onClick={onClose} className="px-5 py-[7px] text-[13px] font-medium text-[#424242] bg-white border rounded-[4px] hover:bg-[#F9FAFB]" style={{ borderColor: SAPO.border }}>
+        <div
+          className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 px-4 sm:px-5 py-3 border-t bg-white shrink-0 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] sm:shadow-none"
+          style={{ borderColor: SAPO.border, paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
+        >
+          <button
+            onClick={onClose}
+            className="w-full sm:w-auto min-h-11 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[14px] sm:text-[13px] font-medium text-[#424242] bg-white border rounded-[6px] sm:rounded-[4px] hover:bg-[#F9FAFB] max-sm:order-2"
+            style={{ borderColor: SAPO.border }}
+          >
             Hủy bỏ
           </button>
           <button
             onClick={handleSave}
             disabled={saving || syncing}
-            className="px-5 py-[7px] text-[13px] font-medium text-white rounded-[4px] disabled:opacity-50 flex items-center gap-2"
+            className="w-full sm:w-auto min-h-12 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[15px] sm:text-[13px] font-semibold text-white rounded-[6px] sm:rounded-[4px] disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm sm:shadow-none max-sm:order-1"
             style={{ background: '#0078D4' }}
           >
-            {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            Cập nhật
+            {saving ? <RefreshCw className="w-5 h-5 sm:w-4 sm:h-4 animate-spin" /> : <Check className="w-5 h-5 sm:w-4 sm:h-4" />}
+            {saving ? 'Đang cập nhật...' : 'Cập nhật'}
           </button>
         </div>
       </div>
