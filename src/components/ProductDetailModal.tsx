@@ -247,16 +247,24 @@ export default function ProductDetailModal({
       const result = await onUpdateProduct(updated, { save: true });
       setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
       if (result && typeof result === 'object' && result.success === false) {
-        setToast(result.error || result.shopeeMessage || 'Lưu kho thành công nhưng đồng bộ Shopee thất bại.');
+        const detail =
+          result.error ||
+          result.shopeeMessage ||
+          'Lưu kho thành công nhưng đồng bộ Shopee thất bại.';
+        setToast(`Lỗi đồng bộ Shopee: ${detail}`);
       } else if (result && typeof result === 'object' && result.shopeeSynced) {
-        setToast(result.shopeeMessage || 'Đồng bộ Shopee thành công!');
+        setToast(
+          result.shopeeMessage
+            ? `Đồng bộ Shopee thành công! ${result.shopeeMessage}`
+            : 'Đồng bộ Shopee thành công!'
+        );
       } else if (result && typeof result === 'object' && result.shopeeMessage) {
         setToast(`Đã lưu vào kho gốc. ${result.shopeeMessage}`);
       } else {
         setToast('Đã lưu vào kho gốc.');
       }
     } catch (err: any) {
-      setToast(err?.message || 'Cập nhật sản phẩm thất bại.');
+      setToast(`Lỗi cập nhật: ${err?.message || 'Cập nhật sản phẩm thất bại.'}`);
     } finally {
       setSaving(false);
       setTimeout(() => setToast(null), 4500);

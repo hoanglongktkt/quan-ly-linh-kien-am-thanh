@@ -177,7 +177,11 @@ export default function ProductList({
       if (!response.ok || data?.success === false) {
         throw new Error(data?.error || data?.message || data?.shopeeMessage || `Đồng bộ Shopee thất bại (HTTP ${response.status})`);
       }
-      setActionToast(data?.shopeeMessage || data?.message || 'Đồng bộ Shopee thành công!');
+      setActionToast(
+        data?.shopeeMessage
+          ? `Đồng bộ Shopee thành công! ${data.shopeeMessage}`
+          : 'Đồng bộ Shopee thành công!'
+      );
       onAddLog({
         id: `sync-${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -188,7 +192,7 @@ export default function ProductList({
       });
     } catch (err: any) {
       const msg = err?.message || 'Đồng bộ Shopee thất bại.';
-      setActionToast(msg);
+      setActionToast(`Lỗi đồng bộ Shopee: ${msg}`);
       onAddLog({
         id: `sync-${Date.now()}`,
         timestamp: new Date().toISOString(),

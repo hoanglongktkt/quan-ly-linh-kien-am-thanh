@@ -7763,6 +7763,7 @@ async function startServer() {
 
   // Đồng bộ nhanh tồn/giá lên Shopee — đăng ký SỚM (trước mọi route :id) để tránh 404.
   const handleProductSyncShopee = async (req: any, res: any) => {
+    console.log("Bắt đầu đồng bộ Shopee", req.body);
     try {
       const requestedIds = Array.isArray(req.body?.productIds)
         ? req.body.productIds
@@ -7825,24 +7826,32 @@ async function startServer() {
       }
       const failed = results.filter((result) => !result.success);
       if (failed.length > 0) {
+        const detail = failed
+          .map((result) => `${result.productId}: ${result.message}`)
+          .join(" | ");
         return res.status(400).json({
           success: false,
-          error: failed.map((result) => `${result.productId}: ${result.message}`).join(" | "),
+          message: `Lỗi từ Shopee: ${detail}`,
+          error: `Lỗi từ Shopee: ${detail}`,
           shopeeSynced: succeeded.length > 0,
           results,
         });
       }
-      return res.json({
+      return res.status(200).json({
         success: true,
         shopeeSynced: true,
         shopeeMessage: results.map((result) => result.message).join(" | "),
-        message: `Đã đồng bộ ${succeeded.length} sản phẩm lên Shopee và lưu MongoDB.`,
+        message: "Đồng bộ thành công",
         results,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       console.error("[Products API] sync-shopee failed:", err);
-      return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+      return res.status(500).json({
+        success: false,
+        message: message || "Internal Server Error",
+        error: message || "Internal Server Error",
+      });
     }
   };
   app.post("/api/products/sync-shopee", authMiddleware, handleProductSyncShopee);

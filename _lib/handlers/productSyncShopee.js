@@ -34,13 +34,15 @@ async function fetchJson(backendUrl, req, pathPart, body) {
     const error = new Error(
       data?.error || data?.message || `HTTP ${result.upstream.status}`,
     );
-    error.httpStatus = result.upstream.status;
+    error.httpStatus =
+      result.upstream.ok && data?.success === false ? 400 : result.upstream.status;
     throw error;
   }
   return data;
 }
 
 export async function handleProductSyncShopee(req, res) {
+  console.log('Bắt đầu đồng bộ Shopee', req.body);
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method Not Allowed' });
   }
@@ -74,7 +76,7 @@ export async function handleProductSyncShopee(req, res) {
       return res.status(200).json({
         ...direct,
         success: true,
-        message: direct?.message || 'Đồng bộ Shopee thành công!',
+        message: 'Đồng bộ thành công',
       });
     } catch (directError) {
       const message = String(directError?.message || '');
@@ -95,24 +97,37 @@ export async function handleProductSyncShopee(req, res) {
     const failedLogs = Array.isArray(fallback?.logs)
       ? fallback.logs.filter((log) => log?.success === false)
       : [];
-    if (failedLogs.length > 0 || fallback?.failCount > 0) {
-      throw new Error(
+    const successLogs = Array.isArray(fallback?.logs)
+      ? fallback.logs.filter((log) => log?.success === true)
+      : [];
+    if (
+      failedLogs.length > 0 ||
+      fallback?.failCount > 0 ||
+      successLogs.length === 0 ||
+      fallback?.successCount === 0
+    ) {
+      const error = new Error(
         failedLogs.map((log) => log?.message).filter(Boolean).join(' | ') ||
-          'Shopee từ chối đồng bộ giá/tồn kho.',
+          'Shopee không xác nhận cập nhật giá/tồn kho.',
       );
+      error.httpStatus = 400;
+      throw error;
     }
 
     return res.status(200).json({
       success: true,
-      message: 'Đồng bộ Shopee thành công!',
+      message: 'Đồng bộ thành công',
       results: fallback?.logs || [],
       fallback: true,
     });
   } catch (err) {
     console.error('[Product Sync Shopee]', err);
-    return res.status(err?.httpStatus >= 400 ? err.httpStatus : 500).json({
+    const status = err?.httpStatus >= 400 ? err.httpStatus : 500;
+    const detail = err?.message || 'Đồng bộ Shopee thất bại.';
+    return res.status(status).json({
       success: false,
-      error: err?.message || 'Đồng bộ Shopee thất bại.',
+      message: status === 400 ? `Lỗi từ Shopee: ${detail}` : detail,
+      error: status === 400 ? `Lỗi từ Shopee: ${detail}` : detail,
     });
   }
 }
