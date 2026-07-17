@@ -6503,7 +6503,10 @@ async function batchAutoLinkFromDatabase(opts?: {
     }
 
     if (wroteChanges) {
-      await writeChannelListingsDb(dbListings);
+      for (const listing of newlyLinkedRows) {
+        await upsertChannelListingToStore(listing);
+      }
+      await flushDbWrites();
       await sleep(1);
     }
 
@@ -7333,13 +7336,9 @@ async function startServer() {
   // ─── Mapping products — ĐẶT SỚM, TRƯỚC static / SPA catch-all ───
   const handleMappingProductsGet = async (_req: any, res: any) => {
     try {
-      // BẮT BUỘC đọc lại từ DB bền vững (Mongo/JSON) — không tin mảng RAM trống sau restart.
-      await reloadCachesFromDb();
-      const cache = await loadLocalInventoryCache();
-      const rawListings =
-        Array.isArray(cache.listings) && cache.listings.length > 0
-          ? cache.listings
-          : await readChannelListingsForGet();
+      // BẮT BUỘC đọc TRỰC TIẾP từ MongoDB — không dùng cache/mảng RAM sau restart.
+      const cache = await reloadCachesFromDb();
+      const rawListings = cache.listings;
       const listings = enrichChannelListingsWithMaster(rawListings, cache.products);
       const successWithProduct = listings.filter(
         (l) =>
@@ -7360,7 +7359,7 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("[Mapping Products] GET lỗi:", error?.message || error);
-      // Fallback an toàn — không để request văng HTML 500.
+      // Thử lại truy vấn MongoDB một lần — không fallback sang mảng RAM.
       try {
         const raw = await readChannelListingsForGet();
         const safe = (Array.isArray(raw) ? raw : []).map((r) => sanitizeChannelListingRow(r));
@@ -7368,13 +7367,13 @@ async function startServer() {
           success: true,
           listings: safe,
           count: safe.length,
-          source: "fallback_memory",
+          source: "mongodb_retry",
           message: error?.message || String(error),
         });
       } catch (fallbackErr: any) {
         return res.status(500).json({
           success: false,
-          message: fallbackErr?.message || error?.message || String(error),
+          error: fallbackErr?.message || error?.message || String(error),
         });
       }
     }
@@ -7392,23 +7391,8 @@ async function startServer() {
       }
       console.log(`[Mapping Save] UPSERT nhận ${incoming.length} dòng (${req.method})`);
       const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
-      if (sanitized.length === 1) {
-        const existing = await readChannelListingsDb();
-        const patch = sanitized[0];
-        const existingIndex = findChannelListingRowIndex(existing, {
-          id: patch.id,
-          channelId: patch.channelId,
-          platform: patch.platform,
-        });
-        const nextRows = Array.isArray(existing) ? [...existing] : [];
-        if (existingIndex === -1) {
-          nextRows.push(patch);
-        } else {
-          nextRows[existingIndex] = patch;
-        }
-        await writeChannelListingsDbAsync(nextRows);
-      } else {
-        await writeChannelListingsDbAsync(sanitized);
+      for (const listing of sanitized) {
+        await upsertChannelListingToStore(listing);
       }
       await flushDbWrites();
       const cache = await refreshCache();
@@ -7495,7 +7479,7 @@ async function startServer() {
       console.error("[Batch Auto-link] Exception:", error);
       if (!res.headersSent) {
         const message = error instanceof Error ? error.message : String(error);
-        return res.status(500).json({ success: false, message });
+        return res.status(500).json({ success: false, error: message });
       }
     }
   };
@@ -7518,7 +7502,7 @@ async function startServer() {
     } catch (error: unknown) {
       console.error("[Auto-link Single] Exception:", error);
       const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ success: false, message });
+      return res.status(500).json({ success: false, error: message });
     }
   };
   app.post("/api/mapping-products/auto-link-single", authMiddleware, handleSingleAutoLink);
