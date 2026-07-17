@@ -168,6 +168,22 @@ export async function parseJsonResponse<T = Record<string, unknown>>(
   }
 }
 
+/** Đọc JSON body kể cả khi HTTP lỗi — dùng cho luồng ship-order (503/500 vẫn có JSON). */
+export async function readResponseJson<T = Record<string, unknown>>(response: Response): Promise<T> {
+  const text = await response.text();
+  const trimmed = text.trimStart();
+  if (trimmed.startsWith('<') || trimmed.startsWith('<!DOCTYPE')) {
+    throw new Error(
+      `Server trả về HTML thay vì JSON (HTTP ${response.status}) — backend có thể bị crash, timeout hoặc proxy lỗi.`,
+    );
+  }
+  try {
+    return (text ? JSON.parse(text) : {}) as T;
+  } catch {
+    throw new Error(`HTTP ${response.status}: phản hồi không phải JSON hợp lệ`);
+  }
+}
+
 /** Nhận diện lỗi Shopee item/model không tồn tại — dùng để skip thay vì crash luồng sync. */
 export function isShopeeItemNotFoundMessage(text: string): boolean {
   const t = String(text || '').toLowerCase();

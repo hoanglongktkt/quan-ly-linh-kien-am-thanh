@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product } from '../types';
 import ManualOrderPage from './ManualOrderPage';
-import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse, base64ToPdfBlob } from '../utils/apiClient';
+import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse, readResponseJson, base64ToPdfBlob } from '../utils/apiClient';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
@@ -1039,14 +1039,26 @@ export default function OrderManager({
         body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
       });
 
-      if (res.status === 404 || res.status === 502 || res.status === 503) {
-        setProgressMessage(`Backend chưa hỗ trợ async — đang xác nhận ${queuedOrders.length} đơn (có thể mất vài phút)...`);
+      const shouldFallbackSync =
+        res.status === 404 ||
+        res.status === 502 ||
+        res.status === 503 ||
+        (res.status >= 500 && res.status !== 202);
+
+      if (shouldFallbackSync) {
+        setProgressMessage(`Backend async lỗi (HTTP ${res.status}) — đang xác nhận ${queuedOrders.length} đơn (có thể mất vài phút)...`);
         res = await fetch('/api/shopee/ship-order/bulk', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
         });
-        const syncData = await parseJsonResponse<any>(res);
+        const syncData = await readResponseJson<any>(res);
+        if (!res.ok) {
+          showToast(syncData.message || syncData.error || `Không xác nhận được đơn (HTTP ${res.status}).`);
+          if (onFetchOrders) await onFetchOrders();
+          clearShipProgressOverlay();
+          return;
+        }
         if (Array.isArray(syncData.orders)) {
           onUpdateOrders(syncData.orders);
           ordersRef.current = syncData.orders;
@@ -1083,7 +1095,7 @@ export default function OrderManager({
         return;
       }
 
-      const data = await parseJsonResponse<any>(res);
+      const data = await readResponseJson<any>(res);
       if (!res.ok && res.status !== 202) {
         showToast(data.message || data.error || data.detail || 'Không thể bắt đầu xác nhận đơn hàng.');
         if (onFetchOrders) await onFetchOrders();

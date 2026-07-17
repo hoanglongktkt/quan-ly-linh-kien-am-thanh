@@ -4537,6 +4537,7 @@ type ShipMethod = "pickup" | "dropoff";
 // then call ship_order. Fails clearly if Shopee doesn't support the chosen method
 // for this specific order's logistics channel (info_needed doesn't list it).
 async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ success: boolean; error?: string; message?: string; mode?: string; shopId?: string }> {
+  try {
   const shopId = resolveOrderShopId(order);
   if (!shopId) {
     return { success: false, error: "missing_shop_id", message: "Đơn hàng thiếu shop_id, không xác định được shop Shopee để gọi API." };
@@ -4600,6 +4601,14 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ su
     return { success: false, error: shipResult.error, message: shipResult.message, mode: method, shopId };
   }
   return { success: true, mode: method, shopId };
+  } catch (error: any) {
+    console.error(`[Shopee LỖI] shipShopeeOrderReal exception đơn ${order?.orderSn}:`, error?.stack || error);
+    return {
+      success: false,
+      error: "internal_server_error",
+      message: "Lỗi nội bộ server: " + (error?.message || String(error)),
+    };
+  }
 }
 
 // TikTok Shop / off-platform (manual) orders: no real Partner API is wired up
@@ -7080,10 +7089,35 @@ function mergeProductPatch(product: any, patch: any): any {
 // connected in this project, that's unambiguously the right shop — use it
 // instead of letting a missing field wrongly block real ship_order/print calls.
 function resolveOrderShopId(order: any): string | undefined {
-  if (order?.shopId) return String(order.shopId);
   if (order?.channel !== "shopee") return undefined;
-  const shopIds = Object.keys(loadShopeeTokens());
-  return shopIds.length === 1 ? shopIds[0] : undefined;
+  const tokens = loadShopeeTokens();
+  const oauthShops = listShopeeOAuthShopIds();
+
+  if (order?.shopId) {
+    const stored = normalizeShopIdKey(order.shopId);
+    if (stored && getShopeeTokenRecord(tokens, stored)) return stored;
+
+    // Webhook/sync đôi khi ghi nhầm shop_id (VD: merchant id) — tự sửa nếu chỉ có 1 shop OAuth.
+    if (oauthShops.length === 1) {
+      const healed = oauthShops[0];
+      if (stored && stored !== healed) {
+        console.warn(
+          `[Shopee] Self-heal shop_id đơn ${order.orderSn || order.id}: ${stored} → ${healed} (không có token cho shop_id cũ)`,
+        );
+      }
+      return healed;
+    }
+
+    for (const sid of oauthShops) {
+      const rec = getShopeeTokenRecord(tokens, sid);
+      const shopList = Array.isArray(rec?.shop_id_list) ? rec.shop_id_list.map(normalizeShopIdKey) : [];
+      if (shopList.includes(stored) || normalizeShopIdKey(rec?.oauth_shop_id) === stored) return sid;
+    }
+
+    return stored || undefined;
+  }
+
+  return oauthShops.length === 1 ? oauthShops[0] : undefined;
 }
 
 // Resolve an order row by internal id OR Shopee order_sn (bulk UI may send either).
@@ -7372,7 +7406,9 @@ async function startServer() {
       pathName === "/api/shopee/callback" ||
       pathName === "/api/shopee/oauth/complete" ||
       pathName === "/api/shopee/webhook" ||
-      pathName.startsWith("/api/public/");
+      pathName.startsWith("/api/public/") ||
+      pathName.startsWith("/api/shopee/ship-order") ||
+      pathName === "/api/shopee/print-document";
     if (allowWithoutDb) return next();
     if (mongoose.connection.readyState !== 1) {
       return res.status(503).json({
@@ -10010,7 +10046,7 @@ async function startServer() {
     for (let i = 0; i < toShip.length; i++) {
       const { index, order } = toShip[i];
       const resolvedShopId = resolveOrderShopId(order);
-      if (resolvedShopId && !order.shopId) {
+      if (resolvedShopId) {
         orders[index].shopId = resolvedShopId;
         order.shopId = resolvedShopId;
       }
