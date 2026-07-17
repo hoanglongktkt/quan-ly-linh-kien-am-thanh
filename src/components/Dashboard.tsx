@@ -450,7 +450,7 @@ export default function Dashboard({
         </div>
       ) : data ? (
         <>
-          <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 transition-opacity ${loading ? 'opacity-60' : ''}`}>
+          <div className={`max-md:hidden md:grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 transition-opacity ${loading ? 'opacity-60' : ''}`}>
             {kpiCards.map((card) => {
               const Icon = card.icon;
               return (
@@ -472,7 +472,7 @@ export default function Dashboard({
             })}
           </div>
 
-          <div className={`bg-white p-5 rounded-2xl border border-gray-100 shadow-xs space-y-4 ${loading ? 'opacity-60' : ''}`}>
+          <div className={`max-md:hidden md:block bg-white p-5 rounded-2xl border border-gray-100 shadow-xs space-y-4 ${loading ? 'opacity-60' : ''}`}>
             <h3 className="font-bold text-sm uppercase tracking-wide text-gray-500">
               Đơn hàng chờ xử lý
             </h3>
@@ -499,7 +499,7 @@ export default function Dashboard({
             </div>
           </div>
 
-          <div className={`bg-white p-6 rounded-2xl border border-gray-100 shadow-xs ${loading ? 'opacity-60' : ''}`}>
+          <div className={`max-md:hidden md:block bg-white p-6 rounded-2xl border border-gray-100 shadow-xs ${loading ? 'opacity-60' : ''}`}>
             <div className="flex items-center justify-between gap-4 mb-6">
               <div>
                 <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
