@@ -118,6 +118,9 @@ export default function App() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [productsLoading, setProductsLoading] = useState<boolean>(false);
+  /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
+  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
+  const lastFocusRefreshAtRef = useRef(0);
 
   const [logs, setLogs] = useState<SyncLog[]>(() =>
     safeGetJson('omni_logs', INITIAL_SYNC_LOGS),
@@ -218,11 +221,12 @@ export default function App() {
   }, []);
 
   // Fetch the real, backend-synced order list (Shopee webhook data) once authenticated.
-  const fetchOrders = async () => {
+  const fetchOrders = async (opts?: { silent?: boolean }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
 
-    setOrdersLoading(true);
+    const silent = Boolean(opts?.silent);
+    if (!silent) setOrdersLoading(true);
     try {
       const response = await fetch('/api/orders', {
         method: 'GET',
@@ -237,7 +241,7 @@ export default function App() {
     } catch (err) {
       console.error("Fetch orders error:", err);
     } finally {
-      setOrdersLoading(false);
+      if (!silent) setOrdersLoading(false);
     }
   };
 
@@ -251,6 +255,7 @@ export default function App() {
     append?: boolean;
     pageSize?: number;
     forceRefresh?: boolean;
+    silent?: boolean;
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
@@ -259,8 +264,9 @@ export default function App() {
     const page = Math.max(1, opts?.page ?? 1);
     const pageSize = Math.min(50, Math.max(1, opts?.pageSize ?? 50));
     const append = !!opts?.append;
+    const silent = Boolean(opts?.silent);
 
-    setProductsLoading(true);
+    if (!silent) setProductsLoading(true);
     try {
       // Chỉ đọc trực tiếp DB Kho gốc, cấm fallback dữ liệu cũ.
       const response = await fetch(`/api/products?page=${page}&pageSize=${pageSize}`, {
@@ -289,9 +295,52 @@ export default function App() {
       setProducts([]);
       setProductsMeta({ page: 1, pageSize, total: 0, totalPages: 1, hasMore: false });
     } finally {
-      setProductsLoading(false);
+      if (!silent) setProductsLoading(false);
     }
   };
+
+  // Quay lại tab trình duyệt → làm mới danh sách từ DB nội bộ (KHÔNG gọi Shopee sync).
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const FOCUS_REFRESH_COOLDOWN_MS = 12_000;
+
+    const refreshFromLocalDb = async () => {
+      if (document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - lastFocusRefreshAtRef.current < FOCUS_REFRESH_COOLDOWN_MS) return;
+      lastFocusRefreshAtRef.current = now;
+
+      setBackgroundRefreshing(true);
+      try {
+        await fetchOrders({ silent: true });
+        if (
+          activeTab === 'products' ||
+          activeTab === 'dashboard' ||
+          activeTab === 'picking' ||
+          activeTab === 'publish'
+        ) {
+          await fetchProducts({ page: 1, append: false, pageSize: 50, silent: true });
+        }
+      } finally {
+        setBackgroundRefreshing(false);
+      }
+    };
+
+    const onFocus = () => {
+      void refreshFromLocalDb();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void refreshFromLocalDb();
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [isAuthenticated, activeTab]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1159,6 +1208,16 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50/50 md:flex md:flex-row antialiased font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900">
+      {backgroundRefreshing && (
+        <div
+          className="fixed top-3 right-3 z-[100] flex items-center gap-2 rounded-full bg-slate-900/90 text-white px-3 py-1.5 shadow-lg pointer-events-none"
+          role="status"
+          aria-live="polite"
+        >
+          <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+          <span className="text-[11px] font-semibold tracking-wide">Đang làm mới...</span>
+        </div>
+      )}
       {/* Sidebar Navigation */}
       <aside className="sidebar-panel max-md:hidden md:flex md:w-64 md:flex-col shrink-0 sticky top-0 h-screen overflow-y-auto bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
         {/* Brand Header */}
