@@ -1487,6 +1487,7 @@ export default function App() {
                   suppliers={suppliers}
                   onAddLog={handleAddLog}
                   productsLoading={productsLoading}
+                  systemFees={settings.systemFees ?? []}
                   productsMeta={productsMeta}
                 />
               </div>

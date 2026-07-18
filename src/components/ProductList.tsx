@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Product, ConnectedShop, SyncLog, Supplier, BulkSaveProductUpdate, getProductChildren } from '../types';
+import { Product, ConnectedShop, SyncLog, Supplier, BulkSaveProductUpdate, SystemFee, getProductChildren } from '../types';
 import ProductDetailModal, {
   buildProductGroups,
   formatPriceRange,
@@ -61,6 +61,7 @@ interface ProductListProps {
   suppliers?: Supplier[];
   onAddLog?: (log: SyncLog) => void;
   productsLoading?: boolean;
+  systemFees?: SystemFee[];
   productsMeta?: {
     page: number;
     pageSize: number;
@@ -68,6 +69,20 @@ interface ProductListProps {
     totalPages: number;
     hasMore: boolean;
   };
+}
+
+function calculateEstimatedProductProfit(product: Product, systemFees: SystemFee[]): number {
+  const sellingPrice = Math.max(0, Number(product.sellingPrice) || 0);
+  const importPrice = Math.max(0, Number(product.importPrice) || 0);
+  const totalFees = systemFees
+    .filter((fee) => fee.active && fee.name.trim() && Number(fee.value) > 0)
+    .reduce(
+      (sum, fee) => sum + (fee.calculationType === 'percentage'
+        ? Math.round((sellingPrice * Number(fee.value)) / 100)
+        : Math.round(Number(fee.value))),
+      0,
+    );
+  return sellingPrice - importPrice - totalFees;
 }
 
 export default function ProductList({ 
@@ -89,6 +104,7 @@ export default function ProductList({
   suppliers = [],
   onAddLog = () => {},
   productsLoading = false,
+  systemFees = [],
   productsMeta,
 }: ProductListProps) {
   // Listen for external highlight trigger
@@ -892,6 +908,7 @@ export default function ProductList({
                 filteredGroups.flatMap((group) => {
                   const prod = group.representative;
                   const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
+                  const estimatedProfit = calculateEstimatedProductProfit(prod, systemFees);
                   const isExpanded = expandedParentIds.has(group.groupId);
                   const rows: React.ReactNode[] = [];
 
@@ -988,7 +1005,12 @@ export default function ProductList({
                       </td>
                       <td className="p-4 text-right font-mono font-bold text-gray-900">
                         {group.hasVariants ? (
-                          <div className="text-xs font-bold text-gray-900">{priceLabel}</div>
+                          <>
+                            <div className="text-xs font-bold text-gray-900">{priceLabel}</div>
+                            <div className={`text-[10px] flex items-center justify-end gap-0.5 mt-0.5 ${estimatedProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              <TrendingUp className="w-3 h-3" /> Lãi: {estimatedProfit.toLocaleString('vi-VN')}đ
+                            </div>
+                          </>
                         ) : (
                           <>
                             <div className="flex items-center justify-end gap-1.5">
@@ -1002,8 +1024,8 @@ export default function ProductList({
                               />
                               <span className="text-[10px] text-gray-400">đ</span>
                             </div>
-                            <div className="text-[10px] text-emerald-600 flex items-center justify-end gap-0.5 mt-0.5">
-                              <TrendingUp className="w-3 h-3" /> {prod.sellingPrice > 0 ? (((prod.sellingPrice - prod.importPrice) / prod.sellingPrice) * 100).toFixed(0) : 0}% lãi
+                            <div className={`text-[10px] flex items-center justify-end gap-0.5 mt-0.5 ${estimatedProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              <TrendingUp className="w-3 h-3" /> Lãi: {estimatedProfit.toLocaleString('vi-VN')}đ
                             </div>
                           </>
                         )}
@@ -1126,16 +1148,26 @@ export default function ProductList({
                             {(child.importPrice || 0).toLocaleString('vi-VN')} đ
                           </td>
                           <td className="p-3 text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <input
-                                type="number"
-                                value={child.sellingPrice}
-                                onChange={(e) => onUpdateProduct({ ...child, sellingPrice: Math.max(0, Number(e.target.value)) })}
-                                onBlur={() => persistInlineProduct(child.id)}
-                                className="w-24 px-1.5 py-1 text-right bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-bold font-mono"
-                              />
-                              <span className="text-[10px] text-gray-400">đ</span>
-                            </div>
+                            {(() => {
+                              const childProfit = calculateEstimatedProductProfit(child, systemFees);
+                              return (
+                                <>
+                                  <div className="flex items-center justify-end gap-1">
+                                    <input
+                                      type="number"
+                                      value={child.sellingPrice}
+                                      onChange={(e) => onUpdateProduct({ ...child, sellingPrice: Math.max(0, Number(e.target.value)) })}
+                                      onBlur={() => persistInlineProduct(child.id)}
+                                      className="w-24 px-1.5 py-1 text-right bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-bold font-mono"
+                                    />
+                                    <span className="text-[10px] text-gray-400">đ</span>
+                                  </div>
+                                  <div className={`text-[10px] flex items-center justify-end gap-0.5 mt-0.5 ${childProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                    <TrendingUp className="w-3 h-3" /> Lãi: {childProfit.toLocaleString('vi-VN')}đ
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </td>
                           <td className="p-3">
                             <span className="inline-flex items-center text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-orange-50 text-orange-600 border border-orange-100">
@@ -1197,6 +1229,7 @@ export default function ProductList({
             const isOutStock = group.totalStock === 0;
             const priceLabel = formatPriceRange(group.minSellingPrice, group.maxSellingPrice);
             const isExpanded = expandedParentIds.has(group.groupId);
+            const estimatedProfit = calculateEstimatedProductProfit(prod, systemFees);
 
             return (
               <div key={group.groupId} className="bg-white rounded-2xl border border-gray-150 p-4 shadow-xs space-y-3">
@@ -1252,11 +1285,16 @@ export default function ProductList({
 
                 {group.hasVariants && isExpanded && (
                   <div className="space-y-2 border-t border-gray-50 pt-2">
-                    {group.variants.map((child) => (
+                    {group.variants.map((child) => {
+                      const childProfit = calculateEstimatedProductProfit(child, systemFees);
+                      return (
                       <div key={child.id} className="flex items-center gap-2 bg-slate-50 rounded-xl p-2.5">
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-gray-800 truncate">{child.modelName || child.title}</p>
                           <p className="text-[10px] font-mono text-indigo-600">SKU: {child.sku}</p>
+                          <p className={`text-[10px] font-semibold mt-0.5 ${childProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            Lãi: {childProfit.toLocaleString('vi-VN')}đ
+                          </p>
                         </div>
                         <span className="text-xs font-mono font-bold text-slate-700">{child.stock}</span>
                         <button
@@ -1269,7 +1307,8 @@ export default function ProductList({
                           <Edit3 className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1284,6 +1323,9 @@ export default function ProductList({
                     <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Giá bán:</span>
                     <span className="font-mono font-black text-blue-600 text-[11px]">
                       {priceLabel}
+                    </span>
+                    <span className={`text-[10px] font-semibold mt-0.5 block ${estimatedProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      Lãi: {estimatedProfit.toLocaleString('vi-VN')}đ
                     </span>
                   </div>
                   <div>
