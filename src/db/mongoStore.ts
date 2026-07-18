@@ -40,6 +40,8 @@ type OrderDoc = {
   orderSn?: string | null;
   status?: string | null;
   shopId?: string | null;
+  /** Flag bẫy lỗi: đơn đang chờ Shopee kiểm tra — default false */
+  is_pending_shopee_check?: boolean;
   data: any;
 };
 
@@ -79,7 +81,9 @@ const OrderSchema = new Schema<OrderDoc>(
     orderSn: { type: String, default: null, index: true },
     status: { type: String, default: null, index: true },
     shopId: { type: String, default: null, index: true },
-    /** Full order payload — includes withholding_cit_tax, shopee_fees, is_handed_over_to_carrier, partialCancel */
+    /** Boolean flag — đơn bị bẫy "đang kiểm tra bởi Shopee" (default: false) */
+    is_pending_shopee_check: { type: Boolean, default: false, index: true },
+    /** Full order payload — includes withholding_cit_tax, shopee_fees, is_handed_over_to_carrier, partialCancel, is_pending_shopee_check */
     data: { type: Schema.Types.Mixed, required: true },
   },
   { collection: "orders", versionKey: false }
@@ -487,6 +491,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     const orderSn = String(order.orderSn || "").trim();
     if (!id && !orderSn) continue;
     const _id = id || `shopee-${orderSn}`;
+    const pendingFlag = order.is_pending_shopee_check === true;
     ops.push({
       updateOne: {
         filter: { _id },
@@ -496,7 +501,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             orderSn: orderSn || null,
             status: order.status != null ? String(order.status) : null,
             shopId: order.shopId != null ? String(order.shopId) : null,
-            data: { ...order, id: _id },
+            is_pending_shopee_check: pendingFlag,
+            data: { ...order, id: _id, is_pending_shopee_check: pendingFlag },
           },
         },
         upsert: true,
@@ -513,6 +519,37 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     );
   });
   return ops.length;
+}
+
+/** Cưỡng bức update flag is_pending_shopee_check theo order_sn (JSON sync caller + Mongo). */
+export async function updateOrderPendingShopeeCheckInStore(
+  orderSn: string,
+  isPending: boolean,
+  patch?: Record<string, unknown>,
+): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").trim();
+  if (!sn) return false;
+  const _id = `shopee-${sn}`;
+  const $set: Record<string, unknown> = {
+    is_pending_shopee_check: isPending,
+    "data.is_pending_shopee_check": isPending,
+  };
+  if (patch) {
+    for (const [k, v] of Object.entries(patch)) {
+      $set[k] = v;
+      $set[`data.${k}`] = v;
+    }
+  }
+  const result = await OrderModel.updateOne(
+    { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] },
+    { $set },
+  );
+  console.log(
+    `[MongoDB] updateOne is_pending_shopee_check=${isPending} order_sn=${sn} matched=${result.matchedCount} modified=${result.modifiedCount}`,
+  );
+  return (result.matchedCount || 0) > 0 || (result.modifiedCount || 0) > 0;
 }
 
 export async function flushDbWrites(): Promise<void> {

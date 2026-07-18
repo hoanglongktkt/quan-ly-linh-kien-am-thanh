@@ -1173,15 +1173,17 @@ export default function OrderManager({
       ordersRef.current = finalJob.orders;
     }
 
-    if (pendingMoved.length > 0 && successCount === 0 && failed.length === 0) {
+    if (pendingMoved.length > 0) {
       setActiveSubTab('pending_verification');
+    }
+
+    if (pendingMoved.length > 0 && successCount === 0 && failed.length === 0) {
       showToast(`${pendingMoved.length} đơn đang được Shopee kiểm tra — đã chuyển sang tab tương ứng.`);
     } else if (finalJob?.status === 'failed') {
       showToast(finalJob.error || 'Đồng bộ Shopee gặp lỗi. Vui lòng kiểm tra lại danh sách đơn.');
     } else if (successCount === 0) {
       const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
       if (pendingMoved.length > 0) {
-        setActiveSubTab('pending_verification');
         showToast(`${pendingMoved.length} đơn đang được Shopee kiểm tra. ${errDetail}`);
       } else {
         showToast(`Không xác nhận được đơn nào trên Shopee. ${errDetail || 'Vui lòng thử lại.'}`);

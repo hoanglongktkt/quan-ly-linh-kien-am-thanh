@@ -14,5 +14,6 @@ export function matchesHandedOverCarrierTab(order: Order): boolean {
 }
 
 export function matchesProcessedPickupTab(order: Order): boolean {
+  if (order.is_pending_shopee_check || order.status === 'pending_verification') return false;
   return order.status === 'processed' && !isOrderHandedOverToCarrier(order);
 }
