@@ -1519,7 +1519,7 @@ export default function App() {
               onFetchOrders={fetchOrders}
               ordersLoading={ordersLoading}
               shops={settings.shops || []}
-              packagingCostPerOrder={0}
+              systemFees={settings.systemFees ?? []}
               onAddLog={handleAddLog}
               products={products}
               onUpdateProduct={handleUpdateProduct}
