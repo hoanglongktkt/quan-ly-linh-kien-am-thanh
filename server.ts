@@ -6265,6 +6265,9 @@ async function syncShopeeOrdersFromApi(
         orders = orders.filter((o: any) => {
           if (o.channel !== "shopee" || String(o.shopId) !== String(auth!.fileKey)) return true;
           if (pullResult.syncedSnSet.has(o.orderSn)) return false;
+          // UNPAID/fraud-check may be absent from a later filtered response;
+          // retain it until Shopee explicitly returns an updated status.
+          if (o.status === "pending_verification") return true;
           if (!SHOPEE_SYNC_UI_STATUSES.has(o.status)) return true;
           return false;
         });
@@ -8297,7 +8300,9 @@ function normalizeShopeeOrder(payload: any): any | null {
   if (!orderSn) return null;
   const shopId = payload?.shop_id ?? data.shop_id;
 
-  const rawStatus = String(data.status || data.order_status || "READY_TO_SHIP").toUpperCase();
+  // Không tự biến webhook thiếu trạng thái thành READY_TO_SHIP; giữ trong tab
+  // kiểm tra Shopee tới khi lần đồng bộ API tiếp theo trả status chính thức.
+  const rawStatus = String(data.status || data.order_status || "PENDING").toUpperCase();
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
   const mappedItems = itemList.length
     ? itemList.map((it: any) => mapShopeeOrderLineItem(it)).filter(Boolean)
