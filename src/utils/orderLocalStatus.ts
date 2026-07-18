@@ -10,6 +10,13 @@ export type OrderLocalStatus =
 export function resolveOrderLocalStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): OrderLocalStatus {
+  if (order.is_local_return_archived) {
+    // Đã archive khỏi tab đối soát — không còn CANCELLED_STORED/RETURN_RECEIVED active.
+    const rawArchived = String(order.local_status ?? order.localStatus ?? '').toUpperCase();
+    if (rawArchived === 'HANDED_OVER') return 'HANDED_OVER';
+    if (order.isHandedOverToCarrier || order.is_handed_over_to_carrier) return 'HANDED_OVER';
+    return 'NONE';
+  }
   const raw = String(order.local_status ?? order.localStatus ?? '').toUpperCase();
   if (raw === 'HANDED_OVER' || raw === 'CANCELLED_STORED' || raw === 'RETURN_RECEIVED') {
     return raw;
@@ -18,10 +25,26 @@ export function resolveOrderLocalStatus(
   if (order.isHandedOverToCarrier || order.is_handed_over_to_carrier) {
     return 'HANDED_OVER';
   }
-  if (order.status === 'return_received') {
+  if (order.status === 'return_received' && !order.is_local_return_archived) {
     return 'RETURN_RECEIVED';
   }
   return 'NONE';
+}
+
+/** Tab "Đã nhận đơn hủy, đơn hoàn" — chỉ đơn còn active trong 14 ngày. */
+export function matchesReceivedCancelReturnTab(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  if (order.is_local_return_archived) return false;
+  const local = resolveOrderLocalStatus(order);
+  return local === 'RETURN_RECEIVED' || local === 'CANCELLED_STORED';
+}
+
+export function resolveLocalStatusUpdatedAt(
+  order: Partial<Order> & Record<string, unknown>,
+): string | undefined {
+  const raw = order.local_status_updated_at || order.localStatusAt;
+  return raw ? String(raw) : undefined;
 }
 
 /** Đơn đã được quét/phân loại nội bộ trước đó — chặn quét trùng. */

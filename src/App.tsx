@@ -43,7 +43,9 @@ import {
   ScanLine,
   ShoppingBasket,
   Scale,
+  PackageCheck,
 } from 'lucide-react';
+import type { OrdersSubTabId } from './components/OrderManager';
 
 function resolveTabFromPath(): string {
   if (typeof window === 'undefined') return 'dashboard';
@@ -155,6 +157,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(() => resolveTabFromPath());
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [focusScanner, setFocusScanner] = useState<boolean>(false);
+  const [ordersSubTabHint, setOrdersSubTabHint] = useState<OrdersSubTabId | null>(null);
   // Mobile: tab 'products' có 2 màn — Kiểm hàng (audit) và Danh sách sản phẩm (list).
   const [mobileProductsView, setMobileProductsView] = useState<'audit' | 'list'>('audit');
   
@@ -1176,10 +1179,18 @@ export default function App() {
     setMobileDrawerOpen(false);
   };
 
-  const navigateTab = (tab: string, opts?: { openScanner?: boolean }) => {
+  const navigateTab = (
+    tab: string,
+    opts?: { openScanner?: boolean; ordersSubTab?: OrdersSubTabId | null },
+  ) => {
     setActiveTab(tab);
     setMobileDrawerOpen(false);
     setFocusScanner(tab === 'orders' && Boolean(opts?.openScanner));
+    if (tab === 'orders') {
+      setOrdersSubTabHint(opts?.ordersSubTab ?? null);
+    } else {
+      setOrdersSubTabHint(null);
+    }
 
     if (tab === 'picking') {
       window.history.pushState({ tab: 'picking' }, '', '/picking');
@@ -1255,6 +1266,17 @@ export default function App() {
             className={navButtonClass('orders')}
           >
             <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
+          </button>
+
+          <button
+            onClick={() => navigateTab('orders', { ordersSubTab: 'received_cancel_returns' })}
+            className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+              activeTab === 'orders' && ordersSubTabHint === 'received_cancel_returns'
+                ? 'bg-teal-600 text-white font-extrabold shadow-sm'
+                : 'hover:bg-slate-800 hover:text-white text-slate-400'
+            }`}
+          >
+            <PackageCheck className="w-4 h-4 shrink-0" /> Đã nhận đơn hủy, đơn hoàn
           </button>
 
           <button
@@ -1351,6 +1373,16 @@ export default function App() {
               <button onClick={() => navigateTab('orders')} className={navButtonClass('orders')}>
                 <ClipboardList className="w-4 h-4 shrink-0" /> Quản lý đơn hàng
               </button>
+              <button
+                onClick={() => navigateTab('orders', { ordersSubTab: 'received_cancel_returns' })}
+                className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                  activeTab === 'orders' && ordersSubTabHint === 'received_cancel_returns'
+                    ? 'bg-teal-600 text-white font-extrabold shadow-sm'
+                    : 'hover:bg-slate-800 hover:text-white text-slate-400'
+                }`}
+              >
+                <PackageCheck className="w-4 h-4 shrink-0" /> Đã nhận đơn hủy, đơn hoàn
+              </button>
               <button onClick={() => navigateTab('orders', { openScanner: true })} className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${activeTab === 'orders' && focusScanner ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white text-slate-400'}`}>
                 <Barcode className="w-4 h-4 shrink-0" /> Quét mã vạch
               </button>
@@ -1404,7 +1436,10 @@ export default function App() {
               {activeTab === 'dashboard' && 'Bảng Điều Khiển Tổng Quan'}
               {activeTab === 'products' && 'Quản Lý Danh Sách Sản Phẩm'}
               {activeTab === 'publish' && 'Hệ Thống Đăng Bán Sản Phẩm Đa Kênh'}
-              {activeTab === 'orders' && 'Hệ Thống Quản Lý Đơn Hàng Đa Sàn'}
+              {activeTab === 'orders' &&
+                (ordersSubTabHint === 'received_cancel_returns'
+                  ? 'Đã nhận đơn hủy, đơn hoàn'
+                  : 'Hệ Thống Quản Lý Đơn Hàng Đa Sàn')}
               {activeTab === 'picking' && 'Nhặt Hàng (Picking)'}
               {activeTab === 'bulk' && 'Chỉnh Sửa Hàng Loạt & Công Cụ AI'}
               {activeTab === 'suppliers' && 'Quản Lý Đối Tác Nhà Cung Cấp'}
@@ -1416,7 +1451,10 @@ export default function App() {
             <p className={`text-xs text-gray-400 ${activeTab === 'orders' ? 'om-orders-mobile-hide-page-desc' : ''}`}>
               {activeTab === 'products' && 'Quản lý giá nhập, giá bán lẻ, tồn kho và xuất bản kênh.'}
               {activeTab === 'publish' && 'Đăng bán sản phẩm lên nhiều gian hàng đồng thời, lồng khung hình sỉ hàng loạt và tối ưu tiêu đề chống spam bằng AI.'}
-              {activeTab === 'orders' && 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.'}
+              {activeTab === 'orders' &&
+                (ordersSubTabHint === 'received_cancel_returns'
+                  ? 'Đối soát kiện hủy/hoàn đã nhận về kho (14 ngày gần nhất).'
+                  : 'Quản lý 8 trạng thái đơn Shopee & TikTok, chuẩn bị hàng đóng gói và in vận đơn nhiệt.')}
               {activeTab === 'picking' && 'Quét mã đơn, tích sản phẩm đã nhặt và chuyển sang đóng gói.'}
               {activeTab === 'bulk' && 'Tăng giảm giá %, đặt tồn kho, tối ưu nội dung bằng AI hàng loạt.'}
               {activeTab === 'suppliers' && 'Quản lý thông tin liên hệ, công nợ sỉ và tiền độ thanh toán cho xưởng sỉ.'}
@@ -1525,6 +1563,7 @@ export default function App() {
               products={products}
               onUpdateProduct={handleUpdateProduct}
               focusScanner={focusScanner}
+              initialOrdersSubTab={ordersSubTabHint}
               onCloseScanner={() => {
                 // Chỉ đóng UI quét — giữ nguyên tab Quản lý đơn, không về trang chủ.
                 setFocusScanner(false);

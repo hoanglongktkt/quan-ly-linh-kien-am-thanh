@@ -26,6 +26,7 @@ import {
 import {
   isOrderAlreadyScanProcessed,
   getScanProcessedReason,
+  matchesReceivedCancelReturnTab,
 } from '../utils/orderLocalStatus';
 import { 
   Search, 
@@ -285,6 +286,20 @@ function OrderDetailAccordionPanel({
   );
 }
 
+type OrderTab = 
+  | 'all' 
+  | 'pending_verification'
+  | 'pending_confirm' 
+  | 'unprocessed' 
+  | 'processed' 
+  | 'handed_over_carrier'
+  | 'shipping' 
+  | 'cancel_returns'
+  | 'received_cancel_returns'
+  | 'order_products';
+
+export type OrdersSubTabId = OrderTab;
+
 interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[]) => void;
@@ -301,18 +316,9 @@ interface OrderManagerProps {
   focusScanner?: boolean;
   onCloseScanner?: () => void;
   onEndScanSession?: () => void;
+  /** Mở sẵn sub-tab khi vào từ menu (vd: received_cancel_returns) */
+  initialOrdersSubTab?: OrderTab | null;
 }
-
-type OrderTab = 
-  | 'all' 
-  | 'pending_verification'
-  | 'pending_confirm' 
-  | 'unprocessed' 
-  | 'processed' 
-  | 'handed_over_carrier'
-  | 'shipping' 
-  | 'cancel_returns'
-  | 'order_products';
 
 type CancelReturnTab = 'all' | 'refund_return' | 'cancelled' | 'failed_delivery';
 
@@ -381,10 +387,19 @@ export default function OrderManager({
   onUpdateProduct,
   focusScanner = false,
   onCloseScanner,
-  onEndScanSession
+  onEndScanSession,
+  initialOrdersSubTab = null,
 }: OrderManagerProps) {
-  const [activeSubTab, setActiveSubTab] = useState<OrderTab>('unprocessed');
+  const [activeSubTab, setActiveSubTab] = useState<OrderTab>(
+    initialOrdersSubTab || 'unprocessed',
+  );
   const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>('all');
+
+  useEffect(() => {
+    if (initialOrdersSubTab) {
+      setActiveSubTab(initialOrdersSubTab);
+    }
+  }, [initialOrdersSubTab]);
   
   // Camera Barcode Scanning States and Ref
   const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét mã QR...');
@@ -1658,6 +1673,9 @@ export default function OrderManager({
     if (status === 'cancel_returns') {
       return cancelReturnPool.length;
     }
+    if (status === 'received_cancel_returns') {
+      return orders.filter((o) => matchesReceivedCancelReturnTab(o)).length;
+    }
     return orders.filter(o => {
       if (status === 'all') return true;
       if (status === 'pending_verification') return isPendingVerificationOrder(o);
@@ -1675,6 +1693,8 @@ export default function OrderManager({
     // 1. Tab filter
     if (activeSubTab === 'cancel_returns') {
       if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
+    } else if (activeSubTab === 'received_cancel_returns') {
+      if (!matchesReceivedCancelReturnTab(order)) return false;
     } else if (activeSubTab === 'handed_over_carrier') {
       if (!matchesHandedOverCarrierTab(order)) return false;
     } else if (activeSubTab === 'processed') {
@@ -2060,12 +2080,8 @@ export default function OrderManager({
       }
 
       if (daXuatKho > 0) setActiveSubTab('handed_over_carrier');
-      else if (daNhanHoan > 0) {
-        setActiveSubTab('cancel_returns');
-        setCancelReturnTab('refund_return');
-      } else if (donHuy > 0) {
-        setActiveSubTab('cancel_returns');
-        setCancelReturnTab('cancelled');
+      else if (daNhanHoan > 0 || donHuy > 0) {
+        setActiveSubTab('received_cancel_returns');
       }
 
       onAddLog({
@@ -2745,6 +2761,20 @@ export default function OrderManager({
         </button>
 
         <button
+          onClick={() => setActiveSubTab('received_cancel_returns')}
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'received_cancel_returns'
+              ? 'border-teal-600 text-teal-700 font-extrabold bg-teal-50/40'
+              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <span>Đã nhận đơn hủy, đơn hoàn</span>
+          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-teal-100 text-teal-800 border border-teal-200">
+            {getCount('received_cancel_returns')}
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveSubTab('order_products')}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'order_products'
@@ -2782,6 +2812,15 @@ export default function OrderManager({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {activeSubTab === 'received_cancel_returns' && (
+        <div className="bg-teal-50/80 border border-teal-100 rounded-2xl px-4 py-3 text-xs text-teal-900 font-semibold leading-relaxed">
+          Đối soát kiện hủy/hoàn đã quét nhận về kho (cờ nội bộ{' '}
+          <code className="font-mono text-[11px]">RETURN_RECEIVED</code> /{' '}
+          <code className="font-mono text-[11px]">CANCELLED_STORED</code>). Tự ẩn sau 14 ngày —
+          không xóa lịch sử đơn Shopee.
         </div>
       )}
 

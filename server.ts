@@ -6369,7 +6369,12 @@ function setOrderLocalStatus(order: any, status: OrderLocalStatus): void {
   const now = new Date().toISOString();
   order.local_status = status;
   order.localStatus = status;
+  // Timestamp bắt buộc cho retention 14 ngày (tab Đã nhận hủy/hoàn).
+  order.local_status_updated_at = now;
   order.localStatusAt = now;
+  if (status === "CANCELLED_STORED" || status === "RETURN_RECEIVED") {
+    order.is_local_return_archived = false;
+  }
   if (status === "HANDED_OVER") {
     order.isHandedOverToCarrier = true;
     order.is_handed_over_to_carrier = true;
@@ -6379,6 +6384,50 @@ function setOrderLocalStatus(order: any, status: OrderLocalStatus): void {
     // Giữ tab "Đã nhận hoàn" kể cả khi Shopee vẫn TO_RETURN.
     order.status = "return_received";
   }
+}
+
+function resolveLocalStatusUpdatedAt(order: any): number {
+  const raw = order?.local_status_updated_at || order?.localStatusAt || order?.handedOverAt;
+  const t = raw ? Date.parse(String(raw)) : NaN;
+  return Number.isFinite(t) ? t : 0;
+}
+
+function matchesReceivedCancelReturnTabOrder(order: any): boolean {
+  if (order?.is_local_return_archived) return false;
+  const local = resolveOrderLocalStatus(order);
+  return local === "RETURN_RECEIVED" || local === "CANCELLED_STORED";
+}
+
+/** Dọn tab "Đã nhận đơn hủy, đơn hoàn": gỡ cờ nội bộ sau 14 ngày — KHÔNG xóa đơn. */
+async function archiveStaleReceivedCancelReturnOrders(
+  retentionDays = 14,
+): Promise<{ scanned: number; archived: number }> {
+  const orders = loadOrders();
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  const changed: any[] = [];
+
+  for (let i = 0; i < orders.length; i++) {
+    const order = orders[i];
+    if (!matchesReceivedCancelReturnTabOrder(order)) continue;
+    const updatedAt = resolveLocalStatusUpdatedAt(order);
+    if (!updatedAt || updatedAt >= cutoff) continue;
+
+    const next = { ...order };
+    next.local_status = null;
+    next.localStatus = null;
+    next.is_local_return_archived = true;
+    // Giữ timestamp gốc để audit; không đụng status Shopee.
+    orders[i] = next;
+    changed.push(next);
+  }
+
+  if (changed.length > 0) {
+    await persistOrdersToDatabase(orders, changed);
+  }
+  console.log(
+    `[Local Return Archive] retention=${retentionDays}d scanned=${orders.length} archived=${changed.length}`,
+  );
+  return { scanned: orders.length, archived: changed.length };
 }
 
 function resolveOrderHandoverFlag(order: any): boolean {
@@ -6392,10 +6441,12 @@ function setOrderHandoverFlag(order: any, value: boolean): void {
   order.isHandedOverToCarrier = value;
   order.is_handed_over_to_carrier = value;
   if (value) {
+    const now = new Date().toISOString();
     order.local_status = "HANDED_OVER";
     order.localStatus = "HANDED_OVER";
-    order.localStatusAt = order.localStatusAt || new Date().toISOString();
-    order.handedOverAt = order.handedOverAt || new Date().toISOString();
+    order.localStatusAt = order.localStatusAt || now;
+    order.local_status_updated_at = order.local_status_updated_at || now;
+    order.handedOverAt = order.handedOverAt || now;
   } else if (resolveOrderLocalStatus(order) === "HANDED_OVER") {
     order.local_status = "NONE";
     order.localStatus = "NONE";
@@ -6576,11 +6627,19 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   }
 
   // GIỮ cờ local_status nội bộ kho — tuyệt đối không để sync Shopee xóa.
+  if (existing?.is_local_return_archived != null) {
+    merged.is_local_return_archived = existing.is_local_return_archived;
+  }
   const existingLocal = resolveOrderLocalStatus(existing);
   if (existingLocal !== "NONE") {
     merged.local_status = existingLocal;
     merged.localStatus = existingLocal;
     if (existing?.localStatusAt) merged.localStatusAt = existing.localStatusAt;
+    if (existing?.local_status_updated_at) {
+      merged.local_status_updated_at = existing.local_status_updated_at;
+    } else if (existing?.localStatusAt) {
+      merged.local_status_updated_at = existing.localStatusAt;
+    }
     if (existingLocal === "HANDED_OVER") {
       merged.isHandedOverToCarrier = true;
       merged.is_handed_over_to_carrier = true;
@@ -10846,6 +10905,13 @@ async function startServer() {
     if (tab === "handed_over_carrier" || tab === "handed-over-carrier") {
       rawOrders = rawOrders.filter((o: any) => matchesHandedOverCarrierTabOrder(o));
     }
+    if (
+      tab === "received_cancel_returns" ||
+      tab === "received-cancel-returns" ||
+      tab === "da_nhan_huy_hoan"
+    ) {
+      rawOrders = rawOrders.filter((o: any) => matchesReceivedCancelReturnTabOrder(o));
+    }
     // Tab "Đang kiểm tra bởi Shopee" — query đúng điều kiện is_pending_shopee_check: true
     if (
       tab === "pending_verification" ||
@@ -11091,13 +11157,18 @@ async function startServer() {
       localPatch === "RETURN_RECEIVED" ||
       localPatch === "NONE"
     ) {
+      const nowIso = new Date().toISOString();
       patch.local_status = localPatch;
       patch.localStatus = localPatch;
-      patch.localStatusAt = patch.localStatusAt || new Date().toISOString();
+      patch.localStatusAt = patch.localStatusAt || nowIso;
+      patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
+      if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
+        patch.is_local_return_archived = false;
+      }
       if (localPatch === "HANDED_OVER") {
         patch.isHandedOverToCarrier = true;
         patch.is_handed_over_to_carrier = true;
-        patch.handedOverAt = patch.handedOverAt || new Date().toISOString();
+        patch.handedOverAt = patch.handedOverAt || nowIso;
       }
       if (localPatch === "RETURN_RECEIVED") {
         patch.status = "return_received";
@@ -14333,6 +14404,20 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
         );
       }, TRACKING_SCAN_INTERVAL_MS);
       console.log(`[Shopee Tracking Scanner] Đã bật job nền mỗi ${TRACKING_SCAN_INTERVAL_MS / 1000}s`);
+
+      // Retention 14 ngày — tab "Đã nhận đơn hủy, đơn hoàn".
+      const LOCAL_RETURN_ARCHIVE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+      setTimeout(() => {
+        void archiveStaleReceivedCancelReturnOrders(14).catch((err) =>
+          console.warn("[Local Return Archive] boot error:", err),
+        );
+      }, 45_000);
+      setInterval(() => {
+        void archiveStaleReceivedCancelReturnOrders(14).catch((err) =>
+          console.warn("[Local Return Archive] interval error:", err),
+        );
+      }, LOCAL_RETURN_ARCHIVE_INTERVAL_MS);
+      console.log("[Local Return Archive] Đã bật job dọn tab hủy/hoàn mỗi 24h (retention 14 ngày)");
     };
 
     if (process.env.PORT) {

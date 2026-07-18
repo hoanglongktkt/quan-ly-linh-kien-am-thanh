@@ -191,9 +191,13 @@ export interface Order {
    * Cờ trạng thái nội bộ kho (chỉ DB local — không gọi Shopee):
    * NONE | HANDED_OVER | CANCELLED_STORED | RETURN_RECEIVED
    */
-  local_status?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED';
-  localStatus?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED';
+  local_status?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED' | null;
+  localStatus?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED' | null;
+  /** Thời điểm cập nhật local_status (ISO) — dùng retention 14 ngày */
+  local_status_updated_at?: string;
   localStatusAt?: string;
+  /** Đã đưa ra khỏi tab đối soát hủy/hoàn sau 14 ngày (không xóa đơn) */
+  is_local_return_archived?: boolean;
   handedOverAt?: string;
   items: {
     productId: string;

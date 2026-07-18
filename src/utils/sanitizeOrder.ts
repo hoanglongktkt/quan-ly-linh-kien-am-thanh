@@ -80,7 +80,13 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (raw.status === 'return_received') return 'RETURN_RECEIVED';
       return undefined;
     })(),
-    localStatusAt: raw.localStatusAt ? String(raw.localStatusAt) : undefined,
+    localStatusAt: raw.localStatusAt || raw.local_status_updated_at
+      ? String(raw.localStatusAt || raw.local_status_updated_at)
+      : undefined,
+    local_status_updated_at: raw.local_status_updated_at || raw.localStatusAt
+      ? String(raw.local_status_updated_at || raw.localStatusAt)
+      : undefined,
+    is_local_return_archived: Boolean(raw.is_local_return_archived),
     handedOverAt: raw.handedOverAt ? String(raw.handedOverAt) : undefined,
     notes: raw.notes ? String(raw.notes) : undefined,
   };

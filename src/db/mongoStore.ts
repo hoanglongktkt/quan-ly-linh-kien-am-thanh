@@ -86,7 +86,7 @@ const OrderSchema = new Schema<OrderDoc>(
     /**
      * Full order payload — includes withholding_cit_tax, shopee_fees,
      * is_handed_over_to_carrier, local_status (HANDED_OVER|CANCELLED_STORED|RETURN_RECEIVED),
-     * partialCancel, is_pending_shopee_check
+     * local_status_updated_at, is_local_return_archived, partialCancel, is_pending_shopee_check
      */
     data: { type: Schema.Types.Mixed, required: true },
   },

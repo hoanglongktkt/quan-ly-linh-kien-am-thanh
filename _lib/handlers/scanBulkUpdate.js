@@ -73,6 +73,7 @@ function buildLocalPatch(targetStatus) {
       local_status: 'HANDED_OVER',
       localStatus: 'HANDED_OVER',
       localStatusAt: now,
+      local_status_updated_at: now,
       isHandedOverToCarrier: true,
       is_handed_over_to_carrier: true,
       handedOverAt: now,
@@ -83,12 +84,16 @@ function buildLocalPatch(targetStatus) {
       local_status: 'CANCELLED_STORED',
       localStatus: 'CANCELLED_STORED',
       localStatusAt: now,
+      local_status_updated_at: now,
+      is_local_return_archived: false,
     };
   }
   return {
     local_status: 'RETURN_RECEIVED',
     localStatus: 'RETURN_RECEIVED',
     localStatusAt: now,
+    local_status_updated_at: now,
+    is_local_return_archived: false,
     status: 'return_received',
   };
 }
