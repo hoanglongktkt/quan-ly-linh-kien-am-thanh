@@ -1525,8 +1525,15 @@ export default function App() {
               products={products}
               onUpdateProduct={handleUpdateProduct}
               focusScanner={focusScanner}
-              onCloseScanner={() => setFocusScanner(false)}
-              onEndScanSession={() => setFocusScanner(false)}
+              onCloseScanner={() => {
+                // Chỉ đóng UI quét — giữ nguyên tab Quản lý đơn, không về trang chủ.
+                setFocusScanner(false);
+                setActiveTab('orders');
+              }}
+              onEndScanSession={() => {
+                setFocusScanner(false);
+                setActiveTab('orders');
+              }}
             />
             </ErrorBoundary>
           )}
