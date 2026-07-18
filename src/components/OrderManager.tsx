@@ -90,6 +90,7 @@ function OrderShopeeFinanceSummary({
   const netRevenue = getShopeeNetRevenue(calculatedOrder);
   const itemAmount = getShopeeItemAmount(order);
   const escrowReady = order.channel !== 'shopee' || isShopeeEscrowSynced(order);
+  const estimatedFeeItems = order.estimated_fee_items ?? [];
   const estimatedHint = !escrowReady
     ? order.finance_source === 'estimated_api'
       ? ' (Ước tính từ Shopee)'
@@ -132,6 +133,16 @@ function OrderShopeeFinanceSummary({
           <span>Phụ phí Shopee{estimatedHint}</span>
           <span>-{surchargeTotal.toLocaleString('vi-VN')}đ</span>
         </div>
+        {!escrowReady && estimatedFeeItems.length > 0 && (
+          <div className="pl-3 space-y-1 border-l-2 border-violet-100 text-violet-700">
+            {estimatedFeeItems.map((fee) => (
+              <div key={fee.id} className="flex justify-between gap-2">
+                <span>{fee.name} {fee.calculationType === 'percentage' ? `(${fee.value}%)` : ''}:</span>
+                <span className="font-semibold">-{fee.amount.toLocaleString('vi-VN')}đ</span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="pl-3 space-y-1 border-l-2 border-rose-100 text-rose-500">
           <div className="flex justify-between gap-2">
             <span>Phí cố định:</span>

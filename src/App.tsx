@@ -1519,7 +1519,7 @@ export default function App() {
               onFetchOrders={fetchOrders}
               ordersLoading={ordersLoading}
               shops={settings.shops || []}
-              packagingCostPerOrder={settings.packagingCostPerOrder ?? 0}
+              packagingCostPerOrder={0}
               onAddLog={handleAddLog}
               products={products}
               onUpdateProduct={handleUpdateProduct}
@@ -1571,6 +1571,8 @@ export default function App() {
               orders={orders}
               onAddExpense={handleAddExpense}
               onDeleteExpense={handleDeleteExpense}
+              settings={settings}
+              onUpdateSettings={persistChannelSettings}
             />
           )}
 

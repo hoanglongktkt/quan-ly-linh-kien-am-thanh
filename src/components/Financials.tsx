@@ -1,13 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import { Expense, Product, Order } from '../types';
+import { ChannelSettings, Expense, Product, Order, SystemFee } from '../types';
 import {
   Plus,
   Trash2,
   Coins,
   Calendar,
   PieChart,
-  Calculator,
   BarChart3,
+  Edit,
+  Save,
+  X,
 } from 'lucide-react';
 
 type ExpenseCategory = Expense['category'];
@@ -94,9 +96,11 @@ interface FinancialsProps {
   orders: Order[];
   onAddExpense: (expense: Expense) => void;
   onDeleteExpense: (id: string) => void;
+  settings: ChannelSettings;
+  onUpdateSettings: (settings: ChannelSettings) => void | Promise<boolean>;
 }
 
-export default function Financials({ expenses, onAddExpense, onDeleteExpense }: FinancialsProps) {
+export default function Financials({ expenses, onAddExpense, onDeleteExpense, settings, onUpdateSettings }: FinancialsProps) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState(100000);
@@ -105,11 +109,11 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense }: 
   const [notes, setNotes] = useState('');
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('this_month');
 
-  const [calcImportPrice, setCalcImportPrice] = useState(150000);
-  const [calcSellingPrice, setCalcSellingPrice] = useState(300000);
-  const [calcPlatformFeePercent, setCalcPlatformFeePercent] = useState(12);
-  const [calcQuantity, setCalcQuantity] = useState(100);
-  const [calcAdSpend, setCalcAdSpend] = useState(1500000);
+  const [showSystemFeeForm, setShowSystemFeeForm] = useState(false);
+  const [editingSystemFeeId, setEditingSystemFeeId] = useState<string | null>(null);
+  const [systemFeeName, setSystemFeeName] = useState('');
+  const [systemFeeType, setSystemFeeType] = useState<SystemFee['calculationType']>('percentage');
+  const [systemFeeValue, setSystemFeeValue] = useState('');
 
   const handleCreateExpense = (e: React.FormEvent) => {
     e.preventDefault();
@@ -208,15 +212,39 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense }: 
     }
   };
 
-  const feeRate = calcPlatformFeePercent / 100;
-  const calcTotalRevenue = calcSellingPrice * calcQuantity;
-  const calcTotalCOGS = calcImportPrice * calcQuantity;
-  const calcTotalFees = calcTotalRevenue * feeRate;
-  const calcNetRevenue = calcTotalRevenue - calcTotalFees;
-  const calcNetProfit = calcNetRevenue - calcTotalCOGS - calcAdSpend;
-  const calcMargin = calcTotalRevenue > 0 ? (calcNetProfit / calcTotalRevenue) * 100 : 0;
-  const calcROI =
-    calcTotalCOGS + calcAdSpend > 0 ? (calcNetProfit / (calcTotalCOGS + calcAdSpend)) * 100 : 0;
+  const systemFees = settings.systemFees ?? [];
+
+  const resetSystemFeeForm = () => {
+    setShowSystemFeeForm(false);
+    setEditingSystemFeeId(null);
+    setSystemFeeName('');
+    setSystemFeeType('percentage');
+    setSystemFeeValue('');
+  };
+
+  const saveSystemFees = async (nextFees: SystemFee[]) => {
+    const ok = await onUpdateSettings({ ...settings, systemFees: nextFees });
+    if (ok === false) alert('Lưu cấu hình phí thất bại.');
+  };
+
+  const handleSaveSystemFee = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const value = Math.max(0, Number(systemFeeValue) || 0);
+    const name = systemFeeName.trim();
+    if (!name || value <= 0) return;
+    const entry: SystemFee = {
+      id: editingSystemFeeId || `system-fee-${Date.now()}`,
+      name,
+      calculationType: systemFeeType,
+      value,
+      active: true,
+    };
+    const nextFees = editingSystemFeeId
+      ? systemFees.map((fee) => (fee.id === editingSystemFeeId ? { ...fee, ...entry } : fee))
+      : [...systemFees, entry];
+    await saveSystemFees(nextFees);
+    resetSystemFeeForm();
+  };
 
   return (
     <div className="space-y-6">
@@ -459,118 +487,113 @@ export default function Financials({ expenses, onAddExpense, onDeleteExpense }: 
         </div>
       </div>
 
-      <div className="bg-linear-to-r from-slate-900 to-indigo-950 text-white rounded-3xl p-6 shadow-xl space-y-6">
-        <div>
-          <h3 className="font-bold text-lg flex items-center gap-2 text-indigo-200">
-            <Calculator className="w-5 h-5 text-indigo-400" /> Công Cụ Mô Phỏng Lợi Nhuận & Định Giá Bán
-          </h3>
-          <p className="text-xs text-indigo-200/80 mt-1">
-            Nhập giá vốn, phí sàn TMĐT tùy chỉnh và ngân sách Ads để hoạch định giá bán tối ưu.
+      <div className="bg-white rounded-3xl border border-violet-100 shadow-xs p-6 space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+              <Coins className="w-5 h-5 text-violet-600" /> Cấu hình Chi phí Hệ thống
+            </h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Các phí đang bật được tự động dùng để ước tính doanh thu cho đơn chưa có escrow Shopee.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              resetSystemFeeForm();
+              setShowSystemFeeForm(true);
+            }}
+            className="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5"
+          >
+            <Plus className="w-4 h-4" /> Thêm mới phí
+          </button>
+        </div>
+
+        {showSystemFeeForm && (
+          <form onSubmit={handleSaveSystemFee} className="grid grid-cols-1 md:grid-cols-4 gap-3 p-4 bg-violet-50/50 border border-violet-100 rounded-2xl">
+            <input
+              required
+              value={systemFeeName}
+              onChange={(e) => setSystemFeeName(e.target.value)}
+              placeholder="Tên khoản phí"
+              className="px-3 py-2 border border-violet-200 bg-white rounded-xl text-sm outline-none focus:border-violet-500"
+            />
+            <select
+              value={systemFeeType}
+              onChange={(e) => setSystemFeeType(e.target.value as SystemFee['calculationType'])}
+              className="px-3 py-2 border border-violet-200 bg-white rounded-xl text-sm outline-none"
+            >
+              <option value="percentage">% theo giá trị đơn</option>
+              <option value="fixed">VNĐ cố định</option>
+            </select>
+            <input
+              required
+              min="0"
+              step={systemFeeType === 'percentage' ? '0.1' : '100'}
+              type="number"
+              value={systemFeeValue}
+              onChange={(e) => setSystemFeeValue(e.target.value)}
+              placeholder={systemFeeType === 'percentage' ? 'Ví dụ: 12' : 'Ví dụ: 5000'}
+              className="px-3 py-2 border border-violet-200 bg-white rounded-xl text-sm outline-none focus:border-violet-500"
+            />
+            <div className="flex gap-2">
+              <button type="submit" className="flex-1 px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1">
+                <Save className="w-3.5 h-3.5" /> Lưu
+              </button>
+              <button type="button" onClick={resetSystemFeeForm} className="px-3 py-2 border border-gray-200 bg-white text-gray-600 rounded-xl text-xs font-bold">
+                Hủy
+              </button>
+            </div>
+          </form>
+        )}
+
+        {systemFees.length === 0 ? (
+          <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+            Chưa cấu hình phí. Hệ thống sẽ dùng tỷ lệ phí Shopee mặc định cho đến khi bạn thêm phí.
           </p>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-5 grid grid-cols-2 gap-4">
-            <div className="space-y-1 text-xs col-span-2">
-              <label className="text-indigo-200 font-medium">Phí sàn TMĐT (%)</label>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                value={calcPlatformFeePercent}
-                onChange={(e) => setCalcPlatformFeePercent(Math.max(0, Math.min(100, Number(e.target.value))))}
-                placeholder="VD: 10.5, 12.0"
-                className="w-full bg-white/10 text-white font-mono font-bold text-sm px-3 py-2 rounded-xl border border-white/10 outline-none"
-              />
-              <p className="text-[10px] text-indigo-300/80 pt-0.5">Nhập % phí sàn thực tế (Shopee, TikTok, Lazada...)</p>
-            </div>
-
-            <div className="space-y-1 text-xs">
-              <label className="text-indigo-200 font-medium">Giá vốn nhập sỉ (đ)</label>
-              <input
-                type="number"
-                value={calcImportPrice}
-                onChange={(e) => setCalcImportPrice(Math.max(0, Number(e.target.value)))}
-                className="w-full bg-white/10 text-white font-mono font-bold text-sm px-3 py-2 rounded-xl border border-white/10 outline-none"
-              />
-            </div>
-
-            <div className="space-y-1 text-xs">
-              <label className="text-indigo-200 font-medium">Giá niêm yết bán (đ)</label>
-              <input
-                type="number"
-                value={calcSellingPrice}
-                onChange={(e) => setCalcSellingPrice(Math.max(0, Number(e.target.value)))}
-                className="w-full bg-white/10 text-white font-mono font-bold text-sm px-3 py-2 rounded-xl border border-white/10 outline-none"
-              />
-            </div>
-
-            <div className="space-y-1 text-xs">
-              <label className="text-indigo-200 font-medium">Số lượng nhập bán (đợt)</label>
-              <input
-                type="number"
-                value={calcQuantity}
-                onChange={(e) => setCalcQuantity(Math.max(1, Number(e.target.value)))}
-                className="w-full bg-white/10 text-white font-mono font-bold text-sm px-3 py-2 rounded-xl border border-white/10 outline-none"
-              />
-            </div>
-
-            <div className="space-y-1 text-xs">
-              <label className="text-indigo-200 font-medium">Tổng ngân sách Ads (đ)</label>
-              <input
-                type="number"
-                value={calcAdSpend}
-                onChange={(e) => setCalcAdSpend(Math.max(0, Number(e.target.value)))}
-                className="w-full bg-white/10 text-white font-mono font-bold text-sm px-3 py-2 rounded-xl border border-white/10 outline-none"
-              />
-            </div>
+        ) : (
+          <div className="divide-y divide-gray-100 border border-gray-100 rounded-2xl overflow-hidden">
+            {systemFees.map((fee) => (
+              <div key={fee.id} className="p-3 flex flex-wrap items-center gap-3 bg-white">
+                <div className="flex-1 min-w-40">
+                  <p className="text-sm font-bold text-gray-800">{fee.name}</p>
+                  <p className="text-[11px] text-gray-500">
+                    {fee.calculationType === 'percentage' ? `${fee.value}% theo giá trị đơn` : `${fee.value.toLocaleString('vi-VN')}đ cố định`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void saveSystemFees(systemFees.map((item) => item.id === fee.id ? { ...item, active: !item.active } : item))}
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${fee.active ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-gray-50 border-gray-200 text-gray-500'}`}
+                >
+                  {fee.active ? 'Đang bật' : 'Đã tắt'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingSystemFeeId(fee.id);
+                    setSystemFeeName(fee.name);
+                    setSystemFeeType(fee.calculationType);
+                    setSystemFeeValue(String(fee.value));
+                    setShowSystemFeeForm(true);
+                  }}
+                  className="p-2 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded-lg"
+                  title="Sửa phí"
+                >
+                  <Edit className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveSystemFees(systemFees.filter((item) => item.id !== fee.id))}
+                  className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"
+                  title="Xóa phí"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
           </div>
-
-          <div className="lg:col-span-7 bg-white/5 border border-white/10 rounded-2xl p-5 grid grid-cols-2 md:grid-cols-4 gap-4 items-center">
-            <div className="space-y-1">
-              <span className="text-[10px] text-indigo-300 block uppercase font-bold">Tổng doanh số</span>
-              <span className="text-base font-extrabold font-mono block text-white">
-                {calcTotalRevenue.toLocaleString('vi-VN')} đ
-              </span>
-            </div>
-
-            <div className="space-y-1">
-              <span className="text-[10px] text-indigo-300 block uppercase font-bold">Thu từ sàn (Net)</span>
-              <span className="text-base font-extrabold font-mono block text-emerald-400">
-                {calcNetRevenue.toLocaleString('vi-VN')} đ
-              </span>
-              <span className="text-[9px] text-indigo-200 block">
-                Đã trừ {calcPlatformFeePercent.toFixed(1)}% phí sàn
-              </span>
-            </div>
-
-            <div className="space-y-1">
-              <span className="text-[10px] text-indigo-300 block uppercase font-bold">Lợi nhuận thực</span>
-              <span
-                className={`text-base font-extrabold font-mono block ${calcNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
-              >
-                {calcNetProfit.toLocaleString('vi-VN')} đ
-              </span>
-            </div>
-
-            <div className="space-y-1">
-              <span className="text-[10px] text-indigo-300 block uppercase font-bold">Tỷ suất LN Ròng</span>
-              <span
-                className={`text-base font-extrabold font-mono block ${calcMargin >= 30 ? 'text-emerald-400' : calcMargin >= 15 ? 'text-blue-300' : 'text-amber-400'}`}
-              >
-                {calcMargin.toFixed(1)}%
-              </span>
-            </div>
-
-            <div className="col-span-2 md:col-span-4 p-3 bg-white/5 border border-white/5 rounded-xl flex items-center justify-between text-xs">
-              <span className="text-indigo-200">Hiệu số ROI (Chỉ số sinh lời trên vốn):</span>
-              <span className={`font-mono font-bold text-sm ${calcROI >= 100 ? 'text-emerald-400' : 'text-indigo-300'}`}>
-                {calcROI.toFixed(0)}% ROI
-              </span>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

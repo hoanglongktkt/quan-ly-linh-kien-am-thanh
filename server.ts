@@ -5174,8 +5174,60 @@ function getShopeeDefaultFeeRate(): number {
 }
 
 function getGlobalPackagingCostPerOrder(): number {
-  const configured = Number(loadChannelSettings()?.packagingCostPerOrder);
-  return Number.isFinite(configured) ? Math.max(0, Math.round(configured)) : 0;
+  // Chi phí đóng gói hiện được đưa vào systemFees để cùng hiển thị/tính toán
+  // với các khoản phí động; không cộng thêm một lần nữa theo từng đơn.
+  return 0;
+}
+
+function getActiveSystemFees(): Array<{
+  id: string;
+  name: string;
+  calculationType: "percentage" | "fixed";
+  value: number;
+  active: boolean;
+}> {
+  const settings = loadChannelSettings();
+  const configured = settings?.systemFees;
+  const normalized = Array.isArray(configured)
+    ? configured
+    .map((fee: any, index: number) => ({
+      id: String(fee?.id || `system-fee-${index}`),
+      name: String(fee?.name || "").trim(),
+      calculationType: fee?.calculationType === "percentage" ? "percentage" : "fixed",
+      value: Math.max(0, Number(fee?.value) || 0),
+      active: fee?.active !== false,
+    }))
+    .filter((fee: any) => fee.active && fee.name && fee.value > 0)
+    : [];
+  if (normalized.length > 0) return normalized;
+
+  const legacyPackagingCost = Math.max(0, Number(settings?.packagingCostPerOrder) || 0);
+  return legacyPackagingCost > 0
+    ? [{
+        id: "legacy-packaging-cost",
+        name: "Chi phí vận hành/đóng gói",
+        calculationType: "fixed" as const,
+        value: legacyPackagingCost,
+        active: true,
+      }]
+    : [];
+}
+
+function calculateSystemFeeEstimate(itemAmount: number) {
+  const base = Math.max(0, Number(itemAmount) || 0);
+  const items = getActiveSystemFees().map((fee) => ({
+    ...fee,
+    amount:
+      fee.calculationType === "percentage"
+        ? Math.round((base * fee.value) / 100)
+        : Math.round(fee.value),
+  }));
+  const total = items.reduce((sum, fee) => sum + fee.amount, 0);
+  console.log(
+    `[Order Finance] Dynamic fees base=${base}:`,
+    JSON.stringify({ items, total }),
+  );
+  return { items, total };
 }
 
 /** Lấy số liệu ước tính từ get_order_detail; nếu Shopee chưa trả thì dùng tỷ lệ cấu hình. */
@@ -5193,12 +5245,27 @@ function applyShopeeEstimatedFinance(order: any, detail: any): void {
 
   const hasApiFees = Number(fees.total_surcharge) > 0 || Number(fees.total_tax) > 0;
   if (!hasApiFees) {
+    const dynamicEstimate = calculateSystemFeeEstimate(itemAmount);
     const defaultRate = getShopeeDefaultFeeRate();
-    fees.total_surcharge = Math.round((itemAmount * defaultRate) / 100);
+    fees.total_surcharge =
+      dynamicEstimate.total > 0
+        ? dynamicEstimate.total
+        : Math.round((itemAmount * defaultRate) / 100);
     fees.default_fee_rate = defaultRate;
     fees.is_estimated = 1;
+    order.estimated_fee_items =
+      dynamicEstimate.items.length > 0
+        ? dynamicEstimate.items
+        : [{
+            id: "legacy-shopee-default-fee",
+            name: "Phí Shopee mặc định",
+            amount: fees.total_surcharge,
+            calculationType: "percentage",
+            value: defaultRate,
+          }];
   } else {
     fees.is_estimated = 1;
+    order.estimated_fee_items = [];
   }
 
   applyShopeeOrderFinanceFields(order, {
@@ -5341,6 +5408,9 @@ async function enrichShopeeOrdersEscrowFinance(
         customCosts,
         financeSource: finance.escrowSynced ? "escrow" : undefined,
       });
+      if (finance.escrowSynced) {
+        order.estimated_fee_items = [];
+      }
     } catch (err) {
       order.escrow_synced = false;
       applyShopeeOrderFinanceFields(order, {
@@ -6075,6 +6145,21 @@ async function syncShopeeOrdersFromApi(
           console.error(`[Shopee Sync] Shop ${fileKey} / ${status} lỗi:`, errMsg);
           shopErrors.push({ shopId: fileKey, status, error: statusErr?.error || "shopee_api_error", message: errMsg });
         }
+      }
+
+      // Một số shop/API không trả UNPAID khi lọc order_status. Quét không lọc
+      // để không bỏ sót đơn đang fraud-check/chờ Shopee xác nhận.
+      try {
+        const unfilteredSns = await shopeeFetchAllOrderSns(apiShopId, accessToken);
+        for (const sn of unfilteredSns) orderSnSet.add(sn);
+        statusCounts[`${fileKey}:UNFILTERED`] = unfilteredSns.length;
+        console.log(
+          `[Shopee Sync] Shop ${fileKey} quét không lọc trạng thái: ${unfilteredSns.length} đơn (bao gồm UNPAID nếu Shopee trả về).`,
+        );
+      } catch (unfilteredErr: any) {
+        const errMsg = unfilteredErr?.message || String(unfilteredErr);
+        console.error(`[Shopee Sync] Shop ${fileKey} quét không lọc trạng thái lỗi:`, errMsg);
+        shopErrors.push({ shopId: fileKey, status: "UNFILTERED", error: "shopee_api_error", message: errMsg });
       }
 
       let orderSnList = Array.from(orderSnSet);
@@ -7642,6 +7727,7 @@ const DEFAULT_CHANNEL_SETTINGS: Record<string, any> = {
   tiktokApiKey: "",
   shopeeDefaultFeeRate: 12,
   packagingCostPerOrder: 0,
+  systemFees: [],
   shops: [],
 };
 

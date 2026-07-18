@@ -106,6 +106,22 @@ export interface ShopeeFees {
   [key: string]: number | undefined;
 }
 
+export interface SystemFee {
+  id: string;
+  name: string;
+  calculationType: 'percentage' | 'fixed';
+  value: number;
+  active: boolean;
+}
+
+export interface AppliedSystemFee {
+  id: string;
+  name: string;
+  amount: number;
+  calculationType: SystemFee['calculationType'];
+  value: number;
+}
+
 export interface OrderCustomCostItem {
   id: string;
   label: string;
@@ -150,6 +166,8 @@ export interface Order {
   escrowAmount?: number;
   /** Chi tiết phí sàn từ get_escrow_detail */
   shopee_fees?: ShopeeFees;
+  /** Các phí hệ thống đã dùng cho số liệu ước tính trước khi có escrow */
+  estimated_fee_items?: AppliedSystemFee[];
   partialCancel?: boolean;
   canPartialCancel?: boolean;
   /** Mã trạng thái gốc từ API Shopee */
@@ -203,6 +221,8 @@ export interface ChannelSettings {
   shopeeDefaultFeeRate?: number;
   /** Chi phí đóng gói/vận hành tự động áp dụng cho mỗi đơn */
   packagingCostPerOrder?: number;
+  /** Danh sách phí động dùng để ước tính khi Shopee chưa đối soát escrow */
+  systemFees?: SystemFee[];
   woocommerceConnected?: boolean;
   woocommerceUrl?: string;
   woocommerceConsumerKey?: string;

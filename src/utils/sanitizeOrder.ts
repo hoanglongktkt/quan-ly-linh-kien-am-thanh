@@ -1,4 +1,4 @@
-import type { Order } from '../types';
+import type { AppliedSystemFee, Order } from '../types';
 import { parseShopeeFees, parseCustomCostItems } from './shopeeFees';
 
 /** Chuẩn hóa đơn từ API — tránh crash khi thiếu date/orderSn/items. */
@@ -26,6 +26,23 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     withholding_cit_tax: Math.max(0, Number(raw.withholding_cit_tax ?? raw.withholdingCitTax) || 0),
     escrowAmount: raw.escrowAmount != null ? Number(raw.escrowAmount) : undefined,
     shopee_fees: parseShopeeFees(raw.shopee_fees ?? raw.shopeeFees),
+    estimated_fee_items: Array.isArray(raw.estimated_fee_items)
+      ? raw.estimated_fee_items
+          .map((item): AppliedSystemFee | null => {
+            const row = (item || {}) as Record<string, unknown>;
+            const amount = Math.max(0, Number(row.amount) || 0);
+            const name = String(row.name || '').trim();
+            if (!name) return null;
+            return {
+              id: String(row.id || name),
+              name,
+              amount,
+              calculationType: row.calculationType === 'percentage' ? 'percentage' : 'fixed',
+              value: Math.max(0, Number(row.value) || 0),
+            };
+          })
+          .filter((item): item is AppliedSystemFee => item !== null)
+      : undefined,
     partialCancel: Boolean(raw.partialCancel),
     canPartialCancel: raw.canPartialCancel != null ? Boolean(raw.canPartialCancel) : undefined,
     shopee_order_status: raw.shopee_order_status ? String(raw.shopee_order_status) : undefined,
