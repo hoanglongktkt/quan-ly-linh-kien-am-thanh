@@ -27,7 +27,6 @@ import {
   Barcode, 
   ArrowRight, 
   AlertCircle, 
-  Sparkles, 
   RefreshCw,
   ChevronDown,
   ChevronRight,
@@ -299,8 +298,7 @@ type OrderTab =
   | 'handed_over_carrier'
   | 'shipping' 
   | 'cancel_returns'
-  | 'order_products'
-  | 'reprint';
+  | 'order_products';
 
 type CancelReturnTab = 'all' | 'refund_return' | 'cancelled' | 'failed_delivery';
 
@@ -769,9 +767,6 @@ export default function OrderManager({
   const pdfOpenUnlockTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastOpenedPdfKeyRef = React.useRef('');
 
-  const [reprintOrderSn, setReprintOrderSn] = useState('');
-  const [isReprintSearching, setIsReprintSearching] = useState(false);
-
   // Auto-hiding toast — replaces blocking alert() in bulk ship/print flows.
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const showToast = (msg: string) => {
@@ -804,30 +799,25 @@ export default function OrderManager({
     return true;
   };
 
-  const triggerPdfDownload = (href: string, filename: string) => {
-    const a = document.createElement('a');
-    a.href = href;
-    a.download = filename;
-    a.rel = 'noopener noreferrer';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+  /** Chỉ mở đúng 1 tab in — tuyệt đối không đổi window.location / không a.click() trên tab hiện tại. */
+  const openPrintUrlInBlankTab = (printUrl: string): boolean => {
+    const raw = String(printUrl || '').trim();
+    if (!raw || raw === '/' || raw === '#') return false;
+    const absolute = /^https?:\/\//i.test(raw)
+      ? raw
+      : new URL(raw.startsWith('/') ? raw : `/${raw}`, window.location.origin).href;
+    window.open(absolute, '_blank');
+    return true;
   };
 
-  const openPdfBlobInNewTab = (blob: Blob, filename = 'van-don-shopee.pdf') => {
+  const openPdfBlobInNewTab = (blob: Blob) => {
     const blobUrl = URL.createObjectURL(blob);
-    const win = window.open(blobUrl, '_blank', 'noopener,noreferrer');
-    if (!win) {
-      triggerPdfDownload(blobUrl, filename);
-      showToast('Trình duyệt chặn popup — đã tải vận đơn PDF về máy.');
-      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
-      return;
-    }
+    window.open(blobUrl, '_blank');
     showToast('Đã mở vận đơn Shopee — bấm In trên trình xem PDF.');
     window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
   };
 
-  /** Mở PDF — khóa phiên trước mọi await; không dùng anchor target=_blank (tránh tab thứ 2). */
+  /** Mở PDF — khóa phiên; chỉ window.open(..., '_blank') một lần, không redirect tab hiện tại. */
   const openShopeeLabelFromStream = async (opts: {
     pdfBase64?: string | null;
     pdfFilename?: string | null;
@@ -838,23 +828,16 @@ export default function OrderManager({
       (opts.pdfBase64 ? `b64:${opts.pdfBase64.slice(0, 48)}` : '');
     if (!sessionKey || !beginPdfOpenSession(sessionKey)) return;
 
-    const filename = opts.pdfFilename || 'van-don-shopee.pdf';
-
     if (opts.url) {
       const fullUrl = resolveLabelFetchUrl(opts.url);
-      const resolvedFilename = (decodeURIComponent(fullUrl.split('/').pop() || filename)).replace(/\?.*$/, '');
 
-      if (/^https?:\/\//i.test(fullUrl)) {
-        const win = window.open(fullUrl, '_blank', 'noopener,noreferrer');
-        if (win) {
-          showToast('Đã mở vận đơn — bấm In trên trình xem PDF.');
-          return;
-        }
-        triggerPdfDownload(fullUrl, resolvedFilename);
-        showToast('Trình duyệt chặn popup — đã tải vận đơn PDF về máy.');
+      // URL tuyệt đối hoặc relative cùng origin → mở 1 tab blank duy nhất
+      if (openPrintUrlInBlankTab(fullUrl)) {
+        showToast('Đã mở vận đơn — bấm In trên trình xem PDF.');
         return;
       }
 
+      // Fallback: fetch → blob → window.open (vẫn không đụng tab chính)
       try {
         let res = await fetch(fullUrl, { credentials: 'same-origin' });
         if (!res.ok && fullUrl.startsWith('/api/labels/')) {
@@ -873,16 +856,15 @@ export default function OrderManager({
           showToast('File vận đơn không hợp lệ (backend trả HTML thay vì PDF).');
           return;
         }
-        openPdfBlobInNewTab(new Blob([buf], { type: 'application/pdf' }), resolvedFilename);
+        openPdfBlobInNewTab(new Blob([buf], { type: 'application/pdf' }));
       } catch {
-        triggerPdfDownload(fullUrl, resolvedFilename);
-        showToast('Không mở được tab xem PDF — đã tải vận đơn về máy.');
+        showToast('Không mở được tab xem PDF. Cho phép popup và thử lại.');
       }
       return;
     }
 
     if (opts.pdfBase64) {
-      openPdfBlobInNewTab(base64ToPdfBlob(opts.pdfBase64), filename);
+      openPdfBlobInNewTab(base64ToPdfBlob(opts.pdfBase64));
     }
   };
 
@@ -1489,7 +1471,7 @@ export default function OrderManager({
       ) {
         return false;
       }
-    } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products' && activeSubTab !== 'reprint') {
+    } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products') {
       if (order.status !== activeSubTab) return false;
     }
 
@@ -1564,8 +1546,10 @@ export default function OrderManager({
     }
   };
 
-  // Bulk Actions
-  const handleBulkPrint = async () => {
+  // Bulk Actions — chặn mọi redirect/navigation mặc định của nút/link
+  const handleBulkPrint = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     const selected = getSelectedOrders();
     if (selected.length === 0) {
       showToast('Vui lòng chọn ít nhất 1 đơn hàng để thực hiện in!');
@@ -1669,56 +1653,6 @@ export default function OrderManager({
     setSelectedOrderIds([]);
   };
 
-  // "Xác nhận Chuẩn bị hàng loạt" — opens the pickup/dropoff confirmation modal
-  // for every selected Shopee order still in "Chưa xử lý"; the actual ship_order call
-  // only happens after the seller picks a method and confirms (see confirmShipOrders).
-  const handleBulkPrepare = () => {
-    const selected = getSelectedOrders();
-    if (selected.length === 0) {
-      showToast('Vui lòng chọn ít nhất 1 đơn hàng để chuẩn bị!');
-      return;
-    }
-
-    const targets = selected.filter(
-      o => o.channel === 'shopee' && (o.status === 'unprocessed' || o.status === 'pending_confirm')
-    );
-    openBulkShipConfirm(targets);
-  };
-
-  const handleBulkHandover = () => {
-    const selected = getSelectedOrders();
-    if (selected.length === 0) {
-      showToast('Vui lòng chọn ít nhất 1 đơn hàng để giao shipper!');
-      return;
-    }
-
-    let count = 0;
-    const selectedIds = new Set(selected.map(o => o.id));
-    const updated = orders.map(o => {
-      if (selectedIds.has(o.id) && (o.status === 'processed' || o.status === 'unprocessed')) {
-        count++;
-        return {
-          ...o,
-          status: 'shipping' as const
-        };
-      }
-      return o;
-    });
-
-    onUpdateOrders(updated);
-    onAddLog({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      channel: 'all',
-      type: 'stock_sync',
-      status: 'success',
-      message: `Bàn giao vận chuyển hàng loạt cho ${count} đơn hàng sang Đơn vị vận chuyển.`
-    });
-    showToast(`Đã bàn giao hàng loạt ${count} đơn hàng cho Shippers.`);
-    setSelectedOrderIds([]);
-    setShowBulkActionsDropdown(false);
-  };
-
   // Single-order "Chuẩn bị hàng" — opens the pickup/dropoff confirmation modal;
   // the real ship_order call fires only after the seller confirms a method.
   const handleSinglePrepare = (order: Order) => {
@@ -1792,70 +1726,6 @@ export default function OrderManager({
       clearShipProgressOverlay();
     } finally {
       setPrintingOrderId(null);
-    }
-  };
-
-  const handleReprintOrder = async () => {
-    const query = reprintOrderSn.trim();
-    if (!query) {
-      showToast('Vui lòng nhập mã đơn hàng.');
-      return;
-    }
-
-    const normalized = query.toUpperCase();
-    const order = orders.find(
-      (o) =>
-        String(o.orderSn || '').toUpperCase() === normalized ||
-        o.id === query ||
-        o.id === `shopee-${query}` ||
-        String(o.id).toUpperCase() === normalized
-    );
-
-    if (!order) {
-      showToast(`Không tìm thấy đơn #${query} trong hệ thống.`);
-      return;
-    }
-
-    if (order.channel !== 'shopee' || !order.shopId) {
-      setBulkPrintOrders([order]);
-      showToast(`Đơn #${order.orderSn} không phải Shopee — mở phiếu in mẫu.`);
-      return;
-    }
-
-    setIsReprintSearching(true);
-    setProgressDone(false);
-    setProgressTotal(1);
-    setProgressCompleted(0);
-    setProgressMessage(`Đang tìm & tải vận đơn đơn #${order.orderSn}...`);
-
-    onAddLog({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      channel: 'shopee',
-      type: 'stock_sync',
-      status: 'success',
-      message: `[IN LẠI ĐƠN] Đang lấy vận đơn cache cho đơn ${order.orderSn} (không phụ thuộc trạng thái tab).`,
-    });
-
-    try {
-      const result = await printShopeeDocuments([order.id], {
-        onProgress: (completed, total) => {
-          setProgressCompleted(completed);
-          setProgressTotal(total);
-          setProgressMessage(`Đang tải vận đơn: ${completed}/${total} đơn...`);
-        },
-      });
-      if (!result.success) {
-        showToast(result.message || `Không in lại được vận đơn đơn #${order.orderSn}.`);
-        clearShipProgressOverlay();
-      } else {
-        markProgressComplete(`Đã mở vận đơn đơn #${order.orderSn}!`);
-      }
-    } catch {
-      showToast('Không thể kết nối API in vận đơn. Vui lòng thử lại.');
-      clearShipProgressOverlay();
-    } finally {
-      setIsReprintSearching(false);
     }
   };
 
@@ -2459,17 +2329,6 @@ export default function OrderManager({
           </span>
         </button>
 
-        <button
-          onClick={() => setActiveSubTab('reprint')}
-          className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeSubTab === 'reprint'
-              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20'
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-          }`}
-        >
-          <Printer className="w-3.5 h-3.5" />
-          <span>In lại đơn</span>
-        </button>
       </div>
 
       {activeSubTab === 'cancel_returns' && (
@@ -2498,7 +2357,7 @@ export default function OrderManager({
       )}
 
       {/* 4. FILTER BOX — search only (ẩn trên màn ĐƠN HỦY, ĐƠN HOÀN) */}
-      {activeSubTab !== 'order_products' && activeSubTab !== 'reprint' && activeSubTab !== 'cancel_returns' && (
+      {activeSubTab !== 'order_products' && activeSubTab !== 'cancel_returns' && (
       <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs">
         <div className="relative w-full">
           <Search className="absolute left-3.5 top-3.5 text-gray-400 w-4 h-4" />
@@ -2513,11 +2372,12 @@ export default function OrderManager({
       </div>
       )}
 
-      {/* 5. BULK ACTION BAR ("Chọn thao tác" dropdown matching mockup perfectly) */}
-      {activeSubTab !== 'order_products' && activeSubTab !== 'reprint' && (
+      {/* 5. BULK ACTION BAR — chỉ giữ In đơn hàng loạt + Xác nhận đơn hàng loạt */}
+      {activeSubTab !== 'order_products' && (
       <div className="om-orders-mobile-hide-bulk-bar bg-slate-50 border border-slate-200/80 p-3 max-md:p-2.5 rounded-2xl flex items-center justify-between gap-4 max-md:gap-2">
         <div className="flex items-center gap-3">
           <button 
+            type="button"
             onClick={handleToggleSelectAll}
             className="text-gray-500 hover:text-gray-800 transition-all cursor-pointer"
           >
@@ -2532,9 +2392,9 @@ export default function OrderManager({
           </span>
         </div>
 
-        {/* Bulk Action selector like mockup */}
         <div className="relative shrink-0">
           <button
+            type="button"
             onClick={() => setShowBulkActionsDropdown(!showBulkActionsDropdown)}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-black rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer"
           >
@@ -2547,7 +2407,12 @@ export default function OrderManager({
               <p className="px-4 py-1.5 text-[10px] uppercase font-black tracking-wider text-gray-400">Hành động hàng loạt</p>
               
               <button
-                onClick={handleBulkPrint}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleBulkPrint(e);
+                }}
                 disabled={isBulkPrinting}
                 className="om-mobile-hide-print w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5 disabled:opacity-50"
               >
@@ -2556,48 +2421,16 @@ export default function OrderManager({
               </button>
 
               <button
-                onClick={handleBulkConfirm}
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleBulkConfirm();
+                }}
                 className="w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5"
               >
                 <Check className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>Xác nhận đơn hàng loạt</span>
-              </button>
-
-              <button
-                onClick={handleBulkPrepare}
-                className="om-mobile-hide-prepare w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5"
-              >
-                <Sparkles className="w-4 h-4 text-rose-500 shrink-0" />
-                <span>Xác nhận Chuẩn bị hàng loạt</span>
-              </button>
-
-              <button
-                onClick={handleBulkHandover}
-                className="w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5"
-              >
-                <Truck className="w-4 h-4 text-indigo-500 shrink-0" />
-                <span>Bàn giao vận chuyển loạt</span>
-              </button>
-
-              <div className="border-t border-gray-50 my-1.5"></div>
-              
-              <button
-                onClick={() => {
-                  alert('Khởi chạy API cập nhật lại trạng thái sàn đồng thời...');
-                  setShowBulkActionsDropdown(false);
-                }}
-                className="w-full text-left px-4 py-2 text-xs text-gray-500 hover:bg-slate-50 font-medium"
-              >
-                Đồng bộ lại
-              </button>
-              <button
-                onClick={() => {
-                  alert('Gửi phản hồi hàng loạt...');
-                  setShowBulkActionsDropdown(false);
-                }}
-                className="w-full text-left px-4 py-2 text-xs text-gray-500 hover:bg-slate-50 font-medium"
-              >
-                Phản hồi
               </button>
             </div>
           )}
@@ -2696,51 +2529,6 @@ export default function OrderManager({
               </div>
             </>
           )}
-        </div>
-      ) : activeSubTab === 'reprint' ? (
-        <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 bg-blue-50/40">
-            <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2">
-              <Printer className="w-4 h-4 text-blue-600" />
-              In lại đơn
-            </h3>
-            <p className="text-[11px] text-gray-500 mt-1">
-              Nhập mã đơn hàng để tìm và in lại vận đơn PDF từ bộ nhớ cache — không phụ thuộc trạng thái tab hiện tại.
-            </p>
-          </div>
-          <div className="p-6 max-w-xl">
-            <label className="block text-xs font-bold text-gray-700 mb-2 uppercase tracking-wide">
-              Mã đơn hàng (Order ID)
-            </label>
-            <div className="flex flex-col sm:flex-row gap-3">
-              <input
-                type="text"
-                value={reprintOrderSn}
-                onChange={(e) => setReprintOrderSn(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void handleReprintOrder();
-                }}
-                placeholder="VD: 250712ABCDEF"
-                className="flex-1 px-4 py-3 bg-gray-50 rounded-xl border border-gray-200 focus:border-blue-500 focus:bg-white text-sm outline-none font-mono font-semibold"
-              />
-              <button
-                type="button"
-                onClick={() => void handleReprintOrder()}
-                disabled={isReprintSearching || !reprintOrderSn.trim()}
-                className="px-5 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 shrink-0"
-              >
-                {isReprintSearching ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Printer className="w-4 h-4" />
-                )}
-                <span>{isReprintSearching ? 'Đang tìm...' : 'Tìm và In'}</span>
-              </button>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-3 leading-relaxed">
-              Hệ thống sẽ lấy vận đơn đã lưu trên server (nếu có) hoặc tải mới từ Shopee. Áp dụng cho mọi đơn Shopee trong cơ sở dữ liệu.
-            </p>
-          </div>
         </div>
       ) : (
       <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
