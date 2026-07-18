@@ -1834,11 +1834,17 @@ export default function OrderManager({
               Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ codes }),
+            body: JSON.stringify({ codes, scannedCodes: codes }),
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok || data?.success === false) {
             throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+          }
+          // Đảm bảo frontend luôn có processedCount để đóng màn quét an toàn.
+          if (data && data.processedCount == null) {
+            const s = data.stats || {};
+            data.processedCount =
+              Number(s.handedOver || 0) + Number(s.cancelled || 0) + Number(s.returnReceived || 0);
           }
 
           const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];

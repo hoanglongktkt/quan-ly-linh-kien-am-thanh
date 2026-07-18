@@ -11048,15 +11048,17 @@ async function startServer() {
     try {
       const rawCodes = Array.isArray(req.body?.codes)
         ? req.body.codes
-        : Array.isArray(req.body?.scanCodes)
-          ? req.body.scanCodes
-          : [];
+        : Array.isArray(req.body?.scannedCodes)
+          ? req.body.scannedCodes
+          : Array.isArray(req.body?.scanCodes)
+            ? req.body.scanCodes
+            : [];
       const codes = [...new Set(rawCodes.map((c: unknown) => String(c || "").trim()).filter(Boolean))];
       if (!codes.length) {
         return res.status(400).json({
           success: false,
           error: "Thiếu danh sách mã quét (codes).",
-          message: "Thiếu danh sách mã quét (codes).",
+          message: "Thiếu danh sách mã quét (codes / scannedCodes).",
         });
       }
 
@@ -11186,8 +11188,10 @@ async function startServer() {
         `[Orders Scan Bulk] codes=${codes.length} handedOver=${stats.handedOver} cancelled=${stats.cancelled} returnReceived=${stats.returnReceived} notFound=${stats.notFound} skipped=${stats.skipped}`,
       );
 
+      const processedCount = stats.handedOver + stats.cancelled + stats.returnReceived;
       return res.json({
         success: true,
+        processedCount,
         stats,
         results,
         orders: enriched,
