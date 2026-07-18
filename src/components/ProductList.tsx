@@ -1367,6 +1367,7 @@ export default function ProductList({
           onUpdateProduct={onUpdateProduct}
           onSyncItemVariants={onSyncItemVariants}
           onProductsRefresh={handleProductsRefresh}
+          systemFees={systemFees}
         />
       )}
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Product, getProductChildren } from '../types';
-import { X, RefreshCw, Check, Package, Plus } from 'lucide-react';
+import { Product, SystemFee, getProductChildren } from '../types';
+import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown } from 'lucide-react';
 
 const SAPO = { blue: '#0078D4', bg: '#F4F6F8', border: '#E0E0E0' };
 
@@ -166,6 +166,22 @@ export function buildProductGroups(products: Product[]): ProductGroupRow[] {
   return rows.sort((a, b) => a.displayTitle.localeCompare(b.displayTitle, 'vi'));
 }
 
+function calculateEstimatedProfitVnd(sellingPrice: number, importPrice: number, systemFees: SystemFee[]): number {
+  const sell = Math.max(0, Number(sellingPrice) || 0);
+  const cost = Math.max(0, Number(importPrice) || 0);
+  const totalFees = systemFees
+    .filter((fee) => fee.active && fee.name.trim() && Number(fee.value) > 0)
+    .reduce(
+      (sum, fee) =>
+        sum +
+        (fee.calculationType === 'percentage'
+          ? Math.round((sell * Number(fee.value)) / 100)
+          : Math.round(Number(fee.value))),
+      0,
+    );
+  return sell - cost - totalFees;
+}
+
 interface ProductDetailModalProps {
   product: Product;
   allProducts: Product[];
@@ -176,6 +192,7 @@ interface ProductDetailModalProps {
   ) => void | Promise<void | { success?: boolean; error?: string; shopeeSynced?: boolean; shopeeMessage?: string }>;
   onSyncItemVariants?: (itemId: string) => Promise<Product[] | null>;
   onProductsRefresh?: (products: Product[]) => void;
+  systemFees?: SystemFee[];
 }
 
 export default function ProductDetailModal({
@@ -185,6 +202,7 @@ export default function ProductDetailModal({
   onUpdateProduct,
   onSyncItemVariants,
   onProductsRefresh,
+  systemFees = [],
 }: ProductDetailModalProps) {
   const priceSelectionRef = useRef<{ input: HTMLInputElement; caret: number } | null>(null);
   const [localProducts, setLocalProducts] = useState(allProducts);
@@ -194,12 +212,10 @@ export default function ProductDetailModal({
 
   const [editTitle, setEditTitle] = useState('');
   const [editSku, setEditSku] = useState('');
-  const [editBarcode, setEditBarcode] = useState('');
   const [editWeight, setEditWeight] = useState(0);
   const [editWeightUnit, setEditWeightUnit] = useState<'g' | 'kg'>('g');
   const [editStock, setEditStock] = useState(0);
   const [editSellingPrice, setEditSellingPrice] = useState(0);
-  const [editWholesalePrice, setEditWholesalePrice] = useState(0);
   const [editImportPrice, setEditImportPrice] = useState(0);
   const [editUnit, setEditUnit] = useState('');
 
@@ -220,11 +236,9 @@ export default function ProductDetailModal({
     if (!active) return;
     setEditTitle(active.title);
     setEditSku(active.sku);
-    setEditBarcode(active.barcode || active.sku);
     setEditWeight(active.weight ?? 0);
     setEditStock(active.stock);
     setEditSellingPrice(active.sellingPrice);
-    setEditWholesalePrice(active.wholesalePrice ?? active.sellingPrice);
     setEditImportPrice(active.importPrice);
     setEditUnit(active.unit || '');
     setToast(null);
@@ -269,11 +283,11 @@ export default function ProductDetailModal({
       ...active,
       title: editTitle.trim() || active.title,
       sku: editSku.trim() || active.sku,
-      barcode: editBarcode.trim() || editSku.trim(),
+      barcode: active.barcode || editSku.trim(),
       weight: Math.max(0, editWeight),
       stock: Math.max(0, Math.round(editStock)),
       sellingPrice: Math.max(0, Math.round(editSellingPrice)),
-      wholesalePrice: Math.max(0, Math.round(editWholesalePrice)),
+      wholesalePrice: active.wholesalePrice ?? active.sellingPrice,
       importPrice: Math.max(0, Math.round(editImportPrice)),
       unit: editUnit.trim(),
       status: editStock <= 0 ? 'out_of_stock' : active.status === 'draft' ? 'draft' : 'active',
@@ -326,9 +340,8 @@ export default function ProductDetailModal({
       priceSelectionRef.current = { input: event.target, caret: nextCaret };
     };
 
-  const marginPct = editSellingPrice > 0
-    ? (((editSellingPrice - editImportPrice) / editSellingPrice) * 100).toFixed(0)
-    : '0';
+  const estimatedProfit = calculateEstimatedProfitVnd(editSellingPrice, editImportPrice, systemFees);
+  const isProfit = estimatedProfit >= 0;
 
   return (
     <div className="fixed inset-0 z-80 flex items-center justify-center bg-black/45 p-0 sm:p-3">
@@ -412,15 +425,9 @@ export default function ProductDetailModal({
                       <label className={labelCls}>Tên phiên bản sản phẩm <span className="text-red-500">*</span></label>
                       <input value={editTitle} onChange={e => setEditTitle(e.target.value)} className={inputCls} />
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className={labelCls}>Mã sản phẩm / SKU</label>
-                        <input value={editSku} onChange={e => setEditSku(e.target.value)} className={`${inputCls} font-mono`} />
-                      </div>
-                      <div>
-                        <label className={labelCls}>Mã vạch / Barcode</label>
-                        <input value={editBarcode} onChange={e => setEditBarcode(e.target.value)} className={`${inputCls} font-mono`} />
-                      </div>
+                    <div>
+                      <label className={labelCls}>Mã sản phẩm / SKU</label>
+                      <input value={editSku} onChange={e => setEditSku(e.target.value)} className={`${inputCls} font-mono`} />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -464,11 +471,8 @@ export default function ProductDetailModal({
 
             {/* Card: Giá sản phẩm */}
             <div className={cardCls} style={{ borderColor: SAPO.border }}>
-              <div className={`${cardHeader} flex items-center justify-between`} style={{ borderColor: SAPO.border }}>
-                <span>Giá sản phẩm</span>
-                <button type="button" className="text-[12px] text-[#0078D4] font-normal flex items-center gap-0.5 hover:underline">
-                  <Plus className="w-3.5 h-3.5" /> Thêm chính sách giá
-                </button>
+              <div className={cardHeader} style={{ borderColor: SAPO.border }}>
+                Giá sản phẩm
               </div>
               <div className="p-4 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -477,36 +481,36 @@ export default function ProductDetailModal({
                     <input type="text" inputMode="decimal" value={formatMoneyInput(editSellingPrice)} onChange={handleMoneyInputChange(setEditSellingPrice)} className={`${inputCls} text-right font-semibold`} />
                   </div>
                   <div>
-                    <label className={labelCls}>Giá bán buôn</label>
-                    <input type="text" inputMode="decimal" value={formatMoneyInput(editWholesalePrice)} onChange={handleMoneyInputChange(setEditWholesalePrice)} className={`${inputCls} text-right`} />
+                    <label className={labelCls}>Giá nhập</label>
+                    <input type="text" inputMode="decimal" value={formatMoneyInput(editImportPrice)} onChange={handleMoneyInputChange(setEditImportPrice)} className={`${inputCls} text-right`} />
                   </div>
                 </div>
-                <div className="sm:w-1/2">
-                  <label className={labelCls}>Giá nhập</label>
-                  <input type="text" inputMode="decimal" value={formatMoneyInput(editImportPrice)} onChange={handleMoneyInputChange(setEditImportPrice)} className={`${inputCls} text-right`} />
-                </div>
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div className="p-3 bg-[#F9FAFB] border rounded-[4px]" style={{ borderColor: SAPO.border }}>
-                    <span className="text-[11px] text-[#9CA3AF]">Giá vốn</span>
-                    <p className="text-[14px] font-semibold text-[#424242] mt-0.5">{editImportPrice.toLocaleString('vi-VN')} đ</p>
+                <div
+                  className={`p-4 border rounded-[6px] ${
+                    isProfit
+                      ? 'bg-emerald-50 border-emerald-200'
+                      : 'bg-rose-50 border-rose-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      {isProfit ? (
+                        <TrendingUp className="w-5 h-5 text-emerald-600 shrink-0" />
+                      ) : (
+                        <TrendingDown className="w-5 h-5 text-rose-600 shrink-0" />
+                      )}
+                      <span className={`text-[13px] font-semibold ${isProfit ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {isProfit ? 'Lãi dự kiến' : 'Lỗ dự kiến'}
+                      </span>
+                    </div>
+                    <p className={`text-[20px] font-extrabold tracking-tight ${isProfit ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {Math.abs(estimatedProfit).toLocaleString('vi-VN')}đ
+                    </p>
                   </div>
-                  <div className="p-3 bg-[#ECFDF5] border border-[#A7F3D0] rounded-[4px]">
-                    <span className="text-[11px] text-emerald-600">Biên lãi gộp</span>
-                    <p className="text-[14px] font-semibold text-emerald-700 mt-0.5">{marginPct}%</p>
-                  </div>
+                  <p className="text-[11px] text-gray-500 mt-2">
+                    Giá bán − Giá nhập − Phí hệ thống đang bật
+                  </p>
                 </div>
-              </div>
-            </div>
-
-            {/* Liên kết sàn */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="p-3 bg-white border rounded-[4px] flex justify-between items-center text-[12px]" style={{ borderColor: SAPO.border }}>
-                <span className="font-semibold text-orange-700">Shopee ID</span>
-                <span className="font-mono text-orange-900">{active.shopeeId || 'Chưa liên kết'}</span>
-              </div>
-              <div className="p-3 bg-white border rounded-[4px] flex justify-between items-center text-[12px]" style={{ borderColor: SAPO.border }}>
-                <span className="font-semibold text-[#424242]">TikTok ID</span>
-                <span className="font-mono text-[#6B7280]">{active.tiktokId || 'Chưa liên kết'}</span>
               </div>
             </div>
 
