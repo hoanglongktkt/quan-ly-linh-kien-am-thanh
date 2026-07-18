@@ -52,6 +52,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     trackingNumber: raw.trackingNumber ? String(raw.trackingNumber) : undefined,
     internalTrackingCode: raw.internalTrackingCode ? String(raw.internalTrackingCode) : undefined,
     packageNumber: raw.packageNumber ? String(raw.packageNumber) : undefined,
+    is_pending_shopee_check: Boolean(raw.is_pending_shopee_check),
     isPrepared: Boolean(raw.isPrepared),
     isPrinted: Boolean(raw.isPrinted),
     isHandedOverToCarrier: Boolean(raw.isHandedOverToCarrier ?? raw.is_handed_over_to_carrier),

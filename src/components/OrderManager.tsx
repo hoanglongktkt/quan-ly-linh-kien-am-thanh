@@ -62,8 +62,9 @@ function getOrderWaybillCode(order: Order): string {
   return getCarrierWaybillDisplay(order);
 }
 
-/** Tab "Đang kiểm tra bởi Shopee" = status nội bộ + raw UNPAID từ Shopee. */
+/** Tab "Đang kiểm tra bởi Shopee" = flag bẫy lỗi + status nội bộ + raw UNPAID/PENDING. */
 function isPendingVerificationOrder(order: Order): boolean {
+  if (order.is_pending_shopee_check) return true;
   if (order.status === 'pending_verification') return true;
   const raw = String(order.shopee_order_status || '').toUpperCase();
   return raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK';
@@ -1154,24 +1155,43 @@ export default function OrderManager({
 
   const finishShipJobResult = async (finalJob: any | null, queuedCount: number, total: number) => {
     const successCount = finalJob?.successCount || 0;
-    const failed = (finalJob?.results || []).filter((r: any) => !r.success);
+    const results = finalJob?.results || [];
+    const pendingMoved = results.filter((r: any) => r.pendingShopeeCheck);
+    const failed = results.filter((r: any) => !r.success && !r.pendingShopeeCheck);
 
     onAddLog({
       id: `log-${Date.now() + 2}`,
       timestamp: new Date().toISOString(),
       channel: 'all',
       type: 'stock_sync',
-      status: successCount > 0 ? 'success' : 'failed',
-      message: `Đồng bộ Shopee xong: ${successCount}/${queuedCount} đơn (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'}).`,
+      status: successCount > 0 || pendingMoved.length > 0 ? 'success' : 'failed',
+      message: `Đồng bộ Shopee xong: ${successCount}/${queuedCount} đơn OK, ${pendingMoved.length} đơn đang được Shopee kiểm tra (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'}).`,
     });
 
-    if (finalJob?.status === 'failed') {
+    if (Array.isArray(finalJob?.orders)) {
+      onUpdateOrders(finalJob.orders);
+      ordersRef.current = finalJob.orders;
+    }
+
+    if (pendingMoved.length > 0 && successCount === 0 && failed.length === 0) {
+      setActiveSubTab('pending_verification');
+      showToast(`${pendingMoved.length} đơn đang được Shopee kiểm tra — đã chuyển sang tab tương ứng.`);
+    } else if (finalJob?.status === 'failed') {
       showToast(finalJob.error || 'Đồng bộ Shopee gặp lỗi. Vui lòng kiểm tra lại danh sách đơn.');
     } else if (successCount === 0) {
       const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
-      showToast(`Không xác nhận được đơn nào trên Shopee. ${errDetail || 'Vui lòng thử lại.'}`);
-    } else if (failed.length > 0) {
-      showToast(`Shopee: ${successCount}/${queuedCount} đơn OK, ${failed.length} đơn lỗi.`);
+      if (pendingMoved.length > 0) {
+        setActiveSubTab('pending_verification');
+        showToast(`${pendingMoved.length} đơn đang được Shopee kiểm tra. ${errDetail}`);
+      } else {
+        showToast(`Không xác nhận được đơn nào trên Shopee. ${errDetail || 'Vui lòng thử lại.'}`);
+      }
+    } else if (failed.length > 0 || pendingMoved.length > 0) {
+      if (pendingMoved.length > 0) {
+        showToast(`Shopee: ${successCount} OK, ${pendingMoved.length} đang kiểm tra, ${failed.length} lỗi.`);
+      } else {
+        showToast(`Shopee: ${successCount}/${queuedCount} đơn OK, ${failed.length} đơn lỗi.`);
+      }
     } else {
       showToast(`Xác nhận thành công ${successCount}/${total} đơn — đang mở vận đơn in...`);
     }
@@ -1283,15 +1303,25 @@ export default function OrderManager({
         setActiveSubTab('processed');
 
         const successCount = syncData.successCount || 0;
+        const pendingMoved = (syncData.results || []).filter((r: any) => r.pendingShopeeCheck);
         if (successCount === 0) {
-          const failed = (syncData.results || []).filter((r: any) => !r.success);
+          const failed = (syncData.results || []).filter((r: any) => !r.success && !r.pendingShopeeCheck);
           const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
-          showToast(`Không xác nhận được đơn nào. ${errDetail || 'Vui lòng thử lại.'}`);
+          if (pendingMoved.length > 0) {
+            setActiveSubTab('pending_verification');
+            showToast(`${pendingMoved.length} đơn đang được Shopee kiểm tra — đã chuyển tab.`);
+          } else {
+            showToast(`Không xác nhận được đơn nào. ${errDetail || 'Vui lòng thử lại.'}`);
+          }
           clearShipProgressOverlay();
           return;
         }
 
-        showToast(`Xác nhận thành công ${successCount}/${queuedOrders.length} đơn — đang mở vận đơn in...`);
+        if (pendingMoved.length > 0) {
+          showToast(`Xác nhận ${successCount} đơn OK, ${pendingMoved.length} đơn đang được Shopee kiểm tra.`);
+        } else {
+          showToast(`Xác nhận thành công ${successCount}/${queuedOrders.length} đơn — đang mở vận đơn in...`);
+        }
         if (syncData.printDocument?.pdfBase64 || syncData.printDocument?.url) {
           await openShopeeLabelFromStream({
             pdfBase64: syncData.printDocument.pdfBase64,
@@ -1429,7 +1459,9 @@ export default function OrderManager({
     return orders.filter(o => {
       if (status === 'all') return true;
       if (status === 'pending_verification') return isPendingVerificationOrder(o);
-      if (status === 'unprocessed') return o.status === 'unprocessed' && !isOrderHandedOverToCarrier(o);
+      if (status === 'unprocessed') {
+        return o.status === 'unprocessed' && !isOrderHandedOverToCarrier(o) && !isPendingVerificationOrder(o);
+      }
       if (status === 'processed') return matchesProcessedPickupTab(o);
       if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
       return o.status === status;
@@ -1448,7 +1480,13 @@ export default function OrderManager({
     } else if (activeSubTab === 'pending_verification') {
       if (!isPendingVerificationOrder(order)) return false;
     } else if (activeSubTab === 'unprocessed') {
-      if (order.status !== 'unprocessed' || isOrderHandedOverToCarrier(order)) return false;
+      if (
+        order.status !== 'unprocessed' ||
+        isOrderHandedOverToCarrier(order) ||
+        isPendingVerificationOrder(order)
+      ) {
+        return false;
+      }
     } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products' && activeSubTab !== 'reprint') {
       if (order.status !== activeSubTab) return false;
     }

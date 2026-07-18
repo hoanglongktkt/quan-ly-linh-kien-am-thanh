@@ -1380,6 +1380,8 @@ async function shopeeGetOrderList(
     time_to: String(timeTo),
     page_size: String(SHOPEE_ORDER_LIST_PAGE_SIZE),
     response_optional_fields: "order_status",
+    // Bắt buộc để API trả về đơn PENDING (đang kiểm tra bởi Shopee).
+    request_order_status_pending: "true",
   });
   if (opts?.orderStatus) params.set("order_status", opts.orderStatus);
   if (opts?.cursor !== undefined && opts.cursor !== "") params.set("cursor", opts.cursor);
@@ -2017,7 +2019,9 @@ async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSn
     // `order_status` / `create_time` are NOT valid values here (they're returned by default);
     // passing them causes Shopee to reject the whole request with response_optional_fields error.
     response_optional_fields:
-      "buyer_user_id,item_list,total_amount,shipping_carrier,package_list,can_partial_cancel_order,buyer_preference_for_partial_cancellation,cancel_reason,cancel_by",
+      "buyer_user_id,item_list,total_amount,shipping_carrier,package_list,can_partial_cancel_order,buyer_preference_for_partial_cancellation,cancel_reason,cancel_by,pending_terms,pending_description",
+    // Bắt buộc để nhận PENDING + pending_terms từ Shopee.
+    request_order_status_pending: "true",
   });
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
@@ -5779,10 +5783,42 @@ function hasUsableShopeeTrackingNumber(order: any): boolean {
 
 function needsShopeeTrackingEnrichment(order: any): boolean {
   if (order.channel !== "shopee") return false;
-  const status = String(order.status || "");
-  if (!SHOPEE_TRACKING_ENRICH_STATUSES.has(status)) return false;
   if (hasUsableShopeeTrackingNumber(order)) return false;
-  return true;
+  const status = String(order.status || "");
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  // Cưỡng bức lấy mã cho Chờ lấy hàng / Đang giao / Đã xử lý (READY_TO_SHIP, PROCESSED, SHIPPED...).
+  if (SHOPEE_TRACKING_ENRICH_STATUSES.has(status)) return true;
+  if (
+    raw === "READY_TO_SHIP" ||
+    raw === "PROCESSED" ||
+    raw === "RETRY_SHIP" ||
+    raw === "SHIPPED" ||
+    raw === "TO_CONFIRM_RECEIVE" ||
+    raw === "CANCELLED" ||
+    raw === "IN_CANCEL" ||
+    raw === "TO_RETURN"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Sau sync: cưỡng bức gọi get_tracking_number cho mọi đơn thiếu mã ở tab Chờ lấy hàng / Đang giao. */
+async function forceFetchMissingTrackingAfterSync(
+  orders: any[],
+  opts?: { max?: number; shopId?: string },
+): Promise<number> {
+  const max = Math.max(1, Math.min(opts?.max ?? 80, 120));
+  const targets = orders.filter((o: any) => {
+    if (String(o?.channel) !== "shopee") return false;
+    if (opts?.shopId && String(o.shopId) !== String(opts.shopId)) return false;
+    return needsShopeeTrackingEnrichment(o);
+  });
+  if (targets.length === 0) return 0;
+  console.log(
+    `[Shopee Tracking] Force fetch: ${Math.min(targets.length, max)}/${targets.length} đơn thiếu tracking_no (READY_TO_SHIP/SHIPPING/...).`,
+  );
+  return repairMissingShopeeTrackingInOrders(targets, { max });
 }
 
 async function enrichShopeeOrderTrackingFromApi(shopId: string, accessToken: string, order: any): Promise<any> {
@@ -5896,6 +5932,16 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       isPrinted: false,
       items: mappedItems,
     };
+    const pendingTerms = Array.isArray(item?.pending_terms) ? item.pending_terms : [];
+    if (
+      rawStatus === "PENDING" ||
+      rawStatus === "UNPAID" ||
+      pendingTerms.length > 0
+    ) {
+      order.is_pending_shopee_check = true;
+      order.status = "pending_verification";
+      order.isPrepared = false;
+    }
     applyShopeePartialCancelMeta(order, item, mappedItems);
     applyShopeeEstimatedFinance(order, item);
     applyShopeePackageListTracking(order, item);
@@ -5973,6 +6019,30 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     resolveConnectedShopDisplayName(existing.shopId, existing.shopName) ||
     merged.shopName;
   mergeShopeeTrackingFields(merged, existing, incoming);
+  // Flag nội bộ "đang kiểm tra bởi Shopee" — giữ nếu chưa thoát PENDING; xóa khi đã READY_TO_SHIP+.
+  const incomingRaw = String(incoming.shopee_order_status || "").toUpperCase();
+  if (incoming.is_pending_shopee_check === true || incoming.status === "pending_verification") {
+    merged.is_pending_shopee_check = true;
+    merged.status = "pending_verification";
+  } else if (
+    existing?.is_pending_shopee_check &&
+    (incomingRaw === "UNPAID" || incomingRaw === "PENDING" || !incomingRaw)
+  ) {
+    merged.is_pending_shopee_check = true;
+    merged.status = "pending_verification";
+  } else if (
+    incomingRaw === "READY_TO_SHIP" ||
+    incomingRaw === "PROCESSED" ||
+    incomingRaw === "SHIPPED" ||
+    incomingRaw === "TO_CONFIRM_RECEIVE" ||
+    incomingRaw === "COMPLETED" ||
+    incomingRaw === "CANCELLED" ||
+    incomingRaw === "IN_CANCEL"
+  ) {
+    merged.is_pending_shopee_check = false;
+  } else if (existing?.is_pending_shopee_check) {
+    merged.is_pending_shopee_check = true;
+  }
   const mergedCustomCosts = getGlobalPackagingCostPerOrder();
   merged.custom_costs = mergedCustomCosts;
   delete merged.custom_cost_items;
@@ -6031,6 +6101,7 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
 // CANCELLED/IN_CANCEL bắt buộc để tab "Đơn hủy" không bị lệch số liệu.
 const SHOPEE_SYNC_STATUSES = [
   "UNPAID",
+  "PENDING",
   "READY_TO_SHIP",
   "PROCESSED",
   "RETRY_SHIP",
@@ -6327,10 +6398,7 @@ async function syncShopeeOrdersFromApi(
 
       orderSnList = [];
 
-      await repairMissingShopeeTrackingInOrders(
-        orders.filter((o: any) => o.channel === "shopee" && String(o.shopId) === String(fileKey)),
-        { max: 35 },
-      );
+      await forceFetchMissingTrackingAfterSync(orders, { max: 80, shopId: fileKey });
 
       return { shopErrors, syncedSnSet, totalSnTarget };
     };
@@ -6377,7 +6445,14 @@ async function syncShopeeOrdersFromApi(
           if (o.channel !== "shopee" || String(o.shopId) !== String(auth!.fileKey)) return true;
           if (pullResult.syncedSnSet.has(o.orderSn)) return true;
           const rawStatus = String(o.shopee_order_status || "").toUpperCase();
-          if (o.status === "pending_verification" || rawStatus === "UNPAID") return true;
+          if (
+            o.status === "pending_verification" ||
+            o.is_pending_shopee_check === true ||
+            rawStatus === "UNPAID" ||
+            rawStatus === "PENDING"
+          ) {
+            return true;
+          }
           if (!SHOPEE_SYNC_UI_STATUSES.has(o.status)) return true;
           return false;
         });
@@ -6415,7 +6490,7 @@ async function syncShopeeOrdersFromApi(
   };
   console.log(`[Shopee Sync] UI counts sau đồng bộ:`, JSON.stringify(uiStatusCounts));
 
-  await repairMissingShopeeTrackingInOrders(orders, { max: 30 });
+  await forceFetchMissingTrackingAfterSync(orders, { max: 80 });
 
   const uniqueErrors = dedupeErrors(errors);
 
@@ -8312,6 +8387,39 @@ function resolveOrdersFromRequest(orders: any[], orderIds?: string[], orderSns?:
 function isAlreadyShippedError(result: any): boolean {
   const blob = `${result?.error || ""} ${result?.message || ""}`.toLowerCase();
   return blob.includes("already") || blob.includes("has been shipped") || blob.includes("logistics order is completed");
+}
+
+/** Bẫy lỗi "đang kiểm tra bởi Shopee" khi gọi ship_order / chuẩn bị hàng. */
+function isShopeePendingVerificationError(result: any): boolean {
+  const blob = `${result?.error || ""} ${result?.message || ""} ${result?.msg || ""}`.toLowerCase();
+  if (!blob.trim()) return false;
+  return (
+    blob.includes("pending verification") ||
+    blob.includes("pending_verification") ||
+    blob.includes("order is pending") ||
+    blob.includes("order not ready") ||
+    blob.includes("not ready to ship") ||
+    blob.includes("not ready for shipment") ||
+    blob.includes("system_pending") ||
+    blob.includes("kyc_pending") ||
+    blob.includes("arrange_shipment_pending") ||
+    blob.includes("under shopee") ||
+    blob.includes("being processed by shopee") ||
+    blob.includes("đang được kiểm tra") ||
+    blob.includes("đang kiểm tra") ||
+    (blob.includes("pending") && (blob.includes("order") || blob.includes("status") || blob.includes("ship")))
+  );
+}
+
+function markOrderPendingShopeeCheck(order: any, reason?: string): any {
+  return {
+    ...order,
+    is_pending_shopee_check: true,
+    status: "pending_verification",
+    isPrepared: false,
+    shopeeSyncPending: false,
+    shopeeSyncError: reason || "Đơn đang được Shopee kiểm tra",
+  };
 }
 
 type ShipOrderJobStatus = "pending" | "running" | "printing" | "done" | "failed";
@@ -10929,7 +11037,7 @@ async function startServer() {
 
       console.log(`[Orders Pull] Hoàn thành: ${pulledCount} đơn đã cập nhật/thêm mới.`);
 
-      await repairMissingShopeeTrackingInOrders(orders, { max: 40 });
+      await forceFetchMissingTrackingAfterSync(orders, { max: 80 });
 
       return res.json({
         success: true,
@@ -11353,8 +11461,17 @@ async function startServer() {
         };
       }
       const treatedAsSuccess = result.success || isAlreadyShippedError(result);
+      const pendingTrap = !treatedAsSuccess && isShopeePendingVerificationError(result);
 
-      if (!treatedAsSuccess) {
+      if (pendingTrap) {
+        console.warn(
+          `[Ship Order Bulk] BẪY LỖI pending Shopee cho đơn ${order.orderSn}: ${result.message || result.error || ""}`,
+        );
+        orders[index] = markOrderPendingShopeeCheck(
+          orders[index],
+          result.message || result.error || "Order is pending verification",
+        );
+      } else if (!treatedAsSuccess) {
         console.error(`[Ship Order Bulk] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`);
         if (opts?.optimistic) {
           orders[index] = {
@@ -11370,6 +11487,7 @@ async function startServer() {
           ...orders[index],
           isPrepared: true,
           status: "processed",
+          is_pending_shopee_check: false,
           trackingNumber: orders[index].trackingNumber || result.trackingNumber,
           shopId: orders[index].shopId || result.shopId || resolvedShopId,
           shopeeSyncPending: false,
@@ -11384,6 +11502,7 @@ async function startServer() {
         orderId: order.id,
         orderSn: order.orderSn,
         success: treatedAsSuccess,
+        pendingShopeeCheck: pendingTrap,
         alreadyShipped: !result.success && isAlreadyShippedError(result),
         ...result,
       });
@@ -11426,20 +11545,38 @@ async function startServer() {
         console.error(`[Ship Order] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`);
       }
 
-      if (result.success) {
-        const index = orders.findIndex((o: any) => o.id === orderId);
+      const index = orders.findIndex((o: any) => o.id === orderId);
+      if (result.success || isAlreadyShippedError(result)) {
         orders[index] = {
           ...orders[index],
           isPrepared: true,
           // Move the order into "Chờ lấy hàng (Đã xử lý)" the INSTANT ship_order
           // succeeds — no need to wait for the print step to flip this anymore.
           status: "processed",
+          is_pending_shopee_check: false,
           trackingNumber: orders[index].trackingNumber || result.trackingNumber,
           shopId: orders[index].shopId || result.shopId, // self-heal orders that lost shop_id from an old webhook bug
         };
         saveOrders(orders);
         return res.json({ success: true, mode: result.mode, order: orders[index] });
       }
+
+      // Trap & Move: lỗi pending verification → chuyển tab "Đang được kiểm tra bởi Shopee"
+      if (isShopeePendingVerificationError(result)) {
+        orders[index] = markOrderPendingShopeeCheck(
+          orders[index],
+          result.message || result.error || "Order is pending verification",
+        );
+        saveOrders(orders);
+        return res.json({
+          success: false,
+          pendingShopeeCheck: true,
+          movedToPendingTab: true,
+          order: orders[index],
+          ...result,
+        });
+      }
+
       return res.status(400).json({ success: false, ...result });
     } catch (error: any) {
       console.error("[Ship Order] Lỗi nội bộ endpoint /api/shopee/ship-order:", error?.stack || error);

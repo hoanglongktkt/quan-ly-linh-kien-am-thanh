@@ -177,6 +177,8 @@ export interface Order {
   trackingNumber?: string; // Carrier tracking (SPXVN..., GHN...) — mã trên phiếu giao / QR quét
   internalTrackingCode?: string; // Shopee sorting / first-mile (0FG...) — mã nội bộ sàn
   packageNumber?: string; // Shopee package_number, required by logistics APIs for split orders
+  /** Flag nội bộ: đơn bị Shopee giữ (pending verification) — đưa vào tab kiểm tra */
+  is_pending_shopee_check?: boolean;
   isPrepared?: boolean;
   isPrinted?: boolean;
   /** Trạng thái nội bộ: đã bàn giao cho bưu tá/ĐVVC, chưa quét nhập kho Shopee */
