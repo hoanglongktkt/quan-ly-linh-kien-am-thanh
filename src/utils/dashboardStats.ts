@@ -222,12 +222,12 @@ export function computeDashboardStats(
     endDate: toDateKey(end),
     kpi: {
       revenue: revenueOrders.reduce((s, o) => s + (Number(o.totalAmount) || 0), 0),
-      newOrders: inRange.filter((o) => o.status === 'pending_confirm' || o.status === 'unprocessed').length,
+      newOrders: inRange.filter((o) => o.status === 'pending_verification' || o.status === 'pending_confirm' || o.status === 'unprocessed').length,
       returns: inRange.filter((o) => o.status === 'return_pending' || o.status === 'return_received').length,
       cancelled: inRange.filter((o) => o.status === 'cancelled').length,
     },
     pendingOrders: {
-      pendingApproval: eligible.filter((o) => o.status === 'pending_confirm').length,
+      pendingApproval: eligible.filter((o) => o.status === 'pending_verification' || o.status === 'pending_confirm').length,
       pendingPayment: eligible.filter((o) => o.status === 'pending_confirm' && o.channel === 'manual').length,
       pendingPack: eligible.filter((o) => o.status === 'unprocessed' && !o.isPrepared).length,
       pendingPickup: eligible.filter(

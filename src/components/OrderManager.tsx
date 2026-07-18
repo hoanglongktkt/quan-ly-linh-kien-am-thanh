@@ -559,6 +559,7 @@ export default function OrderManager({
         }
 
         const statusLabels: Record<Order['status'], string> = {
+          pending_verification: 'Đang được kiểm tra bởi Shopee',
           pending_confirm: 'Chờ xác nhận',
           unprocessed: 'Chờ lấy hàng (Chưa xử lý)',
           processed: 'Chờ lấy hàng (Đã xử lý)',
