@@ -5366,10 +5366,46 @@ function trackingForShopeeShippingDoc(order: any): string | undefined {
   return order.trackingNumber || order.internalTrackingCode || undefined;
 }
 
+function applyShopeePackageListTracking(order: any, shopeeOrder: any): void {
+  const packages = Array.isArray(shopeeOrder?.package_list) ? shopeeOrder.package_list : [];
+  if (packages.length === 0) return;
+  if (!order.packageNumber) {
+    const withPkg = packages.find((p: any) => p?.package_number);
+    if (withPkg?.package_number) order.packageNumber = String(withPkg.package_number);
+  }
+  for (const pkg of packages) {
+    if (pkg?.package_number && !order.packageNumber) {
+      order.packageNumber = String(pkg.package_number);
+    }
+    if (pkg?.tracking_number) applyShopeeTrackingCode(order, pkg.tracking_number);
+    if (pkg?.last_mile_tracking_number) applyShopeeTrackingCode(order, pkg.last_mile_tracking_number);
+    if (pkg?.first_mile_tracking_number) {
+      if (isShopeeInternalTrackingCode(pkg.first_mile_tracking_number)) {
+        order.internalTrackingCode = String(pkg.first_mile_tracking_number);
+      } else {
+        applyShopeeTrackingCode(order, pkg.first_mile_tracking_number);
+      }
+    }
+  }
+  repairMisassignedTracking(order);
+}
+
+/** Các tab cần có mã vận đơn để quét QR — gồm PROCESSED và CANCELLED. */
+const SHOPEE_TRACKING_ENRICH_STATUSES = new Set([
+  "pending_confirm",
+  "unprocessed",
+  "processed",
+  "shipping",
+  "completed",
+  "cancelled",
+  "return_pending",
+  "return_received",
+]);
+
 function needsShopeeTrackingEnrichment(order: any): boolean {
   if (order.channel !== "shopee") return false;
   const status = String(order.status || "");
-  if (!["processed", "shipping", "completed", "return_pending"].includes(status)) return false;
+  if (!SHOPEE_TRACKING_ENRICH_STATUSES.has(status)) return false;
   if (order.trackingNumber && isCarrierTrackingCode(order.trackingNumber)) return false;
   return true;
 }
@@ -5384,6 +5420,51 @@ async function enrichShopeeOrderTrackingFromApi(shopId: string, accessToken: str
     console.warn(`[Shopee Tracking] enrich ${order.orderSn} failed:`, err);
   }
   return order;
+}
+
+async function enrichShopeeOrdersTrackingBatch(
+  shopId: string,
+  accessToken: string,
+  orders: any[],
+): Promise<void> {
+  for (let i = 0; i < orders.length; i++) {
+    const order = orders[i];
+    if (!needsShopeeTrackingEnrichment(order)) continue;
+    try {
+      await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order);
+    } catch (err) {
+      console.warn(`[Shopee Tracking] batch enrich ${order?.orderSn} failed:`, err);
+    }
+    if (i < orders.length - 1) await sleep(200);
+  }
+}
+
+/** Bù get_tracking_number cho đơn thiếu mã vận đơn sau sync/pull (PROCESSED, CANCELLED...). */
+async function repairMissingShopeeTrackingInOrders(
+  orders: any[],
+  opts?: { max?: number },
+): Promise<number> {
+  const max = Math.max(1, Math.min(opts?.max ?? 30, 50));
+  let fixed = 0;
+  const tokenCache = new Map<string, string | null>();
+  for (const o of orders) {
+    if (fixed >= max) break;
+    if (!needsShopeeTrackingEnrichment(o) || !o.shopId) continue;
+    const shopKey = String(o.shopId);
+    if (!tokenCache.has(shopKey)) {
+      tokenCache.set(shopKey, await getValidShopeeAccessToken(shopKey));
+    }
+    const accessToken = tokenCache.get(shopKey);
+    if (!accessToken) continue;
+    await enrichShopeeOrderTrackingFromApi(shopKey, accessToken, o);
+    fixed++;
+    if (fixed < max) await sleep(200);
+  }
+  if (fixed > 0) {
+    saveOrders(orders);
+    console.log(`[Shopee Tracking] repairMissingShopeeTrackingInOrders: đã bù ${fixed} đơn.`);
+  }
+  return fixed;
 }
 
 // Normalize one item from get_order_detail's `order_list` into this project's Order shape.
@@ -5419,7 +5500,7 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       totalAmount: order.totalAmount,
       withholdingCitTax: extractShopeeWithholdingCitTax(item),
     });
-    if (pkg?.tracking_number) applyShopeeTrackingCode(order, pkg.tracking_number);
+    applyShopeePackageListTracking(order, item);
     repairMisassignedTracking(order);
     return order;
   } catch (err) {
@@ -5835,6 +5916,8 @@ async function syncShopeeOrdersFromApi(
     pending_confirm: orders.filter((o: any) => o.status === "pending_confirm").length,
   };
   console.log(`[Shopee Sync] UI counts sau đồng bộ:`, JSON.stringify(uiStatusCounts));
+
+  await repairMissingShopeeTrackingInOrders(orders, { max: 30 });
 
   const uniqueErrors = dedupeErrors(errors);
 
@@ -7856,6 +7939,9 @@ function normalizeShopeeOrder(payload: any): any | null {
     totalAmount: order.totalAmount,
     withholdingCitTax: extractShopeeWithholdingCitTax(data),
   });
+  if (Array.isArray(data.package_list) && data.package_list.length > 0) {
+    applyShopeePackageListTracking(order, data);
+  }
   const rawTrack = data.tracking_no || data.tracking_number;
   if (rawTrack) applyShopeeTrackingCode(order, rawTrack);
   repairMisassignedTracking(order);
@@ -7873,10 +7959,22 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
     if (normalized.partialCancel) {
       await restoreLocalStockForPartialCancel(normalized.shopId || existing?.shopId, existing, normalized);
     }
+    let merged =
+      existingIndex >= 0 ? mergeShopeeOrderOnSync(existing, normalized) : normalized;
+    if (merged.channel === "shopee" && merged.shopId && needsShopeeTrackingEnrichment(merged)) {
+      try {
+        const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
+        if (accessToken) {
+          merged = await enrichShopeeOrderTrackingFromApi(String(merged.shopId), accessToken, merged);
+        }
+      } catch (trackErr) {
+        console.warn(`[Shopee Webhook] enrich tracking ${merged.orderSn}:`, trackErr);
+      }
+    }
     if (existingIndex >= 0) {
-      orders[existingIndex] = mergeShopeeOrderOnSync(existing, normalized);
+      orders[existingIndex] = merged;
     } else {
-      orders.unshift(normalized);
+      orders.unshift(merged);
     }
     saveOrders(orders);
     console.log(`[Shopee Webhook] Order ${normalized.orderSn} upserted into local orders database.`);
@@ -10263,7 +10361,7 @@ async function startServer() {
               accessToken,
               shopId,
               chunkSns,
-              { enrichTracking: false },
+              { enrichTracking: true },
             );
             errors.push(...chunkErrors);
 
@@ -10300,6 +10398,8 @@ async function startServer() {
       }
 
       console.log(`[Orders Pull] Hoàn thành: ${pulledCount} đơn đã cập nhật/thêm mới.`);
+
+      await repairMissingShopeeTrackingInOrders(orders, { max: 40 });
 
       return res.json({
         success: true,

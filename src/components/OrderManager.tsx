@@ -228,7 +228,6 @@ export default function OrderManager({
   const lastQrScanRef = React.useRef({ key: '', at: 0 });
 
   const [sessionStats, setSessionStats] = useState({ shipped: 0, cancelDetected: 0, returnReceived: 0 });
-  const [manualScanInput, setManualScanInput] = useState('');
   const [scanToast, setScanToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   /** Hàng đợi mã QR — chỉ xử lý khi bấm Kết thúc. */
@@ -375,9 +374,8 @@ export default function OrderManager({
             scanFeedback('success');
             setCameraScanError(false);
             setCameraScanSuccess(true);
-            setCameraScanResult(`✓ Giao ĐVVC #${order.orderSn}`);
-            setManualScanInput('');
-            setTimeout(() => setCameraScanSuccess(false), 2000);
+          setCameraScanResult(`✓ Giao ĐVVC #${order.orderSn}`);
+          setTimeout(() => setCameraScanSuccess(false), 2000);
           } else {
             scanFeedback('error');
             setCameraScanSuccess(false);
@@ -417,7 +415,6 @@ export default function OrderManager({
               : `Đã nhận hoàn đơn #${order.orderSn}`,
             'success'
           );
-          setManualScanInput('');
           setTimeout(() => setCameraScanSuccess(false), 2000);
           return;
         }
@@ -1646,7 +1643,6 @@ export default function OrderManager({
 
   const handleEndScanSession = () => {
     setSessionStats({ shipped: 0, cancelDetected: 0, returnReceived: 0 });
-    setManualScanInput('');
     setCameraScanResult('Chế độ quét liên tục — sẵn sàng...');
     setCameraScanSuccess(false);
     setScanToast(null);
@@ -1683,13 +1679,6 @@ export default function OrderManager({
     }
   };
 
-  const handleManualScanSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!manualScanInput.trim() || isFlushingQueue) return;
-    enqueueContinuousScan(manualScanInput);
-    setManualScanInput('');
-  };
-
   if (focusScanner) {
     return (
       <div className="fixed inset-0 bg-zinc-950 z-50 flex flex-col select-none font-sans">
@@ -1724,9 +1713,9 @@ export default function OrderManager({
           </div>
         </div>
 
-        {/* Camera */}
+        {/* Camera + hàng đợi */}
         <div className="flex-1 min-h-0 px-3 flex flex-col gap-2 pb-2">
-          <div className="flex-1 min-h-[160px] max-h-[38vh] relative rounded-2xl border border-zinc-800 overflow-hidden bg-black">
+          <div className="shrink-0 min-h-[160px] max-h-[42vh] relative rounded-2xl border border-zinc-800 overflow-hidden bg-black">
             <div id="camera-reader" className="w-full h-full object-cover" />
             <button
               type="button"
@@ -1747,27 +1736,6 @@ export default function OrderManager({
                 {!cameraScanSuccess && !cameraScanError && <div className="qr-scan-line" />}
               </div>
             </div>
-
-            {/* Overlay log mã vừa quét */}
-            {scanQueue.length > 0 && (
-              <div className="absolute top-2 left-2 right-2 z-[8] pointer-events-none space-y-1 max-h-[42%] overflow-hidden">
-                <div className="rounded-lg bg-black/70 border border-white/15 px-2 py-1.5 backdrop-blur-sm">
-                  <p className="text-[10px] font-black text-emerald-300 uppercase tracking-wide mb-1">
-                    Hàng đợi · {scanQueue.length} mã
-                  </p>
-                  <ul className="space-y-0.5">
-                    {scanQueue.slice(0, 5).map((item) => (
-                      <li key={item.id} className="text-[10px] font-mono text-white/90 truncate">
-                        • {item.code}
-                      </li>
-                    ))}
-                    {scanQueue.length > 5 && (
-                      <li className="text-[10px] text-zinc-400">+{scanQueue.length - 5} mã khác...</li>
-                    )}
-                  </ul>
-                </div>
-              </div>
-            )}
 
             <p className="absolute bottom-2 left-0 right-0 text-center text-[10px] font-bold text-white/80 pointer-events-none z-[7]">
               Quét liên tục — nghe bíp/rung là OK · không cần bấm gì
@@ -1800,24 +1768,35 @@ export default function OrderManager({
             )}
           </div>
 
-          <form onSubmit={handleManualScanSubmit} className="flex gap-2 shrink-0">
-            <input
-              type="text"
-              value={manualScanInput}
-              onChange={(e) => setManualScanInput(e.target.value)}
-              placeholder="Nhập / dán mã → vào hàng đợi..."
-              disabled={isFlushingQueue}
-              className="flex-1 min-h-11 px-3 rounded-xl bg-zinc-900 border border-zinc-700 text-white text-sm font-mono outline-none focus:border-blue-500 disabled:opacity-50"
-              autoComplete="off"
-            />
-            <button
-              type="submit"
-              disabled={isFlushingQueue}
-              className="shrink-0 min-h-11 px-4 rounded-xl bg-blue-600 text-white font-bold text-xs uppercase disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Thêm
-            </button>
-          </form>
+          <div className="flex-1 min-h-[140px] max-h-[45vh] rounded-2xl border border-zinc-700 bg-zinc-900/95 overflow-hidden flex flex-col shadow-inner">
+            <div className="shrink-0 px-3 py-2.5 border-b border-zinc-800 flex items-center justify-between">
+              <p className="text-xs font-black text-emerald-300 uppercase tracking-wide">
+                Hàng đợi · {scanQueue.length} mã
+              </p>
+              {scanQueue.length > 0 && (
+                <span className="text-[10px] font-bold text-zinc-500">Mới nhất ở trên</span>
+              )}
+            </div>
+            {scanQueue.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center px-4 text-center text-xs text-zinc-500 font-semibold">
+                Quét mã QR — danh sách hiển thị tại đây
+              </div>
+            ) : (
+              <ul className="flex-1 overflow-y-auto p-2 space-y-1.5">
+                {scanQueue.map((item, idx) => (
+                  <li
+                    key={item.id}
+                    className="flex items-center gap-2 rounded-xl bg-zinc-950/80 border border-zinc-800 px-3 py-2.5"
+                  >
+                    <span className="shrink-0 w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 text-[10px] font-black flex items-center justify-center">
+                      {scanQueue.length - idx}
+                    </span>
+                    <span className="flex-1 text-sm font-mono text-white truncate">{item.code}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
           <div
             className={`shrink-0 text-sm font-bold px-3 py-2.5 rounded-xl text-center transition-all ${
