@@ -29,6 +29,8 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     packageNumber: raw.packageNumber ? String(raw.packageNumber) : undefined,
     isPrepared: Boolean(raw.isPrepared),
     isPrinted: Boolean(raw.isPrinted),
+    isHandedOverToCarrier: Boolean(raw.isHandedOverToCarrier ?? raw.is_handed_over_to_carrier),
+    is_handed_over_to_carrier: Boolean(raw.is_handed_over_to_carrier ?? raw.isHandedOverToCarrier),
     notes: raw.notes ? String(raw.notes) : undefined,
   };
 }

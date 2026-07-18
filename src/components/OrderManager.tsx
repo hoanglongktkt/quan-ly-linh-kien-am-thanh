@@ -7,6 +7,12 @@ import {
   type LiveQrScannerHandle,
 } from '../utils/cameraScanner';
 import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback, isLikelyTrackingCode, buildOrderScanIndex, normalizeOrderScanKey } from '../utils/orderScan';
+import {
+  isOrderHandedOverToCarrier,
+  matchesHandedOverCarrierTab,
+  matchesProcessedPickupTab,
+  isOrderAwaitingCarrierPickup,
+} from '../utils/orderHandover';
 import { 
   Search, 
   ShoppingBag, 
@@ -150,6 +156,7 @@ type OrderTab =
   | 'pending_confirm' 
   | 'unprocessed' 
   | 'processed' 
+  | 'handed_over_carrier'
   | 'shipping' 
   | 'cancel_returns'
   | 'order_products'
@@ -255,6 +262,69 @@ export default function OrderManager({
     setTimeout(() => setScanToast(null), 2800);
   };
 
+  const applyHandoverToLocalOrders = React.useCallback(
+    (updatedOrder: Order) => {
+      const merged = ordersRef.current.map((o) =>
+        o.id === updatedOrder.id ? { ...o, ...updatedOrder } : o
+      );
+      ordersRef.current = merged;
+      onUpdateOrders(merged);
+    },
+    [onUpdateOrders]
+  );
+
+  const handOverOrderToCarrier = React.useCallback(
+    async (order: Order, opts?: { switchTab?: boolean; fromScan?: boolean }) => {
+      const token = localStorage.getItem('admin_token');
+      if (!token) {
+        showScanToast('Chưa đăng nhập — không thể ghi nhận bàn giao ĐVVC.', 'error');
+        return false;
+      }
+      if (!isOrderAwaitingCarrierPickup(order)) {
+        showScanToast(`Đơn #${order.orderSn} không ở trạng thái chờ lấy hàng.`, 'error');
+        return false;
+      }
+      if (isOrderHandedOverToCarrier(order)) {
+        if (opts?.switchTab !== false) setActiveSubTab('handed_over_carrier');
+        showScanToast(`Đơn #${order.orderSn} đã ghi nhận giao cho ĐVVC trước đó.`, 'success');
+        return true;
+      }
+      try {
+        const res = await fetch(`/api/orders/${encodeURIComponent(order.id)}/hand-over-carrier`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+        }
+        const saved = (data?.order || data) as Order;
+        applyHandoverToLocalOrders({ ...order, ...saved, isHandedOverToCarrier: true, is_handed_over_to_carrier: true });
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          channel: order.channel,
+          type: 'stock_sync',
+          status: 'success',
+          message: opts?.fromScan
+            ? `[QUÉT QR] Bàn giao ĐVVC đơn ${order.orderSn} → Tab Đã giao cho ĐVVC.`
+            : `[BÀN GIAO] Đơn ${order.orderSn} → Đã giao cho ĐVVC.`,
+        });
+        if (opts?.switchTab !== false) setActiveSubTab('handed_over_carrier');
+        showScanToast(`Đã giao cho ĐVVC — đơn #${order.orderSn}`, 'success');
+        return true;
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        showScanToast(`Không ghi nhận bàn giao: ${msg}`, 'error');
+        return false;
+      }
+    },
+    [applyHandoverToLocalOrders, onAddLog]
+  );
+
   const handleOrderScan = React.useCallback(
     async (rawQuery: string) => {
       const trimmed = rawQuery.trim();
@@ -299,33 +369,21 @@ export default function OrderManager({
         }
 
         if (order.status === 'unprocessed' || order.status === 'processed') {
-          const scannedTracking = isLikelyTrackingCode(trimmed) ? trimmed : undefined;
-          const updated = ordersRef.current.map((o) => {
-            if (o.id !== order!.id) return o;
-            const tracking =
-              o.trackingNumber ||
-              scannedTracking ||
-              `${o.channel === 'shopee' ? 'SPX' : o.channel === 'tiktok' ? 'TTS' : 'WOO'}-VN-${Math.floor(10000000 + Math.random() * 90000000)}`;
-            return { ...o, status: 'shipping' as const, trackingNumber: tracking, isPrepared: true };
-          });
-          ordersRef.current = updated;
-          onUpdateOrders(updated);
-          onAddLog({
-            id: `log-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            channel: order.channel,
-            type: 'stock_sync',
-            status: 'success',
-            message: `[QUÉT QR] Xuất kho đơn ${order.orderSn} → Đang giao.`,
-          });
-          setSessionStats((s) => ({ ...s, shipped: s.shipped + 1 }));
-          scanFeedback('success');
-          setCameraScanError(false);
-          setCameraScanSuccess(true);
-          setCameraScanResult(`✓ Xuất kho #${order.orderSn}`);
-          showScanToast(`Đã xuất kho — đơn #${order.orderSn} chuyển sang Đang giao`, 'success');
-          setManualScanInput('');
-          setTimeout(() => setCameraScanSuccess(false), 2000);
+          const ok = await handOverOrderToCarrier(order, { fromScan: true });
+          if (ok) {
+            setSessionStats((s) => ({ ...s, shipped: s.shipped + 1 }));
+            scanFeedback('success');
+            setCameraScanError(false);
+            setCameraScanSuccess(true);
+            setCameraScanResult(`✓ Giao ĐVVC #${order.orderSn}`);
+            setManualScanInput('');
+            setTimeout(() => setCameraScanSuccess(false), 2000);
+          } else {
+            scanFeedback('error');
+            setCameraScanSuccess(false);
+            setCameraScanError(true);
+            setTimeout(() => setCameraScanError(false), 2000);
+          }
           return;
         }
 
@@ -406,7 +464,7 @@ export default function OrderManager({
         setIsScanBusy(false);
       }
     },
-    [onUpdateOrders, onAddLog, orderScanIndex]
+    [onUpdateOrders, onAddLog, orderScanIndex, handOverOrderToCarrier]
   );
 
   useEffect(() => {
@@ -1211,7 +1269,9 @@ export default function OrderManager({
     }
     return orders.filter(o => {
       if (status === 'all') return true;
-      if (status === 'unprocessed') return o.status === 'unprocessed';
+      if (status === 'unprocessed') return o.status === 'unprocessed' && !isOrderHandedOverToCarrier(o);
+      if (status === 'processed') return matchesProcessedPickupTab(o);
+      if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
       return o.status === status;
     }).length;
   };
@@ -1221,6 +1281,12 @@ export default function OrderManager({
     // 1. Tab filter
     if (activeSubTab === 'cancel_returns') {
       if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
+    } else if (activeSubTab === 'handed_over_carrier') {
+      if (!matchesHandedOverCarrierTab(order)) return false;
+    } else if (activeSubTab === 'processed') {
+      if (!matchesProcessedPickupTab(order)) return false;
+    } else if (activeSubTab === 'unprocessed') {
+      if (order.status !== 'unprocessed' || isOrderHandedOverToCarrier(order)) return false;
     } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products' && activeSubTab !== 'reprint') {
       if (order.status !== activeSubTab) return false;
     }
@@ -2119,6 +2185,20 @@ export default function OrderManager({
         </button>
 
         <button
+          onClick={() => setActiveSubTab('handed_over_carrier')}
+          className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'handed_over_carrier' 
+              ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
+              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <span>Đã giao cho ĐVVC</span>
+          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-violet-100 text-violet-700 border border-violet-200">
+            {getCount('handed_over_carrier')}
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveSubTab('shipping')}
           className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'shipping' 
@@ -2624,7 +2704,7 @@ export default function OrderManager({
                             </>
                           )}
 
-                          {order.status === 'processed' && (
+                          {order.status === 'processed' && !isOrderHandedOverToCarrier(order) && (
                             <>
                               <span className={`om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded ${
                                 order.isPrinted ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50'
@@ -2640,10 +2720,7 @@ export default function OrderManager({
                                 <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                               </button>
                               <button
-                                onClick={() => {
-                                  const updated = orders.map(o => o.id === order.id ? { ...o, status: 'shipping' as const } : o);
-                                  onUpdateOrders(updated);
-                                }}
+                                onClick={() => void handOverOrderToCarrier(order)}
                                 className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg transition-all"
                               >
                                 Giao cho ĐVVC
@@ -2850,7 +2927,7 @@ export default function OrderManager({
                         </>
                       )}
 
-                      {order.status === 'processed' && (
+                      {order.status === 'processed' && !isOrderHandedOverToCarrier(order) && (
                         <>
                           <span className={`om-mobile-hide-print text-[11px] font-black px-2.5 py-1 rounded-xl border ${
                             order.isPrinted ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-rose-600 bg-rose-50 border-rose-100'
@@ -2866,10 +2943,7 @@ export default function OrderManager({
                             <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                           </button>
                           <button
-                            onClick={() => {
-                              const updated = orders.map(o => o.id === order.id ? { ...o, status: 'shipping' as const } : o);
-                              onUpdateOrders(updated);
-                            }}
+                            onClick={() => void handOverOrderToCarrier(order)}
                             className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all"
                           >
                             Giao cho ĐVVC

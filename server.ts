@@ -5434,6 +5434,24 @@ function orderItemsHaveVariationData(items: any[] | undefined): boolean {
   return Array.isArray(items) && items.some((i) => i?.modelId || i?.modelName || i?.modelSku);
 }
 
+function resolveOrderHandoverFlag(order: any): boolean {
+  return Boolean(order?.isHandedOverToCarrier ?? order?.is_handed_over_to_carrier);
+}
+
+function setOrderHandoverFlag(order: any, value: boolean): void {
+  order.isHandedOverToCarrier = value;
+  order.is_handed_over_to_carrier = value;
+}
+
+function isOrderAwaitingCarrierPickupStatus(status: unknown): boolean {
+  const s = String(status || "");
+  return s === "processed" || s === "unprocessed";
+}
+
+function matchesHandedOverCarrierTabOrder(order: any): boolean {
+  return resolveOrderHandoverFlag(order) && isOrderAwaitingCarrierPickupStatus(order?.status);
+}
+
 function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   if (!existing) return incoming;
 
@@ -5493,6 +5511,12 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   }
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
+  // Shopee SHIPPED/SHIPPING → ưu tiên sàn: rời tab nội bộ "Đã giao cho ĐVVC"
+  if (incoming.status === "shipping" || incoming.status === "completed") {
+    setOrderHandoverFlag(merged, false);
+  } else if (existing) {
+    setOrderHandoverFlag(merged, resolveOrderHandoverFlag(existing));
+  }
   delete merged.customerName;
   delete merged.customerPhone;
   delete merged.customerAddress;
@@ -9548,10 +9572,43 @@ async function startServer() {
       return o;
     });
     if (dirty) saveOrders(rawOrders);
+
+    const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
+    if (tab === "handed_over_carrier" || tab === "handed-over-carrier") {
+      rawOrders = rawOrders.filter((o: any) => matchesHandedOverCarrierTabOrder(o));
+    }
+
     const products = await loadProductsForOrders(rawOrders);
     const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
     return res.json(orders);
   });
+
+  function handOverOrderToCarrierByIndex(orders: any[], index: number): { ok: true; order: any } | { ok: false; status: number; error: string } {
+    if (index < 0) {
+      return { ok: false, status: 404, error: "Không tìm thấy đơn hàng." };
+    }
+    const order = orders[index];
+    if (!isOrderAwaitingCarrierPickupStatus(order?.status)) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Đơn ${order?.orderSn || order?.id} không ở trạng thái chờ lấy hàng — không thể ghi nhận bàn giao ĐVVC.`,
+      };
+    }
+    if (resolveOrderHandoverFlag(order)) {
+      return { ok: true, order };
+    }
+    const updated = {
+      ...order,
+      isHandedOverToCarrier: true,
+      is_handed_over_to_carrier: true,
+      handedOverAt: new Date().toISOString(),
+    };
+    orders[index] = updated;
+    saveOrders(orders);
+    console.log(`[Orders Handover] Đơn ${updated.orderSn} → is_handed_over_to_carrier=true`);
+    return { ok: true, order: updated };
+  }
 
   function normalizeScanLookupKey(raw: string): string {
     return String(raw || "")
@@ -9725,9 +9782,59 @@ async function startServer() {
     if (index === -1) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
     }
-    orders[index] = { ...orders[index], ...req.body, id: orders[index].id };
+    const patch = { ...req.body };
+    delete patch.id;
+    if (patch.status === "shipping" || patch.status === "completed") {
+      patch.isHandedOverToCarrier = false;
+      patch.is_handed_over_to_carrier = false;
+    }
+    orders[index] = { ...orders[index], ...patch, id: orders[index].id };
     saveOrders(orders);
     return res.json(orders[index]);
+  });
+
+  // Ghi nhận nội bộ: đã bàn giao cho bưu tá/ĐVVC (chưa quét nhập kho Shopee).
+  app.post("/api/orders/:id/hand-over-carrier", authMiddleware, async (req, res) => {
+    const orders = loadOrders();
+    const index = orders.findIndex((o: any) => o.id === req.params.id || o.orderSn === req.params.id);
+    const result = handOverOrderToCarrierByIndex(orders, index);
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+    }
+    const products = await loadProductsForOrders([result.order]);
+    const enriched = enrichOrdersFromCatalog([result.order], products)[0];
+    return res.json({ success: true, order: enriched });
+  });
+
+  // Quét QR/mã vận đơn → ghi nhận bàn giao ĐVVC.
+  app.post("/api/orders/hand-over-carrier", authMiddleware, async (req, res) => {
+    const code = String(req.body?.code || req.body?.scanCode || req.body?.q || "").trim();
+    const orderId = String(req.body?.orderId || req.body?.id || "").trim();
+    const orders = loadOrders();
+
+    let index = -1;
+    if (orderId) {
+      index = orders.findIndex((o: any) => o.id === orderId || o.orderSn === orderId);
+    } else if (code) {
+      const found = await findOrderByScanLookup(orders.filter(isValidOrder), code);
+      if (found) {
+        index = orders.findIndex((o: any) => o.id === found.id);
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: "Thiếu orderId hoặc mã quét (code).",
+        message: "Thiếu orderId hoặc mã quét (code).",
+      });
+    }
+
+    const result = handOverOrderToCarrierByIndex(orders, index);
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+    }
+    const products = await loadProductsForOrders([result.order]);
+    const enriched = enrichOrdersFromCatalog([result.order], products)[0];
+    return res.json({ success: true, order: enriched });
   });
 
   const VN_ADDRESS_API = "https://provinces.open-api.vn/api";

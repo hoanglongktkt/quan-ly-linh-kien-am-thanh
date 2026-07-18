@@ -113,6 +113,10 @@ export interface Order {
   packageNumber?: string; // Shopee package_number, required by logistics APIs for split orders
   isPrepared?: boolean;
   isPrinted?: boolean;
+  /** Trạng thái nội bộ: đã bàn giao cho bưu tá/ĐVVC, chưa quét nhập kho Shopee */
+  isHandedOverToCarrier?: boolean;
+  /** Mirror snake_case for DB / API */
+  is_handed_over_to_carrier?: boolean;
   items: {
     productId: string;
     productTitle: string;
