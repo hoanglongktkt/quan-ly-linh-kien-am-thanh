@@ -7,7 +7,16 @@ import {
   HTTPS_CAMERA_MESSAGE,
   type LiveQrScannerHandle,
 } from '../utils/cameraScanner';
-import { findOrderByScanPayload, lookupOrderByScanCode, scanFeedback, isLikelyTrackingCode, buildOrderScanIndex, normalizeOrderScanKey } from '../utils/orderScan';
+import {
+  findOrderByScanPayload,
+  lookupOrderByScanCode,
+  scanFeedback,
+  playScanSound,
+  vibrateScan,
+  isLikelyTrackingCode,
+  buildOrderScanIndex,
+  normalizeOrderScanKey,
+} from '../utils/orderScan';
 import {
   isOrderHandedOverToCarrier,
   matchesHandedOverCarrierTab,
@@ -367,23 +376,33 @@ export default function OrderManager({
   const [cameraRestartKey, setCameraRestartKey] = useState(0);
   const lastQrScanRef = React.useRef({ key: '', at: 0 });
 
-  /** 3 box thống kê phiên quét: Đã xuất kho / Đơn báo hủy / Đã nhận hoàn */
-  const [scanStatBoxes, setScanStatBoxes] = useState({
-    daXuatKho: 0,
-    donHuy: 0,
-    daNhanHoan: 0,
-  });
+  type ScanVerifiedItem = {
+    id: string;
+    code: string;
+    orderId?: string;
+    orderSn?: string;
+    trackingNumber?: string;
+    at: number;
+  };
+  type ScanStatModalKey = 'daXuatKho' | 'donHuy' | 'daNhanHoan';
+
+  /** Real-time lists — quét đến đâu phân loại đến đó (ghi DB khi bấm Kết thúc). */
+  const [daXuatKhoList, setDaXuatKhoList] = useState<ScanVerifiedItem[]>([]);
+  const [donHuyList, setDonHuyList] = useState<ScanVerifiedItem[]>([]);
+  const [daNhanHoanList, setDaNhanHoanList] = useState<ScanVerifiedItem[]>([]);
+  const [scanStatModal, setScanStatModal] = useState<ScanStatModalKey | null>(null);
   const [scanToast, setScanToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
-  /** Hàng đợi mã QR — chỉ xử lý khi bấm Kết thúc. */
-  const [scanQueue, setScanQueue] = useState<Array<{ id: string; code: string; at: number }>>([]);
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
+  const [isVerifyingScan, setIsVerifyingScan] = useState(false);
 
   const ordersRef = React.useRef(orders);
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
-  const enqueueScanRef = React.useRef<(query: string) => void>(() => {});
+  const verifyScanRef = React.useRef<(query: string) => void>(() => {});
   const isScanBusyRef = React.useRef(false);
-  const scanQueueRef = React.useRef(scanQueue);
+  const daXuatKhoListRef = React.useRef(daXuatKhoList);
+  const donHuyListRef = React.useRef(donHuyList);
+  const daNhanHoanListRef = React.useRef(daNhanHoanList);
   /** Instance scanner sống — dùng để await stop/clear trước khi unmount. */
   const liveScannerRef = React.useRef<LiveQrScannerHandle | null>(null);
   const isTearingDownScannerRef = React.useRef(false);
@@ -395,14 +414,21 @@ export default function OrderManager({
       ).length,
     [orders]
   );
+  const totalVerifiedScans = daXuatKhoList.length + donHuyList.length + daNhanHoanList.length;
 
   useEffect(() => {
     ordersRef.current = orders;
   }, [orders]);
 
   useEffect(() => {
-    scanQueueRef.current = scanQueue;
-  }, [scanQueue]);
+    daXuatKhoListRef.current = daXuatKhoList;
+  }, [daXuatKhoList]);
+  useEffect(() => {
+    donHuyListRef.current = donHuyList;
+  }, [donHuyList]);
+  useEffect(() => {
+    daNhanHoanListRef.current = daNhanHoanList;
+  }, [daNhanHoanList]);
 
   const showScanToast = (text: string, type: 'success' | 'error') => {
     setScanToast({ text, type });
@@ -518,12 +544,11 @@ export default function OrderManager({
         if (order.status === 'unprocessed' || order.status === 'processed') {
           const ok = await handOverOrderToCarrier(order, { fromScan: true });
           if (ok) {
-            setScanStatBoxes((s) => ({ ...s, daXuatKho: s.daXuatKho + 1 }));
             scanFeedback('success');
             setCameraScanError(false);
             setCameraScanSuccess(true);
-          setCameraScanResult(`✓ Giao ĐVVC #${order.orderSn}`);
-          setTimeout(() => setCameraScanSuccess(false), 2000);
+            setCameraScanResult(`✓ Giao ĐVVC #${order.orderSn}`);
+            setTimeout(() => setCameraScanSuccess(false), 2000);
           } else {
             scanFeedback('error');
             setCameraScanSuccess(false);
@@ -548,12 +573,7 @@ export default function OrderManager({
             status: 'success',
             message: `[QUÉT QR] Nhận hoàn đơn ${order.orderSn} → Hủy giao đã nhận.`,
           });
-          setScanStatBoxes((s) => ({
-            ...s,
-            donHuy: isCancelRequest ? s.donHuy + 1 : s.donHuy,
-            daNhanHoan: s.daNhanHoan + 1,
-          }));
-          scanFeedback('success');
+          scanFeedback(isCancelRequest ? 'warning' : 'success');
           setCameraScanError(false);
           setCameraScanSuccess(true);
           setCameraScanResult(`✓ Nhận hoàn #${order.orderSn}`);
@@ -617,46 +637,165 @@ export default function OrderManager({
     applyScanRef.current = handleOrderScan;
   }, [handleOrderScan]);
 
-  /** Continuous mode: chỉ xếp hàng đợi + bíp/rung — không xử lý đơn, không khóa camera. */
-  const enqueueContinuousScan = React.useCallback((rawQuery: string) => {
-    const trimmed = String(rawQuery || '').trim();
-    if (!trimmed || isFlushingQueue) return;
-
-    const key = normalizeOrderScanKey(trimmed);
-    if (!key) return;
-
-    const now = Date.now();
-    if (
-      key === lastQrScanRef.current.key &&
-      now - lastQrScanRef.current.at < 1200
-    ) {
-      return;
-    }
-    lastQrScanRef.current = { key, at: now };
-
-    if (scanQueueRef.current.some((q) => normalizeOrderScanKey(q.code) === key)) {
-      scanFeedback('error');
-      setCameraScanError(true);
+  const flashViewfinder = (type: 'success' | 'error', ms = 500) => {
+    if (type === 'success') {
+      setCameraScanError(false);
+      setCameraScanSuccess(true);
+      window.setTimeout(() => setCameraScanSuccess(false), ms);
+    } else {
       setCameraScanSuccess(false);
-      setCameraScanResult(`Đã có trong hàng đợi: ${trimmed}`);
-      window.setTimeout(() => setCameraScanError(false), 700);
-      return;
+      setCameraScanError(true);
+      window.setTimeout(() => setCameraScanError(false), ms);
     }
+  };
 
-    const item = { id: `sq-${now}-${Math.random().toString(36).slice(2, 7)}`, code: trimmed, at: now };
-    const next = [item, ...scanQueueRef.current];
-    scanQueueRef.current = next;
-    setScanQueue(next);
-    scanFeedback('success');
-    setCameraScanError(false);
-    setCameraScanSuccess(true);
-    setCameraScanResult(`✓ Đã xếp hàng #${next.length}: ${trimmed}`);
-    window.setTimeout(() => setCameraScanSuccess(false), 450);
-  }, [isFlushingQueue]);
+  const isCodeAlreadyVerified = (key: string) => {
+    const inList = (list: ScanVerifiedItem[]) =>
+      list.some((item) => normalizeOrderScanKey(item.code) === key || normalizeOrderScanKey(item.orderSn || '') === key);
+    return (
+      inList(daXuatKhoListRef.current) ||
+      inList(donHuyListRef.current) ||
+      inList(daNhanHoanListRef.current)
+    );
+  };
+
+  /** Real-time: quét → dò trạng thái ngay (chưa ghi DB). */
+  const verifySingleOrder = React.useCallback(
+    async (rawQuery: string) => {
+      const trimmed = String(rawQuery || '').trim();
+      if (!trimmed || isFlushingQueue || isTearingDownScannerRef.current) return;
+
+      const key = normalizeOrderScanKey(trimmed);
+      if (!key) return;
+
+      const now = Date.now();
+      // Debounce 2.5s cùng mã — tránh gọi API/âm thanh liên tục.
+      if (key === lastQrScanRef.current.key && now - lastQrScanRef.current.at < 2500) {
+        return;
+      }
+      lastQrScanRef.current = { key, at: now };
+
+      if (isCodeAlreadyVerified(key)) {
+        playScanSound('warning');
+        vibrateScan('warning');
+        flashViewfinder('error', 500);
+        setCameraScanResult(`Mã đã quét trong phiên này: ${trimmed}`);
+        showScanToast('Mã này đã có trong danh sách phiên quét', 'error');
+        return;
+      }
+
+      if (isScanBusyRef.current) return;
+      isScanBusyRef.current = true;
+      setIsVerifyingScan(true);
+      setCameraScanResult(`Đang kiểm tra: ${trimmed}...`);
+
+      try {
+        const token = localStorage.getItem('admin_token');
+        const order =
+          findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex) ||
+          (await lookupOrderByScanCode(trimmed, ordersRef.current, token, orderScanIndex));
+
+        if (order) {
+          const idx = ordersRef.current.findIndex((o) => o.id === order.id);
+          if (idx >= 0) {
+            const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order } : o));
+            ordersRef.current = merged;
+            onUpdateOrders(merged);
+          } else {
+            const merged = [order, ...ordersRef.current];
+            ordersRef.current = merged;
+            onUpdateOrders(merged);
+          }
+        }
+
+        if (!order) {
+          playScanSound('error');
+          vibrateScan('error');
+          flashViewfinder('error', 500);
+          setCameraScanResult(`Không tìm thấy: ${trimmed}`);
+          showScanToast('Không tìm thấy mã này trong hệ thống', 'error');
+          return;
+        }
+
+        // Trùng theo orderId đã có trong list
+        const orderKey = normalizeOrderScanKey(order.orderSn || order.id);
+        if (isCodeAlreadyVerified(orderKey) || isCodeAlreadyVerified(normalizeOrderScanKey(order.trackingNumber || ''))) {
+          playScanSound('warning');
+          vibrateScan('warning');
+          flashViewfinder('error', 500);
+          showScanToast(`Đơn #${order.orderSn} đã quét trong phiên này`, 'error');
+          return;
+        }
+
+        const item: ScanVerifiedItem = {
+          id: `sv-${now}-${Math.random().toString(36).slice(2, 7)}`,
+          code: trimmed,
+          orderId: order.id,
+          orderSn: order.orderSn,
+          trackingNumber: order.trackingNumber || order.internalTrackingCode,
+          at: now,
+        };
+
+        if (order.status === 'unprocessed' || order.status === 'processed') {
+          playScanSound('success');
+          vibrateScan('success');
+          flashViewfinder('success', 500);
+          setDaXuatKhoList((prev) => {
+            const next = [item, ...prev];
+            daXuatKhoListRef.current = next;
+            return next;
+          });
+          setCameraScanResult(`✓ Xuất kho #${order.orderSn}`);
+          showScanToast(`Đơn chờ lấy hàng #${order.orderSn} — đã ghi nhận xuất kho`, 'success');
+          return;
+        }
+
+        if (order.status === 'cancelled') {
+          playScanSound('warning');
+          vibrateScan('warning');
+          flashViewfinder('error', 500);
+          setDonHuyList((prev) => {
+            const next = [item, ...prev];
+            donHuyListRef.current = next;
+            return next;
+          });
+          setCameraScanResult(`⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`);
+          showScanToast(`CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`, 'error');
+          return;
+        }
+
+        if (order.status === 'return_pending') {
+          playScanSound('success');
+          vibrateScan('success');
+          flashViewfinder('success', 500);
+          setDaNhanHoanList((prev) => {
+            const next = [item, ...prev];
+            daNhanHoanListRef.current = next;
+            return next;
+          });
+          setCameraScanResult(`✓ Nhận hoàn #${order.orderSn}`);
+          showScanToast(`Đơn hoàn #${order.orderSn} — đã ghi nhận nhận hàng hoàn`, 'success');
+          return;
+        }
+
+        playScanSound('error');
+        vibrateScan('error');
+        flashViewfinder('error', 500);
+        setCameraScanResult(`Đơn #${order.orderSn} — trạng thái không xử lý được`);
+        showScanToast(`Đơn #${order.orderSn} không thuộc trạng thái cần phân loại`, 'error');
+      } finally {
+        isScanBusyRef.current = false;
+        setIsVerifyingScan(false);
+      }
+    },
+    [isFlushingQueue, orderScanIndex, onUpdateOrders]
+  );
 
   useEffect(() => {
-    enqueueScanRef.current = enqueueContinuousScan;
-  }, [enqueueContinuousScan]);
+    verifyScanRef.current = (q: string) => {
+      void verifySingleOrder(q);
+    };
+  }, [verifySingleOrder]);
 
   useEffect(() => {
     let isMounted = true;
@@ -673,14 +812,14 @@ export default function OrderManager({
       setCameraScanError(false);
       setCameraError('');
       lastQrScanRef.current = { key: '', at: 0 };
-      // Chỉ reset hàng đợi khi mở/restart camera — KHÔNG reset 3 box thống kê phiên.
-      scanQueueRef.current = [];
-      setScanQueue([]);
       setIsFlushingQueue(false);
       setCameraScanResult((prev) =>
-        prev.includes('Xuất kho') || prev.includes('sẵn sàng quét tiếp')
+        prev.includes('Xuất kho') ||
+        prev.includes('ĐƠN HỦY') ||
+        prev.includes('Nhận hoàn') ||
+        prev.includes('sẵn sàng quét tiếp')
           ? prev
-          : 'Chế độ quét liên tục — sẵn sàng...',
+          : 'Quét realtime — dò trạng thái ngay mỗi mã',
       );
 
       const timer = setTimeout(() => {
@@ -695,8 +834,8 @@ export default function OrderManager({
 
         const qrCodeSuccessCallback = (decodedText: string) => {
           if (!decodedText?.trim() || isTearingDownScannerRef.current) return;
-          // Continuous: xếp hàng đợi ngay — không await backend, không đóng camera.
-          enqueueScanRef.current(decodedText);
+          // Realtime: verify ngay — không xếp hàng đợi batch.
+          verifyScanRef.current(decodedText);
         };
 
         void startLiveQrScanner({
@@ -1784,15 +1923,23 @@ export default function OrderManager({
   const tiktokShops = shops.filter(s => s.platform === 'tiktok');
   const woocommerceShops = shops.filter(s => s.platform === 'woocommerce');
 
-  /** Chỉ đóng UI quét khi user chủ động thoát (hàng đợi trống) — không redirect trang chủ. */
+  const clearVerifiedScanLists = () => {
+    daXuatKhoListRef.current = [];
+    donHuyListRef.current = [];
+    daNhanHoanListRef.current = [];
+    setDaXuatKhoList([]);
+    setDonHuyList([]);
+    setDaNhanHoanList([]);
+    setScanStatModal(null);
+  };
+
+  /** Chỉ đóng UI quét khi user chủ động thoát — không redirect trang chủ. */
   const closeScannerUiOnly = () => {
-    setScanStatBoxes({ daXuatKho: 0, donHuy: 0, daNhanHoan: 0 });
-    setCameraScanResult('Chế độ quét liên tục — sẵn sàng...');
+    clearVerifiedScanLists();
+    setCameraScanResult('Quét realtime — dò trạng thái ngay mỗi mã');
     setCameraScanSuccess(false);
     setScanToast(null);
     setShowEndConfirm(false);
-    scanQueueRef.current = [];
-    setScanQueue([]);
     setIsFlushingQueue(false);
     if (onCloseScanner) onCloseScanner();
     else if (onEndScanSession) onEndScanSession();
@@ -1802,35 +1949,20 @@ export default function OrderManager({
     closeScannerUiOnly();
   };
 
-  /** Tạm dừng camera (giải phóng ống kính) rồi bật lại — GIỮ nguyên UI màn quét. */
-  const recycleCameraKeepUi = async () => {
-    isTearingDownScannerRef.current = true;
-    try {
-      stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
-      const handle = liveScannerRef.current;
-      liveScannerRef.current = null;
-      if (handle) {
-        await handle.stop().catch(() => undefined);
-      } else {
-        await stopLiveQrScanner('camera-reader').catch(() => undefined);
-      }
-      await new Promise<void>((resolve) => {
-        window.requestAnimationFrame(() => resolve());
-      });
-    } finally {
-      isTearingDownScannerRef.current = false;
-    }
-    // Restart camera trong cùng UI (không unmount / không redirect).
-    setCameraRestartKey((k) => k + 1);
-  };
-
-  /** Kết thúc xử lý mã: bulk API → cập nhật 3 box → xóa hàng đợi → recycle camera, Ở LẠI màn quét. */
+  /** Kết thúc: ghi DB 1 lần từ 3 list đã verify realtime — clear list, ở lại màn quét. */
   const handleFinishContinuousScan = async () => {
     setShowEndConfirm(false);
-    const queue = [...scanQueueRef.current].reverse();
-    const codes = queue.map((q) => q.code);
 
-    // Không có mã → user muốn thoát phiên (đóng UI quét, vẫn ở tab Đơn hàng).
+    const shipped = [...daXuatKhoListRef.current];
+    const cancelled = [...donHuyListRef.current];
+    const returned = [...daNhanHoanListRef.current];
+    const codes = [
+      ...shipped.map((i) => i.code),
+      ...cancelled.map((i) => i.code),
+      ...returned.map((i) => i.code),
+    ];
+
+    // Không có mã đã verify → thoát phiên (đóng UI quét, vẫn ở tab Đơn hàng).
     if (codes.length === 0) {
       isTearingDownScannerRef.current = true;
       try {
@@ -1846,7 +1978,7 @@ export default function OrderManager({
     }
 
     setIsFlushingQueue(true);
-    setCameraScanResult(`Đang phân loại ${codes.length} mã đã quét...`);
+    setCameraScanResult(`Đang ghi DB ${codes.length} đơn đã phân loại...`);
 
     try {
       const token = localStorage.getItem('admin_token');
@@ -1860,7 +1992,13 @@ export default function OrderManager({
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ codes, scannedCodes: codes }),
+        body: JSON.stringify({
+          codes,
+          scannedCodes: codes,
+          daXuatKhoCodes: shipped.map((i) => i.code),
+          donHuyCodes: cancelled.map((i) => i.code),
+          daNhanHoanCodes: returned.map((i) => i.code),
+        }),
       });
       const data = await res.json().catch(() => ({} as Record<string, unknown>));
       if (!res.ok || data?.success === false) {
@@ -1872,14 +2010,9 @@ export default function OrderManager({
         donHuy?: number;
         daNhanHoan?: number;
       };
-      const statsLegacy = (data?.stats || {}) as {
-        handedOver?: number;
-        cancelled?: number;
-        returnReceived?: number;
-      };
-      const daXuatKho = Number(summaryRaw.daXuatKho ?? statsLegacy.handedOver ?? 0);
-      const donHuy = Number(summaryRaw.donHuy ?? statsLegacy.cancelled ?? 0);
-      const daNhanHoan = Number(summaryRaw.daNhanHoan ?? statsLegacy.returnReceived ?? 0);
+      const daXuatKho = Number(summaryRaw.daXuatKho ?? shipped.length);
+      const donHuy = Number(summaryRaw.donHuy ?? cancelled.length);
+      const daNhanHoan = Number(summaryRaw.daNhanHoan ?? returned.length);
       const processedCount =
         Number(data?.processedCount) || daXuatKho + donHuy + daNhanHoan || codes.length;
 
@@ -1897,13 +2030,6 @@ export default function OrderManager({
         onUpdateOrders(merged);
       }
 
-      // Cộng dồn vào 3 box thống kê trên màn quét.
-      setScanStatBoxes((prev) => ({
-        daXuatKho: prev.daXuatKho + daXuatKho,
-        donHuy: prev.donHuy + donHuy,
-        daNhanHoan: prev.daNhanHoan + daNhanHoan,
-      }));
-
       if (daXuatKho > 0) setActiveSubTab('handed_over_carrier');
       else if (daNhanHoan > 0) {
         setActiveSubTab('cancel_returns');
@@ -1919,25 +2045,16 @@ export default function OrderManager({
         channel: 'shopee',
         type: 'stock_sync',
         status: 'success',
-        message: `[QUÉT QR BULK] xuất kho ${daXuatKho}, đơn hủy ${donHuy}, nhận hoàn ${daNhanHoan}.`,
+        message: `[QUÉT QR COMMIT] xuất kho ${daXuatKho}, đơn hủy ${donHuy}, nhận hoàn ${daNhanHoan}.`,
       });
 
-      // Xóa trống hàng đợi — sẵn sàng quét tiếp.
-      scanQueueRef.current = [];
-      setScanQueue([]);
-      showScanToast(
-        `Đã phân loại và cập nhật thành công ${processedCount} đơn hàng!`,
-        'success',
-      );
+      clearVerifiedScanLists();
+      showScanToast(`Đã ghi DB thành công ${processedCount} đơn hàng!`, 'success');
       setCameraScanResult(
-        `✓ Xuất kho ${daXuatKho} · Hủy ${donHuy} · Nhận hoàn ${daNhanHoan} — sẵn sàng quét tiếp`,
+        `✓ Đã lưu DB — Xuất kho ${daXuatKho} · Hủy ${donHuy} · Nhận hoàn ${daNhanHoan}. Sẵn sàng quét tiếp`,
       );
-
-      // Recycle camera (stop rồi start lại) — KHÔNG đóng UI / KHÔNG redirect.
-      await recycleCameraKeepUi();
       setIsFlushingQueue(false);
 
-      // Làm mới data nền (không rời màn quét).
       try {
         if (onFetchOrders) void onFetchOrders();
         else if (onRefreshOrders) void onRefreshOrders();
@@ -1946,50 +2063,100 @@ export default function OrderManager({
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      showScanToast(`Lỗi cập nhật hàng loạt: ${msg}`, 'error');
+      showScanToast(`Lỗi ghi DB hàng loạt: ${msg}`, 'error');
       setCameraScanResult(`Lỗi: ${msg}`);
       setIsFlushingQueue(false);
       isTearingDownScannerRef.current = false;
     }
   };
 
+  const scanStatModalMeta: Record<
+    ScanStatModalKey,
+    { title: string; color: string; items: ScanVerifiedItem[] }
+  > = {
+    daXuatKho: {
+      title: 'Đã xuất kho',
+      color: 'text-emerald-400',
+      items: daXuatKhoList,
+    },
+    donHuy: {
+      title: 'Đơn báo hủy',
+      color: 'text-rose-400',
+      items: donHuyList,
+    },
+    daNhanHoan: {
+      title: 'Đã nhận hoàn',
+      color: 'text-amber-400',
+      items: daNhanHoanList,
+    },
+  };
+
   if (focusScanner) {
+    const modalMeta = scanStatModal ? scanStatModalMeta[scanStatModal] : null;
+
     return (
-      <div className="fixed inset-0 bg-zinc-950 z-50 flex flex-col select-none font-sans">
-        {/* Counters dashboard */}
+      <div
+        className={`fixed inset-0 bg-zinc-950 z-50 flex flex-col select-none font-sans transition-colors duration-300 ${
+          cameraScanError ? 'bg-rose-950' : ''
+        }`}
+      >
+        {/* Counters dashboard — clickable */}
         <div className="shrink-0 px-3 pt-3 pb-2 space-y-2">
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span className="text-white font-extrabold text-[10px] uppercase tracking-widest">
-                Quét liên tục · Always-on
+                Quét realtime · Verify ngay
               </span>
             </div>
             <div className="rounded-lg bg-blue-500/20 border border-blue-400/40 px-2.5 py-1">
               <span className="text-blue-300 font-black text-xs tabular-nums">
-                Đã quét {scanQueue.length}/{continuousScanTarget || '—'}
+                Đã dò {totalVerifiedScans}/{continuousScanTarget || '—'}
               </span>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-2">
-            <div className="rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-2 py-2.5 text-center">
+            <button
+              type="button"
+              onClick={() => setScanStatModal('daXuatKho')}
+              className="rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-2 py-2.5 text-center cursor-pointer hover:bg-emerald-500/25 hover:border-emerald-400/50 active:scale-[0.98] transition-all"
+            >
               <p className="text-[9px] font-bold text-emerald-400/90 uppercase tracking-wide leading-tight">Đã xuất kho</p>
-              <p className="text-2xl font-black text-emerald-400 tabular-nums mt-0.5">{scanStatBoxes.daXuatKho}</p>
-            </div>
-            <div className="rounded-xl bg-rose-500/15 border border-rose-500/30 px-2 py-2.5 text-center">
+              <p className="text-2xl font-black text-emerald-400 tabular-nums mt-0.5">{daXuatKhoList.length}</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScanStatModal('donHuy')}
+              className="rounded-xl bg-rose-500/15 border border-rose-500/30 px-2 py-2.5 text-center cursor-pointer hover:bg-rose-500/25 hover:border-rose-400/50 active:scale-[0.98] transition-all"
+            >
               <p className="text-[9px] font-bold text-rose-400/90 uppercase tracking-wide leading-tight">Đơn báo hủy</p>
-              <p className="text-2xl font-black text-rose-400 tabular-nums mt-0.5">{scanStatBoxes.donHuy}</p>
-            </div>
-            <div className="rounded-xl bg-amber-500/15 border border-amber-500/30 px-2 py-2.5 text-center">
+              <p className="text-2xl font-black text-rose-400 tabular-nums mt-0.5">{donHuyList.length}</p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScanStatModal('daNhanHoan')}
+              className="rounded-xl bg-amber-500/15 border border-amber-500/30 px-2 py-2.5 text-center cursor-pointer hover:bg-amber-500/25 hover:border-amber-400/50 active:scale-[0.98] transition-all"
+            >
               <p className="text-[9px] font-bold text-amber-400/90 uppercase tracking-wide leading-tight">Đã nhận hoàn</p>
-              <p className="text-2xl font-black text-amber-400 tabular-nums mt-0.5">{scanStatBoxes.daNhanHoan}</p>
-            </div>
+              <p className="text-2xl font-black text-amber-400 tabular-nums mt-0.5">{daNhanHoanList.length}</p>
+            </button>
           </div>
+          <p className="text-center text-[10px] text-zinc-500 font-semibold">
+            Chạm vào ô thống kê để xem danh sách mã · Đơn hủy sẽ báo đỏ + âm cảnh báo ngay
+          </p>
         </div>
 
-        {/* Camera + hàng đợi */}
+        {/* Camera */}
         <div className="flex-1 min-h-0 px-3 flex flex-col gap-2 pb-2">
-          <div className="shrink-0 min-h-[160px] max-h-[42vh] relative rounded-2xl border border-zinc-800 overflow-hidden bg-black">
+          <div
+            className={`flex-1 min-h-[220px] relative rounded-2xl overflow-hidden bg-black transition-colors duration-300 ${
+              cameraScanSuccess
+                ? 'border-2 border-emerald-400 shadow-[0_0_24px_rgba(52,211,153,0.35)]'
+                : cameraScanError
+                  ? 'border-2 border-rose-500 shadow-[0_0_24px_rgba(244,63,94,0.4)]'
+                  : 'border border-zinc-800'
+            }`}
+          >
             <div id="camera-reader" className="w-full h-full object-cover" />
             <button
               type="button"
@@ -2012,7 +2179,7 @@ export default function OrderManager({
             </div>
 
             <p className="absolute bottom-2 left-0 right-0 text-center text-[10px] font-bold text-white/80 pointer-events-none z-[7]">
-              Quét liên tục — nghe bíp/rung là OK · không cần bấm gì
+              Quét đến đâu · dò ngay đến đó — nghe bíp xanh OK / còi đỏ = đơn hủy
             </p>
             {cameraError && (
               <div className="absolute inset-0 z-20 bg-black/85 flex flex-col items-center justify-center p-4 text-center text-xs text-rose-400 font-semibold gap-3">
@@ -2032,43 +2199,15 @@ export default function OrderManager({
                 )}
               </div>
             )}
-            {isFlushingQueue && (
-              <div className="absolute inset-0 bg-black/80 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3 z-10">
+            {(isFlushingQueue || isVerifyingScan) && (
+              <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3 z-10">
                 <Loader2 className="w-9 h-9 text-blue-400 animate-spin" />
                 <p className="text-xs font-bold text-white/90 px-4 text-center">
-                  Đang xử lý hàng đợi ({scanQueue.length} mã)...
+                  {isFlushingQueue
+                    ? `Đang ghi DB ${totalVerifiedScans} đơn...`
+                    : 'Đang kiểm tra mã...'}
                 </p>
               </div>
-            )}
-          </div>
-
-          <div className="flex-1 min-h-[140px] max-h-[45vh] rounded-2xl border border-zinc-700 bg-zinc-900/95 overflow-hidden flex flex-col shadow-inner">
-            <div className="shrink-0 px-3 py-2.5 border-b border-zinc-800 flex items-center justify-between">
-              <p className="text-xs font-black text-emerald-300 uppercase tracking-wide">
-                Hàng đợi · {scanQueue.length} mã
-              </p>
-              {scanQueue.length > 0 && (
-                <span className="text-[10px] font-bold text-zinc-500">Mới nhất ở trên</span>
-              )}
-            </div>
-            {scanQueue.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center px-4 text-center text-xs text-zinc-500 font-semibold">
-                Quét mã QR — danh sách hiển thị tại đây
-              </div>
-            ) : (
-              <ul className="flex-1 overflow-y-auto p-2 space-y-1.5">
-                {scanQueue.map((item, idx) => (
-                  <li
-                    key={item.id}
-                    className="flex items-center gap-2 rounded-xl bg-zinc-950/80 border border-zinc-800 px-3 py-2.5"
-                  >
-                    <span className="shrink-0 w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 text-[10px] font-black flex items-center justify-center">
-                      {scanQueue.length - idx}
-                    </span>
-                    <span className="flex-1 text-sm font-mono text-white truncate">{item.code}</span>
-                  </li>
-                ))}
-              </ul>
             )}
           </div>
 
@@ -2078,9 +2217,9 @@ export default function OrderManager({
                 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                 : cameraScanError
                   ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('liên tục')
-                  ? 'text-zinc-500'
-                  : 'bg-zinc-800 text-yellow-400 border border-zinc-700'
+                  : cameraScanResult.includes('sẵn sàng') || cameraScanResult.includes('realtime')
+                    ? 'text-zinc-500'
+                    : 'bg-zinc-800 text-yellow-400 border border-zinc-700'
             }`}
           >
             {cameraScanResult}
@@ -2101,14 +2240,15 @@ export default function OrderManager({
         <div className="shrink-0 p-3 pt-2 border-t border-zinc-800 bg-zinc-950 space-y-2">
           <button
             type="button"
-            disabled={isFlushingQueue}
+            disabled={isFlushingQueue || isVerifyingScan}
             onClick={() => setShowEndConfirm(true)}
             className="w-full min-h-14 rounded-2xl bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-black text-base uppercase tracking-wide transition-colors shadow-lg shadow-rose-900/40 disabled:opacity-50"
           >
-            Kết thúc{scanQueue.length > 0 ? ` · Xử lý ${scanQueue.length} mã` : ' · Thoát'}
+            Kết thúc
+            {totalVerifiedScans > 0 ? ` · Ghi DB ${totalVerifiedScans} mã` : ' · Thoát'}
           </button>
           <p className="text-center text-[10px] text-zinc-500 font-semibold">
-            Bấm Kết thúc để xử lý hàng đợi — cập nhật 3 box thống kê và ở lại màn quét
+            Kết thúc = lưu chính thức vào database · giữ nguyên màn quét sau khi lưu
           </p>
         </div>
 
@@ -2116,12 +2256,12 @@ export default function OrderManager({
           <div className="fixed inset-0 z-70 bg-black/70 flex items-center justify-center p-6">
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-5 w-full max-w-sm space-y-4">
               <p className="text-white font-bold text-sm">
-                {scanQueue.length > 0 ? 'Xử lý mã đã quét?' : 'Thoát màn hình quét?'}
+                {totalVerifiedScans > 0 ? 'Ghi database các mã đã dò?' : 'Thoát màn hình quét?'}
               </p>
               <p className="text-zinc-400 text-xs leading-relaxed">
-                {scanQueue.length > 0
-                  ? `Hệ thống sẽ phân loại ${scanQueue.length} mã, cập nhật 3 box thống kê, xóa hàng đợi — và giữ bạn ở lại màn quét để tiếp tục.`
-                  : 'Chưa có mã trong hàng đợi — sẽ đóng camera và quay về tab Đơn hàng (không về trang chủ).'}
+                {totalVerifiedScans > 0
+                  ? `Sẽ ghi DB: xuất kho ${daXuatKhoList.length} · hủy ${donHuyList.length} · nhận hoàn ${daNhanHoanList.length}. Sau đó xóa list và ở lại màn quét.`
+                  : 'Chưa có mã đã dò — sẽ đóng camera và quay về tab Đơn hàng.'}
               </p>
               <div className="flex gap-2">
                 <button
@@ -2139,6 +2279,63 @@ export default function OrderManager({
                   Xác nhận
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {modalMeta && (
+          <div className="fixed inset-0 z-80 bg-black/75 flex items-end sm:items-center justify-center p-4">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-md max-h-[75vh] flex flex-col shadow-2xl">
+              <div className="shrink-0 px-4 py-3 border-b border-zinc-800 flex items-center justify-between gap-3">
+                <div>
+                  <p className={`text-sm font-black uppercase tracking-wide ${modalMeta.color}`}>
+                    {modalMeta.title}
+                  </p>
+                  <p className="text-[10px] text-zinc-500 font-semibold mt-0.5">
+                    {modalMeta.items.length} mã · chạm ngoài hoặc Đóng để thoát
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setScanStatModal(null)}
+                  className="min-h-9 px-3 rounded-xl bg-zinc-800 text-zinc-200 text-xs font-bold"
+                >
+                  Đóng
+                </button>
+              </div>
+              {modalMeta.items.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center p-8 text-xs text-zinc-500 font-semibold text-center">
+                  Chưa có mã nào trong danh mục này
+                </div>
+              ) : (
+                <ul className="flex-1 overflow-y-auto p-3 space-y-2">
+                  {modalMeta.items.map((item, idx) => (
+                    <li
+                      key={item.id}
+                      className="rounded-xl bg-zinc-950/90 border border-zinc-800 px-3 py-2.5"
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className="shrink-0 w-6 h-6 rounded-lg bg-zinc-800 text-zinc-300 text-[10px] font-black flex items-center justify-center">
+                          {modalMeta.items.length - idx}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-mono text-white truncate">{item.code}</p>
+                          {item.orderSn && (
+                            <p className="text-[11px] text-zinc-400 font-semibold mt-0.5">
+                              Đơn #{item.orderSn}
+                            </p>
+                          )}
+                          {item.trackingNumber && (
+                            <p className="text-[10px] text-zinc-500 font-mono truncate mt-0.5">
+                              VĐ: {item.trackingNumber}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         )}

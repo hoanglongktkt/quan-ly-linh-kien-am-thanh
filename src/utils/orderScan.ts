@@ -227,34 +227,81 @@ export async function lookupOrderByScanCode(
   }
 }
 
-export function playScanBeep(type: 'success' | 'error' = 'success') {
+/** Âm thanh public tạm (mp3 ngắn) — success / warning(hủy) / error. */
+export const SCAN_SOUND_URLS = {
+  success:
+    'https://actions.google.com/sounds/v1/cartoon/pop.ogg',
+  warning:
+    'https://actions.google.com/sounds/v1/alarms/beep_short.ogg',
+  error:
+    'https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg',
+} as const;
+
+export type ScanSoundType = 'success' | 'warning' | 'error';
+
+function playHtmlAudio(url: string) {
+  try {
+    const audio = new Audio(url);
+    audio.volume = 0.85;
+    void audio.play().catch(() => undefined);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Web Audio fallback — success (2 tone cao), warning (còi), error (trầm dài). */
+function playWebAudioTone(type: ScanSoundType) {
   try {
     const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioCtx.createOscillator();
-    const gainNode = audioCtx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(type === 'success' ? 1200 : 400, audioCtx.currentTime);
-    gainNode.gain.setValueAtTime(0.4, audioCtx.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(
-      0.01,
-      audioCtx.currentTime + (type === 'success' ? 0.12 : 0.25)
-    );
-    oscillator.start();
-    oscillator.stop(audioCtx.currentTime + (type === 'success' ? 0.12 : 0.25));
+    const now = audioCtx.currentTime;
+
+    const beep = (freq: number, start: number, dur: number, vol = 0.35, wave: OscillatorType = 'sine') => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = wave;
+      osc.frequency.setValueAtTime(freq, now + start);
+      gain.gain.setValueAtTime(vol, now + start);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + start + dur);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now + start);
+      osc.stop(now + start + dur);
+    };
+
+    if (type === 'success') {
+      beep(980, 0, 0.08);
+      beep(1310, 0.09, 0.1);
+    } else if (type === 'warning') {
+      beep(620, 0, 0.12, 0.4, 'square');
+      beep(420, 0.14, 0.16, 0.4, 'square');
+      beep(620, 0.32, 0.14, 0.35, 'square');
+    } else {
+      beep(320, 0, 0.28, 0.4, 'triangle');
+    }
   } catch {
     /* audio unavailable */
   }
 }
 
-export function vibrateScan(type: 'success' | 'error' = 'success') {
+export function playScanSound(type: ScanSoundType = 'success') {
+  playHtmlAudio(SCAN_SOUND_URLS[type]);
+  playWebAudioTone(type);
+}
+
+/** @deprecated — dùng playScanSound */
+export function playScanBeep(type: 'success' | 'error' = 'success') {
+  playScanSound(type === 'success' ? 'success' : 'error');
+}
+
+export function vibrateScan(type: ScanSoundType | 'success' | 'error' = 'success') {
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
-    navigator.vibrate(type === 'success' ? [30, 20, 30] : [80, 40, 80]);
+    if (type === 'success') navigator.vibrate([30, 20, 30]);
+    else if (type === 'warning') navigator.vibrate([100, 50, 100, 50, 120]);
+    else navigator.vibrate([80, 40, 80]);
   }
 }
 
-export function scanFeedback(type: 'success' | 'error') {
-  playScanBeep(type);
+export function scanFeedback(type: ScanSoundType | 'success' | 'error') {
+  playScanSound(type === 'success' || type === 'warning' || type === 'error' ? type : 'error');
   vibrateScan(type);
 }
