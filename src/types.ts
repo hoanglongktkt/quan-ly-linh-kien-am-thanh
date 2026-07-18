@@ -102,6 +102,12 @@ export interface ShopeeFees {
   [key: string]: number | undefined;
 }
 
+export interface OrderCustomCostItem {
+  id: string;
+  label: string;
+  amount: number;
+}
+
 export interface Order {
   id: string;
   orderSn: string;
@@ -126,8 +132,10 @@ export interface Order {
   /** Tổng tiền sản phẩm gốc từ get_escrow_detail (item_amount) */
   item_amount?: number;
   revenue: number; // escrow_amount − custom_costs (chỉ khi đã đối soát Shopee)
-  /** Chi phí tự nhập của kho sỉ (đóng gói, v.v.) */
+  /** Chi phí tự nhập của kho sỉ (đóng gói, v.v.) — tổng các dòng custom_cost_items */
   custom_costs?: number;
+  /** Chi tiết chi phí tự nhập (hộp, băng keo...) */
+  custom_cost_items?: OrderCustomCostItem[];
   /** true khi đã lấy được dữ liệu get_escrow_detail */
   escrow_synced?: boolean;
   withholdingCitTax?: number;

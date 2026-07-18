@@ -50,6 +50,7 @@ import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import {
+  buildOrderWithCustomCosts,
   computeShopeeSurchargeTotal,
   getShopeeCustomCosts,
   getShopeeItemAmount,
@@ -58,19 +59,119 @@ import {
   getShopeeTransactionFee,
   isShopeeEscrowSynced,
 } from '../utils/shopeeFees';
+import type { OrderCustomCostItem } from '../types';
 
 function getOrderWaybillCode(order: Order): string {
   return getCarrierWaybillDisplay(order);
 }
 
 function formatOrderNetRevenueDisplay(order: Order): { text: string; pending: boolean } {
-  if (order.channel === 'shopee' && !isShopeeEscrowSynced(order)) {
-    return { text: 'Chờ đối soát', pending: true };
-  }
-  return { text: `${getShopeeNetRevenue(order).toLocaleString('vi-VN')}đ`, pending: false };
+  const amount = getShopeeNetRevenue(order);
+  const pending = order.channel === 'shopee' && !isShopeeEscrowSynced(order);
+  return { text: `${amount.toLocaleString('vi-VN')}đ`, pending };
 }
 
-function OrderShopeeFinanceSummary({ order }: { order: Order }) {
+function OrderCustomCostsForm({
+  order,
+  onUpdateOrder,
+}: {
+  order: Order;
+  onUpdateOrder: (updated: Order) => void;
+}) {
+  const [label, setLabel] = useState('');
+  const [amount, setAmount] = useState('');
+  const items = order.custom_cost_items ?? [];
+
+  const persistItems = (nextItems: OrderCustomCostItem[]) => {
+    onUpdateOrder(buildOrderWithCustomCosts(order, nextItems));
+  };
+
+  const handleAdd = () => {
+    const parsed = Math.max(0, Number(String(amount).replace(/[^\d]/g, '')) || 0);
+    if (!parsed) return;
+    const nextItems: OrderCustomCostItem[] = [
+      ...items,
+      {
+        id: `cc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        label: label.trim() || 'Chi phí khác',
+        amount: parsed,
+      },
+    ];
+    persistItems(nextItems);
+    setLabel('');
+    setAmount('');
+  };
+
+  const handleRemove = (id: string) => {
+    persistItems(items.filter((item) => item.id !== id));
+  };
+
+  return (
+    <div className="space-y-2 pt-2 border-t border-dashed border-gray-200">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-bold text-gray-700">Chi phí tự nhập (kho sỉ)</span>
+        {getShopeeCustomCosts(order) > 0 && (
+          <span className="text-amber-600 font-bold">-{getShopeeCustomCosts(order).toLocaleString('vi-VN')}đ</span>
+        )}
+      </div>
+      {items.length > 0 && (
+        <div className="space-y-1">
+          {items.map((item) => (
+            <div key={item.id} className="flex items-center justify-between gap-2 text-[11px] bg-amber-50/60 border border-amber-100 rounded-lg px-2.5 py-1.5">
+              <span className="text-gray-700 truncate">{item.label}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="font-bold text-amber-700">-{item.amount.toLocaleString('vi-VN')}đ</span>
+                <button
+                  type="button"
+                  onClick={() => handleRemove(item.id)}
+                  className="text-gray-400 hover:text-rose-500 transition-colors"
+                  title="Xóa chi phí"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="rounded-xl border border-gray-100 bg-slate-50/80 p-2.5 space-y-2">
+        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Thêm mới chi phí</p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="VD: Hộp, băng keo..."
+            className="flex-1 min-w-0 px-2.5 py-2 text-xs border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-100 outline-none"
+          />
+          <input
+            type="text"
+            inputMode="numeric"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="Số tiền"
+            className="w-full sm:w-28 px-2.5 py-2 text-xs border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-100 outline-none"
+          />
+          <button
+            type="button"
+            onClick={handleAdd}
+            className="px-3 py-2 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+          >
+            Thêm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrderShopeeFinanceSummary({
+  order,
+  onUpdateOrder,
+}: {
+  order: Order;
+  onUpdateOrder?: (updated: Order) => void;
+}) {
   const fees = order.shopee_fees;
   const commissionFee = Math.max(0, Number(fees?.commission_fee) || 0);
   const serviceFee = Math.max(0, Number(fees?.service_fee) || 0);
@@ -80,7 +181,8 @@ function OrderShopeeFinanceSummary({ order }: { order: Order }) {
   const customCosts = getShopeeCustomCosts(order);
   const netRevenue = getShopeeNetRevenue(order);
   const itemAmount = getShopeeItemAmount(order);
-  const escrowReady = isShopeeEscrowSynced(order);
+  const escrowReady = order.channel !== 'shopee' || isShopeeEscrowSynced(order);
+  const pendingHint = escrowReady ? '' : ' (Đang chờ Shopee đối soát)';
 
   if (order.channel === 'manual') {
     return (
@@ -93,7 +195,8 @@ function OrderShopeeFinanceSummary({ order }: { order: Order }) {
           <span>Phí sàn / Chi phí trung gian:</span>
           <span className="font-bold">0đ (Đơn trực tiếp)</span>
         </div>
-        {customCosts > 0 && (
+        {onUpdateOrder && <OrderCustomCostsForm order={order} onUpdateOrder={onUpdateOrder} />}
+        {customCosts > 0 && !onUpdateOrder && (
           <div className="flex justify-between text-amber-600">
             <span>Chi phí tự nhập:</span>
             <span className="font-bold">-{customCosts.toLocaleString('vi-VN')}đ</span>
@@ -104,15 +207,6 @@ function OrderShopeeFinanceSummary({ order }: { order: Order }) {
           <span className="font-extrabold">{netRevenue.toLocaleString('vi-VN')}đ</span>
         </div>
       </>
-    );
-  }
-
-  if (!escrowReady) {
-    return (
-      <div className="flex justify-between text-amber-600 pt-1 border-t border-dashed border-gray-200">
-        <span className="font-semibold">Doanh thu Shopee:</span>
-        <span className="font-bold italic">Đang chờ Shopee đối soát</span>
-      </div>
     );
   }
 
@@ -128,39 +222,74 @@ function OrderShopeeFinanceSummary({ order }: { order: Order }) {
           <span>-{surchargeTotal.toLocaleString('vi-VN')}đ</span>
         </div>
         <div className="pl-3 space-y-1 border-l-2 border-rose-100 text-rose-500">
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-2">
             <span>Phí cố định:</span>
-            <span className="font-semibold">-{commissionFee.toLocaleString('vi-VN')}đ</span>
+            <span className="font-semibold text-right">
+              -{commissionFee.toLocaleString('vi-VN')}đ
+              {!escrowReady && commissionFee === 0 && (
+                <span className="block text-[10px] text-gray-400 font-normal">{pendingHint.trim()}</span>
+              )}
+            </span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-2">
             <span>Phí dịch vụ:</span>
-            <span className="font-semibold">-{serviceFee.toLocaleString('vi-VN')}đ</span>
+            <span className="font-semibold text-right">
+              -{serviceFee.toLocaleString('vi-VN')}đ
+              {!escrowReady && serviceFee === 0 && (
+                <span className="block text-[10px] text-gray-400 font-normal">{pendingHint.trim()}</span>
+              )}
+            </span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-2">
             <span>Phí xử lý giao dịch:</span>
-            <span className="font-semibold">-{transactionFee.toLocaleString('vi-VN')}đ</span>
+            <span className="font-semibold text-right">
+              -{transactionFee.toLocaleString('vi-VN')}đ
+              {!escrowReady && transactionFee === 0 && (
+                <span className="block text-[10px] text-gray-400 font-normal">{pendingHint.trim()}</span>
+              )}
+            </span>
           </div>
         </div>
       </div>
-      <div className="flex justify-between text-rose-500">
+      <div className="flex justify-between text-rose-500 gap-2">
         <span>Thuế:</span>
-        <span className="font-semibold">-{taxTotal.toLocaleString('vi-VN')}đ</span>
+        <span className="font-semibold text-right">
+          -{taxTotal.toLocaleString('vi-VN')}đ
+          {!escrowReady && taxTotal === 0 && (
+            <span className="block text-[10px] text-gray-400 font-normal">{pendingHint.trim()}</span>
+          )}
+        </span>
       </div>
-      {customCosts > 0 && (
-        <div className="flex justify-between text-amber-600">
+      {onUpdateOrder ? (
+        <OrderCustomCostsForm order={order} onUpdateOrder={onUpdateOrder} />
+      ) : customCosts > 0 ? (
+        <div className="flex justify-between text-amber-600 pt-2 border-t border-dashed border-gray-200">
           <span>Chi phí tự nhập:</span>
           <span className="font-bold">-{customCosts.toLocaleString('vi-VN')}đ</span>
         </div>
-      )}
-      <div className="flex justify-between text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
+      ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
         <span className="font-bold">Doanh thu Nhận Về:</span>
-        <span className="font-extrabold">{netRevenue.toLocaleString('vi-VN')}đ</span>
+        <div className="text-right">
+          <span className="font-extrabold">{netRevenue.toLocaleString('vi-VN')}đ</span>
+          {!escrowReady && (
+            <span className="block text-[10px] text-amber-600 font-semibold mt-0.5">(Chưa gồm phí Shopee)</span>
+          )}
+        </div>
       </div>
     </>
   );
 }
 
-function OrderDetailAccordionPanel({ order, shops }: { order: Order; shops: ConnectedShop[] }) {
+function OrderDetailAccordionPanel({
+  order,
+  shops,
+  onUpdateOrder,
+}: {
+  order: Order;
+  shops: ConnectedShop[];
+  onUpdateOrder: (updated: Order) => void;
+}) {
   return (
     <div className="px-4 pb-4 pt-3 border-t border-slate-100 bg-slate-50/80 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -216,7 +345,7 @@ function OrderDetailAccordionPanel({ order, shops }: { order: Order; shops: Conn
       </div>
 
       <div className="space-y-2 pt-2 border-t border-gray-100 text-xs text-gray-600 bg-white p-4 rounded-2xl border border-gray-100">
-        <OrderShopeeFinanceSummary order={order} />
+        <OrderShopeeFinanceSummary order={order} onUpdateOrder={onUpdateOrder} />
       </div>
     </div>
   );
@@ -2753,6 +2882,9 @@ export default function OrderManager({
                             : 'text-emerald-600 bg-emerald-50/50'
                         }`}>
                           Lãi: {formatOrderNetRevenueDisplay(order).text}
+                          {formatOrderNetRevenueDisplay(order).pending && (
+                            <span className="text-[9px] font-normal text-amber-700/80 ml-0.5">*</span>
+                          )}
                         </div>
                       </td>
 
@@ -2894,7 +3026,13 @@ export default function OrderManager({
                     {isExpanded && (
                       <tr className="bg-slate-50/60">
                         <td colSpan={7} className="p-0">
-                          <OrderDetailAccordionPanel order={order} shops={shops} />
+                          <OrderDetailAccordionPanel
+                            order={order}
+                            shops={shops}
+                            onUpdateOrder={(updated) => {
+                              onUpdateOrders(orders.map((o) => (o.id === updated.id ? updated : o)));
+                            }}
+                          />
                         </td>
                       </tr>
                     )}
@@ -2999,6 +3137,9 @@ export default function OrderManager({
                           formatOrderNetRevenueDisplay(order).pending ? 'text-amber-700' : 'text-emerald-700'
                         }`}>
                           {formatOrderNetRevenueDisplay(order).text}
+                          {formatOrderNetRevenueDisplay(order).pending && (
+                            <span className="block text-[9px] font-medium text-amber-600/90 mt-0.5">Chưa gồm phí Shopee</span>
+                          )}
                         </span>
                       </div>
                     </div>
@@ -3126,7 +3267,13 @@ export default function OrderManager({
                   </div>
                 </div>
                 {isExpanded && (
-                  <OrderDetailAccordionPanel order={order} shops={shops} />
+                  <OrderDetailAccordionPanel
+                    order={order}
+                    shops={shops}
+                    onUpdateOrder={(updated) => {
+                      onUpdateOrders(orders.map((o) => (o.id === updated.id ? updated : o)));
+                    }}
+                  />
                 )}
                 </div>
               );

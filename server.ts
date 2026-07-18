@@ -5143,6 +5143,26 @@ function computeShopeeOrderRevenue(escrowAmount?: number, customCosts = 0): numb
   return Math.max(0, Math.round(Number(escrowAmount) - costs));
 }
 
+function sumOrderCustomCosts(order: any): number {
+  const items = Array.isArray(order?.custom_cost_items) ? order.custom_cost_items : [];
+  if (items.length > 0) {
+    return Math.round(
+      items.reduce((sum: number, row: any) => sum + Math.max(0, Number(row?.amount) || 0), 0),
+    );
+  }
+  return Math.max(0, Number(order?.custom_costs) || 0);
+}
+
+function computeProvisionalShopeeRevenue(order: any, customCosts = 0): number {
+  const itemAmount =
+    Number(order?.item_amount) > 0
+      ? Number(order.item_amount)
+      : Number(order?.shopee_fees?.item_amount) > 0
+        ? Number(order.shopee_fees.item_amount)
+        : Number(order?.totalAmount) || 0;
+  return Math.max(0, Math.round(itemAmount - Math.max(0, Number(customCosts) || 0)));
+}
+
 function applyShopeeOrderFinanceFields(
   order: any,
   opts: {
@@ -5157,7 +5177,7 @@ function applyShopeeOrderFinanceFields(
 ): void {
   const totalAmount = Number(opts.totalAmount ?? order.totalAmount ?? 0);
   const withholdingCitTax = Math.max(0, Number(opts.withholdingCitTax ?? order.withholdingCitTax ?? 0));
-  const customCosts = Math.max(0, Number(opts.customCosts ?? order.custom_costs ?? 0));
+  const customCosts = Math.max(0, Number(opts.customCosts ?? sumOrderCustomCosts(order) ?? 0));
   const escrowAmount = opts.escrowAmount ?? order.escrowAmount;
 
   order.totalAmount = totalAmount;
@@ -5185,8 +5205,8 @@ function applyShopeeOrderFinanceFields(
 
   if (order.escrow_synced && order.escrowAmount != null && Number.isFinite(Number(order.escrowAmount))) {
     order.revenue = computeShopeeOrderRevenue(order.escrowAmount, customCosts);
-  } else if (opts.escrowSynced === false) {
-    order.revenue = 0;
+  } else {
+    order.revenue = computeProvisionalShopeeRevenue(order, customCosts);
   }
 }
 
@@ -5244,7 +5264,11 @@ async function enrichShopeeOrdersEscrowFinance(
       const escrow = await shopeeGetEscrowDetail(shopId, accessToken, order.orderSn);
       if (escrow?.error) {
         order.escrow_synced = false;
-        order.revenue = 0;
+        applyShopeeOrderFinanceFields(order, {
+          totalAmount: order.totalAmount,
+          escrowSynced: false,
+          customCosts,
+        });
         console.warn(`[Shopee Finance] escrow ${order.orderSn}:`, escrow.message || escrow.error);
         continue;
       }
@@ -5261,7 +5285,11 @@ async function enrichShopeeOrdersEscrowFinance(
       });
     } catch (err) {
       order.escrow_synced = false;
-      order.revenue = 0;
+      applyShopeeOrderFinanceFields(order, {
+        totalAmount: order.totalAmount,
+        escrowSynced: false,
+        customCosts,
+      });
       console.warn(`[Shopee Finance] escrow ${order.orderSn} failed:`, err);
     }
     if (i < targets.length - 1) await sleep(300);
@@ -5738,8 +5766,14 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     resolveConnectedShopDisplayName(existing.shopId, existing.shopName) ||
     merged.shopName;
   mergeShopeeTrackingFields(merged, existing, incoming);
-  const mergedCustomCosts = Math.max(0, Number(existing?.custom_costs ?? incoming?.custom_costs ?? 0));
+  const mergedCustomCosts = sumOrderCustomCosts(existing?.custom_cost_items?.length ? existing : incoming) ||
+    Math.max(0, Number(existing?.custom_costs ?? incoming?.custom_costs ?? 0));
   merged.custom_costs = mergedCustomCosts;
+  if (Array.isArray(existing?.custom_cost_items) && existing.custom_cost_items.length > 0) {
+    merged.custom_cost_items = existing.custom_cost_items;
+  } else if (Array.isArray(incoming?.custom_cost_items) && incoming.custom_cost_items.length > 0) {
+    merged.custom_cost_items = incoming.custom_cost_items;
+  }
   if (incoming.item_amount != null) merged.item_amount = incoming.item_amount;
   else if (existing?.item_amount != null) merged.item_amount = existing.item_amount;
   if (incoming.escrow_synced != null) merged.escrow_synced = incoming.escrow_synced;
@@ -10103,6 +10137,17 @@ async function startServer() {
       patch.is_handed_over_to_carrier = false;
     }
     orders[index] = { ...orders[index], ...patch, id: orders[index].id };
+    if ("custom_costs" in patch || "custom_cost_items" in patch) {
+      applyShopeeOrderFinanceFields(orders[index], {
+        totalAmount: orders[index].totalAmount,
+        itemAmount: orders[index].item_amount,
+        withholdingCitTax: orders[index].withholdingCitTax,
+        escrowAmount: orders[index].escrowAmount,
+        shopeeFees: orders[index].shopee_fees,
+        escrowSynced: orders[index].escrow_synced,
+        customCosts: sumOrderCustomCosts(orders[index]),
+      });
+    }
     saveOrders(orders);
     return res.json(orders[index]);
   });

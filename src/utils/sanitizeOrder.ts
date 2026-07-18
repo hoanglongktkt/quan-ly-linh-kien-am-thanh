@@ -1,5 +1,5 @@
 import type { Order } from '../types';
-import { parseShopeeFees } from './shopeeFees';
+import { parseShopeeFees, parseCustomCostItems } from './shopeeFees';
 
 /** Chuẩn hóa đơn từ API — tránh crash khi thiếu date/orderSn/items. */
 export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Order {
@@ -19,6 +19,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     item_amount: raw.item_amount != null ? Number(raw.item_amount) : undefined,
     revenue: Number(raw.revenue) || 0,
     custom_costs: raw.custom_costs != null ? Math.max(0, Number(raw.custom_costs) || 0) : undefined,
+    custom_cost_items: parseCustomCostItems(raw.custom_cost_items ?? raw.customCostItems),
     escrow_synced: raw.escrow_synced != null ? Boolean(raw.escrow_synced) : undefined,
     withholdingCitTax: Math.max(0, Number(raw.withholdingCitTax ?? raw.withholding_cit_tax) || 0),
     withholding_cit_tax: Math.max(0, Number(raw.withholding_cit_tax ?? raw.withholdingCitTax) || 0),

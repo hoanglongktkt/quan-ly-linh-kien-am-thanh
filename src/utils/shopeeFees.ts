@@ -1,4 +1,4 @@
-import type { Order, ShopeeFees } from '../types';
+import type { Order, OrderCustomCostItem, ShopeeFees } from '../types';
 
 export function parseShopeeFees(raw: unknown): ShopeeFees | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
@@ -9,6 +9,30 @@ export function parseShopeeFees(raw: unknown): ShopeeFees | undefined {
   }
   if (Object.keys(fees).length === 0) return undefined;
   return fees;
+}
+
+export function parseCustomCostItems(raw: unknown): OrderCustomCostItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item, index) => {
+      const row = (item || {}) as Record<string, unknown>;
+      const amount = Math.max(0, Number(row.amount) || 0);
+      const label = String(row.label || 'Chi phí khác').trim() || 'Chi phí khác';
+      const id = String(row.id || `custom-cost-${index}-${Date.now()}`);
+      return { id, label, amount };
+    })
+    .filter((item) => item.amount > 0);
+}
+
+export function sumCustomCostItems(items?: OrderCustomCostItem[]): number {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  return Math.round(items.reduce((sum, item) => sum + Math.max(0, Number(item.amount) || 0), 0));
+}
+
+export function resolveOrderCustomCosts(order: Pick<Order, 'custom_costs' | 'custom_cost_items'>): number {
+  const fromItems = sumCustomCostItems(order.custom_cost_items);
+  if (fromItems > 0) return fromItems;
+  return Math.max(0, Number(order.custom_costs) || 0);
 }
 
 export function isShopeeEscrowSynced(order: Pick<Order, 'channel' | 'escrow_synced' | 'escrowAmount' | 'shopee_fees'>): boolean {
@@ -95,13 +119,30 @@ export function getShopeeEscrowAmount(order: Pick<Order, 'escrowAmount' | 'shope
   return undefined;
 }
 
-export function getShopeeNetRevenue(order: Pick<Order, 'revenue' | 'escrowAmount' | 'shopee_fees' | 'custom_costs'>): number {
-  const escrow = getShopeeEscrowAmount(order);
-  const customCosts = Math.max(0, Number(order.custom_costs) || 0);
-  if (escrow != null) return Math.max(0, Math.round(escrow - customCosts));
-  return Math.max(0, Number(order.revenue) || 0);
+export function getShopeeCustomCosts(order: Pick<Order, 'custom_costs' | 'custom_cost_items'>): number {
+  return resolveOrderCustomCosts(order);
 }
 
-export function getShopeeCustomCosts(order: Pick<Order, 'custom_costs'>): number {
-  return Math.max(0, Number(order.custom_costs) || 0);
+export function getShopeeNetRevenue(
+  order: Pick<
+    Order,
+    'channel' | 'revenue' | 'escrowAmount' | 'shopee_fees' | 'custom_costs' | 'custom_cost_items' | 'item_amount' | 'totalAmount' | 'escrow_synced'
+  >,
+): number {
+  const customCosts = getShopeeCustomCosts(order);
+  if (isShopeeEscrowSynced(order)) {
+    const escrow = getShopeeEscrowAmount(order);
+    if (escrow != null) return Math.max(0, Math.round(escrow - customCosts));
+  }
+  const itemAmount = getShopeeItemAmount(order);
+  return Math.max(0, Math.round(itemAmount - customCosts));
+}
+
+export function buildOrderWithCustomCosts(
+  order: Order,
+  items: OrderCustomCostItem[],
+): Order {
+  const custom_costs = sumCustomCostItems(items);
+  const next: Order = { ...order, custom_cost_items: items, custom_costs };
+  return { ...next, revenue: getShopeeNetRevenue(next) };
 }
