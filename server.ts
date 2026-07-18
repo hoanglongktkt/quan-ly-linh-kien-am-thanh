@@ -11189,9 +11189,15 @@ async function startServer() {
       );
 
       const processedCount = stats.handedOver + stats.cancelled + stats.returnReceived;
+      const summary = {
+        daXuatKho: stats.handedOver,
+        donHuy: stats.cancelled,
+        daNhanHoan: stats.returnReceived,
+      };
       return res.json({
         success: true,
         processedCount,
+        summary,
         stats,
         results,
         orders: enriched,

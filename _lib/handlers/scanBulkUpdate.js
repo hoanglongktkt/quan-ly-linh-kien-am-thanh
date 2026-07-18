@@ -81,16 +81,20 @@ export async function handleScanBulkUpdate(req, res) {
         body: JSON.stringify({ codes, scannedCodes: codes, scanCodes: codes }),
       });
       if (direct.ok && direct.data?.success !== false) {
+        const handed = Number(direct.data?.summary?.daXuatKho ?? direct.data?.stats?.handedOver ?? 0);
+        const cancelled = Number(direct.data?.summary?.donHuy ?? direct.data?.stats?.cancelled ?? 0);
+        const returned = Number(direct.data?.summary?.daNhanHoan ?? direct.data?.stats?.returnReceived ?? 0);
         const processedCount =
-          Number(direct.data?.processedCount) ||
-          Number(direct.data?.stats?.handedOver || 0) +
-            Number(direct.data?.stats?.cancelled || 0) +
-            Number(direct.data?.stats?.returnReceived || 0) ||
-          codes.length;
+          Number(direct.data?.processedCount) || handed + cancelled + returned || codes.length;
         return res.status(200).json({
           ...direct.data,
           success: true,
           processedCount,
+          summary: {
+            daXuatKho: handed,
+            donHuy: cancelled,
+            daNhanHoan: returned,
+          },
         });
       }
       const msg = String(direct.data?.message || direct.data?.error || '');
@@ -224,13 +228,20 @@ export async function handleScanBulkUpdate(req, res) {
     }
 
     const processedCount = stats.handedOver + stats.cancelled + stats.returnReceived;
+    const summary = {
+      daXuatKho: stats.handedOver,
+      donHuy: stats.cancelled,
+      daNhanHoan: stats.returnReceived,
+    };
     console.log(
-      `[Scan Bulk Update] fallback codes=${codes.length} processed=${processedCount} handedOver=${stats.handedOver} cancelled=${stats.cancelled} returnReceived=${stats.returnReceived}`,
+      `[Scan Bulk Update] fallback codes=${codes.length} processed=${processedCount} summary=`,
+      summary,
     );
 
     return res.status(200).json({
       success: true,
       processedCount,
+      summary,
       stats,
       results,
       orders: [...updatedById.values()],
