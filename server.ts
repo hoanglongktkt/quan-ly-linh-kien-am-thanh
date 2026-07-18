@@ -28,6 +28,7 @@ import {
   getMongoUriMasked,
   bulkUpsertOrdersToStore,
   updateOrderPendingShopeeCheckInStore,
+  updateOrderTrackingInStore,
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
 
@@ -4941,14 +4942,50 @@ async function shopeeGetTrackingNumber(shopId: string, accessToken: string, orde
     shop_id: shopId,
     sign,
     order_sn: orderSn,
-    response_optional_fields: "first_mile_tracking_number,last_mile_tracking_number",
+    response_optional_fields: "plp_number,first_mile_tracking_number,last_mile_tracking_number",
   });
   if (packageNumber) params.set("package_number", packageNumber);
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
   const res = await fetchWithTimeout(url);
   const json: any = await res.json();
-  console.log(`[Shopee API] GET ${apiPath} (order_sn=${orderSn}) -> HTTP ${res.status}:`, JSON.stringify(json));
+  // Log FULL payload để lần ra vị trí mã GHN / ĐVVC (VD: GYAGLRYW).
+  console.log(
+    `[Shopee API] GET ${apiPath} FULL PAYLOAD order_sn=${orderSn} HTTP=${res.status}:`,
+    JSON.stringify(json),
+  );
+  return json;
+}
+
+/** Fallback: bóc mã từ shipping_document_info khi get_tracking_number trả rỗng. */
+async function shopeeGetShippingDocumentDataInfo(
+  shopId: string,
+  accessToken: string,
+  orderSn: string,
+  packageNumber?: string,
+) {
+  const apiPath = "/api/v2/logistics/get_shipping_document_data_info";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const body: Record<string, unknown> = {
+    order_list: [
+      {
+        order_sn: orderSn,
+        ...(packageNumber ? { package_number: packageNumber } : {}),
+      },
+    ],
+  };
+  const res = await fetchWithTimeout(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json: any = await res.json();
+  console.log(
+    `[Shopee API] POST ${apiPath} FULL PAYLOAD order_sn=${orderSn} HTTP=${res.status}:`,
+    JSON.stringify(json),
+  );
   return json;
 }
 
@@ -5642,7 +5679,10 @@ function mapShopeeOrderLineItem(it: any) {
   }
 }
 
-// --- Shopee tracking: carrier (SPXVN...) vs internal sorting (0FG...) ---
+// --- Shopee tracking: carrier (SPXVN... / GHN GYAGLRYW...) vs internal sorting (0FG...) ---
+const SHOPEE_TRACKING_KEY_RE =
+  /^(tracking_number|tracking_no|trackingnumber|trackingno|last_mile_tracking_number|shopee_tracking_number|third_party_tracking_number|courier_tracking_number|logistics_tracking_number|plp_number|awb_tracking_number)$/i;
+
 function isShopeeInternalTrackingCode(code: unknown): boolean {
   return /^0FG/i.test(String(code || "").trim());
 }
@@ -5652,7 +5692,8 @@ function isCarrierTrackingCode(code: unknown): boolean {
   if (!k || isShopeeInternalTrackingCode(k)) return false;
   // SPX/GHN/... hoặc mã số dài từ 3PL — không bỏ sót chỉ vì không khớp prefix cũ.
   if (/^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST|LEX|NJV|GRB|BEST|NINJAVAN)/.test(k)) return true;
-  if (/^[A-Z0-9][A-Z0-9\-]{5,}$/.test(k)) return true;
+  // GHN / J&T thường trả mã alphanumeric không prefix (VD: GYAGLRYW)
+  if (/^[A-Z0-9][A-Z0-9\-]{5,19}$/.test(k)) return true;
   return false;
 }
 
@@ -5663,17 +5704,175 @@ function applyShopeeTrackingCode(order: any, rawCode: unknown) {
     order.internalTrackingCode = code;
     return;
   }
-  // Mọi mã vận đơn thực (kể cả format lạ) đều giữ lại — không ghi đè bằng rỗng.
+  // Mọi mã vận đơn thực (kể cả format lạ GHN) — mirror tracking_no cho DB/UI.
   order.trackingNumber = code;
+  order.tracking_no = code;
 }
 
 function repairMisassignedTracking(order: any): any {
   if (!order || typeof order !== "object") return order;
+  // Đồng bộ mirror field
+  if (order.tracking_no && !order.trackingNumber) order.trackingNumber = order.tracking_no;
+  if (order.trackingNumber && !order.tracking_no) order.tracking_no = order.trackingNumber;
   if (order.trackingNumber && isShopeeInternalTrackingCode(order.trackingNumber)) {
     if (!order.internalTrackingCode) order.internalTrackingCode = order.trackingNumber;
     order.trackingNumber = undefined;
+    order.tracking_no = undefined;
   }
   return order;
+}
+
+/**
+ * Deep fallback: quét toàn bộ payload Shopee tìm mã vận đơn.
+ * Ưu tiên: response.tracking_number → order_list[].tracking_no → shipping_document_info → mọi key tracking_*.
+ */
+function deepExtractShopeeTrackingCodes(payload: unknown): {
+  carrier?: string;
+  internal?: string;
+  sources: string[];
+} {
+  const sources: string[] = [];
+  let carrier: string | undefined;
+  let internal: string | undefined;
+
+  const consider = (key: string, value: unknown, path: string) => {
+    if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
+      // vẫn nhận giá trị nếu key chứa "tracking" nhưng không phải boolean/object
+      if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
+    }
+    const s = String(value || "").trim();
+    if (!s || s.length < 5 || s.length > 40) return;
+    if (!/^[A-Za-z0-9][A-Za-z0-9\-_./]*$/.test(s)) return;
+    if (isShopeeInternalTrackingCode(s)) {
+      if (!internal) {
+        internal = s;
+        sources.push(`${path}=${s}(internal)`);
+      }
+      return;
+    }
+    // Bỏ qua mã order_sn kiểu dài toàn số nếu key không rõ ràng
+    if (/^\d{15,}$/.test(s) && !/tracking/i.test(key)) return;
+    if (!carrier || isCarrierTrackingCode(s)) {
+      if (!carrier || (isCarrierTrackingCode(s) && !isCarrierTrackingCode(carrier))) {
+        carrier = s;
+        sources.push(`${path}=${s}`);
+      } else if (!carrier) {
+        carrier = s;
+        sources.push(`${path}=${s}`);
+      }
+    } else if (!carrier && s.length >= 6) {
+      carrier = s;
+      sources.push(`${path}=${s}`);
+    }
+  };
+
+  const walk = (node: unknown, path: string, depth: number) => {
+    if (node == null || depth > 8) return;
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => walk(item, `${path}[${i}]`, depth + 1));
+      return;
+    }
+    if (typeof node !== "object") return;
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      const childPath = path ? `${path}.${k}` : k;
+      if (v != null && (typeof v === "string" || typeof v === "number")) {
+        consider(k, v, childPath);
+      } else {
+        walk(v, childPath, depth + 1);
+      }
+    }
+  };
+
+  // Ưu tiên đường dẫn chuẩn trước khi deep-walk
+  const root = payload as any;
+  const resp = root?.response ?? root;
+  const priorityPaths: Array<[string, unknown]> = [
+    ["response.tracking_number", resp?.tracking_number],
+    ["response.tracking_no", resp?.tracking_no],
+    ["response.last_mile_tracking_number", resp?.last_mile_tracking_number],
+    ["response.plp_number", resp?.plp_number],
+    ["response.shopee_tracking_number", resp?.shopee_tracking_number],
+    [
+      "response.shipping_document_info.tracking_number",
+      resp?.shipping_document_info?.tracking_number,
+    ],
+    [
+      "response.shipping_document_info.tracking_no",
+      resp?.shipping_document_info?.tracking_no,
+    ],
+    [
+      "response.shipping_document_info.shopee_tracking_number",
+      resp?.shipping_document_info?.shopee_tracking_number,
+    ],
+  ];
+  const orderList = Array.isArray(resp?.order_list)
+    ? resp.order_list
+    : Array.isArray(root?.order_list)
+      ? root.order_list
+      : [];
+  orderList.forEach((o: any, i: number) => {
+    priorityPaths.push([`order_list[${i}].tracking_no`, o?.tracking_no]);
+    priorityPaths.push([`order_list[${i}].tracking_number`, o?.tracking_number]);
+    priorityPaths.push([
+      `order_list[${i}].package_list[0].tracking_number`,
+      o?.package_list?.[0]?.tracking_number,
+    ]);
+    priorityPaths.push([
+      `order_list[${i}].package_list[0].tracking_no`,
+      o?.package_list?.[0]?.tracking_no,
+    ]);
+    priorityPaths.push([
+      `order_list[${i}].shipping_document_info.tracking_number`,
+      o?.shipping_document_info?.tracking_number,
+    ]);
+  });
+  for (const [p, v] of priorityPaths) {
+    if (v != null && String(v).trim()) consider("tracking_number", v, p);
+  }
+
+  walk(payload, "", 0);
+  return { carrier, internal, sources };
+}
+
+function applyDeepShopeeTrackingPayload(order: any, payload: unknown, label = "payload"): boolean {
+  const extracted = deepExtractShopeeTrackingCodes(payload);
+  if (extracted.internal) order.internalTrackingCode = extracted.internal;
+  if (extracted.carrier) {
+    applyShopeeTrackingCode(order, extracted.carrier);
+    console.log(
+      `[Shopee Tracking] Deep extract OK order_sn=${order?.orderSn} from=${label} carrier=${extracted.carrier} sources=${extracted.sources.slice(0, 6).join(" | ")}`,
+    );
+    return true;
+  }
+  if (extracted.sources.length) {
+    console.log(
+      `[Shopee Tracking] Deep extract chỉ thấy internal/partial order_sn=${order?.orderSn} from=${label}: ${extracted.sources.slice(0, 8).join(" | ")}`,
+    );
+  }
+  repairMisassignedTracking(order);
+  return false;
+}
+
+async function persistOrderTrackingToDb(order: any): Promise<void> {
+  repairMisassignedTracking(order);
+  const tn = String(order?.trackingNumber || order?.tracking_no || "").trim();
+  if (!tn || !order?.orderSn) return;
+  order.trackingNumber = tn;
+  order.tracking_no = tn;
+  // JSON DB được saveOrders gọi từ caller; ở đây sync Mongo nếu có.
+  if (isMongoReady()) {
+    try {
+      await updateOrderTrackingInStore(String(order.orderSn), tn, {
+        internalTrackingCode: order.internalTrackingCode,
+        packageNumber: order.packageNumber,
+      });
+    } catch (err: any) {
+      console.warn(`[Shopee Tracking] Mongo findOneAndUpdate failed ${order.orderSn}:`, err?.message || err);
+    }
+  }
+  console.log(
+    `[Shopee Tracking] DB SET tracking_no=${tn} order_sn=${order.orderSn} (trackingNumber+tracking_no)`,
+  );
 }
 
 function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
@@ -5699,11 +5898,14 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
   // QUAN TRỌNG: không bao giờ ghi đè tracking_no thành null/undefined khi đơn hủy/hoàn.
   const nextTracking = pickCarrier(
     incoming.trackingNumber,
+    incoming.tracking_no,
     existing.trackingNumber,
+    existing.tracking_no,
     incoming.lastMileTrackingNumber,
     existing.lastMileTrackingNumber,
   );
-  merged.trackingNumber = nextTracking || existing.trackingNumber || incoming.trackingNumber || undefined;
+  merged.trackingNumber = nextTracking || existing.trackingNumber || incoming.trackingNumber || existing.tracking_no || undefined;
+  merged.tracking_no = merged.trackingNumber;
 
   const nextInternal = pickInternal(
     incoming.internalTrackingCode,
@@ -5718,29 +5920,26 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
 }
 
 function applyShopeeGetTrackingResponse(order: any, trackResult: any): void {
-  const resp = trackResult?.response;
-  if (!resp) return;
-  if (resp.tracking_number) applyShopeeTrackingCode(order, resp.tracking_number);
-  if (resp.last_mile_tracking_number) applyShopeeTrackingCode(order, resp.last_mile_tracking_number);
-  if (resp.first_mile_tracking_number) {
-    if (isShopeeInternalTrackingCode(resp.first_mile_tracking_number)) {
-      order.internalTrackingCode = resp.first_mile_tracking_number;
-    } else {
-      applyShopeeTrackingCode(order, resp.first_mile_tracking_number);
-    }
-  }
+  // Deep fallback trên toàn bộ response get_tracking_number
+  applyDeepShopeeTrackingPayload(order, trackResult, "get_tracking_number");
   repairMisassignedTracking(order);
 }
 
 function trackingForShopeeShippingDoc(order: any): string | undefined {
-  return order.trackingNumber || order.internalTrackingCode || undefined;
+  const tn = String(order?.trackingNumber || order?.tracking_no || "").trim();
+  if (tn && !isShopeeInternalTrackingCode(tn)) return tn;
+  const internal = String(order?.internalTrackingCode || "").trim();
+  return internal || undefined;
+}
+
+function orderHasPrintableTracking(order: any): boolean {
+  const tn = String(trackingForShopeeShippingDoc(order) || "").trim();
+  return Boolean(tn);
 }
 
 function applyShopeePackageListTracking(order: any, shopeeOrder: any): void {
-  // Top-level fields (một số region/version trả tracking_no ngoài package_list).
-  applyShopeeTrackingCode(order, shopeeOrder?.tracking_no || shopeeOrder?.tracking_number);
-  applyShopeeTrackingCode(order, shopeeOrder?.last_mile_tracking_number);
-  applyShopeeTrackingCode(order, shopeeOrder?.shopee_tracking_number);
+  // Deep parse toàn bộ order detail (tracking_no / package_list / shipping_document_info)
+  applyDeepShopeeTrackingPayload(order, shopeeOrder, "get_order_detail");
 
   const packages = Array.isArray(shopeeOrder?.package_list) ? shopeeOrder.package_list : [];
   if (!order.packageNumber) {
@@ -5750,16 +5949,6 @@ function applyShopeePackageListTracking(order: any, shopeeOrder: any): void {
   for (const pkg of packages) {
     if (pkg?.package_number && !order.packageNumber) {
       order.packageNumber = String(pkg.package_number);
-    }
-    applyShopeeTrackingCode(order, pkg?.tracking_number || pkg?.tracking_no);
-    applyShopeeTrackingCode(order, pkg?.last_mile_tracking_number);
-    applyShopeeTrackingCode(order, pkg?.shopee_tracking_number);
-    if (pkg?.first_mile_tracking_number) {
-      if (isShopeeInternalTrackingCode(pkg.first_mile_tracking_number)) {
-        order.internalTrackingCode = String(pkg.first_mile_tracking_number);
-      } else {
-        applyShopeeTrackingCode(order, pkg.first_mile_tracking_number);
-      }
     }
   }
   repairMisassignedTracking(order);
@@ -5778,7 +5967,7 @@ const SHOPEE_TRACKING_ENRICH_STATUSES = new Set([
 ]);
 
 function hasUsableShopeeTrackingNumber(order: any): boolean {
-  const tn = String(order?.trackingNumber || "").trim();
+  const tn = String(order?.trackingNumber || order?.tracking_no || "").trim();
   return Boolean(tn) && !isShopeeInternalTrackingCode(tn);
 }
 
@@ -5835,7 +6024,8 @@ async function shopeeGetTrackingNumberWithRetry(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       last = await shopeeGetTrackingNumber(shopId, accessToken, orderSn, packageNumber);
-      const tn = String(last?.response?.tracking_number || "").trim();
+      const extracted = deepExtractShopeeTrackingCodes(last);
+      const tn = String(extracted.carrier || last?.response?.tracking_number || "").trim();
       if (tn) {
         if (attempt > 1) {
           console.log(`[Shopee Tracking] Retry OK order_sn=${orderSn} attempt=${attempt} tn=${tn}`);
@@ -5885,6 +6075,28 @@ async function enrichShopeeOrderTrackingFromApi(
       opts?.retries ?? 3,
     );
     applyShopeeGetTrackingResponse(order, result);
+
+    // Fallback: shipping_document_info khi get_tracking_number chưa có mã (GHN hay delay)
+    if (!hasUsableShopeeTrackingNumber(order)) {
+      try {
+        const docInfo = await shopeeGetShippingDocumentDataInfo(
+          shopId,
+          accessToken,
+          order.orderSn,
+          order.packageNumber,
+        );
+        applyDeepShopeeTrackingPayload(order, docInfo, "get_shipping_document_data_info");
+      } catch (docErr: any) {
+        console.warn(
+          `[Shopee Tracking] shipping_document_data_info ${order.orderSn}:`,
+          docErr?.message || docErr,
+        );
+      }
+    }
+
+    if (hasUsableShopeeTrackingNumber(order)) {
+      await persistOrderTrackingToDb(order);
+    }
   } catch (err) {
     console.warn(`[Shopee Tracking] enrich ${order.orderSn} failed:`, err);
   }
@@ -12334,12 +12546,28 @@ async function startServer() {
     const pdfBuffers: Buffer[] = [];
 
     for (const [shopId, groupOrders] of Object.entries(groups)) {
-      const orderList = groupOrders.map((o: any) => ({
+      const ready = groupOrders.filter((o: any) => orderHasPrintableTracking(o));
+      const missing = groupOrders.filter((o: any) => !orderHasPrintableTracking(o));
+      for (const o of missing) {
+        console.error(`[Ship Order Bulk Auto-Print] BLOCK tracking rỗng order_sn=${o.orderSn}`);
+        skippedOrders.push({
+          orderSn: o.orderSn,
+          error: "tracking_number_missing",
+          message:
+            "Chưa đồng bộ được mã vận đơn từ Shopee, hệ thống đang tự động lấy lại, vui lòng thử lại sau!",
+        });
+      }
+      if (ready.length === 0) continue;
+
+      const orderList = ready.map((o: any) => ({
         order_sn: o.orderSn,
         package_number: o.packageNumber,
         tracking_number: trackingForShopeeShippingDoc(o),
       }));
-      console.log(`[Ship Order Bulk Auto-Print] Tạo vận gộp ${orderList.length} đơn shop_id=${shopId}...`);
+      console.log(
+        `[Ship Order Bulk Auto-Print] Tạo vận gộp ${orderList.length} đơn shop_id=${shopId}:`,
+        JSON.stringify(orderList),
+      );
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
       if (docResult.success && docResult.filename) {
         savedFilenames.push(docResult.filename);
@@ -12564,6 +12792,8 @@ async function startServer() {
     // BẮT BUỘC: trước khi render PDF — await check + fetch mã vận đơn (retry).
     console.log(`[Shopee Print] Gate: đảm bảo tracking_no cho ${shopeeCandidates.length} đơn trước khi tạo PDF...`);
     await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 4 });
+    saveOrders(orders);
+
     // Refresh groups from mutated candidates
     for (const key of Object.keys(groups)) delete groups[key];
     for (const o of shopeeCandidates) {
@@ -12571,11 +12801,14 @@ async function startServer() {
       groups[o.shopId] = groups[o.shopId] || [];
       groups[o.shopId].push(o);
     }
-    saveOrders(orders);
+
+    const TRACKING_MISSING_MSG =
+      "Chưa đồng bộ được mã vận đơn từ Shopee, hệ thống đang tự động lấy lại, vui lòng thử lại sau!";
 
     const documents: any[] = [];
     const savedFilenames: string[] = [];
     const allPrintedSns: string[] = [];
+    const missingTrackingOrders: any[] = [];
 
     const labelUrl = (filename: string) => absoluteLabelUrl(`/labels/${filename}`);
 
@@ -12602,17 +12835,43 @@ async function startServer() {
 
       if (needsGenerate.length === 0) continue;
 
-      const orderList = needsGenerate.map((o: any) => ({
+      // Chặn cứng: tracking_no rỗng → KHÔNG gọi create_shipping_document
+      const readyToPrint: any[] = [];
+      for (const o of needsGenerate) {
+        const tn = String(trackingForShopeeShippingDoc(o) || "").trim();
+        if (!tn) {
+          console.error(
+            `[Shopee Print] BLOCK — tracking_no rỗng order_sn=${o.orderSn}. Không gọi Shopee create_shipping_document.`,
+          );
+          missingTrackingOrders.push(o);
+          documents.push({
+            shopId,
+            orderSns: [o.orderSn],
+            success: false,
+            error: "tracking_number_missing",
+            message: TRACKING_MISSING_MSG,
+          });
+          continue;
+        }
+        readyToPrint.push(o);
+      }
+
+      if (readyToPrint.length === 0) continue;
+
+      const orderList = readyToPrint.map((o: any) => ({
         order_sn: o.orderSn,
         package_number: o.packageNumber,
         tracking_number: trackingForShopeeShippingDoc(o),
       }));
-      console.log(`[Shopee Print] Đang tạo vận đơn cho ${orderList.length} đơn của shop_id=${shopId}...`);
+      console.log(
+        `[Shopee Print] Đang tạo vận đơn cho ${orderList.length} đơn shop_id=${shopId} (payload tracking):`,
+        JSON.stringify(orderList),
+      );
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
 
       if (docResult.success && docResult.filename) {
         savedFilenames.push(docResult.filename);
-        const sns = docResult.orderSns || needsGenerate.map((o: any) => o.orderSn);
+        const sns = docResult.orderSns || readyToPrint.map((o: any) => o.orderSn);
         allPrintedSns.push(...sns);
         const docUrl = docResult.url || labelUrl(docResult.filename);
         documents.push({
@@ -12633,7 +12892,7 @@ async function startServer() {
           }
         }
       } else {
-        for (const o of needsGenerate) {
+        for (const o of readyToPrint) {
           const cachedBuf = readExistingLabelBuffer(o.orderSn);
           if (cachedBuf) {
             const existing = buildMergedLabelFilename([o.orderSn]);
@@ -12657,6 +12916,49 @@ async function startServer() {
           }
         }
       }
+    }
+
+    // Đồng bộ ngầm lấy mã riêng các đơn thiếu tracking_no
+    if (missingTrackingOrders.length > 0) {
+      console.warn(
+        `[Shopee Print] ${missingTrackingOrders.length} đơn thiếu tracking_no — kích hoạt sync ngầm: ${missingTrackingOrders.map((o) => o.orderSn).join(", ")}`,
+      );
+      setImmediate(() => {
+        void (async () => {
+          try {
+            for (const o of missingTrackingOrders) {
+              if (!o.shopId) continue;
+              const token = await getValidShopeeAccessToken(String(o.shopId));
+              if (!token) continue;
+              await enrichShopeeOrderTrackingFromApi(String(o.shopId), token, o, { retries: 4 });
+            }
+            const fresh = loadOrders();
+            for (const o of missingTrackingOrders) {
+              const idx = fresh.findIndex((x: any) => x.orderSn === o.orderSn);
+              if (idx >= 0 && hasUsableShopeeTrackingNumber(o)) {
+                fresh[idx].trackingNumber = o.trackingNumber;
+                fresh[idx].tracking_no = o.tracking_no || o.trackingNumber;
+                fresh[idx].internalTrackingCode = o.internalTrackingCode;
+              }
+            }
+            saveOrders(fresh);
+          } catch (bgErr) {
+            console.warn("[Shopee Print] Background tracking sync failed:", bgErr);
+          }
+        })();
+      });
+    }
+
+    // Không có PDF nào + toàn bộ thiếu mã → trả lỗi rõ, KHÔNG crash Shopee
+    if (allPrintedSns.length === 0 && missingTrackingOrders.length > 0) {
+      return res.status(409).json({
+        success: false,
+        error: "tracking_number_missing",
+        message: TRACKING_MISSING_MSG,
+        missingOrderSns: missingTrackingOrders.map((o) => o.orderSn),
+        documents,
+        orders: orders.filter(isValidOrder),
+      });
     }
 
     let primaryUrl: string | null = null;

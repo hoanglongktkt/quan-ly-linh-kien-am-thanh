@@ -175,6 +175,8 @@ export interface Order {
   status: 'pending_verification' | 'pending_confirm' | 'unprocessed' | 'processed' | 'shipping' | 'cancelled' | 'return_pending' | 'return_received' | 'completed';
   date: string;
   trackingNumber?: string; // Carrier tracking (SPXVN..., GHN...) — mã trên phiếu giao / QR quét
+  /** Mirror snake_case từ Shopee / DB */
+  tracking_no?: string;
   internalTrackingCode?: string; // Shopee sorting / first-mile (0FG...) — mã nội bộ sàn
   packageNumber?: string; // Shopee package_number, required by logistics APIs for split orders
   /** Flag nội bộ: đơn bị Shopee giữ (pending verification) — đưa vào tab kiểm tra */

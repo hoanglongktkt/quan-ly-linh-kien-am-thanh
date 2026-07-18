@@ -883,7 +883,12 @@ export default function OrderManager({
     documents?: { url?: string; message?: string; error?: string }[];
     orders?: Order[];
     error?: string;
+    message?: string;
+    missingOrderSns?: string[];
   };
+
+  const TRACKING_MISSING_TOAST =
+    'Chưa đồng bộ được mã vận đơn từ Shopee, hệ thống đang tự động lấy lại, vui lòng thử lại sau!';
 
   const fetchPrintDocumentApi = async (orderIds: string[]): Promise<{
     ok: boolean;
@@ -904,6 +909,8 @@ export default function OrderManager({
   ): Promise<{ success: boolean; message?: string; mergedUrl?: string | null }> => {
     const failedDocs = (data.documents || []).filter((d) => !d.url);
     const printUrl = data.mergedUrl || (data.documents || []).find((d) => d.url)?.url;
+    const trackingMissing = failedDocs.some((d) => d.error === 'tracking_number_missing')
+      || data.error === 'tracking_number_missing';
 
     if (Array.isArray(data.orders)) {
       onUpdateOrders(data.orders);
@@ -925,7 +932,9 @@ export default function OrderManager({
         return {
           success: true,
           mergedUrl: printUrl,
-          message: `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
+          message: trackingMissing
+            ? TRACKING_MISSING_TOAST
+            : `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
         };
       }
       return { success: true, mergedUrl: printUrl };
@@ -935,10 +944,16 @@ export default function OrderManager({
       if (failedDocs.length > 0) {
         return {
           success: true,
-          message: `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
+          message: trackingMissing
+            ? TRACKING_MISSING_TOAST
+            : `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
         };
       }
       return { success: true };
+    }
+
+    if (trackingMissing) {
+      return { success: false, message: data.message || TRACKING_MISSING_TOAST };
     }
 
     const detail = failedDocs.map((d) => d.message || d.error).filter(Boolean).join('\n');
@@ -970,7 +985,11 @@ export default function OrderManager({
           try {
             const step = await fetchPrintDocumentApi([uniqueIds[i]]);
             if (!step.ok) {
-              stepErrors.push(step.data.error || `Đơn ${uniqueIds[i]}: lỗi HTTP ${step.status}`);
+              if (step.data.error === 'tracking_number_missing' || step.status === 409) {
+                stepErrors.push(step.data.message || TRACKING_MISSING_TOAST);
+              } else {
+                stepErrors.push(step.data.error || `Đơn ${uniqueIds[i]}: lỗi HTTP ${step.status}`);
+              }
             } else {
               const stepResult = await applyPrintDocumentResponse(step.data, false);
               if (stepResult.mergedUrl) stepUrls.push(stepResult.mergedUrl);
@@ -1011,7 +1030,14 @@ export default function OrderManager({
 
       const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds);
       if (!ok) {
-        return { success: false, message: data.error || `Không thể tạo vận đơn Shopee (HTTP ${status}).` };
+        if (data.error === 'tracking_number_missing' || status === 409) {
+          if (Array.isArray(data.orders)) onUpdateOrders(data.orders);
+          return { success: false, message: data.message || TRACKING_MISSING_TOAST };
+        }
+        return {
+          success: false,
+          message: data.message || data.error || `Không thể tạo vận đơn Shopee (HTTP ${status}).`,
+        };
       }
 
       if (onProgress) onProgress(total, total);

@@ -5,17 +5,21 @@ export function isShopeeInternalTrackingCode(code: unknown): boolean {
   return /^0FG/i.test(String(code || '').trim());
 }
 
-/** Carrier tracking on shipping label (SPXVN..., GHN..., ...). */
+/** Carrier tracking on shipping label (SPXVN..., GHN GYAGLRYW..., ...). */
 export function isCarrierTrackingCode(code: unknown): boolean {
   const k = String(code || '').trim().toUpperCase();
   if (!k || isShopeeInternalTrackingCode(k)) return false;
   if (/^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST|LEX|NJV|GRB|BEST|NINJAVAN)/.test(k)) return true;
-  return /^[A-Z0-9][A-Z0-9\-]{5,}$/.test(k);
+  // GHN / J&T thường trả mã alphanumeric 6–20 ký tự không có prefix cố định (VD: GYAGLRYW)
+  if (/^[A-Z0-9][A-Z0-9\-]{5,19}$/.test(k)) return true;
+  return false;
 }
 
 /** Mã vận đơn thực tế để hiển thị trên danh sách — chỉ carrier, không bao giờ 0FG. */
-export function getCarrierWaybillDisplay(order: Pick<Order, 'trackingNumber' | 'internalTrackingCode'>): string {
-  const tn = String(order.trackingNumber || '').trim();
+export function getCarrierWaybillDisplay(
+  order: Pick<Order, 'trackingNumber' | 'internalTrackingCode'> & { tracking_no?: string },
+): string {
+  const tn = String(order.trackingNumber || order.tracking_no || '').trim();
   if (!tn || isShopeeInternalTrackingCode(tn)) return '';
   return tn;
 }

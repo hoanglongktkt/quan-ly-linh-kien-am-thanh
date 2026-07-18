@@ -552,6 +552,40 @@ export async function updateOrderPendingShopeeCheckInStore(
   return (result.matchedCount || 0) > 0 || (result.modifiedCount || 0) > 0;
 }
 
+/** findOneAndUpdate tracking_no / trackingNumber vào Mongo theo order_sn. */
+export async function updateOrderTrackingInStore(
+  orderSn: string,
+  trackingNo: string,
+  extra?: { internalTrackingCode?: string; packageNumber?: string },
+): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").trim();
+  const tn = String(trackingNo || "").trim();
+  if (!sn || !tn) return false;
+  const _id = `shopee-${sn}`;
+  const $set: Record<string, unknown> = {
+    tracking_no: tn,
+    "data.tracking_no": tn,
+    "data.trackingNumber": tn,
+  };
+  if (extra?.internalTrackingCode) {
+    $set["data.internalTrackingCode"] = extra.internalTrackingCode;
+  }
+  if (extra?.packageNumber) {
+    $set["data.packageNumber"] = extra.packageNumber;
+  }
+  const result = await OrderModel.findOneAndUpdate(
+    { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] },
+    { $set },
+    { new: true, upsert: false },
+  );
+  console.log(
+    `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} ok=${Boolean(result)}`,
+  );
+  return Boolean(result);
+}
+
 export async function flushDbWrites(): Promise<void> {
   await writeChain;
 }

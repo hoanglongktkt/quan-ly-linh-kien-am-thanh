@@ -49,7 +49,12 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     status: (raw.status as Order['status']) || 'unprocessed',
     date: String(raw.date || new Date().toISOString()),
     items: Array.isArray(raw.items) ? raw.items : [],
-    trackingNumber: raw.trackingNumber ? String(raw.trackingNumber) : undefined,
+    trackingNumber: raw.trackingNumber || raw.tracking_no
+      ? String(raw.trackingNumber || raw.tracking_no)
+      : undefined,
+    tracking_no: raw.tracking_no || raw.trackingNumber
+      ? String(raw.tracking_no || raw.trackingNumber)
+      : undefined,
     internalTrackingCode: raw.internalTrackingCode ? String(raw.internalTrackingCode) : undefined,
     packageNumber: raw.packageNumber ? String(raw.packageNumber) : undefined,
     is_pending_shopee_check: Boolean(raw.is_pending_shopee_check),
