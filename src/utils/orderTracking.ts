@@ -9,13 +9,13 @@ export function isShopeeInternalTrackingCode(code: unknown): boolean {
 export function isCarrierTrackingCode(code: unknown): boolean {
   const k = String(code || '').trim().toUpperCase();
   if (!k || isShopeeInternalTrackingCode(k)) return false;
-  return /^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST|LEX|NJV|GRB|MY|SG|TH|ID|PH)/.test(k);
+  if (/^(SPX(VN)?|GHN|GHTK|JNT|JT|NINJA|VTP|VNPOST|LEX|NJV|GRB|BEST|NINJAVAN)/.test(k)) return true;
+  return /^[A-Z0-9][A-Z0-9\-]{5,}$/.test(k);
 }
 
 /** Mã vận đơn thực tế để hiển thị trên danh sách — chỉ carrier, không bao giờ 0FG. */
 export function getCarrierWaybillDisplay(order: Pick<Order, 'trackingNumber' | 'internalTrackingCode'>): string {
   const tn = String(order.trackingNumber || '').trim();
   if (!tn || isShopeeInternalTrackingCode(tn)) return '';
-  if (isCarrierTrackingCode(tn)) return tn;
-  return '';
+  return tn;
 }

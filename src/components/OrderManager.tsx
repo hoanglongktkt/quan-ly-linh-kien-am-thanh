@@ -62,6 +62,13 @@ function getOrderWaybillCode(order: Order): string {
   return getCarrierWaybillDisplay(order);
 }
 
+/** Tab "Đang kiểm tra bởi Shopee" = status nội bộ + raw UNPAID từ Shopee. */
+function isPendingVerificationOrder(order: Order): boolean {
+  if (order.status === 'pending_verification') return true;
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  return raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK';
+}
+
 function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
   return systemFees
     .filter((fee) => fee.active && fee.name.trim() && Number(fee.value) > 0)
@@ -1421,6 +1428,7 @@ export default function OrderManager({
     }
     return orders.filter(o => {
       if (status === 'all') return true;
+      if (status === 'pending_verification') return isPendingVerificationOrder(o);
       if (status === 'unprocessed') return o.status === 'unprocessed' && !isOrderHandedOverToCarrier(o);
       if (status === 'processed') return matchesProcessedPickupTab(o);
       if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
@@ -1437,6 +1445,8 @@ export default function OrderManager({
       if (!matchesHandedOverCarrierTab(order)) return false;
     } else if (activeSubTab === 'processed') {
       if (!matchesProcessedPickupTab(order)) return false;
+    } else if (activeSubTab === 'pending_verification') {
+      if (!isPendingVerificationOrder(order)) return false;
     } else if (activeSubTab === 'unprocessed') {
       if (order.status !== 'unprocessed' || isOrderHandedOverToCarrier(order)) return false;
     } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products' && activeSubTab !== 'reprint') {
