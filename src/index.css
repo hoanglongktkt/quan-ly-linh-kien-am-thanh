@@ -208,6 +208,11 @@ body {
     flex-direction: column;
     width: 100%;
   }
+
+  /* Tránh 2 nút In (bảng + card) cùng hiện — chỉ giữ nút trên bảng desktop. */
+  .om-order-card-list .om-order-card-print-btn {
+    display: none !important;
+  }
 }
 
 /* Used by the manual/off-platform packing-slip print preview (window.print()) */
