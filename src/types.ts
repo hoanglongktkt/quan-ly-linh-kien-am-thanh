@@ -187,6 +187,14 @@ export interface Order {
   isHandedOverToCarrier?: boolean;
   /** Mirror snake_case for DB / API */
   is_handed_over_to_carrier?: boolean;
+  /**
+   * Cờ trạng thái nội bộ kho (chỉ DB local — không gọi Shopee):
+   * NONE | HANDED_OVER | CANCELLED_STORED | RETURN_RECEIVED
+   */
+  local_status?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED';
+  localStatus?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED';
+  localStatusAt?: string;
+  handedOverAt?: string;
   items: {
     productId: string;
     productTitle: string;

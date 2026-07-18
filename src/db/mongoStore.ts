@@ -83,7 +83,11 @@ const OrderSchema = new Schema<OrderDoc>(
     shopId: { type: String, default: null, index: true },
     /** Boolean flag — đơn bị bẫy "đang kiểm tra bởi Shopee" (default: false) */
     is_pending_shopee_check: { type: Boolean, default: false, index: true },
-    /** Full order payload — includes withholding_cit_tax, shopee_fees, is_handed_over_to_carrier, partialCancel, is_pending_shopee_check */
+    /**
+     * Full order payload — includes withholding_cit_tax, shopee_fees,
+     * is_handed_over_to_carrier, local_status (HANDED_OVER|CANCELLED_STORED|RETURN_RECEIVED),
+     * partialCancel, is_pending_shopee_check
+     */
     data: { type: Schema.Types.Mixed, required: true },
   },
   { collection: "orders", versionKey: false }

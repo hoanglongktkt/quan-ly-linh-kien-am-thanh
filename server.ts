@@ -6348,13 +6348,58 @@ function orderItemsHaveVariationData(items: any[] | undefined): boolean {
   return Array.isArray(items) && items.some((i) => i?.modelId || i?.modelName || i?.modelSku);
 }
 
+/** Cờ trạng thái nội bộ kho — chỉ lưu DB local, không gọi Shopee. */
+type OrderLocalStatus = "NONE" | "HANDED_OVER" | "CANCELLED_STORED" | "RETURN_RECEIVED";
+
+function resolveOrderLocalStatus(order: any): OrderLocalStatus {
+  const raw = String(order?.local_status ?? order?.localStatus ?? "").toUpperCase();
+  if (raw === "HANDED_OVER" || raw === "CANCELLED_STORED" || raw === "RETURN_RECEIVED") {
+    return raw;
+  }
+  if (Boolean(order?.isHandedOverToCarrier ?? order?.is_handed_over_to_carrier)) {
+    return "HANDED_OVER";
+  }
+  if (String(order?.status || "") === "return_received") {
+    return "RETURN_RECEIVED";
+  }
+  return "NONE";
+}
+
+function setOrderLocalStatus(order: any, status: OrderLocalStatus): void {
+  const now = new Date().toISOString();
+  order.local_status = status;
+  order.localStatus = status;
+  order.localStatusAt = now;
+  if (status === "HANDED_OVER") {
+    order.isHandedOverToCarrier = true;
+    order.is_handed_over_to_carrier = true;
+    order.handedOverAt = order.handedOverAt || now;
+  }
+  if (status === "RETURN_RECEIVED") {
+    // Giữ tab "Đã nhận hoàn" kể cả khi Shopee vẫn TO_RETURN.
+    order.status = "return_received";
+  }
+}
+
 function resolveOrderHandoverFlag(order: any): boolean {
-  return Boolean(order?.isHandedOverToCarrier ?? order?.is_handed_over_to_carrier);
+  return (
+    resolveOrderLocalStatus(order) === "HANDED_OVER" ||
+    Boolean(order?.isHandedOverToCarrier ?? order?.is_handed_over_to_carrier)
+  );
 }
 
 function setOrderHandoverFlag(order: any, value: boolean): void {
   order.isHandedOverToCarrier = value;
   order.is_handed_over_to_carrier = value;
+  if (value) {
+    order.local_status = "HANDED_OVER";
+    order.localStatus = "HANDED_OVER";
+    order.localStatusAt = order.localStatusAt || new Date().toISOString();
+    order.handedOverAt = order.handedOverAt || new Date().toISOString();
+  } else if (resolveOrderLocalStatus(order) === "HANDED_OVER") {
+    order.local_status = "NONE";
+    order.localStatus = "NONE";
+  }
 }
 
 function isOrderAwaitingCarrierPickupStatus(status: unknown): boolean {
@@ -6363,7 +6408,44 @@ function isOrderAwaitingCarrierPickupStatus(status: unknown): boolean {
 }
 
 function matchesHandedOverCarrierTabOrder(order: any): boolean {
-  return resolveOrderHandoverFlag(order) && isOrderAwaitingCarrierPickupStatus(order?.status);
+  if (!resolveOrderHandoverFlag(order)) return false;
+  return (
+    isOrderAwaitingCarrierPickupStatus(order?.status) ||
+    resolveOrderLocalStatus(order) === "HANDED_OVER"
+  );
+}
+
+function isOrderAlreadyScanProcessed(order: any): boolean {
+  const local = resolveOrderLocalStatus(order);
+  return local === "HANDED_OVER" || local === "CANCELLED_STORED" || local === "RETURN_RECEIVED";
+}
+
+function getScanProcessedReason(order: any): string {
+  const local = resolveOrderLocalStatus(order);
+  if (local === "HANDED_OVER") return "Đơn đã được quét/bàn giao ĐVVC trước đó";
+  if (local === "CANCELLED_STORED") return "Đơn hủy đã được phân loại trước đó";
+  if (local === "RETURN_RECEIVED") return "Đơn đã nhận hàng hoàn trước đó";
+  return "Đơn đã được xử lý trước đó";
+}
+
+/** Ghi JSON + Mongo (nếu sẵn sàng) — bắt buộc dùng sau scan-bulk-update. */
+async function persistOrdersToDatabase(orders: any[], changedOrders: any[]): Promise<number> {
+  saveOrders(orders);
+  if (!isMongoReady() || !changedOrders.length) {
+    console.log(
+      `[Orders Persist] JSON OK — changed=${changedOrders.length} mongoReady=${isMongoReady()}`,
+    );
+    return changedOrders.length;
+  }
+  try {
+    const n = await bulkUpsertOrdersToStore(changedOrders);
+    console.log(`[Orders Persist] Mongo bulkWrite OK — upsertedDocs=${n}`);
+    return n;
+  } catch (err: any) {
+    console.error("[Orders Persist] Mongo bulkWrite failed:", err?.message || err);
+    // JSON đã lưu — vẫn coi là persisted local.
+    return changedOrders.length;
+  }
 }
 
 function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
@@ -6492,6 +6574,24 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   } else if (existing) {
     setOrderHandoverFlag(merged, resolveOrderHandoverFlag(existing));
   }
+
+  // GIỮ cờ local_status nội bộ kho — tuyệt đối không để sync Shopee xóa.
+  const existingLocal = resolveOrderLocalStatus(existing);
+  if (existingLocal !== "NONE") {
+    merged.local_status = existingLocal;
+    merged.localStatus = existingLocal;
+    if (existing?.localStatusAt) merged.localStatusAt = existing.localStatusAt;
+    if (existingLocal === "HANDED_OVER") {
+      merged.isHandedOverToCarrier = true;
+      merged.is_handed_over_to_carrier = true;
+      if (existing?.handedOverAt) merged.handedOverAt = existing.handedOverAt;
+    }
+    if (existingLocal === "RETURN_RECEIVED") {
+      // Tab "Đã nhận hoàn" dựa trên cờ nội bộ — giữ status hiển thị ổn định.
+      merged.status = "return_received";
+    }
+  }
+
   delete merged.customerName;
   delete merged.customerPhone;
   delete merged.customerAddress;
@@ -10786,15 +10886,18 @@ async function startServer() {
     if (resolveOrderHandoverFlag(order)) {
       return { ok: true, order };
     }
-    const updated = {
-      ...order,
-      isHandedOverToCarrier: true,
-      is_handed_over_to_carrier: true,
-      handedOverAt: new Date().toISOString(),
-    };
+    const updated = { ...order };
+    setOrderLocalStatus(updated, "HANDED_OVER");
     orders[index] = updated;
     saveOrders(orders);
-    console.log(`[Orders Handover] Đơn ${updated.orderSn} → is_handed_over_to_carrier=true`);
+    if (isMongoReady()) {
+      void bulkUpsertOrdersToStore([updated]).catch((err: any) =>
+        console.warn("[Orders Handover] Mongo sync failed:", err?.message || err),
+      );
+    }
+    console.log(
+      `[Orders Handover] Đơn ${updated.orderSn} → local_status=HANDED_OVER is_handed_over_to_carrier=true`,
+    );
     return { ok: true, order: updated };
   }
 
@@ -10975,6 +11078,30 @@ async function startServer() {
     if (patch.status === "shipping" || patch.status === "completed") {
       patch.isHandedOverToCarrier = false;
       patch.is_handed_over_to_carrier = false;
+      if (String(patch.local_status || patch.localStatus || "").toUpperCase() === "HANDED_OVER") {
+        patch.local_status = "NONE";
+        patch.localStatus = "NONE";
+      }
+    }
+    // Chuẩn hóa cờ nội bộ kho nếu client gửi local_status.
+    const localPatch = String(patch.local_status || patch.localStatus || "").toUpperCase();
+    if (
+      localPatch === "HANDED_OVER" ||
+      localPatch === "CANCELLED_STORED" ||
+      localPatch === "RETURN_RECEIVED" ||
+      localPatch === "NONE"
+    ) {
+      patch.local_status = localPatch;
+      patch.localStatus = localPatch;
+      patch.localStatusAt = patch.localStatusAt || new Date().toISOString();
+      if (localPatch === "HANDED_OVER") {
+        patch.isHandedOverToCarrier = true;
+        patch.is_handed_over_to_carrier = true;
+        patch.handedOverAt = patch.handedOverAt || new Date().toISOString();
+      }
+      if (localPatch === "RETURN_RECEIVED") {
+        patch.status = "return_received";
+      }
     }
     orders[index] = { ...orders[index], ...patch, id: orders[index].id };
     if ("custom_costs" in patch || "custom_cost_items" in patch) {
@@ -10988,7 +11115,7 @@ async function startServer() {
         customCosts: sumOrderCustomCosts(orders[index]),
       });
     }
-    saveOrders(orders);
+    await persistOrdersToDatabase(orders, [orders[index]]);
     return res.json(orders[index]);
   });
 
@@ -11037,12 +11164,13 @@ async function startServer() {
   });
 
   /**
-   * Bulk phân loại đơn sau phiên quét QR liên tục.
+   * Bulk phân loại đơn sau phiên quét QR — CHỈ cập nhật DB nội bộ (JSON + Mongo).
+   * KHÔNG gọi Shopee API.
    * Body: { codes: string[] }
-   * Quy tắc:
-   *  1) Chờ lấy hàng (unprocessed/processed) → Đã bàn giao ĐVVC
-   *  2) Cancelled → giữ tab Đơn hủy
-   *  3) Return cycle (return_pending) → Đã nhận hàng hoàn (return_received)
+   * local_status:
+   *  1) Chờ lấy hàng → HANDED_OVER
+   *  2) Cancelled → CANCELLED_STORED
+   *  3) Return → RETURN_RECEIVED
    */
   app.post("/api/orders/scan-bulk-update", authMiddleware, async (req, res) => {
     try {
@@ -11064,111 +11192,121 @@ async function startServer() {
 
       const orders = loadOrders();
       const validOrders = orders.filter(isValidOrder);
-      let dirty = false;
       const results: Array<{
         code: string;
-        action: "handed_over" | "cancelled" | "return_received" | "not_found" | "skipped";
+        action: "handed_over" | "cancelled" | "return_received" | "not_found" | "skipped" | "duplicate";
         orderId?: string;
         orderSn?: string;
         message: string;
+        local_status?: OrderLocalStatus;
       }> = [];
+      const failed_scans: Array<{
+        code: string;
+        orderId?: string;
+        orderSn?: string;
+        reason: string;
+      }> = [];
+      const changedOrders: any[] = [];
       const updatedById = new Map<string, any>();
-      const stats = {
-        handedOver: 0,
-        cancelled: 0,
-        returnReceived: 0,
-        notFound: 0,
-        skipped: 0,
-      };
+      /** Chỉ đếm record THỰC SỰ vừa UPDATE thành công trong DB. */
+      const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
 
       for (const code of codes) {
         const found = await findOrderByScanLookup(validOrders, code);
         if (!found) {
-          stats.notFound += 1;
           results.push({ code, action: "not_found", message: `Không tìm thấy đơn với mã "${code}"` });
+          failed_scans.push({ code, reason: "Không tìm thấy đơn trong hệ thống" });
           continue;
         }
 
         const index = orders.findIndex((o: any) => o.id === found.id);
         if (index < 0) {
-          stats.notFound += 1;
           results.push({ code, action: "not_found", message: `Không tìm thấy đơn với mã "${code}"` });
+          failed_scans.push({ code, reason: "Không tìm thấy đơn trong hệ thống" });
           continue;
         }
 
         const order = orders[index];
         const status = String(order.status || "");
+        const existingLocal = resolveOrderLocalStatus(order);
 
-        // Quy tắc 1: Chờ lấy hàng → Đã bàn giao ĐVVC
+        // Chặn quét trùng — đã có cờ nội bộ xử lý rồi.
+        if (isOrderAlreadyScanProcessed(order)) {
+          const reason = getScanProcessedReason(order);
+          results.push({
+            code,
+            action: "duplicate",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: reason,
+            local_status: existingLocal,
+          });
+          failed_scans.push({
+            code,
+            orderId: order.id,
+            orderSn: order.orderSn,
+            reason,
+          });
+          continue;
+        }
+
+        // Quy tắc 1: Chờ lấy hàng → HANDED_OVER (cờ nội bộ)
         if (isOrderAwaitingCarrierPickupStatus(status)) {
-          if (!resolveOrderHandoverFlag(order)) {
-            const updated = {
-              ...order,
-              isHandedOverToCarrier: true,
-              is_handed_over_to_carrier: true,
-              handedOverAt: new Date().toISOString(),
-            };
-            orders[index] = updated;
-            dirty = true;
-            updatedById.set(updated.id, updated);
-          } else {
-            updatedById.set(order.id, order);
-          }
-          stats.handedOver += 1;
+          const updated = { ...order };
+          setOrderLocalStatus(updated, "HANDED_OVER");
+          orders[index] = updated;
+          changedOrders.push(updated);
+          updatedById.set(updated.id, updated);
+          summary.daXuatKho += 1;
           results.push({
             code,
             action: "handed_over",
-            orderId: order.id,
-            orderSn: order.orderSn,
-            message: `Đã bàn giao ĐVVC — đơn #${order.orderSn}`,
+            orderId: updated.id,
+            orderSn: updated.orderSn,
+            message: `Đã bàn giao ĐVVC — đơn #${updated.orderSn}`,
+            local_status: "HANDED_OVER",
           });
           continue;
         }
 
-        // Quy tắc 2: Đơn hủy → tab Đơn hủy (giữ status cancelled)
+        // Quy tắc 2: Đơn hủy → CANCELLED_STORED
         if (status === "cancelled") {
-          updatedById.set(order.id, order);
-          stats.cancelled += 1;
+          const updated = { ...order };
+          setOrderLocalStatus(updated, "CANCELLED_STORED");
+          orders[index] = updated;
+          changedOrders.push(updated);
+          updatedById.set(updated.id, updated);
+          summary.donHuy += 1;
           results.push({
             code,
             action: "cancelled",
-            orderId: order.id,
-            orderSn: order.orderSn,
-            message: `Đơn hủy #${order.orderSn} → tab Đơn hủy`,
+            orderId: updated.id,
+            orderSn: updated.orderSn,
+            message: `Đơn hủy #${updated.orderSn} → đã lưu cờ CANCELLED_STORED`,
+            local_status: "CANCELLED_STORED",
           });
           continue;
         }
 
-        // Quy tắc 3: Chu trình hoàn hàng → Đã nhận hàng hoàn
-        if (status === "return_pending") {
-          const updated = { ...order, status: "return_received" };
+        // Quy tắc 3: Hoàn hàng → RETURN_RECEIVED
+        if (status === "return_pending" || status === "return_received") {
+          const updated = { ...order };
+          setOrderLocalStatus(updated, "RETURN_RECEIVED");
           orders[index] = updated;
-          dirty = true;
+          changedOrders.push(updated);
           updatedById.set(updated.id, updated);
-          stats.returnReceived += 1;
+          summary.daNhanHoan += 1;
           results.push({
             code,
             action: "return_received",
-            orderId: order.id,
-            orderSn: order.orderSn,
-            message: `Đã nhận hàng hoàn — đơn #${order.orderSn}`,
+            orderId: updated.id,
+            orderSn: updated.orderSn,
+            message: `Đã nhận hàng hoàn — đơn #${updated.orderSn}`,
+            local_status: "RETURN_RECEIVED",
           });
           continue;
         }
 
-        if (status === "return_received") {
-          stats.skipped += 1;
-          results.push({
-            code,
-            action: "skipped",
-            orderId: order.id,
-            orderSn: order.orderSn,
-            message: `Đơn #${order.orderSn} đã nhận hoàn trước đó`,
-          });
-          continue;
-        }
-
-        stats.skipped += 1;
         results.push({
           code,
           action: "skipped",
@@ -11176,30 +11314,43 @@ async function startServer() {
           orderSn: order.orderSn,
           message: `Đơn #${order.orderSn} trạng thái "${status}" — bỏ qua`,
         });
+        failed_scans.push({
+          code,
+          orderId: order.id,
+          orderSn: order.orderSn,
+          reason: `Trạng thái "${status}" không thuộc quy tắc phân loại`,
+        });
       }
 
-      if (dirty) saveOrders(orders);
+      // BẮT BUỘC ghi DB thật (JSON + Mongo) — summary chỉ đếm record đã đổi.
+      if (changedOrders.length > 0) {
+        await persistOrdersToDatabase(orders, changedOrders);
+      }
 
       const updatedList = [...updatedById.values()];
       const products = await loadProductsForOrders(updatedList);
       const enriched = enrichOrdersFromCatalog(updatedList, products);
+      const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
 
       console.log(
-        `[Orders Scan Bulk] codes=${codes.length} handedOver=${stats.handedOver} cancelled=${stats.cancelled} returnReceived=${stats.returnReceived} notFound=${stats.notFound} skipped=${stats.skipped}`,
+        `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${isMongoReady()}`,
       );
 
-      const processedCount = stats.handedOver + stats.cancelled + stats.returnReceived;
-      const summary = {
-        daXuatKho: stats.handedOver,
-        donHuy: stats.cancelled,
-        daNhanHoan: stats.returnReceived,
-      };
       return res.json({
         success: true,
         processedCount,
+        persistedCount: changedOrders.length,
         summary,
-        stats,
+        stats: {
+          handedOver: summary.daXuatKho,
+          cancelled: summary.donHuy,
+          returnReceived: summary.daNhanHoan,
+          notFound: failed_scans.filter((f) => f.reason.includes("Không tìm thấy")).length,
+          skipped: results.filter((r) => r.action === "skipped").length,
+          duplicates: results.filter((r) => r.action === "duplicate").length,
+        },
         results,
+        failed_scans,
         orders: enriched,
       });
     } catch (error: any) {

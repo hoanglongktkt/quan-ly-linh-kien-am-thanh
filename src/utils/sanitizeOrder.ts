@@ -62,6 +62,26 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     isPrinted: Boolean(raw.isPrinted),
     isHandedOverToCarrier: Boolean(raw.isHandedOverToCarrier ?? raw.is_handed_over_to_carrier),
     is_handed_over_to_carrier: Boolean(raw.is_handed_over_to_carrier ?? raw.isHandedOverToCarrier),
+    local_status: (() => {
+      const v = String(raw.local_status ?? raw.localStatus ?? '').toUpperCase();
+      if (v === 'HANDED_OVER' || v === 'CANCELLED_STORED' || v === 'RETURN_RECEIVED' || v === 'NONE') {
+        return v as Order['local_status'];
+      }
+      if (raw.isHandedOverToCarrier || raw.is_handed_over_to_carrier) return 'HANDED_OVER';
+      if (raw.status === 'return_received') return 'RETURN_RECEIVED';
+      return undefined;
+    })(),
+    localStatus: (() => {
+      const v = String(raw.localStatus ?? raw.local_status ?? '').toUpperCase();
+      if (v === 'HANDED_OVER' || v === 'CANCELLED_STORED' || v === 'RETURN_RECEIVED' || v === 'NONE') {
+        return v as Order['localStatus'];
+      }
+      if (raw.isHandedOverToCarrier || raw.is_handed_over_to_carrier) return 'HANDED_OVER';
+      if (raw.status === 'return_received') return 'RETURN_RECEIVED';
+      return undefined;
+    })(),
+    localStatusAt: raw.localStatusAt ? String(raw.localStatusAt) : undefined,
+    handedOverAt: raw.handedOverAt ? String(raw.handedOverAt) : undefined,
     notes: raw.notes ? String(raw.notes) : undefined,
   };
 }

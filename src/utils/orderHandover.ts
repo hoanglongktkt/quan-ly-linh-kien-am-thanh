@@ -1,7 +1,11 @@
 import type { Order } from '../types';
+import { resolveOrderLocalStatus } from './orderLocalStatus';
 
 export function isOrderHandedOverToCarrier(order: Partial<Order> & Record<string, unknown>): boolean {
-  return Boolean(order.isHandedOverToCarrier ?? order.is_handed_over_to_carrier);
+  return (
+    resolveOrderLocalStatus(order) === 'HANDED_OVER' ||
+    Boolean(order.isHandedOverToCarrier ?? order.is_handed_over_to_carrier)
+  );
 }
 
 /** Trạng thái Shopee tương đương READY_TO_SHIP / PROCESSED — chờ bưu tá lấy hàng. */
@@ -10,7 +14,10 @@ export function isOrderAwaitingCarrierPickup(order: Pick<Order, 'status'>): bool
 }
 
 export function matchesHandedOverCarrierTab(order: Order): boolean {
-  return isOrderHandedOverToCarrier(order) && isOrderAwaitingCarrierPickup(order);
+  // Tab Đã bàn giao: ưu tiên cờ nội bộ local_status / is_handed_over.
+  if (!isOrderHandedOverToCarrier(order)) return false;
+  // Vẫn chờ lấy hàng trên sàn, hoặc đã gắn HANDED_OVER nội bộ.
+  return isOrderAwaitingCarrierPickup(order) || resolveOrderLocalStatus(order) === 'HANDED_OVER';
 }
 
 export function matchesProcessedPickupTab(order: Order): boolean {

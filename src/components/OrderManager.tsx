@@ -23,6 +23,10 @@ import {
   matchesProcessedPickupTab,
   isOrderAwaitingCarrierPickup,
 } from '../utils/orderHandover';
+import {
+  isOrderAlreadyScanProcessed,
+  getScanProcessedReason,
+} from '../utils/orderLocalStatus';
 import { 
   Search, 
   ShoppingBag, 
@@ -315,20 +319,34 @@ type CancelReturnTab = 'all' | 'refund_return' | 'cancelled' | 'failed_delivery'
 const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending', 'return_received'];
 
 function isCancelReturnOrder(order: Order): boolean {
-  return CANCEL_RETURN_STATUSES.includes(order.status);
+  const local = String(order.local_status || order.localStatus || '').toUpperCase();
+  return (
+    CANCEL_RETURN_STATUSES.includes(order.status) ||
+    local === 'CANCELLED_STORED' ||
+    local === 'RETURN_RECEIVED'
+  );
 }
 
 function matchesCancelReturnTab(order: Order, tab: CancelReturnTab): boolean {
-  if (!isCancelReturnOrder(order)) return false;
+  const local = String(order.local_status || order.localStatus || '').toUpperCase();
+  const isReturnReceived = local === 'RETURN_RECEIVED' || order.status === 'return_received';
+  const isCancelledStored = local === 'CANCELLED_STORED' || order.status === 'cancelled';
+  const isFailedDelivery =
+    order.status === 'return_pending' && local !== 'RETURN_RECEIVED';
+
+  // Đơn có cờ nội bộ hoàn/hủy vẫn thuộc nhóm cancel_returns dù Shopee sync ghi đè status.
+  if (!isCancelReturnOrder(order) && !isReturnReceived && local !== 'CANCELLED_STORED') {
+    return false;
+  }
   switch (tab) {
     case 'all':
       return true;
     case 'refund_return':
-      return order.status === 'return_received';
+      return isReturnReceived;
     case 'cancelled':
-      return order.status === 'cancelled';
+      return isCancelledStored && !isReturnReceived;
     case 'failed_delivery':
-      return order.status === 'return_pending';
+      return isFailedDelivery;
     default:
       return false;
   }
@@ -717,7 +735,18 @@ export default function OrderManager({
           return;
         }
 
-        // Trùng theo orderId đã có trong list
+        // Chặn trùng theo DB (local_status đã xử lý trước đó).
+        if (isOrderAlreadyScanProcessed(order)) {
+          const reason = getScanProcessedReason(order);
+          playScanSound('warning');
+          vibrateScan('warning');
+          flashViewfinder('error', 500);
+          setCameraScanResult(`⚠ ${reason}`);
+          showScanToast(reason, 'error');
+          return;
+        }
+
+        // Trùng theo orderId đã có trong list phiên hiện tại
         const orderKey = normalizeOrderScanKey(order.orderSn || order.id);
         if (isCodeAlreadyVerified(orderKey) || isCodeAlreadyVerified(normalizeOrderScanKey(order.trackingNumber || ''))) {
           playScanSound('warning');
@@ -2048,10 +2077,30 @@ export default function OrderManager({
         message: `[QUÉT QR COMMIT] xuất kho ${daXuatKho}, đơn hủy ${donHuy}, nhận hoàn ${daNhanHoan}.`,
       });
 
+      const failedScans = Array.isArray(data?.failed_scans) ? data.failed_scans : [];
       clearVerifiedScanLists();
-      showScanToast(`Đã ghi DB thành công ${processedCount} đơn hàng!`, 'success');
+      if (processedCount > 0) {
+        showScanToast(`Đã ghi DB thành công ${processedCount} đơn hàng!`, 'success');
+      } else {
+        showScanToast(
+          failedScans.length > 0
+            ? String(failedScans[0]?.reason || 'Không có đơn mới được cập nhật (có thể đã quét trước đó)')
+            : 'Không có đơn mới được cập nhật vào DB',
+          'error',
+        );
+      }
+      if (failedScans.length > 0 && processedCount > 0) {
+        window.setTimeout(() => {
+          showScanToast(
+            `${failedScans.length} mã bị bỏ qua (trùng/không hợp lệ)`,
+            'error',
+          );
+        }, 1600);
+      }
       setCameraScanResult(
-        `✓ Đã lưu DB — Xuất kho ${daXuatKho} · Hủy ${donHuy} · Nhận hoàn ${daNhanHoan}. Sẵn sàng quét tiếp`,
+        `✓ DB: Xuất kho ${daXuatKho} · Hủy ${donHuy} · Nhận hoàn ${daNhanHoan}${
+          failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
+        }. Sẵn sàng quét tiếp`,
       );
       setIsFlushingQueue(false);
 
