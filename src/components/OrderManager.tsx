@@ -182,7 +182,11 @@ function OrderShopeeFinanceSummary({
   const netRevenue = getShopeeNetRevenue(order);
   const itemAmount = getShopeeItemAmount(order);
   const escrowReady = order.channel !== 'shopee' || isShopeeEscrowSynced(order);
-  const pendingHint = escrowReady ? '' : ' (Đang chờ Shopee đối soát)';
+  const estimatedHint = !escrowReady
+    ? order.finance_source === 'estimated_api'
+      ? ' (Ước tính từ Shopee)'
+      : ' (Ước tính theo tỷ lệ mặc định)'
+    : '';
 
   if (order.channel === 'manual') {
     return (
@@ -218,7 +222,7 @@ function OrderShopeeFinanceSummary({
       </div>
       <div className="space-y-1.5">
         <div className="flex justify-between text-rose-600 font-bold">
-          <span>Phụ phí</span>
+          <span>Phụ phí Shopee{estimatedHint}</span>
           <span>-{surchargeTotal.toLocaleString('vi-VN')}đ</span>
         </div>
         <div className="pl-3 space-y-1 border-l-2 border-rose-100 text-rose-500">
@@ -226,27 +230,21 @@ function OrderShopeeFinanceSummary({
             <span>Phí cố định:</span>
             <span className="font-semibold text-right">
               -{commissionFee.toLocaleString('vi-VN')}đ
-              {!escrowReady && commissionFee === 0 && (
-                <span className="block text-[10px] text-gray-400 font-normal">{pendingHint.trim()}</span>
-              )}
+              {!escrowReady && commissionFee === 0 && <span className="block text-[10px] text-gray-400 font-normal">Chờ chi tiết từ Shopee</span>}
             </span>
           </div>
           <div className="flex justify-between gap-2">
             <span>Phí dịch vụ:</span>
             <span className="font-semibold text-right">
               -{serviceFee.toLocaleString('vi-VN')}đ
-              {!escrowReady && serviceFee === 0 && (
-                <span className="block text-[10px] text-gray-400 font-normal">{pendingHint.trim()}</span>
-              )}
+              {!escrowReady && serviceFee === 0 && <span className="block text-[10px] text-gray-400 font-normal">Chờ chi tiết từ Shopee</span>}
             </span>
           </div>
           <div className="flex justify-between gap-2">
             <span>Phí xử lý giao dịch:</span>
             <span className="font-semibold text-right">
               -{transactionFee.toLocaleString('vi-VN')}đ
-              {!escrowReady && transactionFee === 0 && (
-                <span className="block text-[10px] text-gray-400 font-normal">{pendingHint.trim()}</span>
-              )}
+              {!escrowReady && transactionFee === 0 && <span className="block text-[10px] text-gray-400 font-normal">Chờ chi tiết từ Shopee</span>}
             </span>
           </div>
         </div>
@@ -255,9 +253,7 @@ function OrderShopeeFinanceSummary({
         <span>Thuế:</span>
         <span className="font-semibold text-right">
           -{taxTotal.toLocaleString('vi-VN')}đ
-          {!escrowReady && taxTotal === 0 && (
-            <span className="block text-[10px] text-gray-400 font-normal">{pendingHint.trim()}</span>
-          )}
+          {!escrowReady && taxTotal === 0 && <span className="block text-[10px] text-gray-400 font-normal">Chờ chi tiết từ Shopee</span>}
         </span>
       </div>
       {onUpdateOrder ? (
@@ -272,9 +268,7 @@ function OrderShopeeFinanceSummary({
         <span className="font-bold">Doanh thu Nhận Về:</span>
         <div className="text-right">
           <span className="font-extrabold">{netRevenue.toLocaleString('vi-VN')}đ</span>
-          {!escrowReady && (
-            <span className="block text-[10px] text-amber-600 font-semibold mt-0.5">(Chưa gồm phí Shopee)</span>
-          )}
+          {!escrowReady && <span className="block text-[10px] text-amber-600 font-semibold mt-0.5">Đang dùng phí Shopee ước tính</span>}
         </div>
       </div>
     </>

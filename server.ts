@@ -5160,7 +5160,48 @@ function computeProvisionalShopeeRevenue(order: any, customCosts = 0): number {
       : Number(order?.shopee_fees?.item_amount) > 0
         ? Number(order.shopee_fees.item_amount)
         : Number(order?.totalAmount) || 0;
-  return Math.max(0, Math.round(itemAmount - Math.max(0, Number(customCosts) || 0)));
+  const shopeeFee = Math.max(0, Number(order?.shopee_fees?.total_surcharge) || 0);
+  const tax = Math.max(0, Number(order?.shopee_fees?.total_tax) || 0);
+  return Math.max(0, Math.round(itemAmount - shopeeFee - tax - Math.max(0, Number(customCosts) || 0)));
+}
+
+function getShopeeDefaultFeeRate(): number {
+  const configured = Number(loadChannelSettings()?.shopeeDefaultFeeRate);
+  return Number.isFinite(configured) ? Math.min(100, Math.max(0, configured)) : 12;
+}
+
+/** Lấy số liệu ước tính từ get_order_detail; nếu Shopee chưa trả thì dùng tỷ lệ cấu hình. */
+function applyShopeeEstimatedFinance(order: any, detail: any): void {
+  const estimatedIncome =
+    detail?.estimated_income ??
+    detail?.estimatedIncome ??
+    detail?.income_details ??
+    detail?.order_income ??
+    {};
+  const extracted = extractShopeeEscrowFinance({ order_income: estimatedIncome });
+  const itemAmount = extracted.itemAmount || Math.max(0, Number(order.totalAmount) || 0);
+  const fees = { ...extracted.shopeeFees };
+  delete fees.escrow_amount;
+
+  const hasApiFees = Number(fees.total_surcharge) > 0 || Number(fees.total_tax) > 0;
+  if (!hasApiFees) {
+    const defaultRate = getShopeeDefaultFeeRate();
+    fees.total_surcharge = Math.round((itemAmount * defaultRate) / 100);
+    fees.default_fee_rate = defaultRate;
+    fees.is_estimated = 1;
+  } else {
+    fees.is_estimated = 1;
+  }
+
+  applyShopeeOrderFinanceFields(order, {
+    totalAmount: order.totalAmount,
+    itemAmount,
+    withholdingCitTax: extracted.withholdingCitTax,
+    shopeeFees: fees,
+    escrowSynced: false,
+    customCosts: sumOrderCustomCosts(order),
+    financeSource: hasApiFees ? "estimated_api" : "estimated_default",
+  });
 }
 
 function applyShopeeOrderFinanceFields(
@@ -5173,6 +5214,7 @@ function applyShopeeOrderFinanceFields(
     shopeeFees?: Record<string, number>;
     escrowSynced?: boolean;
     customCosts?: number;
+    financeSource?: "estimated_api" | "estimated_default" | "escrow";
   },
 ): void {
   const totalAmount = Number(opts.totalAmount ?? order.totalAmount ?? 0);
@@ -5201,6 +5243,9 @@ function applyShopeeOrderFinanceFields(
 
   if (opts.escrowSynced != null) {
     order.escrow_synced = Boolean(opts.escrowSynced);
+  }
+  if (opts.financeSource) {
+    order.finance_source = opts.financeSource;
   }
 
   if (order.escrow_synced && order.escrowAmount != null && Number.isFinite(Number(order.escrowAmount))) {
@@ -5256,7 +5301,11 @@ async function enrichShopeeOrdersEscrowFinance(
   accessToken: string,
   orders: any[],
 ): Promise<void> {
-  const targets = orders.filter((o) => o?.orderSn && o.status !== "cancelled");
+  const targets = orders.filter(
+    (o) =>
+      o?.orderSn &&
+      ["completed", "return_pending", "return_received"].includes(String(o.status)),
+  );
   for (let i = 0; i < targets.length; i++) {
     const order = targets[i];
     const customCosts = Math.max(0, Number(order.custom_costs) || 0);
@@ -5282,6 +5331,7 @@ async function enrichShopeeOrdersEscrowFinance(
         shopeeFees: finance.shopeeFees,
         escrowSynced: finance.escrowSynced,
         customCosts,
+        financeSource: finance.escrowSynced ? "escrow" : undefined,
       });
     } catch (err) {
       order.escrow_synced = false;
@@ -5685,12 +5735,7 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       items: mappedItems,
     };
     applyShopeePartialCancelMeta(order, item, mappedItems);
-    applyShopeeOrderFinanceFields(order, {
-      totalAmount: order.totalAmount,
-      withholdingCitTax: extractShopeeWithholdingCitTax(item),
-      escrowSynced: false,
-      customCosts: 0,
-    });
+    applyShopeeEstimatedFinance(order, item);
     applyShopeePackageListTracking(order, item);
     repairMisassignedTracking(order);
     return order;
@@ -5827,7 +5872,16 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
 
 // TO_CONFIRM_RECEIVE is returned inside SHIPPED pages — not a valid order_status filter.
 // CANCELLED/IN_CANCEL bắt buộc để tab "Đơn hủy" không bị lệch số liệu.
-const SHOPEE_SYNC_STATUSES = ["READY_TO_SHIP", "PROCESSED", "RETRY_SHIP", "SHIPPED", "CANCELLED", "IN_CANCEL"] as const;
+const SHOPEE_SYNC_STATUSES = [
+  "READY_TO_SHIP",
+  "PROCESSED",
+  "RETRY_SHIP",
+  "SHIPPED",
+  "COMPLETED",
+  "TO_RETURN",
+  "CANCELLED",
+  "IN_CANCEL",
+] as const;
 
 const SHOPEE_SYNC_UI_STATUSES = new Set(["pending_confirm", "unprocessed", "processed", "shipping", "cancelled"]);
 
@@ -7573,6 +7627,7 @@ const DEFAULT_CHANNEL_SETTINGS: Record<string, any> = {
   tiktokConnected: false,
   tiktokShopId: "",
   tiktokApiKey: "",
+  shopeeDefaultFeeRate: 12,
   shops: [],
 };
 
@@ -8168,12 +8223,7 @@ function normalizeShopeeOrder(payload: any): any | null {
   if (itemList.length > 0) {
     applyShopeePartialCancelMeta(order, data, mappedItems);
   }
-  applyShopeeOrderFinanceFields(order, {
-    totalAmount: order.totalAmount,
-    withholdingCitTax: extractShopeeWithholdingCitTax(data),
-    escrowSynced: false,
-    customCosts: 0,
-  });
+  applyShopeeEstimatedFinance(order, data);
   if (Array.isArray(data.package_list) && data.package_list.length > 0) {
     applyShopeePackageListTracking(order, data);
   }

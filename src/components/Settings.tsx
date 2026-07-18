@@ -909,6 +909,37 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         </div>
       </div>
 
+      <div className="bg-white rounded-3xl border border-orange-100 shadow-sm p-6 space-y-4">
+        <div>
+          <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+            <Sliders className="w-5 h-5 text-orange-600" /> Phí Shopee Ước Tính
+          </h3>
+          <p className="text-xs text-gray-400 mt-1">
+            Chỉ dùng khi Shopee chưa trả dữ liệu Estimated Income hoặc escrow. Số liệu escrow sẽ tự động ghi đè khi đối soát.
+          </p>
+        </div>
+        <div className="max-w-md flex flex-col sm:flex-row gap-2 sm:items-end">
+          <label className="block flex-1">
+            <span className="text-[11px] font-semibold text-gray-600">Tỉ lệ phí Shopee mặc định (%)</span>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+              value={settings.shopeeDefaultFeeRate ?? 12}
+              onChange={(e) => {
+                const rate = Math.min(100, Math.max(0, Number(e.target.value) || 0));
+                void onUpdateSettings({ ...settings, shopeeDefaultFeeRate: rate });
+              }}
+              className="w-full mt-1 px-3 py-2.5 bg-orange-50/30 rounded-xl border border-orange-200 focus:border-orange-500 focus:outline-none text-sm font-semibold"
+            />
+          </label>
+          <span className="text-[11px] text-orange-700 bg-orange-50 border border-orange-100 rounded-xl px-3 py-2.5">
+            Hiện dùng: {Number(settings.shopeeDefaultFeeRate ?? 12).toLocaleString('vi-VN')}%
+          </span>
+        </div>
+      </div>
+
       {/* 4. CARRIER INTEGRATION PANEL (GHN & Shopee SPX) */}
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-6">
         <div>

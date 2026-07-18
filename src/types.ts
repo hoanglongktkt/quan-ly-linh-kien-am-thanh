@@ -99,6 +99,10 @@ export interface ShopeeFees {
   escrow_amount?: number;
   /** Tổng phụ phí (commission + service + transaction, chưa gồm thuế) */
   total_surcharge?: number;
+  /** true khi dữ liệu phí chỉ là ước tính từ order detail hoặc tỷ lệ mặc định */
+  is_estimated?: number;
+  /** Tỷ lệ mặc định đã dùng khi Shopee chưa trả phí ước tính */
+  default_fee_rate?: number;
   [key: string]: number | undefined;
 }
 
@@ -138,6 +142,8 @@ export interface Order {
   custom_cost_items?: OrderCustomCostItem[];
   /** true khi đã lấy được dữ liệu get_escrow_detail */
   escrow_synced?: boolean;
+  /** Nguồn số liệu tài chính: dữ liệu ước tính hoặc escrow đối soát chính thức */
+  finance_source?: 'estimated_api' | 'estimated_default' | 'escrow';
   withholdingCitTax?: number;
   /** Mirror snake_case field from Shopee OpenAPI order_income.withholding_cit_tax */
   withholding_cit_tax?: number;
@@ -191,6 +197,8 @@ export interface ChannelSettings {
   tiktokConnected: boolean;
   tiktokShopId: string;
   tiktokApiKey: string;
+  /** Phí Shopee dự phòng (%) khi API chưa trả estimated income */
+  shopeeDefaultFeeRate?: number;
   woocommerceConnected?: boolean;
   woocommerceUrl?: string;
   woocommerceConsumerKey?: string;

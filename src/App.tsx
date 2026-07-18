@@ -81,6 +81,7 @@ function emptyChannelSettings(): ChannelSettings {
     tiktokConnected: false,
     tiktokShopId: '',
     tiktokApiKey: '',
+    shopeeDefaultFeeRate: 12,
     shops: [],
   };
 }

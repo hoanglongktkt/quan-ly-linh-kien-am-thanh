@@ -35,8 +35,10 @@ export function resolveOrderCustomCosts(order: Pick<Order, 'custom_costs' | 'cus
   return Math.max(0, Number(order.custom_costs) || 0);
 }
 
-export function isShopeeEscrowSynced(order: Pick<Order, 'channel' | 'escrow_synced' | 'escrowAmount' | 'shopee_fees'>): boolean {
+export function isShopeeEscrowSynced(order: Pick<Order, 'channel' | 'escrow_synced' | 'escrowAmount' | 'shopee_fees' | 'finance_source'>): boolean {
   if (order.channel !== 'shopee') return true;
+  if (order.finance_source === 'estimated_api' || order.finance_source === 'estimated_default') return false;
+  if (order.finance_source === 'escrow') return true;
   if (order.escrow_synced) return true;
   if (order.escrowAmount != null && Number.isFinite(Number(order.escrowAmount))) return true;
   const fees = order.shopee_fees;
@@ -126,7 +128,7 @@ export function getShopeeCustomCosts(order: Pick<Order, 'custom_costs' | 'custom
 export function getShopeeNetRevenue(
   order: Pick<
     Order,
-    'channel' | 'revenue' | 'escrowAmount' | 'shopee_fees' | 'custom_costs' | 'custom_cost_items' | 'item_amount' | 'totalAmount' | 'escrow_synced'
+    'channel' | 'revenue' | 'escrowAmount' | 'shopee_fees' | 'custom_costs' | 'custom_cost_items' | 'item_amount' | 'totalAmount' | 'escrow_synced' | 'finance_source'
   >,
 ): number {
   const customCosts = getShopeeCustomCosts(order);
