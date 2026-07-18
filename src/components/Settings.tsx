@@ -940,6 +940,36 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         </div>
       </div>
 
+      <div className="bg-white rounded-3xl border border-amber-100 shadow-sm p-6 space-y-4">
+        <div>
+          <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+            <Sliders className="w-5 h-5 text-amber-600" /> Cấu Hình Chi Phí Đóng Gói Tự Động
+          </h3>
+          <p className="text-xs text-gray-400 mt-1">
+            Tự động trừ cho mọi đơn hàng; không cần nhập lại ở từng đơn.
+          </p>
+        </div>
+        <div className="max-w-md flex flex-col sm:flex-row gap-2 sm:items-end">
+          <label className="block flex-1">
+            <span className="text-[11px] font-semibold text-gray-600">Chi phí vận hành/đóng gói mỗi đơn (đ)</span>
+            <input
+              type="number"
+              min="0"
+              step="100"
+              value={settings.packagingCostPerOrder ?? 0}
+              onChange={(e) => {
+                const amount = Math.max(0, Number(e.target.value) || 0);
+                void onUpdateSettings({ ...settings, packagingCostPerOrder: amount });
+              }}
+              className="w-full mt-1 px-3 py-2.5 bg-amber-50/30 rounded-xl border border-amber-200 focus:border-amber-500 focus:outline-none text-sm font-semibold"
+            />
+          </label>
+          <span className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-xl px-3 py-2.5">
+            Tự động trừ: {Number(settings.packagingCostPerOrder ?? 0).toLocaleString('vi-VN')}đ/đơn
+          </span>
+        </div>
+      </div>
+
       {/* 4. CARRIER INTEGRATION PANEL (GHN & Shopee SPX) */}
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-6">
         <div>

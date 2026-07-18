@@ -82,6 +82,7 @@ function emptyChannelSettings(): ChannelSettings {
     tiktokShopId: '',
     tiktokApiKey: '',
     shopeeDefaultFeeRate: 12,
+    packagingCostPerOrder: 0,
     shops: [],
   };
 }
@@ -1518,6 +1519,7 @@ export default function App() {
               onFetchOrders={fetchOrders}
               ordersLoading={ordersLoading}
               shops={settings.shops || []}
+              packagingCostPerOrder={settings.packagingCostPerOrder ?? 0}
               onAddLog={handleAddLog}
               products={products}
               onUpdateProduct={handleUpdateProduct}

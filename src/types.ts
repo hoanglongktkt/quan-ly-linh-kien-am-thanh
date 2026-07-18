@@ -152,7 +152,9 @@ export interface Order {
   shopee_fees?: ShopeeFees;
   partialCancel?: boolean;
   canPartialCancel?: boolean;
-  status: 'pending_confirm' | 'unprocessed' | 'processed' | 'shipping' | 'cancelled' | 'return_pending' | 'return_received' | 'completed';
+  /** Mã trạng thái gốc từ API Shopee */
+  shopee_order_status?: string;
+  status: 'pending_verification' | 'pending_confirm' | 'unprocessed' | 'processed' | 'shipping' | 'cancelled' | 'return_pending' | 'return_received' | 'completed';
   date: string;
   trackingNumber?: string; // Carrier tracking (SPXVN..., GHN...) — mã trên phiếu giao / QR quét
   internalTrackingCode?: string; // Shopee sorting / first-mile (0FG...) — mã nội bộ sàn
@@ -199,6 +201,8 @@ export interface ChannelSettings {
   tiktokApiKey: string;
   /** Phí Shopee dự phòng (%) khi API chưa trả estimated income */
   shopeeDefaultFeeRate?: number;
+  /** Chi phí đóng gói/vận hành tự động áp dụng cho mỗi đơn */
+  packagingCostPerOrder?: number;
   woocommerceConnected?: boolean;
   woocommerceUrl?: string;
   woocommerceConsumerKey?: string;

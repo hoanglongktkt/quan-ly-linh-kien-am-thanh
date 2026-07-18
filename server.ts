@@ -5009,7 +5009,10 @@ function extractShopeeOrderModelSku(it: any): string | undefined {
 }
 
 const SHOPEE_ORDER_STATUS_MAP: Record<string, string> = {
-  UNPAID: "pending_confirm",
+  UNPAID: "pending_verification",
+  PENDING: "pending_verification",
+  IN_REVIEW: "pending_verification",
+  FRAUD_CHECK: "pending_verification",
   READY_TO_SHIP: "unprocessed",
   PROCESSED: "processed",
   RETRY_SHIP: "unprocessed",
@@ -5170,6 +5173,11 @@ function getShopeeDefaultFeeRate(): number {
   return Number.isFinite(configured) ? Math.min(100, Math.max(0, configured)) : 12;
 }
 
+function getGlobalPackagingCostPerOrder(): number {
+  const configured = Number(loadChannelSettings()?.packagingCostPerOrder);
+  return Number.isFinite(configured) ? Math.max(0, Math.round(configured)) : 0;
+}
+
 /** Lấy số liệu ước tính từ get_order_detail; nếu Shopee chưa trả thì dùng tỷ lệ cấu hình. */
 function applyShopeeEstimatedFinance(order: any, detail: any): void {
   const estimatedIncome =
@@ -5199,7 +5207,7 @@ function applyShopeeEstimatedFinance(order: any, detail: any): void {
     withholdingCitTax: extracted.withholdingCitTax,
     shopeeFees: fees,
     escrowSynced: false,
-    customCosts: sumOrderCustomCosts(order),
+    customCosts: getGlobalPackagingCostPerOrder(),
     financeSource: hasApiFees ? "estimated_api" : "estimated_default",
   });
 }
@@ -5219,7 +5227,7 @@ function applyShopeeOrderFinanceFields(
 ): void {
   const totalAmount = Number(opts.totalAmount ?? order.totalAmount ?? 0);
   const withholdingCitTax = Math.max(0, Number(opts.withholdingCitTax ?? order.withholdingCitTax ?? 0));
-  const customCosts = Math.max(0, Number(opts.customCosts ?? sumOrderCustomCosts(order) ?? 0));
+  const customCosts = Math.max(0, Number(opts.customCosts ?? getGlobalPackagingCostPerOrder()));
   const escrowAmount = opts.escrowAmount ?? order.escrowAmount;
 
   order.totalAmount = totalAmount;
@@ -5308,7 +5316,7 @@ async function enrichShopeeOrdersEscrowFinance(
   );
   for (let i = 0; i < targets.length; i++) {
     const order = targets[i];
-    const customCosts = Math.max(0, Number(order.custom_costs) || 0);
+    const customCosts = getGlobalPackagingCostPerOrder();
     try {
       const escrow = await shopeeGetEscrowDetail(shopId, accessToken, order.orderSn);
       if (escrow?.error) {
@@ -5727,6 +5735,7 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       withholdingCitTax: 0,
       withholding_cit_tax: 0,
       revenue: 0,
+      shopee_order_status: rawStatus,
       status: SHOPEE_ORDER_STATUS_MAP[rawStatus] || "unprocessed",
       date: item?.create_time ? new Date(Number(item.create_time) * 1000).toISOString() : new Date().toISOString(),
       packageNumber: pkg?.package_number || undefined,
@@ -5811,14 +5820,9 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     resolveConnectedShopDisplayName(existing.shopId, existing.shopName) ||
     merged.shopName;
   mergeShopeeTrackingFields(merged, existing, incoming);
-  const mergedCustomCosts = sumOrderCustomCosts(existing?.custom_cost_items?.length ? existing : incoming) ||
-    Math.max(0, Number(existing?.custom_costs ?? incoming?.custom_costs ?? 0));
+  const mergedCustomCosts = getGlobalPackagingCostPerOrder();
   merged.custom_costs = mergedCustomCosts;
-  if (Array.isArray(existing?.custom_cost_items) && existing.custom_cost_items.length > 0) {
-    merged.custom_cost_items = existing.custom_cost_items;
-  } else if (Array.isArray(incoming?.custom_cost_items) && incoming.custom_cost_items.length > 0) {
-    merged.custom_cost_items = incoming.custom_cost_items;
-  }
+  delete merged.custom_cost_items;
   if (incoming.item_amount != null) merged.item_amount = incoming.item_amount;
   else if (existing?.item_amount != null) merged.item_amount = existing.item_amount;
   if (incoming.escrow_synced != null) merged.escrow_synced = incoming.escrow_synced;
@@ -5873,6 +5877,7 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
 // TO_CONFIRM_RECEIVE is returned inside SHIPPED pages — not a valid order_status filter.
 // CANCELLED/IN_CANCEL bắt buộc để tab "Đơn hủy" không bị lệch số liệu.
 const SHOPEE_SYNC_STATUSES = [
+  "UNPAID",
   "READY_TO_SHIP",
   "PROCESSED",
   "RETRY_SHIP",
@@ -5883,7 +5888,14 @@ const SHOPEE_SYNC_STATUSES = [
   "IN_CANCEL",
 ] as const;
 
-const SHOPEE_SYNC_UI_STATUSES = new Set(["pending_confirm", "unprocessed", "processed", "shipping", "cancelled"]);
+const SHOPEE_SYNC_UI_STATUSES = new Set([
+  "pending_verification",
+  "pending_confirm",
+  "unprocessed",
+  "processed",
+  "shipping",
+  "cancelled",
+]);
 
 function upsertShopeeOrdersIntoStore(
   orders: any[],
@@ -6200,6 +6212,7 @@ async function syncShopeeOrdersFromApi(
     unprocessed: orders.filter((o: any) => o.status === "unprocessed").length,
     processed: orders.filter((o: any) => o.status === "processed").length,
     shipping: orders.filter((o: any) => o.status === "shipping").length,
+    pending_verification: orders.filter((o: any) => o.status === "pending_verification").length,
     pending_confirm: orders.filter((o: any) => o.status === "pending_confirm").length,
   };
   console.log(`[Shopee Sync] UI counts sau đồng bộ:`, JSON.stringify(uiStatusCounts));
@@ -7628,6 +7641,7 @@ const DEFAULT_CHANNEL_SETTINGS: Record<string, any> = {
   tiktokShopId: "",
   tiktokApiKey: "",
   shopeeDefaultFeeRate: 12,
+  packagingCostPerOrder: 0,
   shops: [],
 };
 
@@ -8213,6 +8227,7 @@ function normalizeShopeeOrder(payload: any): any | null {
     withholdingCitTax: 0,
     withholding_cit_tax: 0,
     revenue: 0,
+    shopee_order_status: rawStatus,
     status: SHOPEE_ORDER_STATUS_MAP[rawStatus] || "unprocessed",
     date: data.create_time ? new Date(data.create_time * 1000).toISOString() : new Date().toISOString(),
     packageNumber: data.package_number || undefined,

@@ -50,127 +50,34 @@ import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import {
-  buildOrderWithCustomCosts,
   computeShopeeSurchargeTotal,
-  getShopeeCustomCosts,
   getShopeeItemAmount,
   getShopeeNetRevenue,
   getShopeeTaxTotal,
   getShopeeTransactionFee,
   isShopeeEscrowSynced,
 } from '../utils/shopeeFees';
-import type { OrderCustomCostItem } from '../types';
 
 function getOrderWaybillCode(order: Order): string {
   return getCarrierWaybillDisplay(order);
 }
 
-function formatOrderNetRevenueDisplay(order: Order): { text: string; pending: boolean } {
-  const amount = getShopeeNetRevenue(order);
+function withGlobalPackagingCost(order: Order, packagingCostPerOrder: number): Order {
+  return { ...order, custom_costs: Math.max(0, Number(packagingCostPerOrder) || 0), custom_cost_items: [] };
+}
+
+function formatOrderNetRevenueDisplay(order: Order, packagingCostPerOrder = 0): { text: string; pending: boolean } {
+  const amount = getShopeeNetRevenue(withGlobalPackagingCost(order, packagingCostPerOrder));
   const pending = order.channel === 'shopee' && !isShopeeEscrowSynced(order);
   return { text: `${amount.toLocaleString('vi-VN')}đ`, pending };
 }
 
-function OrderCustomCostsForm({
-  order,
-  onUpdateOrder,
-}: {
-  order: Order;
-  onUpdateOrder: (updated: Order) => void;
-}) {
-  const [label, setLabel] = useState('');
-  const [amount, setAmount] = useState('');
-  const items = order.custom_cost_items ?? [];
-
-  const persistItems = (nextItems: OrderCustomCostItem[]) => {
-    onUpdateOrder(buildOrderWithCustomCosts(order, nextItems));
-  };
-
-  const handleAdd = () => {
-    const parsed = Math.max(0, Number(String(amount).replace(/[^\d]/g, '')) || 0);
-    if (!parsed) return;
-    const nextItems: OrderCustomCostItem[] = [
-      ...items,
-      {
-        id: `cc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        label: label.trim() || 'Chi phí khác',
-        amount: parsed,
-      },
-    ];
-    persistItems(nextItems);
-    setLabel('');
-    setAmount('');
-  };
-
-  const handleRemove = (id: string) => {
-    persistItems(items.filter((item) => item.id !== id));
-  };
-
-  return (
-    <div className="space-y-2 pt-2 border-t border-dashed border-gray-200">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-bold text-gray-700">Chi phí tự nhập (kho sỉ)</span>
-        {getShopeeCustomCosts(order) > 0 && (
-          <span className="text-amber-600 font-bold">-{getShopeeCustomCosts(order).toLocaleString('vi-VN')}đ</span>
-        )}
-      </div>
-      {items.length > 0 && (
-        <div className="space-y-1">
-          {items.map((item) => (
-            <div key={item.id} className="flex items-center justify-between gap-2 text-[11px] bg-amber-50/60 border border-amber-100 rounded-lg px-2.5 py-1.5">
-              <span className="text-gray-700 truncate">{item.label}</span>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="font-bold text-amber-700">-{item.amount.toLocaleString('vi-VN')}đ</span>
-                <button
-                  type="button"
-                  onClick={() => handleRemove(item.id)}
-                  className="text-gray-400 hover:text-rose-500 transition-colors"
-                  title="Xóa chi phí"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="rounded-xl border border-gray-100 bg-slate-50/80 p-2.5 space-y-2">
-        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">Thêm mới chi phí</p>
-        <div className="flex flex-col sm:flex-row gap-2">
-          <input
-            type="text"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="VD: Hộp, băng keo..."
-            className="flex-1 min-w-0 px-2.5 py-2 text-xs border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-100 outline-none"
-          />
-          <input
-            type="text"
-            inputMode="numeric"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="Số tiền"
-            className="w-full sm:w-28 px-2.5 py-2 text-xs border border-gray-200 rounded-lg bg-white focus:ring-2 focus:ring-blue-100 outline-none"
-          />
-          <button
-            type="button"
-            onClick={handleAdd}
-            className="px-3 py-2 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shrink-0"
-          >
-            Thêm
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function OrderShopeeFinanceSummary({
   order,
-  onUpdateOrder,
+  packagingCostPerOrder,
 }: {
   order: Order;
-  onUpdateOrder?: (updated: Order) => void;
+  packagingCostPerOrder: number;
 }) {
   const fees = order.shopee_fees;
   const commissionFee = Math.max(0, Number(fees?.commission_fee) || 0);
@@ -178,8 +85,9 @@ function OrderShopeeFinanceSummary({
   const transactionFee = getShopeeTransactionFee(fees);
   const taxTotal = getShopeeTaxTotal(fees, order);
   const surchargeTotal = computeShopeeSurchargeTotal(fees);
-  const customCosts = getShopeeCustomCosts(order);
-  const netRevenue = getShopeeNetRevenue(order);
+  const packagingCost = Math.max(0, Number(packagingCostPerOrder) || 0);
+  const calculatedOrder = withGlobalPackagingCost(order, packagingCost);
+  const netRevenue = getShopeeNetRevenue(calculatedOrder);
   const itemAmount = getShopeeItemAmount(order);
   const escrowReady = order.channel !== 'shopee' || isShopeeEscrowSynced(order);
   const estimatedHint = !escrowReady
@@ -199,11 +107,10 @@ function OrderShopeeFinanceSummary({
           <span>Phí sàn / Chi phí trung gian:</span>
           <span className="font-bold">0đ (Đơn trực tiếp)</span>
         </div>
-        {onUpdateOrder && <OrderCustomCostsForm order={order} onUpdateOrder={onUpdateOrder} />}
-        {customCosts > 0 && !onUpdateOrder && (
+        {packagingCost > 0 && (
           <div className="flex justify-between text-amber-600">
-            <span>Chi phí tự nhập:</span>
-            <span className="font-bold">-{customCosts.toLocaleString('vi-VN')}đ</span>
+            <span>Chi phí vận hành/đóng gói (Tự động):</span>
+            <span className="font-bold">-{packagingCost.toLocaleString('vi-VN')}đ</span>
           </div>
         )}
         <div className="flex justify-between text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
@@ -256,14 +163,12 @@ function OrderShopeeFinanceSummary({
           {!escrowReady && taxTotal === 0 && <span className="block text-[10px] text-gray-400 font-normal">Chờ chi tiết từ Shopee</span>}
         </span>
       </div>
-      {onUpdateOrder ? (
-        <OrderCustomCostsForm order={order} onUpdateOrder={onUpdateOrder} />
-      ) : customCosts > 0 ? (
+      {packagingCost > 0 && (
         <div className="flex justify-between text-amber-600 pt-2 border-t border-dashed border-gray-200">
-          <span>Chi phí tự nhập:</span>
-          <span className="font-bold">-{customCosts.toLocaleString('vi-VN')}đ</span>
+          <span>Chi phí vận hành/đóng gói (Tự động):</span>
+          <span className="font-bold">-{packagingCost.toLocaleString('vi-VN')}đ</span>
         </div>
-      ) : null}
+      )}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
         <span className="font-bold">Doanh thu Nhận Về:</span>
         <div className="text-right">
@@ -278,11 +183,11 @@ function OrderShopeeFinanceSummary({
 function OrderDetailAccordionPanel({
   order,
   shops,
-  onUpdateOrder,
+  packagingCostPerOrder,
 }: {
   order: Order;
   shops: ConnectedShop[];
-  onUpdateOrder: (updated: Order) => void;
+  packagingCostPerOrder: number;
 }) {
   return (
     <div className="px-4 pb-4 pt-3 border-t border-slate-100 bg-slate-50/80 space-y-4">
@@ -339,7 +244,7 @@ function OrderDetailAccordionPanel({
       </div>
 
       <div className="space-y-2 pt-2 border-t border-gray-100 text-xs text-gray-600 bg-white p-4 rounded-2xl border border-gray-100">
-        <OrderShopeeFinanceSummary order={order} onUpdateOrder={onUpdateOrder} />
+        <OrderShopeeFinanceSummary order={order} packagingCostPerOrder={packagingCostPerOrder} />
       </div>
     </div>
   );
@@ -354,6 +259,7 @@ interface OrderManagerProps {
   onFetchOrders?: () => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
+  packagingCostPerOrder?: number;
   onAddLog: (log: SyncLog) => void;
   products?: Product[];
   onUpdateProduct?: (updated: Product) => void;
@@ -364,6 +270,7 @@ interface OrderManagerProps {
 
 type OrderTab = 
   | 'all' 
+  | 'pending_verification'
   | 'pending_confirm' 
   | 'unprocessed' 
   | 'processed' 
@@ -420,6 +327,7 @@ export default function OrderManager({
   onFetchOrders,
   ordersLoading = false,
   shops, 
+  packagingCostPerOrder = 0,
   onAddLog, 
   products = [], 
   onUpdateProduct,
@@ -1447,6 +1355,8 @@ export default function OrderManager({
   // Status Vietnamese styling and labeling helper matching mockup closely
   const getStatusBadge = (status: Order['status']) => {
     switch (status) {
+      case 'pending_verification':
+        return { text: 'Đang được kiểm tra bởi Shopee', color: 'bg-violet-50 text-violet-700 border-violet-200/60' };
       case 'pending_confirm': 
         return { text: 'Chờ xác nhận', color: 'bg-amber-50 text-amber-600 border-amber-200/60' };
       case 'unprocessed': 
@@ -2370,6 +2280,20 @@ export default function OrderManager({
         </button>
 
         <button
+          onClick={() => setActiveSubTab('pending_verification')}
+          className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeSubTab === 'pending_verification'
+              ? 'border-violet-600 text-violet-700 font-extrabold bg-violet-50/40'
+              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+          }`}
+        >
+          <span>Đang được kiểm tra bởi Shopee</span>
+          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-violet-100 text-violet-700 border border-violet-200/50">
+            {getCount('pending_verification')}
+          </span>
+        </button>
+
+        <button
           onClick={() => setActiveSubTab('pending_confirm')}
           className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'pending_confirm' 
@@ -2871,12 +2795,12 @@ export default function OrderManager({
                       <td className="p-4 text-right space-y-0.5">
                         <div className="font-black text-gray-950 text-sm">{order.totalAmount.toLocaleString('vi-VN')}đ</div>
                         <div className={`text-[10px] font-bold p-0.5 px-1.5 rounded-md inline-block ${
-                          formatOrderNetRevenueDisplay(order).pending
+                          formatOrderNetRevenueDisplay(order, packagingCostPerOrder).pending
                             ? 'text-amber-700 bg-amber-50/80'
                             : 'text-emerald-600 bg-emerald-50/50'
                         }`}>
-                          Lãi: {formatOrderNetRevenueDisplay(order).text}
-                          {formatOrderNetRevenueDisplay(order).pending && (
+                          Lãi: {formatOrderNetRevenueDisplay(order, packagingCostPerOrder).text}
+                          {formatOrderNetRevenueDisplay(order, packagingCostPerOrder).pending && (
                             <span className="text-[9px] font-normal text-amber-700/80 ml-0.5">*</span>
                           )}
                         </div>
@@ -3023,9 +2947,7 @@ export default function OrderManager({
                           <OrderDetailAccordionPanel
                             order={order}
                             shops={shops}
-                            onUpdateOrder={(updated) => {
-                              onUpdateOrders(orders.map((o) => (o.id === updated.id ? updated : o)));
-                            }}
+                            packagingCostPerOrder={packagingCostPerOrder}
                           />
                         </td>
                       </tr>
@@ -3128,10 +3050,10 @@ export default function OrderManager({
                       <div className="text-xs">
                         <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng nhận được</span>
                         <span className={`font-black text-sm whitespace-nowrap ${
-                          formatOrderNetRevenueDisplay(order).pending ? 'text-amber-700' : 'text-emerald-700'
+                          formatOrderNetRevenueDisplay(order, packagingCostPerOrder).pending ? 'text-amber-700' : 'text-emerald-700'
                         }`}>
-                          {formatOrderNetRevenueDisplay(order).text}
-                          {formatOrderNetRevenueDisplay(order).pending && (
+                          {formatOrderNetRevenueDisplay(order, packagingCostPerOrder).text}
+                          {formatOrderNetRevenueDisplay(order, packagingCostPerOrder).pending && (
                             <span className="block text-[9px] font-medium text-amber-600/90 mt-0.5">Chưa gồm phí Shopee</span>
                           )}
                         </span>
@@ -3264,9 +3186,7 @@ export default function OrderManager({
                   <OrderDetailAccordionPanel
                     order={order}
                     shops={shops}
-                    onUpdateOrder={(updated) => {
-                      onUpdateOrders(orders.map((o) => (o.id === updated.id ? updated : o)));
-                    }}
+                    packagingCostPerOrder={packagingCostPerOrder}
                   />
                 )}
                 </div>
