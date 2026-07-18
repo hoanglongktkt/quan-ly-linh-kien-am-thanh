@@ -1474,8 +1474,6 @@ const SHOPEE_HTTP_TIMEOUT_MS = 12_000;
 /** TLS tối thiểu cho Shopee OpenAPI (cPanel Node ≥20) — tránh ECONNRESET do handshake cũ. */
 const SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
 const SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
-/** Ước tính phí sàn khi chưa có escrow_amount từ get_escrow_detail. */
-const SHOPEE_NET_FEE_RATE = 0.12;
 const nodeRequire = createRequire(import.meta.url);
 const { Agent: ShopeeUndiciAgent } = nodeRequire("undici") as {
   Agent: new (opts?: Record<string, unknown>) => unknown;
@@ -5030,104 +5028,166 @@ function extractShopeeWithholdingCitTax(source: any): number {
 }
 
 function extractShopeeEscrowAmount(source: any): number | undefined {
-  const income = source?.order_income || source?.orderIncome || source;
-  const raw = income?.escrow_amount ?? source?.escrow_amount ?? source?.escrowAmount;
+  const payload = source?.response ?? source;
+  const income = payload?.order_income || payload?.orderIncome || payload;
+  const details = payload?.income_details || payload?.incomeDetails || income?.income_details || {};
+  const raw =
+    details?.escrow_amount ??
+    income?.escrow_amount ??
+    payload?.escrow_amount ??
+    source?.escrow_amount ??
+    source?.escrowAmount;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : undefined;
+  return Number.isFinite(n) ? Math.round(n) : undefined;
 }
 
-function shopeeEscrowFeeAmount(raw: unknown): number {
+function shopeeEscrowNum(raw: unknown): number {
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+  return Number.isFinite(n) ? n : 0;
 }
 
-/** Bóc tách toàn bộ phí seller từ order_income của get_escrow_detail. */
-function extractShopeeFeesFromEscrow(source: any): Record<string, number> {
-  const income = source?.order_income || source?.orderIncome || source;
-  if (!income || typeof income !== "object") return {};
+function shopeeEscrowPos(raw: unknown): number {
+  const n = shopeeEscrowNum(raw);
+  return n > 0 ? Math.round(n) : 0;
+}
+
+/** Map order_income + income_details từ get_escrow_detail — không tính thủ công 12%. */
+function extractShopeeEscrowFinance(source: any): {
+  itemAmount?: number;
+  escrowAmount?: number;
+  withholdingCitTax: number;
+  shopeeFees: Record<string, number>;
+  escrowSynced: boolean;
+} {
+  const payload = source?.response ?? source;
+  const income = payload?.order_income || payload?.orderIncome || {};
+  const details = payload?.income_details || payload?.incomeDetails || income?.income_details || {};
+
+  const itemAmountRaw =
+    details?.item_amount ??
+    income?.cost_of_goods_sold ??
+    income?.original_cost_of_goods_sold ??
+    income?.order_selling_price ??
+    income?.order_original_price;
+  const itemAmount = shopeeEscrowPos(itemAmountRaw) || undefined;
+
+  const commissionFee = shopeeEscrowPos(details?.commission_fee ?? income?.commission_fee);
+  const serviceFee = shopeeEscrowPos(details?.service_fee ?? income?.service_fee);
+  const sellerTransactionFee = shopeeEscrowPos(details?.seller_transaction_fee ?? income?.seller_transaction_fee);
+  const transactionFee = shopeeEscrowPos(
+    details?.transaction_fee ??
+      income?.transaction_fee ??
+      income?.seller_transaction_fee ??
+      details?.seller_transaction_fee,
+  );
+  const creditCardTransactionFee = shopeeEscrowPos(
+    details?.credit_card_transaction_fee ?? income?.credit_card_transaction_fee,
+  );
+  const resolvedTransactionFee = sellerTransactionFee || transactionFee || creditCardTransactionFee;
+
+  const commissionFeeTax = shopeeEscrowPos(details?.commission_fee_tax ?? income?.commission_fee_tax);
+  const serviceFeeTax = shopeeEscrowPos(details?.service_fee_tax ?? income?.service_fee_tax);
+  const transactionFeeTax = shopeeEscrowPos(details?.transaction_fee_tax ?? income?.transaction_fee_tax);
+  const withholdingVatTax = shopeeEscrowPos(details?.withholding_vat_tax ?? income?.withholding_vat_tax);
+  const withholdingPitTax = shopeeEscrowPos(details?.withholding_pit_tax ?? income?.withholding_pit_tax);
+  const withholdingCitTax = shopeeEscrowPos(
+    details?.withholding_cit_tax ?? income?.withholding_cit_tax ?? income?.withholdingCitTax,
+  );
+  const feeTaxTotal = commissionFeeTax + serviceFeeTax + transactionFeeTax;
+  const withholdingTotal = withholdingVatTax + withholdingPitTax + withholdingCitTax;
+  const totalTax = feeTaxTotal > 0 ? feeTaxTotal : withholdingTotal;
+
+  const escrowAmount = extractShopeeEscrowAmount(payload);
 
   const fees: Record<string, number> = {};
   const setFee = (key: string, value: number) => {
     if (value > 0) fees[key] = value;
   };
+  if (itemAmount != null) setFee("item_amount", itemAmount);
+  setFee("commission_fee", commissionFee);
+  setFee("service_fee", serviceFee);
+  if (sellerTransactionFee > 0) setFee("seller_transaction_fee", sellerTransactionFee);
+  if (transactionFee > 0) setFee("transaction_fee", transactionFee);
+  else if (resolvedTransactionFee > 0) setFee("transaction_fee", resolvedTransactionFee);
+  if (creditCardTransactionFee > 0) setFee("credit_card_transaction_fee", creditCardTransactionFee);
+  setFee("commission_fee_tax", commissionFeeTax);
+  setFee("service_fee_tax", serviceFeeTax);
+  setFee("transaction_fee_tax", transactionFeeTax);
+  setFee("withholding_vat_tax", withholdingVatTax);
+  setFee("withholding_pit_tax", withholdingPitTax);
+  setFee("withholding_cit_tax", withholdingCitTax);
+  if (totalTax > 0) fees.total_tax = Math.round(totalTax);
 
-  setFee("commission_fee", shopeeEscrowFeeAmount(income.commission_fee));
-  setFee("service_fee", shopeeEscrowFeeAmount(income.service_fee));
-  const sellerTxn = shopeeEscrowFeeAmount(income.seller_transaction_fee);
-  const txn = shopeeEscrowFeeAmount(income.transaction_fee);
-  if (sellerTxn > 0) setFee("seller_transaction_fee", sellerTxn);
-  if (txn > 0) setFee("transaction_fee", txn);
-  else if (sellerTxn > 0) setFee("transaction_fee", sellerTxn);
-
-  setFee("withholding_vat_tax", shopeeEscrowFeeAmount(income.withholding_vat_tax));
-  setFee("withholding_pit_tax", shopeeEscrowFeeAmount(income.withholding_pit_tax));
-  setFee("withholding_cit_tax", shopeeEscrowFeeAmount(income.withholding_cit_tax));
-
-  const extraSellerFeeKeys = [
-    "campaign_fee",
-    "order_ams_commission_fee",
-    "seller_order_processing_fee",
-    "shipping_seller_protection_fee_amount",
-    "delivery_seller_protection_fee_premium_amount",
-    "final_escrow_product_gst",
-    "escrow_tax",
-    "withholding_tax",
-    "vat_on_imported_goods",
-  ] as const;
-  for (const key of extraSellerFeeKeys) {
-    setFee(key, shopeeEscrowFeeAmount(income[key]));
-  }
-
-  const transactionFee = fees.seller_transaction_fee ?? fees.transaction_fee ?? 0;
-  const taxTotal =
-    (fees.withholding_vat_tax ?? 0) +
-    (fees.withholding_pit_tax ?? 0) +
-    (fees.withholding_cit_tax ?? 0);
-  const totalSurcharge =
-    (fees.commission_fee ?? 0) +
-    (fees.service_fee ?? 0) +
-    transactionFee +
-    taxTotal;
+  const totalSurcharge = commissionFee + serviceFee + resolvedTransactionFee;
   if (totalSurcharge > 0) fees.total_surcharge = Math.round(totalSurcharge);
+  if (escrowAmount != null) fees.escrow_amount = escrowAmount;
 
-  return fees;
+  const escrowSynced =
+    escrowAmount != null ||
+    totalSurcharge > 0 ||
+    totalTax > 0 ||
+    (itemAmount != null && itemAmount > 0);
+
+  return {
+    itemAmount,
+    escrowAmount,
+    withholdingCitTax: withholdingCitTax || extractShopeeWithholdingCitTax(payload),
+    shopeeFees: fees,
+    escrowSynced,
+  };
 }
 
-function computeShopeeOrderRevenue(
-  totalAmount: number,
-  withholdingCitTax = 0,
-  escrowAmount?: number,
-): number {
-  if (escrowAmount != null && Number.isFinite(escrowAmount) && escrowAmount > 0) {
-    return Math.max(0, Math.round(escrowAmount));
-  }
-  const gross = Math.max(0, Number(totalAmount) || 0);
-  const cit = Math.max(0, Number(withholdingCitTax) || 0);
-  return Math.max(0, Math.round(gross * (1 - SHOPEE_NET_FEE_RATE) - cit));
+function computeShopeeOrderRevenue(escrowAmount?: number, customCosts = 0): number {
+  if (escrowAmount == null || !Number.isFinite(Number(escrowAmount))) return 0;
+  const costs = Math.max(0, Number(customCosts) || 0);
+  return Math.max(0, Math.round(Number(escrowAmount) - costs));
 }
 
 function applyShopeeOrderFinanceFields(
   order: any,
   opts: {
     totalAmount?: number;
+    itemAmount?: number;
     withholdingCitTax?: number;
     escrowAmount?: number;
     shopeeFees?: Record<string, number>;
+    escrowSynced?: boolean;
+    customCosts?: number;
   },
 ): void {
   const totalAmount = Number(opts.totalAmount ?? order.totalAmount ?? 0);
   const withholdingCitTax = Math.max(0, Number(opts.withholdingCitTax ?? order.withholdingCitTax ?? 0));
+  const customCosts = Math.max(0, Number(opts.customCosts ?? order.custom_costs ?? 0));
   const escrowAmount = opts.escrowAmount ?? order.escrowAmount;
+
   order.totalAmount = totalAmount;
   order.withholdingCitTax = withholdingCitTax;
   order.withholding_cit_tax = withholdingCitTax;
+  order.custom_costs = customCosts;
+
+  if (opts.itemAmount != null && Number(opts.itemAmount) > 0) {
+    order.item_amount = Number(opts.itemAmount);
+  } else if (opts.shopeeFees?.item_amount != null && Number(opts.shopeeFees.item_amount) > 0) {
+    order.item_amount = Number(opts.shopeeFees.item_amount);
+  }
+
   if (escrowAmount != null && Number.isFinite(Number(escrowAmount))) {
     order.escrowAmount = Number(escrowAmount);
   }
+
   if (opts.shopeeFees && Object.keys(opts.shopeeFees).length > 0) {
     order.shopee_fees = opts.shopeeFees;
   }
-  order.revenue = computeShopeeOrderRevenue(totalAmount, withholdingCitTax, order.escrowAmount);
+
+  if (opts.escrowSynced != null) {
+    order.escrow_synced = Boolean(opts.escrowSynced);
+  }
+
+  if (order.escrow_synced && order.escrowAmount != null && Number.isFinite(Number(order.escrowAmount))) {
+    order.revenue = computeShopeeOrderRevenue(order.escrowAmount, customCosts);
+  } else if (opts.escrowSynced === false) {
+    order.revenue = 0;
+  }
 }
 
 function shopeeItemCancelledQty(it: any): number {
@@ -5179,20 +5239,29 @@ async function enrichShopeeOrdersEscrowFinance(
   const targets = orders.filter((o) => o?.orderSn && o.status !== "cancelled");
   for (let i = 0; i < targets.length; i++) {
     const order = targets[i];
+    const customCosts = Math.max(0, Number(order.custom_costs) || 0);
     try {
       const escrow = await shopeeGetEscrowDetail(shopId, accessToken, order.orderSn);
-      if (escrow?.error) continue;
+      if (escrow?.error) {
+        order.escrow_synced = false;
+        order.revenue = 0;
+        console.warn(`[Shopee Finance] escrow ${order.orderSn}:`, escrow.message || escrow.error);
+        continue;
+      }
       const payload = escrow?.response ?? escrow;
-      const withholdingCitTax = extractShopeeWithholdingCitTax(payload);
-      const escrowAmount = extractShopeeEscrowAmount(payload);
-      const shopeeFees = extractShopeeFeesFromEscrow(payload);
+      const finance = extractShopeeEscrowFinance(payload);
       applyShopeeOrderFinanceFields(order, {
         totalAmount: order.totalAmount,
-        withholdingCitTax,
-        escrowAmount,
-        shopeeFees,
+        itemAmount: finance.itemAmount,
+        withholdingCitTax: finance.withholdingCitTax,
+        escrowAmount: finance.escrowAmount,
+        shopeeFees: finance.shopeeFees,
+        escrowSynced: finance.escrowSynced,
+        customCosts,
       });
     } catch (err) {
+      order.escrow_synced = false;
+      order.revenue = 0;
       console.warn(`[Shopee Finance] escrow ${order.orderSn} failed:`, err);
     }
     if (i < targets.length - 1) await sleep(300);
@@ -5591,6 +5660,8 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     applyShopeeOrderFinanceFields(order, {
       totalAmount: order.totalAmount,
       withholdingCitTax: extractShopeeWithholdingCitTax(item),
+      escrowSynced: false,
+      customCosts: 0,
     });
     applyShopeePackageListTracking(order, item);
     repairMisassignedTracking(order);
@@ -5667,29 +5738,43 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     resolveConnectedShopDisplayName(existing.shopId, existing.shopName) ||
     merged.shopName;
   mergeShopeeTrackingFields(merged, existing, incoming);
+  const mergedCustomCosts = Math.max(0, Number(existing?.custom_costs ?? incoming?.custom_costs ?? 0));
+  merged.custom_costs = mergedCustomCosts;
+  if (incoming.item_amount != null) merged.item_amount = incoming.item_amount;
+  else if (existing?.item_amount != null) merged.item_amount = existing.item_amount;
+  if (incoming.escrow_synced != null) merged.escrow_synced = incoming.escrow_synced;
+  else if (existing?.escrow_synced != null) merged.escrow_synced = existing.escrow_synced;
   if (incoming.withholdingCitTax != null || incoming.withholding_cit_tax != null) {
     applyShopeeOrderFinanceFields(merged, {
       totalAmount: merged.totalAmount,
+      itemAmount: incoming.item_amount ?? existing?.item_amount,
       withholdingCitTax: extractShopeeWithholdingCitTax(incoming),
-      escrowAmount: incoming.escrowAmount,
-      shopeeFees: incoming.shopee_fees,
+      escrowAmount: incoming.escrowAmount ?? existing?.escrowAmount,
+      shopeeFees: incoming.shopee_fees ?? existing?.shopee_fees,
+      escrowSynced: incoming.escrow_synced ?? existing?.escrow_synced,
+      customCosts: mergedCustomCosts,
     });
-  } else if (existing.withholdingCitTax != null || existing.withholding_cit_tax != null) {
+  } else if (existing?.escrow_synced || existing?.escrowAmount != null) {
     applyShopeeOrderFinanceFields(merged, {
       totalAmount: merged.totalAmount,
+      itemAmount: existing?.item_amount,
       withholdingCitTax: extractShopeeWithholdingCitTax(existing),
-      escrowAmount: existing.escrowAmount,
-      shopeeFees: existing.shopee_fees,
+      escrowAmount: existing?.escrowAmount,
+      shopeeFees: existing?.shopee_fees,
+      escrowSynced: existing?.escrow_synced,
+      customCosts: mergedCustomCosts,
     });
   } else {
     applyShopeeOrderFinanceFields(merged, {
       totalAmount: merged.totalAmount,
-      shopeeFees: incoming.shopee_fees ?? existing.shopee_fees,
+      shopeeFees: incoming.shopee_fees ?? existing?.shopee_fees,
+      escrowSynced: false,
+      customCosts: mergedCustomCosts,
     });
   }
   if (incoming.shopee_fees && Object.keys(incoming.shopee_fees).length > 0) {
     merged.shopee_fees = incoming.shopee_fees;
-  } else if (existing.shopee_fees && !merged.shopee_fees) {
+  } else if (existing?.shopee_fees && !merged.shopee_fees) {
     merged.shopee_fees = existing.shopee_fees;
   }
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
@@ -8052,6 +8137,8 @@ function normalizeShopeeOrder(payload: any): any | null {
   applyShopeeOrderFinanceFields(order, {
     totalAmount: order.totalAmount,
     withholdingCitTax: extractShopeeWithholdingCitTax(data),
+    escrowSynced: false,
+    customCosts: 0,
   });
   if (Array.isArray(data.package_list) && data.package_list.length > 0) {
     applyShopeePackageListTracking(order, data);
@@ -8089,7 +8176,7 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
       merged.channel === "shopee" &&
       merged.shopId &&
       merged.orderSn &&
-      (merged.status === "completed" || merged.status === "shipping")
+      merged.status !== "cancelled"
     ) {
       try {
         const accessToken = await getValidShopeeAccessToken(String(merged.shopId));

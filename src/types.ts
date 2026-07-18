@@ -78,16 +78,26 @@ export interface Expense {
   notes?: string;
 }
 
-/** Chi tiết phí sàn Shopee từ v2.payment.get_escrow_detail → order_income */
+/** Chi tiết phí sàn Shopee từ v2.payment.get_escrow_detail → order_income / income_details */
 export interface ShopeeFees {
+  /** Tổng tiền sản phẩm gốc (item_amount) */
+  item_amount?: number;
   commission_fee?: number;
   service_fee?: number;
   transaction_fee?: number;
   seller_transaction_fee?: number;
+  credit_card_transaction_fee?: number;
+  commission_fee_tax?: number;
+  service_fee_tax?: number;
+  transaction_fee_tax?: number;
+  /** Tổng thuế (fee tax hoặc withholding VN) */
+  total_tax?: number;
   withholding_vat_tax?: number;
   withholding_pit_tax?: number;
   withholding_cit_tax?: number;
-  /** Tổng phụ phí (commission + service + transaction + thuế + phí khác) */
+  /** Doanh thu escrow từ Shopee */
+  escrow_amount?: number;
+  /** Tổng phụ phí (commission + service + transaction, chưa gồm thuế) */
   total_surcharge?: number;
   [key: string]: number | undefined;
 }
@@ -113,7 +123,13 @@ export interface Order {
   };
   carrier?: 'self' | 'ghn' | 'spx';
   totalAmount: number;
-  revenue: number; // Net revenue after channel fees
+  /** Tổng tiền sản phẩm gốc từ get_escrow_detail (item_amount) */
+  item_amount?: number;
+  revenue: number; // escrow_amount − custom_costs (chỉ khi đã đối soát Shopee)
+  /** Chi phí tự nhập của kho sỉ (đóng gói, v.v.) */
+  custom_costs?: number;
+  /** true khi đã lấy được dữ liệu get_escrow_detail */
+  escrow_synced?: boolean;
   withholdingCitTax?: number;
   /** Mirror snake_case field from Shopee OpenAPI order_income.withholding_cit_tax */
   withholding_cit_tax?: number;

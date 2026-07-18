@@ -16,7 +16,10 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
         ? String(raw.shop_name)
         : undefined,
     totalAmount: Number(raw.totalAmount) || 0,
-    revenue: Number(raw.revenue) || Number(raw.totalAmount) || 0,
+    item_amount: raw.item_amount != null ? Number(raw.item_amount) : undefined,
+    revenue: Number(raw.revenue) || 0,
+    custom_costs: raw.custom_costs != null ? Math.max(0, Number(raw.custom_costs) || 0) : undefined,
+    escrow_synced: raw.escrow_synced != null ? Boolean(raw.escrow_synced) : undefined,
     withholdingCitTax: Math.max(0, Number(raw.withholdingCitTax ?? raw.withholding_cit_tax) || 0),
     withholding_cit_tax: Math.max(0, Number(raw.withholding_cit_tax ?? raw.withholdingCitTax) || 0),
     escrowAmount: raw.escrowAmount != null ? Number(raw.escrowAmount) : undefined,

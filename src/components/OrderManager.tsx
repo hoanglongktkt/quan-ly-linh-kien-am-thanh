@@ -51,12 +51,23 @@ import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import {
   computeShopeeSurchargeTotal,
+  getShopeeCustomCosts,
+  getShopeeItemAmount,
+  getShopeeNetRevenue,
   getShopeeTaxTotal,
   getShopeeTransactionFee,
+  isShopeeEscrowSynced,
 } from '../utils/shopeeFees';
 
 function getOrderWaybillCode(order: Order): string {
   return getCarrierWaybillDisplay(order);
+}
+
+function formatOrderNetRevenueDisplay(order: Order): { text: string; pending: boolean } {
+  if (order.channel === 'shopee' && !isShopeeEscrowSynced(order)) {
+    return { text: 'Chờ đối soát', pending: true };
+  }
+  return { text: `${getShopeeNetRevenue(order).toLocaleString('vi-VN')}đ`, pending: false };
 }
 
 function OrderShopeeFinanceSummary({ order }: { order: Order }) {
@@ -65,78 +76,85 @@ function OrderShopeeFinanceSummary({ order }: { order: Order }) {
   const serviceFee = Math.max(0, Number(fees?.service_fee) || 0);
   const transactionFee = getShopeeTransactionFee(fees);
   const taxTotal = getShopeeTaxTotal(fees, order);
-  const surchargeTotal = computeShopeeSurchargeTotal(fees, order);
-  const hasDetailedFees =
-    order.channel === 'shopee' &&
-    (commissionFee > 0 || serviceFee > 0 || transactionFee > 0 || taxTotal > 0 || Boolean(fees?.total_surcharge));
+  const surchargeTotal = computeShopeeSurchargeTotal(fees);
+  const customCosts = getShopeeCustomCosts(order);
+  const netRevenue = getShopeeNetRevenue(order);
+  const itemAmount = getShopeeItemAmount(order);
+  const escrowReady = isShopeeEscrowSynced(order);
 
   if (order.channel === 'manual') {
     return (
       <>
+        <div className="flex justify-between">
+          <span>Tổng tiền sản phẩm:</span>
+          <span className="font-bold text-gray-900">{order.totalAmount.toLocaleString('vi-VN')}đ</span>
+        </div>
         <div className="flex justify-between text-emerald-600">
           <span>Phí sàn / Chi phí trung gian:</span>
           <span className="font-bold">0đ (Đơn trực tiếp)</span>
         </div>
+        {customCosts > 0 && (
+          <div className="flex justify-between text-amber-600">
+            <span>Chi phí tự nhập:</span>
+            <span className="font-bold">-{customCosts.toLocaleString('vi-VN')}đ</span>
+          </div>
+        )}
         <div className="flex justify-between text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
           <span className="font-bold">Doanh thu Nhận Về:</span>
-          <span className="font-extrabold">{order.revenue.toLocaleString('vi-VN')}đ</span>
+          <span className="font-extrabold">{netRevenue.toLocaleString('vi-VN')}đ</span>
         </div>
       </>
     );
   }
 
-  if (hasDetailedFees) {
+  if (!escrowReady) {
     return (
-      <>
-        <div className="space-y-1.5">
-          <div className="flex justify-between text-rose-600 font-bold">
-            <span>Phụ phí</span>
-            <span>-{surchargeTotal.toLocaleString('vi-VN')}đ</span>
-          </div>
-          <div className="pl-3 space-y-1 border-l-2 border-rose-100 text-rose-500">
-            {commissionFee > 0 && (
-              <div className="flex justify-between">
-                <span>Phí cố định:</span>
-                <span className="font-semibold">-{commissionFee.toLocaleString('vi-VN')}đ</span>
-              </div>
-            )}
-            {serviceFee > 0 && (
-              <div className="flex justify-between">
-                <span>Phí dịch vụ:</span>
-                <span className="font-semibold">-{serviceFee.toLocaleString('vi-VN')}đ</span>
-              </div>
-            )}
-            {transactionFee > 0 && (
-              <div className="flex justify-between">
-                <span>Phí xử lý giao dịch:</span>
-                <span className="font-semibold">-{transactionFee.toLocaleString('vi-VN')}đ</span>
-              </div>
-            )}
-            {taxTotal > 0 && (
-              <div className="flex justify-between">
-                <span>Thuế (Thuế GTGT, TNCN...):</span>
-                <span className="font-semibold">-{taxTotal.toLocaleString('vi-VN')}đ</span>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="flex justify-between text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
-          <span className="font-bold">Doanh thu Nhận Về:</span>
-          <span className="font-extrabold">{order.revenue.toLocaleString('vi-VN')}đ</span>
-        </div>
-      </>
+      <div className="flex justify-between text-amber-600 pt-1 border-t border-dashed border-gray-200">
+        <span className="font-semibold">Doanh thu Shopee:</span>
+        <span className="font-bold italic">Đang chờ Shopee đối soát</span>
+      </div>
     );
   }
 
   return (
     <>
-      <div className="flex justify-between text-rose-500">
-        <span>Khấu trừ phí sàn ({order.channel === 'shopee' ? '12%' : '10%'}):</span>
-        <span className="font-bold">-{(order.totalAmount - order.revenue).toLocaleString('vi-VN')}đ</span>
+      <div className="flex justify-between">
+        <span>Tổng tiền sản phẩm:</span>
+        <span className="font-bold text-gray-900">{itemAmount.toLocaleString('vi-VN')}đ</span>
       </div>
+      <div className="space-y-1.5">
+        <div className="flex justify-between text-rose-600 font-bold">
+          <span>Phụ phí</span>
+          <span>-{surchargeTotal.toLocaleString('vi-VN')}đ</span>
+        </div>
+        <div className="pl-3 space-y-1 border-l-2 border-rose-100 text-rose-500">
+          <div className="flex justify-between">
+            <span>Phí cố định:</span>
+            <span className="font-semibold">-{commissionFee.toLocaleString('vi-VN')}đ</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Phí dịch vụ:</span>
+            <span className="font-semibold">-{serviceFee.toLocaleString('vi-VN')}đ</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Phí xử lý giao dịch:</span>
+            <span className="font-semibold">-{transactionFee.toLocaleString('vi-VN')}đ</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex justify-between text-rose-500">
+        <span>Thuế:</span>
+        <span className="font-semibold">-{taxTotal.toLocaleString('vi-VN')}đ</span>
+      </div>
+      {customCosts > 0 && (
+        <div className="flex justify-between text-amber-600">
+          <span>Chi phí tự nhập:</span>
+          <span className="font-bold">-{customCosts.toLocaleString('vi-VN')}đ</span>
+        </div>
+      )}
       <div className="flex justify-between text-emerald-600 pt-1.5 border-t border-dashed border-gray-200 text-sm">
         <span className="font-bold">Doanh thu Nhận Về:</span>
-        <span className="font-extrabold">{order.revenue.toLocaleString('vi-VN')}đ</span>
+        <span className="font-extrabold">{netRevenue.toLocaleString('vi-VN')}đ</span>
       </div>
     </>
   );
@@ -198,10 +216,6 @@ function OrderDetailAccordionPanel({ order, shops }: { order: Order; shops: Conn
       </div>
 
       <div className="space-y-2 pt-2 border-t border-gray-100 text-xs text-gray-600 bg-white p-4 rounded-2xl border border-gray-100">
-        <div className="flex justify-between">
-          <span>Tổng tiền hàng khách trả:</span>
-          <span className="font-bold text-gray-900">{order.totalAmount.toLocaleString('vi-VN')}đ</span>
-        </div>
         <OrderShopeeFinanceSummary order={order} />
       </div>
     </div>
@@ -2733,8 +2747,12 @@ export default function OrderManager({
                       {/* Total bill & Net Profit */}
                       <td className="p-4 text-right space-y-0.5">
                         <div className="font-black text-gray-950 text-sm">{order.totalAmount.toLocaleString('vi-VN')}đ</div>
-                        <div className="text-[10px] text-emerald-600 font-bold bg-emerald-50/50 p-0.5 px-1.5 rounded-md inline-block">
-                          Lãi: {order.revenue.toLocaleString('vi-VN')}đ
+                        <div className={`text-[10px] font-bold p-0.5 px-1.5 rounded-md inline-block ${
+                          formatOrderNetRevenueDisplay(order).pending
+                            ? 'text-amber-700 bg-amber-50/80'
+                            : 'text-emerald-600 bg-emerald-50/50'
+                        }`}>
+                          Lãi: {formatOrderNetRevenueDisplay(order).text}
                         </div>
                       </td>
 
@@ -2977,7 +2995,11 @@ export default function OrderManager({
                       </div>
                       <div className="text-xs">
                         <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Tổng nhận được</span>
-                        <span className="font-black text-emerald-700 text-sm whitespace-nowrap">{order.revenue.toLocaleString('vi-VN')} đ</span>
+                        <span className={`font-black text-sm whitespace-nowrap ${
+                          formatOrderNetRevenueDisplay(order).pending ? 'text-amber-700' : 'text-emerald-700'
+                        }`}>
+                          {formatOrderNetRevenueDisplay(order).text}
+                        </span>
                       </div>
                     </div>
 
