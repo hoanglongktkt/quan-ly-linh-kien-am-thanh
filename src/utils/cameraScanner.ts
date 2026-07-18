@@ -21,6 +21,8 @@ const DECODE_INTERVAL_MS = 40;
 
 export type LiveQrScannerHandle = {
   stop: () => Promise<void>;
+  clear: () => Promise<void>;
+  destroy: () => Promise<void>;
 };
 
 type ExtendedCaps = MediaTrackCapabilities & {
@@ -398,30 +400,72 @@ export async function startLiveQrScanner(opts: {
     }
   }
 
+  const teardownDom = async () => {
+    try {
+      zxingControls?.stop();
+    } catch {
+      /* ignore */
+    }
+    zxingReader = null;
+    try {
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {
+      /* ignore */
+    }
+    try {
+      video.srcObject = null;
+    } catch {
+      /* ignore */
+    }
+    // Tránh removeChild race với React unmount: chỉ gỡ khi còn gắn DOM.
+    try {
+      if (video.isConnected && video.parentNode) {
+        video.parentNode.removeChild(video);
+      }
+    } catch {
+      /* ignore NotFoundError / removeChild */
+    }
+    try {
+      canvas.width = 0;
+      canvas.height = 0;
+    } catch {
+      /* ignore */
+    }
+    try {
+      if (container.isConnected) {
+        container.innerHTML = '';
+      }
+    } catch {
+      /* ignore */
+    }
+    activeScanners.delete(opts.containerId);
+  };
+
   const handle: LiveQrScannerHandle = {
     stop: async () => {
       if (stopped) return;
       stopped = true;
       cancelAnimationFrame(rafId);
       if (opts.tapLayerId) stopTapToFocusAssist(opts.tapLayerId);
-      try {
-        zxingControls?.stop();
-      } catch {
-        /* ignore */
-      }
-      zxingReader = null;
-      stream.getTracks().forEach((t) => t.stop());
-      video.srcObject = null;
-      video.remove();
-      canvas.width = 0;
-      canvas.height = 0;
-      container.innerHTML = '';
-      activeScanners.delete(opts.containerId);
+      await teardownDom();
+    },
+    clear: async () => {
+      await handle.stop();
+    },
+    destroy: async () => {
+      await handle.stop();
     },
   };
 
   activeScanners.set(opts.containerId, handle);
   return handle;
+}
+
+/** Dừng scanner đang active theo container — dùng trước khi điều hướng/unmount. */
+export async function stopLiveQrScanner(containerId: string): Promise<void> {
+  const handle = activeScanners.get(containerId);
+  if (!handle) return;
+  await handle.stop().catch(() => undefined);
 }
 
 /** @deprecated giữ API cũ — chuyển sang startLiveQrScanner */

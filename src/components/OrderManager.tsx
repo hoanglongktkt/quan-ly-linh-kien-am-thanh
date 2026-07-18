@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   startLiveQrScanner,
+  stopLiveQrScanner,
   stopTapToFocusAssist,
   CAMERA_TAP_LAYER_ID,
   HTTPS_CAMERA_MESSAGE,
@@ -378,6 +379,9 @@ export default function OrderManager({
   const enqueueScanRef = React.useRef<(query: string) => void>(() => {});
   const isScanBusyRef = React.useRef(false);
   const scanQueueRef = React.useRef(scanQueue);
+  /** Instance scanner sống — dùng để await stop/clear trước khi unmount. */
+  const liveScannerRef = React.useRef<LiveQrScannerHandle | null>(null);
+  const isTearingDownScannerRef = React.useRef(false);
   const orderScanIndex = useMemo(() => buildOrderScanIndex(orders), [orders]);
   const continuousScanTarget = useMemo(
     () =>
@@ -650,10 +654,16 @@ export default function OrderManager({
   }, [enqueueContinuousScan]);
 
   useEffect(() => {
-    const scannerRef = { current: null as LiveQrScannerHandle | null };
     let isMounted = true;
 
     if (focusScanner) {
+      // Tránh restart camera khi đang graceful teardown (finish scan).
+      if (isTearingDownScannerRef.current) {
+        return () => {
+          isMounted = false;
+        };
+      }
+
       setCameraScanResult('Chế độ quét liên tục — sẵn sàng...');
       setCameraScanSuccess(false);
       setCameraScanError(false);
@@ -664,7 +674,7 @@ export default function OrderManager({
       setIsFlushingQueue(false);
 
       const timer = setTimeout(() => {
-        if (!isMounted) return;
+        if (!isMounted || isTearingDownScannerRef.current) return;
 
         const element = document.getElementById('camera-reader');
         if (!element) {
@@ -674,7 +684,7 @@ export default function OrderManager({
         }
 
         const qrCodeSuccessCallback = (decodedText: string) => {
-          if (!decodedText?.trim()) return;
+          if (!decodedText?.trim() || isTearingDownScannerRef.current) return;
           // Continuous: xếp hàng đợi ngay — không await backend, không đóng camera.
           enqueueScanRef.current(decodedText);
         };
@@ -685,11 +695,11 @@ export default function OrderManager({
           onSuccess: qrCodeSuccessCallback,
         })
           .then((handle) => {
-            if (!isMounted) {
+            if (!isMounted || isTearingDownScannerRef.current) {
               void handle.stop();
               return;
             }
-            scannerRef.current = handle;
+            liveScannerRef.current = handle;
           })
           .catch((err: unknown) => {
             console.error('Camera scanner start failed:', err);
@@ -706,8 +716,12 @@ export default function OrderManager({
       return () => {
         isMounted = false;
         clearTimeout(timer);
+        // Nếu finish handler đã/đang teardown — không stop lần 2 (tránh race removeChild).
+        if (isTearingDownScannerRef.current) return;
         stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
-        void scannerRef.current?.stop().catch((err) => console.error('Error stopping QR scanner', err));
+        const handle = liveScannerRef.current;
+        liveScannerRef.current = null;
+        void handle?.stop().catch((err) => console.error('Error stopping QR scanner', err));
       };
     }
 
@@ -1773,29 +1787,132 @@ export default function OrderManager({
     else if (onCloseScanner) onCloseScanner();
   };
 
-  /** Kết thúc: xử lý cả hàng đợi rồi mới đóng camera. */
+  /** Dọn camera/DOM scanner xong mới cho phép unmount — tránh lỗi removeChild. */
+  const teardownScannerBeforeExit = async () => {
+    isTearingDownScannerRef.current = true;
+    try {
+      stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
+      const handle = liveScannerRef.current;
+      liveScannerRef.current = null;
+      if (handle) {
+        await handle.stop().catch(() => undefined);
+        await handle.clear().catch(() => undefined);
+      } else {
+        await stopLiveQrScanner('camera-reader').catch(() => undefined);
+      }
+      // Nhường 1 frame để browser/React settle DOM trước khi unmount.
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    } finally {
+      /* flag reset sau khi đã thoát màn quét */
+    }
+  };
+
+  /** Kết thúc: bulk cập nhật trạng thái → await dọn camera → mới thoát. */
   const handleFinishContinuousScan = async () => {
     setShowEndConfirm(false);
     const queue = [...scanQueueRef.current].reverse();
-    if (queue.length === 0) {
-      handleEndScanSession();
+    const codes = queue.map((q) => q.code);
+
+    setIsFlushingQueue(true);
+    setCameraScanResult(
+      codes.length > 0
+        ? `Đang phân loại ${codes.length} mã đã quét...`
+        : 'Đang tắt camera...',
+    );
+
+    try {
+      if (codes.length > 0) {
+        const token = localStorage.getItem('admin_token');
+        if (!token) {
+          showScanToast('Chưa đăng nhập — không thể cập nhật đơn đã quét.', 'error');
+        } else {
+          const res = await fetch('/api/orders/scan-bulk-update', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ codes }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || data?.success === false) {
+            throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+          }
+
+          const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
+          if (updatedOrders.length > 0) {
+            const byId = new Map(updatedOrders.map((o) => [o.id, o]));
+            const merged = ordersRef.current.map((o) => {
+              const next = byId.get(o.id);
+              return next ? { ...o, ...next } : o;
+            });
+            for (const o of updatedOrders) {
+              if (!merged.some((x) => x.id === o.id)) merged.unshift(o);
+            }
+            ordersRef.current = merged;
+            onUpdateOrders(merged);
+          }
+
+          const stats = data?.stats || {};
+          const handed = Number(stats.handedOver || 0);
+          const cancelled = Number(stats.cancelled || 0);
+          const returned = Number(stats.returnReceived || 0);
+          setSessionStats((s) => ({
+            shipped: s.shipped + handed,
+            cancelDetected: s.cancelDetected + cancelled,
+            returnReceived: s.returnReceived + returned,
+          }));
+
+          if (handed > 0) {
+            setActiveSubTab('handed_over_carrier');
+          } else if (returned > 0) {
+            setActiveSubTab('cancel_returns');
+            setCancelReturnTab('refund_return');
+          } else if (cancelled > 0) {
+            setActiveSubTab('cancel_returns');
+            setCancelReturnTab('cancelled');
+          }
+
+          onAddLog({
+            id: `log-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            channel: 'shopee',
+            type: 'stock_sync',
+            status: 'success',
+            message: `[QUÉT QR BULK] ${codes.length} mã → bàn giao ${handed}, đơn hủy ${cancelled}, nhận hoàn ${returned}.`,
+          });
+          showScanToast(
+            `Đã phân loại ${codes.length} mã (bàn giao ${handed} · hủy ${cancelled} · hoàn ${returned})`,
+            'success',
+          );
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showScanToast(`Lỗi cập nhật hàng loạt: ${msg}`, 'error');
+      setIsFlushingQueue(false);
+      isTearingDownScannerRef.current = false;
       return;
     }
 
-    setIsFlushingQueue(true);
-    setCameraScanResult(`Đang xử lý ${queue.length} mã đã quét...`);
+    // BẮT BUỘC: dọn scanner xong mới điều hướng / unmount.
+    setCameraScanResult('Đang tắt camera...');
     try {
-      for (let i = 0; i < queue.length; i++) {
-        setCameraScanResult(`Đang xử lý ${i + 1}/${queue.length}: ${queue[i].code}`);
-        await handleOrderScan(queue[i].code);
-      }
-      showScanToast(`Đã xử lý ${queue.length} mã quét liên tục`, 'success');
-    } finally {
-      scanQueueRef.current = [];
-      setScanQueue([]);
-      setIsFlushingQueue(false);
-      handleEndScanSession();
+      await teardownScannerBeforeExit();
+    } catch (err) {
+      console.error('Scanner teardown failed:', err);
     }
+
+    scanQueueRef.current = [];
+    setScanQueue([]);
+    setIsFlushingQueue(false);
+    handleEndScanSession();
+    // Cho phép mở lại scanner sau khi đã thoát.
+    window.setTimeout(() => {
+      isTearingDownScannerRef.current = false;
+    }, 300);
   };
 
   if (focusScanner) {

@@ -11036,6 +11036,172 @@ async function startServer() {
     return res.json({ success: true, order: enriched });
   });
 
+  /**
+   * Bulk phân loại đơn sau phiên quét QR liên tục.
+   * Body: { codes: string[] }
+   * Quy tắc:
+   *  1) Chờ lấy hàng (unprocessed/processed) → Đã bàn giao ĐVVC
+   *  2) Cancelled → giữ tab Đơn hủy
+   *  3) Return cycle (return_pending) → Đã nhận hàng hoàn (return_received)
+   */
+  app.post("/api/orders/scan-bulk-update", authMiddleware, async (req, res) => {
+    try {
+      const rawCodes = Array.isArray(req.body?.codes)
+        ? req.body.codes
+        : Array.isArray(req.body?.scanCodes)
+          ? req.body.scanCodes
+          : [];
+      const codes = [...new Set(rawCodes.map((c: unknown) => String(c || "").trim()).filter(Boolean))];
+      if (!codes.length) {
+        return res.status(400).json({
+          success: false,
+          error: "Thiếu danh sách mã quét (codes).",
+          message: "Thiếu danh sách mã quét (codes).",
+        });
+      }
+
+      const orders = loadOrders();
+      const validOrders = orders.filter(isValidOrder);
+      let dirty = false;
+      const results: Array<{
+        code: string;
+        action: "handed_over" | "cancelled" | "return_received" | "not_found" | "skipped";
+        orderId?: string;
+        orderSn?: string;
+        message: string;
+      }> = [];
+      const updatedById = new Map<string, any>();
+      const stats = {
+        handedOver: 0,
+        cancelled: 0,
+        returnReceived: 0,
+        notFound: 0,
+        skipped: 0,
+      };
+
+      for (const code of codes) {
+        const found = await findOrderByScanLookup(validOrders, code);
+        if (!found) {
+          stats.notFound += 1;
+          results.push({ code, action: "not_found", message: `Không tìm thấy đơn với mã "${code}"` });
+          continue;
+        }
+
+        const index = orders.findIndex((o: any) => o.id === found.id);
+        if (index < 0) {
+          stats.notFound += 1;
+          results.push({ code, action: "not_found", message: `Không tìm thấy đơn với mã "${code}"` });
+          continue;
+        }
+
+        const order = orders[index];
+        const status = String(order.status || "");
+
+        // Quy tắc 1: Chờ lấy hàng → Đã bàn giao ĐVVC
+        if (isOrderAwaitingCarrierPickupStatus(status)) {
+          if (!resolveOrderHandoverFlag(order)) {
+            const updated = {
+              ...order,
+              isHandedOverToCarrier: true,
+              is_handed_over_to_carrier: true,
+              handedOverAt: new Date().toISOString(),
+            };
+            orders[index] = updated;
+            dirty = true;
+            updatedById.set(updated.id, updated);
+          } else {
+            updatedById.set(order.id, order);
+          }
+          stats.handedOver += 1;
+          results.push({
+            code,
+            action: "handed_over",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Đã bàn giao ĐVVC — đơn #${order.orderSn}`,
+          });
+          continue;
+        }
+
+        // Quy tắc 2: Đơn hủy → tab Đơn hủy (giữ status cancelled)
+        if (status === "cancelled") {
+          updatedById.set(order.id, order);
+          stats.cancelled += 1;
+          results.push({
+            code,
+            action: "cancelled",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Đơn hủy #${order.orderSn} → tab Đơn hủy`,
+          });
+          continue;
+        }
+
+        // Quy tắc 3: Chu trình hoàn hàng → Đã nhận hàng hoàn
+        if (status === "return_pending") {
+          const updated = { ...order, status: "return_received" };
+          orders[index] = updated;
+          dirty = true;
+          updatedById.set(updated.id, updated);
+          stats.returnReceived += 1;
+          results.push({
+            code,
+            action: "return_received",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Đã nhận hàng hoàn — đơn #${order.orderSn}`,
+          });
+          continue;
+        }
+
+        if (status === "return_received") {
+          stats.skipped += 1;
+          results.push({
+            code,
+            action: "skipped",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Đơn #${order.orderSn} đã nhận hoàn trước đó`,
+          });
+          continue;
+        }
+
+        stats.skipped += 1;
+        results.push({
+          code,
+          action: "skipped",
+          orderId: order.id,
+          orderSn: order.orderSn,
+          message: `Đơn #${order.orderSn} trạng thái "${status}" — bỏ qua`,
+        });
+      }
+
+      if (dirty) saveOrders(orders);
+
+      const updatedList = [...updatedById.values()];
+      const products = await loadProductsForOrders(updatedList);
+      const enriched = enrichOrdersFromCatalog(updatedList, products);
+
+      console.log(
+        `[Orders Scan Bulk] codes=${codes.length} handedOver=${stats.handedOver} cancelled=${stats.cancelled} returnReceived=${stats.returnReceived} notFound=${stats.notFound} skipped=${stats.skipped}`,
+      );
+
+      return res.json({
+        success: true,
+        stats,
+        results,
+        orders: enriched,
+      });
+    } catch (error: any) {
+      console.error("[Orders Scan Bulk] Error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "scan_bulk_update_failed",
+        message: error?.message || "Không thể cập nhật hàng loạt đơn đã quét.",
+      });
+    }
+  });
+
   const VN_ADDRESS_API = "https://provinces.open-api.vn/api";
   let vnProvincesCache: any[] | null = null;
   const vnDistrictsCache = new Map<number, any[]>();
