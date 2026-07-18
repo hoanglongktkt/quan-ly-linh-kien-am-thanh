@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { createRequire } from "node:module";
 import { PDFDocument } from "pdf-lib";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
@@ -1224,7 +1225,23 @@ async function runShopeeConnectivityDiagnostics(shopIdInput?: string) {
       shopee_host: SHOPEE_HOST,
       partner_id: SHOPEE_PARTNER_ID || null,
       partner_key_preview: SHOPEE_PARTNER_KEY ? maskedPartnerKey : null,
+      tls_min_version: SHOPEE_TLS_MIN_VERSION,
+      tls_max_version: SHOPEE_TLS_MAX_VERSION,
+      http_dispatcher_connections: 3,
       note: "Biến SHOPEE_* phải cấu hình trên cPanel backend — KHÔNG chỉ trên Vercel frontend.",
+    },
+  });
+
+  steps.push({
+    step: "tls_http_client",
+    ok: true,
+    code: "OK",
+    detail: `Shopee HTTP client dùng undici Agent TLS ${SHOPEE_TLS_MIN_VERSION}–${SHOPEE_TLS_MAX_VERSION}, keepAlive, max 3 connections.`,
+    data: {
+      tls_min_version: SHOPEE_TLS_MIN_VERSION,
+      tls_max_version: SHOPEE_TLS_MAX_VERSION,
+      timeout_ms: SHOPEE_HTTP_TIMEOUT_MS,
+      override_env: "SHOPEE_TLS_MIN_VERSION / SHOPEE_TLS_MAX_VERSION",
     },
   });
 
@@ -1283,14 +1300,11 @@ async function runShopeeConnectivityDiagnostics(shopIdInput?: string) {
   }
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
     const apiPath = "/api/v2/shop/get_shop_info";
     const timestamp = Math.floor(Date.now() / 1000);
     const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
     const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
+    const res = await fetchWithTimeout(url);
     const json: any = await res.json();
 
     const shopeeErr = String(json?.error || "").trim();
@@ -1457,6 +1471,25 @@ const SHOPEE_API_MAX_RETRY = 3;
 const SHOPEE_API_RETRY_BASE_MS = 1500;
 /** Timeout mọi HTTP Shopee — tránh treo process vô hạn trên cPanel. */
 const SHOPEE_HTTP_TIMEOUT_MS = 12_000;
+/** TLS tối thiểu cho Shopee OpenAPI (cPanel Node ≥20) — tránh ECONNRESET do handshake cũ. */
+const SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
+const SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
+/** Ước tính phí sàn khi chưa có escrow_amount từ get_escrow_detail. */
+const SHOPEE_NET_FEE_RATE = 0.12;
+const nodeRequire = createRequire(import.meta.url);
+const { Agent: ShopeeUndiciAgent } = nodeRequire("undici") as {
+  Agent: new (opts?: Record<string, unknown>) => unknown;
+};
+const shopeeHttpDispatcher = new ShopeeUndiciAgent({
+  connect: {
+    rejectUnauthorized: true,
+    minVersion: SHOPEE_TLS_MIN_VERSION,
+    maxVersion: SHOPEE_TLS_MAX_VERSION,
+  },
+  connections: 3,
+  pipelining: 0,
+  keepAliveTimeout: 30_000,
+});
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -1470,7 +1503,12 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+      // @ts-expect-error Node fetch (undici) — dispatcher TLS cho Shopee API trên cPanel
+      dispatcher: shopeeHttpDispatcher,
+    });
   } catch (error: any) {
     if (error?.name === "AbortError") {
       throw new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`);
@@ -1913,7 +1951,8 @@ async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSn
     // Note: `image_info` is nested inside item_list automatically — not a top-level field.
     // `order_status` / `create_time` are NOT valid values here (they're returned by default);
     // passing them causes Shopee to reject the whole request with response_optional_fields error.
-    response_optional_fields: "buyer_user_id,item_list,total_amount,shipping_carrier,package_list",
+    response_optional_fields:
+      "buyer_user_id,item_list,total_amount,shipping_carrier,package_list,can_partial_cancel_order,buyer_preference_for_partial_cancellation,cancel_reason,cancel_by",
   });
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
@@ -1935,6 +1974,34 @@ async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSn
     return json;
   } catch (err) {
     return shopeeApiErrorResult(err, `get_order_detail fetch (shop_id=${shopId})`);
+  }
+}
+
+// v2.payment.get_escrow_detail — đối soát escrow_amount + withholding_cit_tax (VN CB seller).
+async function shopeeGetEscrowDetail(shopId: string, accessToken: string, orderSn: string) {
+  const apiPath = "/api/v2/payment/get_escrow_detail";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const params = new URLSearchParams({
+    partner_id: SHOPEE_PARTNER_ID,
+    timestamp: String(timestamp),
+    access_token: accessToken,
+    shop_id: shopId,
+    sign,
+    order_sn: String(orderSn),
+  });
+  const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  try {
+    const { json, httpStatus } = await shopeeFetchJsonWithRetry(
+      url,
+      `get_escrow_detail shop_id=${shopId} order_sn=${orderSn}`,
+    );
+    if (json.error) {
+      return { ...json, message: json.message || formatShopeeApiError(json, httpStatus) };
+    }
+    return json;
+  } catch (err) {
+    return shopeeApiErrorResult(err, `get_escrow_detail fetch (shop_id=${shopId}, order_sn=${orderSn})`);
   }
 }
 
@@ -4943,6 +5010,235 @@ function extractShopeeOrderModelSku(it: any): string | undefined {
   return undefined;
 }
 
+const SHOPEE_ORDER_STATUS_MAP: Record<string, string> = {
+  UNPAID: "pending_confirm",
+  READY_TO_SHIP: "unprocessed",
+  PROCESSED: "processed",
+  RETRY_SHIP: "unprocessed",
+  SHIPPED: "shipping",
+  TO_CONFIRM_RECEIVE: "shipping",
+  IN_CANCEL: "cancelled",
+  CANCELLED: "cancelled",
+  TO_RETURN: "return_pending",
+  COMPLETED: "completed",
+};
+
+function extractShopeeWithholdingCitTax(source: any): number {
+  const income = source?.order_income || source?.orderIncome || source;
+  const raw = income?.withholding_cit_tax ?? source?.withholding_cit_tax ?? source?.withholdingCitTax;
+  return Math.max(0, Number(raw) || 0);
+}
+
+function extractShopeeEscrowAmount(source: any): number | undefined {
+  const income = source?.order_income || source?.orderIncome || source;
+  const raw = income?.escrow_amount ?? source?.escrow_amount ?? source?.escrowAmount;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+function computeShopeeOrderRevenue(
+  totalAmount: number,
+  withholdingCitTax = 0,
+  escrowAmount?: number,
+): number {
+  if (escrowAmount != null && Number.isFinite(escrowAmount) && escrowAmount > 0) {
+    return Math.max(0, Math.round(escrowAmount));
+  }
+  const gross = Math.max(0, Number(totalAmount) || 0);
+  const cit = Math.max(0, Number(withholdingCitTax) || 0);
+  return Math.max(0, Math.round(gross * (1 - SHOPEE_NET_FEE_RATE) - cit));
+}
+
+function applyShopeeOrderFinanceFields(
+  order: any,
+  opts: { totalAmount?: number; withholdingCitTax?: number; escrowAmount?: number },
+): void {
+  const totalAmount = Number(opts.totalAmount ?? order.totalAmount ?? 0);
+  const withholdingCitTax = Math.max(0, Number(opts.withholdingCitTax ?? order.withholdingCitTax ?? 0));
+  const escrowAmount = opts.escrowAmount ?? order.escrowAmount;
+  order.totalAmount = totalAmount;
+  order.withholdingCitTax = withholdingCitTax;
+  order.withholding_cit_tax = withholdingCitTax;
+  if (escrowAmount != null && Number.isFinite(Number(escrowAmount))) {
+    order.escrowAmount = Number(escrowAmount);
+  }
+  order.revenue = computeShopeeOrderRevenue(totalAmount, withholdingCitTax, order.escrowAmount);
+}
+
+function shopeeItemCancelledQty(it: any): number {
+  return Math.max(0, Number(it?.cancelled_qty ?? it?.cancelledQty) || 0);
+}
+
+function shopeeItemCancelRequestedQty(it: any): number {
+  return Math.max(0, Number(it?.cancel_requested_qty ?? it?.cancelRequestedQty) || 0);
+}
+
+function shopeeItemPurchasedQty(it: any): number {
+  return Math.max(0, Number(it?.model_quantity_purchased ?? it?.model_quantity ?? it?.quantity ?? 0));
+}
+
+function detectShopeePartialCancellation(rawOrder: any, activeItems: any[]): boolean {
+  const rawStatus = String(rawOrder?.order_status || rawOrder?.status || "").toUpperCase();
+  if (rawStatus === "CANCELLED") return false;
+  const itemList = Array.isArray(rawOrder?.item_list) ? rawOrder.item_list : [];
+  const cancelledUnits = itemList.reduce((sum: number, it: any) => sum + shopeeItemCancelledQty(it), 0);
+  const purchasedUnits = itemList.reduce((sum: number, it: any) => sum + shopeeItemPurchasedQty(it), 0);
+  if (cancelledUnits <= 0) return false;
+  if (purchasedUnits > 0 && cancelledUnits >= purchasedUnits) return false;
+  return activeItems.length > 0;
+}
+
+function applyShopeePartialCancelMeta(order: any, rawOrder: any, activeItems: any[]): void {
+  const partialCancel = detectShopeePartialCancellation(rawOrder, activeItems);
+  order.partialCancel = partialCancel;
+  order.canPartialCancel = Boolean(rawOrder?.can_partial_cancel_order ?? order.canPartialCancel);
+  if (partialCancel) {
+    const recalcFromItems = activeItems.reduce(
+      (sum: number, it: any) => sum + Math.max(0, Number(it.price) || 0) * Math.max(0, Number(it.quantity) || 0),
+      0,
+    );
+    const shopeeTotal = Number(rawOrder?.total_amount ?? order.totalAmount ?? 0);
+    if (shopeeTotal > 0) {
+      order.totalAmount = shopeeTotal;
+    } else if (recalcFromItems > 0) {
+      order.totalAmount = Math.round(recalcFromItems);
+    }
+  }
+}
+
+async function enrichShopeeOrdersEscrowFinance(
+  shopId: string,
+  accessToken: string,
+  orders: any[],
+): Promise<void> {
+  const targets = orders.filter((o) => o?.orderSn && o.status !== "cancelled");
+  for (let i = 0; i < targets.length; i++) {
+    const order = targets[i];
+    try {
+      const escrow = await shopeeGetEscrowDetail(shopId, accessToken, order.orderSn);
+      if (escrow?.error) continue;
+      const payload = escrow?.response ?? escrow;
+      const withholdingCitTax = extractShopeeWithholdingCitTax(payload);
+      const escrowAmount = extractShopeeEscrowAmount(payload);
+      applyShopeeOrderFinanceFields(order, {
+        totalAmount: order.totalAmount,
+        withholdingCitTax,
+        escrowAmount,
+      });
+    } catch (err) {
+      console.warn(`[Shopee Finance] escrow ${order.orderSn} failed:`, err);
+    }
+    if (i < targets.length - 1) await sleep(300);
+  }
+}
+
+function findLinkedProductIdForShopeeLine(
+  listings: any[],
+  shopId: string | undefined,
+  productId: string,
+  modelId?: string,
+): string | undefined {
+  const pid = String(productId || "").trim();
+  if (!pid) return undefined;
+  const mid = String(modelId || "0").trim() || "0";
+  const hit = listings.find((row) => {
+    if (String(row?.itemId || "") !== pid) return false;
+    const rowMid = String(row?.modelId || "0").trim() || "0";
+    if (rowMid !== mid && rowMid !== "0" && mid !== "0") return false;
+    if (shopId && row?.shopId && String(row.shopId) !== String(shopId)) return false;
+    return Boolean(row?.linkedProductId);
+  });
+  return hit?.linkedProductId ? String(hit.linkedProductId) : undefined;
+}
+
+async function restoreLocalStockForPartialCancel(
+  shopId: string | undefined,
+  existing: any | undefined,
+  incoming: any,
+): Promise<void> {
+  if (!incoming?.partialCancel) return;
+  const prevItems = Array.isArray(existing?.items) ? existing.items : [];
+  const nextItems = Array.isArray(incoming?.items) ? incoming.items : [];
+  if (nextItems.length === 0 && prevItems.length === 0) return;
+
+  let listings: any[] = [];
+  try {
+    listings = await readChannelListingsDb();
+  } catch {
+    return;
+  }
+
+  let products: any[] = [];
+  try {
+    products = await loadProductsFromStore();
+  } catch {
+    return;
+  }
+
+  let changed = false;
+  const restoreByProduct = new Map<string, number>();
+
+  const resolveRestoreQty = (productId: string, modelId: string | undefined, nextCancelled: number): number => {
+    const prev = prevItems.find(
+      (p: any) => String(p.productId) === productId && String(p.modelId || "0") === String(modelId || "0"),
+    );
+    const prevCancelled = Math.max(0, Number(prev?.cancelledQty) || 0);
+    return Math.max(0, nextCancelled - prevCancelled);
+  };
+
+  for (const item of nextItems) {
+    const productId = String(item?.productId || "");
+    const modelId = item?.modelId ? String(item.modelId) : undefined;
+    const restoreQty = resolveRestoreQty(productId, modelId, Math.max(0, Number(item?.cancelledQty) || 0));
+    if (restoreQty <= 0) continue;
+    const linkedId =
+      findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) ||
+      findLinkedProductIdForShopeeLine(listings, shopId, productId, undefined);
+    if (!linkedId) continue;
+    restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + restoreQty);
+  }
+
+  for (const prev of prevItems) {
+    const stillActive = nextItems.some(
+      (n: any) =>
+        String(n.productId) === String(prev.productId) &&
+        String(n.modelId || "0") === String(prev.modelId || "0"),
+    );
+    if (stillActive) continue;
+    const prevActiveQty = Math.max(
+      0,
+      Number(prev.originalQuantity ?? prev.quantity) - Math.max(0, Number(prev.cancelledQty) || 0),
+    );
+    if (prevActiveQty <= 0) continue;
+    const linkedId = findLinkedProductIdForShopeeLine(
+      listings,
+      shopId,
+      String(prev.productId),
+      prev.modelId ? String(prev.modelId) : undefined,
+    );
+    if (!linkedId) continue;
+    restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + prevActiveQty);
+  }
+
+  for (const [linkedId, restoreQty] of restoreByProduct) {
+    const idx = products.findIndex((p) => String(p?.id) === linkedId);
+    if (idx < 0) continue;
+    products[idx] = applyBulkProductUpdate(products[idx], { stock: { mode: "increase", value: restoreQty } });
+    changed = true;
+    console.log(
+      `[Shopee Partial Cancel] Hoàn ${restoreQty} tồn kho cho ${linkedId} (order ${incoming.orderSn}).`,
+    );
+  }
+
+  if (changed) {
+    try {
+      await saveProductsToStoreAsync(products);
+    } catch (err) {
+      console.warn("[Shopee Partial Cancel] Lưu tồn kho thất bại:", err);
+    }
+  }
+}
+
 function mapShopeeOrderLineItem(it: any) {
   if (!it || typeof it !== "object") return null;
   try {
@@ -4957,12 +5253,20 @@ function mapShopeeOrderLineItem(it: any) {
       it?.image_url ||
       it?.variation_image_url ||
       undefined;
+    const purchasedQty = Math.max(1, shopeeItemPurchasedQty(it) || 1);
+    const cancelledQty = shopeeItemCancelledQty(it);
+    const cancelRequestedQty = shopeeItemCancelRequestedQty(it);
+    const activeQty = Math.max(0, purchasedQty - cancelledQty);
+    if (activeQty <= 0 && cancelledQty > 0) return null;
 
     return {
       productId: itemId,
       productTitle,
       productImage,
-      quantity: Number(it?.model_quantity_purchased || it?.model_quantity || it?.quantity || 1),
+      quantity: activeQty > 0 ? activeQty : purchasedQty,
+      originalQuantity: purchasedQty,
+      cancelledQty,
+      cancelRequestedQty,
       price: Number(it?.model_discounted_price || it?.model_original_price || it?.item_price || 0),
       modelId: modelId === "0" ? undefined : modelId,
       modelSku,
@@ -5089,21 +5393,10 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     return null;
   }
   try {
-    const statusMap: Record<string, string> = {
-      UNPAID: "pending_confirm",
-      READY_TO_SHIP: "unprocessed",
-      PROCESSED: "processed",
-      RETRY_SHIP: "unprocessed",
-      SHIPPED: "shipping",
-      TO_CONFIRM_RECEIVE: "shipping",
-      IN_CANCEL: "cancelled",
-      CANCELLED: "cancelled",
-      TO_RETURN: "return_pending",
-      COMPLETED: "completed",
-    };
     const rawStatus = String(item?.order_status || "READY_TO_SHIP").toUpperCase();
     const pkg = Array.isArray(item?.package_list) ? item.package_list[0] : undefined;
     const itemList = Array.isArray(item?.item_list) ? item.item_list : [];
+    const mappedItems = itemList.map((it: any) => mapShopeeOrderLineItem(it)).filter(Boolean);
     const order: any = {
       id: `shopee-${item.order_sn}`,
       orderSn: String(item.order_sn),
@@ -5111,14 +5404,21 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       shopId: String(shopId),
       shopName: resolveConnectedShopDisplayName(shopId, shopName) || `Shop ${shopId}`,
       totalAmount: Number(item?.total_amount || 0),
-      revenue: Number(item?.total_amount || 0) * 0.88,
-      status: statusMap[rawStatus] || "unprocessed",
+      withholdingCitTax: 0,
+      withholding_cit_tax: 0,
+      revenue: 0,
+      status: SHOPEE_ORDER_STATUS_MAP[rawStatus] || "unprocessed",
       date: item?.create_time ? new Date(Number(item.create_time) * 1000).toISOString() : new Date().toISOString(),
       packageNumber: pkg?.package_number || undefined,
       isPrepared: rawStatus === "PROCESSED" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE",
       isPrinted: false,
-      items: itemList.map((it: any) => mapShopeeOrderLineItem(it)).filter(Boolean),
+      items: mappedItems,
     };
+    applyShopeePartialCancelMeta(order, item, mappedItems);
+    applyShopeeOrderFinanceFields(order, {
+      totalAmount: order.totalAmount,
+      withholdingCitTax: extractShopeeWithholdingCitTax(item),
+    });
     if (pkg?.tracking_number) applyShopeeTrackingCode(order, pkg.tracking_number);
     repairMisassignedTracking(order);
     return order;
@@ -5176,6 +5476,23 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     resolveConnectedShopDisplayName(existing.shopId, existing.shopName) ||
     merged.shopName;
   mergeShopeeTrackingFields(merged, existing, incoming);
+  if (incoming.withholdingCitTax != null || incoming.withholding_cit_tax != null) {
+    applyShopeeOrderFinanceFields(merged, {
+      totalAmount: merged.totalAmount,
+      withholdingCitTax: extractShopeeWithholdingCitTax(incoming),
+      escrowAmount: incoming.escrowAmount,
+    });
+  } else if (existing.withholdingCitTax != null || existing.withholding_cit_tax != null) {
+    applyShopeeOrderFinanceFields(merged, {
+      totalAmount: merged.totalAmount,
+      withholdingCitTax: extractShopeeWithholdingCitTax(existing),
+      escrowAmount: existing.escrowAmount,
+    });
+  } else {
+    applyShopeeOrderFinanceFields(merged, { totalAmount: merged.totalAmount });
+  }
+  if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
+  if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
   delete merged.customerName;
   delete merged.customerPhone;
   delete merged.customerAddress;
@@ -5263,6 +5580,10 @@ async function fetchNormalizeShopeeOrderChunk(
         });
       }
     }
+
+    if (normalized.length > 0) {
+      await enrichShopeeOrdersEscrowFinance(apiShopId, accessToken, normalized);
+    }
   } catch (err: any) {
     const message = err?.message || String(err);
     for (const orderSn of snList) {
@@ -5283,6 +5604,16 @@ async function persistShopeeOrderChunk(
   orders: any[],
   batchNormalized: any[],
 ): Promise<{ added: number; updated: number }> {
+  for (const normalized of batchNormalized) {
+    const existing = orders.find((o: any) => o.orderSn === normalized.orderSn);
+    if (normalized.partialCancel) {
+      await restoreLocalStockForPartialCancel(
+        normalized.shopId || existing?.shopId,
+        existing,
+        normalized,
+      );
+    }
+  }
   const upsert = upsertShopeeOrdersIntoStore(orders, batchNormalized);
   saveOrders(orders);
   if (isMongoReady() && batchNormalized.length > 0) {
@@ -7471,20 +7802,11 @@ function normalizeShopeeOrder(payload: any): any | null {
   if (!orderSn) return null;
   const shopId = payload?.shop_id ?? data.shop_id;
 
-  const statusMap: Record<string, string> = {
-    UNPAID: "pending_confirm",
-    READY_TO_SHIP: "unprocessed",
-    PROCESSED: "processed",
-    RETRY_SHIP: "unprocessed",
-    SHIPPED: "shipping",
-    TO_CONFIRM_RECEIVE: "shipping",
-    IN_CANCEL: "cancelled",
-    CANCELLED: "cancelled",
-    TO_RETURN: "return_pending",
-    COMPLETED: "completed",
-  };
-
   const rawStatus = String(data.status || data.order_status || "READY_TO_SHIP").toUpperCase();
+  const itemList = Array.isArray(data.item_list) ? data.item_list : [];
+  const mappedItems = itemList.length
+    ? itemList.map((it: any) => mapShopeeOrderLineItem(it)).filter(Boolean)
+    : [];
 
   const order: any = {
     id: `shopee-${orderSn}`,
@@ -7493,46 +7815,42 @@ function normalizeShopeeOrder(payload: any): any | null {
     shopId: shopId ? String(shopId) : undefined,
     shopName: resolveConnectedShopDisplayName(shopId, data.shop_name) || (shopId ? `Shop ${shopId}` : "Gian hàng"),
     totalAmount: Number(data.total_amount || 0),
-    revenue: Number(data.total_amount || 0) * 0.88,
-    status: statusMap[rawStatus] || "unprocessed",
+    withholdingCitTax: 0,
+    withholding_cit_tax: 0,
+    revenue: 0,
+    status: SHOPEE_ORDER_STATUS_MAP[rawStatus] || "unprocessed",
     date: data.create_time ? new Date(data.create_time * 1000).toISOString() : new Date().toISOString(),
     packageNumber: data.package_number || undefined,
     isPrepared: false,
     isPrinted: false,
-    items: Array.isArray(data.item_list)
-      ? data.item_list.map((it: any) => mapShopeeOrderLineItem(it))
-      : [],
+    items: mappedItems,
   };
+  if (itemList.length > 0) {
+    applyShopeePartialCancelMeta(order, data, mappedItems);
+  }
+  applyShopeeOrderFinanceFields(order, {
+    totalAmount: order.totalAmount,
+    withholdingCitTax: extractShopeeWithholdingCitTax(data),
+  });
   const rawTrack = data.tracking_no || data.tracking_number;
   if (rawTrack) applyShopeeTrackingCode(order, rawTrack);
   repairMisassignedTracking(order);
   return order;
 }
 
-function processShopeeWebhookPayload(body: any): void {
+async function processShopeeWebhookPayload(body: any): Promise<void> {
   try {
     const normalized = normalizeShopeeOrder(body);
     if (!normalized) return;
 
     const orders = loadOrders();
     const existingIndex = orders.findIndex((o: any) => o.orderSn === normalized.orderSn);
+    const existing = existingIndex >= 0 ? orders[existingIndex] : undefined;
+    if (normalized.partialCancel) {
+      await restoreLocalStockForPartialCancel(normalized.shopId || existing?.shopId, existing, normalized);
+    }
     if (existingIndex >= 0) {
-      const merged = { ...orders[existingIndex], ...normalized };
-      if (!normalized.items || normalized.items.length === 0) {
-        merged.items = orders[existingIndex].items;
-      }
-      if (!normalized.totalAmount) {
-        merged.totalAmount = orders[existingIndex].totalAmount;
-        merged.revenue = orders[existingIndex].revenue;
-      }
-      if (!normalized.shopId) {
-        merged.shopId = orders[existingIndex].shopId;
-      }
-      if (!normalized.packageNumber) {
-        merged.packageNumber = orders[existingIndex].packageNumber;
-      }
-      mergeShopeeTrackingFields(merged, orders[existingIndex], normalized);
-      orders[existingIndex] = merged;
+      orders[existingIndex] = mergeShopeeOrderOnSync(existing, normalized);
     } else {
       orders.unshift(normalized);
     }
@@ -8124,12 +8442,13 @@ async function startServer() {
     res.status(200).end();
     const payload = req.body;
     setImmediate(() => {
-      try {
-        processShopeeWebhookPayload(payload);
-        console.log("[Shopee Webhook] Đã xử lý và lưu payload vào database.");
-      } catch (error) {
-        console.error("[Shopee Webhook] Lỗi xử lý payload:", error);
-      }
+      void processShopeeWebhookPayload(payload)
+        .then(() => {
+          console.log("[Shopee Webhook] Đã xử lý và lưu payload vào database.");
+        })
+        .catch((error) => {
+          console.error("[Shopee Webhook] Lỗi xử lý payload:", error);
+        });
     });
   });
 

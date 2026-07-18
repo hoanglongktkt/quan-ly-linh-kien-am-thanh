@@ -100,6 +100,12 @@ export interface Order {
   carrier?: 'self' | 'ghn' | 'spx';
   totalAmount: number;
   revenue: number; // Net revenue after channel fees
+  withholdingCitTax?: number;
+  /** Mirror snake_case field from Shopee OpenAPI order_income.withholding_cit_tax */
+  withholding_cit_tax?: number;
+  escrowAmount?: number;
+  partialCancel?: boolean;
+  canPartialCancel?: boolean;
   status: 'pending_confirm' | 'unprocessed' | 'processed' | 'shipping' | 'cancelled' | 'return_pending' | 'return_received' | 'completed';
   date: string;
   trackingNumber?: string; // Carrier tracking (SPXVN..., GHN...) — mã trên phiếu giao / QR quét
@@ -112,6 +118,9 @@ export interface Order {
     productTitle: string;
     productImage?: string;
     quantity: number;
+    originalQuantity?: number;
+    cancelledQty?: number;
+    cancelRequestedQty?: number;
     price: number;
     modelId?: string;
     modelSku?: string;
