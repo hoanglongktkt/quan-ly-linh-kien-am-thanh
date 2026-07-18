@@ -339,6 +339,10 @@ body {
   .om-orders-mobile-hide-bulk-bar {
     display: none !important;
   }
+
+  .om-mobile-hide-checkbox {
+    display: none !important;
+  }
 }
 
 /* Kiểm Hàng — desktop / mobile */

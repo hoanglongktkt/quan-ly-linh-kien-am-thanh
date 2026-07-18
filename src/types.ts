@@ -78,6 +78,20 @@ export interface Expense {
   notes?: string;
 }
 
+/** Chi tiết phí sàn Shopee từ v2.payment.get_escrow_detail → order_income */
+export interface ShopeeFees {
+  commission_fee?: number;
+  service_fee?: number;
+  transaction_fee?: number;
+  seller_transaction_fee?: number;
+  withholding_vat_tax?: number;
+  withholding_pit_tax?: number;
+  withholding_cit_tax?: number;
+  /** Tổng phụ phí (commission + service + transaction + thuế + phí khác) */
+  total_surcharge?: number;
+  [key: string]: number | undefined;
+}
+
 export interface Order {
   id: string;
   orderSn: string;
@@ -104,6 +118,8 @@ export interface Order {
   /** Mirror snake_case field from Shopee OpenAPI order_income.withholding_cit_tax */
   withholding_cit_tax?: number;
   escrowAmount?: number;
+  /** Chi tiết phí sàn từ get_escrow_detail */
+  shopee_fees?: ShopeeFees;
   partialCancel?: boolean;
   canPartialCancel?: boolean;
   status: 'pending_confirm' | 'unprocessed' | 'processed' | 'shipping' | 'cancelled' | 'return_pending' | 'return_received' | 'completed';

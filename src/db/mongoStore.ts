@@ -79,7 +79,7 @@ const OrderSchema = new Schema<OrderDoc>(
     orderSn: { type: String, default: null, index: true },
     status: { type: String, default: null, index: true },
     shopId: { type: String, default: null, index: true },
-    /** Full order payload — includes withholding_cit_tax, is_handed_over_to_carrier, partialCancel */
+    /** Full order payload — includes withholding_cit_tax, shopee_fees, is_handed_over_to_carrier, partialCancel */
     data: { type: Schema.Types.Mixed, required: true },
   },
   { collection: "orders", versionKey: false }

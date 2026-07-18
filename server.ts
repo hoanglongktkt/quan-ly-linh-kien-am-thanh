@@ -5036,6 +5036,63 @@ function extractShopeeEscrowAmount(source: any): number | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+function shopeeEscrowFeeAmount(raw: unknown): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+
+/** Bóc tách toàn bộ phí seller từ order_income của get_escrow_detail. */
+function extractShopeeFeesFromEscrow(source: any): Record<string, number> {
+  const income = source?.order_income || source?.orderIncome || source;
+  if (!income || typeof income !== "object") return {};
+
+  const fees: Record<string, number> = {};
+  const setFee = (key: string, value: number) => {
+    if (value > 0) fees[key] = value;
+  };
+
+  setFee("commission_fee", shopeeEscrowFeeAmount(income.commission_fee));
+  setFee("service_fee", shopeeEscrowFeeAmount(income.service_fee));
+  const sellerTxn = shopeeEscrowFeeAmount(income.seller_transaction_fee);
+  const txn = shopeeEscrowFeeAmount(income.transaction_fee);
+  if (sellerTxn > 0) setFee("seller_transaction_fee", sellerTxn);
+  if (txn > 0) setFee("transaction_fee", txn);
+  else if (sellerTxn > 0) setFee("transaction_fee", sellerTxn);
+
+  setFee("withholding_vat_tax", shopeeEscrowFeeAmount(income.withholding_vat_tax));
+  setFee("withholding_pit_tax", shopeeEscrowFeeAmount(income.withholding_pit_tax));
+  setFee("withholding_cit_tax", shopeeEscrowFeeAmount(income.withholding_cit_tax));
+
+  const extraSellerFeeKeys = [
+    "campaign_fee",
+    "order_ams_commission_fee",
+    "seller_order_processing_fee",
+    "shipping_seller_protection_fee_amount",
+    "delivery_seller_protection_fee_premium_amount",
+    "final_escrow_product_gst",
+    "escrow_tax",
+    "withholding_tax",
+    "vat_on_imported_goods",
+  ] as const;
+  for (const key of extraSellerFeeKeys) {
+    setFee(key, shopeeEscrowFeeAmount(income[key]));
+  }
+
+  const transactionFee = fees.seller_transaction_fee ?? fees.transaction_fee ?? 0;
+  const taxTotal =
+    (fees.withholding_vat_tax ?? 0) +
+    (fees.withholding_pit_tax ?? 0) +
+    (fees.withholding_cit_tax ?? 0);
+  const totalSurcharge =
+    (fees.commission_fee ?? 0) +
+    (fees.service_fee ?? 0) +
+    transactionFee +
+    taxTotal;
+  if (totalSurcharge > 0) fees.total_surcharge = Math.round(totalSurcharge);
+
+  return fees;
+}
+
 function computeShopeeOrderRevenue(
   totalAmount: number,
   withholdingCitTax = 0,
@@ -5051,7 +5108,12 @@ function computeShopeeOrderRevenue(
 
 function applyShopeeOrderFinanceFields(
   order: any,
-  opts: { totalAmount?: number; withholdingCitTax?: number; escrowAmount?: number },
+  opts: {
+    totalAmount?: number;
+    withholdingCitTax?: number;
+    escrowAmount?: number;
+    shopeeFees?: Record<string, number>;
+  },
 ): void {
   const totalAmount = Number(opts.totalAmount ?? order.totalAmount ?? 0);
   const withholdingCitTax = Math.max(0, Number(opts.withholdingCitTax ?? order.withholdingCitTax ?? 0));
@@ -5061,6 +5123,9 @@ function applyShopeeOrderFinanceFields(
   order.withholding_cit_tax = withholdingCitTax;
   if (escrowAmount != null && Number.isFinite(Number(escrowAmount))) {
     order.escrowAmount = Number(escrowAmount);
+  }
+  if (opts.shopeeFees && Object.keys(opts.shopeeFees).length > 0) {
+    order.shopee_fees = opts.shopeeFees;
   }
   order.revenue = computeShopeeOrderRevenue(totalAmount, withholdingCitTax, order.escrowAmount);
 }
@@ -5120,10 +5185,12 @@ async function enrichShopeeOrdersEscrowFinance(
       const payload = escrow?.response ?? escrow;
       const withholdingCitTax = extractShopeeWithholdingCitTax(payload);
       const escrowAmount = extractShopeeEscrowAmount(payload);
+      const shopeeFees = extractShopeeFeesFromEscrow(payload);
       applyShopeeOrderFinanceFields(order, {
         totalAmount: order.totalAmount,
         withholdingCitTax,
         escrowAmount,
+        shopeeFees,
       });
     } catch (err) {
       console.warn(`[Shopee Finance] escrow ${order.orderSn} failed:`, err);
@@ -5605,15 +5672,25 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
       totalAmount: merged.totalAmount,
       withholdingCitTax: extractShopeeWithholdingCitTax(incoming),
       escrowAmount: incoming.escrowAmount,
+      shopeeFees: incoming.shopee_fees,
     });
   } else if (existing.withholdingCitTax != null || existing.withholding_cit_tax != null) {
     applyShopeeOrderFinanceFields(merged, {
       totalAmount: merged.totalAmount,
       withholdingCitTax: extractShopeeWithholdingCitTax(existing),
       escrowAmount: existing.escrowAmount,
+      shopeeFees: existing.shopee_fees,
     });
   } else {
-    applyShopeeOrderFinanceFields(merged, { totalAmount: merged.totalAmount });
+    applyShopeeOrderFinanceFields(merged, {
+      totalAmount: merged.totalAmount,
+      shopeeFees: incoming.shopee_fees ?? existing.shopee_fees,
+    });
+  }
+  if (incoming.shopee_fees && Object.keys(incoming.shopee_fees).length > 0) {
+    merged.shopee_fees = incoming.shopee_fees;
+  } else if (existing.shopee_fees && !merged.shopee_fees) {
+    merged.shopee_fees = existing.shopee_fees;
   }
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
@@ -8006,6 +8083,21 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
         }
       } catch (trackErr) {
         console.warn(`[Shopee Webhook] enrich tracking ${merged.orderSn}:`, trackErr);
+      }
+    }
+    if (
+      merged.channel === "shopee" &&
+      merged.shopId &&
+      merged.orderSn &&
+      (merged.status === "completed" || merged.status === "shipping")
+    ) {
+      try {
+        const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
+        if (accessToken) {
+          await enrichShopeeOrdersEscrowFinance(String(merged.shopId), accessToken, [merged]);
+        }
+      } catch (financeErr) {
+        console.warn(`[Shopee Webhook] enrich escrow ${merged.orderSn}:`, financeErr);
       }
     }
     if (existingIndex >= 0) {
