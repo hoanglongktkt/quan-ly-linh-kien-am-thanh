@@ -5467,6 +5467,31 @@ async function repairMissingShopeeTrackingInOrders(
   return fixed;
 }
 
+/** Tự động gọi get_tracking_number khi sync ngầm/webhook — trước khi ghi DB. */
+async function ensureShopeeTrackingForBatch(
+  apiShopId: string,
+  accessToken: string,
+  batch: any[],
+): Promise<number> {
+  let fetched = 0;
+  for (let i = 0; i < batch.length; i++) {
+    const order = batch[i];
+    if (String(order?.channel) !== "shopee") continue;
+    if (!needsShopeeTrackingEnrichment(order)) continue;
+    try {
+      await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, order);
+      if (order.trackingNumber && isCarrierTrackingCode(order.trackingNumber)) fetched++;
+    } catch (err) {
+      console.warn(`[Shopee Tracking] auto-fetch ${order?.orderSn}:`, err);
+    }
+    if (i < batch.length - 1) await sleep(150);
+  }
+  if (fetched > 0) {
+    console.log(`[Shopee Tracking] ensureShopeeTrackingForBatch: đã lấy ${fetched}/${batch.length} đơn (shop=${apiShopId}).`);
+  }
+  return fetched;
+}
+
 // Normalize one item from get_order_detail's `order_list` into this project's Order shape.
 function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any): any | null {
   if (!item || !item.order_sn) {
@@ -5708,7 +5733,11 @@ async function fetchNormalizeShopeeOrderChunk(
 async function persistShopeeOrderChunk(
   orders: any[],
   batchNormalized: any[],
+  syncCtx?: { apiShopId: string; accessToken: string },
 ): Promise<{ added: number; updated: number }> {
+  if (syncCtx && batchNormalized.length > 0) {
+    await ensureShopeeTrackingForBatch(syncCtx.apiShopId, syncCtx.accessToken, batchNormalized);
+  }
   for (const normalized of batchNormalized) {
     const existing = orders.find((o: any) => o.orderSn === normalized.orderSn);
     if (normalized.partialCancel) {
@@ -5814,7 +5843,10 @@ async function syncShopeeOrdersFromApi(
         }
 
         if (batchNormalized.length > 0) {
-          const upsert = await persistShopeeOrderChunk(orders, batchNormalized);
+          const upsert = await persistShopeeOrderChunk(orders, batchNormalized, {
+            apiShopId,
+            accessToken,
+          });
           addedCount += upsert.added;
           updatedCount += upsert.updated;
           syncedCount += batchNormalized.length;
@@ -5838,6 +5870,11 @@ async function syncShopeeOrdersFromApi(
       }
 
       orderSnList = [];
+
+      await repairMissingShopeeTrackingInOrders(
+        orders.filter((o: any) => o.channel === "shopee" && String(o.shopId) === String(fileKey)),
+        { max: 35 },
+      );
 
       return { shopErrors, syncedSnSet, totalSnTarget };
     };
@@ -10367,7 +10404,10 @@ async function startServer() {
 
             if (batchNormalized.length > 0) {
               try {
-                const upsert = await persistShopeeOrderChunk(orders, batchNormalized);
+                const upsert = await persistShopeeOrderChunk(orders, batchNormalized, {
+                  apiShopId: shopId,
+                  accessToken,
+                });
                 pulledCount += upsert.added + upsert.updated;
                 console.log(
                   `[Orders Pull] Shop ${shopId}: đã lưu lô ${chunkNo} (+${upsert.added} mới, ~${upsert.updated} cập nhật).`,

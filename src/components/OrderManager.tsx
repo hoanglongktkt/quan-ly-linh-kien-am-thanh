@@ -619,6 +619,9 @@ export default function OrderManager({
   const [progressTotal, setProgressTotal] = useState(0);
   const [progressDone, setProgressDone] = useState(false);
   const progressCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Chặn mở trùng nhiều tab PDF khi click In đơn / re-render. */
+  const pdfOpenGuardRef = React.useRef(false);
+  const printActionGuardRef = React.useRef(false);
 
   const [reprintOrderSn, setReprintOrderSn] = useState('');
   const [isReprintSearching, setIsReprintSearching] = useState(false);
@@ -639,6 +642,12 @@ export default function OrderManager({
   };
 
   const openPdfBlobInNewTab = (blob: Blob, filename = 'van-don-shopee.pdf') => {
+    if (pdfOpenGuardRef.current) return;
+    pdfOpenGuardRef.current = true;
+    window.setTimeout(() => {
+      pdfOpenGuardRef.current = false;
+    }, 2500);
+
     const blobUrl = URL.createObjectURL(blob);
     const win = window.open(blobUrl, '_blank', 'noopener,noreferrer');
     if (!win) {
@@ -655,12 +664,13 @@ export default function OrderManager({
     }
   };
 
-  /** Mở PDF — ưu tiên URL tĩnh (CDN/backend cache), không stream base64 qua JSON. */
+  /** Mở PDF — ưu tiên URL tĩnh; chỉ mở đúng 1 lần. */
   const openShopeeLabelFromStream = async (opts: {
     pdfBase64?: string | null;
     pdfFilename?: string | null;
     url?: string | null;
   }) => {
+    if (pdfOpenGuardRef.current) return;
     if (opts.url) {
       await openShopeeLabelInNewTab(opts.url);
       return;
@@ -671,22 +681,32 @@ export default function OrderManager({
     }
   };
 
-  // Mở PDF trực tiếp qua URL tĩnh — trình duyệt tải song song, không proxy buffer qua API JSON.
   const openShopeeLabelInNewTab = async (url: string) => {
+    if (pdfOpenGuardRef.current) return;
     const fullUrl = resolveLabelFetchUrl(url);
     const filename = (decodeURIComponent(fullUrl.split('/').pop() || 'van-don-shopee.pdf')).replace(/\?.*$/, '');
 
     if (/^https?:\/\//i.test(fullUrl)) {
+      pdfOpenGuardRef.current = true;
+      window.setTimeout(() => {
+        pdfOpenGuardRef.current = false;
+      }, 2500);
       const win = window.open(fullUrl, '_blank', 'noopener,noreferrer');
       if (win) {
         showToast('Đã mở vận đơn — bấm In trên trình xem PDF.');
         return;
       }
+      const a = document.createElement('a');
+      a.href = fullUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      showToast('Trình duyệt chặn popup — đã thử tải vận đơn PDF.');
+      return;
     }
-
-    const openBlob = (blob: Blob) => {
-      openPdfBlobInNewTab(blob, filename);
-    };
 
     try {
       let res = await fetch(fullUrl, { credentials: 'same-origin' });
@@ -706,20 +726,17 @@ export default function OrderManager({
         showToast('File vận đơn không hợp lệ (backend trả HTML thay vì PDF).');
         return;
       }
-      openBlob(new Blob([buf], { type: 'application/pdf' }));
+      openPdfBlobInNewTab(new Blob([buf], { type: 'application/pdf' }), filename);
     } catch {
-      const win = window.open(fullUrl, '_blank', 'noopener,noreferrer');
-      if (!win) {
-        const a = document.createElement('a');
-        a.href = fullUrl;
-        a.target = '_blank';
-        a.rel = 'noopener noreferrer';
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        showToast('Đã thử tải vận đơn — mở file PDF và in trên khổ A4.');
-      }
+      const a = document.createElement('a');
+      a.href = fullUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      showToast('Đã thử tải vận đơn — mở file PDF và in trên khổ A4.');
     }
   };
 
@@ -764,14 +781,18 @@ export default function OrderManager({
       onUpdateOrders(data.orders);
     }
 
-    if (printUrl) {
-      if (openPdf) {
+    if (openPdf) {
+      if (printUrl) {
+        await openShopeeLabelFromStream({ url: printUrl, pdfFilename: data.pdfFilename });
+      } else if (data.pdfBase64) {
         await openShopeeLabelFromStream({
-          url: printUrl,
-          pdfFilename: data.pdfFilename,
           pdfBase64: data.pdfBase64,
+          pdfFilename: data.pdfFilename,
         });
       }
+    }
+
+    if (printUrl) {
       if (failedDocs.length > 0) {
         return {
           success: true,
@@ -783,12 +804,6 @@ export default function OrderManager({
     }
 
     if (data.pdfBase64) {
-      if (openPdf) {
-        await openShopeeLabelFromStream({
-          pdfBase64: data.pdfBase64,
-          pdfFilename: data.pdfFilename,
-        });
-      }
       if (failedDocs.length > 0) {
         return {
           success: true,
@@ -1524,9 +1539,12 @@ export default function OrderManager({
   // Single-order print — fetches the REAL Shopee AWB PDF, or falls back to the
   // mock packing-slip preview for non-Shopee (manual/tiktok) orders.
   const handleSinglePrint = async (order: Order) => {
+    if (printActionGuardRef.current) return;
+    printActionGuardRef.current = true;
     if (order.channel !== 'shopee' || !order.shopId) {
       setBulkPrintOrders([order]);
       onUpdateOrders(orders.map(o => o.id === order.id ? { ...o, isPrinted: true, status: o.isPrepared ? ('processed' as const) : o.status } : o));
+      printActionGuardRef.current = false;
       return;
     }
 
@@ -1569,6 +1587,7 @@ export default function OrderManager({
       clearShipProgressOverlay();
     } finally {
       setPrintingOrderId(null);
+      printActionGuardRef.current = false;
     }
   };
 
@@ -2673,7 +2692,12 @@ export default function OrderManager({
                               )}
 
                               <button
-                                onClick={() => handleSinglePrint(order)}
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  void handleSinglePrint(order);
+                                }}
                                 disabled={printingOrderId === order.id}
                                 className="om-mobile-hide-print p-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-500 rounded-lg transition-all disabled:opacity-60"
                                 title="In phiếu giao (vận đơn thật Shopee)"
@@ -2691,7 +2715,12 @@ export default function OrderManager({
                                 {order.isPrinted ? '✓ Đã in' : '✕ Chưa in'}
                               </span>
                               <button
-                                onClick={() => handleSinglePrint(order)}
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  void handleSinglePrint(order);
+                                }}
                                 disabled={printingOrderId === order.id}
                                 className="om-mobile-hide-print p-1.5 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-500 rounded-lg transition-all disabled:opacity-60"
                                 title="In lại vận đơn (vận đơn thật Shopee)"
@@ -2896,7 +2925,12 @@ export default function OrderManager({
                           )}
 
                           <button
-                            onClick={() => handleSinglePrint(order)}
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void handleSinglePrint(order);
+                            }}
                             disabled={printingOrderId === order.id}
                             className="om-mobile-hide-print min-h-11 min-w-11 p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-xl transition-all disabled:opacity-60 flex items-center justify-center"
                             title="In phiếu giao (vận đơn thật Shopee)"
@@ -2914,7 +2948,12 @@ export default function OrderManager({
                             {order.isPrinted ? '✓ Đã in' : '✕ Chưa in'}
                           </span>
                           <button
-                            onClick={() => handleSinglePrint(order)}
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void handleSinglePrint(order);
+                            }}
                             disabled={printingOrderId === order.id}
                             className="om-mobile-hide-print min-h-11 min-w-11 p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 rounded-xl transition-all disabled:opacity-60 flex items-center justify-center"
                             title="In lại vận đơn (vận đơn thật Shopee)"
