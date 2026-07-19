@@ -177,6 +177,16 @@ export interface Order {
   trackingNumber?: string; // Carrier tracking (SPXVN..., GHN...) — mã trên phiếu giao / QR quét
   /** Mirror snake_case từ Shopee / DB */
   tracking_no?: string;
+  /** Mã vận đơn chiều hoàn từ v2.returns.get_return_detail */
+  return_tracking_no?: string;
+  /** Mã yêu cầu trả hàng/hoàn tiền Shopee */
+  return_sn?: string;
+  /** Trạng thái return Shopee: REQUESTED | PROCESSING | ACCEPTED | COMPLETED | ... */
+  return_status?: string;
+  /** 0 Normal RR, 1 In-transit RR, 2 Return-on-the-Spot (giao không thành công) */
+  return_refund_request_type?: number;
+  /** Phân loại tab Hủy/Hoàn khớp Seller Center */
+  shopee_cancel_return_kind?: 'refund_return' | 'cancelled' | 'failed_delivery';
   internalTrackingCode?: string; // Shopee sorting / first-mile (0FG...) — mã nội bộ sàn
   packageNumber?: string; // Shopee package_number, required by logistics APIs for split orders
   /** Flag nội bộ: đơn bị Shopee giữ (pending verification) — đưa vào tab kiểm tra */

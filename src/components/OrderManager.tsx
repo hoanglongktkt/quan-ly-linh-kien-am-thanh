@@ -326,36 +326,49 @@ const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending'
 
 function isCancelReturnOrder(order: Order): boolean {
   const local = String(order.local_status || order.localStatus || '').toUpperCase();
+  const raw = String(order.shopee_order_status || '').toUpperCase();
   return (
     CANCEL_RETURN_STATUSES.includes(order.status) ||
     local === 'CANCELLED_STORED' ||
-    local === 'RETURN_RECEIVED'
+    local === 'RETURN_RECEIVED' ||
+    Boolean(order.return_sn) ||
+    raw === 'CANCELLED' ||
+    raw === 'IN_CANCEL' ||
+    raw === 'TO_RETURN' ||
+    order.shopee_cancel_return_kind === 'refund_return' ||
+    order.shopee_cancel_return_kind === 'failed_delivery' ||
+    order.shopee_cancel_return_kind === 'cancelled'
   );
 }
 
-function matchesCancelReturnTab(order: Order, tab: CancelReturnTab): boolean {
+/** Phân loại khớp Seller Center: Trả hàng/Hoàn tiền | Đơn hủy | Giao không thành công. */
+function resolveCancelReturnKind(order: Order): CancelReturnTab | null {
+  if (!isCancelReturnOrder(order)) return null;
+  const kind = order.shopee_cancel_return_kind;
+  if (kind === 'refund_return' || kind === 'cancelled' || kind === 'failed_delivery') {
+    return kind;
+  }
+  const type = Number(order.return_refund_request_type);
+  if (type === 2) return 'failed_delivery';
+  if (order.return_sn || order.status === 'return_pending' || order.status === 'return_received') {
+    return 'refund_return';
+  }
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  if (raw === 'TO_RETURN') return 'refund_return';
+  if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || order.status === 'cancelled') {
+    return 'cancelled';
+  }
   const local = String(order.local_status || order.localStatus || '').toUpperCase();
-  const isReturnReceived = local === 'RETURN_RECEIVED' || order.status === 'return_received';
-  const isCancelledStored = local === 'CANCELLED_STORED' || order.status === 'cancelled';
-  const isFailedDelivery =
-    order.status === 'return_pending' && local !== 'RETURN_RECEIVED';
+  if (local === 'RETURN_RECEIVED') return 'refund_return';
+  if (local === 'CANCELLED_STORED') return 'cancelled';
+  return 'cancelled';
+}
 
-  // Đơn có cờ nội bộ hoàn/hủy vẫn thuộc nhóm cancel_returns dù Shopee sync ghi đè status.
-  if (!isCancelReturnOrder(order) && !isReturnReceived && local !== 'CANCELLED_STORED') {
-    return false;
-  }
-  switch (tab) {
-    case 'all':
-      return true;
-    case 'refund_return':
-      return isReturnReceived;
-    case 'cancelled':
-      return isCancelledStored && !isReturnReceived;
-    case 'failed_delivery':
-      return isFailedDelivery;
-    default:
-      return false;
-  }
+function matchesCancelReturnTab(order: Order, tab: CancelReturnTab): boolean {
+  const kind = resolveCancelReturnKind(order);
+  if (!kind) return false;
+  if (tab === 'all') return true;
+  return kind === tab;
 }
 
 function VariationNameBadge({ variationName }: { variationName?: string }) {

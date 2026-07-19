@@ -49,12 +49,26 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     status: (raw.status as Order['status']) || 'unprocessed',
     date: String(raw.date || new Date().toISOString()),
     items: Array.isArray(raw.items) ? raw.items : [],
-    trackingNumber: raw.trackingNumber || raw.tracking_no
-      ? String(raw.trackingNumber || raw.tracking_no)
+    trackingNumber: raw.trackingNumber || raw.tracking_no || raw.return_tracking_no
+      ? String(raw.trackingNumber || raw.tracking_no || raw.return_tracking_no)
       : undefined,
-    tracking_no: raw.tracking_no || raw.trackingNumber
-      ? String(raw.tracking_no || raw.trackingNumber)
+    tracking_no: raw.tracking_no || raw.trackingNumber || raw.return_tracking_no
+      ? String(raw.tracking_no || raw.trackingNumber || raw.return_tracking_no)
       : undefined,
+    return_tracking_no: raw.return_tracking_no
+      ? String(raw.return_tracking_no)
+      : undefined,
+    return_sn: raw.return_sn ? String(raw.return_sn) : undefined,
+    return_status: raw.return_status ? String(raw.return_status) : undefined,
+    return_refund_request_type:
+      raw.return_refund_request_type != null
+        ? Number(raw.return_refund_request_type)
+        : undefined,
+    shopee_cancel_return_kind: (() => {
+      const k = String(raw.shopee_cancel_return_kind || '').trim();
+      if (k === 'refund_return' || k === 'cancelled' || k === 'failed_delivery') return k;
+      return undefined;
+    })(),
     internalTrackingCode: raw.internalTrackingCode ? String(raw.internalTrackingCode) : undefined,
     packageNumber: raw.packageNumber ? String(raw.packageNumber) : undefined,
     is_pending_shopee_check: Boolean(raw.is_pending_shopee_check),

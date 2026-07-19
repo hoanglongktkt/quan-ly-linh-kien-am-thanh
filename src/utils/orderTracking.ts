@@ -17,9 +17,13 @@ export function isCarrierTrackingCode(code: unknown): boolean {
 
 /** Mã vận đơn thực tế để hiển thị trên danh sách — chỉ carrier, không bao giờ 0FG. */
 export function getCarrierWaybillDisplay(
-  order: Pick<Order, 'trackingNumber' | 'internalTrackingCode'> & { tracking_no?: string },
+  order: Pick<Order, 'trackingNumber' | 'internalTrackingCode' | 'return_tracking_no'> & {
+    tracking_no?: string;
+  },
 ): string {
-  const tn = String(order.trackingNumber || order.tracking_no || '').trim();
+  const tn = String(
+    order.trackingNumber || order.tracking_no || order.return_tracking_no || '',
+  ).trim();
   if (!tn || isShopeeInternalTrackingCode(tn)) return '';
   return tn;
 }
