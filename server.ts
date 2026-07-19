@@ -1434,8 +1434,8 @@ function parseShopeeOrderListPagination(result: any): { more: boolean; nextCurso
 const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 /** 2 cửa sổ × 15 ngày = quét đủ 30 ngày (giới hạn Shopee mỗi request ≤ 15 ngày). */
 const SHOPEE_ORDER_LIST_MAX_WINDOWS = 2;
-/** Incremental sync mặc định: quét lùi 35 phút theo update_time (cron + nút bấm). */
-const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 35 * 60;
+/** Incremental sync mặc định: quét lùi 24 giờ theo update_time (cron + nút bấm). */
+const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 const SHOPEE_ORDER_LIST_MAX_PAGES = 8;
 const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 120;
@@ -1950,7 +1950,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
 }
 
 // Paginate get_order_list without status filter — theo update_time.
-// mode=incremental (mặc định): 1 cửa sổ 35 phút; mode=full: 2 × 15 ngày (= 30 ngày).
+// mode=incremental (mặc định): 1 cửa sổ 24 giờ; mode=full: 2 × 15 ngày (= 30 ngày).
 async function shopeeFetchAllOrderSns(
   shopId: string,
   accessToken: string,
@@ -1976,7 +1976,7 @@ async function shopeeFetchAllOrderSns(
     let windowCount = 0;
 
     console.log(
-      `[Orders Pull] shop_id=${shopId} mode=${mode}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", ~35 phút" : ", ~15 ngày"})`,
+      `[Orders Pull] shop_id=${shopId} mode=${mode}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 24 giờ" : ", ~15 ngày"})`,
     );
 
     while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
@@ -5906,6 +5906,38 @@ async function persistOrderTrackingToDb(order: any): Promise<void> {
   );
 }
 
+function isCancelOrReturnOrderStatus(order: any): boolean {
+  const status = String(order?.status || "").toLowerCase();
+  const raw = String(order?.shopee_order_status || "").toUpperCase();
+  if (
+    status === "cancelled" ||
+    status === "return_pending" ||
+    status === "return_received"
+  ) {
+    return true;
+  }
+  return raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN";
+}
+
+/** Giữ mã vận đơn cũ khi sàn trả về rỗng (đặc biệt đơn hủy/hoàn). */
+function preserveExistingTrackingIfIncomingEmpty(target: any, existing: any | undefined): void {
+  if (!target || !existing) return;
+  const existingTn = String(existing.trackingNumber || existing.tracking_no || "").trim();
+  const incomingTn = String(target.trackingNumber || target.tracking_no || "").trim();
+  if (existingTn && !incomingTn) {
+    target.trackingNumber = existingTn;
+    target.tracking_no = existingTn;
+  }
+  const existingInternal = String(existing.internalTrackingCode || "").trim();
+  const incomingInternal = String(target.internalTrackingCode || "").trim();
+  if (existingInternal && !incomingInternal) {
+    target.internalTrackingCode = existingInternal;
+  }
+  if (!target.packageNumber && existing.packageNumber) {
+    target.packageNumber = existing.packageNumber;
+  }
+}
+
 function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
   repairMisassignedTracking(merged);
   repairMisassignedTracking(existing);
@@ -5926,7 +5958,23 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
     return undefined;
   };
 
-  // QUAN TRỌNG: không bao giờ ghi đè tracking_no thành null/undefined khi đơn hủy/hoàn.
+  const existingTn = String(existing?.trackingNumber || existing?.tracking_no || "").trim();
+  const incomingTn = String(incoming?.trackingNumber || incoming?.tracking_no || "").trim();
+  const cancelReturn = isCancelOrReturnOrderStatus(incoming) || isCancelOrReturnOrderStatus(merged);
+
+  // BẮT BUỘC: đơn hủy/hoàn + sàn trả tracking rỗng → giữ mã cũ trong DB (quét barcode hoàn hàng).
+  if (cancelReturn && existingTn && !incomingTn) {
+    merged.trackingNumber = existingTn;
+    merged.tracking_no = existingTn;
+    const existingInternal = String(existing?.internalTrackingCode || "").trim();
+    if (existingInternal) merged.internalTrackingCode = existingInternal;
+    if (!merged.packageNumber && existing?.packageNumber) {
+      merged.packageNumber = existing.packageNumber;
+    }
+    return;
+  }
+
+  // Không bao giờ ghi đè tracking_no thành null/empty nếu DB đã có mã.
   const nextTracking = pickCarrier(
     incoming.trackingNumber,
     incoming.tracking_no,
@@ -5935,8 +5983,14 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
     incoming.lastMileTrackingNumber,
     existing.lastMileTrackingNumber,
   );
-  merged.trackingNumber = nextTracking || existing.trackingNumber || incoming.trackingNumber || existing.tracking_no || undefined;
+  merged.trackingNumber =
+    nextTracking || existingTn || incomingTn || undefined;
   merged.tracking_no = merged.trackingNumber;
+
+  if (!merged.trackingNumber && existingTn) {
+    merged.trackingNumber = existingTn;
+    merged.tracking_no = existingTn;
+  }
 
   const nextInternal = pickInternal(
     incoming.internalTrackingCode,
@@ -6533,6 +6587,7 @@ async function persistOrdersToDatabase(orders: any[], changedOrders: any[]): Pro
 function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   if (!existing) return incoming;
 
+  // Spread có thể đưa tracking rỗng từ sàn — sẽ khôi phục ở mergeShopeeTrackingFields.
   const merged = { ...existing, ...incoming, id: existing.id };
   // Luôn ghi đè trạng thái từ Shopee (shipping / cancelled / ...) — không giữ status local cũ.
   merged.status = incoming.status;
@@ -6817,6 +6872,10 @@ async function persistShopeeOrderChunk(
   }
   for (const normalized of batchNormalized) {
     const existing = orders.find((o: any) => o.orderSn === normalized.orderSn);
+    // Trước merge: nếu hủy/hoàn mà sàn trả tracking rỗng → giữ mã DB cũ trên object incoming.
+    if (existing) {
+      preserveExistingTrackingIfIncomingEmpty(normalized, existing);
+    }
     if (normalized.partialCancel) {
       await restoreLocalStockForPartialCancel(
         normalized.shopId || existing?.shopId,
@@ -6829,7 +6888,12 @@ async function persistShopeeOrderChunk(
   saveOrders(orders);
   if (isMongoReady() && batchNormalized.length > 0) {
     try {
-      await bulkUpsertOrdersToStore(batchNormalized);
+      // Ghi bản đã merge từ store — không bulkWrite raw normalized (tránh mất tracking).
+      const mergedForMongo = batchNormalized.map((n) => {
+        const sn = String(n?.orderSn || "").trim();
+        return (sn && orders.find((o: any) => String(o.orderSn) === sn)) || n;
+      });
+      await bulkUpsertOrdersToStore(mergedForMongo);
     } catch (mongoErr: any) {
       console.error("[Orders Sync] Mongo bulkWrite thất bại:", mongoErr?.message || mongoErr);
     }
