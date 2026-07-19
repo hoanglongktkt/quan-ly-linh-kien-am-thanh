@@ -132,108 +132,14 @@ function writeCpanelCrashLogToAppRoot(kind: string, err: unknown): void {
 }
 process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
 process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
-/** Thư mục tập trung lưu PDF vận đơn (tương đương public/waybills/ trên hosting, nhưng ngoài Vite publicDir). */
+/** Legacy dirs — chỉ dùng để XÓA TRẮNG PDF cũ; không còn ghi file vận đơn xuống đĩa. */
 const WAYBILLS_DIR = path.join(APP_ROOT, "storage", "waybills");
 const LEGACY_WAYBILLS_DIR = path.join(APP_ROOT, "storage", "labels");
-const SHIPPING_DOCS_DIR = WAYBILLS_DIR;
-const WAYBILLS_MAX_AGE_MS = 20 * 24 * 60 * 60 * 1000;
 const WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
 
-function ensureWaybillsDir(): void {
-  try {
-    fs.mkdirSync(WAYBILLS_DIR, { recursive: true });
-  } catch {
-    /* ignore */
-  }
-}
-
-function migrateLegacyWaybillFiles(): void {
-  try {
-    if (!fs.existsSync(LEGACY_WAYBILLS_DIR)) return;
-    ensureWaybillsDir();
-    for (const name of fs.readdirSync(LEGACY_WAYBILLS_DIR)) {
-      if (!WAYBILL_FILE_RE.test(name)) continue;
-      const src = path.join(LEGACY_WAYBILLS_DIR, name);
-      const dst = path.join(WAYBILLS_DIR, name);
-      if (fs.existsSync(dst)) continue;
-      try {
-        fs.renameSync(src, dst);
-      } catch {
-        try {
-          fs.copyFileSync(src, dst);
-        } catch {
-          /* ignore per-file */
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[Waybills] Không migrate được thư mục cũ storage/labels:", err);
-  }
-}
-
-type WaybillCleanupResult = { scanned: number; deleted: number; skipped: number; errors: number };
-
-function cleanupExpiredWaybills(
-  dir: string = WAYBILLS_DIR,
-  maxAgeMs: number = WAYBILLS_MAX_AGE_MS
-): WaybillCleanupResult {
-  const result: WaybillCleanupResult = { scanned: 0, deleted: 0, skipped: 0, errors: 0 };
-  try {
-    if (!fs.existsSync(dir)) return result;
-    const now = Date.now();
-    for (const name of fs.readdirSync(dir)) {
-      if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = path.join(dir, name);
-      result.scanned += 1;
-      try {
-        const stat = fs.statSync(full);
-        if (!stat.isFile()) {
-          result.skipped += 1;
-          continue;
-        }
-        const ageMs = now - stat.mtimeMs;
-        if (ageMs > maxAgeMs) {
-          fs.unlinkSync(full);
-          result.deleted += 1;
-          console.log(
-            `[Waybills Cleanup] Đã xóa ${name} (tuổi ${Math.floor(ageMs / 86400000)} ngày, dir=${path.basename(dir)})`
-          );
-        }
-      } catch {
-        result.errors += 1;
-      }
-    }
-  } catch (err) {
-    console.warn(`[Waybills Cleanup] Quét thư mục thất bại (${dir}):`, err);
-  }
-  if (result.deleted > 0) {
-    console.log(
-      `[Waybills Cleanup] Hoàn tất: scanned=${result.scanned} deleted=${result.deleted} errors=${result.errors}`
-    );
-  }
-  return result;
-}
-
-let waybillCleanupRunning = false;
-
-function scheduleWaybillsCleanup(): void {
-  if (waybillCleanupRunning) return;
-  waybillCleanupRunning = true;
-  setImmediate(() => {
-    try {
-      ensureWaybillsDir();
-      const primary = cleanupExpiredWaybills(WAYBILLS_DIR);
-      const legacy =
-        fs.existsSync(LEGACY_WAYBILLS_DIR) && LEGACY_WAYBILLS_DIR !== WAYBILLS_DIR
-          ? cleanupExpiredWaybills(LEGACY_WAYBILLS_DIR)
-          : { scanned: 0, deleted: 0, skipped: 0, errors: 0 };
-    } finally {
-      waybillCleanupRunning = false;
-    }
-  });
-}
-
-ensureWaybillsDir();
+/** PDF vận đơn chỉ giữ trong RAM (TTL 15 phút) — tránh tràn ổ cứng AZDIGI. */
+const LABEL_TTL_MS = 15 * 60 * 1000;
+const labelMemCache = new Map<string, { buf: Buffer; expires: number; contentType?: string }>();
 
 function safeLabelFilename(raw: string): string | null {
   const base = path.basename(String(raw || "").trim());
@@ -246,32 +152,112 @@ function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
   return buffer.length > 4 && buffer.subarray(0, 4).toString() === "%PDF";
 }
 
-type ServeLabelPdfResult = "sent" | "not_found" | "invalid";
-
-function resolveLabelFilePath(filename: string): string | null {
+function putLabelMem(filename: string, buffer: Buffer, contentType?: string): string {
   const safe = safeLabelFilename(filename);
-  if (!safe) return null;
-  const primary = path.join(SHIPPING_DOCS_DIR, safe);
-  if (fs.existsSync(primary)) return primary;
-  const legacy = path.join(LEGACY_WAYBILLS_DIR, safe);
-  if (fs.existsSync(legacy)) return legacy;
-  return null;
+  if (!safe) throw new Error(`Tên file vận đơn không hợp lệ: ${filename}`);
+  if (!isPdfBuffer(buffer, contentType)) {
+    throw new Error("Dữ liệu vận đơn từ Shopee không phải PDF hợp lệ.");
+  }
+  labelMemCache.set(safe, {
+    buf: buffer,
+    expires: Date.now() + LABEL_TTL_MS,
+    contentType: contentType || "application/pdf",
+  });
+  console.log(`[Labels RAM] Cached ${safe} (${buffer.length} bytes, TTL ${LABEL_TTL_MS / 60000}p, size=${labelMemCache.size})`);
+  return safe;
 }
 
-function serveLabelPdfFromDisk(filename: string, res: any): ServeLabelPdfResult {
+function getLabelMem(filename: string): { buf: Buffer; contentType?: string } | null {
+  const safe = safeLabelFilename(filename);
+  if (!safe) return null;
+  const hit = labelMemCache.get(safe);
+  if (!hit) return null;
+  if (hit.expires < Date.now()) {
+    labelMemCache.delete(safe);
+    return null;
+  }
+  return hit;
+}
+
+function hasLabelMem(filename: string): boolean {
+  return !!getLabelMem(filename);
+}
+
+function purgeExpiredLabelMem(): number {
+  const now = Date.now();
+  let deleted = 0;
+  for (const [key, val] of labelMemCache) {
+    if (val.expires < now) {
+      labelMemCache.delete(key);
+      deleted += 1;
+    }
+  }
+  if (deleted > 0) {
+    console.log(`[Labels RAM] Đã xóa ${deleted} PDF hết hạn (còn ${labelMemCache.size} trong cache).`);
+  }
+  return deleted;
+}
+
+/** Xóa trắng mọi file PDF/ZIP/HTML cũ trên đĩa (một lần khi boot + khi cleanup). */
+function wipeLegacyLabelDiskFiles(): number {
+  let deleted = 0;
+  for (const dir of [WAYBILLS_DIR, LEGACY_WAYBILLS_DIR]) {
+    try {
+      if (!fs.existsSync(dir)) continue;
+      for (const name of fs.readdirSync(dir)) {
+        if (!WAYBILL_FILE_RE.test(name)) continue;
+        try {
+          fs.unlinkSync(path.join(dir, name));
+          deleted += 1;
+        } catch {
+          /* ignore per-file */
+        }
+      }
+    } catch (err) {
+      console.warn(`[Waybills] Không xóa được thư mục ${dir}:`, err);
+    }
+  }
+  if (deleted > 0) {
+    console.log(`[Waybills] Đã xóa trắng ${deleted} file vận đơn cũ trên đĩa (chuyển sang RAM).`);
+  }
+  return deleted;
+}
+
+function scheduleWaybillsCleanup(): void {
+  setImmediate(() => {
+    try {
+      purgeExpiredLabelMem();
+      wipeLegacyLabelDiskFiles();
+    } catch (err) {
+      console.warn("[Waybills Cleanup] lỗi:", err);
+    }
+  });
+}
+
+// Boot: dọn disk legacy + interval giải phóng RAM mỗi 5 phút
+wipeLegacyLabelDiskFiles();
+const labelMemCleanupTimer = setInterval(() => {
+  purgeExpiredLabelMem();
+}, 5 * 60 * 1000);
+if (typeof (labelMemCleanupTimer as any).unref === "function") {
+  (labelMemCleanupTimer as any).unref();
+}
+
+type ServeLabelPdfResult = "sent" | "not_found" | "invalid";
+
+function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
   const safe = safeLabelFilename(filename);
   if (!safe) {
     res.status(400).type("text/plain").send("Tên file vận đơn không hợp lệ.");
     return "invalid";
   }
-  const filePath = resolveLabelFilePath(safe);
-  if (!filePath) {
+  const hit = getLabelMem(safe);
+  if (!hit) {
     return "not_found";
   }
-  const buf = fs.readFileSync(filePath);
-  if (!isPdfBuffer(buf)) {
+  if (!isPdfBuffer(hit.buf, hit.contentType)) {
     console.error(
-      `[Labels] File không phải PDF hợp lệ: ${safe}, size=${buf.length}, head=${buf.subarray(0, 20).toString("hex")}`
+      `[Labels] Buffer không phải PDF hợp lệ: ${safe}, size=${hit.buf.length}, head=${hit.buf.subarray(0, 20).toString("hex")}`
     );
     res.status(415).type("text/plain").send("File vận đơn không phải PDF hợp lệ.");
     return "invalid";
@@ -279,10 +265,10 @@ function serveLabelPdfFromDisk(filename: string, res: any): ServeLabelPdfResult 
   res.status(200);
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
-  res.setHeader("Content-Length", String(buf.length));
+  res.setHeader("Content-Length", String(hit.buf.length));
   res.setHeader("Cache-Control", "no-store");
-  res.end(buf);
-  console.log(`[Labels] Served PDF ${safe} (${buf.length} bytes)`);
+  res.end(hit.buf);
+  console.log(`[Labels] Served PDF from RAM ${safe} (${hit.buf.length} bytes)`);
   return "sent";
 }
 
@@ -11416,16 +11402,16 @@ async function startServer() {
     // PDF vận đơn — public (tab in mới không gửi Bearer). LiteSpeed thường chặn /labels/* trước Node;
     // route /api/public/labels/* luôn vào Express.
     app.get("/api/public/labels/:filename", (req, res) => {
-      const result = serveLabelPdfFromDisk(req.params.filename, res);
+      const result = serveLabelPdfFromMem(req.params.filename, res);
       if (result === "not_found") {
-        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn.");
+        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (hết hạn hoặc chưa tạo trong RAM).");
       }
     });
 
     app.get("/api/labels/:filename", (req, res) => {
-      const result = serveLabelPdfFromDisk(req.params.filename, res);
+      const result = serveLabelPdfFromMem(req.params.filename, res);
       if (result === "not_found") {
-        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn.");
+        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (hết hạn hoặc chưa tạo trong RAM).");
       }
     });
 
@@ -14790,36 +14776,14 @@ async function startServer() {
 
   const LABEL_DOWNLOAD_CONCURRENCY = 5;
 
-  // Public, non-authenticated static folder (like Sapo): downloaded Shopee AWB
-  // files are saved here and served directly at /labels/<file>, so the browser
-  // can window.open() the link straight from a new tab and print it — no
-  // Authorization header available on a plain tab navigation, so this MUST
-  // live outside the authMiddleware-protected API routes.
-  // NOTE: deliberately NOT named "public/" — Vite treats a root-level "public/"
-  // folder as its own publicDir and copies its entire contents into dist/ on
-  // every `npm run build`, which would bloat/leak generated AWB files into the
-  // production bundle. "storage/waybills" is served via /api/public/labels (primary) and /labels fallback.
-  ensureWaybillsDir();
-  migrateLegacyWaybillFiles();
+  // PDF vận đơn: RAM cache (labelMemCache) + GET /labels|/api/labels|/api/public/labels.
+  // Không ghi đĩa — tab in mới mở URL tạm (TTL 15 phút) không cần Authorization.
   scheduleWaybillsCleanup();
 
   app.get("/labels/:filename", (req, res, next) => {
-    const result = serveLabelPdfFromDisk(req.params.filename, res);
+    const result = serveLabelPdfFromMem(req.params.filename, res);
     if (result === "not_found") return next();
   });
-
-  app.use("/labels", express.static(SHIPPING_DOCS_DIR, {
-    setHeaders(res, filePath) {
-      if (filePath.endsWith(".pdf")) {
-        const name = path.basename(filePath);
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", `inline; filename="${name}"`);
-      } else if (filePath.endsWith(".html")) {
-        res.setHeader("Content-Type", "text/html; charset=utf-8");
-      }
-      res.setHeader("Cache-Control", "private, max-age=3600");
-    },
-  }));
 
   function extensionForContentType(contentType: string): string {
     if (contentType.includes("zip")) return "zip";
@@ -14850,57 +14814,38 @@ async function startServer() {
 
   function findExistingLabelFile(orderSn: string): string | null {
     const fname = buildMergedLabelFilename([orderSn]);
-    if (resolveLabelFilePath(fname)) {
-      try {
-        const filePath = resolveLabelFilePath(fname)!;
-        const buf = fs.readFileSync(filePath);
-        if (isPdfBuffer(buf)) return fname;
-      } catch {
-        /* ignore */
-      }
-    }
-    return null;
+    const hit = getLabelMem(fname);
+    return hit && isPdfBuffer(hit.buf) ? fname : null;
   }
 
   function readExistingLabelBuffer(orderSn: string): Buffer | null {
     const fname = findExistingLabelFile(orderSn);
     if (!fname) return null;
-    try {
-      const filePath = resolveLabelFilePath(fname);
-      if (!filePath) return null;
-      const buf = fs.readFileSync(filePath);
-      return isPdfBuffer(buf) ? buf : null;
-    } catch {
-      return null;
-    }
+    const hit = getLabelMem(fname);
+    return hit && isPdfBuffer(hit.buf) ? hit.buf : null;
   }
 
+  /** Cache PDF vào RAM (không ghi đĩa). */
   function saveLabelFile(buffer: Buffer, filename: string, contentType?: string): string {
-    if (!isPdfBuffer(buffer, contentType)) {
+    try {
+      return putLabelMem(filename, buffer, contentType);
+    } catch (err: any) {
       console.error(
-        `[Shopee Print] Từ chối lưu — dữ liệu không phải PDF: ${filename}, size=${buffer.length}, type=${contentType || ""}`
+        `[Shopee Print] Từ chối cache RAM — ${filename}: ${err?.message || err}, size=${buffer.length}, type=${contentType || ""}`
       );
-      throw new Error("Dữ liệu vận đơn từ Shopee không phải PDF hợp lệ.");
+      throw err;
     }
-    fs.mkdirSync(SHIPPING_DOCS_DIR, { recursive: true });
-    fs.writeFileSync(path.join(SHIPPING_DOCS_DIR, filename), buffer);
-    console.log(`[Shopee Print] Đã lưu vận đơn (${buffer.length} bytes) → storage/waybills/${filename}`);
-    return filename;
   }
 
-  /** Lưu PDF nền (không chặn response stream về frontend). */
   function saveLabelFileAsync(buffer: Buffer, filename: string, contentType?: string): void {
-    const copy = Buffer.from(buffer);
-    setImmediate(() => {
-      try {
-        saveLabelFile(copy, filename, contentType);
-      } catch (err) {
-        console.warn(`[Shopee Print] Lưu nền thất bại ${filename}:`, err);
-      }
-    });
+    try {
+      saveLabelFile(buffer, filename, contentType);
+    } catch (err) {
+      console.warn(`[Shopee Print] Cache RAM thất bại ${filename}:`, err);
+    }
   }
 
-  // Download AWB PDFs — parallel batches (5/lần), lưu cache từng đơn trên đĩa.
+  // Download AWB PDFs — parallel batches (5/lần), cache từng đơn trong RAM.
   async function downloadShippingDocumentsMerged(
     shopId: string,
     accessToken: string,
@@ -14978,10 +14923,8 @@ async function startServer() {
   async function mergeLabelFilesToSingleUrl(filenames: string[], orderSns: string[]): Promise<string | null> {
     const pdfBuffers: Buffer[] = [];
     for (const name of filenames) {
-      const full = resolveLabelFilePath(name);
-      if (!full) continue;
-      const buf = fs.readFileSync(full);
-      if (isPdfBuffer(buf)) pdfBuffers.push(buf);
+      const hit = getLabelMem(name);
+      if (hit && isPdfBuffer(hit.buf)) pdfBuffers.push(hit.buf);
     }
     if (pdfBuffers.length === 0) return null;
     if (pdfBuffers.length === 1) return `/labels/${filenames[0]}`;
@@ -14989,13 +14932,13 @@ async function startServer() {
     const merged = await mergePdfBuffers(pdfBuffers);
     const mergedName = buildMergedLabelFilename(orderSns);
     saveLabelFile(merged, mergedName, "application/pdf");
-    console.log(`[Shopee Print] Đã gộp ${pdfBuffers.length} file PDF thành 1 file duy nhất: ${mergedName}`);
+    console.log(`[Shopee Print] Đã gộp ${pdfBuffers.length} PDF (RAM) thành 1 file: ${mergedName}`);
     return `/labels/${mergedName}`;
   }
 
   // Generates one real Shopee AWB/label document (grouped per shop) for the
   // given orders, polls until Shopee finishes rendering it, downloads the raw
-  // file and saves it locally so the frontend can open/print it via a URL.
+  // file and caches it in RAM so the frontend can open/print via a temporary URL.
   // The full create→poll→download pipeline is wrapped in a retry loop: Shopee
   // sometimes hasn't finished internally processing the order's logistics
   // status yet (transient "All failed, please check result_list for detail"),
@@ -15146,7 +15089,7 @@ async function startServer() {
     if (!alreadyCached) {
       saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
-    console.log(`[Shopee Print] Cached vận đơn (${cleanOrderList.length} đơn → ${filename}, ${downloadResult.buffer.length} bytes).`);
+    console.log(`[Shopee Print] Cached vận đơn RAM (${cleanOrderList.length} đơn → ${filename}, ${downloadResult.buffer.length} bytes).`);
 
     return {
       success: true,
@@ -15154,6 +15097,8 @@ async function startServer() {
       contentType: downloadResult.contentType,
       orderSns,
       skippedOrders,
+      buffer: downloadResult.buffer,
+      pdfBase64: downloadResult.buffer.toString("base64"),
       url: absoluteLabelUrl(`/labels/${filename}`),
     };
   }
@@ -15632,13 +15577,15 @@ async function startServer() {
     let primaryUrl: string | null = null;
     let pdfFilename: string | null = null;
 
+    let pdfBase64: string | null = null;
+
     if (allPrintedSns.length > 0) {
       pdfFilename = buildMergedLabelFilename(allPrintedSns);
-      const mergedOnDisk = resolveLabelFilePath(pdfFilename);
-      if (!mergedOnDisk && savedFilenames.length > 1) {
+      const mergedInRam = hasLabelMem(pdfFilename);
+      if (!mergedInRam && savedFilenames.length > 1) {
         primaryUrl = await mergeLabelFilesToSingleUrl(savedFilenames, allPrintedSns);
         if (primaryUrl) primaryUrl = absoluteLabelUrl(primaryUrl);
-      } else if (mergedOnDisk) {
+      } else if (mergedInRam) {
         primaryUrl = labelUrl(pdfFilename);
       } else if (savedFilenames.length === 1) {
         primaryUrl = labelUrl(savedFilenames[0]);
@@ -15647,6 +15594,8 @@ async function startServer() {
         primaryUrl = documents.find((d: any) => d.url)?.url || null;
         pdfFilename = savedFilenames[0] || null;
       }
+      const memHit = getLabelMem(pdfFilename || "") || (savedFilenames[0] ? getLabelMem(savedFilenames[0]) : null);
+      if (memHit?.buf) pdfBase64 = memHit.buf.toString("base64");
     } else {
       primaryUrl = documents.find((d: any) => d.url)?.url || null;
     }
@@ -15661,13 +15610,14 @@ async function startServer() {
     });
     saveOrders(updatedOrders);
 
-    console.log(`[Shopee Print] Ho\xE0n t\u1EA5t: ${documents.filter(d => d.url).length}/${Object.keys(groups).length} nh\xF3m shop t\u1EA1o v\u1EAD n th\xE0nh c\xF4ng.`);
+    console.log(`[Shopee Print] Ho\xE0n t\u1EA5t: ${documents.filter(d => d.url).length}/${Object.keys(groups).length} nh\xF3m shop t\u1EA1o v\u1EAD n th\xE0nh c\xF4ng (RAM cache).`);
 
-    scheduleWaybillsCleanup();
+    purgeExpiredLabelMem();
 
     return res.json({
       mergedUrl: primaryUrl,
       pdfFilename,
+      pdfBase64,
       documents: documents.map((d: any) =>
         d.url
           ? {
@@ -15678,7 +15628,7 @@ async function startServer() {
       ),
       orders: updatedOrders.filter(isValidOrder),
       shippingDocumentType: SHOPEE_SHIPPING_DOCUMENT_TYPE,
-      openMode: "new_tab_pdf",
+      openMode: pdfBase64 ? "blob_pdf" : "new_tab_pdf",
     });
     } catch (error: any) {
       console.error("[Shopee Print] fatal:", error?.response?.data || error?.message || error);
