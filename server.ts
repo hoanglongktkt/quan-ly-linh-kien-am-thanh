@@ -12142,14 +12142,23 @@ async function startServer() {
     try {
       const q = String(req.query?.q ?? req.query?.query ?? "").trim();
       const limit = Number(req.query?.limit ?? 40);
-      // warehouse_id: kho hệ thống = Mongo products — bỏ lọc kho cũ hardcoded
-      const warehouseId = String(req.query?.warehouse_id ?? req.query?.warehouseId ?? "default").trim() || "default";
       const products = await searchProductsFromStore(q, limit);
+      console.log("[Products API] /api/products/search", {
+        q,
+        limit,
+        total: products.length,
+        sample: products.slice(0, 3).map((p: any) => ({
+          id: p?.id,
+          sku: p?.sku,
+          title: p?.title,
+          stock: p?.stock,
+          importPrice: p?.importPrice,
+        })),
+      });
       return res.json({
         success: true,
         products,
         total: products.length,
-        warehouse_id: warehouseId,
         source: "mongodb",
       });
     } catch (err: unknown) {
@@ -13013,9 +13022,17 @@ async function startServer() {
         })[0]
       : null;
 
+    const stock = Math.max(0, Math.round(Number(product.stock) || 0));
+    const oldPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
+    console.log("[Imports] product-context:", { productId, sku, stock, oldPrice, title: product.title });
+
     return res.json({
       productId,
-      oldPrice: Math.max(0, Math.round(Number(product.importPrice) || 0)),
+      stock,
+      importPrice: oldPrice,
+      oldPrice,
+      sku,
+      title: product.title || "",
       lastSupplierName: latest?.supplierName || null,
       lastSupplierId: latest?.supplierId || null,
       lastImportDate: latest?.date || null,

@@ -336,6 +336,23 @@ export async function loadProductByIdFromStore(productId: string): Promise<any |
     if (child) return child;
   }
 
+  // Biến thể lưu trong children_models (search flatten dùng field này)
+  const byChildModel = await ProductModel.findOne({ "data.children_models.id": id }).lean();
+  if (byChildModel?.data && typeof byChildModel.data === "object") {
+    const models = Array.isArray(byChildModel.data.children_models)
+      ? byChildModel.data.children_models
+      : [];
+    const child = models.find((c: any) => String(c?.id || "").trim() === id);
+    if (child) {
+      return {
+        ...child,
+        title: child.title || byChildModel.data.title,
+        imageUrl: child.imageUrl || byChildModel.data.imageUrl,
+        avatarUrl: child.avatarUrl || byChildModel.data.avatarUrl,
+      };
+    }
+  }
+
   const byModel = await ProductModel.findOne({ "data.shopeeModelId": id }).lean();
   if (byModel?.data && typeof byModel.data === "object") return byModel.data;
 
