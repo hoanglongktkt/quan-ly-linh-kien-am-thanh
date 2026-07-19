@@ -973,6 +973,8 @@ export default function OrderManager({
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
+  /** Client-side: ưu tiên + gom nhóm đơn 1 SP (tab Chờ lấy hàng chưa xử lý). */
+  const [smartPickSort, setSmartPickSort] = useState(false);
 
   // Multi-select bulk state
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
@@ -1717,8 +1719,14 @@ export default function OrderManager({
     }).length;
   };
 
-  // Filter logic
-  const filteredOrders = orders.filter(order => {
+  // Filter logic (client-side only — không gọi API)
+  const singleItemSortKey = (order: Order) => {
+    const item = (order.items || [])[0];
+    if (!item) return '';
+    return String(item.productTitle || item.modelSku || item.modelName || '').trim();
+  };
+
+  const filteredOrdersBase = orders.filter(order => {
     // 1. Tab filter
     if (activeSubTab === 'cancel_returns') {
       if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
@@ -1753,7 +1761,7 @@ export default function OrderManager({
     // 3. Shop Filter
     if (selectedShopId !== 'all' && order.shopId !== selectedShopId) return false;
 
-    // 4. Text query search
+    // 4. Search query search
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
@@ -1772,6 +1780,30 @@ export default function OrderManager({
     if (selectedSort === 'highest_value') return (Number(b.totalAmount) || 0) - (Number(a.totalAmount) || 0);
     return 0;
   });
+
+  // Smart pick sort: không ẩn đơn — chỉ sắp xếp lại trên client khi bật toggle (tab unprocessed).
+  // Tắt toggle → dùng lại filteredOrdersBase (thứ tự thời gian gốc).
+  const filteredOrders =
+    smartPickSort && activeSubTab === 'unprocessed'
+      ? [...filteredOrdersBase].sort((a, b) => {
+          const aSingle = (a.items || []).length === 1;
+          const bSingle = (b.items || []).length === 1;
+          if (aSingle && !bSingle) return -1;
+          if (!aSingle && bSingle) return 1;
+          if (aSingle && bSingle) {
+            const nameCmp = singleItemSortKey(a).localeCompare(singleItemSortKey(b), 'vi', {
+              sensitivity: 'base',
+              numeric: true,
+            });
+            if (nameCmp !== 0) return nameCmp;
+            const aq = Number(a.items[0]?.quantity) || 0;
+            const bq = Number(b.items[0]?.quantity) || 0;
+            return aq - bq;
+          }
+          // Đơn ≥2 SP: giữ nguyên thứ tự thời gian gốc (stable sort).
+          return 0;
+        })
+      : filteredOrdersBase;
 
   // Resolve checkbox selections to full Order rows — match internal id, orderSn,
   // or the normalized shopee-{orderSn} id so bulk actions never lose selections.
@@ -2892,6 +2924,19 @@ export default function OrderManager({
             className="w-full pl-10 pr-4 py-2.5 bg-gray-50/50 rounded-xl border border-gray-100 focus:border-blue-500 focus:bg-white text-xs outline-none transition-all font-medium"
           />
         </div>
+        {activeSubTab === 'unprocessed' && (
+          <label className="mt-3 flex items-center gap-2.5 cursor-pointer select-none w-fit max-w-full">
+            <input
+              type="checkbox"
+              checked={smartPickSort}
+              onChange={(e) => setSmartPickSort(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-sky-600 focus:ring-sky-500 cursor-pointer shrink-0"
+            />
+            <span className="text-xs font-semibold text-slate-700 leading-snug">
+              Ưu tiên đơn 1 sản phẩm (Gom nhóm nhặt hàng)
+            </span>
+          </label>
+        )}
       </div>
       )}
 
