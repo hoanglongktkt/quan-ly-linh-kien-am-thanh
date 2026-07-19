@@ -21,6 +21,9 @@ export function matchesHandedOverCarrierTab(order: Order): boolean {
 }
 
 export function matchesProcessedPickupTab(order: Order): boolean {
-  if (order.is_pending_shopee_check || order.status === 'pending_verification') return false;
+  // SHIPPED / Đang giao không được nằm ở tab Chờ lấy hàng (Đã xử lý)
+  if (order.status === 'shipping' || order.status === 'pending_verification') return false;
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return false;
   return order.status === 'processed' && !isOrderHandedOverToCarrier(order);
 }

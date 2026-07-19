@@ -85,12 +85,19 @@ function getOrderWaybillCode(order: Order): string {
   return '';
 }
 
-/** Tab "Đang kiểm tra bởi Shopee" = flag bẫy lỗi + status nội bộ + raw UNPAID/PENDING. */
-function isPendingVerificationOrder(order: Order): boolean {
-  if (order.is_pending_shopee_check) return true;
+/** UNPAID/PENDING → Chờ xác nhận (tab "Đang kiểm tra bởi Shopee" đã bỏ). */
+function isPendingConfirmOrder(order: Order): boolean {
+  if (order.status === 'pending_confirm') return true;
   if (order.status === 'pending_verification') return true;
   const raw = String(order.shopee_order_status || '').toUpperCase();
   return raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK';
+}
+
+/** SHIPPED / TO_CONFIRM_RECEIVE → luôn Đang giao (API v2.2.9). */
+function isShippingTabOrder(order: Order): boolean {
+  if (order.status === 'shipping') return true;
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  return raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE';
 }
 
 function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
@@ -423,9 +430,16 @@ export default function OrderManager({
 
   useEffect(() => {
     if (initialOrdersSubTab) {
-      setActiveSubTab(initialOrdersSubTab);
+      setActiveSubTab(initialOrdersSubTab === 'pending_verification' ? 'pending_confirm' : initialOrdersSubTab);
     }
   }, [initialOrdersSubTab]);
+
+  // Tab "Đang kiểm tra bởi Shopee" đã xóa — chuyển sang Chờ xác nhận.
+  useEffect(() => {
+    if (activeSubTab === 'pending_verification') {
+      setActiveSubTab('pending_confirm');
+    }
+  }, [activeSubTab]);
   
   // Camera Barcode Scanning States and Ref
   const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét mã QR...');
@@ -667,7 +681,7 @@ export default function OrderManager({
         }
 
         const statusLabels: Record<Order['status'], string> = {
-          pending_verification: 'Đang được kiểm tra bởi Shopee',
+          pending_verification: 'Chờ xác nhận',
           pending_confirm: 'Chờ xác nhận',
           unprocessed: 'Chờ lấy hàng (Chưa xử lý)',
           processed: 'Chờ lấy hàng (Đã xử lý)',
@@ -1397,16 +1411,16 @@ export default function OrderManager({
   const finishShipJobResult = async (finalJob: any | null, queuedCount: number, total: number) => {
     const successCount = finalJob?.successCount || 0;
     const results = finalJob?.results || [];
-    const pendingMoved = results.filter((r: any) => r.pendingShopeeCheck);
-    const failed = results.filter((r: any) => !r.success && !r.pendingShopeeCheck);
+    const failed = results.filter((r: any) => !r.success);
+    const failedCount = Number(finalJob?.failedCount) || failed.length;
 
     onAddLog({
       id: `log-${Date.now() + 2}`,
       timestamp: new Date().toISOString(),
       channel: 'all',
       type: 'stock_sync',
-      status: successCount > 0 || pendingMoved.length > 0 ? 'success' : 'failed',
-      message: `Đồng bộ Shopee xong: ${successCount}/${queuedCount} đơn OK, ${pendingMoved.length} đơn đang được Shopee kiểm tra (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'}).`,
+      status: successCount > 0 ? 'success' : 'failed',
+      message: `Xác nhận thành công ${successCount} đơn. Bỏ qua ${failedCount} đơn bị lỗi. (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'})`,
     });
 
     if (Array.isArray(finalJob?.orders)) {
@@ -1414,29 +1428,13 @@ export default function OrderManager({
       ordersRef.current = finalJob.orders;
     }
 
-    if (pendingMoved.length > 0) {
-      setActiveSubTab('pending_verification');
-    }
-
-    if (pendingMoved.length > 0 && successCount === 0 && failed.length === 0) {
-      showToast(`${pendingMoved.length} đơn đang được Shopee kiểm tra — đã chuyển sang tab tương ứng.`);
-    } else if (finalJob?.status === 'failed') {
+    if (finalJob?.status === 'failed' && successCount === 0) {
       showToast(finalJob.error || 'Đồng bộ Shopee gặp lỗi. Vui lòng kiểm tra lại danh sách đơn.');
-    } else if (successCount === 0) {
-      const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
-      if (pendingMoved.length > 0) {
-        showToast(`${pendingMoved.length} đơn đang được Shopee kiểm tra. ${errDetail}`);
-      } else {
-        showToast(`Không xác nhận được đơn nào trên Shopee. ${errDetail || 'Vui lòng thử lại.'}`);
-      }
-    } else if (failed.length > 0 || pendingMoved.length > 0) {
-      if (pendingMoved.length > 0) {
-        showToast(`Shopee: ${successCount} OK, ${pendingMoved.length} đang kiểm tra, ${failed.length} lỗi.`);
-      } else {
-        showToast(`Shopee: ${successCount}/${queuedCount} đơn OK, ${failed.length} đơn lỗi.`);
-      }
     } else {
-      showToast(`Xác nhận thành công ${successCount}/${total} đơn — đang mở vận đơn in...`);
+      showToast(
+        finalJob?.message ||
+          `Xác nhận thành công ${successCount} đơn. Bỏ qua ${failedCount} đơn bị lỗi.`,
+      );
     }
 
     if (finalJob?.printDocument?.pdfBase64 || finalJob?.printDocument?.url) {
@@ -1546,24 +1544,16 @@ export default function OrderManager({
         setActiveSubTab('processed');
 
         const successCount = syncData.successCount || 0;
-        const pendingMoved = (syncData.results || []).filter((r: any) => r.pendingShopeeCheck);
+        const failedCount =
+          Number(syncData.failedCount) ||
+          (syncData.results || []).filter((r: any) => !r.success).length;
+        showToast(
+          syncData.message ||
+            `Xác nhận thành công ${successCount} đơn. Bỏ qua ${failedCount} đơn bị lỗi.`,
+        );
         if (successCount === 0) {
-          const failed = (syncData.results || []).filter((r: any) => !r.success && !r.pendingShopeeCheck);
-          const errDetail = failed.map((f: any) => `${f.orderSn || f.orderId}: ${f.message || f.error}`).join('; ');
-          if (pendingMoved.length > 0) {
-            setActiveSubTab('pending_verification');
-            showToast(`${pendingMoved.length} đơn đang được Shopee kiểm tra — đã chuyển tab.`);
-          } else {
-            showToast(`Không xác nhận được đơn nào. ${errDetail || 'Vui lòng thử lại.'}`);
-          }
           clearShipProgressOverlay();
           return;
-        }
-
-        if (pendingMoved.length > 0) {
-          showToast(`Xác nhận ${successCount} đơn OK, ${pendingMoved.length} đơn đang được Shopee kiểm tra.`);
-        } else {
-          showToast(`Xác nhận thành công ${successCount}/${queuedOrders.length} đơn — đang mở vận đơn in...`);
         }
         if (syncData.printDocument?.pdfBase64 || syncData.printDocument?.url) {
           await openShopeeLabelFromStream({
@@ -1621,6 +1611,8 @@ export default function OrderManager({
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
       if (onFetchOrders) await onFetchOrders();
       clearShipProgressOverlay();
+    } finally {
+      setIsShipping(false);
     }
   };
 
@@ -1660,7 +1652,6 @@ export default function OrderManager({
   const getStatusBadge = (status: Order['status']) => {
     switch (status) {
       case 'pending_verification':
-        return { text: 'Đang được kiểm tra bởi Shopee', color: 'bg-violet-50 text-violet-700 border-violet-200/60' };
       case 'pending_confirm': 
         return { text: 'Chờ xác nhận', color: 'bg-amber-50 text-amber-600 border-amber-200/60' };
       case 'unprocessed': 
@@ -1713,11 +1704,14 @@ export default function OrderManager({
     }
     return orders.filter(o => {
       if (status === 'all') return true;
-      if (status === 'pending_verification') return isPendingVerificationOrder(o);
-      if (status === 'unprocessed') {
-        return o.status === 'unprocessed' && !isOrderHandedOverToCarrier(o) && !isPendingVerificationOrder(o);
+      if (status === 'pending_confirm' || status === 'pending_verification') {
+        return isPendingConfirmOrder(o);
       }
-      if (status === 'processed') return matchesProcessedPickupTab(o);
+      if (status === 'unprocessed') {
+        return o.status === 'unprocessed' && !isOrderHandedOverToCarrier(o) && !isPendingConfirmOrder(o);
+      }
+      if (status === 'processed') return matchesProcessedPickupTab(o) && !isShippingTabOrder(o);
+      if (status === 'shipping') return isShippingTabOrder(o);
       if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
       return o.status === status;
     }).length;
@@ -1733,17 +1727,19 @@ export default function OrderManager({
     } else if (activeSubTab === 'handed_over_carrier') {
       if (!matchesHandedOverCarrierTab(order)) return false;
     } else if (activeSubTab === 'processed') {
-      if (!matchesProcessedPickupTab(order)) return false;
-    } else if (activeSubTab === 'pending_verification') {
-      if (!isPendingVerificationOrder(order)) return false;
+      if (!matchesProcessedPickupTab(order) || isShippingTabOrder(order)) return false;
+    } else if (activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification') {
+      if (!isPendingConfirmOrder(order)) return false;
     } else if (activeSubTab === 'unprocessed') {
       if (
         order.status !== 'unprocessed' ||
         isOrderHandedOverToCarrier(order) ||
-        isPendingVerificationOrder(order)
+        isPendingConfirmOrder(order)
       ) {
         return false;
       }
+    } else if (activeSubTab === 'shipping') {
+      if (!isShippingTabOrder(order)) return false;
     } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products') {
       if (order.status !== activeSubTab) return false;
     }
@@ -2733,23 +2729,9 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('pending_verification')}
-          className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeSubTab === 'pending_verification'
-              ? 'border-violet-600 text-violet-700 font-extrabold bg-violet-50/40'
-              : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-          }`}
-        >
-          <span>Đang được kiểm tra bởi Shopee</span>
-          <span className="px-1.5 py-0.2 text-[10px] font-bold rounded-full bg-violet-100 text-violet-700 border border-violet-200/50">
-            {getCount('pending_verification')}
-          </span>
-        </button>
-
-        <button
           onClick={() => setActiveSubTab('pending_confirm')}
           className={`om-orders-mobile-hide-subtab px-4 py-3 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-            activeSubTab === 'pending_confirm' 
+            activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification'
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
