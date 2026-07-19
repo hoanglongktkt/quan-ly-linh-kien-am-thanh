@@ -525,8 +525,9 @@ export default function App() {
       if (startedBackground) {
         // Giải phóng loading UI ngay — sync chạy ngầm, poll silent.
         setOrdersLoading(false);
-        const pollMs = 12_000;
-        const maxPolls = 12;
+        // Full sync (returns) có thể > 5 phút — poll lâu hơn để UI kịp cập nhật.
+        const pollMs = syncType === 'full' ? 15_000 : 12_000;
+        const maxPolls = syncType === 'full' ? 24 : 12;
         for (let i = 0; i < maxPolls; i++) {
           await new Promise((r) => setTimeout(r, pollMs));
           await fetchOrders({ silent: true });

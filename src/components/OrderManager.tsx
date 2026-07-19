@@ -73,7 +73,16 @@ import {
 } from '../utils/shopeeFees';
 
 function getOrderWaybillCode(order: Order): string {
-  return getCarrierWaybillDisplay(order);
+  // Luôn ưu tiên mã vận đơn (return/forward) — không bao giờ thay bằng order_sn.
+  const fromHelper = getCarrierWaybillDisplay(order);
+  if (fromHelper) return fromHelper;
+  const fallback = String(
+    order.return_tracking_no || order.trackingNumber || order.tracking_no || '',
+  ).trim();
+  if (fallback && !/^0FG/i.test(fallback) && fallback !== String(order.orderSn || '')) {
+    return fallback;
+  }
+  return '';
 }
 
 /** Tab "Đang kiểm tra bởi Shopee" = flag bẫy lỗi + status nội bộ + raw UNPAID/PENDING. */
@@ -347,6 +356,10 @@ function resolveCancelReturnKind(order: Order): CancelReturnTab | null {
   const kind = order.shopee_cancel_return_kind;
   if (kind === 'refund_return' || kind === 'cancelled' || kind === 'failed_delivery') {
     return kind;
+  }
+  const logistics = String((order as any).logistics_status || '').toUpperCase();
+  if (logistics.includes('DELIVERY_FAILED') || logistics.includes('FAILED_DELIVERY')) {
+    return 'failed_delivery';
   }
   const type = Number(order.return_refund_request_type);
   if (type === 2) return 'failed_delivery';
