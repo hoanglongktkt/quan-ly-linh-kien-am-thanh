@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Product, SyncLog } from '../types';
-import { CategorySelection } from '../types/marketplaceCategory';
+import {
+  CategorySelection,
+  ShopeeAttributeSelection,
+  ShopeeCategoryAttribute,
+} from '../types/marketplaceCategory';
 import { applySmartPricesFromShopee } from '../utils/smartPricing';
 import SmartCategorySelector from './SmartCategorySelector';
 import {
@@ -39,6 +43,8 @@ export interface MultiChannelListingPayload {
   shopeeCat: string;
   shopeeCategoryId: string;
   shopeeBrand: string;
+  shopeeBrandId?: number;
+  shopeeAttributes?: ShopeeAttributeSelection[];
   lazadaCat: string;
   lazadaCategoryId: string;
   lazadaBrand: string;
@@ -64,6 +70,8 @@ interface ShopItem {
   name: string;
   icon: string;
   platform: 'shopee' | 'lazada' | 'tiktok' | string;
+  shopId?: string;
+  shopName?: string;
 }
 
 interface MultiChannelListingFormProps {
@@ -123,11 +131,18 @@ function buildVariantsFromProducts(allProducts: Product[], product: Product | un
 export default function MultiChannelListingForm({ products, shops, onAddLog, initialProductId }: MultiChannelListingFormProps) {
   const editorRef = useRef<HTMLDivElement>(null);
 
-  const availableShops = useMemo(() => {
-    const fromProps = (shops || []).filter((s) =>
-      ['shopee', 'lazada', 'tiktok'].includes(String(s.platform || '').toLowerCase())
-    );
-    return fromProps;
+  const availableShops = useMemo((): ShopItem[] => {
+    return (shops || [])
+      .filter((s) => ['shopee', 'lazada', 'tiktok'].includes(String(s.platform || '').toLowerCase()))
+      .map((s: any) => ({
+        id: String(s.id || s.shopId || ''),
+        shopId: String(s.shopId || s.id || ''),
+        name: String(s.name || s.shopName || s.shopId || s.id || 'Shop'),
+        shopName: String(s.shopName || s.name || ''),
+        icon: s.icon || (s.platform === 'shopee' ? '🛒' : s.platform === 'lazada' ? '🔵' : '🎵'),
+        platform: String(s.platform || '').toLowerCase(),
+      }))
+      .filter((s) => s.id);
   }, [shops]);
 
   const [selectedShops, setSelectedShops] = useState<string[]>(
@@ -137,6 +152,10 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   const [title, setTitle] = useState('');
   const [shopeeCategory, setShopeeCategory] = useState<CategorySelection | null>(null);
   const [shopeeBrand, setShopeeBrand] = useState('NoBrand');
+  const [shopeeBrandId, setShopeeBrandId] = useState(0);
+  const [shopeeAttrDefs, setShopeeAttrDefs] = useState<ShopeeCategoryAttribute[]>([]);
+  const [shopeeAttrValues, setShopeeAttrValues] = useState<Record<string, string>>({});
+  const [loadingShopeeAttrs, setLoadingShopeeAttrs] = useState(false);
   const [lazadaCategory, setLazadaCategory] = useState<CategorySelection | null>(null);
   const [lazadaBrand, setLazadaBrand] = useState('No Brand');
   const [tiktokCategory, setTiktokCategory] = useState<CategorySelection | null>(null);
@@ -161,6 +180,42 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   const [isPublishing, setIsPublishing] = useState(false);
 
   const warehouseProduct = products.find((p) => p.id === warehouseProductId);
+
+  const primaryShopeeShopId = useMemo(() => {
+    const selected = availableShops.find(
+      (s) => selectedShops.includes(s.id) && s.platform === 'shopee'
+    );
+    return selected?.shopId || selected?.id || '';
+  }, [availableShops, selectedShops]);
+
+  const shopeeMandatoryAttrs = useMemo(
+    () => shopeeAttrDefs.filter((a) => a.mandatory),
+    [shopeeAttrDefs]
+  );
+
+  const buildShopeeAttributesPayload = useCallback((): ShopeeAttributeSelection[] => {
+    return shopeeAttrDefs
+      .map((attr) => {
+        const key = String(attr.attribute_id);
+        const raw = String(shopeeAttrValues[key] || '').trim();
+        if (!raw) return null;
+        if (attr.values?.length) {
+          const hit = attr.values.find((v) => String(v.value_id) === raw);
+          if (!hit) return null;
+          return {
+            attribute_id: attr.attribute_id,
+            value_id: hit.value_id,
+            original_value_name: hit.name,
+          };
+        }
+        return {
+          attribute_id: attr.attribute_id,
+          value_id: 0,
+          original_value_name: raw,
+        };
+      })
+      .filter(Boolean) as ShopeeAttributeSelection[];
+  }, [shopeeAttrDefs, shopeeAttrValues]);
 
   useEffect(() => {
     if (!warehouseProductId && products.length > 0) {
@@ -193,6 +248,56 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     }
   }, [descMode, descriptionHtml]);
 
+  useEffect(() => {
+    const categoryId = shopeeCategory?.categoryId;
+    if (!categoryId || !primaryShopeeShopId) {
+      setShopeeAttrDefs([]);
+      setShopeeAttrValues({});
+      return;
+    }
+    let cancelled = false;
+    const loadAttrs = async () => {
+      setLoadingShopeeAttrs(true);
+      try {
+        const token = localStorage.getItem('admin_token');
+        const qs = new URLSearchParams({
+          shop_id: primaryShopeeShopId,
+          category_id: String(categoryId),
+        });
+        const res = await fetch(`/api/shopee/category-attributes?${qs}`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok || !data.success) {
+          setShopeeAttrDefs([]);
+          setShopeeAttrValues({});
+          return;
+        }
+        const attrs: ShopeeCategoryAttribute[] = Array.isArray(data.attributes) ? data.attributes : [];
+        setShopeeAttrDefs(attrs);
+        const next: Record<string, string> = {};
+        for (const a of attrs) {
+          if (!a.mandatory) continue;
+          if (a.values?.length) next[String(a.attribute_id)] = String(a.values[0].value_id);
+          else next[String(a.attribute_id)] = '';
+        }
+        setShopeeAttrValues(next);
+      } catch {
+        if (!cancelled) {
+          setShopeeAttrDefs([]);
+          setShopeeAttrValues({});
+        }
+      } finally {
+        if (!cancelled) setLoadingShopeeAttrs(false);
+      }
+    };
+    loadAttrs();
+    return () => {
+      cancelled = true;
+    };
+  }, [shopeeCategory?.categoryId, primaryShopeeShopId]);
+
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3500);
@@ -204,6 +309,8 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     shopeeCat: shopeeCategory?.label || '',
     shopeeCategoryId: shopeeCategory?.categoryId || '',
     shopeeBrand,
+    shopeeBrandId: shopeeBrand === 'NoBrand' ? 0 : shopeeBrandId,
+    shopeeAttributes: buildShopeeAttributesPayload(),
     lazadaCat: lazadaCategory?.label || '',
     lazadaCategoryId: lazadaCategory?.categoryId || '',
     lazadaBrand,
@@ -223,8 +330,8 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
     shippingMethod,
     warehouseProductId: warehouseProductId || undefined,
   }), [
-    selectedShops, title, shopeeCategory, shopeeBrand, lazadaCategory, lazadaBrand,
-    tiktokCategory, tiktokBrand, images, variants, descriptionHtml,
+    selectedShops, title, shopeeCategory, shopeeBrand, shopeeBrandId, buildShopeeAttributesPayload,
+    lazadaCategory, lazadaBrand, tiktokCategory, tiktokBrand, images, variants, descriptionHtml,
     packageWeight, packageLength, packageWidth, packageHeight, shippingMethod, warehouseProductId,
   ]);
 
@@ -233,7 +340,7 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []) as File[];
     files.forEach((file) => {
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -367,6 +474,17 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
       alert('Vui lòng chọn ngành hàng Shopee (Category ID)!');
       return;
     }
+    if (needsShopee && images.length === 0) {
+      alert('Vui lòng thêm ít nhất 1 ảnh sản phẩm!');
+      return;
+    }
+    if (needsShopee && shopeeMandatoryAttrs.length > 0) {
+      const missing = shopeeMandatoryAttrs.filter((a) => !String(shopeeAttrValues[String(a.attribute_id)] || '').trim());
+      if (missing.length) {
+        alert(`Vui lòng điền thuộc tính bắt buộc Shopee: ${missing.map((a) => a.attribute_name).join(', ')}`);
+        return;
+      }
+    }
     if (needsLazada && !lazadaCategory?.categoryId) {
       alert('Vui lòng chọn ngành hàng Lazada (Category ID)!');
       return;
@@ -414,7 +532,13 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
       const payload = { ...buildPayload(), images: publishImages, shopTitles: shopTitlesPayload };
       const shopDetails = selectedShops
         .map((id) => availableShops.find((s) => s.id === id))
-        .filter(Boolean);
+        .filter(Boolean)
+        .map((s) => ({
+          id: s!.id,
+          shopId: s!.shopId || s!.id,
+          name: s!.name || s!.shopName || s!.id,
+          platform: s!.platform,
+        }));
 
       const res = await fetch('/api/multi-channel/publish', {
         method: 'POST',
@@ -564,9 +688,16 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
               value={shopeeCategory}
               onChange={setShopeeCategory}
             />
-            <select value={shopeeBrand} onChange={(e) => setShopeeBrand(e.target.value)}
-              className="w-full px-2.5 py-1.5 bg-white border rounded-lg text-xs">
-              <option value="NoBrand">NoBrand</option>
+            <select
+              value={shopeeBrand}
+              onChange={(e) => {
+                const v = e.target.value;
+                setShopeeBrand(v);
+                setShopeeBrandId(v === 'NoBrand' ? 0 : 0);
+              }}
+              className="w-full px-2.5 py-1.5 bg-white border rounded-lg text-xs"
+            >
+              <option value="NoBrand">NoBrand (brand_id=0)</option>
               <option value="Sony">Sony</option>
               <option value="JBL">JBL</option>
             </select>
@@ -606,6 +737,66 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
             </select>
           </div>
         </div>
+
+        {shopeeCategory?.categoryId && (
+          <div className="border border-orange-100 rounded-2xl p-4 bg-orange-50/20 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-xs font-bold text-orange-700 flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" /> Thuộc tính bắt buộc Shopee
+              </h4>
+              {loadingShopeeAttrs && (
+                <span className="text-[10px] text-orange-500 font-medium flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Đang tải...
+                </span>
+              )}
+            </div>
+            {!primaryShopeeShopId ? (
+              <p className="text-[10px] text-amber-700 font-medium">Chọn ít nhất một gian hàng Shopee để tải thuộc tính danh mục.</p>
+            ) : shopeeMandatoryAttrs.length === 0 && !loadingShopeeAttrs ? (
+              <p className="text-[10px] text-gray-400">Danh mục này không có thuộc tính bắt buộc (hoặc chưa lấy được từ API).</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {shopeeMandatoryAttrs.map((attr) => {
+                  const key = String(attr.attribute_id);
+                  const hasOptions = Array.isArray(attr.values) && attr.values.length > 0;
+                  return (
+                    <div key={key} className="space-y-1">
+                      <label className="text-[10px] font-bold text-gray-600">
+                        {attr.attribute_name} <span className="text-red-500">*</span>
+                      </label>
+                      {hasOptions ? (
+                        <select
+                          value={shopeeAttrValues[key] || ''}
+                          onChange={(e) =>
+                            setShopeeAttrValues((prev) => ({ ...prev, [key]: e.target.value }))
+                          }
+                          className="w-full px-2.5 py-1.5 bg-white border border-orange-100 rounded-lg text-xs"
+                        >
+                          <option value="">— Chọn —</option>
+                          {attr.values.map((v) => (
+                            <option key={v.value_id} value={String(v.value_id)}>
+                              {v.name || v.value_id}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          value={shopeeAttrValues[key] || ''}
+                          onChange={(e) =>
+                            setShopeeAttrValues((prev) => ({ ...prev, [key]: e.target.value }))
+                          }
+                          placeholder="Nhập giá trị"
+                          className="w-full px-2.5 py-1.5 bg-white border border-orange-100 rounded-lg text-xs"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 3. Hình ảnh */}

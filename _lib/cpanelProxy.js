@@ -34,6 +34,8 @@ const LONG_RUNNING_PREFIXES = [
   'shopee/ship-order',
   'shopee/print-document',
   'settings/shop-connection-status',
+  'multi-channel/publish',
+  'shopee/category-attributes',
 ];
 
 const RETRYABLE_ERROR_CODES = new Set([

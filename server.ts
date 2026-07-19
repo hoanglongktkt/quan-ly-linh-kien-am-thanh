@@ -2767,6 +2767,420 @@ async function shopeeUpdatePrice(
   return json;
 }
 
+// ---------------------------------------------------------------------------
+// Shopee Open API v2 — Đăng bán sản phẩm (Guide 217)
+// upload_image → add_item → init_tier_variation → add_model
+// ---------------------------------------------------------------------------
+
+function stripHtmlToText(html: string): string {
+  return String(html || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function flattenShopeeAttributeNodes(nodes: any[]): any[] {
+  const out: any[] = [];
+  for (const n of Array.isArray(nodes) ? nodes : []) {
+    if (!n || typeof n !== "object") continue;
+    if (n.attribute_id != null) out.push(n);
+    if (Array.isArray(n.attribute_tree)) out.push(...flattenShopeeAttributeNodes(n.attribute_tree));
+    if (Array.isArray(n.child_attribute_list)) out.push(...flattenShopeeAttributeNodes(n.child_attribute_list));
+    if (Array.isArray(n.children)) out.push(...flattenShopeeAttributeNodes(n.children));
+  }
+  return out;
+}
+
+async function resolvePublishImageBuffer(src: string): Promise<{ buf: Buffer; filename: string; mime: string }> {
+  const raw = String(src || "").trim();
+  if (!raw) throw new Error("Ảnh trống");
+
+  if (raw.startsWith("data:image")) {
+    const m = raw.match(/^data:(image\/[\w+.-]+);base64,(.+)$/i);
+    if (!m) throw new Error("Data URL ảnh không hợp lệ");
+    const mime = m[1].toLowerCase();
+    const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+    return { buf: Buffer.from(m[2], "base64"), filename: `item.${ext}`, mime };
+  }
+
+  const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
+  if (framedMatch) {
+    const filePath = path.join(APP_ROOT, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (fs.existsSync(filePath)) {
+      return { buf: fs.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    }
+  }
+
+  let fetchUrl = raw;
+  if (raw.startsWith("/")) {
+    fetchUrl = `${APP_BASE_URL.replace(/\/$/, "")}${raw}`;
+  }
+  const res = await fetch(fetchUrl);
+  if (!res.ok) throw new Error(`Không tải được ảnh (${res.status}): ${raw.slice(0, 120)}`);
+  const mime = (res.headers.get("content-type") || "image/jpeg").split(";")[0].trim() || "image/jpeg";
+  const ext = mime.includes("png") ? "png" : mime.includes("webp") ? "webp" : "jpg";
+  return { buf: Buffer.from(await res.arrayBuffer()), filename: `item.${ext}`, mime };
+}
+
+async function shopeeUploadImage(
+  shopId: string,
+  accessToken: string,
+  imageBuffer: Buffer,
+  filename = "item.jpg",
+  mime = "image/jpeg",
+): Promise<string> {
+  const apiPath = "/api/v2/media_space/upload_image";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const url =
+    `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}` +
+    `&timestamp=${timestamp}&access_token=${encodeURIComponent(accessToken)}&shop_id=${shopId}&sign=${sign}`;
+
+  const form = new FormData();
+  const fileBytes = new Uint8Array(imageBuffer);
+  form.append("image", new Blob([fileBytes], { type: mime }), filename);
+  form.append("scene", "normal");
+
+  const res = await fetchWithTimeout(url, { method: "POST", body: form }, 90_000);
+  const rawText = await res.text();
+  let json: any = {};
+  try {
+    json = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    throw new Error(`upload_image phản hồi không phải JSON (HTTP ${res.status})`);
+  }
+  const info =
+    json?.response?.image_info_list?.[0]?.image_info ||
+    json?.response?.image_info_list?.[0] ||
+    json?.response?.image_info;
+  const imageId = info?.image_id || info?.image_id_list?.[0];
+  if (json?.error || !imageId) {
+    throw new Error(formatShopeeApiError(json, res.status) || "upload_image thất bại");
+  }
+  return String(imageId);
+}
+
+async function shopeeGetChannelList(shopId: string, accessToken: string) {
+  const apiPath = "/api/v2/logistics/get_channel_list";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const params = new URLSearchParams({
+    partner_id: SHOPEE_PARTNER_ID,
+    timestamp: String(timestamp),
+    access_token: accessToken,
+    shop_id: shopId,
+    sign,
+  });
+  const { json, httpStatus } = await shopeeFetchJsonWithRetry(
+    `${SHOPEE_HOST}${apiPath}?${params.toString()}`,
+    `GET ${apiPath}`,
+  );
+  if (json?.error) {
+    throw new Error(formatShopeeApiError(json, httpStatus) || "get_channel_list thất bại");
+  }
+  const list = asShopeeArray(json?.response?.logistics_channel_list);
+  return list
+    .filter((c: any) => c && c.enabled !== false && Number(c.logistics_channel_id) > 0)
+    .map((c: any) => ({
+      logistic_id: Number(c.logistics_channel_id),
+      enabled: true,
+    }));
+}
+
+async function shopeeGetAttributeTree(shopId: string, accessToken: string, categoryId: number) {
+  const apiPath = "/api/v2/product/get_attribute_tree";
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const params = new URLSearchParams({
+    partner_id: SHOPEE_PARTNER_ID,
+    timestamp: String(timestamp),
+    access_token: accessToken,
+    shop_id: shopId,
+    sign,
+    category_id_list: String(categoryId),
+    language: "vi",
+  });
+  const { json, httpStatus } = await shopeeFetchJsonWithRetry(
+    `${SHOPEE_HOST}${apiPath}?${params.toString()}`,
+    `GET ${apiPath} category=${categoryId}`,
+  );
+  if (json?.error) {
+    throw new Error(formatShopeeApiError(json, httpStatus) || "get_attribute_tree thất bại");
+  }
+  const listEntry = asShopeeArray(json?.response?.list)[0];
+  const tree =
+    asShopeeArray(listEntry?.attribute_tree).length > 0
+      ? asShopeeArray(listEntry?.attribute_tree)
+      : asShopeeArray(json?.response?.attribute_list).length > 0
+        ? asShopeeArray(json?.response?.attribute_list)
+        : asShopeeArray(listEntry?.attribute_list);
+  const flat = flattenShopeeAttributeNodes(tree);
+  return flat.map((a: any) => {
+    const values = asShopeeArray(a.attribute_value_list || a.value_list || a.values);
+    return {
+      attribute_id: Number(a.attribute_id),
+      attribute_name: String(a.name || a.attribute_name || a.display_attribute_name || `Attr ${a.attribute_id}`),
+      mandatory: Boolean(a.mandatory ?? a.is_mandatory ?? a.mandatory_region),
+      input_type: String(a.attribute_info?.input_type || a.input_type || a.attribute_type || ""),
+      values: values.map((v: any) => ({
+        value_id: Number(v.value_id ?? v.attribute_value_id ?? 0),
+        name: String(v.name || v.original_value_name || v.display_value_name || ""),
+      })),
+    };
+  });
+}
+
+async function shopeeProductPost(
+  apiPath: string,
+  shopId: string,
+  accessToken: string,
+  body: Record<string, unknown>,
+  context: string,
+) {
+  const timestamp = Math.floor(Date.now() / 1000);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const url =
+    `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}` +
+    `&timestamp=${timestamp}&access_token=${encodeURIComponent(accessToken)}&shop_id=${shopId}&sign=${sign}`;
+  console.log(`[Shopee Publish] POST ${apiPath} shop=${shopId}:`, JSON.stringify(body).slice(0, 2000));
+  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, context);
+  if (json?.error) {
+    const msg = formatShopeeApiError(json, httpStatus) || json.message || json.error;
+    throw new Error(`${context}: ${msg}`);
+  }
+  return json?.response ?? json;
+}
+
+function buildShopeeAttributeListFromPayload(payload: any, mandatoryAttrs: any[]): any[] {
+  const fromFe = Array.isArray(payload?.shopeeAttributes) ? payload.shopeeAttributes : [];
+  const byId = new Map<number, any>();
+  for (const row of fromFe) {
+    const attributeId = Number(row?.attribute_id);
+    if (!Number.isFinite(attributeId) || attributeId <= 0) continue;
+    const valueId = Number(row?.value_id ?? row?.attribute_value_list?.[0]?.value_id ?? 0);
+    const originalValueName = String(
+      row?.original_value_name ||
+        row?.value_name ||
+        row?.attribute_value_list?.[0]?.original_value_name ||
+        "",
+    ).trim();
+    if (!valueId && !originalValueName) continue;
+    byId.set(attributeId, {
+      attribute_id: attributeId,
+      attribute_value_list: [
+        {
+          value_id: Number.isFinite(valueId) ? valueId : 0,
+          ...(originalValueName ? { original_value_name: originalValueName } : {}),
+        },
+      ],
+    });
+  }
+
+  for (const attr of mandatoryAttrs) {
+    const attributeId = Number(attr.attribute_id);
+    if (!Number.isFinite(attributeId) || byId.has(attributeId)) continue;
+    const first = Array.isArray(attr.values) ? attr.values[0] : null;
+    if (first && (first.value_id || first.name)) {
+      byId.set(attributeId, {
+        attribute_id: attributeId,
+        attribute_value_list: [
+          {
+            value_id: Number(first.value_id) || 0,
+            ...(first.name ? { original_value_name: String(first.name) } : {}),
+          },
+        ],
+      });
+    }
+  }
+
+  return Array.from(byId.values());
+}
+
+function resolveShopeeBrandId(payload: any): number {
+  const raw = Number(payload?.shopeeBrandId ?? payload?.brand_id);
+  if (Number.isFinite(raw) && raw > 0) return raw;
+  const name = String(payload?.shopeeBrand || "").trim().toLowerCase();
+  if (!name || name === "nobrand" || name === "no brand" || name === "no_brand") return 0;
+  return 0; // fallback No Brand
+}
+
+function packageWeightToKg(payload: any): number {
+  const raw = Number(payload?.packageWeight ?? payload?.weight ?? 500);
+  if (!Number.isFinite(raw) || raw <= 0) return 0.5;
+  // FE dùng gram; nếu đã là kg (< 30) giữ nguyên
+  return raw > 30 ? raw / 1000 : raw;
+}
+
+async function publishOneItemToShopee(shopId: string, payload: any): Promise<number> {
+  const accessToken = await getValidShopeeAccessToken(shopId);
+  if (!accessToken) {
+    const fail = describeShopeeTokenFailure(shopId);
+    throw new Error(fail.message);
+  }
+
+  const categoryId = Number(payload?.shopeeCategoryId || payload?.shopeeCategory?.categoryId);
+  if (!Number.isFinite(categoryId) || categoryId <= 0) {
+    throw new Error("Thiếu category_id Shopee hợp lệ");
+  }
+
+  const images: string[] = Array.isArray(payload?.images) ? payload.images.filter(Boolean) : [];
+  if (!images.length) throw new Error("Thiếu hình ảnh sản phẩm");
+
+  // 1) Media Space — bắt buộc image_id Shopee, không dùng URL ngoài
+  const imageIds: string[] = [];
+  for (const src of images.slice(0, 9)) {
+    const { buf, filename, mime } = await resolvePublishImageBuffer(src);
+    if (buf.length > 10 * 1024 * 1024) throw new Error(`Ảnh vượt 10MB: ${filename}`);
+    imageIds.push(await shopeeUploadImage(shopId, accessToken, buf, filename, mime));
+    await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+  }
+
+  const logisticInfo = await shopeeGetChannelList(shopId, accessToken);
+  if (!logisticInfo.length) {
+    throw new Error("Shop chưa có kênh vận chuyển enabled (get_channel_list)");
+  }
+  await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+
+  let mandatoryAttrs: any[] = [];
+  try {
+    const allAttrs = await shopeeGetAttributeTree(shopId, accessToken, categoryId);
+    mandatoryAttrs = allAttrs.filter((a) => a.mandatory);
+  } catch (err: any) {
+    console.warn(`[Shopee Publish] get_attribute_tree cảnh báo: ${err?.message || err}`);
+  }
+  await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+
+  const attributeList = buildShopeeAttributeListFromPayload(payload, mandatoryAttrs);
+  const missingMandatory = mandatoryAttrs.filter(
+    (a) => !attributeList.some((x) => Number(x.attribute_id) === Number(a.attribute_id)),
+  );
+  if (missingMandatory.length > 0) {
+    const names = missingMandatory.map((a) => a.attribute_name).join(", ");
+    throw new Error(`Thiếu thuộc tính bắt buộc: ${names}`);
+  }
+
+  const variants = Array.isArray(payload?.variants) ? payload.variants : [];
+  const hasVariants =
+    variants.length > 1 ||
+    (variants.length === 1 &&
+      String(variants[0]?.name || "").trim() &&
+      !/^mặc định$/i.test(String(variants[0]?.name || "").trim()));
+
+  const basePrice = Math.max(
+    0,
+    Math.round(Number(variants[0]?.priceShopee ?? payload?.price ?? 0)),
+  );
+  const baseStock = Math.max(0, Math.round(Number(variants[0]?.stock ?? 0)));
+  if (basePrice <= 0) throw new Error("Giá Shopee phải > 0");
+
+  const itemName = String(
+    (payload?.shopTitles && payload.shopTitles[shopId]) || payload?.title || "Sản phẩm",
+  )
+    .trim()
+    .slice(0, 120);
+  const description = stripHtmlToText(payload?.descriptionHtml || payload?.description || itemName).slice(
+    0,
+    5000,
+  ) || itemName;
+
+  const weightKg = packageWeightToKg(payload);
+  const brandId = resolveShopeeBrandId(payload);
+
+  // 2) add_item — sản phẩm gốc (không nhồi tier variation)
+  const addBody: Record<string, unknown> = {
+    item_name: itemName,
+    description,
+    category_id: categoryId,
+    brand: { brand_id: brandId },
+    image: { image_id_list: imageIds },
+    original_price: basePrice,
+    seller_stock: [{ stock: hasVariants ? 0 : baseStock }],
+    weight: weightKg,
+    dimension: {
+      package_length: Math.max(1, Math.round(Number(payload?.packageLength || 10))),
+      package_width: Math.max(1, Math.round(Number(payload?.packageWidth || 10))),
+      package_height: Math.max(1, Math.round(Number(payload?.packageHeight || 10))),
+    },
+    logistic_info: logisticInfo,
+    item_status: "NORMAL",
+    condition: "NEW",
+  };
+  if (attributeList.length) addBody.attribute_list = attributeList;
+
+  const addResp = await shopeeProductPost(
+    "/api/v2/product/add_item",
+    shopId,
+    accessToken,
+    addBody,
+    "add_item",
+  );
+  const itemId = Number(addResp?.item_id);
+  if (!Number.isFinite(itemId) || itemId <= 0) {
+    throw new Error("add_item không trả về item_id");
+  }
+  await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+
+  // 3) Biến thể: init_tier_variation → add_model
+  if (hasVariants) {
+    const optionList = variants.map((v: any) => ({
+      option: String(v.name || "Phân loại").trim().slice(0, 30) || "Phân loại",
+    }));
+    const modelList = variants.map((v: any, idx: number) => ({
+      tier_index: [idx],
+      original_price: Math.max(0, Math.round(Number(v.priceShopee || 0))),
+      seller_stock: [{ stock: Math.max(0, Math.round(Number(v.stock || 0))) }],
+      model_sku: String(v.sku || "").slice(0, 100),
+    }));
+    for (const m of modelList) {
+      if (m.original_price <= 0) throw new Error("Mỗi phân loại cần giá Shopee > 0");
+    }
+
+    try {
+      // Ưu tiên init kèm model (1 lần gọi)
+      await shopeeProductPost(
+        "/api/v2/product/init_tier_variation",
+        shopId,
+        accessToken,
+        {
+          item_id: itemId,
+          tier_variation: [{ name: "Phân loại", option_list: optionList }],
+          model: modelList,
+        },
+        "init_tier_variation",
+      );
+    } catch (initErr: any) {
+      // Fallback đúng 3 bước: init tier → add_model
+      console.warn(`[Shopee Publish] init kèm model lỗi, fallback add_model: ${initErr?.message || initErr}`);
+      await shopeeProductPost(
+        "/api/v2/product/init_tier_variation",
+        shopId,
+        accessToken,
+        {
+          item_id: itemId,
+          tier_variation: [{ name: "Phân loại", option_list: optionList }],
+        },
+        "init_tier_variation",
+      );
+      await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+      await shopeeProductPost(
+        "/api/v2/product/add_model",
+        shopId,
+        accessToken,
+        { item_id: itemId, model_list: modelList },
+        "add_model",
+      );
+    }
+  }
+
+  return itemId;
+}
+
 type ChannelSyncLine = {
   productId: string;
   sku: string;
@@ -16325,6 +16739,37 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     });
   });
 
+  /** Lấy thuộc tính bắt buộc theo category (FE form đăng bán). */
+  app.get("/api/shopee/category-attributes", authMiddleware, async (req, res) => {
+    try {
+      const shopId = String(req.query.shop_id || req.query.shopId || "").trim();
+      const categoryId = Number(req.query.category_id || req.query.categoryId);
+      if (!shopId) {
+        return res.status(400).json({ success: false, error: "Thiếu shop_id" });
+      }
+      if (!Number.isFinite(categoryId) || categoryId <= 0) {
+        return res.status(400).json({ success: false, error: "Thiếu category_id hợp lệ" });
+      }
+      const accessToken = await getValidShopeeAccessToken(shopId);
+      if (!accessToken) {
+        const fail = describeShopeeTokenFailure(shopId);
+        return res.status(400).json({ success: false, error: fail.message, code: fail.error });
+      }
+      const attributes = await shopeeGetAttributeTree(shopId, accessToken, categoryId);
+      return res.json({
+        success: true,
+        category_id: categoryId,
+        attributes,
+        mandatory: attributes.filter((a) => a.mandatory),
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "Không lấy được thuộc tính danh mục",
+      });
+    }
+  });
+
   app.post("/api/multi-channel/publish", authMiddleware, async (req, res) => {
     try {
       const payload = req.body || {};
@@ -16352,27 +16797,52 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
         const platform = String(shop.platform || "shopee").toLowerCase();
         if (!["shopee", "lazada", "tiktok"].includes(platform)) continue;
 
+        const shopKey = String(shop.shopId || shop.shop_id || shop.id || "").trim();
+        const shopName = shop.name || shop.shopName || shopKey;
         const existingIdx = allRows.findIndex(
-          (r) => r.product_id === productId && r.shop_id === shop.id && r.platform === platform
+          (r) => r.product_id === productId && String(r.shop_id) === shopKey && r.platform === platform
         );
 
-        const simulateFail = platform === "lazada" && i % 3 === 2;
-        const status = simulateFail ? "failed" : "success";
-        const platformProductId = status === "success"
-          ? `${platform}-${productId}-${Date.now().toString(36)}`
-          : undefined;
+        let status: "success" | "failed" | "pending" = "pending";
+        let platformProductId: string | undefined;
+        let error_message: string | undefined;
+
+        if (platform === "shopee") {
+          try {
+            if (i > 0) await sleep(SHOPEE_PRODUCT_API_DELAY_MS * 2);
+            const itemId = await publishOneItemToShopee(shopKey, {
+              ...payload,
+              images: Array.isArray(images) && images.length
+                ? images
+                : [product?.imageUrl || product?.avatarUrl].filter(Boolean),
+            });
+            status = "success";
+            platformProductId = String(itemId);
+          } catch (err: any) {
+            status = "failed";
+            error_message = err?.message || "Đăng Shopee thất bại";
+            console.error(`[Shopee Publish] shop=${shopKey} lỗi:`, error_message);
+          }
+        } else {
+          // Lazada / TikTok: chưa tích hợp API tạo SP — ghi pending
+          status = "pending";
+          error_message = `Chưa hỗ trợ đăng thật lên ${platform} (chỉ Shopee Open API)`;
+        }
 
         const row = {
           id: existingIdx >= 0 ? allRows[existingIdx].id : `pl-${Date.now()}-${i}`,
           product_id: productId,
           publish_batch_id: batchId,
           platform,
-          shop_id: shop.id,
-          shop_name: shop.name || shop.shopName || shop.id,
+          shop_id: shopKey,
+          shop_name: shopName,
           status,
           platform_product_id: platformProductId,
-          error_message: status === "failed" ? "Lỗi xác thực danh mục hoặc từ khóa bị cấm trên sàn" : undefined,
-          listing_title: (payload.shopTitles && payload.shopTitles[shop.id]) || title || product?.title,
+          error_message,
+          listing_title:
+            (payload.shopTitles && (payload.shopTitles[shopKey] || payload.shopTitles[shop.id])) ||
+            title ||
+            product?.title,
           product_image: images[0] || product?.imageUrl || product?.avatarUrl,
           created_at: existingIdx >= 0 ? allRows[existingIdx].created_at : now,
           updated_at: now,
@@ -16398,11 +16868,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       });
       writeListingsDb(draftListings.slice(0, 200));
 
+      const okCount = newRows.filter((r) => r.status === "success").length;
       return res.json({
         success: true,
         batchId,
         listings: newRows,
-        message: `Đã ghi nhận đăng bán lên ${newRows.length} gian hàng`,
+        message: `Đăng bán xong: ${okCount}/${newRows.length} gian hàng thành công`,
       });
     } catch (error: any) {
       return res.status(500).json({ success: false, error: error.message || "Đăng bán thất bại" });
