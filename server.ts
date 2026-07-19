@@ -10329,51 +10329,363 @@ function normalizeShopeeOrder(payload: any): any | null {
   return order;
 }
 
+/** Parse Shopee Push envelope: { shop_id, code, data } hoặc action string. */
+function parseShopeePushEvent(body: any): {
+  shopId: string;
+  orderSn: string;
+  eventKind: "order_status_update" | "tracking_no_update" | "return_refund" | "other";
+  status: string;
+  trackingNo: string;
+  returnSn: string;
+  code: string | number;
+} {
+  const data = body?.data || body || {};
+  const code = body?.code ?? body?.msg_id ?? data?.code ?? "";
+  const action = String(body?.action || body?.msg || data?.action || data?.msg || "").toLowerCase();
+  const codeNum = Number(code);
+  const codeStr = String(code).toLowerCase();
+  const status = String(data.status || data.order_status || "").toUpperCase();
+  const returnSn = String(data.return_sn || data.returnSn || "").trim();
+  const orderSn = String(data.ordersn || data.order_sn || data.orderSn || "").trim();
+  const shopId = String(body?.shop_id ?? data.shop_id ?? "").trim();
+  const trackingNo = String(data.tracking_no || data.tracking_number || "").trim();
+
+  let eventKind: "order_status_update" | "tracking_no_update" | "return_refund" | "other" = "other";
+  if (
+    codeNum === 3 ||
+    codeStr.includes("order_status") ||
+    action.includes("order_status")
+  ) {
+    eventKind = "order_status_update";
+  } else if (
+    codeNum === 4 ||
+    codeStr.includes("tracking") ||
+    action.includes("tracking_no")
+  ) {
+    eventKind = "tracking_no_update";
+  } else if (
+    returnSn ||
+    codeStr.includes("return") ||
+    codeStr.includes("refund") ||
+    action.includes("return") ||
+    action.includes("refund") ||
+    status === "TO_RETURN" ||
+    status === "CANCELLED" ||
+    status === "IN_CANCEL"
+  ) {
+    eventKind = "return_refund";
+  } else if (orderSn) {
+    // Push có order_sn nhưng code lạ — vẫn coi như cập nhật đơn.
+    eventKind = "order_status_update";
+  }
+
+  return { shopId, orderSn, eventKind, status, trackingNo, returnSn, code };
+}
+
+/** Tìm return_sn theo order_sn qua get_return_list (ưu tiên không time-filter). */
+async function findReturnSnForOrderWebhook(
+  shopId: string,
+  accessToken: string,
+  orderSn: string,
+): Promise<string> {
+  let pageNo = 1;
+  while (pageNo <= 3) {
+    const listResult = await shopeeGetReturnList(shopId, accessToken, {
+      pageNo,
+      pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE,
+    });
+    if (listResult?.error) {
+      console.warn(
+        `[Shopee Webhook] get_return_list page=${pageNo}:`,
+        listResult.error,
+        listResult.message || "",
+      );
+      break;
+    }
+    const rows = extractShopeeReturnListRows(listResult);
+    for (const row of rows) {
+      if (String(row?.order_sn || "") === orderSn) {
+        return String(row.return_sn || "").trim();
+      }
+    }
+    if (!parseShopeeReturnListMore(listResult) || rows.length === 0) break;
+    pageNo += 1;
+    await sleep(150);
+  }
+  return "";
+}
+
+/** Return/Refund fallback: get_return_list → get_return_detail → update tracking vào DB. */
+async function applyWebhookReturnFallback(
+  shopId: string,
+  accessToken: string,
+  orderSn: string,
+  orders: any[],
+  hintReturnSn?: string,
+): Promise<void> {
+  let returnSn = String(hintReturnSn || "").trim();
+  if (!returnSn) {
+    returnSn = await findReturnSnForOrderWebhook(shopId, accessToken, orderSn);
+  }
+  if (!returnSn) {
+    console.warn(`[Shopee Webhook] Return fallback: không tìm thấy return_sn cho ${orderSn}`);
+    return;
+  }
+
+  const detailResult = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
+  if (detailResult?.error) {
+    console.warn(
+      `[Shopee Webhook] get_return_detail ${returnSn}:`,
+      detailResult.error,
+      detailResult.message || "",
+    );
+    return;
+  }
+
+  const detail = detailResult?.response ?? detailResult ?? {};
+  const kind = mapShopeeReturnKind(detail);
+  const returnStatus = String(detail.status || "").toUpperCase();
+  const { tracking: returnShipTn, sources: tnSources } = await fetchReturnShippingTrackingNumber(
+    shopId,
+    accessToken,
+    returnSn,
+    detailResult,
+  );
+  const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
+  const existing = idx >= 0 ? orders[idx] : undefined;
+  const bestTn = pickBestTrackingNumber(
+    returnShipTn,
+    tnSources.reverse_tracking_info,
+    tnSources.return_detail,
+    detail.tracking_number,
+    existing?.return_tracking_no,
+    existing?.trackingNumber,
+    existing?.tracking_no,
+  );
+
+  const patch: any = {
+    return_sn: String(detail.return_sn || returnSn),
+    return_status: returnStatus,
+    return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
+    shopee_cancel_return_kind: kind,
+    status:
+      existing?.status === "return_received" || existing?.local_status === "RETURN_RECEIVED"
+        ? "return_received"
+        : "return_pending",
+    shopee_order_status:
+      existing?.shopee_order_status === "CANCELLED" || existing?.shopee_order_status === "IN_CANCEL"
+        ? existing.shopee_order_status
+        : existing?.shopee_order_status || "TO_RETURN",
+  };
+  if (bestTn) {
+    patch.trackingNumber = bestTn;
+    patch.tracking_no = bestTn;
+    patch.return_tracking_no = returnShipTn || tnSources.return_detail || bestTn;
+  }
+
+  if (idx >= 0) {
+    if (!bestTn) {
+      delete patch.trackingNumber;
+      delete patch.tracking_no;
+      delete patch.return_tracking_no;
+    }
+    preserveExistingTrackingIfIncomingEmpty(patch, existing);
+    const merged = mergeShopeeOrderOnSync(existing, { ...existing, ...patch });
+    merged.return_sn = patch.return_sn;
+    merged.return_status = patch.return_status;
+    merged.return_refund_request_type = patch.return_refund_request_type;
+    merged.shopee_cancel_return_kind = kind;
+    if (patch.status === "return_received") merged.status = "return_received";
+    else if (merged.status !== "return_received" && merged.status !== "cancelled") {
+      merged.status = "return_pending";
+    }
+    const finalTn = pickBestTrackingNumber(
+      bestTn,
+      merged.trackingNumber,
+      merged.tracking_no,
+      merged.return_tracking_no,
+      existing?.trackingNumber,
+      existing?.tracking_no,
+      existing?.return_tracking_no,
+    );
+    if (finalTn) {
+      merged.trackingNumber = finalTn;
+      merged.tracking_no = finalTn;
+      merged.return_tracking_no = merged.return_tracking_no || finalTn;
+    }
+    orders[idx] = merged;
+  } else {
+    orders.unshift({
+      id: `shopee-${orderSn}`,
+      orderSn,
+      channel: "shopee",
+      shopId,
+      revenue: 0,
+      date: new Date().toISOString(),
+      totalAmount: Math.max(1, Number(detail.refund_amount || 0) || 1),
+      items: [
+        {
+          productId: "return-placeholder",
+          productTitle: `Đơn hoàn ${orderSn}`,
+          quantity: 1,
+          price: Number(detail.refund_amount || 1) || 1,
+        },
+      ],
+      ...patch,
+    });
+  }
+
+  console.log(
+    `[Shopee Webhook] Return fallback OK order_sn=${orderSn} return_sn=${returnSn} tn=${bestTn || "(empty)"} kind=${kind}`,
+  );
+}
+
+/** Fallback cũ: normalize payload push thô khi chưa gọi được get_order_detail. */
+async function upsertShopeeWebhookShallow(body: any, orders: any[]): Promise<string | null> {
+  const normalized = normalizeShopeeOrder(body);
+  if (!normalized) return null;
+
+  const existingIndex = orders.findIndex((o: any) => o.orderSn === normalized.orderSn);
+  const existing = existingIndex >= 0 ? orders[existingIndex] : undefined;
+  if (normalized.partialCancel) {
+    await restoreLocalStockForPartialCancel(normalized.shopId || existing?.shopId, existing, normalized);
+  }
+  let merged = existingIndex >= 0 ? mergeShopeeOrderOnSync(existing, normalized) : normalized;
+  if (merged.channel === "shopee" && merged.shopId && needsShopeeTrackingEnrichment(merged)) {
+    try {
+      const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
+      if (accessToken) {
+        merged = await enrichShopeeOrderTrackingFromApi(String(merged.shopId), accessToken, merged);
+      }
+    } catch (trackErr) {
+      console.warn(`[Shopee Webhook] enrich tracking ${merged.orderSn}:`, trackErr);
+    }
+  }
+  if (
+    merged.channel === "shopee" &&
+    merged.shopId &&
+    merged.orderSn &&
+    merged.status !== "cancelled"
+  ) {
+    try {
+      const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
+      if (accessToken) {
+        await enrichShopeeOrdersEscrowFinance(String(merged.shopId), accessToken, [merged]);
+      }
+    } catch (financeErr) {
+      console.warn(`[Shopee Webhook] enrich escrow ${merged.orderSn}:`, financeErr);
+    }
+  }
+  if (existingIndex >= 0) {
+    orders[existingIndex] = merged;
+  } else {
+    orders.unshift(merged);
+  }
+  return String(merged.orderSn);
+}
+
 async function processShopeeWebhookPayload(body: any): Promise<void> {
   try {
-    const normalized = normalizeShopeeOrder(body);
-    if (!normalized) return;
+    if (!body || typeof body !== "object") return;
+
+    const parsed = parseShopeePushEvent(body);
+    console.log(
+      "[Shopee Webhook] Push event",
+      JSON.stringify({
+        code: parsed.code,
+        eventKind: parsed.eventKind,
+        shopId: parsed.shopId || null,
+        orderSn: parsed.orderSn || null,
+        status: parsed.status || null,
+        returnSn: parsed.returnSn || null,
+      }),
+    );
+
+    if (!parsed.orderSn) {
+      console.log(`[Shopee Webhook] Bỏ qua — thiếu order_sn (code=${parsed.code})`);
+      return;
+    }
 
     const orders = loadOrders();
-    const existingIndex = orders.findIndex((o: any) => o.orderSn === normalized.orderSn);
-    const existing = existingIndex >= 0 ? orders[existingIndex] : undefined;
-    if (normalized.partialCancel) {
-      await restoreLocalStockForPartialCancel(normalized.shopId || existing?.shopId, existing, normalized);
+    const shopId = parsed.shopId;
+    let accessToken: string | null = null;
+    if (shopId) {
+      accessToken = await getValidShopeeAccessToken(shopId);
     }
-    let merged =
-      existingIndex >= 0 ? mergeShopeeOrderOnSync(existing, normalized) : normalized;
-    if (merged.channel === "shopee" && merged.shopId && needsShopeeTrackingEnrichment(merged)) {
-      try {
-        const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
-        if (accessToken) {
-          merged = await enrichShopeeOrderTrackingFromApi(String(merged.shopId), accessToken, merged);
-        }
-      } catch (trackErr) {
-        console.warn(`[Shopee Webhook] enrich tracking ${merged.orderSn}:`, trackErr);
+
+    const shouldFetchDetail =
+      parsed.eventKind === "order_status_update" ||
+      parsed.eventKind === "tracking_no_update" ||
+      parsed.eventKind === "return_refund";
+
+    if (shouldFetchDetail && shopId && accessToken) {
+      const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+        shopId,
+        accessToken,
+        shopId,
+        [parsed.orderSn],
+        { enrichTracking: true },
+      );
+      if (normalized.length > 0) {
+        await persistShopeeOrderChunk(orders, normalized, {
+          apiShopId: shopId,
+          accessToken,
+        });
+        console.log(
+          `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn} status=${normalized[0]?.shopee_order_status || ""}`,
+        );
+      } else {
+        console.warn(
+          `[Shopee Webhook] get_order_detail rỗng order_sn=${parsed.orderSn}`,
+          errors?.[0] || "",
+        );
+        await upsertShopeeWebhookShallow(body, orders);
+        saveOrders(orders);
       }
-    }
-    if (
-      merged.channel === "shopee" &&
-      merged.shopId &&
-      merged.orderSn &&
-      merged.status !== "cancelled"
-    ) {
-      try {
-        const accessToken = await getValidShopeeAccessToken(String(merged.shopId));
-        if (accessToken) {
-          await enrichShopeeOrdersEscrowFinance(String(merged.shopId), accessToken, [merged]);
-        }
-      } catch (financeErr) {
-        console.warn(`[Shopee Webhook] enrich escrow ${merged.orderSn}:`, financeErr);
-      }
-    }
-    if (existingIndex >= 0) {
-      orders[existingIndex] = merged;
     } else {
-      orders.unshift(merged);
+      if (!shopId || !accessToken) {
+        console.warn(
+          `[Shopee Webhook] Thiếu shop_id/token — fallback normalize thô order_sn=${parsed.orderSn}`,
+        );
+      }
+      await upsertShopeeWebhookShallow(body, orders);
+      saveOrders(orders);
     }
-    saveOrders(orders);
-    console.log(`[Shopee Webhook] Order ${normalized.orderSn} upserted into local orders database.`);
+
+    const orderAfter = orders.find((o: any) => String(o.orderSn) === parsed.orderSn);
+    const needReturnFallback =
+      parsed.eventKind === "return_refund" ||
+      Boolean(parsed.returnSn) ||
+      parsed.status === "CANCELLED" ||
+      parsed.status === "IN_CANCEL" ||
+      parsed.status === "TO_RETURN" ||
+      (orderAfter != null && isCancelOrReturnOrderStatus(orderAfter));
+
+    if (needReturnFallback && shopId && accessToken) {
+      await applyWebhookReturnFallback(
+        shopId,
+        accessToken,
+        parsed.orderSn,
+        orders,
+        parsed.returnSn,
+      );
+      saveOrders(orders);
+      if (isMongoReady()) {
+        const row = orders.find((o: any) => String(o.orderSn) === parsed.orderSn);
+        if (row) {
+          try {
+            await bulkUpsertOrdersToStore([row]);
+          } catch (mongoErr: any) {
+            console.warn(
+              `[Shopee Webhook] Mongo upsert return ${parsed.orderSn}:`,
+              mongoErr?.message || mongoErr,
+            );
+          }
+        }
+      }
+    }
+
+    console.log(`[Shopee Webhook] Order ${parsed.orderSn} processed (event=${parsed.eventKind}).`);
   } catch (error) {
     console.error("[Shopee Webhook] Async processing error:", error);
   }
@@ -10455,6 +10767,7 @@ async function startServer() {
       pathName.startsWith("/api/health") ||
       pathName.startsWith("/api/auth/") ||
       pathName === "/api/shopee/callback" ||
+      pathName === "/api/auth/shopee/callback" ||
       pathName === "/api/shopee/oauth/complete" ||
       pathName === "/api/shopee/webhook" ||
       pathName.startsWith("/api/public/") ||
@@ -10848,7 +11161,8 @@ async function startServer() {
     }
   });
 
-  app.get("/api/shopee/callback", async (req, res) => {
+  // OAuth GET — giữ nguyên logic; alias /api/auth/shopee/callback (URL Shopee Console).
+  app.get(["/api/shopee/callback", "/api/auth/shopee/callback"], async (req, res) => {
     console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
     logShopeeIngress("[Shopee Callback]", req);
     const code = queryParamOne(req.query.code);
@@ -10949,15 +11263,10 @@ async function startServer() {
     }
   });
 
-  app.get("/api/shopee/webhook", (req, res) => {
+  /** Push webhook POST — trả 200 "success" ngay, xử lý async. Alias auth/callback = URL Shopee Console. */
+  const handleShopeePushIngress = (req: any, res: any) => {
     logShopeeIngress("[Shopee Webhook]", req);
-    console.log("[Shopee Webhook] GET verification probe — 200 empty");
-    res.status(200).end();
-  });
-
-  app.post("/api/shopee/webhook", (req, res) => {
-    logShopeeIngress("[Shopee Webhook]", req);
-    res.status(200).end();
+    res.status(200).type("text/plain; charset=utf-8").send("success");
     const payload = req.body;
     setImmediate(() => {
       void processShopeeWebhookPayload(payload)
@@ -10968,7 +11277,17 @@ async function startServer() {
           console.error("[Shopee Webhook] Lỗi xử lý payload:", error);
         });
     });
+  };
+
+  app.get("/api/shopee/webhook", (req, res) => {
+    logShopeeIngress("[Shopee Webhook]", req);
+    console.log("[Shopee Webhook] GET verification probe — 200 success");
+    res.status(200).type("text/plain; charset=utf-8").send("success");
   });
+
+  app.post("/api/shopee/webhook", handleShopeePushIngress);
+  app.post("/api/auth/shopee/callback", handleShopeePushIngress);
+  app.post("/api/shopee/callback", handleShopeePushIngress);
 
   // Real synced orders list — this is what the Order Management UI reads from.
   // --- Products warehouse API (MongoDB products) ---

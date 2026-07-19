@@ -85,6 +85,8 @@ export async function handleShopeeCallback(req, res) {
   }
 
   if (req.method === 'POST') {
+    // Push webhook từ Shopee — trả 200 "success" ngay, xử lý ngầm trên cPanel.
+    // Tái dùng URL /api/auth/shopee/callback (không đổi URL trên Shopee Console).
     respondShopeeOk(res);
 
     setImmediate(() => {
@@ -94,7 +96,16 @@ export async function handleShopeeCallback(req, res) {
         else if (v != null) qs.append(k, String(v));
       }
       const q = qs.toString();
-      forwardToCpanel(LOG, `/api/shopee/webhook${q ? `?${q}` : ''}`, req).catch(() => {});
+      const suffix = q ? `?${q}` : '';
+      // Ưu tiên cùng path auth/callback; fallback /api/shopee/webhook nếu cPanel cũ chưa deploy.
+      forwardToCpanel(LOG, `/api/auth/shopee/callback${suffix}`, req)
+        .then((r) => {
+          if (r?.ok && r.upstream && r.upstream.status < 500) return r;
+          return forwardToCpanel(LOG, `/api/shopee/webhook${suffix}`, req);
+        })
+        .catch(() => {
+          forwardToCpanel(LOG, `/api/shopee/webhook${suffix}`, req).catch(() => {});
+        });
     });
     return;
   }

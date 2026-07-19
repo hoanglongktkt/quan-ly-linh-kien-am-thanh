@@ -36,11 +36,11 @@ export function logShopeeRequest(prefix, req) {
 
 export { cpanelBackendBase, resolveCpanelBackend };
 
-/** Shopee Push verification: 2xx + body RỖNG (không JSON). */
+/** Shopee Push verification: 2xx + body "success". */
 export function respondShopeeOk(res) {
   res.status(200);
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  return res.end();
+  return res.end('success');
 }
 
 const HOP_HEADERS = new Set([
