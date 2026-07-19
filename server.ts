@@ -9314,11 +9314,11 @@ async function readLocalInventoryFileSync(): LocalInventoryCache {
 }
 
 /**
- * SKU khớp tuyệt đối — CHỈ trim + toLowerCase.
+ * SKU khớp tuyệt đối — CHỈ trim + toUpperCase.
  * Cấm includes / regex / cắt tiền tố một phần (tránh M15 ↔ 1).
  */
 function normalizeSkuKey(sku: unknown): string {
-  return String(sku ?? "").trim().toLowerCase();
+  return String(sku ?? "").trim().toUpperCase();
 }
 
 function skusExactMatch(listingSku: unknown, masterSku: unknown): boolean {
@@ -9333,8 +9333,8 @@ function skusLooselyMatch(listingSku: unknown, masterSku: unknown): boolean {
 }
 
 /**
- * Index SKU từ .products — khóa = trim().toLowerCase() tuyệt đối.
- * Gồm sản phẩm mẹ + children/variants/models.
+ * Index SKU từ .products (Kho gốc) — khóa = trim().toUpperCase() tuyệt đối.
+ * Gồm sản phẩm mẹ + children/variants/models. Query 1 lần → Map in-memory.
  */
 function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
   const index = new Map<string, any>();
@@ -9490,35 +9490,38 @@ async function autoLinkSingleListingFromDatabase(opts?: {
     };
   }
 
+  const linkedProductId =
+    masterItem?.id != null && String(masterItem.id).trim() !== ""
+      ? String(masterItem.id).trim()
+      : undefined;
+
   const patched = persistBatchAutoLinkListingUpdate(dbListings, rowIndex, {
     ...current,
     status: "success",
-    linkedProductId:
-      masterItem?.id != null && String(masterItem.id).trim() !== ""
-        ? String(masterItem.id).trim()
-        : undefined,
+    linkedProductId,
     linkedProductTitle: String(masterItem?.title || "").trim() || undefined,
     linkedProductSku: String(masterItem?.sku || "").trim() || undefined,
+    linkedProduct: linkedProductId
+      ? {
+          id: linkedProductId,
+          title: String(masterItem?.title || "").trim(),
+          sku: String(masterItem?.sku || "").trim(),
+        }
+      : undefined,
     syncError: undefined,
+    linkBroken: false,
   });
 
+  // Ghi DB ngay — không refreshCache toàn bộ (tránh nghẽn khi gọi hàng loạt).
   await upsertChannelListingToStore(patched);
   await flushDbWrites();
-  const cache = await refreshCache();
-  await sleep(1);
 
-  const verifiedListings = enrichChannelListingsWithMaster(cache.listings, cache.products);
-  const verifiedListing =
-    verifiedListings.find((row) => String(row?.id || "").trim() === String(patched.id).trim()) ||
-    enrichChannelListingsWithMaster([patched], cache.products)[0];
+  const verifiedListing = enrichChannelListingsWithMaster([patched], masterProducts)[0];
 
   return {
     success: true,
     listing: verifiedListing,
-    matchedProductId:
-      masterItem?.id != null && String(masterItem.id).trim() !== ""
-        ? String(masterItem.id).trim()
-        : undefined,
+    matchedProductId: linkedProductId,
     message: "Liên kết tự động thành công.",
   };
 }
@@ -9574,7 +9577,7 @@ async function batchAutoLinkFromDatabase(opts?: {
     let nextCursor = dbListings.length;
     let wroteChanges = false;
     const newlyLinkedRows: any[] = [];
-    // Dùng đúng helper matching hiện có: trim().toLowerCase() và cắt prefix trước "_".
+    // Hash Map SKU (trim + toUpperCase) — so khớp O(1), không query DB từng dòng.
     const masterSkuIndex = buildMasterSkuIndex(masterProducts);
     console.log(
       `[Batch Auto-link] DB loaded: masterProducts=${masterProducts.length}, skuIndex=${masterSkuIndex.size}, listings=${dbListings.length}, cursor=${requestedCursor}, limit=${requestedLimit}`
@@ -11101,6 +11104,52 @@ async function startServer() {
       return res.status(500).json({ success: false, error: message });
     }
   };
+  /** Index SKU Kho gốc (products) — payload nhẹ cho frontend Hash Map. */
+  app.get("/api/mapping-products/sku-index", authMiddleware, async (_req, res) => {
+    try {
+      const masterProducts = await loadProducts();
+      const items: Array<{ sku: string; id: string; title: string }> = [];
+      const seen = new Set<string>();
+
+      const addOne = (row: any) => {
+        if (!row || typeof row !== "object" || isSyntheticShopeePullProduct(row)) return;
+        const key = normalizeSkuKey(row.sku);
+        const id = row.id != null ? String(row.id).trim() : "";
+        if (!key || !id || seen.has(key)) return;
+        seen.add(key);
+        items.push({
+          sku: key,
+          id,
+          title: String(row.title || "").trim(),
+        });
+      };
+
+      for (const masterItem of Array.isArray(masterProducts) ? masterProducts : []) {
+        if (!masterItem) continue;
+        addOne(masterItem);
+        for (const child of getProductChildrenList(masterItem)) addOne(child);
+        if (Array.isArray(masterItem.variants)) {
+          for (const v of masterItem.variants) addOne(v);
+        }
+        if (Array.isArray(masterItem.models)) {
+          for (const m of masterItem.models) addOne(m);
+        }
+      }
+
+      console.log(`[SKU Index] Kho gốc products → ${items.length} SKU (Map-ready)`);
+      return res.status(200).json({
+        success: true,
+        count: items.length,
+        items,
+        source: isMongoReady() ? "mongodb" : "json_fallback",
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[SKU Index] Lỗi:", message);
+      return res.status(500).json({ success: false, message });
+    }
+  });
+
   app.post("/api/mapping-products/auto-link-single", authMiddleware, handleSingleAutoLink);
   app.post("/api/mapping-products/batch-auto-link", authMiddleware, handleBatchAutoLink);
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Product, SyncLog, ConnectedShop, getProductChildren } from '../types';
 import { parseJsonResponse, apiFetch } from '../utils/apiClient';
 import { 
@@ -24,7 +24,8 @@ import {
   PlusCircle,
   ArrowDownToLine,
   Sparkles,
-  Trash2
+  Trash2,
+  Square
 } from 'lucide-react';
 
 interface ChannelListing {
@@ -47,11 +48,41 @@ interface ChannelListing {
   modelId?: string;
 }
 
+/** Chuẩn hóa SKU — trim + toUpperCase để so khớp chính xác. */
 function normalizeSKU(sku: unknown): string {
-  return String(sku ?? '').trim().toLowerCase();
+  return String(sku ?? '').trim().toUpperCase();
 }
 
-/** So khớp SKU tuyệt đối — chỉ trim + toLowerCase (không includes / regex). */
+type MasterSkuRef = { id: string; title: string; sku: string };
+
+/** Dựng Hash Map SKU → productId từ Kho gốc (query 1 lần, so khớp O(1)). */
+function buildMasterSkuMap(
+  products: Array<Product | MasterSkuRef | null | undefined>
+): Map<string, MasterSkuRef> {
+  const map = new Map<string, MasterSkuRef>();
+  const addOne = (row: Product | MasterSkuRef | null | undefined) => {
+    if (!row || row.id == null) return;
+    const key = normalizeSKU(row.sku);
+    const id = String(row.id).trim();
+    if (!key || !id || map.has(key)) return;
+    map.set(key, {
+      id,
+      title: String(row.title || '').trim(),
+      sku: String(row.sku || '').trim(),
+    });
+  };
+
+  for (const product of Array.isArray(products) ? products : []) {
+    if (!product) continue;
+    addOne(product);
+    if ('children' in product || 'variants' in product || 'models' in product) {
+      for (const child of getProductChildren(product as Product)) addOne(child);
+    }
+  }
+  return map;
+}
+
+/** So khớp SKU tuyệt đối — chỉ trim + toUpperCase (không includes / regex). */
 function skusMatchLikeSearch(listingSku: unknown, masterSku: unknown): boolean {
   const listingRaw = normalizeSKU(listingSku);
   const masterRaw = normalizeSKU(masterSku);
@@ -70,6 +101,43 @@ function findMasterProductLikeSearch(
   }
 
   return null;
+}
+
+async function fetchMasterSkuMapFromServer(token: string): Promise<Map<string, MasterSkuRef>> {
+  try {
+    const res = await apiFetch('/api/mapping-products/sku-index', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await parseJsonResponse<{
+      success?: boolean;
+      items?: Array<{ sku?: string; id?: string; title?: string }>;
+    }>(res);
+    if (res.ok && data?.success !== false && Array.isArray(data.items) && data.items.length > 0) {
+      return buildMasterSkuMap(
+        data.items.map((item) => ({
+          id: String(item.id || ''),
+          title: String(item.title || ''),
+          sku: String(item.sku || ''),
+        }))
+      );
+    }
+  } catch (err) {
+    console.warn('[ProductLinking] sku-index thất bại, fallback local-inventory:', err);
+  }
+
+  try {
+    const res = await apiFetch('/api/local-inventory', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await parseJsonResponse<{ success?: boolean; products?: Product[] }>(res);
+    if (res.ok && Array.isArray(data?.products) && data.products.length > 0) {
+      return buildMasterSkuMap(data.products);
+    }
+  } catch (err) {
+    console.warn('[ProductLinking] local-inventory fallback thất bại:', err);
+  }
+
+  return new Map();
 }
 
 /** Chuẩn hóa 1 dòng mapping từ DATA object — không đọc DOM. */
@@ -455,6 +523,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [isAutoLinking, setIsAutoLinking] = useState(false);
   const [autoLinkProgress, setAutoLinkProgress] = useState({ current: 0, total: 0 });
   const [isPurgingBroken, setIsPurgingBroken] = useState(false);
+  const isMappingCancelledRef = useRef(false);
 
   // Manual Mapping Modal state
   const [mappingListing, setMappingListing] = useState<ChannelListing | null>(null);
@@ -871,45 +940,129 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     setInitListing(null);
   };
 
+  const handleStopAutoLink = () => {
+    isMappingCancelledRef.current = true;
+    showToast('Đang dừng liên kết… kết quả đã xử lý sẽ được giữ lại.');
+  };
+
   const handleAutoLinkBySku = async () => {
+    isMappingCancelledRef.current = false;
     setIsAutoLinking(true);
     setAutoLinkProgress({ current: 0, total: 0 });
+
+    const PERSIST_CHUNK = 40;
+    const pendingPersist: ChannelListing[] = [];
+
+    const flushPending = async () => {
+      if (pendingPersist.length === 0) return;
+      const chunk = pendingPersist.splice(0, pendingPersist.length);
+      await persistListings(chunk);
+    };
+
     try {
+      const token = localStorage.getItem('admin_token');
+      if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
+
       const unlinkedVisibleListings = filteredListings.filter((item) => item?.status === 'unlinked');
       if (unlinkedVisibleListings.length === 0) {
         showToast('Không có sản phẩm chưa liên kết trong danh sách đang hiển thị.');
         return;
       }
 
+      // 1) Kéo toàn bộ SKU Kho gốc 1 lần → Hash Map (không query 1700 lần).
+      let skuMap = await fetchMasterSkuMapFromServer(token);
+      if (skuMap.size === 0) {
+        skuMap = buildMasterSkuMap(flattenedMasterProducts);
+      }
+      if (skuMap.size === 0) {
+        throw new Error('Kho gốc đang trống hoặc chưa tải được SKU. Hãy khởi tạo/sync Kho gốc trước.');
+      }
+
       let processed = 0;
       let totalLinked = 0;
       let totalFailed = 0;
+      let cancelled = false;
       const total = unlinkedVisibleListings.length;
       setAutoLinkProgress({ current: 0, total });
 
+      // 2) for...of tuần tự — cập nhật UI từng dòng, hỗ trợ Dừng khẩn cấp.
       for (const item of unlinkedVisibleListings) {
-        try {
-          const result = await requestSingleAutoLink(item);
-          if (result.success && result.listing) {
-            mergeListingIntoState(result.listing);
-            totalLinked += 1;
-          } else {
-            totalFailed += 1;
-          }
-        } catch (error) {
-          totalFailed += 1;
-          console.error('[ProductLinking] Auto-link từng dòng thất bại:', error);
+        if (isMappingCancelledRef.current) {
+          cancelled = true;
+          break;
         }
+
+        const skuKey = normalizeSKU(item?.sku);
+        const masterRef = skuKey ? skuMap.get(skuKey) : undefined;
+
+        if (masterRef?.id) {
+          const linkedProductId = String(masterRef.id).trim();
+          const updated: ChannelListing = {
+            ...item,
+            status: 'success',
+            linkedProductId,
+            linkedProductTitle: masterRef.title,
+            linkedProductSku: masterRef.sku,
+            linkedProduct: {
+              id: linkedProductId,
+              title: masterRef.title,
+              sku: masterRef.sku,
+            },
+            syncError: undefined,
+            linkBroken: false,
+          };
+
+          // Dispatch UI ngay — nhãn "Liên kết thành công"
+          setListings((prev) =>
+            prev.map((row) => (String(row.id) === String(item.id) ? updated : row))
+          );
+          pendingPersist.push(updated);
+
+          const fullMaster = flattenedMasterProducts.find(
+            (p) => String(p.id) === linkedProductId
+          );
+          if (fullMaster) {
+            onUpdateProduct(applyProductChannelLink(fullMaster, item), { save: false });
+          }
+
+          totalLinked += 1;
+        } else {
+          const failed: ChannelListing = {
+            ...item,
+            status: 'failed',
+            syncError: skuKey
+              ? `Không tìm thấy SKU khớp trong Kho gốc: ${skuKey}`
+              : 'SKU sản phẩm sàn đang trống hoặc không hợp lệ.',
+          };
+
+          // Dispatch UI ngay — nhãn "Liên kết thất bại"
+          setListings((prev) =>
+            prev.map((row) => (String(row.id) === String(item.id) ? failed : row))
+          );
+          pendingPersist.push(failed);
+          totalFailed += 1;
+        }
+
         processed += 1;
         setAutoLinkProgress({ current: processed, total });
+
+        if (pendingPersist.length >= PERSIST_CHUNK) {
+          await flushPending();
+        }
+
+        // Nhường event loop để React paint realtime
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
 
-      await refreshListingsFromDb({ forceRefresh: true });
+      await flushPending();
 
+      const stoppedNote = cancelled ? ' (đã dừng sớm)' : '';
       if (totalLinked > 0) {
-        showToast(`Đã liên kết thành công ${totalLinked}/${total} sản phẩm`);
+        showToast(`Đã liên kết thành công ${totalLinked}/${processed} sản phẩm${stoppedNote}`);
+      } else if (cancelled) {
+        showToast(`Đã dừng. Chưa liên kết được sản phẩm nào.`);
       } else {
-        showToast(`Đã chạy xong ${total} sản phẩm nhưng không có dòng nào liên kết thành công.`);
+        showToast(`Đã chạy xong ${processed} sản phẩm nhưng không có dòng nào liên kết thành công.`);
       }
 
       onAddLog({
@@ -918,13 +1071,19 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         channel: 'all',
         type: 'product_sync',
         status: totalLinked > 0 ? 'success' : 'failed',
-        message:
-          totalLinked > 0
-            ? `Liên kết tự động frontend: ${totalLinked}/${total} sản phẩm, lỗi/bỏ qua ${totalFailed}`
-            : `Liên kết tự động frontend thất bại hoặc không khớp ở ${total} sản phẩm.`,
+        message: cancelled
+          ? `Liên kết tự động đã dừng: ${totalLinked}/${processed} thành công, thất bại ${totalFailed} (SKU map=${skuMap.size}).`
+          : totalLinked > 0
+            ? `Liên kết tự động (SKU Map): ${totalLinked}/${total} sản phẩm, lỗi/bỏ qua ${totalFailed}.`
+            : `Liên kết tự động thất bại hoặc không khớp ở ${total} sản phẩm (SKU map=${skuMap.size}).`,
       });
     } catch (err: unknown) {
       const message = (err as Error)?.message || 'Liên kết tự động thất bại.';
+      try {
+        await flushPending();
+      } catch {
+        /* giữ kết quả đã lưu */
+      }
       alert(`Liên kết tự động thất bại: ${message}`);
       onAddLog({
         id: `log-${Date.now()}`,
@@ -935,6 +1094,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         message: `Liên kết tự động thất bại: ${message}`,
       });
     } finally {
+      isMappingCancelledRef.current = false;
       setIsAutoLinking(false);
       setAutoLinkProgress({ current: 0, total: 0 });
     }
@@ -1128,28 +1288,37 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             )}
           </button>
 
-          <button
-            onClick={handleAutoLinkBySku}
-            type="button"
-            disabled={isFetchingFromChannel || isAutoLinking || isPurgingBroken}
-            className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-          >
-            {isAutoLinking ? (
-              <>
+          {isAutoLinking ? (
+            <div className="flex-1 sm:flex-none flex items-stretch sm:items-center gap-2">
+              <div className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-extrabold rounded-xl flex items-center justify-center gap-1.5">
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 <span>
                   {autoLinkProgress.total > 0
-                    ? `Đang liên kết (${autoLinkProgress.current}/${autoLinkProgress.total})...`
+                    ? `Đang liên kết (${autoLinkProgress.current}/${autoLinkProgress.total})`
                     : 'Đang liên kết...'}
                 </span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Liên kết tự động</span>
-              </>
-            )}
-          </button>
+              </div>
+              <button
+                onClick={handleStopAutoLink}
+                type="button"
+                className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-rose-500/20 flex items-center justify-center gap-1.5 cursor-pointer"
+                title="Dừng liên kết khẩn cấp"
+              >
+                <Square className="w-3 h-3 fill-current" />
+                <span>Dừng</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => void handleAutoLinkBySku()}
+              type="button"
+              disabled={isFetchingFromChannel || isPurgingBroken}
+              className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl transition-all shadow-md shadow-emerald-500/20 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Liên kết tự động</span>
+            </button>
+          )}
 
           <button
             onClick={() => void handlePurgeBrokenMappings()}

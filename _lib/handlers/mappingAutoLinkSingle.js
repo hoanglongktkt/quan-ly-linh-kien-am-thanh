@@ -3,7 +3,7 @@ import { resolveCpanelBackend } from '../cpanelBackend.js';
 import { fetchWithDiagnostics } from '../fetchDiagnostics.js';
 
 function normalizeSkuKey(sku) {
-  return String(sku ?? '').trim().toLowerCase();
+  return String(sku ?? '').trim().toUpperCase();
 }
 
 function getChildren(row) {
@@ -16,7 +16,7 @@ function getChildren(row) {
   return buckets.filter((item) => item && typeof item === 'object');
 }
 
-/** Exact match only — trim + toLowerCase. */
+/** Exact match only — trim + toUpperCase. */
 function skusExactMatch(listingSku, masterSku) {
   const a = normalizeSkuKey(listingSku);
   const b = normalizeSkuKey(masterSku);
