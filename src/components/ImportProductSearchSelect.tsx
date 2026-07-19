@@ -141,11 +141,11 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
         } finally {
           if (seq === reqSeqRef.current) setSearching(false);
         }
-      }, 300);
+      }, 400);
 
       return () => {
+        // Chỉ hủy timer — không abort request ở cleanup (tránh React StrictMode hủy nhầm → phải search 2 lần)
         if (debounceRef.current) clearTimeout(debounceRef.current);
-        abortRef.current?.abort();
       };
     }, [query, open]);
 

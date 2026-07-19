@@ -451,7 +451,7 @@ export default function ImportManager({
           totalAmount: lineTotal,
           paidAmount: linePaid,
           status,
-          warehouseId: 'default',
+          warehouseId: 'KhoGoc',
         };
         await onAddImport(tx);
       }
@@ -955,7 +955,14 @@ export default function ImportManager({
                       {(imp.importCost ?? 0) > 0 ? `${(imp.importCost ?? 0).toLocaleString('vi-VN')} đ` : '—'}
                     </td>
                     <td className="p-4 text-center">
-                      <PriceChangeBadge oldPrice={imp.oldImportPrice} newPrice={imp.newImportPrice} />
+                      <div className="flex flex-col items-center gap-1">
+                        <PriceChangeBadge oldPrice={imp.oldImportPrice} newPrice={imp.newImportPrice} size="md" />
+                        {imp.oldImportPrice > 0 && imp.oldImportPrice !== imp.newImportPrice && (
+                          <span className="text-[10px] font-mono text-gray-400">
+                            {imp.oldImportPrice.toLocaleString('vi-VN')} → {imp.newImportPrice.toLocaleString('vi-VN')}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="p-4 text-right">
                       <div className="font-mono font-bold text-slate-800">{imp.totalAmount.toLocaleString('vi-VN')} đ</div>

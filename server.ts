@@ -16,6 +16,7 @@ import {
   loadProductsByIdsFromStore,
   searchProductsFromStore,
   applyImportStockAndPriceToStore,
+  applyImportStockAndPriceToMainWarehouse,
   saveProductsToStoreAsync,
   loadChannelListingsFromStore,
   saveChannelListingsToStoreAsync,
@@ -13107,18 +13108,25 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "import_fields_required" });
     }
 
-    const productId = String(body.productId);
+    const productId = String(body.productId).trim();
+    const productSku = String(body.productSku || body.sku || "").trim();
     const qty = Math.max(1, Math.round(Number(body.quantity)));
     const unitPrice = Math.max(0, Math.round(Number(body.newImportPrice)));
     const importCost = Math.max(0, Math.round(Number(body.importCost) || 0));
     const computedTotal = qty * unitPrice + importCost;
-    const warehouseId = String(body.warehouseId || body.warehouse_id || "default").trim() || "default";
+    // Kho Gốc duy nhất = Mongo collection `products` — bỏ hardcode kho cũ
+    const warehouseId = "KhoGoc";
 
     try {
-      // Atomic (1 lệnh Mongo): cộng tồn + đè importPrice
-      const updatedProduct = await applyImportStockAndPriceToStore(productId, qty, unitPrice);
+      // 1) Cập nhật tồn + importPrice trên Kho Gốc (transaction khi khả dụng)
+      const applied = await applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice, {
+        skuHint: productSku,
+      });
+      const updatedProduct = applied.product;
+      const oldImportPrice =
+        Math.max(0, Math.round(Number(body.oldImportPrice) || 0)) || applied.oldImportPrice;
 
-      // INSERT lịch sử nhập — chỉ sau khi cập nhật kho thành công
+      // 2) Ghi lịch sử nhập — chỉ SAU khi Mongo commit thành công
       const imports = loadImports();
       const entry = {
         id: body.id || `imp-${Date.now()}`,
@@ -13126,11 +13134,11 @@ async function startServer() {
         supplierName: String(body.supplierName || ""),
         date: body.date || new Date().toISOString().split("T")[0],
         createdAt: new Date().toISOString(),
-        productId,
+        productId: String(updatedProduct?.id || productId),
         productTitle: String(body.productTitle || updatedProduct?.title || ""),
-        productSku: String(body.productSku || updatedProduct?.sku || ""),
+        productSku: String(productSku || updatedProduct?.sku || ""),
         quantity: qty,
-        oldImportPrice: Math.max(0, Math.round(Number(body.oldImportPrice) || 0)),
+        oldImportPrice,
         newImportPrice: unitPrice,
         importCost,
         totalAmount: Math.max(0, Math.round(Number(body.totalAmount) || computedTotal)),
@@ -13138,9 +13146,34 @@ async function startServer() {
         status: body.status || "unpaid",
         notes: body.notes || undefined,
         warehouseId,
+        priceChangePercent:
+          oldImportPrice > 0
+            ? Math.round(((unitPrice - oldImportPrice) / oldImportPrice) * 1000) / 10
+            : null,
       };
-      imports.unshift(entry);
-      saveImports(imports);
+
+      try {
+        imports.unshift(entry);
+        saveImports(imports);
+      } catch (logErr) {
+        // Bù trừ: hoàn tồn/giá nếu ghi log thất bại
+        console.error("[Imports] Ghi log thất bại — rollback tồn/giá Kho Gốc:", logErr);
+        await applyImportStockAndPriceToMainWarehouse(productId, -qty, applied.oldImportPrice, {
+          skuHint: productSku,
+        }).catch((rb) => console.error("[Imports] Rollback Kho Gốc failed:", rb));
+        throw logErr;
+      }
+
+      console.log("[Imports] PO submitted → KhoGoc", {
+        productId: entry.productId,
+        sku: entry.productSku,
+        qty,
+        oldStock: applied.oldStock,
+        newStock: applied.newStock,
+        oldImportPrice,
+        newImportPrice: unitPrice,
+        target: applied.target,
+      });
 
       return res.status(201).json({
         success: true,
@@ -13148,6 +13181,12 @@ async function startServer() {
         imports,
         product: updatedProduct,
         warehouseId,
+        warehouse: "KhoGoc",
+        collection: "products",
+        stockBefore: applied.oldStock,
+        stockAfter: applied.newStock,
+        importPriceBefore: oldImportPrice,
+        importPriceAfter: unitPrice,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

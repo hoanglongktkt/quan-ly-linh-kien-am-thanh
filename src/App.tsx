@@ -1149,7 +1149,11 @@ export default function App() {
         const response = await fetch('/api/imports', {
           method: 'POST',
           headers: apiAuthHeaders(),
-          body: JSON.stringify({ ...transaction, warehouseId: transaction.warehouseId || 'default' }),
+          body: JSON.stringify({
+            ...transaction,
+            warehouseId: 'KhoGoc',
+            productSku: transaction.productSku,
+          }),
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
@@ -1172,28 +1176,41 @@ export default function App() {
       setImports((prev) => [transaction, ...prev]);
     }
 
+    // Cập nhật UI từ product server trả về (đã cộng tồn + đè importPrice) — không cộng đôi
     setProducts((prevProducts) =>
       prevProducts.map((p) => {
         if (savedProduct && p.id === savedProduct.id) {
-          return { ...p, ...savedProduct };
+          return { ...p, ...savedProduct, status: 'active' as const };
         }
         if (p.id === transaction.productId) {
           return {
             ...p,
-            stock: (Number(p.stock) || 0) + transaction.quantity,
-            importPrice: transaction.newImportPrice,
+            ...(savedProduct || {}),
+            stock: savedProduct
+              ? Number(savedProduct.stock)
+              : (Number(p.stock) || 0) + transaction.quantity,
+            importPrice: savedProduct
+              ? Number(savedProduct.importPrice)
+              : transaction.newImportPrice,
             status: 'active' as const,
           };
         }
         const children = getProductChildren(p);
-        if (!children.some((c) => c.id === transaction.productId)) return p;
+        if (!children.some((c) => c.id === transaction.productId || (savedProduct && c.id === savedProduct.id))) {
+          return p;
+        }
+        const targetId = savedProduct?.id || transaction.productId;
         const nextChildren = children.map((c) =>
-          c.id === transaction.productId
+          c.id === targetId || c.id === transaction.productId
             ? {
                 ...c,
                 ...(savedProduct && savedProduct.id === c.id ? savedProduct : {}),
-                stock: (Number(c.stock) || 0) + transaction.quantity,
-                importPrice: transaction.newImportPrice,
+                stock: savedProduct && savedProduct.id === c.id
+                  ? Number(savedProduct.stock)
+                  : (Number(c.stock) || 0) + transaction.quantity,
+                importPrice: savedProduct && savedProduct.id === c.id
+                  ? Number(savedProduct.importPrice)
+                  : transaction.newImportPrice,
                 status: 'active' as const,
               }
             : c
@@ -1202,6 +1219,9 @@ export default function App() {
         return { ...p, children: nextChildren, stock: totalStock };
       })
     );
+
+    // Đồng bộ lại từ Kho Gốc để màn hình chính (ProductList) thấy tồn/giá mới
+    void fetchProducts({ forceRefresh: true, silent: true });
 
     const supplier = suppliers.find((s) => s.id === transaction.supplierId);
     if (supplier) {

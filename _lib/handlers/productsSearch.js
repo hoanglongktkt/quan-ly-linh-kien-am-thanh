@@ -24,19 +24,21 @@ function normalizeProduct(row, parent) {
   const image = row?.avatarUrl || row?.imageUrl || row?.image || parent?.avatarUrl || parent?.imageUrl || '';
   const stock = Math.max(0, Math.round(Number(row?.stock ?? row?.current_stock) || 0));
   const importPrice = Math.max(0, Math.round(Number(row?.importPrice ?? row?.last_import_price) || 0));
+  // Lean fields only — không trả description HTML
   return {
-    ...row,
     id,
     sku,
     title,
     name: title,
     image,
-    imageUrl: row?.imageUrl || image,
-    avatarUrl: row?.avatarUrl || image,
+    imageUrl: image,
+    avatarUrl: image,
     stock,
     current_stock: stock,
     importPrice,
     last_import_price: importPrice,
+    modelName: row?.modelName || undefined,
+    status: row?.status || 'active',
   };
 }
 

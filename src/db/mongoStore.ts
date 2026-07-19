@@ -54,6 +54,12 @@ const ProductSchema = new Schema<ProductDoc>(
   { collection: "products", versionKey: false }
 );
 
+// Index phục vụ search Kho Gốc (SKU / tên) — syncIndexes lúc boot
+ProductSchema.index({ "data.sku": 1 });
+ProductSchema.index({ "data.title": 1 });
+ProductSchema.index({ "data.children.sku": 1 });
+ProductSchema.index({ "data.children_models.sku": 1 });
+
 const ChannelListingSchema = new Schema<ListingDoc>(
   {
     _id: { type: String, required: true },
@@ -258,8 +264,15 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
 
     console.log("MongoDB Connected Successfully");
     console.log(
-      `[MongoDB] Connected Successfully — ${getMongoUriMasked()} | products=${productCount} | channel_listings=${listingCount}`
+      `[MongoDB] Connected Successfully — ${getMongoUriMasked()} | products=${productCount} | channel_listings=${listingCount} | warehouse=KhoGoc(collection:products)`
     );
+
+    try {
+      await ProductModel.syncIndexes();
+      console.log("[MongoDB] Product indexes synced (sku, data.sku, text title/sku, children.sku)");
+    } catch (idxErr) {
+      console.warn("[MongoDB] syncIndexes products:", idxErr);
+    }
 
     // One-time migrate từ JSON local nếu Atlas trống
     if (productCount === 0 && listingCount === 0) {
@@ -390,9 +403,36 @@ export async function loadProductsByIdsFromStore(
   return docsToProducts(docs);
 }
 
+/** Chỉ trả field nhẹ cho UI search — không kèm description HTML. */
+function toSearchLeanRow(row: any): any {
+  const id = String(row?.id || "").trim();
+  const sku = String(row?.sku || "").trim();
+  const title = String(row?.title || row?.name || "").trim();
+  const image = row?.avatarUrl || row?.imageUrl || row?.image || "";
+  const stock = Math.max(0, Math.round(Number(row?.stock ?? row?.current_stock) || 0));
+  const importPrice = Math.max(0, Math.round(Number(row?.importPrice ?? row?.last_import_price) || 0));
+  return {
+    id,
+    sku,
+    title,
+    name: title,
+    image,
+    imageUrl: image,
+    avatarUrl: image,
+    stock,
+    current_stock: stock,
+    importPrice,
+    last_import_price: importPrice,
+    sellingPrice: Math.max(0, Math.round(Number(row?.sellingPrice) || 0)),
+    modelName: row?.modelName || undefined,
+    tierLabels: Array.isArray(row?.tierLabels) ? row.tierLabels : undefined,
+    status: row?.status || "active",
+  };
+}
+
 /**
- * Tìm sản phẩm kho gốc theo SKU/tên — find() trả mảng, ưu tiên khớp SKU.
- * Không lọc warehouse_id (kho hệ thống = collection products Mongo).
+ * Tìm sản phẩm Kho Gốc (collection `products`) — CHỈ Mongo nội bộ, không gọi Shopee.
+ * Ưu tiên exact SKU → prefix SKU → regex tên. Trả field lean.
  */
 export async function searchProductsFromStore(
   query: string,
@@ -401,34 +441,87 @@ export async function searchProductsFromStore(
   requireMongo();
   const q = String(query || "").trim();
   const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
-  // Lấy nhiều parent hơn limit vì mỗi parent có thể flatten thành nhiều biến thể
-  const parentFetchLimit = Math.min(200, Math.max(safeLimit * 3, 60));
+  const parentFetchLimit = Math.min(120, Math.max(safeLimit * 2, 40));
+  const qLower = q.toLowerCase();
 
   let docs: Array<{ _id?: any; data?: any; sku?: string | null }> = [];
+
   if (!q) {
-    docs = await ProductModel.find({}).sort({ _id: 1 }).limit(parentFetchLimit).lean();
+    docs = await ProductModel.find({}, { sku: 1, data: 1 })
+      .sort({ _id: 1 })
+      .limit(parentFetchLimit)
+      .lean();
   } else {
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // LIKE không phân biệt hoa thường: (sku OR name OR barcode OR children...)
-    const like = { $regex: escaped, $options: "i" as const };
-    const filter = {
-      $or: [
-        { sku: like },
-        { "data.sku": like },
-        { "data.barcode": like },
-        { "data.title": like },
-        { "data.modelName": like },
-        { "data.children.sku": like },
-        { "data.children.barcode": like },
-        { "data.children.title": like },
-        { "data.children.modelName": like },
-        { "data.children_models.sku": like },
-        { "data.children_models.barcode": like },
-        { "data.children_models.title": like },
-      ],
-    };
-    docs = await ProductModel.find(filter).limit(parentFetchLimit).lean();
-    console.log("[MongoSearch] products query", {
+    const exactSku = new RegExp(`^${escaped}$`, "i");
+    const prefixSku = new RegExp(`^${escaped}`, "i");
+    const contains = { $regex: escaped, $options: "i" as const };
+
+    // 1) Exact SKU trước (nhanh nhất, dùng index)
+    docs = await ProductModel.find(
+      {
+        $or: [
+          { sku: exactSku },
+          { "data.sku": exactSku },
+          { "data.children.sku": exactSku },
+          { "data.children_models.sku": exactSku },
+          { "data.barcode": exactSku },
+        ],
+      },
+      { sku: 1, data: 1 },
+    )
+      .limit(parentFetchLimit)
+      .lean();
+
+    // 2) Prefix SKU nếu chưa đủ
+    if (docs.length < safeLimit) {
+      const more = await ProductModel.find(
+        {
+          $or: [
+            { sku: prefixSku },
+            { "data.sku": prefixSku },
+            { "data.children.sku": prefixSku },
+            { "data.children_models.sku": prefixSku },
+          ],
+        },
+        { sku: 1, data: 1 },
+      )
+        .limit(parentFetchLimit)
+        .lean();
+      const seen = new Set(docs.map((d) => String(d._id)));
+      for (const d of more) {
+        const key = String(d._id);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        docs.push(d);
+      }
+    }
+
+    // 3) Tên / model chứa từ khóa (hạn chế limit)
+    if (docs.length < safeLimit) {
+      const more = await ProductModel.find(
+        {
+          $or: [
+            { "data.title": contains },
+            { "data.modelName": contains },
+            { "data.children.title": contains },
+            { "data.children_models.title": contains },
+          ],
+        },
+        { sku: 1, data: 1 },
+      )
+        .limit(parentFetchLimit)
+        .lean();
+      const seen = new Set(docs.map((d) => String(d._id)));
+      for (const d of more) {
+        const key = String(d._id);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        docs.push(d);
+      }
+    }
+
+    console.log("[MongoSearch] KhoGoc products", {
       q,
       parentHits: docs.length,
       sampleSkus: docs.slice(0, 5).map((d) => d?.sku || d?.data?.sku),
@@ -438,43 +531,9 @@ export async function searchProductsFromStore(
   const parents = docsToProducts(docs);
   const flat: any[] = [];
   const seen = new Set<string>();
-  const qLower = q.toLowerCase();
 
-  const resolveId = (row: any): string => {
-    // Chỉ dùng id thật trong kho — không tự sinh id giả (sẽ làm vỡ cập nhật tồn)
-    return String(row?.id || row?._id || row?.shopeeModelId || "").trim();
-  };
-
-  const normalizeRow = (row: any) => {
-    const id = String(row.id || "").trim();
-    const sku = String(row.sku || "").trim();
-    const title = String(row.title || row.name || "").trim();
-    const image = row.avatarUrl || row.imageUrl || row.image || "";
-    const stock = Math.max(0, Math.round(Number(row.stock ?? row.current_stock) || 0));
-    const importPrice = Math.max(0, Math.round(Number(row.importPrice ?? row.last_import_price) || 0));
-    return {
-      ...row,
-      id,
-      sku,
-      title,
-      name: title,
-      image,
-      imageUrl: row.imageUrl || image,
-      avatarUrl: row.avatarUrl || image,
-      stock,
-      current_stock: stock,
-      importPrice,
-      last_import_price: importPrice,
-    };
-  };
-
-  const pushRow = (row: any) => {
-    if (!row || typeof row !== "object") return;
-    const id = String(row.id || "").trim();
-    if (!id || seen.has(id)) return;
-    seen.add(id);
-    flat.push(normalizeRow(row));
-  };
+  const resolveId = (row: any, fallbackDocId = ""): string =>
+    String(row?.id || row?._id || fallbackDocId || "").trim();
 
   const matchesQuery = (row: any, extra = ""): boolean => {
     if (!q) return true;
@@ -490,6 +549,13 @@ export async function searchProductsFromStore(
       .map((v) => String(v ?? "").toLowerCase())
       .join(" ");
     return hay.includes(qLower);
+  };
+
+  const pushRow = (row: any) => {
+    const lean = toSearchLeanRow(row);
+    if (!lean.id || seen.has(lean.id)) return;
+    seen.add(lean.id);
+    flat.push(lean);
   };
 
   for (const p of parents) {
@@ -518,104 +584,245 @@ export async function searchProductsFromStore(
         });
         childMatched += 1;
       }
-      // Parent không có biến thể khớp nhưng chính parent khớp (SKU/tên parent)
-      if (childMatched === 0 && matchesQuery(p) && parentId) {
-        pushRow({ ...p, id: parentId });
-      }
+      if (childMatched === 0 && matchesQuery(p) && parentId) pushRow({ ...p, id: parentId });
     } else if (matchesQuery(p) && parentId) {
       pushRow({ ...p, id: parentId });
     }
   }
 
-  // Ưu tiên dòng khớp SKU chính xác / chứa SKU lên đầu
   if (q) {
     flat.sort((a, b) => {
       const aSku = String(a.sku || "").toLowerCase();
       const bSku = String(b.sku || "").toLowerCase();
-      const aExact = aSku === qLower ? 0 : aSku.includes(qLower) ? 1 : 2;
-      const bExact = bSku === qLower ? 0 : bSku.includes(qLower) ? 1 : 2;
-      if (aExact !== bExact) return aExact - bExact;
-      return 0;
+      const rank = (sku: string) => (sku === qLower ? 0 : sku.startsWith(qLower) ? 1 : sku.includes(qLower) ? 2 : 3);
+      return rank(aSku) - rank(bSku);
     });
   }
 
   return flat.slice(0, safeLimit);
 }
 
+type ApplyImportResult = {
+  product: any;
+  oldStock: number;
+  newStock: number;
+  oldImportPrice: number;
+  newImportPrice: number;
+  target: "parent" | "child";
+  parentId?: string;
+  warehouse: "KhoGoc";
+  collection: "products";
+};
+
 /**
- * Cộng tồn kho + ghi đè importPrice bằng 1 lần findByIdAndUpdate (hoặc cập nhật child trong parent).
- * Trả về sản phẩm đã cập nhật.
+ * Cộng tồn + ghi đè importPrice trên Kho Gốc (collection `products`).
+ * Hỗ trợ tìm theo id / sku / biến thể. Bọc Mongo transaction khi replica-set hỗ trợ.
  */
 export async function applyImportStockAndPriceToStore(
   productId: string,
   quantityDelta: number,
   importPrice: number,
+  opts?: { skuHint?: string },
 ): Promise<any> {
+  const result = await applyImportStockAndPriceToMainWarehouse(productId, quantityDelta, importPrice, opts);
+  return result.product;
+}
+
+export async function applyImportStockAndPriceToMainWarehouse(
+  productId: string,
+  quantityDelta: number,
+  importPrice: number,
+  opts?: { skuHint?: string },
+): Promise<ApplyImportResult> {
   requireMongo();
   const id = String(productId || "").trim();
-  if (!id) throw new Error("Thiếu productId");
-  const qty = Math.max(0, Math.round(Number(quantityDelta) || 0));
+  const skuHint = String(opts?.skuHint || "").trim();
+  if (!id && !skuHint) throw new Error("Thiếu productId/sku để cập nhật Kho Gốc");
+  // Cho phép delta âm (rollback). Tồn cuối luôn >= 0.
+  const qty = Math.round(Number(quantityDelta) || 0);
   const price = Math.max(0, Math.round(Number(importPrice) || 0));
 
-  // 1) Document top-level
-  const direct = await ProductModel.findById(id).lean();
-  if (direct?.data && typeof direct.data === "object") {
-    const before = direct.data;
-    const nextStock = Math.max(0, Math.round(Number(before.stock) || 0) + qty);
+  const findParentDoc = async () => {
+    const or: Record<string, unknown>[] = [];
+    if (id) {
+      or.push({ _id: id });
+      or.push({ "data.id": id });
+      or.push({ "data.children.id": id });
+      or.push({ "data.children_models.id": id });
+      or.push({ "data.shopeeModelId": id });
+      or.push({ "data.children.shopeeModelId": id });
+      or.push({ "data.children_models.shopeeModelId": id });
+    }
+    if (skuHint) {
+      or.push({ sku: skuHint });
+      or.push({ "data.sku": skuHint });
+      or.push({ "data.children.sku": skuHint });
+      or.push({ "data.children_models.sku": skuHint });
+    }
+    if (or.length === 0) return null;
+    return ProductModel.findOne(or.length === 1 ? or[0] : { $or: or }).lean();
+  };
+
+  const parentDoc = await findParentDoc();
+  if (!parentDoc?.data || typeof parentDoc.data !== "object") {
+    throw new Error(
+      `Không tìm thấy sản phẩm trong Kho Gốc (collection products). id=${id || "—"} sku=${skuHint || "—"}`,
+    );
+  }
+
+  const parentId = String(parentDoc._id);
+  const parentData = { ...parentDoc.data, id: parentDoc.data.id || parentId };
+  const childKey: "children" | "children_models" | null =
+    Array.isArray(parentData.children) && parentData.children.length
+      ? "children"
+      : Array.isArray(parentData.children_models) && parentData.children_models.length
+        ? "children_models"
+        : null;
+
+  let mode: "parent" | "child" = "parent";
+  let childIdx = -1;
+
+  if (childKey) {
+    const children = parentData[childKey] as any[];
+    childIdx = children.findIndex((c) => {
+      const cid = String(c?.id || c?.shopeeModelId || "").trim();
+      const csku = String(c?.sku || "").trim();
+      return (id && cid === id) || (skuHint && csku === skuHint);
+    });
+    // Parent có biến thể nhưng chọn đúng parent id + không khớp child → nếu có skuHint khớp child thì ưu tiên child
+    if (childIdx < 0 && skuHint) {
+      childIdx = children.findIndex((c) => String(c?.sku || "").trim().toLowerCase() === skuHint.toLowerCase());
+    }
+    if (childIdx >= 0) mode = "child";
+  }
+
+  const runUpdate = async (session?: mongoose.ClientSession): Promise<ApplyImportResult> => {
+    if (mode === "child" && childKey) {
+      const children = [...(parentData[childKey] as any[])];
+      const beforeChild = children[childIdx];
+      const oldStock = Math.max(0, Math.round(Number(beforeChild.stock) || 0));
+      const oldImportPrice = Math.max(0, Math.round(Number(beforeChild.importPrice) || 0));
+      const newStock = Math.max(0, oldStock + qty);
+      const mergedChild = {
+        ...beforeChild,
+        id: beforeChild.id || id,
+        stock: newStock,
+        importPrice: price,
+        status:
+          newStock <= 0 && beforeChild.status !== "draft"
+            ? "out_of_stock"
+            : beforeChild.status === "out_of_stock"
+              ? "active"
+              : beforeChild.status,
+        lastSynced: new Date().toISOString(),
+      };
+      children[childIdx] = mergedChild;
+      const totalStock = children.reduce(
+        (s, c) => s + Math.max(0, Math.round(Number(c.stock) || 0)),
+        0,
+      );
+      const mergedParent = {
+        ...parentData,
+        id: parentId,
+        [childKey]: children,
+        stock: totalStock,
+        lastSynced: new Date().toISOString(),
+      };
+      await ProductModel.findByIdAndUpdate(
+        parentId,
+        {
+          $set: {
+            data: mergedParent,
+            sku: mergedParent.sku != null ? String(mergedParent.sku) : null,
+          },
+        },
+        { new: true, session: session || undefined },
+      );
+      console.log("[Import/KhoGoc] UPDATED child", {
+        collection: "products",
+        parentId,
+        childId: mergedChild.id,
+        sku: mergedChild.sku,
+        oldStock,
+        newStock,
+        oldImportPrice,
+        newImportPrice: price,
+      });
+      return {
+        product: mergedChild,
+        oldStock,
+        newStock,
+        oldImportPrice,
+        newImportPrice: price,
+        target: "child",
+        parentId,
+        warehouse: "KhoGoc",
+        collection: "products",
+      };
+    }
+
+    const oldStock = Math.max(0, Math.round(Number(parentData.stock) || 0));
+    const oldImportPrice = Math.max(0, Math.round(Number(parentData.importPrice) || 0));
+    const newStock = Math.max(0, oldStock + qty);
     const merged = {
-      ...before,
-      stock: nextStock,
+      ...parentData,
+      id: parentId,
+      stock: newStock,
       importPrice: price,
-      status: nextStock <= 0 && before.status !== "draft" ? "out_of_stock" : before.status === "out_of_stock" ? "active" : before.status,
+      status:
+        newStock <= 0 && parentData.status !== "draft"
+          ? "out_of_stock"
+          : parentData.status === "out_of_stock"
+            ? "active"
+            : parentData.status,
       lastSynced: new Date().toISOString(),
     };
     await ProductModel.findByIdAndUpdate(
-      id,
+      parentId,
       { $set: { data: merged, sku: merged.sku != null ? String(merged.sku) : null } },
-      { new: true },
+      { new: true, session: session || undefined },
     );
-    return merged;
-  }
-
-  // 2) Child trong parent — 1 query tìm parent chứa child
-  const parentDoc = await ProductModel.findOne({
-    $or: [{ "data.children.id": id }, { "data.children_models.id": id }],
-  }).lean();
-  if (!parentDoc?.data || typeof parentDoc.data !== "object") {
-    throw new Error(`Không tìm thấy sản phẩm id=${id} trong kho Mongo`);
-  }
-
-  const parent = { ...parentDoc.data };
-  const childKey = Array.isArray(parent.children) && parent.children.some((c: any) => String(c?.id) === id)
-    ? "children"
-    : "children_models";
-  const children = Array.isArray(parent[childKey]) ? [...parent[childKey]] : [];
-  const idx = children.findIndex((c: any) => String(c?.id || "").trim() === id);
-  if (idx < 0) throw new Error(`Không tìm thấy biến thể id=${id}`);
-
-  const beforeChild = children[idx];
-  const nextStock = Math.max(0, Math.round(Number(beforeChild.stock) || 0) + qty);
-  const mergedChild = {
-    ...beforeChild,
-    stock: nextStock,
-    importPrice: price,
-    status: nextStock <= 0 && beforeChild.status !== "draft" ? "out_of_stock" : beforeChild.status === "out_of_stock" ? "active" : beforeChild.status,
-    lastSynced: new Date().toISOString(),
+    console.log("[Import/KhoGoc] UPDATED parent", {
+      collection: "products",
+      productId: parentId,
+      sku: merged.sku,
+      oldStock,
+      newStock,
+      oldImportPrice,
+      newImportPrice: price,
+    });
+    return {
+      product: merged,
+      oldStock,
+      newStock,
+      oldImportPrice,
+      newImportPrice: price,
+      target: "parent",
+      warehouse: "KhoGoc",
+      collection: "products",
+    };
   };
-  children[idx] = mergedChild;
-  const totalStock = children.reduce((s: number, c: any) => s + (Math.max(0, Math.round(Number(c.stock) || 0))), 0);
-  const mergedParent = {
-    ...parent,
-    [childKey]: children,
-    stock: totalStock,
-    lastSynced: new Date().toISOString(),
-  };
-  await ProductModel.findByIdAndUpdate(
-    parentDoc._id,
-    { $set: { data: mergedParent, sku: mergedParent.sku != null ? String(mergedParent.sku) : null } },
-    { new: true },
-  );
-  return mergedChild;
+
+  // Transaction khi Mongo hỗ trợ (replica set / Atlas). Standalone → chạy trực tiếp.
+  try {
+    const session = await mongoose.startSession();
+    try {
+      let out!: ApplyImportResult;
+      await session.withTransaction(async () => {
+        out = await runUpdate(session);
+      });
+      return out;
+    } finally {
+      session.endSession();
+    }
+  } catch (txErr) {
+    const msg = txErr instanceof Error ? txErr.message : String(txErr);
+    if (/transaction|replica|Transaction numbers/i.test(msg)) {
+      console.warn("[Import/KhoGoc] Transaction không khả dụng, chạy update trực tiếp:", msg);
+      return runUpdate();
+    }
+    throw txErr;
+  }
 }
 
 /** Đọc channel_listings TRỰC TIẾP từ MongoDB — Model.find({}) */
