@@ -1436,15 +1436,16 @@ const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 const SHOPEE_ORDER_LIST_MAX_WINDOWS = 2;
 /** Incremental sync mặc định: quét lùi 24 giờ theo update_time (cron + nút bấm). */
 const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
-/** Full sync hủy/hoàn: quét tối đa 90 ngày (6 × 15 ngày) để khớp Seller Center. */
-const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 6;
+/** Full sync hủy/hoàn: quét tối đa 120 ngày (8 × 15 ngày) để khớp Seller Center. */
+const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 8;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 const SHOPEE_ORDER_LIST_MAX_PAGES = 8;
 const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 120;
-/** Ngân sách riêng cho đơn hủy/hoàn + returns (không dùng chung 120 đơn active). */
-const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 300;
-const SHOPEE_RETURN_LIST_PAGE_SIZE = 50;
-const SHOPEE_RETURN_LIST_MAX_PAGES = 20;
+/** Ngân sách riêng cho đơn hủy/hoàn + returns — đủ để khớp ~163+ đơn Seller Center. */
+const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
+/** get_return_list: page_size tối đa Shopee = 100; paginate đầy đủ. */
+const SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
+const SHOPEE_RETURN_LIST_MAX_PAGES = 50;
 /** Xử lý theo lô chính xác 25 đơn / lần gọi get_order_detail. */
 const SHOPEE_SYNC_CHUNK_SIZE = 25;
 /** Delay giữa các lô khi đồng bộ đơn hàng (ms). */
@@ -2137,31 +2138,88 @@ async function shopeeGetReverseTrackingInfo(shopId: string, accessToken: string,
 
 function extractShopeeReturnListRows(result: any): any[] {
   const body = result?.response ?? result ?? {};
-  const rows = body.return ?? body.return_list ?? body.returns ?? [];
+  const rows = body.return ?? body.return_list ?? body.returns ?? body.return_order_list ?? [];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    const keys = body && typeof body === "object" ? Object.keys(body).slice(0, 20) : [];
+    if (keys.length) {
+      console.warn(`[Shopee Returns] list rows rỗng — response keys: ${keys.join(", ")}`);
+    }
+  }
   return Array.isArray(rows) ? rows : [];
 }
 
 function parseShopeeReturnListMore(result: any): boolean {
   const body = result?.response ?? result ?? {};
-  return body.more === true || body.more === 1 || body.has_more === true;
+  return (
+    body.more === true ||
+    body.more === 1 ||
+    body.more === "true" ||
+    body.has_more === true ||
+    body.has_more === 1
+  );
+}
+
+/** Ưu tiên: returnDetail.tracking_number → orderDetail → DB cũ. Không bao giờ trả empty nếu đã có mã. */
+function pickBestTrackingNumber(...candidates: unknown[]): string {
+  for (const c of candidates) {
+    const s = String(c || "").trim();
+    if (!s || s.length < 4) continue;
+    if (/^0FG/i.test(s)) continue;
+    return s;
+  }
+  return "";
 }
 
 function extractTrackingFromReturnPayload(payload: any): string {
   const root = payload?.response ?? payload ?? {};
-  const candidates = [
+  const direct = pickBestTrackingNumber(
     root.tracking_number,
     root.return_tracking_no,
     root.return_tracking_number,
     root.rts_tracking_number,
     root?.tracking_info?.tracking_number,
+    root?.reverse_logistics_info?.tracking_number,
     root?.reverse_tracking_number,
-  ];
-  for (const c of candidates) {
-    const s = String(c || "").trim();
-    if (s && s.length >= 4) return s;
+    root?.shipping_carrier_tracking_number,
+  );
+  if (direct) return direct;
+
+  // Deep walk: tìm mọi key tracking_number / return_tracking* trong payload hoàn.
+  const found: string[] = [];
+  const walk = (node: any, depth: number) => {
+    if (!node || depth > 8) return;
+    if (typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item, depth + 1);
+      return;
+    }
+    for (const [k, v] of Object.entries(node)) {
+      const key = String(k).toLowerCase();
+      if (
+        (key === "tracking_number" ||
+          key === "return_tracking_no" ||
+          key === "return_tracking_number" ||
+          key === "rts_tracking_number" ||
+          key.endsWith("_tracking_number")) &&
+        v != null &&
+        String(v).trim()
+      ) {
+        found.push(String(v).trim());
+      } else if (v && typeof v === "object") {
+        walk(v, depth + 1);
+      }
+    }
+  };
+  walk(root, 0);
+  const picked = pickBestTrackingNumber(...found);
+  if (picked) return picked;
+
+  try {
+    const deep = deepExtractShopeeTrackingCodes(root);
+    return String(deep.carrier || "").trim();
+  } catch {
+    return "";
   }
-  const deep = deepExtractShopeeTrackingCodes(root);
-  return String(deep.carrier || "").trim();
 }
 
 function mapShopeeReturnKind(detail: any): "refund_return" | "failed_delivery" {
@@ -2170,112 +2228,135 @@ function mapShopeeReturnKind(detail: any): "refund_return" | "failed_delivery" {
   );
   // 2 = Return-on-the-Spot / giao không thành công (Shopee)
   if (type === 2) return "failed_delivery";
-  const reason = String(detail?.reason || detail?.text_reason || "").toUpperCase();
+  const reason = `${detail?.reason || ""} ${detail?.text_reason || ""}`.toUpperCase();
+  const logistics = `${detail?.logistics_status || ""} ${detail?.reverse_logistic_status || ""}`.toUpperCase();
   if (
     reason.includes("FAILED_DELIVERY") ||
     reason.includes("FAILED DELIVERY") ||
     reason.includes("NOT_DELIVERED") ||
-    reason.includes("REJECT")
+    reason.includes("PARCEL_RETURN") ||
+    logistics.includes("FAILED") ||
+    logistics.includes("UNDELIVERABLE")
   ) {
     return "failed_delivery";
   }
   return "refund_return";
 }
 
-/** Quét get_return_list theo cửa sổ update_time (incremental 24h / full 90 ngày). */
+type ReturnListRow = { returnSn: string; orderSn?: string; status?: string };
+
+async function shopeePaginateReturnListWindow(
+  shopId: string,
+  accessToken: string,
+  opts: {
+    timeFrom: number;
+    timeTo: number;
+    timeField: "update" | "create";
+    status?: string;
+    seen: Set<string>;
+    out: ReturnListRow[];
+    label: string;
+  },
+): Promise<void> {
+  let pageNo = 1;
+  while (pageNo <= SHOPEE_RETURN_LIST_MAX_PAGES) {
+    if (opts.out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) return;
+    const listOpts: Parameters<typeof shopeeGetReturnList>[2] = {
+      pageNo,
+      pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE,
+      status: opts.status,
+    };
+    if (opts.timeField === "update") {
+      listOpts.updateTimeFrom = opts.timeFrom;
+      listOpts.updateTimeTo = opts.timeTo;
+    } else {
+      listOpts.createTimeFrom = opts.timeFrom;
+      listOpts.createTimeTo = opts.timeTo;
+    }
+    const listResult = await shopeeGetReturnList(shopId, accessToken, listOpts);
+    if (listResult.error) {
+      console.warn(
+        `[Shopee Returns] ${opts.label} page=${pageNo} lỗi:`,
+        listResult.message || listResult.error,
+      );
+      return;
+    }
+    const rows = extractShopeeReturnListRows(listResult);
+    for (const row of rows) {
+      const returnSn = String(row?.return_sn || row?.returnSn || "").trim();
+      if (!returnSn || opts.seen.has(returnSn)) continue;
+      opts.seen.add(returnSn);
+      opts.out.push({
+        returnSn,
+        orderSn: row?.order_sn ? String(row.order_sn) : undefined,
+        status: row?.status ? String(row.status) : opts.status,
+      });
+      if (opts.out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
+    }
+    const more = parseShopeeReturnListMore(listResult);
+    console.log(
+      `[Shopee Returns] ${opts.label} page=${pageNo}: +${rows.length} (tổng ${opts.out.length}), more=${more}`,
+    );
+    // Tiếp tục paginate khi more=true HOẶC trang đầy (tránh sót khi Shopee không trả more).
+    const pageFull = rows.length >= SHOPEE_RETURN_LIST_PAGE_SIZE;
+    if (!more && !pageFull) return;
+    if (rows.length === 0) return;
+    pageNo++;
+    await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+  }
+}
+
+/** Quét get_return_list — paginate đầy đủ (update_time + create_time). */
 async function shopeeFetchAllReturnSns(
   shopId: string,
   accessToken: string,
   opts?: { mode?: "incremental" | "full" },
-): Promise<{ returnSn: string; orderSn?: string; status?: string }[]> {
+): Promise<ReturnListRow[]> {
   const mode = opts?.mode === "full" ? "full" : "incremental";
   const now = Math.floor(Date.now() / 1000);
   const maxWindows = mode === "full" ? SHOPEE_CANCEL_RETURN_MAX_WINDOWS : 1;
   const windowSec = mode === "full" ? SHOPEE_ORDER_LIST_WINDOW_SEC : SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
-  const out: { returnSn: string; orderSn?: string; status?: string }[] = [];
+  const out: ReturnListRow[] = [];
   const seen = new Set<string>();
 
-  for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
-    const timeTo = now - windowIdx * windowSec;
-    const timeFrom = timeTo - windowSec;
-    let pageNo = 1;
-    console.log(
-      `[Shopee Returns] shop=${shopId} mode=${mode} window ${windowIdx + 1}/${maxWindows} update_time ${timeFrom}→${timeTo}`,
-    );
-
-    while (pageNo <= SHOPEE_RETURN_LIST_MAX_PAGES) {
-      const listResult = await shopeeGetReturnList(shopId, accessToken, {
-        pageNo,
-        pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE,
-        updateTimeFrom: timeFrom,
-        updateTimeTo: timeTo,
-      });
-      if (listResult.error) {
-        console.warn(
-          `[Shopee Returns] get_return_list page=${pageNo} lỗi:`,
-          listResult.message || listResult.error,
-        );
-        break;
-      }
-      const rows = extractShopeeReturnListRows(listResult);
-      for (const row of rows) {
-        const returnSn = String(row?.return_sn || row?.returnSn || "").trim();
-        if (!returnSn || seen.has(returnSn)) continue;
-        seen.add(returnSn);
-        out.push({
-          returnSn,
-          orderSn: row?.order_sn ? String(row.order_sn) : undefined,
-          status: row?.status ? String(row.status) : undefined,
-        });
-        if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-      }
+  for (const timeField of ["update", "create"] as const) {
+    for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+      if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
+      const timeTo = now - windowIdx * windowSec;
+      const timeFrom = timeTo - windowSec;
       console.log(
-        `[Shopee Returns] shop=${shopId} page=${pageNo}: +${rows.length} (tổng ${out.length}), more=${parseShopeeReturnListMore(listResult)}`,
+        `[Shopee Returns] shop=${shopId} mode=${mode} ${timeField}_time window ${windowIdx + 1}/${maxWindows} ${timeFrom}→${timeTo}`,
       );
-      if (!parseShopeeReturnListMore(listResult)) break;
-      if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-      pageNo++;
-      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+      await shopeePaginateReturnListWindow(shopId, accessToken, {
+        timeFrom,
+        timeTo,
+        timeField,
+        seen,
+        out,
+        label: `shop=${shopId} ${timeField} w${windowIdx + 1}`,
+      });
+      if (windowIdx < maxWindows - 1) await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
-
-    if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-    if (windowIdx < maxWindows - 1) await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
 
-  // Full: bổ sung các return đang mở (REQUESTED/PROCESSING/ACCEPTED) — bất kể create_time cũ.
+  // Full: bổ sung return đang mở theo status.
   if (mode === "full") {
-    for (const openStatus of ["REQUESTED", "PROCESSING", "ACCEPTED"] as const) {
-      let pageNo = 1;
-      while (pageNo <= 5) {
-        const listResult = await shopeeGetReturnList(shopId, accessToken, {
-          pageNo,
-          pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE,
-          status: openStatus,
-          updateTimeFrom: now - SHOPEE_CANCEL_RETURN_MAX_WINDOWS * SHOPEE_ORDER_LIST_WINDOW_SEC,
-          updateTimeTo: now,
-        });
-        if (listResult.error) break;
-        const rows = extractShopeeReturnListRows(listResult);
-        for (const row of rows) {
-          const returnSn = String(row?.return_sn || "").trim();
-          if (!returnSn || seen.has(returnSn)) continue;
-          seen.add(returnSn);
-          out.push({
-            returnSn,
-            orderSn: row?.order_sn ? String(row.order_sn) : undefined,
-            status: row?.status ? String(row.status) : openStatus,
-          });
-          if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-        }
-        if (!parseShopeeReturnListMore(listResult) || rows.length === 0) break;
-        if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
-        pageNo++;
-        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
-      }
+    const spanFrom = now - SHOPEE_CANCEL_RETURN_MAX_WINDOWS * SHOPEE_ORDER_LIST_WINDOW_SEC;
+    for (const openStatus of ["REQUESTED", "PROCESSING", "ACCEPTED", "COMPLETED", "CANCELLED"] as const) {
       if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
+      await shopeePaginateReturnListWindow(shopId, accessToken, {
+        timeFrom: spanFrom,
+        timeTo: now,
+        timeField: "update",
+        status: openStatus,
+        seen,
+        out,
+        label: `shop=${shopId} status=${openStatus}`,
+      });
     }
   }
 
+  console.log(`[Shopee Returns] shop=${shopId} mode=${mode}: TỔNG ${out.length} return_sn (unique)`);
   return out;
 }
 
@@ -7333,11 +7414,12 @@ async function syncShopeeCancelReturnsForShop(
         }
 
         const kind = mapShopeeReturnKind(detail);
-        const returnTn = extractTrackingFromReturnPayload(detailResult);
+        const returnTnFromApi = extractTrackingFromReturnPayload(detailResult);
         const returnStatus = String(detail.status || row.status || "").toUpperCase();
 
         // Lấy/merge order detail nếu chưa có trong store
         let existing = orders.find((o: any) => String(o.orderSn) === orderSn);
+        let orderDetailTn = "";
         if (!existing) {
           const { normalized } = await fetchNormalizeShopeeOrderChunk(
             apiShopId,
@@ -7347,6 +7429,10 @@ async function syncShopeeCancelReturnsForShop(
             { enrichTracking: false },
           );
           if (normalized[0]) {
+            orderDetailTn = pickBestTrackingNumber(
+              normalized[0].trackingNumber,
+              normalized[0].tracking_no,
+            );
             const upsert = await persistShopeeOrderChunk(orders, normalized, {
               apiShopId,
               accessToken,
@@ -7355,7 +7441,19 @@ async function syncShopeeCancelReturnsForShop(
             updated += upsert.updated;
             existing = orders.find((o: any) => String(o.orderSn) === orderSn);
           }
+        } else {
+          orderDetailTn = pickBestTrackingNumber(existing.trackingNumber, existing.tracking_no);
         }
+
+        // tracking = returnDetail || orderDetail || existingDb — tuyệt đối không đè null.
+        const bestTn = pickBestTrackingNumber(
+          returnTnFromApi,
+          detail.tracking_number,
+          orderDetailTn,
+          existing?.return_tracking_no,
+          existing?.trackingNumber,
+          existing?.tracking_no,
+        );
 
         const patch: any = {
           orderSn,
@@ -7365,42 +7463,86 @@ async function syncShopeeCancelReturnsForShop(
           return_status: returnStatus,
           return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
           shopee_cancel_return_kind: kind,
-          status: kind === "failed_delivery" ? "return_pending" : "return_pending",
+          status: "return_pending",
           shopee_order_status: existing?.shopee_order_status || "TO_RETURN",
         };
-        if (returnTn) {
-          patch.trackingNumber = returnTn;
-          patch.tracking_no = returnTn;
-          patch.return_tracking_no = returnTn;
+        if (bestTn) {
+          patch.trackingNumber = bestTn;
+          patch.tracking_no = bestTn;
+          patch.return_tracking_no = returnTnFromApi || bestTn;
         }
-        // Đơn hoàn đã hoàn tất trên Shopee vẫn giữ trong tab hủy/hoàn (không đẩy sang completed)
-        if (returnStatus === "COMPLETED" || returnStatus === "ACCEPTED" || returnStatus === "PROCESSING" || returnStatus === "REQUESTED") {
+        if (
+          returnStatus === "COMPLETED" ||
+          returnStatus === "ACCEPTED" ||
+          returnStatus === "PROCESSING" ||
+          returnStatus === "REQUESTED"
+        ) {
           patch.status = "return_pending";
         }
-        // Giữ return_received local nếu user đã quét nhận kho
         if (existing?.local_status === "RETURN_RECEIVED" || existing?.status === "return_received") {
           patch.status = "return_received";
         }
 
+        if (!bestTn) {
+          console.warn(
+            `[Shopee Returns] THIẾU tracking sau get_return_detail — order_sn=${orderSn} return_sn=${row.returnSn} payload.tracking_number=${detail.tracking_number || "(empty)"}`,
+          );
+          console.warn(
+            `[Shopee Returns] RAW detail keys: ${Object.keys(detail).slice(0, 40).join(", ")}`,
+          );
+        } else {
+          console.log(
+            `[Shopee Returns] OK tracking order_sn=${orderSn} return_sn=${row.returnSn} tn=${bestTn} kind=${kind}`,
+          );
+        }
+
         if (existing) {
+          // Không spread tracking rỗng từ patch nếu bestTn trống — giữ DB cũ.
+          if (!bestTn) {
+            delete patch.trackingNumber;
+            delete patch.tracking_no;
+            delete patch.return_tracking_no;
+          }
           preserveExistingTrackingIfIncomingEmpty(patch, existing);
           const merged = mergeShopeeOrderOnSync(existing, { ...existing, ...patch });
-          // Ép phân loại hủy/hoàn từ returns API
           merged.return_sn = patch.return_sn;
           merged.return_status = patch.return_status;
           merged.return_refund_request_type = patch.return_refund_request_type;
           merged.shopee_cancel_return_kind = kind;
           if (patch.status === "return_received") merged.status = "return_received";
           else if (merged.status !== "return_received") merged.status = "return_pending";
-          if (returnTn && !hasUsableShopeeTrackingNumber(merged)) {
-            merged.trackingNumber = returnTn;
-            merged.tracking_no = returnTn;
-            merged.return_tracking_no = returnTn;
+          const finalTn = pickBestTrackingNumber(
+            bestTn,
+            merged.trackingNumber,
+            merged.tracking_no,
+            merged.return_tracking_no,
+            existing.trackingNumber,
+            existing.tracking_no,
+            existing.return_tracking_no,
+          );
+          if (finalTn) {
+            merged.trackingNumber = finalTn;
+            merged.tracking_no = finalTn;
+            merged.return_tracking_no = merged.return_tracking_no || finalTn;
           }
           const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
           if (idx >= 0) {
             orders[idx] = merged;
-            await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, orders[idx], { retries: 2 });
+            // Chỉ gọi enrich logistics khi VẪN thiếu mã — tránh ghi đè return tracking.
+            if (!hasUsableShopeeTrackingNumber(orders[idx])) {
+              await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, orders[idx], {
+                retries: 2,
+              });
+              const after = pickBestTrackingNumber(
+                orders[idx].trackingNumber,
+                orders[idx].return_tracking_no,
+                finalTn,
+              );
+              if (after) {
+                orders[idx].trackingNumber = after;
+                orders[idx].tracking_no = after;
+              }
+            }
           }
           touchedSn.add(orderSn);
           updated++;
@@ -7430,10 +7572,17 @@ async function syncShopeeCancelReturnsForShop(
               : [],
             ...patch,
           };
+          if (bestTn) {
+            stub.trackingNumber = bestTn;
+            stub.tracking_no = bestTn;
+            stub.return_tracking_no = returnTnFromApi || bestTn;
+          }
           orders.unshift(stub);
           touchedSn.add(orderSn);
           added++;
-          await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, stub, { retries: 2 });
+          if (!hasUsableShopeeTrackingNumber(stub)) {
+            await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, stub, { retries: 2 });
+          }
         }
       } catch (oneErr: any) {
         errors.push({
@@ -7475,12 +7624,52 @@ async function syncShopeeCancelReturnsForShop(
       );
       errors.push(...chunkErrors);
       for (const n of normalized) {
+        const existing = orders.find((o: any) => String(o.orderSn) === String(n.orderSn));
+        // Đơn đã gắn return_sn từ Returns API — không ghi đè thành cancelled thuần.
+        if (
+          existing?.return_sn ||
+          existing?.shopee_cancel_return_kind === "refund_return" ||
+          existing?.shopee_cancel_return_kind === "failed_delivery"
+        ) {
+          n.return_sn = existing.return_sn;
+          n.return_status = existing.return_status;
+          n.return_refund_request_type = existing.return_refund_request_type;
+          n.shopee_cancel_return_kind = existing.shopee_cancel_return_kind;
+          n.return_tracking_no = existing.return_tracking_no;
+          const tn = pickBestTrackingNumber(
+            existing.return_tracking_no,
+            existing.trackingNumber,
+            existing.tracking_no,
+            n.trackingNumber,
+            n.tracking_no,
+          );
+          if (tn) {
+            n.trackingNumber = tn;
+            n.tracking_no = tn;
+          }
+          if (existing.status === "return_received") n.status = "return_received";
+          else n.status = "return_pending";
+          continue;
+        }
         const raw = String(n.shopee_order_status || "").toUpperCase();
         if (raw === "CANCELLED" || raw === "IN_CANCEL") {
           n.shopee_cancel_return_kind = n.shopee_cancel_return_kind || "cancelled";
         } else if (raw === "TO_RETURN") {
           n.shopee_cancel_return_kind = n.shopee_cancel_return_kind || "refund_return";
           n.status = n.status === "return_received" ? "return_received" : "return_pending";
+        }
+        if (existing) {
+          const tn = pickBestTrackingNumber(
+            n.trackingNumber,
+            n.tracking_no,
+            existing.trackingNumber,
+            existing.tracking_no,
+            existing.return_tracking_no,
+          );
+          if (tn) {
+            n.trackingNumber = tn;
+            n.tracking_no = tn;
+          }
         }
       }
       if (normalized.length > 0) {
@@ -12875,6 +13064,180 @@ async function startServer() {
       ...report,
       checkedAt: new Date().toISOString(),
       backend: "cpanel-node",
+    });
+  });
+
+  /**
+   * DEBUG ẩn: GET /api/shopee/debug/return-by-order?order_sn=260703PQ2D6RUK
+   * 1) get_return_list (cửa sổ bao phủ 12/07/2026)
+   * 2) get_return_detail
+   * 3) Log + trả JSON đầy đủ (tracking_number chiều hoàn).
+   */
+  app.get("/api/shopee/debug/return-by-order", authMiddleware, async (req, res) => {
+    const orderSn = String(req.query.order_sn || "260703PQ2D6RUK").trim();
+    const tokens = loadShopeeTokens();
+    const shopIds = Object.keys(tokens);
+    const shopId = String(req.query.shop_id || shopIds[0] || "").trim();
+    if (!shopId) {
+      return res.status(400).json({ ok: false, error: "no_shop", message: "Chưa có shop OAuth." });
+    }
+    const accessToken = await getValidShopeeAccessToken(shopId);
+    if (!accessToken) {
+      return res.status(401).json({ ok: false, error: "no_token", shopId });
+    }
+
+    // Bao phủ ngày 12/07/2026 (VN UTC+7): 11/07 17:00 UTC → 13/07 17:00 UTC + cửa rộng hơn.
+    const coverFrom = Math.floor(new Date("2026-07-01T00:00:00+07:00").getTime() / 1000);
+    const coverTo = Math.floor(new Date("2026-07-19T23:59:59+07:00").getTime() / 1000);
+    const windowSec = 15 * 24 * 60 * 60;
+    const steps: any[] = [];
+    let matchedReturnSn = "";
+    const listHits: any[] = [];
+
+    console.log(`[DEBUG Return] ===== order_sn=${orderSn} shop=${shopId} =====`);
+
+    for (const timeField of ["update", "create"] as const) {
+      for (let t = coverFrom; t < coverTo; t += windowSec) {
+        const timeFrom = t;
+        const timeTo = Math.min(t + windowSec, coverTo);
+        let pageNo = 1;
+        while (pageNo <= 30) {
+          const listOpts: Parameters<typeof shopeeGetReturnList>[2] = {
+            pageNo,
+            pageSize: 100,
+          };
+          if (timeField === "update") {
+            listOpts.updateTimeFrom = timeFrom;
+            listOpts.updateTimeTo = timeTo;
+          } else {
+            listOpts.createTimeFrom = timeFrom;
+            listOpts.createTimeTo = timeTo;
+          }
+          const listResult = await shopeeGetReturnList(shopId, accessToken, listOpts);
+          const rows = extractShopeeReturnListRows(listResult);
+          for (const row of rows) {
+            if (String(row?.order_sn || "") === orderSn) {
+              matchedReturnSn = String(row.return_sn || "");
+              listHits.push(row);
+              console.log(
+                `[DEBUG Return] FOUND in list ${timeField} ${timeFrom}-${timeTo} page=${pageNo}:`,
+                JSON.stringify(row),
+              );
+            }
+          }
+          steps.push({
+            step: "get_return_list",
+            timeField,
+            timeFrom,
+            timeTo,
+            pageNo,
+            error: listResult.error || null,
+            rowCount: rows.length,
+            more: parseShopeeReturnListMore(listResult),
+            matched: Boolean(matchedReturnSn),
+          });
+          if (matchedReturnSn) break;
+          if (!parseShopeeReturnListMore(listResult) && rows.length < 100) break;
+          if (rows.length === 0) break;
+          pageNo++;
+          await sleep(400);
+        }
+        if (matchedReturnSn) break;
+        await sleep(300);
+      }
+      if (matchedReturnSn) break;
+    }
+
+    let detailRaw: any = null;
+    let extractedTn = "";
+    if (matchedReturnSn) {
+      detailRaw = await shopeeGetReturnDetail(shopId, accessToken, matchedReturnSn);
+      extractedTn = extractTrackingFromReturnPayload(detailRaw);
+      console.log(`[DEBUG Return] === RAW get_return_detail return_sn=${matchedReturnSn} ===`);
+      console.log(JSON.stringify(detailRaw, null, 2));
+      console.log(`[DEBUG Return] extracted tracking_number = ${extractedTn || "(EMPTY)"}`);
+    } else {
+      console.warn(`[DEBUG Return] KHÔNG tìm thấy return_sn cho order_sn=${orderSn} trong cửa sổ 01–19/07/2026`);
+    }
+
+    // Persist vào DB nếu có mã
+    let persisted = false;
+    if (matchedReturnSn && extractedTn) {
+      try {
+        const orders = loadOrders();
+        const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
+        const detail = detailRaw?.response ?? detailRaw ?? {};
+        const kind = mapShopeeReturnKind(detail);
+        if (idx >= 0) {
+          const existing = orders[idx];
+          const best = pickBestTrackingNumber(
+            extractedTn,
+            existing.trackingNumber,
+            existing.tracking_no,
+            existing.return_tracking_no,
+          );
+          orders[idx] = {
+            ...existing,
+            return_sn: matchedReturnSn,
+            return_status: String(detail.status || ""),
+            return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
+            shopee_cancel_return_kind: kind,
+            status:
+              existing.status === "return_received" || existing.local_status === "RETURN_RECEIVED"
+                ? "return_received"
+                : "return_pending",
+            trackingNumber: best,
+            tracking_no: best,
+            return_tracking_no: extractedTn || best,
+          };
+        } else {
+          orders.unshift({
+            id: `shopee-${orderSn}`,
+            orderSn,
+            channel: "shopee",
+            shopId,
+            totalAmount: Number(detail.refund_amount || 0),
+            revenue: 0,
+            status: "return_pending",
+            shopee_order_status: "TO_RETURN",
+            date: new Date().toISOString(),
+            items: [],
+            return_sn: matchedReturnSn,
+            return_status: String(detail.status || ""),
+            shopee_cancel_return_kind: kind,
+            trackingNumber: extractedTn,
+            tracking_no: extractedTn,
+            return_tracking_no: extractedTn,
+          });
+        }
+        saveOrders(orders);
+        if (isMongoReady()) {
+          const row = orders.find((o: any) => String(o.orderSn) === orderSn);
+          if (row) await bulkUpsertOrdersToStore([row]);
+        }
+        persisted = true;
+      } catch (persistErr: any) {
+        console.error("[DEBUG Return] persist failed:", persistErr?.message || persistErr);
+      }
+    }
+
+    return res.json({
+      ok: Boolean(matchedReturnSn),
+      order_sn: orderSn,
+      shop_id: shopId,
+      return_sn: matchedReturnSn || null,
+      tracking_number_extracted: extractedTn || null,
+      expected_tracking_hint: "SPXVN064782062347",
+      tracking_match: extractedTn === "SPXVN064782062347",
+      list_hits: listHits,
+      steps,
+      return_detail_raw: detailRaw,
+      persisted,
+      message: matchedReturnSn
+        ? extractedTn
+          ? `OK — lấy được tracking_number=${extractedTn}`
+          : "Tìm thấy return_sn nhưng tracking_number rỗng — xem return_detail_raw"
+        : "Không tìm thấy return trong get_return_list (kiểm tra token/shop/time window)",
     });
   });
 
