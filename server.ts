@@ -1435,8 +1435,8 @@ function parseShopeeOrderListPagination(result: any): { more: boolean; nextCurso
 const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 /** 2 cửa sổ × 15 ngày = quét đủ 30 ngày (giới hạn Shopee mỗi request ≤ 15 ngày). */
 const SHOPEE_ORDER_LIST_MAX_WINDOWS = 2;
-/** Incremental sync mặc định: quét lùi 24 giờ theo update_time (cron + nút bấm). */
-const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
+/** Quick Sync / incremental: quét lùi 6 giờ theo update_time (nút Cập nhật đơn hàng). Full Sync không dùng hằng này. */
+const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 6 * 60 * 60;
 /** Full sync hủy/hoàn: quét tối đa 120 ngày (8 × 15 ngày) để khớp Seller Center. */
 const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 8;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
@@ -1958,7 +1958,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
 }
 
 // Paginate get_order_list without status filter — theo update_time.
-// mode=incremental (mặc định): 1 cửa sổ 24 giờ; mode=full: 2 × 15 ngày (= 30 ngày).
+// mode=incremental (Quick Sync): 1 cửa sổ 6 giờ; mode=full: 2 × 15 ngày (= 30 ngày).
 async function shopeeFetchAllOrderSns(
   shopId: string,
   accessToken: string,
@@ -1984,7 +1984,7 @@ async function shopeeFetchAllOrderSns(
     let windowCount = 0;
 
     console.log(
-      `[Orders Pull] shop_id=${shopId} mode=${mode}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 24 giờ" : ", ~15 ngày"})`,
+      `[Orders Pull] shop_id=${shopId} mode=${mode}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 6 giờ" : ", ~15 ngày"})`,
     );
 
     while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {

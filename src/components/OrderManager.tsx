@@ -1629,17 +1629,17 @@ export default function OrderManager({
       status: 'success',
       message: isFull
         ? 'Đang Full Sync đơn hàng (quét ~30 ngày update_time) — chạy ngầm.'
-        : 'Đang đồng bộ đơn hàng (quét 24 giờ update_time) — chạy ngầm.',
+        : 'Đang đồng bộ đơn hàng (quét 6 giờ update_time) — chạy ngầm.',
     });
 
-    showToast(isFull ? 'Đang Full Sync ngầm...' : 'Đang đồng bộ ngầm (1 ngày)...');
+    showToast(isFull ? 'Đang Full Sync ngầm...' : 'Đang đồng bộ ngầm (6 giờ)...');
 
     try {
       await onRefreshOrders?.({ type });
       showToast(
         isFull
           ? 'Full Sync hoàn tất — danh sách đơn đã được làm mới.'
-          : 'Đồng bộ 1 ngày hoàn tất — danh sách đơn đã được làm mới.',
+          : 'Đồng bộ 6 giờ hoàn tất — danh sách đơn đã được làm mới.',
       );
     } catch (err: any) {
       showToast(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);
@@ -2670,7 +2670,7 @@ export default function OrderManager({
             onClick={() => void handleSyncOrders('incremental')}
             disabled={isSyncing || ordersLoading}
             className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/15 hover:shadow-blue-500/30 transition-all flex items-center gap-2 cursor-pointer"
-            title="Đồng bộ 1 ngày: đơn cập nhật trong 24 giờ gần nhất"
+            title="Quick Sync: đơn cập nhật trong 6 giờ gần nhất"
           >
             <RefreshCw className={`w-4 h-4 ${(isSyncing || ordersLoading) ? 'animate-spin' : ''}`} />
             <span>Cập nhật đơn hàng</span>
@@ -2697,21 +2697,21 @@ export default function OrderManager({
         </div>
       </div>
 
-      {/* Mobile: nút đồng bộ 1 ngày (desktop dùng nút ở top bar) */}
+      {/* Mobile: nút Quick Sync 6 giờ (desktop dùng nút ở top bar) */}
       <div className="hidden max-md:flex items-center justify-between gap-2 px-0.5">
         <p className="text-[11px] font-semibold text-slate-500 truncate">
-          {isSyncing || ordersLoading ? 'Đang đồng bộ ngầm...' : 'Đồng bộ đơn Shopee (24 giờ)'}
+          {isSyncing || ordersLoading ? 'Đang đồng bộ ngầm...' : 'Đồng bộ đơn Shopee (6 giờ)'}
         </p>
         <button
           type="button"
           onClick={() => void handleSyncOrders('incremental')}
           disabled={isSyncing || ordersLoading}
           className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2.5 min-h-11 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer"
-          title="Cập nhật đơn hàng — quét 24 giờ"
-          aria-label="Cập nhật đơn hàng 1 ngày"
+          title="Cập nhật đơn hàng — quét 6 giờ"
+          aria-label="Cập nhật đơn hàng 6 giờ"
         >
           <RefreshCw className={`w-4 h-4 ${(isSyncing || ordersLoading) ? 'animate-spin' : ''}`} />
-          <span>Cập nhật 1 ngày</span>
+          <span>Cập nhật 6 giờ</span>
         </button>
       </div>
 
