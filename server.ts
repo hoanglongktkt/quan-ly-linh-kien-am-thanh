@@ -14,6 +14,8 @@ import {
   loadProductsFromStore,
   loadProductByIdFromStore,
   loadProductsByIdsFromStore,
+  searchProductsFromStore,
+  applyImportStockAndPriceToStore,
   saveProductsToStoreAsync,
   loadChannelListingsFromStore,
   saveChannelListingsToStoreAsync,
@@ -12135,6 +12137,28 @@ async function startServer() {
     }
   });
 
+  /** Tìm SP kho gốc cho Tab Nhập hàng — query Mongo trực tiếp (không phụ thuộc pagination 50). */
+  app.get("/api/products/search", authMiddleware, async (req, res) => {
+    try {
+      const q = String(req.query?.q ?? req.query?.query ?? "").trim();
+      const limit = Number(req.query?.limit ?? 40);
+      // warehouse_id: kho hệ thống = Mongo products — bỏ lọc kho cũ hardcoded
+      const warehouseId = String(req.query?.warehouse_id ?? req.query?.warehouseId ?? "default").trim() || "default";
+      const products = await searchProductsFromStore(q, limit);
+      return res.json({
+        success: true,
+        products,
+        total: products.length,
+        warehouse_id: warehouseId,
+        source: "mongodb",
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[Products API] GET /api/products/search failed:", err);
+      return res.status(500).json({ success: false, error: message || "search_failed", products: [] });
+    }
+  });
+
   // Đồng bộ nhanh tồn/giá lên Shopee — đăng ký SỚM (trước mọi route :id) để tránh 404.
   const handleProductSyncShopee = async (req: any, res: any) => {
     console.log("Bắt đầu đồng bộ Shopee", req.body);
@@ -12932,15 +12956,45 @@ async function startServer() {
     return res.json({ success: true, cleared: true, suppliers: [] });
   });
 
-  // --- Imports API (data/imports.json) ---
+  // --- Imports API (data/imports.json + cập nhật tồn/giá Mongo atomic) ---
   app.get("/api/imports", authMiddleware, async (_req, res) => {
     return res.json(loadImports());
   });
 
+  app.get("/api/imports/history/:productId", authMiddleware, async (req, res) => {
+    try {
+      const productId = String(req.params.productId || "").trim();
+      if (!productId) return res.status(400).json({ success: false, error: "missing_product_id" });
+      const product = await loadProductById(productId);
+      const sku = String(product?.sku || "").trim();
+      const imports = loadImports();
+      const history = imports
+        .filter(
+          (imp: any) =>
+            String(imp.productId) === productId || (sku && String(imp.productSku || "") === sku),
+        )
+        .sort((a: any, b: any) => {
+          const tb = new Date(b.date || b.createdAt || 0).getTime();
+          const ta = new Date(a.date || a.createdAt || 0).getTime();
+          if (tb !== ta) return tb - ta;
+          return String(b.id || "").localeCompare(String(a.id || ""));
+        });
+      return res.json({
+        success: true,
+        productId,
+        productSku: sku || null,
+        history,
+        total: history.length,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return res.status(500).json({ success: false, error: message });
+    }
+  });
+
   app.get("/api/imports/product-context/:productId", authMiddleware, async (req, res) => {
     const productId = String(req.params.productId);
-    const products = await loadProducts();
-    const product = products.find((p: any) => p.id === productId);
+    const product = (await loadProductById(productId)) || (await loadProducts()).find((p: any) => p.id === productId);
     if (!product) {
       return res.status(404).json({ error: "product_not_found" });
     }
@@ -12970,35 +13024,57 @@ async function startServer() {
 
   app.post("/api/imports", authMiddleware, async (req, res) => {
     const body = req.body || {};
-    if (!body.supplierId || !body.productId || !body.quantity || !body.newImportPrice) {
-      return res.status(400).json({ error: "import_fields_required" });
+    if (!body.supplierId || !body.productId || !body.quantity || body.newImportPrice == null) {
+      return res.status(400).json({ success: false, error: "import_fields_required" });
     }
-    const imports = loadImports();
+
+    const productId = String(body.productId);
     const qty = Math.max(1, Math.round(Number(body.quantity)));
     const unitPrice = Math.max(0, Math.round(Number(body.newImportPrice)));
     const importCost = Math.max(0, Math.round(Number(body.importCost) || 0));
     const computedTotal = qty * unitPrice + importCost;
+    const warehouseId = String(body.warehouseId || body.warehouse_id || "default").trim() || "default";
 
-    const entry = {
-      id: body.id || `imp-${Date.now()}`,
-      supplierId: String(body.supplierId),
-      supplierName: String(body.supplierName || ""),
-      date: body.date || new Date().toISOString().split("T")[0],
-      productId: String(body.productId),
-      productTitle: String(body.productTitle || ""),
-      productSku: String(body.productSku || ""),
-      quantity: qty,
-      oldImportPrice: Math.max(0, Math.round(Number(body.oldImportPrice) || 0)),
-      newImportPrice: unitPrice,
-      importCost,
-      totalAmount: Math.max(0, Math.round(Number(body.totalAmount) || computedTotal)),
-      paidAmount: Math.max(0, Math.round(Number(body.paidAmount) || 0)),
-      status: body.status || "unpaid",
-      notes: body.notes || undefined,
-    };
-    imports.unshift(entry);
-    saveImports(imports);
-    return res.status(201).json({ import: entry, imports });
+    try {
+      // Atomic (1 lệnh Mongo): cộng tồn + đè importPrice
+      const updatedProduct = await applyImportStockAndPriceToStore(productId, qty, unitPrice);
+
+      // INSERT lịch sử nhập — chỉ sau khi cập nhật kho thành công
+      const imports = loadImports();
+      const entry = {
+        id: body.id || `imp-${Date.now()}`,
+        supplierId: String(body.supplierId),
+        supplierName: String(body.supplierName || ""),
+        date: body.date || new Date().toISOString().split("T")[0],
+        createdAt: new Date().toISOString(),
+        productId,
+        productTitle: String(body.productTitle || updatedProduct?.title || ""),
+        productSku: String(body.productSku || updatedProduct?.sku || ""),
+        quantity: qty,
+        oldImportPrice: Math.max(0, Math.round(Number(body.oldImportPrice) || 0)),
+        newImportPrice: unitPrice,
+        importCost,
+        totalAmount: Math.max(0, Math.round(Number(body.totalAmount) || computedTotal)),
+        paidAmount: Math.max(0, Math.round(Number(body.paidAmount) || 0)),
+        status: body.status || "unpaid",
+        notes: body.notes || undefined,
+        warehouseId,
+      };
+      imports.unshift(entry);
+      saveImports(imports);
+
+      return res.status(201).json({
+        success: true,
+        import: entry,
+        imports,
+        product: updatedProduct,
+        warehouseId,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[Imports] POST /api/imports failed:", err);
+      return res.status(500).json({ success: false, error: message || "import_failed" });
+    }
   });
 
   app.post("/api/imports/clear-all", authMiddleware, async (_req, res) => {

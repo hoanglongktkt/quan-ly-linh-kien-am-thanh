@@ -291,4 +291,6 @@ export interface ImportTransaction {
   paidAmount: number;
   status: 'fully_paid' | 'partial' | 'unpaid';
   notes?: string;
+  warehouseId?: string;
+  createdAt?: string;
 }

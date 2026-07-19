@@ -1143,42 +1143,67 @@ export default function App() {
 
   const handleAddImport = async (transaction: ImportTransaction) => {
     const token = localStorage.getItem('admin_token');
+    let savedProduct: Product | null = null;
     if (token) {
       try {
         const response = await fetch('/api/imports', {
           method: 'POST',
           headers: apiAuthHeaders(),
-          body: JSON.stringify(transaction),
+          body: JSON.stringify({ ...transaction, warehouseId: transaction.warehouseId || 'default' }),
         });
-        if (response.ok) {
-          const data = await response.json();
-          if (Array.isArray(data.imports)) {
-            setImports(data.imports);
-          } else {
-            setImports((prev) => [transaction, ...prev]);
-          }
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || 'Lưu phiếu nhập thất bại');
+        }
+        if (Array.isArray(data.imports)) {
+          setImports(data.imports);
+        } else {
+          setImports((prev) => [transaction, ...prev]);
+        }
+        if (data.product && data.product.id) {
+          savedProduct = data.product as Product;
         }
       } catch (err) {
         console.error('Save import error:', err);
-        setImports((prev) => [transaction, ...prev]);
+        alert(`Không lưu được phiếu nhập: ${err instanceof Error ? err.message : String(err)}`);
+        return;
       }
     } else {
       setImports((prev) => [transaction, ...prev]);
     }
 
-    setProducts(prevProducts => prevProducts.map(p => {
-      if (p.id === transaction.productId) {
-        return {
-          ...p,
-          stock: p.stock + transaction.quantity,
-          importPrice: transaction.newImportPrice,
-          status: 'active' as const
-        };
-      }
-      return p;
-    }));
+    setProducts((prevProducts) =>
+      prevProducts.map((p) => {
+        if (savedProduct && p.id === savedProduct.id) {
+          return { ...p, ...savedProduct };
+        }
+        if (p.id === transaction.productId) {
+          return {
+            ...p,
+            stock: (Number(p.stock) || 0) + transaction.quantity,
+            importPrice: transaction.newImportPrice,
+            status: 'active' as const,
+          };
+        }
+        const children = getProductChildren(p);
+        if (!children.some((c) => c.id === transaction.productId)) return p;
+        const nextChildren = children.map((c) =>
+          c.id === transaction.productId
+            ? {
+                ...c,
+                ...(savedProduct && savedProduct.id === c.id ? savedProduct : {}),
+                stock: (Number(c.stock) || 0) + transaction.quantity,
+                importPrice: transaction.newImportPrice,
+                status: 'active' as const,
+              }
+            : c
+        );
+        const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
+        return { ...p, children: nextChildren, stock: totalStock };
+      })
+    );
 
-    const supplier = suppliers.find(s => s.id === transaction.supplierId);
+    const supplier = suppliers.find((s) => s.id === transaction.supplierId);
     if (supplier) {
       await handleUpdateSupplier({
         ...supplier,
@@ -1194,7 +1219,7 @@ export default function App() {
       channel: 'all',
       type: 'stock_sync',
       status: 'success',
-      message: `Đã nhập sỉ thành công ${transaction.quantity} cái [${transaction.productTitle}] từ ${transaction.supplierName}.`
+      message: `Đã nhập sỉ thành công ${transaction.quantity} cái [${transaction.productTitle}] từ ${transaction.supplierName}.`,
     });
   };
 

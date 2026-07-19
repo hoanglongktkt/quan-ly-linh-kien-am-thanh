@@ -369,6 +369,164 @@ export async function loadProductsByIdsFromStore(
   return docsToProducts(docs);
 }
 
+/**
+ * Tìm sản phẩm kho gốc theo SKU/tên — 1 query Mongo (không N+1).
+ * Không lọc warehouse_id cứng (kho hệ thống = collection products Mongo).
+ */
+export async function searchProductsFromStore(
+  query: string,
+  limit = 40,
+): Promise<any[]> {
+  requireMongo();
+  const q = String(query || "").trim();
+  const safeLimit = Math.min(80, Math.max(1, Math.floor(Number(limit) || 40)));
+
+  let docs: Array<{ data?: any }> = [];
+  if (!q) {
+    docs = await ProductModel.find({}).sort({ _id: 1 }).limit(safeLimit).lean();
+  } else {
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rx = new RegExp(escaped, "i");
+    docs = await ProductModel.find({
+      $or: [
+        { sku: rx },
+        { "data.sku": rx },
+        { "data.title": rx },
+        { "data.modelName": rx },
+        { "data.barcode": rx },
+        { "data.children.sku": rx },
+        { "data.children.title": rx },
+        { "data.children.modelName": rx },
+        { "data.children_models.sku": rx },
+        { "data.children_models.title": rx },
+      ],
+    })
+      .limit(safeLimit)
+      .lean();
+  }
+
+  const parents = docsToProducts(docs);
+  const flat: any[] = [];
+  const seen = new Set<string>();
+  const qLower = q.toLowerCase();
+
+  const pushRow = (row: any) => {
+    if (!row || typeof row !== "object") return;
+    const id = String(row.id || "").trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    flat.push(row);
+  };
+
+  const matchesQuery = (row: any, extra = ""): boolean => {
+    if (!q) return true;
+    const hay = `${row?.sku || ""} ${row?.title || ""} ${row?.modelName || ""} ${(row?.tierLabels || []).join(" ")} ${extra}`.toLowerCase();
+    return hay.includes(qLower);
+  };
+
+  for (const p of parents) {
+    const children = Array.isArray(p?.children) && p.children.length
+      ? p.children
+      : Array.isArray(p?.children_models)
+        ? p.children_models
+        : [];
+    if (children.length > 0) {
+      let childMatched = 0;
+      for (const c of children) {
+        if (!matchesQuery(c, String(p.title || ""))) continue;
+        pushRow({
+          ...c,
+          title: c.title || p.title,
+          imageUrl: c.imageUrl || p.imageUrl,
+          avatarUrl: c.avatarUrl || p.avatarUrl,
+        });
+        childMatched += 1;
+      }
+      if (childMatched === 0 && matchesQuery(p)) pushRow(p);
+    } else if (matchesQuery(p)) {
+      pushRow(p);
+    }
+  }
+
+  return flat.slice(0, safeLimit);
+}
+
+/**
+ * Cộng tồn kho + ghi đè importPrice bằng 1 lần findByIdAndUpdate (hoặc cập nhật child trong parent).
+ * Trả về sản phẩm đã cập nhật.
+ */
+export async function applyImportStockAndPriceToStore(
+  productId: string,
+  quantityDelta: number,
+  importPrice: number,
+): Promise<any> {
+  requireMongo();
+  const id = String(productId || "").trim();
+  if (!id) throw new Error("Thiếu productId");
+  const qty = Math.max(0, Math.round(Number(quantityDelta) || 0));
+  const price = Math.max(0, Math.round(Number(importPrice) || 0));
+
+  // 1) Document top-level
+  const direct = await ProductModel.findById(id).lean();
+  if (direct?.data && typeof direct.data === "object") {
+    const before = direct.data;
+    const nextStock = Math.max(0, Math.round(Number(before.stock) || 0) + qty);
+    const merged = {
+      ...before,
+      stock: nextStock,
+      importPrice: price,
+      status: nextStock <= 0 && before.status !== "draft" ? "out_of_stock" : before.status === "out_of_stock" ? "active" : before.status,
+      lastSynced: new Date().toISOString(),
+    };
+    await ProductModel.findByIdAndUpdate(
+      id,
+      { $set: { data: merged, sku: merged.sku != null ? String(merged.sku) : null } },
+      { new: true },
+    );
+    return merged;
+  }
+
+  // 2) Child trong parent — 1 query tìm parent chứa child
+  const parentDoc = await ProductModel.findOne({
+    $or: [{ "data.children.id": id }, { "data.children_models.id": id }],
+  }).lean();
+  if (!parentDoc?.data || typeof parentDoc.data !== "object") {
+    throw new Error(`Không tìm thấy sản phẩm id=${id} trong kho Mongo`);
+  }
+
+  const parent = { ...parentDoc.data };
+  const childKey = Array.isArray(parent.children) && parent.children.some((c: any) => String(c?.id) === id)
+    ? "children"
+    : "children_models";
+  const children = Array.isArray(parent[childKey]) ? [...parent[childKey]] : [];
+  const idx = children.findIndex((c: any) => String(c?.id || "").trim() === id);
+  if (idx < 0) throw new Error(`Không tìm thấy biến thể id=${id}`);
+
+  const beforeChild = children[idx];
+  const nextStock = Math.max(0, Math.round(Number(beforeChild.stock) || 0) + qty);
+  const mergedChild = {
+    ...beforeChild,
+    stock: nextStock,
+    importPrice: price,
+    status: nextStock <= 0 && beforeChild.status !== "draft" ? "out_of_stock" : beforeChild.status === "out_of_stock" ? "active" : beforeChild.status,
+    lastSynced: new Date().toISOString(),
+  };
+  children[idx] = mergedChild;
+  const totalStock = children.reduce((s: number, c: any) => s + (Math.max(0, Math.round(Number(c.stock) || 0))), 0);
+  const mergedParent = {
+    ...parent,
+    [childKey]: children,
+    stock: totalStock,
+    lastSynced: new Date().toISOString(),
+  };
+  await ProductModel.findByIdAndUpdate(
+    parentDoc._id,
+    { $set: { data: mergedParent, sku: mergedParent.sku != null ? String(mergedParent.sku) : null } },
+    { new: true },
+  );
+  return mergedChild;
+}
+
 /** Đọc channel_listings TRỰC TIẾP từ MongoDB — Model.find({}) */
 export async function loadChannelListingsFromStore(): Promise<any[]> {
   requireMongo();
