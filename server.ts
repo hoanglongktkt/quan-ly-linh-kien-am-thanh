@@ -12139,26 +12139,76 @@ async function startServer() {
 
   /** Tìm SP kho gốc cho Tab Nhập hàng — query Mongo find() trả mảng (SKU OR tên). */
   app.get("/api/products/search", authMiddleware, async (req, res) => {
+    const q = String(req.query?.q ?? req.query?.query ?? "").trim();
+    const limit = Number(req.query?.limit ?? 40);
+    const mapRow = (p: any) => ({
+      ...p,
+      id: p.id,
+      sku: p.sku || "",
+      name: p.name || p.title || "",
+      title: p.title || p.name || "",
+      image: p.image || p.avatarUrl || p.imageUrl || "",
+      current_stock: p.current_stock ?? p.stock ?? 0,
+      stock: p.stock ?? p.current_stock ?? 0,
+      last_import_price: p.last_import_price ?? p.importPrice ?? 0,
+      importPrice: p.importPrice ?? p.last_import_price ?? 0,
+    });
+
     try {
-      const q = String(req.query?.q ?? req.query?.query ?? "").trim();
-      const limit = Number(req.query?.limit ?? 40);
-      const raw = await searchProductsFromStore(q, limit);
-      const products = raw.map((p: any) => ({
-        ...p,
-        id: p.id,
-        sku: p.sku || "",
-        name: p.name || p.title || "",
-        title: p.title || p.name || "",
-        image: p.image || p.avatarUrl || p.imageUrl || "",
-        current_stock: p.current_stock ?? p.stock ?? 0,
-        stock: p.stock ?? p.current_stock ?? 0,
-        last_import_price: p.last_import_price ?? p.importPrice ?? 0,
-        importPrice: p.importPrice ?? p.last_import_price ?? 0,
-      }));
+      let raw: any[] = [];
+      let source = "mongodb";
+      try {
+        raw = await searchProductsFromStore(q, limit);
+      } catch (mongoErr) {
+        console.warn("[Products API] searchProductsFromStore failed, fallback loadProducts:", mongoErr);
+        const all = await loadProducts();
+        const qLower = q.toLowerCase();
+        const flat: any[] = [];
+        const seen = new Set<string>();
+        const push = (row: any) => {
+          const id = String(row?.id || "").trim();
+          if (!id || seen.has(id)) return;
+          seen.add(id);
+          flat.push(row);
+        };
+        const match = (row: any, extra = "") => {
+          if (!q) return true;
+          const hay = `${row?.sku || ""} ${row?.title || ""} ${row?.name || ""} ${row?.modelName || ""} ${extra}`.toLowerCase();
+          return hay.includes(qLower);
+        };
+        for (const p of Array.isArray(all) ? all : []) {
+          const children = Array.isArray(p?.children) && p.children.length
+            ? p.children
+            : Array.isArray(p?.children_models)
+              ? p.children_models
+              : [];
+          if (children.length > 0) {
+            let n = 0;
+            for (const c of children) {
+              if (!match(c, `${p.title || ""} ${p.sku || ""}`)) continue;
+              push({
+                ...c,
+                title: c.title || p.title,
+                imageUrl: c.imageUrl || p.imageUrl,
+                avatarUrl: c.avatarUrl || p.avatarUrl,
+              });
+              n += 1;
+            }
+            if (n === 0 && match(p)) push(p);
+          } else if (match(p)) {
+            push(p);
+          }
+        }
+        raw = flat.slice(0, Math.min(100, Math.max(1, Math.floor(limit) || 40)));
+        source = "products_memory_fallback";
+      }
+
+      const products = raw.map(mapRow);
       console.log("[Products API] /api/products/search", {
         q,
         limit,
         total: products.length,
+        source,
         sample: products.slice(0, 5).map((p: any) => ({
           id: p.id,
           sku: p.sku,
@@ -12171,7 +12221,7 @@ async function startServer() {
         success: true,
         products,
         total: products.length,
-        source: "mongodb",
+        source,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

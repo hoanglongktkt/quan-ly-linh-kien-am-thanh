@@ -409,39 +409,30 @@ export async function searchProductsFromStore(
     docs = await ProductModel.find({}).sort({ _id: 1 }).limit(parentFetchLimit).lean();
   } else {
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const rx = new RegExp(escaped, "i");
-    // Tách query SKU và Tên — gộp OR trong từng nhóm, ưu tiên kết quả SKU trước
-    const skuFilter = {
+    // LIKE không phân biệt hoa thường: (sku OR name OR barcode OR children...)
+    const like = { $regex: escaped, $options: "i" as const };
+    const filter = {
       $or: [
-        { sku: rx },
-        { "data.sku": rx },
-        { "data.barcode": rx },
-        { "data.children.sku": rx },
-        { "data.children.barcode": rx },
-        { "data.children_models.sku": rx },
-        { "data.children_models.barcode": rx },
+        { sku: like },
+        { "data.sku": like },
+        { "data.barcode": like },
+        { "data.title": like },
+        { "data.modelName": like },
+        { "data.children.sku": like },
+        { "data.children.barcode": like },
+        { "data.children.title": like },
+        { "data.children.modelName": like },
+        { "data.children_models.sku": like },
+        { "data.children_models.barcode": like },
+        { "data.children_models.title": like },
       ],
     };
-    const nameFilter = {
-      $or: [
-        { "data.title": rx },
-        { "data.modelName": rx },
-        { "data.children.title": rx },
-        { "data.children.modelName": rx },
-        { "data.children_models.title": rx },
-      ],
-    };
-    const [skuDocs, nameDocs] = await Promise.all([
-      ProductModel.find(skuFilter).limit(parentFetchLimit).lean(),
-      ProductModel.find(nameFilter).limit(parentFetchLimit).lean(),
-    ]);
-    const seenDoc = new Set<string>();
-    for (const d of [...skuDocs, ...nameDocs]) {
-      const key = String(d?._id ?? "");
-      if (!key || seenDoc.has(key)) continue;
-      seenDoc.add(key);
-      docs.push(d);
-    }
+    docs = await ProductModel.find(filter).limit(parentFetchLimit).lean();
+    console.log("[MongoSearch] products query", {
+      q,
+      parentHits: docs.length,
+      sampleSkus: docs.slice(0, 5).map((d) => d?.sku || d?.data?.sku),
+    });
   }
 
   const parents = docsToProducts(docs);

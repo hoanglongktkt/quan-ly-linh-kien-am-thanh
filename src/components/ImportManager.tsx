@@ -8,6 +8,7 @@ import ImportProductSearchSelect, {
   ImportProductSearchSelectHandle,
 } from './ImportProductSearchSelect';
 import ImportSupplierSelect, { ImportSupplierSelectHandle } from './ImportSupplierSelect';
+import CurrencyInput from './CurrencyInput';
 import {
   Plus,
   Search,
@@ -26,6 +27,7 @@ import {
   X,
   Trash2,
   Package,
+  CircleDollarSign,
 } from 'lucide-react';
 
 function PriceChangeBadge({
@@ -593,7 +595,6 @@ export default function ImportManager({
               </label>
               <ImportProductSearchSelect
                 ref={productSearchRef}
-                products={products}
                 excludeIds={selectedProducts.map((l) => l.productId)}
                 onSelect={(p) => void addProductToTable(p)}
               />
@@ -606,17 +607,17 @@ export default function ImportManager({
               </label>
               <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse min-w-[720px]">
+                  <table className="w-full text-left border-collapse min-w-[780px]">
                     <thead>
                       <tr className="bg-slate-50 border-b border-gray-200 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
                         <th className="px-3 py-3 w-12 text-center">STT</th>
                         <th className="px-3 py-3 w-14">Ảnh</th>
                         <th className="px-3 py-3">Tên sản phẩm</th>
-                        <th className="px-3 py-3 w-28 text-center">Tồn</th>
-                        <th className="px-3 py-3 w-32 text-center">SL nhập</th>
-                        <th className="px-3 py-3 w-44 text-right">Đơn giá</th>
+                        <th className="px-3 py-3 w-20 text-center">Tồn</th>
+                        <th className="px-3 py-3 w-28 text-center">SL nhập</th>
+                        <th className="px-3 py-3 w-52 text-right">Đơn giá</th>
                         <th className="px-3 py-3 w-36 text-right">Thành tiền</th>
-                        <th className="px-3 py-3 w-14 text-center" />
+                        <th className="px-3 py-3 w-12 text-center" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 text-sm">
@@ -633,8 +634,8 @@ export default function ImportManager({
                           const preview = lineHistoryPreview(line.productId);
                           return (
                             <tr key={line.productId} className="hover:bg-slate-50/60">
-                              <td className="px-3 py-3 text-center text-gray-400 font-mono text-xs">{idx + 1}</td>
-                              <td className="px-3 py-3">
+                              <td className="px-3 py-2.5 text-center text-gray-400 font-mono text-xs align-middle">{idx + 1}</td>
+                              <td className="px-3 py-2.5 align-middle">
                                 {line.image ? (
                                   <img
                                     src={line.image}
@@ -648,28 +649,26 @@ export default function ImportManager({
                                   </div>
                                 )}
                               </td>
-                              <td className="px-3 py-3 min-w-0">
+                              <td className="px-3 py-2.5 min-w-0 align-middle">
                                 <p className="font-semibold text-gray-900 line-clamp-2 leading-snug">{line.title || '—'}</p>
                                 <p className="text-[11px] font-mono text-gray-400 mt-0.5">{line.sku || '—'}</p>
                               </td>
-                              <td className="px-3 py-3 text-center font-mono text-xs text-gray-500">{line.currentStock}</td>
-                              <td className="px-3 py-3">
+                              <td className="px-3 py-2.5 text-center font-mono text-xs text-gray-500 align-middle">{line.currentStock}</td>
+                              <td className="px-3 py-2.5 align-middle">
                                 <input
                                   type="number"
                                   min={1}
                                   value={line.quantity}
                                   onChange={(e) => updateLine(line.productId, { quantity: Number(e.target.value) })}
-                                  className="w-full px-2 py-2 text-center font-mono font-bold text-sm rounded-lg border border-gray-200 outline-none focus:border-indigo-400"
+                                  className="w-full h-10 px-2 text-center font-mono font-bold text-sm rounded-lg border border-gray-200 outline-none focus:border-indigo-400"
                                 />
                               </td>
-                              <td className="px-3 py-3">
-                                <div className="relative flex items-center gap-1 justify-end">
-                                  <input
-                                    type="number"
-                                    min={0}
+                              <td className="px-3 py-2.5 align-middle">
+                                <div className="relative flex items-center gap-1.5 justify-end">
+                                  <CurrencyInput
                                     value={line.unitPrice}
-                                    onChange={(e) => updateLine(line.productId, { unitPrice: Number(e.target.value) })}
-                                    className="w-full min-w-[100px] px-2 py-2 text-right font-mono font-bold text-sm text-indigo-700 rounded-lg border border-gray-200 outline-none focus:border-indigo-400"
+                                    onChange={(v) => updateLine(line.productId, { unitPrice: v })}
+                                    className="w-[130px] h-10 px-2 text-right font-mono font-bold text-sm text-indigo-700 rounded-lg border border-gray-200 outline-none focus:border-indigo-400"
                                   />
                                   <button
                                     type="button"
@@ -678,16 +677,18 @@ export default function ImportManager({
                                       e.stopPropagation();
                                       setPriceHistoryOpenId((id) => (id === line.productId ? null : line.productId));
                                     }}
-                                    className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 shrink-0"
+                                    className="h-10 w-10 inline-flex items-center justify-center rounded-lg border border-indigo-100 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 shrink-0"
                                   >
-                                    <History className="w-3.5 h-3.5" />
+                                    <CircleDollarSign className="w-4 h-4" />
                                   </button>
                                   {priceHistoryOpenId === line.productId && (
                                     <div
                                       className="absolute right-0 top-full mt-1 z-40 w-64 bg-white border border-gray-200 rounded-xl shadow-xl p-3 text-left"
                                       onClick={(e) => e.stopPropagation()}
                                     >
-                                      <p className="text-[10px] font-bold uppercase text-gray-400 mb-2">Lịch sử giá nhập</p>
+                                      <p className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-1">
+                                        <History className="w-3 h-3" /> Lịch sử giá nhập
+                                      </p>
                                       <p className="text-xs text-gray-500 mb-2">
                                         Giá cũ:{' '}
                                         <span className="font-mono font-bold text-gray-800">
@@ -726,14 +727,14 @@ export default function ImportManager({
                                   </div>
                                 )}
                               </td>
-                              <td className="px-3 py-3 text-right font-mono font-bold text-slate-800">
+                              <td className="px-3 py-2.5 text-right font-mono font-bold text-slate-800 align-middle whitespace-nowrap">
                                 {lineTotal.toLocaleString('vi-VN')} đ
                               </td>
-                              <td className="px-3 py-3 text-center">
+                              <td className="px-3 py-2.5 text-center align-middle">
                                 <button
                                   type="button"
                                   onClick={() => removeLine(line.productId)}
-                                  className="p-2 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50"
+                                  className="h-10 w-10 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50"
                                   title="Xóa dòng"
                                 >
                                   <Trash2 className="w-4 h-4" />
@@ -751,44 +752,43 @@ export default function ImportManager({
 
             {/* Block 4: Tổng kết */}
             <section className="border-t border-gray-100 pt-5 space-y-4">
-              <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-5">
-                <div className="flex flex-wrap gap-4 items-end">
-                  <div className="space-y-1 w-44">
-                    <label className="text-xs font-semibold text-gray-600 flex items-center gap-1">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-gray-600 whitespace-nowrap flex items-center gap-1 w-28 shrink-0">
                       <Truck className="w-3.5 h-3.5 text-gray-400" /> Chi phí khác
                     </label>
-                    <input
-                      type="number"
-                      min={0}
+                    <CurrencyInput
                       value={importCost}
-                      onChange={(e) => {
-                        const cost = Math.max(0, Number(e.target.value) || 0);
+                      onChange={(cost) => {
                         setImportCost(cost);
                         syncPaidToTotal(goodsTotal + cost);
                       }}
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 font-mono font-bold text-amber-800 text-sm outline-none focus:border-amber-300"
+                      className="w-40 h-10 px-3 rounded-lg border border-gray-200 font-mono font-bold text-amber-800 text-sm outline-none focus:border-amber-300"
                     />
                   </div>
-                  <div className="space-y-1 w-48">
-                    <label className="text-xs font-semibold text-gray-600">Số tiền đã trả</label>
-                    <input
-                      type="number"
-                      min={0}
-                      max={totalCost}
-                      value={paidAmount}
-                      onChange={(e) => setPaidAmount(Math.min(totalCost, Math.max(0, Number(e.target.value))))}
-                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 font-mono font-bold text-indigo-600 text-sm text-right outline-none focus:border-indigo-400"
-                    />
-                    <p className="text-[11px] text-gray-400">
-                      Còn nợ:{' '}
-                      <span className="font-mono font-bold text-rose-600">
-                        {(totalCost - paidAmount).toLocaleString('vi-VN')} đ
-                      </span>
-                    </p>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-gray-600 whitespace-nowrap w-28 shrink-0">
+                      Số tiền đã trả
+                    </label>
+                    <div>
+                      <CurrencyInput
+                        value={paidAmount}
+                        max={totalCost}
+                        onChange={(v) => setPaidAmount(Math.min(totalCost, Math.max(0, v)))}
+                        className="w-44 h-10 px-3 rounded-lg border border-gray-200 font-mono font-bold text-indigo-600 text-sm text-right outline-none focus:border-indigo-400"
+                      />
+                      <p className="text-[11px] text-gray-400 mt-1 text-right">
+                        Còn nợ:{' '}
+                        <span className="font-mono font-bold text-rose-600">
+                          {(totalCost - paidAmount).toLocaleString('vi-VN')} đ
+                        </span>
+                      </p>
+                    </div>
                   </div>
                 </div>
 
-                <div className="text-right">
+                <div className="text-right lg:text-right flex flex-col justify-center">
                   <span className="text-[10px] uppercase font-bold text-gray-400 block">Tổng cộng</span>
                   <span className="text-3xl font-extrabold text-indigo-900 font-mono tracking-tight">
                     {totalCost.toLocaleString('vi-VN')} đ

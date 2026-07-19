@@ -13,6 +13,7 @@ import { handleMappingAutoLinkSingle } from '../_lib/handlers/mappingAutoLinkSin
 import { handleMappingSkuIndex } from '../_lib/handlers/mappingSkuIndex.js';
 import { handleMappingBulkAutoLink } from '../_lib/handlers/mappingBulkAutoLink.js';
 import { handleProductSyncShopee } from '../_lib/handlers/productSyncShopee.js';
+import { handleProductsSearch } from '../_lib/handlers/productsSearch.js';
 import { handleScanBulkUpdate } from '../_lib/handlers/scanBulkUpdate.js';
 import { handleLabelProxy } from '../_lib/handlers/labels.js';
 import { proxyRequestToCpanel, resolveProxyTimeoutMs } from '../_lib/cpanelProxy.js';
@@ -51,6 +52,8 @@ const LOCAL_ROUTES = {
   'mapping-products/bulk-auto-link': handleMappingBulkAutoLink,
   'mapping/bulk-update': handleMappingBulkAutoLink,
   'products/sync-shopee': handleProductSyncShopee,
+  // Tìm SP nhập hàng — local trên Vercel (tránh cPanel cũ 404 / HTML → FE fallback local).
+  'products/search': handleProductsSearch,
   // cPanel cũ trả 404 cho route bulk quét — xử lý local trên Vercel.
   'orders/scan-bulk-update': handleScanBulkUpdate,
 };

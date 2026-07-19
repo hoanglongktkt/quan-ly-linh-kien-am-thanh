@@ -14,16 +14,11 @@ function getProductImage(p: Product): string | undefined {
   return (p as any).image || p.avatarUrl || p.imageUrl;
 }
 
-function safeText(v: unknown): string {
-  return String(v ?? '').toLowerCase();
-}
-
 export interface ImportProductSearchSelectHandle {
   focus: () => void;
 }
 
 interface ImportProductSearchSelectProps {
-  products: Product[];
   onSelect: (product: Product) => void;
   placeholder?: string;
   excludeIds?: string[];
@@ -32,7 +27,6 @@ interface ImportProductSearchSelectProps {
 const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, ImportProductSearchSelectProps>(
   function ImportProductSearchSelect(
     {
-      products,
       onSelect,
       placeholder = 'F3 — Gõ SKU hoặc tên sản phẩm, Enter để thêm vào bảng...',
       excludeIds = [],
@@ -43,7 +37,6 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
     const [query, setQuery] = useState('');
     const [highlightIndex, setHighlightIndex] = useState(0);
     const [remoteProducts, setRemoteProducts] = useState<Product[]>([]);
-    const [remoteReady, setRemoteReady] = useState(false);
     const [searching, setSearching] = useState(false);
     const [searchError, setSearchError] = useState<string | null>(null);
     const rootRef = useRef<HTMLDivElement>(null);
@@ -61,23 +54,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
     }));
 
     const excludeSet = useMemo(() => new Set(excludeIds), [excludeIds]);
-
-    const localFiltered = useMemo(() => {
-      const q = query.trim().toLowerCase();
-      const base = !q
-        ? products.slice(0, 40)
-        : products.filter(
-            (p) =>
-              safeText(p.sku).includes(q) ||
-              safeText(p.title).includes(q) ||
-              getVariantLabel(p).toLowerCase().includes(q),
-          );
-      return base.filter((p) => !excludeSet.has(p.id));
-    }, [products, query, excludeSet]);
-
-    const filtered = (
-      remoteReady ? remoteProducts : searchError ? localFiltered : remoteProducts.length > 0 ? remoteProducts : localFiltered
-    ).filter((p) => !excludeSet.has(p.id));
+    const filtered = remoteProducts.filter((p) => !excludeSet.has(p.id));
 
     useEffect(() => {
       setHighlightIndex(0);
@@ -100,6 +77,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
       el?.scrollIntoView({ block: 'nearest' });
     }, [highlightIndex, open]);
 
+    // CHỈ lấy từ API — tuyệt đối không fallback danh sách local App
     useEffect(() => {
       if (!open) return;
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -108,7 +86,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
         const token = localStorage.getItem('admin_token');
         if (!token) {
           setSearchError('Chưa đăng nhập');
-          setRemoteReady(false);
+          setRemoteProducts([]);
           return;
         }
 
@@ -128,34 +106,37 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
             headers: { Authorization: `Bearer ${token}` },
             signal: controller.signal,
           });
-          const data = await res.json();
-          console.log('[ImportSearch] API /api/products/search response:', {
+          const data = await res.json().catch(() => ({}));
+          console.log('[ImportSearch] API /api/products/search:', {
             q: query.trim(),
+            status: res.status,
             ok: res.ok,
+            success: data?.success,
             total: data?.total,
+            source: data?.source,
             count: Array.isArray(data?.products) ? data.products.length : 0,
             products: data?.products,
           });
           if (seq !== reqSeqRef.current) return;
           if (!res.ok || data.success === false) {
-            throw new Error(data.error || 'Không tìm được sản phẩm');
+            throw new Error(data.error || data.message || `Lỗi tìm kiếm (HTTP ${res.status})`);
           }
           const list = (Array.isArray(data.products) ? data.products : []).map((p: any) => ({
             ...p,
+            id: String(p.id || ''),
             title: p.title || p.name || '',
+            sku: p.sku || '',
             stock: p.stock ?? p.current_stock ?? 0,
             importPrice: p.importPrice ?? p.last_import_price ?? 0,
             imageUrl: p.imageUrl || p.image || p.avatarUrl,
             avatarUrl: p.avatarUrl || p.image || p.imageUrl,
           }));
           setRemoteProducts(list);
-          setRemoteReady(true);
         } catch (err: any) {
           if (err?.name === 'AbortError') return;
           if (seq !== reqSeqRef.current) return;
           console.error('[ImportSearch] fetch error:', err);
           setSearchError(err?.message || 'Lỗi tìm kiếm');
-          setRemoteReady(false);
           setRemoteProducts([]);
         } finally {
           if (seq === reqSeqRef.current) setSearching(false);
@@ -174,7 +155,6 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
       setQuery('');
       setOpen(false);
       setRemoteProducts([]);
-      setRemoteReady(false);
       setTimeout(() => inputRef.current?.focus(), 50);
     };
 
@@ -214,7 +194,7 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
-            className="w-full pl-10 pr-10 py-3.5 min-h-[52px] text-sm bg-white rounded-xl border border-gray-200 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/15 shadow-sm"
+            className="w-full pl-10 pr-10 h-12 text-sm bg-white rounded-xl border border-gray-200 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-400/15 shadow-sm"
             autoComplete="off"
           />
           {searching && (
@@ -226,13 +206,13 @@ const ImportProductSearchSelect = forwardRef<ImportProductSearchSelectHandle, Im
           <div className="absolute z-50 left-0 right-0 mt-1.5 bg-white rounded-xl border border-gray-200 shadow-xl shadow-gray-200/60 overflow-hidden">
             <div ref={listRef} className="max-h-[380px] overflow-y-auto scrollbar-thin">
               {searchError && (
-                <div className="px-3 py-2 text-[10px] text-amber-700 bg-amber-50 border-b border-amber-100">
-                  {searchError} — đang dùng danh sách local tạm.
+                <div className="px-3 py-2 text-[11px] text-rose-700 bg-rose-50 border-b border-rose-100">
+                  {searchError}
                 </div>
               )}
               {filtered.length === 0 ? (
                 <div className="py-8 text-center text-xs text-gray-400">
-                  {searching ? 'Đang tìm trong kho...' : 'Không tìm thấy sản phẩm phù hợp.'}
+                  {searching ? 'Đang tìm trong kho...' : searchError ? 'Không tải được danh sách từ server.' : 'Không tìm thấy sản phẩm phù hợp.'}
                 </div>
               ) : (
                 filtered.map((p, idx) => {
