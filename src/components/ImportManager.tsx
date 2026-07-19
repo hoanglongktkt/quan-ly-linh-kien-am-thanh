@@ -4,8 +4,10 @@ import {
   calcImportPriceChangePercent,
   getImportPriceChangeStatus,
 } from '../utils/importPriceChange';
-import ImportProductSearchSelect from './ImportProductSearchSelect';
-import ImportSupplierSelect from './ImportSupplierSelect';
+import ImportProductSearchSelect, {
+  ImportProductSearchSelectHandle,
+} from './ImportProductSearchSelect';
+import ImportSupplierSelect, { ImportSupplierSelectHandle } from './ImportSupplierSelect';
 import {
   Plus,
   Search,
@@ -22,6 +24,8 @@ import {
   Truck,
   CheckCircle2,
   X,
+  Trash2,
+  Package,
 } from 'lucide-react';
 
 function PriceChangeBadge({
@@ -67,12 +71,15 @@ function PriceChangeBadge({
   );
 }
 
-interface ProductImportContext {
-  oldPrice: number;
-  stock: number | null;
-  lastSupplierName: string | null;
-  lastSupplierId: string | null;
-  lastImportDate: string | null;
+interface SelectedImportLine {
+  productId: string;
+  title: string;
+  sku: string;
+  image?: string;
+  currentStock: number;
+  oldImportPrice: number;
+  quantity: number;
+  unitPrice: number;
 }
 
 interface ImportManagerProps {
@@ -101,6 +108,8 @@ export default function ImportManager({
   const [localSuppliers, setLocalSuppliers] = useState<Supplier[]>(suppliersProp);
   const [viewMode, setViewMode] = useState<'list' | 'create'>('list');
   const prefillHandledRef = useRef<string | null>(null);
+  const supplierSelectRef = useRef<ImportSupplierSelectHandle>(null);
+  const productSearchRef = useRef<ImportProductSearchSelectHandle>(null);
 
   const fetchSuppliersFromApi = useCallback(async () => {
     const token = localStorage.getItem('admin_token');
@@ -131,15 +140,11 @@ export default function ImportManager({
   const [selectedSupplierFilter, setSelectedSupplierFilter] = useState('all');
 
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
-  const [selectedProductId, setSelectedProductId] = useState('');
-  const [selectedProductSnap, setSelectedProductSnap] = useState<Product | null>(null);
-  const [quantity, setQuantity] = useState<number>(10);
-  const [newPrice, setNewPrice] = useState<number>(0);
+  const [selectedProducts, setSelectedProducts] = useState<SelectedImportLine[]>([]);
   const [importCost, setImportCost] = useState<number>(0);
   const [paidAmount, setPaidAmount] = useState<number>(0);
+  const [submitting, setSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [productContext, setProductContext] = useState<ProductImportContext | null>(null);
-  const [contextLoading, setContextLoading] = useState(false);
   const [historyModal, setHistoryModal] = useState<{
     productId: string;
     productTitle: string;
@@ -147,20 +152,13 @@ export default function ImportManager({
     rows: ImportTransaction[];
     loading: boolean;
   } | null>(null);
+  const [priceHistoryOpenId, setPriceHistoryOpenId] = useState<string | null>(null);
 
-  const activeProduct =
-    selectedProductSnap && selectedProductSnap.id === selectedProductId
-      ? selectedProductSnap
-      : products.find((p) => p.id === selectedProductId);
-  const oldPrice = productContext?.oldPrice ?? (activeProduct ? Number(activeProduct.importPrice) || 0 : 0);
-  const currentStock =
-    productContext?.stock != null
-      ? productContext.stock
-      : activeProduct
-        ? Number(activeProduct.stock) || 0
-        : 0;
-  const lineSubtotal = quantity * newPrice;
-  const totalCost = lineSubtotal + importCost;
+  const goodsTotal = useMemo(
+    () => selectedProducts.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0),
+    [selectedProducts],
+  );
+  const totalCost = goodsTotal + importCost;
 
   const filteredImports = imports.filter((imp) => {
     const matchesSearch =
@@ -171,110 +169,120 @@ export default function ImportManager({
     return matchesSearch && matchesSupplier;
   });
 
-  const productHistory = useMemo(() => {
-    if (!selectedProductId) return [];
-    return imports
-      .filter((imp) => imp.productId === selectedProductId)
-      .sort((a, b) => {
-        const tb = new Date(b.date || 0).getTime();
-        const ta = new Date(a.date || 0).getTime();
-        if (tb !== ta) return tb - ta;
-        return String(b.id).localeCompare(String(a.id));
-      })
-      .slice(0, 5);
-  }, [imports, selectedProductId]);
+  // F3 = focus tìm SP, F4 = focus NCC
+  useEffect(() => {
+    if (viewMode !== 'create') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F3') {
+        e.preventDefault();
+        productSearchRef.current?.focus();
+      } else if (e.key === 'F4') {
+        e.preventDefault();
+        supplierSelectRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== 'create') return;
+    const onDocClick = () => setPriceHistoryOpenId(null);
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  }, [viewMode]);
 
   const syncPaidToTotal = (total: number) => {
     setPaidAmount(total);
   };
 
-  const fetchProductContext = useCallback(async (productId: string) => {
-    const token = localStorage.getItem('admin_token');
-    if (!token || !productId) {
-      setProductContext(null);
-      return;
-    }
-    setContextLoading(true);
-    try {
-      const res = await fetch(`/api/imports/product-context/${encodeURIComponent(productId)}`, {
-        headers: { Authorization: `Bearer ${token}` },
+  const addProductToTable = useCallback(
+    async (product: Product) => {
+      const productId = String(product.id || '').trim();
+      if (!productId) return;
+
+      setSelectedProducts((prev) => {
+        if (prev.some((l) => l.productId === productId)) {
+          setToastMessage('Sản phẩm đã có trong bảng — tăng số lượng nếu cần.');
+          setTimeout(() => setToastMessage(null), 2500);
+          return prev;
+        }
+        const price = Number(product.importPrice) || 0;
+        const next: SelectedImportLine[] = [
+          ...prev,
+          {
+            productId,
+            title: product.title || (product as any).name || '',
+            sku: product.sku || '',
+            image: (product as any).image || product.avatarUrl || product.imageUrl,
+            currentStock: Number(product.stock) || 0,
+            oldImportPrice: price,
+            quantity: 1,
+            unitPrice: price > 0 ? price : 0,
+          },
+        ];
+        const goods = next.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+        syncPaidToTotal(goods + importCost);
+        return next;
       });
-      if (res.ok) {
+
+      // Bổ sung tồn kho / giá cũ từ product-context
+      const token = localStorage.getItem('admin_token');
+      if (!token) return;
+      try {
+        const res = await fetch(`/api/imports/product-context/${encodeURIComponent(productId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
         const data = await res.json();
         console.log('[ImportManager] product-context:', data);
-        const ctx: ProductImportContext = {
-          oldPrice: Number(data.oldPrice ?? data.importPrice ?? 0) || 0,
-          stock: data.stock != null ? Number(data.stock) || 0 : null,
-          lastSupplierName: data.lastSupplierName ?? null,
-          lastSupplierId: data.lastSupplierId ?? null,
-          lastImportDate: data.lastImportDate ?? null,
-        };
-        setProductContext(ctx);
-        // Đồng bộ tồn kho + giá nhập cũ vào snapshot đang chọn
-        setSelectedProductSnap((prev) => {
-          if (!prev || prev.id !== productId) return prev;
-          return {
-            ...prev,
-            stock: ctx.stock != null ? ctx.stock : prev.stock,
-            importPrice: ctx.oldPrice || prev.importPrice,
-            title: data.title || prev.title,
-            sku: data.sku || prev.sku,
-          };
-        });
-        if (ctx.oldPrice > 0) {
-          setNewPrice((prev) => (prev > 0 ? prev : ctx.oldPrice));
-        }
-      } else {
-        setProductContext(null);
+        setSelectedProducts((prev) =>
+          prev.map((line) =>
+            line.productId === productId
+              ? {
+                  ...line,
+                  currentStock: data.stock != null ? Number(data.stock) || 0 : line.currentStock,
+                  oldImportPrice: Number(data.oldPrice ?? data.importPrice ?? line.oldImportPrice) || 0,
+                  unitPrice:
+                    line.unitPrice > 0
+                      ? line.unitPrice
+                      : Number(data.oldPrice ?? data.importPrice ?? 0) || 0,
+                  title: data.title || line.title,
+                  sku: data.sku || line.sku,
+                }
+              : line,
+          ),
+        );
+      } catch (err) {
+        console.error('Fetch product import context error:', err);
       }
-    } catch (err) {
-      console.error('Fetch product import context error:', err);
-      setProductContext(null);
-    } finally {
-      setContextLoading(false);
-    }
-  }, []);
+    },
+    [importCost],
+  );
 
-  useEffect(() => {
-    if (viewMode === 'create' && selectedProductId) {
-      fetchProductContext(selectedProductId);
-    }
-  }, [viewMode, selectedProductId, fetchProductContext]);
-
-  const handleProductChange = (productId: string, product?: Product) => {
-    if (!productId) {
-      setSelectedProductId('');
-      setSelectedProductSnap(null);
-      setProductContext(null);
-      setNewPrice(0);
-      return;
-    }
-    setSelectedProductId(productId);
-    const prod = product || products.find((p) => p.id === productId) || null;
-    if (prod) {
-      setSelectedProductSnap(prod);
-      const price = Number(prod.importPrice) || 0;
-      setNewPrice(price);
-      syncPaidToTotal(price * quantity + importCost);
-    } else {
-      setSelectedProductSnap(null);
-    }
-    fetchProductContext(productId);
+  const updateLine = (productId: string, patch: Partial<Pick<SelectedImportLine, 'quantity' | 'unitPrice'>>) => {
+    setSelectedProducts((prev) => {
+      const next = prev.map((line) => {
+        if (line.productId !== productId) return line;
+        return {
+          ...line,
+          quantity: patch.quantity != null ? Math.max(1, Math.round(patch.quantity)) : line.quantity,
+          unitPrice: patch.unitPrice != null ? Math.max(0, Math.round(patch.unitPrice)) : line.unitPrice,
+        };
+      });
+      const goods = next.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+      syncPaidToTotal(goods + importCost);
+      return next;
+    });
   };
 
-  const handleQuantityChange = (qty: number) => {
-    setQuantity(qty);
-    syncPaidToTotal(newPrice * qty + importCost);
-  };
-
-  const handlePriceChange = (price: number) => {
-    setNewPrice(price);
-    syncPaidToTotal(price * quantity + importCost);
-  };
-
-  const handleImportCostChange = (cost: number) => {
-    setImportCost(cost);
-    syncPaidToTotal(newPrice * quantity + cost);
+  const removeLine = (productId: string) => {
+    setSelectedProducts((prev) => {
+      const next = prev.filter((l) => l.productId !== productId);
+      const goods = next.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+      syncPaidToTotal(goods + importCost);
+      return next;
+    });
   };
 
   const bootstrapCreateForm = async (prefillProductId?: string) => {
@@ -301,17 +309,31 @@ export default function ImportManager({
       setSelectedSupplierId(fresh[0].id);
     }
     setImportCost(0);
-    setQuantity(10);
     setPaidAmount(0);
-    setSelectedProductId('');
-    setSelectedProductSnap(null);
-    setProductContext(null);
-    setNewPrice(0);
+    setSelectedProducts([]);
+    setViewMode('create');
+
     if (prefillProductId) {
       const local = products.find((p) => p.id === prefillProductId);
-      handleProductChange(prefillProductId, local);
+      if (local) {
+        void addProductToTable(local);
+      } else {
+        void addProductToTable({
+          id: prefillProductId,
+          title: '',
+          sku: '',
+          stock: 0,
+          importPrice: 0,
+          sellingPrice: 0,
+          channels: [],
+          category: '',
+          status: 'active',
+          description: '',
+        } as Product);
+      }
     }
-    setViewMode('create');
+
+    setTimeout(() => productSearchRef.current?.focus(), 100);
   };
 
   const handleOpenCreate = async () => {
@@ -360,17 +382,32 @@ export default function ImportManager({
     }
   };
 
+  const lineHistoryPreview = (productId: string) =>
+    imports
+      .filter((imp) => imp.productId === productId)
+      .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+      .slice(0, 5);
+
   const handleSubmitImport = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSupplierId || !selectedProductId || quantity <= 0 || newPrice <= 0) {
-      alert('Vui lòng điền đầy đủ các trường thông tin hợp lệ!');
+    if (!selectedSupplierId) {
+      alert('Vui lòng chọn nhà cung cấp!');
+      supplierSelectRef.current?.focus();
+      return;
+    }
+    if (selectedProducts.length === 0) {
+      alert('Vui lòng thêm ít nhất một sản phẩm vào bảng!');
+      productSearchRef.current?.focus();
+      return;
+    }
+    if (selectedProducts.some((l) => l.quantity <= 0 || l.unitPrice <= 0)) {
+      alert('Mỗi dòng cần Số lượng và Đơn giá hợp lệ!');
       return;
     }
 
-    const supplier = suppliers.find((s) => s.id === selectedSupplierId)!;
-    const product = activeProduct;
-    if (!product) {
-      alert('Vui lòng chọn sản phẩm hợp lệ từ kho!');
+    const supplier = suppliers.find((s) => s.id === selectedSupplierId);
+    if (!supplier) {
+      alert('Nhà cung cấp không hợp lệ!');
       return;
     }
 
@@ -380,41 +417,116 @@ export default function ImportManager({
       return;
     }
 
-    let status: 'fully_paid' | 'partial' | 'unpaid' = 'unpaid';
-    if (finalPaid === totalCost) {
-      status = 'fully_paid';
-    } else if (finalPaid > 0) {
-      status = 'partial';
+    setSubmitting(true);
+    try {
+      let remainingPaid = finalPaid;
+      const date = new Date().toISOString().split('T')[0];
+
+      for (let i = 0; i < selectedProducts.length; i++) {
+        const line = selectedProducts[i];
+        const lineGoods = line.quantity * line.unitPrice;
+        const lineImportCost = i === 0 ? importCost : 0;
+        const lineTotal = lineGoods + lineImportCost;
+        const linePaid = Math.min(remainingPaid, lineTotal);
+        remainingPaid -= linePaid;
+
+        let status: 'fully_paid' | 'partial' | 'unpaid' = 'unpaid';
+        if (linePaid === lineTotal) status = 'fully_paid';
+        else if (linePaid > 0) status = 'partial';
+
+        const tx: ImportTransaction = {
+          id: `imp-${Date.now()}-${i}`,
+          supplierId: selectedSupplierId,
+          supplierName: supplier.name,
+          date,
+          productId: line.productId,
+          productTitle: line.title,
+          productSku: line.sku,
+          quantity: line.quantity,
+          oldImportPrice: line.oldImportPrice,
+          newImportPrice: line.unitPrice,
+          importCost: lineImportCost,
+          totalAmount: lineTotal,
+          paidAmount: linePaid,
+          status,
+          warehouseId: 'default',
+        };
+        await onAddImport(tx);
+      }
+
+      setViewMode('list');
+      alert(`Đã lưu đơn nhập kho thành công (${selectedProducts.length} sản phẩm). Tồn kho đã được cập nhật.`);
+    } catch (err) {
+      console.error(err);
+      alert('Có lỗi khi lưu đơn nhập. Vui lòng thử lại.');
+    } finally {
+      setSubmitting(false);
     }
-
-    const newTransaction: ImportTransaction = {
-      id: `imp-${Date.now()}`,
-      supplierId: selectedSupplierId,
-      supplierName: supplier.name,
-      date: new Date().toISOString().split('T')[0],
-      productId: selectedProductId,
-      productTitle: product.title,
-      productSku: product.sku,
-      quantity,
-      oldImportPrice: oldPrice,
-      newImportPrice: newPrice,
-      importCost,
-      totalAmount: totalCost,
-      paidAmount: finalPaid,
-      status,
-      warehouseId: 'default',
-    };
-
-    await onAddImport(newTransaction);
-    setViewMode('list');
-    alert(`Đã lưu đơn nhập kho thành công cho sản phẩm: ${product.title}. Kho đã tự động tăng thêm +${quantity} sản phẩm.`);
   };
+
+  const historyModalEl = historyModal && (
+    <div className="fixed inset-0 z-80 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <button type="button" className="absolute inset-0 bg-slate-900/40" aria-label="Đóng" onClick={() => setHistoryModal(null)} />
+      <div className="relative w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-gray-100 max-h-[85vh] overflow-hidden flex flex-col">
+        <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2">
+              <History className="w-4 h-4 text-indigo-600" /> Lịch sử nhập hàng
+            </h3>
+            <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+              [{historyModal.productSku}] {historyModal.productTitle}
+            </p>
+          </div>
+          <button type="button" onClick={() => setHistoryModal(null)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="overflow-y-auto p-4 space-y-2">
+          {historyModal.loading ? (
+            <p className="text-center text-xs text-gray-400 py-8">Đang tải lịch sử...</p>
+          ) : historyModal.rows.length === 0 ? (
+            <p className="text-center text-xs text-gray-400 py-8">Chưa có lần nhập nào.</p>
+          ) : (
+            historyModal.rows.map((row, idx) => {
+              const prev = historyModal.rows[idx + 1];
+              return (
+                <div key={row.id} className="rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-semibold text-gray-800">{row.supplierName}</span>
+                    <span className="text-gray-400">{row.date}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-gray-400 block">SL</span>
+                      <span className="font-bold">{row.quantity}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block">Giá nhập</span>
+                      <span className="font-mono font-bold">{row.newImportPrice.toLocaleString('vi-VN')} đ</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block">So lần trước</span>
+                      {prev ? (
+                        <PriceChangeBadge oldPrice={prev.newImportPrice} newPrice={row.newImportPrice} />
+                      ) : (
+                        <span className="text-sky-600 font-bold">Lần đầu</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
 
   if (viewMode === 'create') {
     return (
       <div className="space-y-0 -mx-4 sm:-mx-6 lg:-mx-8">
         {toastMessage && (
-          <div className="fixed top-5 right-5 z-70 bg-emerald-600 text-white font-semibold text-sm px-5 py-3 rounded-xl shadow-lg flex items-center gap-2 animate-in fade-in">
+          <div className="fixed top-5 right-5 z-70 bg-emerald-600 text-white font-semibold text-sm px-5 py-3 rounded-xl shadow-lg flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
             <span>{toastMessage}</span>
             <button type="button" onClick={() => setToastMessage(null)} className="ml-1 text-emerald-200 hover:text-white">
@@ -422,13 +534,14 @@ export default function ImportManager({
             </button>
           </div>
         )}
+
         <div className="bg-white border-y border-gray-100 shadow-sm">
-          <div className="px-6 lg:px-10 py-5 border-b border-gray-100 bg-linear-to-r from-indigo-50/80 via-white to-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-4">
+          <div className="px-6 lg:px-10 py-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
               <button
                 type="button"
                 onClick={() => setViewMode('list')}
-                className="mt-0.5 p-2 hover:bg-white rounded-xl border border-gray-200 text-gray-500 hover:text-gray-800 transition-all shrink-0"
+                className="mt-0.5 p-2 hover:bg-gray-50 rounded-xl border border-gray-200 text-gray-500 hover:text-gray-800 shrink-0"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
@@ -437,8 +550,9 @@ export default function ImportManager({
                   <Box className="w-6 h-6 text-indigo-600" />
                   Tạo Đơn Nhập Hàng
                 </h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  Lập chứng từ nhập sỉ — tồn kho, công nợ và chi phí vận hành được cập nhật tự động.
+                <p className="text-xs text-gray-400 mt-1">
+                  Phím tắt: <kbd className="px-1.5 py-0.5 bg-gray-100 rounded border text-[10px] font-mono">F4</kbd> Nhà cung cấp ·{' '}
+                  <kbd className="px-1.5 py-0.5 bg-gray-100 rounded border text-[10px] font-mono">F3</kbd> Tìm sản phẩm
                 </p>
               </div>
             </div>
@@ -448,12 +562,15 @@ export default function ImportManager({
             </div>
           </div>
 
-          <form onSubmit={handleSubmitImport} className="px-6 lg:px-10 py-6 max-w-3xl mx-auto space-y-6">
-            {/* 1. NCC + Tìm SP */}
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-700">Nhà cung cấp</label>
+          <form onSubmit={handleSubmitImport} className="px-6 lg:px-10 py-6 space-y-6">
+            {/* Block 1: NCC */}
+            <section className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">
+                1. Nhà cung cấp <span className="normal-case font-normal text-gray-300">(F4)</span>
+              </label>
+              <div className="max-w-xl">
                 <ImportSupplierSelect
+                  ref={supplierSelectRef}
                   suppliers={suppliers}
                   value={selectedSupplierId}
                   onChange={setSelectedSupplierId}
@@ -467,136 +584,223 @@ export default function ImportManager({
                   }}
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-gray-700">Tìm / chọn sản phẩm</label>
-                <ImportProductSearchSelect
-                  products={selectedProductSnap ? [selectedProductSnap, ...products] : products}
-                  value={selectedProductId}
-                  onChange={handleProductChange}
-                />
-              </div>
-            </div>
+            </section>
 
-            {/* 2. Thông tin kho (sau khi chọn) + nhập SL / giá */}
-            {activeProduct && (
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm py-3 border-y border-gray-100">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-gray-400 block">Tồn kho hiện tại</span>
-                    <span className="text-base font-extrabold text-gray-900">
-                      {contextLoading ? '…' : `${currentStock} cái`}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-gray-400 block">Giá nhập cũ</span>
-                    <span className="text-base font-mono font-bold text-gray-800">
-                      {oldPrice > 0 ? `${oldPrice.toLocaleString('vi-VN')} đ` : 'N/A'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-gray-400 block">NCC gần nhất</span>
-                    <span className="text-sm font-semibold text-gray-800">
-                      {contextLoading ? '…' : productContext?.lastSupplierName || 'Chưa có'}
-                    </span>
-                  </div>
-                  <div className="ml-auto flex items-center gap-2">
-                    <PriceChangeBadge oldPrice={oldPrice} newPrice={newPrice} size="md" />
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openImportHistory(activeProduct.id, activeProduct.title, activeProduct.sku)
-                      }
-                      className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 px-2 py-1"
-                    >
-                      Lịch sử giá
-                    </button>
-                  </div>
+            {/* Block 2: Tìm SP */}
+            <section className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">
+                2. Tìm kiếm sản phẩm <span className="normal-case font-normal text-gray-300">(F3)</span>
+              </label>
+              <ImportProductSearchSelect
+                ref={productSearchRef}
+                products={products}
+                excludeIds={selectedProducts.map((l) => l.productId)}
+                onSelect={(p) => void addProductToTable(p)}
+              />
+            </section>
+
+            {/* Block 3: Bảng chi tiết */}
+            <section className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-gray-400">
+                3. Chi tiết sản phẩm nhập ({selectedProducts.length})
+              </label>
+              <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse min-w-[720px]">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-gray-200 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                        <th className="px-3 py-3 w-12 text-center">STT</th>
+                        <th className="px-3 py-3 w-14">Ảnh</th>
+                        <th className="px-3 py-3">Tên sản phẩm</th>
+                        <th className="px-3 py-3 w-28 text-center">Tồn</th>
+                        <th className="px-3 py-3 w-32 text-center">SL nhập</th>
+                        <th className="px-3 py-3 w-44 text-right">Đơn giá</th>
+                        <th className="px-3 py-3 w-36 text-right">Thành tiền</th>
+                        <th className="px-3 py-3 w-14 text-center" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-sm">
+                      {selectedProducts.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="px-4 py-14 text-center text-gray-400 text-sm">
+                            <Package className="w-8 h-8 mx-auto mb-2 text-gray-300" />
+                            Chưa có sản phẩm — dùng ô tìm kiếm phía trên (F3) để thêm vào bảng.
+                          </td>
+                        </tr>
+                      ) : (
+                        selectedProducts.map((line, idx) => {
+                          const lineTotal = line.quantity * line.unitPrice;
+                          const preview = lineHistoryPreview(line.productId);
+                          return (
+                            <tr key={line.productId} className="hover:bg-slate-50/60">
+                              <td className="px-3 py-3 text-center text-gray-400 font-mono text-xs">{idx + 1}</td>
+                              <td className="px-3 py-3">
+                                {line.image ? (
+                                  <img
+                                    src={line.image}
+                                    alt=""
+                                    className="w-10 h-10 rounded-lg object-cover border border-gray-100"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ) : (
+                                  <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <Package className="w-4 h-4 text-gray-400" />
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-3 min-w-0">
+                                <p className="font-semibold text-gray-900 line-clamp-2 leading-snug">{line.title || '—'}</p>
+                                <p className="text-[11px] font-mono text-gray-400 mt-0.5">{line.sku || '—'}</p>
+                              </td>
+                              <td className="px-3 py-3 text-center font-mono text-xs text-gray-500">{line.currentStock}</td>
+                              <td className="px-3 py-3">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={line.quantity}
+                                  onChange={(e) => updateLine(line.productId, { quantity: Number(e.target.value) })}
+                                  className="w-full px-2 py-2 text-center font-mono font-bold text-sm rounded-lg border border-gray-200 outline-none focus:border-indigo-400"
+                                />
+                              </td>
+                              <td className="px-3 py-3">
+                                <div className="relative flex items-center gap-1 justify-end">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={line.unitPrice}
+                                    onChange={(e) => updateLine(line.productId, { unitPrice: Number(e.target.value) })}
+                                    className="w-full min-w-[100px] px-2 py-2 text-right font-mono font-bold text-sm text-indigo-700 rounded-lg border border-gray-200 outline-none focus:border-indigo-400"
+                                  />
+                                  <button
+                                    type="button"
+                                    title="Lịch sử giá nhập"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPriceHistoryOpenId((id) => (id === line.productId ? null : line.productId));
+                                    }}
+                                    className="p-1.5 rounded-lg text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 shrink-0"
+                                  >
+                                    <History className="w-3.5 h-3.5" />
+                                  </button>
+                                  {priceHistoryOpenId === line.productId && (
+                                    <div
+                                      className="absolute right-0 top-full mt-1 z-40 w-64 bg-white border border-gray-200 rounded-xl shadow-xl p-3 text-left"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <p className="text-[10px] font-bold uppercase text-gray-400 mb-2">Lịch sử giá nhập</p>
+                                      <p className="text-xs text-gray-500 mb-2">
+                                        Giá cũ:{' '}
+                                        <span className="font-mono font-bold text-gray-800">
+                                          {line.oldImportPrice > 0
+                                            ? `${line.oldImportPrice.toLocaleString('vi-VN')} đ`
+                                            : 'N/A'}
+                                        </span>
+                                      </p>
+                                      {preview.length === 0 ? (
+                                        <p className="text-xs text-gray-400 italic">Chưa có lịch sử.</p>
+                                      ) : (
+                                        <ul className="space-y-1.5 max-h-36 overflow-y-auto">
+                                          {preview.map((imp) => (
+                                            <li key={imp.id} className="flex justify-between text-[11px] gap-2">
+                                              <span className="text-gray-400 shrink-0">{imp.date}</span>
+                                              <span className="font-mono font-bold text-gray-800">
+                                                {imp.newImportPrice.toLocaleString('vi-VN')} đ
+                                              </span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="mt-2 text-[11px] font-semibold text-indigo-600 hover:underline"
+                                        onClick={() => openImportHistory(line.productId, line.title, line.sku)}
+                                      >
+                                        Xem đầy đủ →
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                                {line.oldImportPrice > 0 && line.unitPrice !== line.oldImportPrice && (
+                                  <div className="mt-1 flex justify-end">
+                                    <PriceChangeBadge oldPrice={line.oldImportPrice} newPrice={line.unitPrice} />
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-3 text-right font-mono font-bold text-slate-800">
+                                {lineTotal.toLocaleString('vi-VN')} đ
+                              </td>
+                              <td className="px-3 py-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => removeLine(line.productId)}
+                                  className="p-2 rounded-lg text-gray-400 hover:text-rose-600 hover:bg-rose-50"
+                                  title="Xóa dòng"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
                 </div>
+              </div>
+            </section>
 
-                {productHistory.length > 0 && (
-                  <div className="flex flex-wrap gap-2 text-[11px] text-gray-500">
-                    <span className="font-semibold text-gray-400 uppercase tracking-wide mr-1">Nhập gần đây:</span>
-                    {productHistory.slice(0, 3).map((imp) => (
-                      <span key={imp.id} className="font-mono bg-gray-50 px-2 py-1 rounded">
-                        {imp.date}: {imp.newImportPrice.toLocaleString('vi-VN')}đ ×{imp.quantity}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-gray-700">Số lượng nhập</label>
-                    <input
-                      type="number"
-                      min="1"
-                      required
-                      value={quantity}
-                      onChange={(e) => handleQuantityChange(Math.max(1, Number(e.target.value)))}
-                      className="w-full px-3 py-2.5 min-h-11 bg-white rounded-lg border border-gray-200 text-sm outline-none font-mono font-bold focus:border-indigo-400"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-gray-700">Giá nhập mới (đ/cái)</label>
-                    <input
-                      type="number"
-                      min="100"
-                      required
-                      value={newPrice}
-                      onChange={(e) => handlePriceChange(Math.max(0, Number(e.target.value)))}
-                      className="w-full px-3 py-2.5 min-h-11 bg-white rounded-lg border border-gray-200 text-sm outline-none font-mono font-bold text-indigo-700 focus:border-indigo-400"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-gray-700 flex items-center gap-1">
+            {/* Block 4: Tổng kết */}
+            <section className="border-t border-gray-100 pt-5 space-y-4">
+              <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-5">
+                <div className="flex flex-wrap gap-4 items-end">
+                  <div className="space-y-1 w-44">
+                    <label className="text-xs font-semibold text-gray-600 flex items-center gap-1">
                       <Truck className="w-3.5 h-3.5 text-gray-400" /> Chi phí khác
                     </label>
                     <input
                       type="number"
-                      min="0"
+                      min={0}
                       value={importCost}
-                      onChange={(e) => handleImportCostChange(Math.max(0, Number(e.target.value)))}
-                      placeholder="0"
-                      className="w-full px-3 py-2.5 min-h-11 bg-white rounded-lg border border-gray-200 text-sm outline-none font-mono font-bold text-amber-800 focus:border-amber-300"
+                      onChange={(e) => {
+                        const cost = Math.max(0, Number(e.target.value) || 0);
+                        setImportCost(cost);
+                        syncPaidToTotal(goodsTotal + cost);
+                      }}
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 font-mono font-bold text-amber-800 text-sm outline-none focus:border-amber-300"
                     />
                   </div>
-                </div>
-              </div>
-            )}
-
-            {/* 3. Tổng kết + xác nhận */}
-            <div className="pt-4 border-t border-gray-100 space-y-4">
-              <div className="flex flex-wrap items-end justify-between gap-4">
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-gray-400 block">Tổng giá trị đơn</span>
-                  <span className="text-2xl font-extrabold text-indigo-900 font-mono tracking-tight">
-                    {totalCost.toLocaleString('vi-VN')} đ
-                  </span>
-                  <p className="text-[11px] text-gray-400 mt-0.5 font-mono">
-                    ({quantity} × {newPrice.toLocaleString('vi-VN')})
-                    {importCost > 0 ? ` + ${importCost.toLocaleString('vi-VN')}` : ''}
-                  </p>
-                </div>
-                <div className="w-full sm:w-56 space-y-1">
-                  <label className="text-xs font-semibold text-gray-600">Số tiền đã trả</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max={totalCost}
-                    value={paidAmount}
-                    onChange={(e) => setPaidAmount(Math.min(totalCost, Math.max(0, Number(e.target.value))))}
-                    className="w-full px-3 py-2.5 bg-white rounded-lg border border-gray-200 text-sm font-mono font-bold text-indigo-600 text-right outline-none focus:border-indigo-400"
-                  />
-                  <div className="flex justify-between text-[11px]">
-                    <span className="text-gray-400">Còn nợ</span>
-                    <span className="font-mono font-bold text-rose-600">
-                      {(totalCost - paidAmount).toLocaleString('vi-VN')} đ
-                    </span>
+                  <div className="space-y-1 w-48">
+                    <label className="text-xs font-semibold text-gray-600">Số tiền đã trả</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={totalCost}
+                      value={paidAmount}
+                      onChange={(e) => setPaidAmount(Math.min(totalCost, Math.max(0, Number(e.target.value))))}
+                      className="w-full px-3 py-2.5 rounded-lg border border-gray-200 font-mono font-bold text-indigo-600 text-sm text-right outline-none focus:border-indigo-400"
+                    />
+                    <p className="text-[11px] text-gray-400">
+                      Còn nợ:{' '}
+                      <span className="font-mono font-bold text-rose-600">
+                        {(totalCost - paidAmount).toLocaleString('vi-VN')} đ
+                      </span>
+                    </p>
                   </div>
                 </div>
+
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-bold text-gray-400 block">Tổng cộng</span>
+                  <span className="text-3xl font-extrabold text-indigo-900 font-mono tracking-tight">
+                    {totalCost.toLocaleString('vi-VN')} đ
+                  </span>
+                  <p className="text-[11px] text-gray-400 font-mono mt-0.5">
+                    Hàng: {goodsTotal.toLocaleString('vi-VN')}
+                    {importCost > 0 ? ` + CP: ${importCost.toLocaleString('vi-VN')}` : ''}
+                  </p>
+                </div>
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex gap-3 justify-end">
                 <button
                   type="button"
                   onClick={() => setViewMode('list')}
@@ -606,73 +810,17 @@ export default function ImportManager({
                 </button>
                 <button
                   type="submit"
-                  disabled={!activeProduct || !selectedSupplierId}
-                  className="flex-1 px-5 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-sm"
+                  disabled={submitting || selectedProducts.length === 0 || !selectedSupplierId}
+                  className="min-w-[200px] px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm rounded-xl shadow-sm"
                 >
-                  Xác nhận nhập kho
+                  {submitting ? 'Đang lưu...' : 'Xác nhận nhập kho'}
                 </button>
               </div>
-            </div>
+            </section>
           </form>
         </div>
 
-      {historyModal && (
-        <div className="fixed inset-0 z-80 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <button type="button" className="absolute inset-0 bg-slate-900/40" aria-label="Đóng" onClick={() => setHistoryModal(null)} />
-          <div className="relative w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-gray-100 max-h-[85vh] overflow-hidden flex flex-col">
-            <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2">
-                  <History className="w-4 h-4 text-indigo-600" /> Lịch sử nhập hàng
-                </h3>
-                <p className="text-xs text-gray-500 mt-1 line-clamp-2">
-                  [{historyModal.productSku}] {historyModal.productTitle}
-                </p>
-              </div>
-              <button type="button" onClick={() => setHistoryModal(null)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="overflow-y-auto p-4 space-y-2">
-              {historyModal.loading ? (
-                <p className="text-center text-xs text-gray-400 py-8">Đang tải lịch sử...</p>
-              ) : historyModal.rows.length === 0 ? (
-                <p className="text-center text-xs text-gray-400 py-8">Chưa có lần nhập nào.</p>
-              ) : (
-                historyModal.rows.map((row, idx) => {
-                  const prev = historyModal.rows[idx + 1];
-                  return (
-                    <div key={row.id} className="rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="font-semibold text-gray-800">{row.supplierName}</span>
-                        <span className="text-gray-400">{row.date}</span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-[11px]">
-                        <div>
-                          <span className="text-gray-400 block">SL</span>
-                          <span className="font-bold">{row.quantity}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-400 block">Giá nhập</span>
-                          <span className="font-mono font-bold">{row.newImportPrice.toLocaleString('vi-VN')} đ</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-400 block">So lần trước</span>
-                          {prev ? (
-                            <PriceChangeBadge oldPrice={prev.newImportPrice} newPrice={row.newImportPrice} />
-                          ) : (
-                            <span className="text-sky-600 font-bold">Lần đầu</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+        {historyModalEl}
       </div>
     );
   }
@@ -812,26 +960,11 @@ export default function ImportManager({
                     <td className="p-4 text-right">
                       <div className="font-mono font-bold text-slate-800">{imp.totalAmount.toLocaleString('vi-VN')} đ</div>
                       <div className="text-xs text-gray-400">Đã trả: {imp.paidAmount.toLocaleString('vi-VN')} đ</div>
-                      {imp.status === 'fully_paid' && (
-                        <span className="inline-block text-[9px] bg-emerald-50 text-emerald-600 font-bold px-1 rounded-full border border-emerald-100 mt-1">
-                          Đã trả hết
-                        </span>
-                      )}
-                      {imp.status === 'partial' && (
-                        <span className="inline-block text-[9px] bg-amber-50 text-amber-600 font-bold px-1 rounded-full border border-amber-100 mt-1">
-                          Trả một phần
-                        </span>
-                      )}
-                      {imp.status === 'unpaid' && (
-                        <span className="inline-block text-[9px] bg-rose-50 text-rose-600 font-bold px-1 rounded-full border border-rose-100 mt-1">
-                          Nợ 100%
-                        </span>
-                      )}
                     </td>
                     <td className="p-4 text-center">
                       <button
                         onClick={() => onEditProductShortcut(imp.productId)}
-                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline font-semibold bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg border border-blue-100 transition-all cursor-pointer"
+                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-semibold bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg border border-blue-100"
                       >
                         <ExternalLink className="w-3.5 h-3.5" /> Sửa SP
                       </button>
@@ -840,8 +973,7 @@ export default function ImportManager({
                       <button
                         type="button"
                         onClick={() => openImportHistory(imp.productId, imp.productTitle, imp.productSku)}
-                        className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-semibold bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg border border-indigo-100 transition-all cursor-pointer"
-                        title="Xem lịch sử nhập & so sánh giá"
+                        className="inline-flex items-center gap-1 text-xs text-indigo-600 font-semibold bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg border border-indigo-100"
                       >
                         <History className="w-3.5 h-3.5" /> Lịch sử
                       </button>
@@ -861,24 +993,17 @@ export default function ImportManager({
           </div>
         ) : (
           filteredImports.map((imp) => (
-            <div
-              key={imp.id}
-              className="bg-white rounded-2xl border border-gray-100 p-4 shadow-xs space-y-3"
-            >
+            <div key={imp.id} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-xs space-y-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-gray-900 line-clamp-2 leading-snug">{imp.productTitle}</p>
+                  <p className="font-semibold text-gray-900 line-clamp-2">{imp.productTitle}</p>
                   <p className="text-[11px] font-mono text-gray-500 mt-1">{imp.productSku}</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="text-xs text-gray-400 flex items-center gap-1 justify-end">
-                    <Calendar className="w-3.5 h-3.5" />
-                    {imp.date}
-                  </p>
+                  <p className="text-xs text-gray-400">{imp.date}</p>
                   <p className="text-sm font-bold text-gray-800 mt-1">{imp.supplierName}</p>
                 </div>
               </div>
-
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div className="bg-gray-50 rounded-xl p-3">
                   <span className="text-gray-400 block text-[10px] uppercase font-bold">Số lượng</span>
@@ -886,37 +1011,7 @@ export default function ImportManager({
                 </div>
                 <div className="bg-gray-50 rounded-xl p-3">
                   <span className="text-gray-400 block text-[10px] uppercase font-bold">Thành tiền</span>
-                  <span className="font-mono font-bold text-slate-800">{imp.totalAmount.toLocaleString('vi-VN')} đ</span>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-3">
-                  <span className="text-gray-400 block text-[10px] uppercase font-bold">Giá nhập mới</span>
-                  <span className="font-mono font-semibold">{imp.newImportPrice.toLocaleString('vi-VN')} đ</span>
-                </div>
-                <div className="bg-gray-50 rounded-xl p-3 flex flex-col justify-center">
-                  <span className="text-gray-400 block text-[10px] uppercase font-bold mb-1">% Thay đổi</span>
-                  <PriceChangeBadge oldPrice={imp.oldImportPrice} newPrice={imp.newImportPrice} />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between gap-2 pt-1 border-t border-gray-50">
-                <span className="text-xs text-gray-500">
-                  Đã trả: <strong className="text-gray-800">{imp.paidAmount.toLocaleString('vi-VN')} đ</strong>
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openImportHistory(imp.productId, imp.productTitle, imp.productSku)}
-                    className="min-h-11 px-3 inline-flex items-center gap-1.5 text-xs text-indigo-600 font-semibold bg-indigo-50 hover:bg-indigo-100 rounded-xl border border-indigo-100 transition-all"
-                  >
-                    <History className="w-4 h-4" /> Lịch sử
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onEditProductShortcut(imp.productId)}
-                    className="min-h-11 px-4 inline-flex items-center gap-1.5 text-xs text-blue-600 font-semibold bg-blue-50 hover:bg-blue-100 rounded-xl border border-blue-100 transition-all"
-                  >
-                    <ExternalLink className="w-4 h-4" /> Sửa SP
-                  </button>
+                  <span className="font-mono font-bold">{imp.totalAmount.toLocaleString('vi-VN')} đ</span>
                 </div>
               </div>
             </div>
@@ -924,82 +1019,7 @@ export default function ImportManager({
         )}
       </div>
 
-      {historyModal && (
-        <div className="fixed inset-0 z-80 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/40"
-            aria-label="Đóng"
-            onClick={() => setHistoryModal(null)}
-          />
-          <div className="relative w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border border-gray-100 max-h-[85vh] overflow-hidden flex flex-col">
-            <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="text-sm font-extrabold text-gray-900 flex items-center gap-2">
-                  <History className="w-4 h-4 text-indigo-600" /> Lịch sử nhập hàng
-                </h3>
-                <p className="text-xs text-gray-500 mt-1 line-clamp-2">
-                  [{historyModal.productSku}] {historyModal.productTitle}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setHistoryModal(null)}
-                className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="overflow-y-auto p-4 space-y-2">
-              {historyModal.loading ? (
-                <p className="text-center text-xs text-gray-400 py-8">Đang tải lịch sử...</p>
-              ) : historyModal.rows.length === 0 ? (
-                <p className="text-center text-xs text-gray-400 py-8">Chưa có lần nhập nào.</p>
-              ) : (
-                historyModal.rows.map((row, idx) => {
-                  const prev = historyModal.rows[idx + 1];
-                  return (
-                    <div
-                      key={row.id}
-                      className="rounded-xl border border-gray-100 bg-gray-50/60 p-3 space-y-2"
-                    >
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="font-semibold text-gray-800">{row.supplierName}</span>
-                        <span className="text-gray-400 flex items-center gap-1">
-                          <Calendar className="w-3 h-3" /> {row.date}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-2 text-[11px]">
-                        <div>
-                          <span className="text-gray-400 block">SL</span>
-                          <span className="font-bold text-gray-900">{row.quantity}</span>
-                        </div>
-                        <div>
-                          <span className="text-gray-400 block">Giá nhập</span>
-                          <span className="font-mono font-bold text-gray-900">
-                            {row.newImportPrice.toLocaleString('vi-VN')} đ
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-gray-400 block">So lần trước</span>
-                          {prev ? (
-                            <PriceChangeBadge oldPrice={prev.newImportPrice} newPrice={row.newImportPrice} />
-                          ) : (
-                            <span className="text-sky-600 font-bold">Lần đầu</span>
-                          )}
-                        </div>
-                      </div>
-                      {row.warehouseId && (
-                        <p className="text-[10px] text-gray-400">Kho: {row.warehouseId}</p>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {historyModalEl}
     </div>
   );
 }

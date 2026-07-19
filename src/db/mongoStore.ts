@@ -163,10 +163,14 @@ function toListingDocs(rows: any[]): ListingDoc[] {
   return out;
 }
 
-function docsToProducts(docs: Array<{ data?: any }>): any[] {
+function docsToProducts(docs: Array<{ _id?: any; data?: any; sku?: string | null }>): any[] {
   const out: any[] = [];
   for (const d of docs) {
-    if (d?.data && typeof d.data === "object") out.push(d.data);
+    if (!d?.data || typeof d.data !== "object") continue;
+    const data = { ...d.data };
+    if (!data.id && d._id != null) data.id = String(d._id);
+    if ((data.sku == null || data.sku === "") && d.sku != null) data.sku = String(d.sku);
+    out.push(data);
   }
   return out;
 }
@@ -387,8 +391,8 @@ export async function loadProductsByIdsFromStore(
 }
 
 /**
- * Tìm sản phẩm kho gốc theo SKU/tên — 1 query Mongo (không N+1).
- * Không lọc warehouse_id cứng (kho hệ thống = collection products Mongo).
+ * Tìm sản phẩm kho gốc theo SKU/tên — find() trả mảng, ưu tiên khớp SKU.
+ * Không lọc warehouse_id (kho hệ thống = collection products Mongo).
  */
 export async function searchProductsFromStore(
   query: string,
@@ -396,30 +400,48 @@ export async function searchProductsFromStore(
 ): Promise<any[]> {
   requireMongo();
   const q = String(query || "").trim();
-  const safeLimit = Math.min(80, Math.max(1, Math.floor(Number(limit) || 40)));
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
+  // Lấy nhiều parent hơn limit vì mỗi parent có thể flatten thành nhiều biến thể
+  const parentFetchLimit = Math.min(200, Math.max(safeLimit * 3, 60));
 
-  let docs: Array<{ data?: any }> = [];
+  let docs: Array<{ _id?: any; data?: any; sku?: string | null }> = [];
   if (!q) {
-    docs = await ProductModel.find({}).sort({ _id: 1 }).limit(safeLimit).lean();
+    docs = await ProductModel.find({}).sort({ _id: 1 }).limit(parentFetchLimit).lean();
   } else {
     const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const rx = new RegExp(escaped, "i");
-    docs = await ProductModel.find({
+    // Tách query SKU và Tên — gộp OR trong từng nhóm, ưu tiên kết quả SKU trước
+    const skuFilter = {
       $or: [
         { sku: rx },
         { "data.sku": rx },
-        { "data.title": rx },
-        { "data.modelName": rx },
         { "data.barcode": rx },
         { "data.children.sku": rx },
+        { "data.children.barcode": rx },
+        { "data.children_models.sku": rx },
+        { "data.children_models.barcode": rx },
+      ],
+    };
+    const nameFilter = {
+      $or: [
+        { "data.title": rx },
+        { "data.modelName": rx },
         { "data.children.title": rx },
         { "data.children.modelName": rx },
-        { "data.children_models.sku": rx },
         { "data.children_models.title": rx },
       ],
-    })
-      .limit(safeLimit)
-      .lean();
+    };
+    const [skuDocs, nameDocs] = await Promise.all([
+      ProductModel.find(skuFilter).limit(parentFetchLimit).lean(),
+      ProductModel.find(nameFilter).limit(parentFetchLimit).lean(),
+    ]);
+    const seenDoc = new Set<string>();
+    for (const d of [...skuDocs, ...nameDocs]) {
+      const key = String(d?._id ?? "");
+      if (!key || seenDoc.has(key)) continue;
+      seenDoc.add(key);
+      docs.push(d);
+    }
   }
 
   const parents = docsToProducts(docs);
@@ -427,42 +449,103 @@ export async function searchProductsFromStore(
   const seen = new Set<string>();
   const qLower = q.toLowerCase();
 
+  const resolveId = (row: any): string => {
+    // Chỉ dùng id thật trong kho — không tự sinh id giả (sẽ làm vỡ cập nhật tồn)
+    return String(row?.id || row?._id || row?.shopeeModelId || "").trim();
+  };
+
+  const normalizeRow = (row: any) => {
+    const id = String(row.id || "").trim();
+    const sku = String(row.sku || "").trim();
+    const title = String(row.title || row.name || "").trim();
+    const image = row.avatarUrl || row.imageUrl || row.image || "";
+    const stock = Math.max(0, Math.round(Number(row.stock ?? row.current_stock) || 0));
+    const importPrice = Math.max(0, Math.round(Number(row.importPrice ?? row.last_import_price) || 0));
+    return {
+      ...row,
+      id,
+      sku,
+      title,
+      name: title,
+      image,
+      imageUrl: row.imageUrl || image,
+      avatarUrl: row.avatarUrl || image,
+      stock,
+      current_stock: stock,
+      importPrice,
+      last_import_price: importPrice,
+    };
+  };
+
   const pushRow = (row: any) => {
     if (!row || typeof row !== "object") return;
     const id = String(row.id || "").trim();
     if (!id || seen.has(id)) return;
     seen.add(id);
-    flat.push(row);
+    flat.push(normalizeRow(row));
   };
 
   const matchesQuery = (row: any, extra = ""): boolean => {
     if (!q) return true;
-    const hay = `${row?.sku || ""} ${row?.title || ""} ${row?.modelName || ""} ${(row?.tierLabels || []).join(" ")} ${extra}`.toLowerCase();
+    const hay = [
+      row?.sku,
+      row?.barcode,
+      row?.title,
+      row?.name,
+      row?.modelName,
+      ...(Array.isArray(row?.tierLabels) ? row.tierLabels : []),
+      extra,
+    ]
+      .map((v) => String(v ?? "").toLowerCase())
+      .join(" ");
     return hay.includes(qLower);
   };
 
   for (const p of parents) {
+    const parentId = resolveId(p);
     const children = Array.isArray(p?.children) && p.children.length
       ? p.children
       : Array.isArray(p?.children_models)
         ? p.children_models
         : [];
+
     if (children.length > 0) {
       let childMatched = 0;
       for (const c of children) {
-        if (!matchesQuery(c, String(p.title || ""))) continue;
+        if (!matchesQuery(c, `${p.title || ""} ${p.sku || ""}`)) continue;
+        const childId = resolveId(c);
+        if (!childId) continue;
         pushRow({
           ...c,
-          title: c.title || p.title,
-          imageUrl: c.imageUrl || p.imageUrl,
+          id: childId,
+          title: c.title || c.name || p.title,
+          sku: c.sku || "",
+          imageUrl: c.imageUrl || c.image || p.imageUrl,
           avatarUrl: c.avatarUrl || p.avatarUrl,
+          stock: c.stock ?? 0,
+          importPrice: c.importPrice ?? p.importPrice ?? 0,
         });
         childMatched += 1;
       }
-      if (childMatched === 0 && matchesQuery(p)) pushRow(p);
-    } else if (matchesQuery(p)) {
-      pushRow(p);
+      // Parent không có biến thể khớp nhưng chính parent khớp (SKU/tên parent)
+      if (childMatched === 0 && matchesQuery(p) && parentId) {
+        pushRow({ ...p, id: parentId });
+      }
+    } else if (matchesQuery(p) && parentId) {
+      pushRow({ ...p, id: parentId });
     }
+  }
+
+  // Ưu tiên dòng khớp SKU chính xác / chứa SKU lên đầu
+  if (q) {
+    flat.sort((a, b) => {
+      const aSku = String(a.sku || "").toLowerCase();
+      const bSku = String(b.sku || "").toLowerCase();
+      const aExact = aSku === qLower ? 0 : aSku.includes(qLower) ? 1 : 2;
+      const bExact = bSku === qLower ? 0 : bSku.includes(qLower) ? 1 : 2;
+      if (aExact !== bExact) return aExact - bExact;
+      return 0;
+    });
   }
 
   return flat.slice(0, safeLimit);

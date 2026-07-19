@@ -12137,22 +12137,34 @@ async function startServer() {
     }
   });
 
-  /** Tìm SP kho gốc cho Tab Nhập hàng — query Mongo trực tiếp (không phụ thuộc pagination 50). */
+  /** Tìm SP kho gốc cho Tab Nhập hàng — query Mongo find() trả mảng (SKU OR tên). */
   app.get("/api/products/search", authMiddleware, async (req, res) => {
     try {
       const q = String(req.query?.q ?? req.query?.query ?? "").trim();
       const limit = Number(req.query?.limit ?? 40);
-      const products = await searchProductsFromStore(q, limit);
+      const raw = await searchProductsFromStore(q, limit);
+      const products = raw.map((p: any) => ({
+        ...p,
+        id: p.id,
+        sku: p.sku || "",
+        name: p.name || p.title || "",
+        title: p.title || p.name || "",
+        image: p.image || p.avatarUrl || p.imageUrl || "",
+        current_stock: p.current_stock ?? p.stock ?? 0,
+        stock: p.stock ?? p.current_stock ?? 0,
+        last_import_price: p.last_import_price ?? p.importPrice ?? 0,
+        importPrice: p.importPrice ?? p.last_import_price ?? 0,
+      }));
       console.log("[Products API] /api/products/search", {
         q,
         limit,
         total: products.length,
-        sample: products.slice(0, 3).map((p: any) => ({
-          id: p?.id,
-          sku: p?.sku,
-          title: p?.title,
-          stock: p?.stock,
-          importPrice: p?.importPrice,
+        sample: products.slice(0, 5).map((p: any) => ({
+          id: p.id,
+          sku: p.sku,
+          name: p.name,
+          current_stock: p.current_stock,
+          last_import_price: p.last_import_price,
         })),
       });
       return res.json({

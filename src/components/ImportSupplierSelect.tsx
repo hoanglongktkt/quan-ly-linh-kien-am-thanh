@@ -1,7 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, ChevronDown, Plus, Building2, X } from 'lucide-react';
 import { Supplier } from '../types';
+
+export interface ImportSupplierSelectHandle {
+  focus: () => void;
+}
 
 interface ImportSupplierSelectProps {
   suppliers: Supplier[];
@@ -11,13 +15,11 @@ interface ImportSupplierSelectProps {
   onQuickAddSuccess?: () => void;
 }
 
-export default function ImportSupplierSelect({
-  suppliers,
-  value,
-  onChange,
-  onSuppliersUpdated,
-  onQuickAddSuccess,
-}: ImportSupplierSelectProps) {
+const ImportSupplierSelect = forwardRef<ImportSupplierSelectHandle, ImportSupplierSelectProps>(
+  function ImportSupplierSelect(
+    { suppliers, value, onChange, onSuppliersUpdated, onQuickAddSuccess },
+    ref,
+  ) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [highlightIndex, setHighlightIndex] = useState(0);
@@ -28,6 +30,14 @@ export default function ImportSupplierSelect({
   const [quickAddError, setQuickAddError] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      setOpen(true);
+      setTimeout(() => searchInputRef.current?.focus(), 0);
+    },
+  }));
 
   const selected = suppliers.find((s) => s.id === value);
 
@@ -183,12 +193,13 @@ export default function ImportSupplierSelect({
               <div className="relative">
                 <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                 <input
+                  ref={searchInputRef}
                   type="text"
                   autoFocus
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Tìm theo mã, tên nhà cung cấp..."
+                  placeholder="F4 — Tìm theo mã, tên nhà cung cấp..."
                   className="w-full pl-8 pr-3 py-2 text-xs bg-gray-50 rounded-lg border border-gray-100 outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/20"
                 />
               </div>
@@ -316,4 +327,6 @@ export default function ImportSupplierSelect({
         )}
     </>
   );
-}
+});
+
+export default ImportSupplierSelect;
