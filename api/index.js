@@ -11,6 +11,7 @@ import { handleHealthCpanel } from '../_lib/handlers/healthCpanel.js';
 import { handleChannelAutoLink } from '../_lib/handlers/channelAutoLink.js';
 import { handleMappingAutoLinkSingle } from '../_lib/handlers/mappingAutoLinkSingle.js';
 import { handleMappingSkuIndex } from '../_lib/handlers/mappingSkuIndex.js';
+import { handleMappingBulkAutoLink } from '../_lib/handlers/mappingBulkAutoLink.js';
 import { handleProductSyncShopee } from '../_lib/handlers/productSyncShopee.js';
 import { handleScanBulkUpdate } from '../_lib/handlers/scanBulkUpdate.js';
 import { handleLabelProxy } from '../_lib/handlers/labels.js';
@@ -47,6 +48,8 @@ const LOCAL_ROUTES = {
   'auto-link': handleChannelAutoLink,
   'mapping-products/auto-link-single': handleMappingAutoLinkSingle,
   'mapping-products/sku-index': handleMappingSkuIndex,
+  'mapping-products/bulk-auto-link': handleMappingBulkAutoLink,
+  'mapping/bulk-update': handleMappingBulkAutoLink,
   'products/sync-shopee': handleProductSyncShopee,
   // cPanel cũ trả 404 cho route bulk quét — xử lý local trên Vercel.
   'orders/scan-bulk-update': handleScanBulkUpdate,

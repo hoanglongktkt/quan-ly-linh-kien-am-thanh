@@ -471,6 +471,50 @@ export async function upsertChannelListingToStore(row: any): Promise<any> {
   return row;
 }
 
+/**
+ * Upsert lô channel_listings bằng bulkWrite (1 lệnh Mongo / lô).
+ * Dùng cho auto-map hàng loạt — tránh N lần findByIdAndUpdate (NPROC/CageFS).
+ */
+export async function bulkUpsertChannelListingsToStore(rows: any[]): Promise<number> {
+  requireMongo();
+  const list = Array.isArray(rows)
+    ? rows.filter((r) => r != null && typeof r === "object")
+    : [];
+  const ops = [];
+  for (const row of list) {
+    const id = String(row?.id || "").trim();
+    if (!id) continue;
+    ops.push({
+      updateOne: {
+        filter: { _id: id },
+        update: {
+          $set: {
+            _id: id,
+            channelId: row?.channelId != null ? String(row.channelId) : null,
+            platform: row?.platform != null ? String(row.platform) : null,
+            sku: row?.sku != null ? String(row.sku) : null,
+            status: row?.status != null ? String(row.status) : null,
+            linkedProductId:
+              row?.linkedProductId != null ? String(row.linkedProductId) : null,
+            data: row,
+          },
+        },
+        upsert: true,
+      },
+    });
+  }
+  if (ops.length === 0) return 0;
+
+  await enqueueWrite(async () => {
+    const result = await ChannelListingModel.bulkWrite(ops as any, { ordered: false });
+    await setMeta("listings_updated_at", new Date().toISOString());
+    console.log(
+      `[MongoDB] bulkWrite channel_listings — ops=${ops.length} upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`
+    );
+  });
+  return ops.length;
+}
+
 export async function deleteAllProductsFromStore(): Promise<void> {
   requireMongo();
   await ProductModel.deleteMany({});

@@ -18,6 +18,7 @@ import {
   loadChannelListingsFromStore,
   saveChannelListingsToStoreAsync,
   upsertChannelListingToStore,
+  bulkUpsertChannelListingsToStore,
   buildLocalInventoryCacheFromStore,
   countProducts,
   countChannelListings,
@@ -9623,11 +9624,10 @@ async function batchAutoLinkFromDatabase(opts?: {
     }
 
     if (wroteChanges) {
-      for (const listing of newlyLinkedRows) {
-        await upsertChannelListingToStore(listing);
-      }
+      // 1 lệnh bulkWrite / lô — cấm vòng await upsert từng dòng (NPROC).
+      await bulkUpsertChannelListingsToStore(newlyLinkedRows);
       await flushDbWrites();
-      await sleep(1);
+      await sleep(200); // Event loop breathe — giải phóng CPU/GC trên AZDIGI
     }
 
     const unlinkedRemaining = dbListings.filter((row) => {
@@ -9656,6 +9656,171 @@ async function batchAutoLinkFromDatabase(opts?: {
     console.error("[Batch Auto-link] Matching failed:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
+}
+
+const BULK_AUTO_LINK_CHUNK_MAX = 50;
+
+/**
+ * Auto-link theo lô ID từ Frontend (≤50).
+ * Hash Map SKU 1 lần / request → bulkWrite 1 lần → thở 200ms.
+ */
+async function bulkAutoLinkListingsByIds(rawIds: unknown[]): Promise<{
+  linkedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  listings: any[];
+  results: Array<{ id: string; success: boolean; listing: any; message: string }>;
+  skuIndexSize: number;
+  masterProductCount: number;
+}> {
+  const ids = (Array.isArray(rawIds) ? rawIds : [])
+    .map((id) => String(id ?? "").trim())
+    .filter(Boolean)
+    .slice(0, BULK_AUTO_LINK_CHUNK_MAX);
+
+  if (ids.length === 0) {
+    throw new Error("Thiếu danh sách id sản phẩm sàn cần liên kết (tối đa 50/lô).");
+  }
+
+  const dbListings = await readChannelListingsDb();
+  if (!Array.isArray(dbListings) || dbListings.length === 0) {
+    throw new Error("Không có dữ liệu channel_listings để liên kết.");
+  }
+  const masterProducts = await loadProducts();
+  if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
+    throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
+  }
+
+  const masterSkuIndex = buildMasterSkuIndex(masterProducts);
+  const byId = new Map<string, { index: number; row: any }>();
+  for (let i = 0; i < dbListings.length; i += 1) {
+    const safe = sanitizeChannelListingRow(dbListings[i]);
+    const id = String(safe?.id || "").trim();
+    if (id && !byId.has(id)) byId.set(id, { index: i, row: safe });
+  }
+
+  const results: Array<{ id: string; success: boolean; listing: any; message: string }> = [];
+  const toWrite: any[] = [];
+  let linkedCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+
+  for (const id of ids) {
+    const found = byId.get(id);
+    if (!found) {
+      failedCount += 1;
+      results.push({
+        id,
+        success: false,
+        listing: { id, status: "failed", syncError: "Không tìm thấy listing trên Database." },
+        message: "Không tìm thấy sản phẩm sàn cần liên kết.",
+      });
+      continue;
+    }
+
+    const current = found.row;
+    if (isListingAlreadyLinkedProtected(current)) {
+      skippedCount += 1;
+      const enriched = enrichChannelListingsWithMaster([current], masterProducts)[0];
+      results.push({
+        id,
+        success: true,
+        listing: enriched,
+        message: "Sản phẩm này đã được liên kết trước đó.",
+      });
+      continue;
+    }
+
+    const normalizedSku = normalizeSkuKey(current?.sku);
+    if (!normalizedSku) {
+      failedCount += 1;
+      const failedRow = sanitizeChannelListingRow({
+        ...current,
+        status: "failed",
+        syncError: "SKU sản phẩm sàn đang trống hoặc không hợp lệ.",
+      });
+      dbListings[found.index] = failedRow;
+      toWrite.push(failedRow);
+      results.push({
+        id,
+        success: false,
+        listing: enrichChannelListingsWithMaster([failedRow], masterProducts)[0],
+        message: "SKU sản phẩm sàn đang trống hoặc không hợp lệ.",
+      });
+      continue;
+    }
+
+    const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku, masterProducts);
+    if (!masterItem) {
+      failedCount += 1;
+      const failedRow = sanitizeChannelListingRow({
+        ...current,
+        status: "failed",
+        syncError: `Không tìm thấy SKU khớp trong Kho gốc: ${normalizedSku}`,
+      });
+      dbListings[found.index] = failedRow;
+      toWrite.push(failedRow);
+      results.push({
+        id,
+        success: false,
+        listing: enrichChannelListingsWithMaster([failedRow], masterProducts)[0],
+        message: `Không tìm thấy SKU khớp trong Kho gốc cho "${normalizedSku}".`,
+      });
+      continue;
+    }
+
+    const linkedProductId =
+      masterItem?.id != null && String(masterItem.id).trim() !== ""
+        ? String(masterItem.id).trim()
+        : undefined;
+    const patched = sanitizeChannelListingRow({
+      ...current,
+      status: "success",
+      linkedProductId,
+      linkedProductTitle: String(masterItem?.title || "").trim() || undefined,
+      linkedProductSku: String(masterItem?.sku || "").trim() || undefined,
+      linkedProduct: linkedProductId
+        ? {
+            id: linkedProductId,
+            title: String(masterItem?.title || "").trim(),
+            sku: String(masterItem?.sku || "").trim(),
+          }
+        : undefined,
+      syncError: undefined,
+      linkBroken: false,
+    });
+    dbListings[found.index] = patched;
+    toWrite.push(patched);
+    linkedCount += 1;
+    results.push({
+      id,
+      success: true,
+      listing: enrichChannelListingsWithMaster([patched], masterProducts)[0],
+      message: "Liên kết tự động thành công.",
+    });
+  }
+
+  if (toWrite.length > 0) {
+    await bulkUpsertChannelListingsToStore(toWrite);
+    await flushDbWrites();
+  }
+
+  // Nhịp thở Event Loop giữa các lô (Frontend chờ response rồi mới gửi lô tiếp).
+  await sleep(200);
+
+  console.log(
+    `[Bulk Auto-link] chunk=${ids.length} linked=${linkedCount} failed=${failedCount} skipped=${skippedCount} wrote=${toWrite.length} skuIndex=${masterSkuIndex.size}`
+  );
+
+  return {
+    linkedCount,
+    failedCount,
+    skippedCount,
+    listings: results.map((r) => r.listing).filter(Boolean),
+    results,
+    skuIndexSize: masterSkuIndex.size,
+    masterProductCount: masterProducts.length,
+  };
 }
 const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
 
@@ -10990,18 +11155,17 @@ async function startServer() {
       }
       console.log(`[Mapping Save] UPSERT nhận ${incoming.length} dòng (${req.method})`);
       const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
-      for (const listing of sanitized) {
-        await upsertChannelListingToStore(listing);
-      }
+      // bulkWrite 1 lệnh — cấm vòng await upsert từng dòng (NPROC AZDIGI).
+      await bulkUpsertChannelListingsToStore(sanitized);
       await flushDbWrites();
-      const cache = await refreshCache();
-      console.log(`Đã lưu DB thành công — mapping upsert ${sanitized.length} dòng + refreshCache`);
-      const verified = enrichChannelListingsWithMaster(cache.listings, cache.products);
+      await sleep(200);
+      const verified = enrichChannelListingsWithMaster(sanitized, await loadProducts());
+      console.log(`Đã lưu DB thành công — mapping bulkWrite ${sanitized.length} dòng`);
       return res.status(200).json({
         success: true,
         count: verified.length,
         listings: verified,
-        cacheUpdatedAt: cache.updatedAt,
+        cacheUpdatedAt: new Date().toISOString(),
         source: isMongoReady() ? "mongodb" : "json_fallback",
       });
     } catch (error: any) {
@@ -11150,8 +11314,37 @@ async function startServer() {
     }
   });
 
+  /** Auto-link theo lô ≤50 id — Hash Map + bulkWrite + thở 200ms (chống NPROC). */
+  const handleBulkAutoLinkByIds = async (req: any, res: any) => {
+    try {
+      const body = req?.body && typeof req.body === "object" ? req.body : {};
+      const rawIds = Array.isArray(body.ids)
+        ? body.ids
+        : Array.isArray(body.listingIds)
+          ? body.listingIds
+          : Array.isArray(body.listings)
+            ? body.listings.map((row: any) => row?.id)
+            : [];
+      const result = await bulkAutoLinkListingsByIds(rawIds);
+      return res.status(200).json({
+        success: true,
+        ...result,
+        message:
+          result.linkedCount > 0
+            ? `Đã liên kết thành công ${result.linkedCount}/${rawIds.length} sản phẩm trong lô`
+            : "Không có sản phẩm nào liên kết thành công trong lô này",
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Bulk Auto-link] Exception:", message);
+      return res.status(500).json({ success: false, message, error: message });
+    }
+  };
+
   app.post("/api/mapping-products/auto-link-single", authMiddleware, handleSingleAutoLink);
   app.post("/api/mapping-products/batch-auto-link", authMiddleware, handleBatchAutoLink);
+  app.post("/api/mapping-products/bulk-auto-link", authMiddleware, handleBulkAutoLinkByIds);
+  app.post("/api/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
 
   // BẮT BUỘC: đăng ký purge-broken (MongoDB channel_listings).
   app.post("/api/mapping-products/purge-broken", authMiddleware, async (_req, res) => {
