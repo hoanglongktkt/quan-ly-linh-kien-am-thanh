@@ -105,6 +105,10 @@ export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
 
   const orderSnKey = normalizeOrderScanKey(order.orderSn);
   const trackingKey = order.trackingNumber ? normalizeOrderScanKey(order.trackingNumber) : '';
+  const returnTrackingKey = order.return_tracking_no
+    ? normalizeOrderScanKey(order.return_tracking_no)
+    : '';
+  const trackingNoKey = order.tracking_no ? normalizeOrderScanKey(order.tracking_no) : '';
   const internalKey = order.internalTrackingCode ? normalizeOrderScanKey(order.internalTrackingCode) : '';
   const packageKey = order.packageNumber ? normalizeOrderScanKey(order.packageNumber) : '';
   const idKey = normalizeOrderScanKey(order.id?.replace(/^shopee-/i, '') || '');
@@ -113,6 +117,8 @@ export function matchScannedCodeToOrder(order: Order, raw: string): boolean {
     (sk) =>
       flexibleCodeMatch(sk, orderSnKey) ||
       flexibleCodeMatch(sk, trackingKey) ||
+      flexibleCodeMatch(sk, returnTrackingKey) ||
+      flexibleCodeMatch(sk, trackingNoKey) ||
       flexibleCodeMatch(sk, internalKey) ||
       flexibleCodeMatch(sk, packageKey) ||
       flexibleCodeMatch(sk, idKey)
@@ -141,6 +147,8 @@ export function buildOrderScanIndex(orders: Order[]): OrderScanIndex {
     };
     put(byOrderSn, order.orderSn);
     put(byTracking, order.trackingNumber);
+    put(byTracking, order.tracking_no);
+    put(byTracking, order.return_tracking_no);
     put(byInternal, order.internalTrackingCode);
     put(byPackage, order.packageNumber);
     put(byId, order.id);
@@ -178,10 +186,13 @@ export function findOrderByScanPayload(
 
   if (trackingLike) {
     for (const order of orders) {
-      const trackingKey = order.trackingNumber ? normalizeOrderScanKey(order.trackingNumber) : '';
-      if (!trackingKey) continue;
-      const matched = scanKeys.some((sk) => flexibleCodeMatch(sk, trackingKey));
-      if (matched) return order;
+      const candidates = [order.trackingNumber, order.tracking_no, order.return_tracking_no];
+      for (const c of candidates) {
+        const trackingKey = c ? normalizeOrderScanKey(c) : '';
+        if (!trackingKey) continue;
+        const matched = scanKeys.some((sk) => flexibleCodeMatch(sk, trackingKey));
+        if (matched) return order;
+      }
     }
   }
 
