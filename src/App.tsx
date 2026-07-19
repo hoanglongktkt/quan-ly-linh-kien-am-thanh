@@ -466,18 +466,19 @@ export default function App() {
       })
       .join('; ');
 
-  // Actively pull real orders straight from Shopee (v2.order.get_order_list +
-  // get_order_detail) via the backend, then refresh local state with the result.
-  // Bound to the "Cập nhật đơn hàng" button.
-  const pullOrders = async () => {
+  // Incremental (mặc định) / full sync — API trả 202, sync chạy ngầm; poll /api/orders.
+  const pullOrders = async (opts?: { type?: 'incremental' | 'full' }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
 
+    const syncType = opts?.type === 'full' ? 'full' : 'incremental';
     const invalidServerResponseMessage =
       'Máy chủ đang bận hoặc phản hồi không hợp lệ. Vui lòng thử lại sau.';
     const readOrderSyncJson = async (response: Response): Promise<Record<string, any>> => {
       const contentType = response.headers.get('content-type') || '';
-      if (!response.ok || !contentType.includes('application/json')) {
+      // 202 Accepted cũng là JSON hợp lệ khi bắt đầu sync ngầm.
+      const okHttp = response.ok || response.status === 202;
+      if (!okHttp || !contentType.includes('application/json')) {
         try {
           const responsePreview = (await response.text()).slice(0, 200);
           console.error('[Orders Sync] Invalid server response:', {
@@ -501,28 +502,56 @@ export default function App() {
 
     setOrdersLoading(true);
     try {
-      const response = await fetch('/api/orders/pull', {
+      const response = await fetch(`/api/orders/pull?type=${syncType}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: syncType }),
       });
       const data = await readOrderSyncJson(response);
+
+      if (data.skipped || data.syncing) {
+        throw new Error(String(data.message || 'Đang có tiến trình đồng bộ chạy'));
+      }
+      if (data.warning && !data.accepted && response.status !== 202) {
+        throw new Error(String(data.warning));
+      }
+
+      const startedBackground =
+        response.status === 202 || data.accepted === true || data.message === 'Đã bắt đầu tiến trình đồng bộ ngầm';
+
+      if (startedBackground) {
+        // Giải phóng loading UI ngay — sync chạy ngầm, poll silent.
+        setOrdersLoading(false);
+        const pollMs = 12_000;
+        const maxPolls = 12;
+        for (let i = 0; i < maxPolls; i++) {
+          await new Promise((r) => setTimeout(r, pollMs));
+          await fetchOrders({ silent: true });
+          try {
+            const statusRes = await fetch('/api/orders/pull/status', {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (statusRes.ok) {
+              const status = await statusRes.json();
+              if (!status.syncing) break;
+            }
+          } catch {
+            /* bỏ qua lỗi status — vẫn tiếp tục poll orders */
+          }
+        }
+        await fetchOrders({ silent: true });
+        return;
+      }
+
       const pulled = Number(data.pulled) || 0;
       const pullErrors = Array.isArray(data.errors) ? data.errors : [];
       if (pullErrors.length > 0 && pulled === 0) {
         throw new Error(formatPullErrors(pullErrors));
       }
-      const refreshRes = await fetch('/api/orders', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const freshOrders = await readOrderSyncJson(refreshRes);
-      if (Array.isArray(freshOrders)) {
-        const sanitized = sanitizeOrders(freshOrders);
-        setOrders(sanitized);
-        void saveOrdersCache(sanitized);
-      }
-      if (data.warning) {
-        throw new Error(String(data.warning));
-      }
+      await fetchOrders({ silent: true });
       if (pullErrors.length > 0) {
         console.warn('[Orders Pull] partial errors:', formatPullErrors(pullErrors));
       }

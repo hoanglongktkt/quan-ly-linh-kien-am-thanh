@@ -303,8 +303,8 @@ export type OrdersSubTabId = OrderTab;
 interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[]) => void;
-  /** Kéo đơn từ Shopee API (nặng) — dùng cho nút đồng bộ thủ công */
-  onRefreshOrders?: () => Promise<void> | void;
+  /** Kéo đơn từ Shopee API — incremental (mặc định) hoặc full 30 ngày */
+  onRefreshOrders?: (opts?: { type?: 'incremental' | 'full' }) => Promise<void> | void;
   /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
   onFetchOrders?: () => Promise<void> | void;
   ordersLoading?: boolean;
@@ -1600,22 +1600,31 @@ export default function OrderManager({
 
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
-  const handleSyncOrders = async () => {
+  const handleSyncOrders = async (type: 'incremental' | 'full' = 'incremental') => {
     setIsSyncing(true);
+    const isFull = type === 'full';
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
       channel: 'all',
       type: 'stock_sync',
       status: 'success',
-      message: 'Đang gọi API lấy danh sách đơn hàng thực tế đã đồng bộ từ các gian hàng liên kết.'
+      message: isFull
+        ? 'Đang Full Sync đơn hàng (quét ~30 ngày update_time) — chạy ngầm.'
+        : 'Đang đồng bộ incremental (~35 phút update_time) — chạy ngầm.',
     });
 
+    showToast(isFull ? 'Đang Full Sync ngầm...' : 'Đang đồng bộ ngầm...');
+
     try {
-      await onRefreshOrders?.();
-      alert('Đồng bộ thành công! Danh sách đơn hàng đã được cập nhật từ dữ liệu thực tế trên hệ thống.');
+      await onRefreshOrders?.({ type });
+      showToast(
+        isFull
+          ? 'Full Sync hoàn tất — danh sách đơn đã được làm mới.'
+          : 'Đồng bộ hoàn tất — danh sách đơn đã được làm mới.',
+      );
     } catch (err: any) {
-      alert(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);
+      showToast(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);
     } finally {
       setIsSyncing(false);
     }
@@ -2636,12 +2645,32 @@ export default function OrderManager({
           </button>
 
           <button
-            onClick={handleSyncOrders}
+            onClick={() => void handleSyncOrders('incremental')}
             disabled={isSyncing || ordersLoading}
             className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/15 hover:shadow-blue-500/30 transition-all flex items-center gap-2 cursor-pointer"
+            title="Đồng bộ incremental: chỉ đơn cập nhật trong ~35 phút gần nhất"
           >
             <RefreshCw className={`w-4 h-4 ${(isSyncing || ordersLoading) ? 'animate-spin' : ''}`} />
             <span>Cập nhật đơn hàng</span>
+          </button>
+
+          <button
+            onClick={() => {
+              if (
+                !window.confirm(
+                  'Full Sync sẽ quét lại đơn ~30 ngày (nặng hơn). Chỉ dùng khi cần đối soát toàn bộ. Tiếp tục?',
+                )
+              ) {
+                return;
+              }
+              void handleSyncOrders('full');
+            }}
+            disabled={isSyncing || ordersLoading}
+            className="om-orders-mobile-hide-primary-actions px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-75 text-slate-700 font-extrabold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-2 cursor-pointer"
+            title="Full Sync: quét ~30 ngày theo update_time (không dùng cho cron)"
+          >
+            <RefreshCw className={`w-4 h-4 ${(isSyncing || ordersLoading) ? 'animate-spin' : ''}`} />
+            <span>Full Sync</span>
           </button>
         </div>
       </div>

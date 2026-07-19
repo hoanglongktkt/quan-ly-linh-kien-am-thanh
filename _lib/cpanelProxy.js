@@ -18,6 +18,7 @@ const LONG_RUNNING_PREFIXES = [
   'shopee/orders/sync',
   'shopee/orders/sync/job',
   'orders/pull',
+  'orders/pull/status',
   'shopee/products/sync',
   'shopee/channel-products/fetch',
   'shopee/channel-products/auto-link',
