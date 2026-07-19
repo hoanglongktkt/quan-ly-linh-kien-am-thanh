@@ -548,30 +548,74 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
         },
         body: JSON.stringify({ ...payload, shops: shopDetails, selectedShops }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Đăng bán thất bại');
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Máy chủ trả phản hồi không phải JSON (HTTP ${res.status})`);
+      }
 
-      selectedShops.forEach((shopId) => {
-        const shop = availableShops.find((s) => s.id === shopId);
-        const listing = (data.listings || []).find((l: { shop_id: string }) => l.shop_id === shopId);
-        if (shop) {
-          onAddLog({
-            id: `log-${Date.now()}-${shopId}`,
-            timestamp: new Date().toISOString(),
-            channel: (['shopee', 'tiktok', 'woocommerce', 'manual', 'all', 'ghn', 'spx'].includes(shop.platform)
-              ? shop.platform
-              : 'manual') as SyncLog['channel'],
-            type: 'publish',
-            status: listing?.status === 'success' ? 'success' : 'failed',
-            message: listing?.status === 'success'
-              ? `Đăng bán thành công lên [${shop.name}] — ${title}`
-              : `Đăng bán thất bại [${shop.name}]: ${listing?.error_message || 'Lỗi không xác định'}`,
-          });
-        }
+      const listings: any[] = Array.isArray(data.listings) ? data.listings : [];
+      const apiErrors: any[] = Array.isArray(data.errors) ? data.errors : [];
+      const okCount = Number(data.summary?.success ?? listings.filter((l) => l.status === 'success').length);
+      const failCount = Number(
+        data.summary?.failed ?? listings.filter((l) => l.status !== 'success').length
+      );
+
+      const findListingForShop = (shop: ShopItem) =>
+        listings.find(
+          (l) =>
+            String(l.client_shop_id || '') === String(shop.id) ||
+            String(l.shop_id || '') === String(shop.shopId || shop.id) ||
+            String(l.shop_id || '') === String(shop.id)
+        );
+
+      selectedShops.forEach((localId) => {
+        const shop = availableShops.find((s) => s.id === localId);
+        if (!shop) return;
+        const listing = findListingForShop(shop);
+        const errFromList =
+          apiErrors.find(
+            (e) =>
+              String(e.shop_id) === String(shop.shopId || shop.id) ||
+              String(e.shop_name) === String(shop.name)
+          )?.error || listing?.error_message;
+        const isOk = listing?.status === 'success';
+        onAddLog({
+          id: `log-${Date.now()}-${localId}`,
+          timestamp: new Date().toISOString(),
+          channel: (['shopee', 'tiktok', 'woocommerce', 'manual', 'all', 'ghn', 'spx'].includes(shop.platform)
+            ? shop.platform
+            : 'manual') as SyncLog['channel'],
+          type: 'publish',
+          status: isOk ? 'success' : 'failed',
+          message: isOk
+            ? `Đăng bán thành công lên [${shop.name}] — item_id=${listing?.platform_product_id || '?'} — ${title}`
+            : `Đăng bán thất bại [${shop.name}]: ${errFromList || data.error || 'Lỗi không xác định'}`,
+        });
       });
-      showToast(`Đăng bán hoàn tất — ${(data.listings || []).filter((l: { status: string }) => l.status === 'success').length}/${selectedShops.length} gian hàng thành công!`);
+
+      // Bắt buộc cảnh báo nếu có bất kỳ shop nào rớt (kể cả HTTP 207 partial)
+      if (!data.success || failCount > 0 || res.status === 207 || res.status >= 400) {
+        const detailLines = (apiErrors.length ? apiErrors : listings.filter((l) => l.status !== 'success'))
+          .map((e: any) => `• [${e.shop_name || e.shop_id}] ${e.error || e.error_message || 'Thất bại'}`)
+          .slice(0, 8);
+        const msg =
+          data.message ||
+          data.error ||
+          `Đăng bán thất bại: ${failCount}/${okCount + failCount || selectedShops.length} gian hàng`;
+        alert(
+          `⚠ CẢNH BÁO ĐĂNG BÁN\n\n${msg}\n\n${detailLines.join('\n') || 'Không có chi tiết lỗi từ Shopee.'}\n\nKiểm tra log server: [SHOPEE UPLOAD ERROR]`
+        );
+        showToast(`⚠ ${okCount} thành công / ${failCount} thất bại`);
+        if (!okCount) throw new Error(msg);
+        return;
+      }
+
+      showToast(`Đăng bán thành công — ${okCount}/${selectedShops.length} gian hàng!`);
     } catch (err: any) {
       showToast(`Lỗi đăng bán: ${err.message}`);
+      alert(`⚠ Đăng bán thất bại\n\n${err?.message || 'Lỗi không xác định'}`);
     } finally {
       setIsPublishing(false);
     }
@@ -584,8 +628,14 @@ export default function MultiChannelListingForm({ products, shops, onAddLog, ini
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
       {toast && (
-        <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-2">
-          <Check className="w-4 h-4 text-emerald-400" />
+        <div className={`fixed top-5 right-5 z-50 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border flex items-center gap-2 ${
+          toast.includes('⚠') || toast.toLowerCase().includes('lỗi') || toast.toLowerCase().includes('thất bại')
+            ? 'bg-red-700 border-red-500'
+            : 'bg-slate-900 border-slate-700'
+        }`}>
+          {toast.includes('⚠') || toast.toLowerCase().includes('lỗi') || toast.toLowerCase().includes('thất bại')
+            ? <AlertCircle className="w-4 h-4 text-amber-300" />
+            : <Check className="w-4 h-4 text-emerald-400" />}
           <span>{toast}</span>
         </div>
       )}
