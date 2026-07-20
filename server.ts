@@ -15185,6 +15185,9 @@ async function startServer() {
   });
 
   app.get("/api/orders/pull/status", authMiddleware, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     return res.json({
       syncing: isSyncing,
       mode: ordersPullSyncMeta.mode,
