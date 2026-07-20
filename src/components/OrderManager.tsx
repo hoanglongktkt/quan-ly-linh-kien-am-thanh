@@ -21,6 +21,8 @@ import {
   isOrderHandedOverToCarrier,
   matchesHandedOverCarrierTab,
   matchesProcessedPickupTab,
+  matchesUnprocessedPickupTab,
+  isShopeeShippingStatus,
   isOrderAwaitingCarrierPickup,
 } from '../utils/orderHandover';
 import {
@@ -93,11 +95,9 @@ function isPendingConfirmOrder(order: Order): boolean {
   return raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK';
 }
 
-/** SHIPPED / TO_CONFIRM_RECEIVE → luôn Đang giao (API v2.2.9). */
+/** SHIPPED / TO_CONFIRM_RECEIVE → luôn Đang giao (ưu tiên tuyệt đối từ Shopee). */
 function isShippingTabOrder(order: Order): boolean {
-  if (order.status === 'shipping') return true;
-  const raw = String(order.shopee_order_status || '').toUpperCase();
-  return raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE';
+  return isShopeeShippingStatus(order);
 }
 
 function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
@@ -1839,10 +1839,8 @@ export default function OrderManager({
       if (status === 'pending_confirm' || status === 'pending_verification') {
         return isPendingConfirmOrder(o);
       }
-      if (status === 'unprocessed') {
-        return o.status === 'unprocessed' && !isOrderHandedOverToCarrier(o) && !isPendingConfirmOrder(o);
-      }
-      if (status === 'processed') return matchesProcessedPickupTab(o) && !isShippingTabOrder(o);
+      if (status === 'unprocessed') return matchesUnprocessedPickupTab(o) && !isPendingConfirmOrder(o);
+      if (status === 'processed') return matchesProcessedPickupTab(o);
       if (status === 'shipping') return isShippingTabOrder(o);
       if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
       return o.status === status;
@@ -1865,17 +1863,11 @@ export default function OrderManager({
     } else if (activeSubTab === 'handed_over_carrier') {
       if (!matchesHandedOverCarrierTab(order)) return false;
     } else if (activeSubTab === 'processed') {
-      if (!matchesProcessedPickupTab(order) || isShippingTabOrder(order)) return false;
+      if (!matchesProcessedPickupTab(order)) return false;
     } else if (activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification') {
       if (!isPendingConfirmOrder(order)) return false;
     } else if (activeSubTab === 'unprocessed') {
-      if (
-        order.status !== 'unprocessed' ||
-        isOrderHandedOverToCarrier(order) ||
-        isPendingConfirmOrder(order)
-      ) {
-        return false;
-      }
+      if (!matchesUnprocessedPickupTab(order) || isPendingConfirmOrder(order)) return false;
     } else if (activeSubTab === 'shipping') {
       if (!isShippingTabOrder(order)) return false;
     } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products') {

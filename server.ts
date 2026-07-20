@@ -7729,11 +7729,29 @@ function isOrderAwaitingCarrierPickupStatus(status: unknown): boolean {
 }
 
 function matchesHandedOverCarrierTabOrder(order: any): boolean {
+  // Độc quyền: đã bàn giao local AND Shopee chưa SHIPPED/COMPLETED.
   if (!resolveOrderHandoverFlag(order)) return false;
-  return (
-    isOrderAwaitingCarrierPickupStatus(order?.status) ||
-    resolveOrderLocalStatus(order) === "HANDED_OVER"
-  );
+  const raw = String(order?.shopee_order_status || "").toUpperCase();
+  if (
+    raw === "SHIPPED" ||
+    raw === "TO_CONFIRM_RECEIVE" ||
+    raw === "COMPLETED" ||
+    order?.status === "shipping" ||
+    order?.status === "completed"
+  ) {
+    return false;
+  }
+  if (
+    raw === "CANCELLED" ||
+    raw === "IN_CANCEL" ||
+    raw === "TO_RETURN" ||
+    order?.status === "cancelled" ||
+    order?.status === "return_pending" ||
+    order?.status === "return_received"
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function isOrderAlreadyScanProcessed(order: any): boolean {
@@ -7902,35 +7920,58 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   }
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
-  // Shopee SHIPPED/SHIPPING → ưu tiên sàn: rời tab nội bộ "Đã giao cho ĐVVC"
-  if (incoming.status === "shipping" || incoming.status === "completed") {
+  // Shopee SHIPPED/COMPLETED → BẮT BUỘC gỡ cờ bàn giao ĐVVC, ép sang tab Đang giao.
+  const clearHandoverOnShip =
+    incoming.status === "shipping" ||
+    incoming.status === "completed" ||
+    incomingRaw === "SHIPPED" ||
+    incomingRaw === "TO_CONFIRM_RECEIVE" ||
+    incomingRaw === "COMPLETED" ||
+    merged.status === "shipping" ||
+    merged.status === "completed";
+
+  if (clearHandoverOnShip) {
     setOrderHandoverFlag(merged, false);
+    merged.isHandedOverToCarrier = false;
+    merged.is_handed_over_to_carrier = false;
+    if (resolveOrderLocalStatus(merged) === "HANDED_OVER") {
+      merged.local_status = "NONE";
+      merged.localStatus = "NONE";
+    }
   } else if (existing) {
     setOrderHandoverFlag(merged, resolveOrderHandoverFlag(existing));
   }
 
-  // GIỮ cờ local_status nội bộ kho — tuyệt đối không để sync Shopee xóa.
+  // GIỮ cờ local_status nội bộ kho — trừ HANDED_OVER khi đơn đã SHIPPED/COMPLETED.
   if (existing?.is_local_return_archived != null) {
     merged.is_local_return_archived = existing.is_local_return_archived;
   }
   const existingLocal = resolveOrderLocalStatus(existing);
   if (existingLocal !== "NONE") {
-    merged.local_status = existingLocal;
-    merged.localStatus = existingLocal;
-    if (existing?.localStatusAt) merged.localStatusAt = existing.localStatusAt;
-    if (existing?.local_status_updated_at) {
-      merged.local_status_updated_at = existing.local_status_updated_at;
-    } else if (existing?.localStatusAt) {
-      merged.local_status_updated_at = existing.localStatusAt;
-    }
-    if (existingLocal === "HANDED_OVER") {
-      merged.isHandedOverToCarrier = true;
-      merged.is_handed_over_to_carrier = true;
-      if (existing?.handedOverAt) merged.handedOverAt = existing.handedOverAt;
-    }
-    if (existingLocal === "RETURN_RECEIVED") {
-      // Tab "Đã nhận hoàn" dựa trên cờ nội bộ — giữ status hiển thị ổn định.
-      merged.status = "return_received";
+    if (clearHandoverOnShip && existingLocal === "HANDED_OVER") {
+      // Không khôi phục HANDED_OVER — đơn đã sang Đang giao trên Shopee.
+      merged.local_status = "NONE";
+      merged.localStatus = "NONE";
+      merged.isHandedOverToCarrier = false;
+      merged.is_handed_over_to_carrier = false;
+    } else {
+      merged.local_status = existingLocal;
+      merged.localStatus = existingLocal;
+      if (existing?.localStatusAt) merged.localStatusAt = existing.localStatusAt;
+      if (existing?.local_status_updated_at) {
+        merged.local_status_updated_at = existing.local_status_updated_at;
+      } else if (existing?.localStatusAt) {
+        merged.local_status_updated_at = existing.localStatusAt;
+      }
+      if (existingLocal === "HANDED_OVER" && !clearHandoverOnShip) {
+        merged.isHandedOverToCarrier = true;
+        merged.is_handed_over_to_carrier = true;
+        if (existing?.handedOverAt) merged.handedOverAt = existing.handedOverAt;
+      }
+      if (existingLocal === "RETURN_RECEIVED") {
+        // Tab "Đã nhận hoàn" dựa trên cờ nội bộ — giữ status hiển thị ổn định.
+        merged.status = "return_received";
+      }
     }
   }
 
@@ -13672,10 +13713,17 @@ async function startServer() {
     }
     const patch = { ...req.body };
     delete patch.id;
-    if (patch.status === "shipping" || patch.status === "completed") {
+    const patchRaw = String(patch.shopee_order_status || "").toUpperCase();
+    const clearHandover =
+      patch.status === "shipping" ||
+      patch.status === "completed" ||
+      patchRaw === "SHIPPED" ||
+      patchRaw === "TO_CONFIRM_RECEIVE" ||
+      patchRaw === "COMPLETED";
+    if (clearHandover) {
       patch.isHandedOverToCarrier = false;
       patch.is_handed_over_to_carrier = false;
-      if (String(patch.local_status || patch.localStatus || "").toUpperCase() === "HANDED_OVER") {
+      if (String(patch.local_status || patch.localStatus || orders[index]?.local_status || "").toUpperCase() === "HANDED_OVER") {
         patch.local_status = "NONE";
         patch.localStatus = "NONE";
       }
