@@ -23,8 +23,13 @@ import {
   matchesProcessedPickupTab,
   matchesUnprocessedPickupTab,
   isShopeeShippingStatus,
+  isShopeeReadyToShipStatus,
   isOrderAwaitingCarrierPickup,
   hasOrderTrackingNo,
+  isProcessedCondition,
+  isOrderPrintedEffective,
+  isOrderPreparedEffective,
+  resolveOrderBadgeStatus,
 } from '../utils/orderHandover';
 import {
   isOrderAlreadyScanProcessed,
@@ -1426,16 +1431,19 @@ export default function OrderManager({
     queuedKeys: Set<string>,
     opts?: { markPrinted?: boolean }
   ): Order[] =>
-    baseOrders.map((o) =>
-      queuedKeys.has(o.id) || queuedKeys.has(o.orderSn) || queuedKeys.has(`shopee-${o.orderSn}`)
-        ? {
-            ...o,
-            status: 'processed' as const,
-            isPrepared: true,
-            ...(opts?.markPrinted ? { isPrinted: true } : {}),
-          }
-        : o
-    );
+    baseOrders.map((o) => {
+      if (!queuedKeys.has(o.id) && !queuedKeys.has(o.orderSn) && !queuedKeys.has(`shopee-${o.orderSn}`)) {
+        return o;
+      }
+      const hasTracking = isProcessedCondition(o);
+      return {
+        ...o,
+        isPrepared: true,
+        // Chỉ đánh dấu processed / Đã in khi THỰC SỰ đã có mã vận đơn.
+        ...(hasTracking ? { status: 'processed' as const } : {}),
+        ...(opts?.markPrinted && hasTracking ? { isPrinted: true } : {}),
+      };
+    });
 
   const refreshOrdersAfterShip = async (queuedOrders: Order[], opts?: { markPrinted?: boolean }) => {
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
@@ -2030,7 +2038,12 @@ export default function OrderManager({
       // Non-Shopee (manual/tiktok) orders don't have a real Shopee AWB — show the mock preview instead.
       if (others.length > 0) {
         setBulkPrintOrders(others);
-        onUpdateOrders(orders.map(o => others.some(x => x.id === o.id) ? { ...o, isPrinted: true, status: o.isPrepared ? ('processed' as const) : o.status } : o));
+        onUpdateOrders(orders.map(o => others.some(x => x.id === o.id) ? {
+          ...o,
+          ...(isProcessedCondition(o)
+            ? { isPrinted: true, status: 'processed' as const }
+            : { isPrepared: o.isPrepared }),
+        } : o));
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
@@ -2114,7 +2127,12 @@ export default function OrderManager({
   const handleSinglePrint = async (order: Order) => {
     if (order.channel !== 'shopee' || !order.shopId) {
       setBulkPrintOrders([order]);
-      onUpdateOrders(orders.map(o => o.id === order.id ? { ...o, isPrinted: true, status: o.isPrepared ? ('processed' as const) : o.status } : o));
+      onUpdateOrders(orders.map(o => o.id === order.id ? {
+        ...o,
+        ...(isProcessedCondition(o)
+          ? { isPrinted: true, status: 'processed' as const }
+          : {}),
+      } : o));
       return;
     }
 
@@ -3313,7 +3331,7 @@ export default function OrderManager({
               <tbody className="divide-y divide-gray-50">
                 {filteredOrders.map(order => {
                   const isChecked = selectedOrderIds.includes(order.id);
-                  const badge = getStatusBadge(order.status) || { text: order.status, color: '' };
+                  const badge = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
                   const isExpanded = expandedOrderId === order.id;
                   return (
                     <React.Fragment key={order.id}>
@@ -3437,9 +3455,9 @@ export default function OrderManager({
                             </button>
                           )}
 
-                          {order.status === 'unprocessed' && (
+                          {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && (
                             <>
-                              {!order.isPrepared ? (
+                              {!isOrderPreparedEffective(order) ? (
                                 <button
                                   onClick={() => handleSinglePrepare(order)}
                                   className="om-mobile-hide-prepare px-2.5 py-1.5 bg-rose-500 hover:bg-rose-600 text-white font-bold text-[10px] rounded-lg transition-all"
@@ -3464,12 +3482,12 @@ export default function OrderManager({
                             </>
                           )}
 
-                          {order.status === 'processed' && !isOrderHandedOverToCarrier(order) && (
+                          {isShopeeReadyToShipStatus(order) && isProcessedCondition(order) && !isOrderHandedOverToCarrier(order) && (
                             <>
                               <span className={`om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded ${
-                                order.isPrinted ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50'
+                                isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50'
                               }`}>
-                                {order.isPrinted ? '✓ Đã in' : '✕ Chưa in'}
+                                {isOrderPrintedEffective(order) ? '✓ Đã in' : '✕ Chưa in'}
                               </span>
                               <button
                                 type="button"
@@ -3563,7 +3581,7 @@ export default function OrderManager({
           <div className="om-order-card-list flex flex-col divide-y divide-gray-100 w-full">
             {filteredOrders.map(order => {
               const isChecked = selectedOrderIds.includes(order.id);
-              const badge = getStatusBadge(order.status) || { text: order.status, color: '' };
+              const badge = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
               const isExpanded = expandedOrderId === order.id;
               return (
                 <div
@@ -3686,9 +3704,9 @@ export default function OrderManager({
                         </button>
                       )}
 
-                      {order.status === 'unprocessed' && (
+                      {isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && (
                         <>
-                          {!order.isPrepared ? (
+                          {!isOrderPreparedEffective(order) ? (
                             <button
                               onClick={() => handleSinglePrepare(order)}
                               className="om-mobile-hide-prepare min-h-11 px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all"
@@ -3713,12 +3731,12 @@ export default function OrderManager({
                         </>
                       )}
 
-                      {order.status === 'processed' && !isOrderHandedOverToCarrier(order) && (
+                      {isShopeeReadyToShipStatus(order) && isProcessedCondition(order) && !isOrderHandedOverToCarrier(order) && (
                         <>
                           <span className={`om-mobile-hide-print text-[11px] font-black px-2.5 py-1 rounded-xl border ${
-                            order.isPrinted ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-rose-600 bg-rose-50 border-rose-100'
+                            isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-rose-600 bg-rose-50 border-rose-100'
                           }`}>
-                            {order.isPrinted ? '✓ Đã in' : '✕ Chưa in'}
+                            {isOrderPrintedEffective(order) ? '✓ Đã in' : '✕ Chưa in'}
                           </span>
                           <button
                             type="button"

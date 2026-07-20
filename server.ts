@@ -15537,7 +15537,12 @@ async function startServer() {
         const printedSet = new Set(printDocument.printedOrderSns);
         for (let i = 0; i < orders.length; i++) {
           if (printedSet.has(orders[i].orderSn)) {
-            orders[i] = { ...orders[i], isPrinted: true, status: "processed" };
+            // Chỉ đánh dấu Đã in / Đã xử lý khi đơn THỰC SỰ đã có mã vận đơn.
+            if (hasUsableShopeeTrackingNumber(orders[i])) {
+              orders[i] = { ...orders[i], isPrinted: true, status: "processed" };
+            } else {
+              orders[i] = { ...orders[i], isPrepared: true };
+            }
           }
         }
         saveOrders(orders);
@@ -16085,7 +16090,11 @@ async function startServer() {
             const printedSet = new Set(printDocument.printedOrderSns);
             for (let i = 0; i < orders.length; i++) {
               if (printedSet.has(orders[i].orderSn)) {
-                orders[i] = { ...orders[i], isPrinted: true, status: "processed" };
+                if (hasUsableShopeeTrackingNumber(orders[i])) {
+                  orders[i] = { ...orders[i], isPrinted: true, status: "processed" };
+                } else {
+                  orders[i] = { ...orders[i], isPrepared: true };
+                }
               }
             }
             saveOrders(orders);
