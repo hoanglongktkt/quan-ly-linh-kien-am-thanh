@@ -8032,8 +8032,27 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     merged.status = "completed";
     merged.is_pending_shopee_check = false;
   } else if (incomingRaw === "UNPAID" || incomingRaw === "PENDING") {
-    merged.status = "pending_confirm";
-    merged.is_pending_shopee_check = false;
+    // Webhook Code 4 thiếu status từng bị default PENDING — không được kéo lùi đơn đã PROCESSED/GHN.
+    const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
+    const existingFurther =
+      existingRaw === "READY_TO_SHIP" ||
+      existingRaw === "RETRY_SHIP" ||
+      existingRaw === "PROCESSED" ||
+      existingRaw === "SHIPPED" ||
+      existingRaw === "TO_CONFIRM_RECEIVE" ||
+      existingRaw === "COMPLETED" ||
+      hasUsableShopeeTrackingNumber(existing) ||
+      hasUsableShopeeTrackingNumber(merged);
+    const incomingLooksShallow =
+      !Array.isArray(incoming?.items) || incoming.items.length === 0;
+    if (existingFurther && incomingLooksShallow) {
+      merged.status = existing.status || merged.status;
+      merged.shopee_order_status = existing.shopee_order_status || merged.shopee_order_status;
+      merged.is_pending_shopee_check = false;
+    } else {
+      merged.status = "pending_confirm";
+      merged.is_pending_shopee_check = false;
+    }
   } else if (existing?.is_pending_shopee_check === true || incoming.is_pending_shopee_check === true) {
     const clearedByShipProgress =
       incomingRaw === "PROCESSED" ||
@@ -11398,21 +11417,37 @@ function isValidOrder(order: any): boolean {
 // `shop_id` lives at the TOP LEVEL, sibling to `data`, never inside `data` itself.
 // Reading `data.shop_id` (the inner object) always returns undefined and was the
 // root cause of orders silently losing their shop_id in the local database.
+//
+// Push Code 4 (Order TrackingNo) thường CHỈ có ordersn + tracking_no — KHÔNG có status.
+// Tuyệt đối KHÔNG default status = PENDING (sẽ kéo đơn GHN đã có mã về "Chưa xử lý").
 function normalizeShopeeOrder(payload: any): any | null {
   const data = payload?.data || payload || {};
   const orderSn = data.ordersn || data.order_sn || data.orderSn;
   if (!orderSn) return null;
   const shopId = payload?.shop_id ?? data.shop_id;
 
-  // Không tự biến webhook thiếu trạng thái thành READY_TO_SHIP; giữ trong tab
-  // kiểm tra Shopee tới khi lần đồng bộ API tiếp theo trả status chính thức.
-  const rawStatus = String(data.status || data.order_status || "PENDING").toUpperCase();
+  const webhookTracking = pickBestTrackingNumber(
+    data.tracking_no,
+    data.tracking_number,
+    data.last_mile_tracking_number,
+    data.forder_id,
+  );
+  const hasExplicitStatus = Boolean(data.status || data.order_status);
+  // Code 4 TrackingNo: có mã vận đơn (GHN/SPX/...) → coi như PROCESSED (Chờ lấy hàng).
+  const rawStatus = hasExplicitStatus
+    ? String(data.status || data.order_status).toUpperCase()
+    : webhookTracking
+      ? "PROCESSED"
+      : "";
   const itemList = Array.isArray(data.item_list) ? data.item_list : [];
   const mappedItems = itemList.length
     ? itemList.map((it: any) => mapShopeeOrderLineItem(it)).filter(Boolean)
     : [];
-  const webhookTracking = pickBestTrackingNumber(data.tracking_no, data.tracking_number);
-  const mappedStatus = mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) });
+  const mappedStatus = rawStatus
+    ? mapShopeeStatusToLocal(rawStatus, { hasTracking: Boolean(webhookTracking) })
+    : webhookTracking
+      ? "processed"
+      : "unprocessed";
 
   const order: any = {
     id: `shopee-${orderSn}`,
@@ -11424,11 +11459,11 @@ function normalizeShopeeOrder(payload: any): any | null {
     withholdingCitTax: 0,
     withholding_cit_tax: 0,
     revenue: 0,
-    shopee_order_status: rawStatus,
+    shopee_order_status: rawStatus || (webhookTracking ? "PROCESSED" : undefined),
     status: mappedStatus,
     date: data.create_time ? new Date(data.create_time * 1000).toISOString() : new Date().toISOString(),
     packageNumber: data.package_number || undefined,
-    isPrepared: mappedStatus === "processed" || mappedStatus === "shipping",
+    isPrepared: mappedStatus === "processed" || mappedStatus === "shipping" || Boolean(webhookTracking),
     isPrinted: false,
     items: mappedItems,
   };
@@ -11439,19 +11474,23 @@ function normalizeShopeeOrder(payload: any): any | null {
   if (Array.isArray(data.package_list) && data.package_list.length > 0) {
     applyShopeePackageListTracking(order, data);
   }
-  const rawTrack = data.tracking_no || data.tracking_number;
-  if (rawTrack) applyShopeeTrackingCode(order, rawTrack);
+  if (webhookTracking) applyShopeeTrackingCode(order, webhookTracking);
   repairMisassignedTracking(order);
   return order;
 }
 
-/** Parse Shopee Push envelope: { shop_id, code, data } hoặc action string. */
+/** Parse Shopee Push envelope theo Open Platform Push Mechanism:
+ *  Code 3 = Order Status Update, Code 4 = TrackingNo, Code 15 = Shipping Document Status.
+ *  @see https://open.shopee.com/push-mechanism/2
+ *  @see https://open.shopee.com/developer-guide/18
+ */
 function parseShopeePushEvent(body: any): {
   shopId: string;
   orderSn: string;
-  eventKind: "order_status_update" | "tracking_no_update" | "return_refund" | "other";
+  eventKind: "order_status_update" | "tracking_no_update" | "shipping_document" | "return_refund" | "other";
   status: string;
   trackingNo: string;
+  packageNumber: string;
   returnSn: string;
   code: string | number;
 } {
@@ -11464,9 +11503,20 @@ function parseShopeePushEvent(body: any): {
   const returnSn = String(data.return_sn || data.returnSn || "").trim();
   const orderSn = String(data.ordersn || data.order_sn || data.orderSn || "").trim();
   const shopId = String(body?.shop_id ?? data.shop_id ?? "").trim();
-  const trackingNo = String(data.tracking_no || data.tracking_number || "").trim();
+  const trackingNo = pickBestTrackingNumber(
+    data.tracking_no,
+    data.tracking_number,
+    data.last_mile_tracking_number,
+    data.third_party_tracking_number,
+  );
+  const packageNumber = String(data.package_number || data.packageNumber || "").trim();
 
-  let eventKind: "order_status_update" | "tracking_no_update" | "return_refund" | "other" = "other";
+  let eventKind:
+    | "order_status_update"
+    | "tracking_no_update"
+    | "shipping_document"
+    | "return_refund"
+    | "other" = "other";
   if (
     codeNum === 3 ||
     codeStr.includes("order_status") ||
@@ -11480,6 +11530,12 @@ function parseShopeePushEvent(body: any): {
   ) {
     eventKind = "tracking_no_update";
   } else if (
+    codeNum === 15 ||
+    codeStr.includes("shipping_document") ||
+    action.includes("shipping_document")
+  ) {
+    eventKind = "shipping_document";
+  } else if (
     returnSn ||
     codeStr.includes("return") ||
     codeStr.includes("refund") ||
@@ -11490,12 +11546,62 @@ function parseShopeePushEvent(body: any): {
     status === "IN_CANCEL"
   ) {
     eventKind = "return_refund";
+  } else if (trackingNo && orderSn) {
+    // Có tracking_no trong payload → ưu tiên Code 4 semantics (GHN/SPX).
+    eventKind = "tracking_no_update";
   } else if (orderSn) {
-    // Push có order_sn nhưng code lạ — vẫn coi như cập nhật đơn.
     eventKind = "order_status_update";
   }
 
-  return { shopId, orderSn, eventKind, status, trackingNo, returnSn, code };
+  return { shopId, orderSn, eventKind, status, trackingNo, packageNumber, returnSn, code };
+}
+
+/**
+ * Áp dụng field từ Push (Code 3/4/15) lên đơn trong DB — BẮT BUỘC cho GHN.
+ * Code 4 chỉ gửi tracking_no; nếu bỏ qua sẽ mãi "Chưa có mã vận đơn".
+ */
+function applyShopeePushFieldsToOrder(order: any, parsed: {
+  status?: string;
+  trackingNo?: string;
+  packageNumber?: string;
+  eventKind?: string;
+}): void {
+  if (!order) return;
+  if (parsed.packageNumber) order.packageNumber = parsed.packageNumber;
+  if (parsed.trackingNo) {
+    applyShopeeTrackingCode(order, parsed.trackingNo);
+    order.trackingNumber = String(parsed.trackingNo).trim();
+    order.tracking_no = order.trackingNumber;
+  }
+  if (parsed.status) {
+    order.shopee_order_status = String(parsed.status).toUpperCase();
+  }
+
+  const tn = String(order.trackingNumber || order.tracking_no || "").trim();
+  const hasTn = Boolean(tn && !isShopeeInternalTrackingCode(tn));
+  let raw = String(order.shopee_order_status || "").toUpperCase();
+
+  // Code 4 TrackingNo / có mã: đơn đã được chuẩn bị trên Shopee (mọi ĐVVC).
+  if (hasTn && (!raw || raw === "PENDING" || raw === "UNPAID" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP")) {
+    order.shopee_order_status = "PROCESSED";
+    raw = "PROCESSED";
+  }
+
+  if (hasTn && (raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || !raw)) {
+    order.status = "processed";
+    order.isPrepared = true;
+    order.is_pending_shopee_check = false;
+    if (!order.shopee_order_status || order.shopee_order_status === "PENDING") {
+      order.shopee_order_status = "PROCESSED";
+    }
+  } else if (parsed.status) {
+    order.status = mapShopeeStatusToLocal(raw, { hasTracking: hasTn });
+    if (order.status === "processed" || order.status === "shipping") {
+      order.isPrepared = true;
+      order.is_pending_shopee_check = false;
+    }
+  }
+  repairMisassignedTracking(order);
 }
 
 /** Tìm return_sn theo order_sn qua get_return_list (ưu tiên không time-filter). */
@@ -11713,6 +11819,8 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
         shopId: parsed.shopId || null,
         orderSn: parsed.orderSn || null,
         status: parsed.status || null,
+        trackingNo: parsed.trackingNo || null,
+        packageNumber: parsed.packageNumber || null,
         returnSn: parsed.returnSn || null,
       }),
     );
@@ -11729,9 +11837,11 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
       accessToken = await getValidShopeeAccessToken(shopId);
     }
 
+    // Code 3 status / Code 4 tracking / Code 15 shipping document → luôn fetch detail + tracking.
     const shouldFetchDetail =
       parsed.eventKind === "order_status_update" ||
       parsed.eventKind === "tracking_no_update" ||
+      parsed.eventKind === "shipping_document" ||
       parsed.eventKind === "return_refund";
 
     if (shouldFetchDetail && shopId && accessToken) {
@@ -11748,7 +11858,7 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
           accessToken,
         });
         console.log(
-          `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn} status=${normalized[0]?.shopee_order_status || ""}`,
+          `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "—"}`,
         );
       } else {
         console.warn(
@@ -11766,6 +11876,53 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
       }
       await upsertShopeeWebhookShallow(body, orders);
       saveOrders(orders);
+    }
+
+    // BẮT BUỘC: ghi đè tracking_no từ Push Code 4 (GHN GYA9LYP6...) — get_order_detail
+    // đôi khi chưa kịp trả mã trong khi Push đã có.
+    let idx = orders.findIndex((o: any) => String(o.orderSn) === parsed.orderSn);
+    if (idx < 0 && (parsed.trackingNo || parsed.status)) {
+      await upsertShopeeWebhookShallow(body, orders);
+      idx = orders.findIndex((o: any) => String(o.orderSn) === parsed.orderSn);
+    }
+    if (idx >= 0) {
+      const beforeTn = String(orders[idx].trackingNumber || orders[idx].tracking_no || "");
+      applyShopeePushFieldsToOrder(orders[idx], parsed);
+
+      // Code 4 / thiếu mã sau detail → cưỡng bức get_tracking_number (GHN thường cần bước này).
+      if (
+        shopId &&
+        accessToken &&
+        (parsed.eventKind === "tracking_no_update" ||
+          parsed.eventKind === "shipping_document" ||
+          !hasUsableShopeeTrackingNumber(orders[idx]))
+      ) {
+        try {
+          await enrichShopeeOrderTrackingFromApi(shopId, accessToken, orders[idx], { retries: 4 });
+          applyShopeePushFieldsToOrder(orders[idx], parsed);
+        } catch (trackErr: any) {
+          console.warn(
+            `[Shopee Webhook] Force get_tracking_number ${parsed.orderSn}:`,
+            trackErr?.message || trackErr,
+          );
+        }
+      }
+
+      const afterTn = String(orders[idx].trackingNumber || orders[idx].tracking_no || "");
+      console.log(
+        `[Shopee Webhook] Apply push fields order_sn=${parsed.orderSn} status=${orders[idx].status} raw=${orders[idx].shopee_order_status || "—"} tn=${afterTn || "—"} (before=${beforeTn || "—"})`,
+      );
+      saveOrders(orders);
+      if (isMongoReady()) {
+        try {
+          await bulkUpsertOrdersToStore([orders[idx]]);
+        } catch (mongoErr: any) {
+          console.warn(
+            `[Shopee Webhook] Mongo upsert ${parsed.orderSn}:`,
+            mongoErr?.message || mongoErr,
+          );
+        }
+      }
     }
 
     const orderAfter = orders.find((o: any) => String(o.orderSn) === parsed.orderSn);
