@@ -1371,8 +1371,8 @@ async function runShopeeConnectivityDiagnostics(shopIdInput?: string) {
   }
 }
 
-// v2.order.get_order_list — pulls order_sn updated within the last 30 days
-// (Shopee giới hạn mỗi request tối đa 15 ngày → caller phải lặp 2 cửa sổ).
+// v2.order.get_order_list — mặc định chỉ lấy đơn đổi trạng thái trong 6 giờ
+// (update_time). Shopee giới hạn mỗi request ≤ 15 ngày; full sync mới chia cửa sổ.
 // Supports optional order_status filter and cursor pagination (Shopee returns
 // at most page_size orders per call; more/next_cursor must be followed).
 async function shopeeGetOrderList(
@@ -1391,7 +1391,8 @@ async function shopeeGetOrderList(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
 
   const timeTo = opts?.timeTo ?? timestamp;
-  const timeFrom = opts?.timeFrom ?? timeTo - 30 * 24 * 60 * 60;
+  // Mặc định 6 giờ theo update_time — tránh timeout serverless / rate limit.
+  const timeFrom = opts?.timeFrom ?? timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
 
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
@@ -1422,7 +1423,7 @@ async function shopeeGetOrderList(
     if (json.error) {
       const errMsg = formatShopeeApiError(json, httpStatus);
       console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y danh s\xE1ch \u0111\u01A1n: ${errMsg}`);
-      return { ...json, message: json.message || errMsg };
+      return { ...json, message: json.message || errMsg, httpStatus };
     }
     return json;
   } catch (err) {
@@ -1455,12 +1456,15 @@ function parseShopeeOrderListPagination(result: any): { more: boolean; nextCurso
 }
 
 const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
-/** 2 cửa sổ × 15 ngày = quét đủ 30 ngày (giới hạn Shopee mỗi request ≤ 15 ngày). */
-const SHOPEE_ORDER_LIST_MAX_WINDOWS = 2;
-/** Quick Sync / incremental: quét lùi 6 giờ theo update_time (nút Cập nhật đơn hàng). Full Sync không dùng hằng này. */
+/** Full sync: tối đa 1 cửa sổ 15 ngày (giảm tải — tránh timeout Vercel/cPanel). */
+const SHOPEE_ORDER_LIST_MAX_WINDOWS = 1;
+/**
+ * Quick Sync / mặc định: chỉ lấy đơn CÓ update_time trong 6 giờ gần nhất.
+ * (An toàn trong khoảng 3–6h; Shopee từ chối nếu time_from..time_to quá rộng.)
+ */
 const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 6 * 60 * 60;
-/** Full sync hủy/hoàn: quét tối đa 120 ngày (8 × 15 ngày) để khớp Seller Center. */
-const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 8;
+/** Full sync hủy/hoàn: tối đa 2 × 15 ngày (= 30 ngày) — giảm so với 120 ngày cũ. */
+const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 const SHOPEE_ORDER_LIST_MAX_PAGES = 8;
 const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 120;
@@ -1469,8 +1473,8 @@ const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
 /** get_return_list: page_size tối đa Shopee = 100; paginate đầy đủ. */
 const SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
 const SHOPEE_RETURN_LIST_MAX_PAGES = 50;
-/** Xử lý theo lô chính xác 25 đơn / lần gọi get_order_detail. */
-const SHOPEE_SYNC_CHUNK_SIZE = 25;
+/** Shopee v2 get_order_detail cho phép tối đa 50 order_sn / 1 lần gọi — BẮT BUỘC batch. */
+const SHOPEE_SYNC_CHUNK_SIZE = 50;
 /** Delay giữa các lô khi đồng bộ đơn hàng (ms). */
 const ORDER_SYNC_SAVE_DELAY_MS = 500;
 /** Nghỉ giữa các chunk đơn hàng (đồng bộ nền). */
@@ -1604,21 +1608,62 @@ function shopeeSyncDelay(ms: number = SHOPEE_SYNC_BATCH_DELAY_MS): Promise<void>
   return sleep(ms);
 }
 
-function shopeeApiErrorResult(err: unknown, context: string): Record<string, any> {
+function shopeeApiErrorResult(err: unknown, context: string, httpStatus?: number): Record<string, any> {
   const message = err instanceof Error ? err.message : String(err);
   console.error(`[Shopee API] ${context}:`, message);
-  return { error: "shopee_api_error", message: `${context}: ${message}` };
+  const status =
+    httpStatus ||
+    (/HTTP\s*401|\b401\b|invalid_access_token|unauthorized|auth/i.test(message)
+      ? 401
+      : /HTTP\s*429|\b429\b|rate.?limit|too many/i.test(message)
+        ? 429
+        : /HTTP\s*504|\b504\b|timeout|timed out|AbortError/i.test(message)
+          ? 504
+          : undefined);
+  return {
+    error: status === 401 ? "unauthorized" : status === 429 ? "rate_limit_exceeded" : status === 504 ? "gateway_timeout" : "shopee_api_error",
+    message: formatShopeeApiError({ error: "shopee_api_error", message: `${context}: ${message}` }, status),
+    httpStatus: status,
+  };
 }
 
 function formatShopeeApiError(json: any, httpStatus?: number): string {
   const parts = [json?.message, json?.error, json?.msg]
     .map((v) => String(v ?? "").trim())
     .filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
-  if (httpStatus === 429) {
-    return parts[0] || "Shopee giới hạn tần suất (HTTP 429 Too Many Requests) — vui lòng thử lại sau 1–2 phút.";
+  const status =
+    typeof httpStatus === "number" && httpStatus > 0
+      ? httpStatus
+      : typeof json?.httpStatus === "number" && json.httpStatus > 0
+        ? json.httpStatus
+        : undefined;
+
+  if (status === 401) {
+    return (
+      parts[0] ||
+      "Lỗi ủy quyền Shopee (HTTP 401) — access_token hết hạn hoặc không hợp lệ. Vào Cài đặt → OAuth lại shop."
+    );
+  }
+  if (status === 429) {
+    return (
+      parts[0] ||
+      "Shopee giới hạn tần suất (HTTP 429 Too Many Requests) — vui lòng thử lại sau 1–2 phút."
+    );
+  }
+  if (status === 504) {
+    return (
+      parts[0] ||
+      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với đồng bộ nhanh (6 giờ)."
+    );
+  }
+  if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
+    return (
+      parts[0] ||
+      "Timeout khi gọi Shopee API — giảm phạm vi thời gian đồng bộ và thử lại."
+    );
   }
   if (parts.length > 0) return parts.join(" — ");
-  if (httpStatus && httpStatus >= 400) return `Shopee API lỗi HTTP ${httpStatus}`;
+  if (status && status >= 400) return `Shopee API lỗi HTTP ${status}`;
   return "Lỗi Shopee API không xác định";
 }
 
@@ -1746,6 +1791,12 @@ async function shopeeFetchJsonWithRetry(
       continue;
     }
 
+    // Gắn message tiếng Việt rõ ràng cho 401 / 429 / 504 — không silent.
+    if (res.status === 401 || res.status === 429 || res.status === 504 || (res.status >= 400 && json?.error)) {
+      json.message = formatShopeeApiError(json, res.status);
+      json.httpStatus = res.status;
+    }
+
     return { json, httpStatus: res.status };
   }
 
@@ -1754,6 +1805,7 @@ async function shopeeFetchJsonWithRetry(
     json: {
       error: "rate_limit_exceeded",
       message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429),
+      httpStatus: 429,
     },
   };
 }
@@ -1841,20 +1893,34 @@ function buildShopeeUpdateStockEntry(
   return entry;
 }
 
-// Paginate get_order_list for one Shopee order_status — lật trang + quét 2 cửa sổ 15 ngày (= 30 ngày).
-async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: string, orderStatus: string): Promise<string[]> {
+// Paginate get_order_list for one Shopee order_status — mặc định 6h update_time; full = 1×15 ngày.
+async function shopeeFetchAllOrderSnsByStatus(
+  shopId: string,
+  accessToken: string,
+  orderStatus: string,
+  opts?: { mode?: "incremental" | "full" },
+): Promise<string[]> {
+  const mode = opts?.mode === "full" ? "full" : "incremental";
   const orderSnSet = new Set<string>();
   const now = Math.floor(Date.now() / 1000);
+  const maxWindows = mode === "full" ? SHOPEE_ORDER_LIST_MAX_WINDOWS : 1;
 
-  for (let windowIdx = 0; windowIdx < SHOPEE_ORDER_LIST_MAX_WINDOWS; windowIdx++) {
-    const timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
-    const timeFrom = timeTo - SHOPEE_ORDER_LIST_WINDOW_SEC;
+  for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+    let timeTo: number;
+    let timeFrom: number;
+    if (mode === "incremental") {
+      timeTo = now;
+      timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+    } else {
+      timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
+      timeFrom = timeTo - SHOPEE_ORDER_LIST_WINDOW_SEC;
+    }
     let cursor: string | undefined;
     let page = 0;
     let windowCount = 0;
 
     console.log(
-      `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${SHOPEE_ORDER_LIST_MAX_WINDOWS} time_from=${timeFrom} time_to=${timeTo} (update_time, ~15 ngày)`,
+      `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 6 giờ" : ", ~15 ngày"})`,
     );
 
     while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
@@ -1867,13 +1933,17 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
         timeTo,
       });
       if (listResult.error) {
-        const errMsg = listResult.message || formatShopeeApiError(listResult);
+        const errMsg = listResult.message || formatShopeeApiError(listResult, listResult.httpStatus);
         console.error(
           `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} page=${page} lỗi:`,
           listResult.error,
           errMsg,
         );
-        throw Object.assign(new Error(errMsg), { error: listResult.error, message: errMsg });
+        throw Object.assign(new Error(errMsg), {
+          error: listResult.error,
+          message: errMsg,
+          httpStatus: listResult.httpStatus,
+        });
       }
 
       const pageList = extractShopeeOrderListRows(listResult);
@@ -1904,7 +1974,7 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
     }
 
     if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-    if (windowIdx < SHOPEE_ORDER_LIST_MAX_WINDOWS - 1) {
+    if (windowIdx < maxWindows - 1) {
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   }
@@ -1912,24 +1982,34 @@ async function shopeeFetchAllOrderSnsByStatus(shopId: string, accessToken: strin
   return Array.from(orderSnSet);
 }
 
-/** Quét get_order_list theo create_time cho 1 status (dùng cho UNPAID đang chờ Shopee kiểm tra). */
+/** Quét get_order_list theo create_time cho 1 status (UNPAID) — mặc định 6 giờ. */
 async function shopeeFetchAllOrderSnsByStatusCreateTime(
   shopId: string,
   accessToken: string,
   orderStatus: string,
+  opts?: { mode?: "incremental" | "full" },
 ): Promise<string[]> {
+  const mode = opts?.mode === "full" ? "full" : "incremental";
   const orderSnSet = new Set<string>();
   const now = Math.floor(Date.now() / 1000);
+  const maxWindows = mode === "full" ? SHOPEE_ORDER_LIST_MAX_WINDOWS : 1;
 
-  for (let windowIdx = 0; windowIdx < SHOPEE_ORDER_LIST_MAX_WINDOWS; windowIdx++) {
-    const timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
-    const timeFrom = timeTo - SHOPEE_ORDER_LIST_WINDOW_SEC;
+  for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+    let timeTo: number;
+    let timeFrom: number;
+    if (mode === "incremental") {
+      timeTo = now;
+      timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+    } else {
+      timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
+      timeFrom = timeTo - SHOPEE_ORDER_LIST_WINDOW_SEC;
+    }
     let cursor: string | undefined;
     let page = 0;
     let windowCount = 0;
 
     console.log(
-      `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: cửa sổ ${windowIdx + 1}/${SHOPEE_ORDER_LIST_MAX_WINDOWS} time_from=${timeFrom} time_to=${timeTo}`,
+      `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo}${mode === "incremental" ? " (6 giờ)" : ""}`,
     );
 
     while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
@@ -1942,13 +2022,17 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
         timeTo,
       });
       if (listResult.error) {
-        const errMsg = listResult.message || formatShopeeApiError(listResult);
+        const errMsg = listResult.message || formatShopeeApiError(listResult, listResult.httpStatus);
         console.error(
           `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} page=${page} lỗi:`,
           listResult.error,
           errMsg,
         );
-        throw Object.assign(new Error(errMsg), { error: listResult.error, message: errMsg });
+        throw Object.assign(new Error(errMsg), {
+          error: listResult.error,
+          message: errMsg,
+          httpStatus: listResult.httpStatus,
+        });
       }
 
       const pageList = extractShopeeOrderListRows(listResult);
@@ -1971,7 +2055,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
     }
 
     if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-    if (windowIdx < SHOPEE_ORDER_LIST_MAX_WINDOWS - 1) {
+    if (windowIdx < maxWindows - 1) {
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   }
@@ -2563,7 +2647,7 @@ async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSn
     if (json.error) {
       const errMsg = formatShopeeApiError(json, httpStatus);
       console.error(`[Shopee API] L\u1ED7i t\u1EEB Shopee khi l\u1EA5y chi ti\u1EBFt \u0111\u01A1n: ${errMsg}`);
-      return { ...json, message: json.message || errMsg };
+      return { ...json, message: json.message || errMsg, httpStatus };
     }
     return json;
   } catch (err) {
@@ -8036,7 +8120,7 @@ function upsertShopeeOrdersIntoStore(
   return { added, updated };
 }
 
-/** Lấy chi tiết + chuẩn hóa THEO LÔ — 1 lần get_order_detail tối đa 25 order_sn. */
+/** Lấy chi tiết + chuẩn hóa THEO LÔ — 1 lần get_order_detail tối đa 50 order_sn (Shopee v2). */
 async function fetchNormalizeShopeeOrderChunk(
   apiShopId: string,
   accessToken: string,
@@ -8050,19 +8134,38 @@ async function fetchNormalizeShopeeOrderChunk(
   const snList = orderSns.map((sn) => String(sn || "").trim()).filter(Boolean);
   if (snList.length === 0) return { normalized, errors };
 
+  // Phòng thủ: nếu caller truyền >50 thì tự chia nhỏ — không bao giờ gọi lẻ từng đơn.
+  if (snList.length > SHOPEE_SYNC_CHUNK_SIZE) {
+    for (let i = 0; i < snList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+      const sub = snList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+      const part = await fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, sub, opts);
+      normalized.push(...part.normalized);
+      errors.push(...part.errors);
+      if (i + SHOPEE_SYNC_CHUNK_SIZE < snList.length) {
+        await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+      }
+    }
+    return { normalized, errors };
+  }
+
   try {
     console.log(
-      `[Shopee Sync] get_order_detail lô ${snList.length} đơn (shop=${fileKey}): ${snList.slice(0, 3).join(", ")}${snList.length > 3 ? "..." : ""}`,
+      `[Shopee Sync] get_order_detail batch ${snList.length}/${SHOPEE_SYNC_CHUNK_SIZE} đơn (shop=${fileKey}): ${snList.slice(0, 3).join(", ")}${snList.length > 3 ? "..." : ""}`,
     );
     const detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, snList);
     if (detailResult.error) {
-      const message = detailResult.message || formatShopeeApiError(detailResult);
+      const message =
+        detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
+      console.error(
+        `[Shopee Sync] get_order_detail lỗi HTTP ${detailResult.httpStatus || "?"} shop=${fileKey}: ${message}`,
+      );
       for (const orderSn of snList) {
         errors.push({
           shopId: fileKey,
           error: detailResult.error,
           message,
           orderSn,
+          httpStatus: detailResult.httpStatus,
         });
       }
       return { normalized, errors };
@@ -8097,13 +8200,15 @@ async function fetchNormalizeShopeeOrderChunk(
       await enrichShopeeOrdersEscrowFinance(apiShopId, accessToken, normalized);
     }
   } catch (err: any) {
-    const message = err?.message || String(err);
+    const mapped = shopeeApiErrorResult(err, `get_order_detail batch shop=${fileKey}`);
+    console.error(`[Shopee Sync] Exception get_order_detail shop=${fileKey}:`, mapped.message);
     for (const orderSn of snList) {
       errors.push({
         shopId: fileKey,
-        error: "order_detail_failed",
-        message,
+        error: mapped.error || "order_detail_failed",
+        message: mapped.message,
         orderSn,
+        httpStatus: mapped.httpStatus,
       });
     }
   }
@@ -8620,14 +8725,25 @@ async function syncShopeeOrdersFromApi(
       for (const status of statuses) {
         await shopeeSyncDelay();
         try {
-          const sns = await shopeeFetchAllOrderSnsByStatus(apiShopId, accessToken, status);
+          const sns = await shopeeFetchAllOrderSnsByStatus(apiShopId, accessToken, status, {
+            mode: "incremental",
+          });
           for (const sn of sns) orderSnSet.add(sn);
           statusCounts[`${fileKey}:${status}`] = sns.length;
           console.log(`[Shopee Sync] Shop ${fileKey} (api=${apiShopId}) / ${status}: ${sns.length} đơn.`);
         } catch (statusErr: any) {
-          const errMsg = statusErr?.message || String(statusErr);
+          const errMsg =
+            statusErr?.message ||
+            formatShopeeApiError(statusErr, statusErr?.httpStatus) ||
+            String(statusErr);
           console.error(`[Shopee Sync] Shop ${fileKey} / ${status} lỗi:`, errMsg);
-          shopErrors.push({ shopId: fileKey, status, error: statusErr?.error || "shopee_api_error", message: errMsg });
+          shopErrors.push({
+            shopId: fileKey,
+            status,
+            error: statusErr?.error || "shopee_api_error",
+            message: errMsg,
+            httpStatus: statusErr?.httpStatus,
+          });
         }
       }
 
@@ -8639,6 +8755,7 @@ async function syncShopeeOrdersFromApi(
           apiShopId,
           accessToken,
           "UNPAID",
+          { mode: "incremental" },
         );
         for (const sn of unpaidCreateSns) orderSnSet.add(sn);
         statusCounts[`${fileKey}:UNPAID_CREATE_TIME`] = unpaidCreateSns.length;
@@ -8646,29 +8763,43 @@ async function syncShopeeOrdersFromApi(
           `[Shopee Sync] Shop ${fileKey} / UNPAID (create_time): ${unpaidCreateSns.length} đơn.`,
         );
       } catch (unpaidCreateErr: any) {
-        const errMsg = unpaidCreateErr?.message || String(unpaidCreateErr);
+        const errMsg =
+          unpaidCreateErr?.message ||
+          formatShopeeApiError(unpaidCreateErr, unpaidCreateErr?.httpStatus) ||
+          String(unpaidCreateErr);
         console.error(`[Shopee Sync] Shop ${fileKey} / UNPAID create_time lỗi:`, errMsg);
         shopErrors.push({
           shopId: fileKey,
           status: "UNPAID_CREATE_TIME",
           error: unpaidCreateErr?.error || "shopee_api_error",
           message: errMsg,
+          httpStatus: unpaidCreateErr?.httpStatus,
         });
       }
 
-      // Một số shop/API không trả UNPAID khi lọc order_status. Quét không lọc
-      // để không bỏ sót đơn đang fraud-check/chờ Shopee xác nhận.
+      // Quét không lọc trạng thái — cửa sổ 6h update_time (tránh timeout).
       try {
-        const unfilteredSns = await shopeeFetchAllOrderSns(apiShopId, accessToken, { mode: "full" });
+        const unfilteredSns = await shopeeFetchAllOrderSns(apiShopId, accessToken, {
+          mode: "incremental",
+        });
         for (const sn of unfilteredSns) orderSnSet.add(sn);
         statusCounts[`${fileKey}:UNFILTERED`] = unfilteredSns.length;
         console.log(
           `[Shopee Sync] Shop ${fileKey} quét không lọc trạng thái: ${unfilteredSns.length} đơn (bao gồm UNPAID nếu Shopee trả về).`,
         );
       } catch (unfilteredErr: any) {
-        const errMsg = unfilteredErr?.message || String(unfilteredErr);
+        const errMsg =
+          unfilteredErr?.message ||
+          formatShopeeApiError(unfilteredErr, unfilteredErr?.httpStatus) ||
+          String(unfilteredErr);
         console.error(`[Shopee Sync] Shop ${fileKey} quét không lọc trạng thái lỗi:`, errMsg);
-        shopErrors.push({ shopId: fileKey, status: "UNFILTERED", error: "shopee_api_error", message: errMsg });
+        shopErrors.push({
+          shopId: fileKey,
+          status: "UNFILTERED",
+          error: "shopee_api_error",
+          message: errMsg,
+          httpStatus: unfilteredErr?.httpStatus,
+        });
       }
 
       let orderSnList = Array.from(orderSnSet);
@@ -14332,10 +14463,11 @@ async function startServer() {
       job.status = "done";
       job.message = `Hoàn tất: ${result.synced} đơn (${result.added} mới, ${result.updated} cập nhật).`;
     } catch (err: any) {
+      const mapped = shopeeApiErrorResult(err, `order-sync-job:${jobId}`);
       job.status = "failed";
-      job.error = err?.message || String(err);
-      job.message = job.error || "Đồng bộ thất bại";
-      console.error(`[Order Sync Job ${jobId}] Failed:`, err);
+      job.error = mapped.error || err?.message || String(err);
+      job.message = mapped.message || "Đồng bộ thất bại";
+      console.error(`[Order Sync Job ${jobId}] Failed:`, mapped.message, err);
     } finally {
       job.updatedAt = Date.now();
       if (activeOrderSyncJobId === jobId) activeOrderSyncJobId = null;
@@ -14580,9 +14712,19 @@ async function startServer() {
 
           orderSnList = [];
         } catch (error: any) {
-          const errorMsg = error?.message || String(error);
+          const errorMsg =
+            error?.message ||
+            formatShopeeApiError(error, error?.httpStatus) ||
+            String(error);
           console.error(`[Orders Pull] Lỗi khi kéo đơn cho shop_id=${shopId}:`, errorMsg);
-          errors.push({ shopId, error: error?.error || "pull_shop_failed", message: errorMsg });
+          errors.push({
+            shopId,
+            error: error?.error || "pull_shop_failed",
+            message: errorMsg,
+            httpStatus: error?.httpStatus,
+          });
+          // Ghi lỗi rõ vào meta để Frontend đọc được (không silent).
+          ordersPullSyncMeta.error = errorMsg;
         }
 
         await shopeeSyncDelay();
@@ -14591,11 +14733,25 @@ async function startServer() {
       console.log(`[Orders Pull] Hoàn thành mode=${mode}: ${pulledCount} đơn đã cập nhật/thêm mới.`);
       await forceFetchMissingTrackingAfterSync(orders, { max: 100 });
       ordersPullSyncMeta.pulled = pulledCount;
+      if (errors.length > 0 && !ordersPullSyncMeta.error) {
+        const first = errors[0];
+        ordersPullSyncMeta.error =
+          first?.message ||
+          formatShopeeApiError(first, first?.httpStatus) ||
+          "Đồng bộ gặp lỗi từ Shopee API";
+      }
 
       return {
         success: true,
         pulled: pulledCount,
         errors: errors.length ? errors : undefined,
+        warning: errors.length
+          ? errors
+              .slice(0, 3)
+              .map((e) => e.message)
+              .filter(Boolean)
+              .join(" | ")
+          : undefined,
       };
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
