@@ -13913,6 +13913,11 @@ async function startServer() {
   });
 
   app.get("/api/orders", authMiddleware, async (req, res) => {
+    // Phá HTTP cache trình duyệt/CDN — GHN/webhook vừa ghi DB phải hiện ngay khi refresh.
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+
     let rawOrders = loadOrders().filter(isValidOrder);
     let dirty = false;
     rawOrders = rawOrders.map((o: any) => {

@@ -1767,6 +1767,7 @@ export default function OrderManager({
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   const handleSyncOrders = async (type: 'incremental' | 'full' = 'incremental') => {
+    if (isSyncing || ordersLoading) return;
     setIsSyncing(true);
     const isFull = type === 'full';
     onAddLog({
@@ -1776,14 +1777,17 @@ export default function OrderManager({
       type: 'stock_sync',
       status: 'success',
       message: isFull
-        ? 'Đang Full Sync đơn hàng (quét ~30 ngày update_time) — chạy ngầm.'
-        : 'Đang đồng bộ đơn hàng (quét 6 giờ update_time) — chạy ngầm.',
+        ? 'Đang Full Sync đơn hàng (quét ~30 ngày update_time) — chờ làm mới UI.'
+        : 'Đang đồng bộ đơn hàng (quét 6 giờ update_time) — chờ làm mới UI.',
     });
 
-    showToast(isFull ? 'Đang Full Sync ngầm...' : 'Đang đồng bộ ngầm (6 giờ)...');
+    showToast(isFull ? 'Đang Full Sync — vui lòng chờ...' : 'Đang cập nhật đơn hàng — vui lòng chờ...');
 
     try {
+      // 1) Sync Shopee → DB
       await onRefreshOrders?.({ type });
+      // 2) BẮT BUỘC force re-fetch danh sách → ghi đè state (phá cache UI / IndexedDB cũ).
+      await onFetchOrders?.();
       showToast(
         isFull
           ? 'Full Sync hoàn tất — danh sách đơn đã được làm mới.'
@@ -1791,6 +1795,12 @@ export default function OrderManager({
       );
     } catch (err: any) {
       showToast(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);
+      // Vẫn thử làm mới từ DB nội bộ nếu sync lỗi giữa chừng.
+      try {
+        await onFetchOrders?.();
+      } catch {
+        /* ignore */
+      }
     } finally {
       setIsSyncing(false);
     }
@@ -3820,6 +3830,19 @@ export default function OrderManager({
       {/* Floating processing overlay — shown for the full duration of any real
           Shopee API call (ship_order / create+download shipping document),
           single or bulk. Highest z-index so it always sits above every other modal. */}
+      {(isSyncing || (ordersLoading && !progressMessage)) && (
+        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-[110] animate-in fade-in">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-8 shadow-2xl flex flex-col items-center gap-4 text-center">
+            <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
+            <p className="text-sm font-extrabold text-gray-800 leading-relaxed">
+              Đang cập nhật đơn hàng...
+            </p>
+            <p className="text-[11px] text-gray-400 font-semibold">
+              Đang đồng bộ Shopee và làm mới danh sách từ máy chủ — vui lòng không bấm đúp.
+            </p>
+          </div>
+        </div>
+      )}
       {progressMessage && (
         <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-100 animate-in fade-in">
           <div className="bg-white rounded-3xl max-w-sm w-full p-8 shadow-2xl flex flex-col items-center gap-4 text-center">

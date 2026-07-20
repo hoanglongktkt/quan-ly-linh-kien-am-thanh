@@ -226,16 +226,24 @@ export default function App() {
   }, []);
 
   // Fetch the real, backend-synced order list (Shopee webhook data) once authenticated.
-  const fetchOrders = async (opts?: { silent?: boolean }) => {
+  const fetchOrders = async (opts?: { silent?: boolean; bustCache?: boolean }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
 
     const silent = Boolean(opts?.silent);
+    const bustCache = opts?.bustCache !== false;
     if (!silent) setOrdersLoading(true);
     try {
-      const response = await fetch('/api/orders', {
+      // Cache bust: timestamp + cache:no-store — tránh trình duyệt trả danh sách cũ (GHN kẹt tab).
+      const url = bustCache ? `/api/orders?t=${Date.now()}` : '/api/orders';
+      const response = await fetch(url, {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}` },
+        cache: 'no-store',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
       });
       if (response.ok) {
         const data: Order[] = await response.json();
@@ -466,7 +474,7 @@ export default function App() {
       })
       .join('; ');
 
-  // Incremental (mặc định) / full sync — API trả 202, sync chạy ngầm; poll /api/orders.
+  // Incremental (mặc định) / full sync — API trả 202, sync chạy ngầm; poll + FORCE re-fetch /api/orders.
   const pullOrders = async (opts?: { type?: 'incremental' | 'full' }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
@@ -500,19 +508,23 @@ export default function App() {
       }
     };
 
+    // Overlay loading xuyên suốt sync + re-fetch — không tắt giữa chừng.
     setOrdersLoading(true);
     try {
-      const response = await fetch(`/api/orders/pull?type=${syncType}`, {
+      const response = await fetch(`/api/orders/pull?type=${syncType}&t=${Date.now()}`, {
         method: 'POST',
+        cache: 'no-store',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
         },
         body: JSON.stringify({ type: syncType }),
       });
       const data = await readOrderSyncJson(response);
 
-      if (data.skipped || data.syncing) {
+      if (data.skipped || (data.syncing && response.status !== 202 && !data.accepted)) {
         throw new Error(String(data.message || 'Đang có tiến trình đồng bộ chạy'));
       }
       if (data.warning && !data.accepted && response.status !== 202) {
@@ -523,17 +535,20 @@ export default function App() {
         response.status === 202 || data.accepted === true || data.message === 'Đã bắt đầu tiến trình đồng bộ ngầm';
 
       if (startedBackground) {
-        // Giải phóng loading UI ngay — sync chạy ngầm, poll silent.
-        setOrdersLoading(false);
-        // Full sync (returns) có thể > 5 phút — poll lâu hơn để UI kịp cập nhật.
-        const pollMs = syncType === 'full' ? 15_000 : 12_000;
-        const maxPolls = syncType === 'full' ? 24 : 12;
+        // Giữ loading — poll đến khi sync xong rồi FORCE fetchOrders ghi đè state.
+        const pollMs = syncType === 'full' ? 8_000 : 5_000;
+        const maxPolls = syncType === 'full' ? 40 : 24;
         for (let i = 0; i < maxPolls; i++) {
           await new Promise((r) => setTimeout(r, pollMs));
-          await fetchOrders({ silent: true });
+          await fetchOrders({ silent: true, bustCache: true });
           try {
-            const statusRes = await fetch('/api/orders/pull/status', {
-              headers: { Authorization: `Bearer ${token}` },
+            const statusRes = await fetch(`/api/orders/pull/status?t=${Date.now()}`, {
+              cache: 'no-store',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Cache-Control': 'no-cache',
+                Pragma: 'no-cache',
+              },
             });
             if (statusRes.ok) {
               const status = await statusRes.json();
@@ -543,7 +558,8 @@ export default function App() {
             /* bỏ qua lỗi status — vẫn tiếp tục poll orders */
           }
         }
-        await fetchOrders({ silent: true });
+        // Bắt buộc re-fetch lần cuối — ghi đè toàn bộ mảng orders (GHN/webhook).
+        await fetchOrders({ silent: true, bustCache: true });
         return;
       }
 
@@ -552,7 +568,7 @@ export default function App() {
       if (pullErrors.length > 0 && pulled === 0) {
         throw new Error(formatPullErrors(pullErrors));
       }
-      await fetchOrders({ silent: true });
+      await fetchOrders({ silent: true, bustCache: true });
       if (pullErrors.length > 0) {
         console.warn('[Orders Pull] partial errors:', formatPullErrors(pullErrors));
       }
