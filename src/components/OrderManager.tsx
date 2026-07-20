@@ -24,6 +24,7 @@ import {
   matchesUnprocessedPickupTab,
   isShopeeShippingStatus,
   isOrderAwaitingCarrierPickup,
+  hasOrderTrackingNo,
 } from '../utils/orderHandover';
 import {
   isOrderAlreadyScanProcessed,
@@ -528,6 +529,13 @@ export default function OrderManager({
       }
       if (!isOrderAwaitingCarrierPickup(order)) {
         showScanToast(`Đơn #${order.orderSn} không ở trạng thái chờ lấy hàng.`, 'error');
+        return false;
+      }
+      if (!hasOrderTrackingNo(order)) {
+        showScanToast(
+          `Đơn #${order.orderSn} chưa có mã vận đơn (chưa chuẩn bị hàng) — không thể bàn giao ĐVVC.`,
+          'error',
+        );
         return false;
       }
       if (isOrderHandedOverToCarrier(order)) {

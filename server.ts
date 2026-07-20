@@ -7729,8 +7729,10 @@ function isOrderAwaitingCarrierPickupStatus(status: unknown): boolean {
 }
 
 function matchesHandedOverCarrierTabOrder(order: any): boolean {
-  // Độc quyền: đã bàn giao local AND Shopee chưa SHIPPED/COMPLETED.
+  // KPI Shopee — chỉ đơn READY_TO_SHIP + đã có mã VĐ + đã bàn giao.
+  // Đơn chưa chuẩn bị hàng (không có tracking_no) tuyệt đối không vào tab ĐVVC.
   if (!resolveOrderHandoverFlag(order)) return false;
+  if (!hasUsableShopeeTrackingNumber(order)) return false;
   const raw = String(order?.shopee_order_status || "").toUpperCase();
   if (
     raw === "SHIPPED" ||
@@ -7751,7 +7753,17 @@ function matchesHandedOverCarrierTabOrder(order: any): boolean {
   ) {
     return false;
   }
-  return true;
+  // Phải còn ở giai đoạn chờ lấy hàng trên sàn.
+  if (
+    raw === "READY_TO_SHIP" ||
+    raw === "RETRY_SHIP" ||
+    raw === "PROCESSED" ||
+    order?.status === "processed" ||
+    order?.status === "unprocessed"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function isOrderAlreadyScanProcessed(order: any): boolean {
@@ -13521,6 +13533,14 @@ async function startServer() {
         error: `Đơn ${order?.orderSn || order?.id} không ở trạng thái chờ lấy hàng — không thể ghi nhận bàn giao ĐVVC.`,
       };
     }
+    // KPI: chưa có mã vận đơn = chưa chuẩn bị hàng → không cho vào tab ĐVVC.
+    if (!hasUsableShopeeTrackingNumber(order)) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Đơn ${order?.orderSn || order?.id} chưa có mã vận đơn (chưa chuẩn bị hàng) — không thể bàn giao ĐVVC.`,
+      };
+    }
     if (resolveOrderHandoverFlag(order)) {
       return { ok: true, order };
     }
@@ -13900,8 +13920,27 @@ async function startServer() {
           continue;
         }
 
-        // Quy tắc 1: Chờ lấy hàng → HANDED_OVER (cờ nội bộ)
+        // Quy tắc 1: Chờ lấy hàng + đã có mã VĐ → HANDED_OVER (cờ nội bộ)
         if (isOrderAwaitingCarrierPickupStatus(status)) {
+          if (!hasUsableShopeeTrackingNumber(order)) {
+            const reason =
+              `Đơn #${order.orderSn || order.id} chưa có mã vận đơn (chưa chuẩn bị hàng) — không thể bàn giao ĐVVC.`;
+            results.push({
+              code,
+              action: "rejected",
+              orderId: order.id,
+              orderSn: order.orderSn,
+              message: reason,
+              local_status: existingLocal,
+            });
+            failed_scans.push({
+              code,
+              orderId: order.id,
+              orderSn: order.orderSn,
+              reason,
+            });
+            continue;
+          }
           const updated = { ...order };
           setOrderLocalStatus(updated, "HANDED_OVER");
           orders[index] = updated;

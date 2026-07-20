@@ -1,5 +1,6 @@
 import type { Order } from '../types';
 import { resolveOrderLocalStatus } from './orderLocalStatus';
+import { isShopeeInternalTrackingCode } from './orderTracking';
 
 export function getShopeeOrderRawStatus(
   order: Partial<Order> & Record<string, unknown>,
@@ -7,114 +8,130 @@ export function getShopeeOrderRawStatus(
   return String(order.shopee_order_status || '').toUpperCase();
 }
 
-export function isOrderHandedOverToCarrier(order: Partial<Order> & Record<string, unknown>): boolean {
+/** tracking_no thực tế từ Shopee (bỏ mã nội bộ 0FG...). */
+export function getOrderTrackingNo(
+  order: Partial<Order> & Record<string, unknown>,
+): string {
+  const candidates = [
+    order.trackingNumber,
+    order.tracking_no,
+    order.shopee_tracking_number,
+  ];
+  for (const c of candidates) {
+    const tn = String(c || '').trim();
+    if (!tn || tn === '0' || isShopeeInternalTrackingCode(tn)) continue;
+    return tn;
+  }
+  return '';
+}
+
+export function hasOrderTrackingNo(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  return Boolean(getOrderTrackingNo(order));
+}
+
+/** is_handed_over — cờ nội bộ user đã quẹt mã giao bưu tá. */
+export function isOrderHandedOverToCarrier(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
   return (
     resolveOrderLocalStatus(order) === 'HANDED_OVER' ||
     Boolean(order.isHandedOverToCarrier ?? order.is_handed_over_to_carrier)
   );
 }
 
-/** SHIPPED / TO_CONFIRM_RECEIVE → Đang giao (ưu tiên tuyệt đối từ Shopee). */
-export function isShopeeShippingStatus(order: Partial<Order> & Record<string, unknown>): boolean {
-  if (order.status === 'shipping') return true;
+/** SHIPPED / TO_CONFIRM_RECEIVE → Đang giao. */
+export function isShopeeShippingStatus(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
   const raw = getShopeeOrderRawStatus(order);
-  return raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE';
+  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return true;
+  return order.status === 'shipping';
 }
 
-export function isShopeeCompletedStatus(order: Partial<Order> & Record<string, unknown>): boolean {
-  if (order.status === 'completed') return true;
-  return getShopeeOrderRawStatus(order) === 'COMPLETED';
+export function isShopeeCompletedStatus(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  if (getShopeeOrderRawStatus(order) === 'COMPLETED') return true;
+  return order.status === 'completed';
 }
 
-/** READY_TO_SHIP / RETRY_SHIP / PROCESSED — còn ở giai đoạn chờ lấy hàng trên sàn. */
-export function isShopeeReadyToShipLike(order: Partial<Order> & Record<string, unknown>): boolean {
+/**
+ * Giai đoạn chờ lấy hàng trên sàn (KPI Shopee):
+ * READY_TO_SHIP | RETRY_SHIP | PROCESSED
+ */
+export function isShopeeReadyToShipStatus(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || raw === 'PROCESSED') return true;
-  // Fallback khi thiếu shopee_order_status nhưng local đã map đúng tab chờ lấy.
+  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || raw === 'PROCESSED') {
+    return true;
+  }
+  // Fallback khi thiếu shopee_order_status
+  if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
+  if (
+    raw === 'UNPAID' ||
+    raw === 'PENDING' ||
+    raw === 'IN_REVIEW' ||
+    raw === 'FRAUD_CHECK' ||
+    raw === 'CANCELLED' ||
+    raw === 'IN_CANCEL' ||
+    raw === 'TO_RETURN'
+  ) {
+    return false;
+  }
   return order.status === 'unprocessed' || order.status === 'processed';
 }
 
-/** Đã xác nhận giao hàng (ship_order) hoặc đã in nhãn. */
-export function isOrderConfirmedOrPrinted(order: Partial<Order> & Record<string, unknown>): boolean {
-  const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'PROCESSED') return true;
-  if (order.status === 'processed') return true;
-  if (Boolean(order.isPrepared) || Boolean(order.isPrinted)) return true;
-  const tracking = String(
-    order.trackingNumber || order.tracking_no || order.shopee_tracking_number || '',
-  ).trim();
-  return Boolean(tracking) && tracking !== '0' && !/^0FG/i.test(tracking);
+/** @deprecated dùng isShopeeReadyToShipStatus */
+export function isShopeeReadyToShipLike(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  return isShopeeReadyToShipStatus(order);
 }
 
-/** Trạng thái Shopee tương đương READY_TO_SHIP / PROCESSED — chờ bưu tá lấy hàng. */
+/** @deprecated dùng hasOrderTrackingNo */
+export function isOrderConfirmedOrPrinted(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  return hasOrderTrackingNo(order);
+}
+
 export function isOrderAwaitingCarrierPickup(order: Pick<Order, 'status'>): boolean {
   return order.status === 'processed' || order.status === 'unprocessed';
 }
 
 /**
- * ĐÃ GIAO CHO ĐVVC — độc quyền:
- * local bàn giao = true AND Shopee chưa SHIPPED/COMPLETED.
+ * TAB "ĐÃ GIAO CHO ĐVVC" (KPI — chốt chặn):
+ * shopee READY_TO_SHIP-like AND tracking_no có dữ liệu AND is_handed_over === true
+ * Đơn chưa có mã vận đơn tuyệt đối KHÔNG được vào tab này.
  */
 export function matchesHandedOverCarrierTab(order: Order): boolean {
-  if (!isOrderHandedOverToCarrier(order)) return false;
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
-  const raw = getShopeeOrderRawStatus(order);
-  if (
-    raw === 'CANCELLED' ||
-    raw === 'IN_CANCEL' ||
-    raw === 'TO_RETURN' ||
-    order.status === 'cancelled' ||
-    order.status === 'return_pending' ||
-    order.status === 'return_received'
-  ) {
-    return false;
-  }
-  return true;
+  if (!isShopeeReadyToShipStatus(order)) return false;
+  if (!hasOrderTrackingNo(order)) return false;
+  return isOrderHandedOverToCarrier(order);
 }
 
 /**
- * CHỜ LẤY HÀNG (ĐÃ XỬ LÝ) — độc quyền:
- * READY_TO_SHIP-like AND đã xác nhận/in nhãn AND chưa bàn giao ĐVVC AND chưa SHIPPED.
+ * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)":
+ * READY_TO_SHIP-like AND tracking_no có dữ liệu AND is_handed_over === false
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
-  if (isOrderHandedOverToCarrier(order)) return false;
-  if (order.status === 'pending_verification' || order.status === 'pending_confirm') return false;
-  if (
-    order.status === 'cancelled' ||
-    order.status === 'return_pending' ||
-    order.status === 'return_received'
-  ) {
-    return false;
-  }
-  const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || raw === 'TO_RETURN') return false;
-  if (!isShopeeReadyToShipLike(order)) return false;
-  return isOrderConfirmedOrPrinted(order);
+  if (!isShopeeReadyToShipStatus(order)) return false;
+  if (!hasOrderTrackingNo(order)) return false;
+  return !isOrderHandedOverToCarrier(order);
 }
 
 /**
- * CHỜ LẤY HÀNG (CHƯA XỬ LÝ) — độc quyền:
- * READY_TO_SHIP-like AND chưa xác nhận/in nhãn AND chưa bàn giao ĐVVC AND chưa SHIPPED.
+ * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)":
+ * READY_TO_SHIP-like AND tracking_no null/empty
+ * (Chưa chuẩn bị hàng — kể cả nếu cờ bàn giao bị set sai vẫn ở đây)
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
-  if (isOrderHandedOverToCarrier(order)) return false;
-  if (order.status === 'pending_verification' || order.status === 'pending_confirm') return false;
-  if (
-    order.status === 'cancelled' ||
-    order.status === 'return_pending' ||
-    order.status === 'return_received'
-  ) {
-    return false;
-  }
-  const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || raw === 'TO_RETURN') return false;
-  if (raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK') {
-    return false;
-  }
-  if (!isShopeeReadyToShipLike(order)) return false;
-  // Mutually exclusive với tab Đã xử lý
-  if (isOrderConfirmedOrPrinted(order)) return false;
-  return true;
+  if (!isShopeeReadyToShipStatus(order)) return false;
+  return !hasOrderTrackingNo(order);
 }
