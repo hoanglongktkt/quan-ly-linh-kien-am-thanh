@@ -16442,11 +16442,14 @@ async function startServer() {
       }
     }
 
-    // Mark successfully-printed orders (isPrinted=true, and auto-advance status like the old UI mock did).
+    // Mark successfully-printed orders — chỉ "Đã in/Đã xử lý" khi đã có mã VĐ.
     const printedOrderSns = new Set(allPrintedSns);
     const updatedOrders = orders.map((o: any) => {
       if (printedOrderSns.has(o.orderSn)) {
-        return { ...o, isPrinted: true, status: o.isPrepared ? "processed" : o.status };
+        if (hasUsableShopeeTrackingNumber(o)) {
+          return { ...o, isPrinted: true, status: "processed", isPrepared: true };
+        }
+        return { ...o, isPrepared: true };
       }
       return o;
     });
