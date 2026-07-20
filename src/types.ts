@@ -177,6 +177,10 @@ export interface Order {
   trackingNumber?: string; // Carrier tracking (SPXVN..., GHN...) — mã trên phiếu giao / QR quét
   /** Mirror snake_case từ Shopee / DB */
   tracking_no?: string;
+  /** Phương thức giao: pickup (bưu tá lấy) | dropoff (gửi tại bưu cục) — không phụ thuộc pickup_time */
+  fulfillment_type?: 'pickup' | 'dropoff' | string;
+  ship_method?: 'pickup' | 'dropoff' | string;
+  shipping_method?: string;
   /** Mã vận đơn chiều hoàn từ v2.returns.get_return_detail */
   return_tracking_no?: string;
   /** Mã yêu cầu trả hàng/hoàn tiền Shopee */

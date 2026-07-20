@@ -31,16 +31,51 @@ export function hasOrderTrackingNo(
   return Boolean(getOrderTrackingNo(order));
 }
 
+/** pickup | dropoff — không phụ thuộc pickup_time. */
+export function getOrderFulfillmentType(
+  order: Partial<Order> & Record<string, unknown>,
+): 'pickup' | 'dropoff' | '' {
+  const raw = String(
+    order.fulfillment_type ||
+      order.ship_method ||
+      order.shipping_method ||
+      order.fulfillmentType ||
+      '',
+  )
+    .trim()
+    .toLowerCase();
+  if (raw === 'dropoff' || raw === 'drop_off' || raw === 'drop-off') return 'dropoff';
+  if (raw === 'pickup' || raw === 'pick_up' || raw === 'pick-up') return 'pickup';
+  return '';
+}
+
 /**
  * isProcessedCondition — NGUỒN SỰ THẬT DUY NHẤT cho Tab Filter + UI Badge/Nút.
- * Đã xử lý = đơn THỰC SỰ đã có mã vận đơn (tracking_no).
- * Không dùng isPrepared / isPrinted / status===processed một mình
- * (các cờ này có thể bị set sớm trước khi Shopee trả mã).
+ * Đã xử lý (Pickup HOẶC Drop-off) khi THỎA 1 trong các điều kiện:
+ *   1) Có tracking_no thực (GHN GYA..., SPX...)
+ *   2) Shopee order_status = PROCESSED (sau ship_order — cả dropoff lẫn pickup)
+ *   3) local status = processed (đã xác nhận gửi hàng trên app)
+ *   4) Drop-off + isPrepared (không cần pickup_time)
+ * TUYỆT ĐỐI KHÔNG yêu cầu pickup_time / is_pickup.
  */
 export function isProcessedCondition(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
-  return hasOrderTrackingNo(order);
+  if (hasOrderTrackingNo(order)) return true;
+
+  const raw = getShopeeOrderRawStatus(order);
+  // Sau arrange shipment (dropoff/pickup) Shopee chuyển PROCESSED — Đã xử lý ngay.
+  if (raw === 'PROCESSED') return true;
+
+  // Local đã đánh dấu sau ship_order thành công (kể cả khi sync chưa kịp tracking).
+  if (order.status === 'processed') return true;
+
+  // Drop-off: đã chuẩn bị gửi bưu cục — không phụ thuộc pickup_time.
+  if (getOrderFulfillmentType(order) === 'dropoff' && Boolean(order.isPrepared)) {
+    return true;
+  }
+
+  return false;
 }
 
 /** is_handed_over — cờ nội bộ user đã quẹt mã giao bưu tá. */
@@ -187,8 +222,8 @@ export function matchesHandedOverCarrierTab(order: Order): boolean {
 }
 
 /**
- * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)":
- * READY_TO_SHIP AND isProcessedCondition AND is_handed_over === false
+ * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" — áp dụng cả Pickup và Drop-off (gửi tại bưu cục).
+ * Không yêu cầu pickup_time. Chỉ cần isProcessedCondition (tracking_no | PROCESSED | ...).
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
@@ -199,12 +234,14 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 }
 
 /**
- * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)":
- * READY_TO_SHIP AND NOT isProcessedCondition
+ * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)" — Pickup/Drop-off chưa arrange / chưa có mã.
+ * Đơn PROCESSED hoặc đã có tracking_no KHÔNG được ở đây (kể cả Drop-off).
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (!isShopeeReadyToShipStatus(order)) return false;
+  // PROCESSED = đã ship_order (dropoff/pickup) → luôn sang Đã xử lý.
+  if (getShopeeOrderRawStatus(order) === 'PROCESSED') return false;
   return !isProcessedCondition(order);
 }

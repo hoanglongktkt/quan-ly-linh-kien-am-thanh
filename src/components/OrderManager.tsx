@@ -1429,23 +1429,35 @@ export default function OrderManager({
   const applyLocalShippedOrdersUpdate = (
     baseOrders: Order[],
     queuedKeys: Set<string>,
-    opts?: { markPrinted?: boolean }
+    opts?: { markPrinted?: boolean; shipMethod?: 'pickup' | 'dropoff' }
   ): Order[] =>
     baseOrders.map((o) => {
       if (!queuedKeys.has(o.id) && !queuedKeys.has(o.orderSn) && !queuedKeys.has(`shopee-${o.orderSn}`)) {
         return o;
       }
-      const hasTracking = isProcessedCondition(o);
+      // Sau ship_order (pickup HOẶC dropoff) → Đã xử lý ngay, không cần pickup_time.
       return {
         ...o,
         isPrepared: true,
-        // Chỉ đánh dấu processed / Đã in khi THỰC SỰ đã có mã vận đơn.
-        ...(hasTracking ? { status: 'processed' as const } : {}),
-        ...(opts?.markPrinted && hasTracking ? { isPrinted: true } : {}),
+        status: 'processed' as const,
+        shopee_order_status:
+          o.shopee_order_status === 'READY_TO_SHIP' ||
+          o.shopee_order_status === 'RETRY_SHIP' ||
+          !o.shopee_order_status
+            ? 'PROCESSED'
+            : o.shopee_order_status,
+        fulfillment_type: opts?.shipMethod || o.fulfillment_type,
+        ship_method: opts?.shipMethod || o.ship_method,
+        ...(opts?.markPrinted && isProcessedCondition({ ...o, status: 'processed', isPrepared: true })
+          ? { isPrinted: true }
+          : {}),
       };
     });
 
-  const refreshOrdersAfterShip = async (queuedOrders: Order[], opts?: { markPrinted?: boolean }) => {
+  const refreshOrdersAfterShip = async (
+    queuedOrders: Order[],
+    opts?: { markPrinted?: boolean; shipMethod?: 'pickup' | 'dropoff' }
+  ) => {
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
     const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, opts);
     ordersRef.current = patched;
@@ -1600,7 +1612,10 @@ export default function OrderManager({
         )
       : [];
     if (queuedForRefresh.length > 0) {
-      await refreshOrdersAfterShip(queuedForRefresh, { markPrinted: printedSns.size > 0 });
+      await refreshOrdersAfterShip(queuedForRefresh, {
+        markPrinted: printedSns.size > 0,
+        shipMethod,
+      });
     } else if (onFetchOrders) {
       await onFetchOrders();
     }
@@ -1618,7 +1633,9 @@ export default function OrderManager({
     }
 
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
-    const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys);
+    const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
+      shipMethod,
+    });
     onUpdateOrders(optimisticOrders);
     ordersRef.current = optimisticOrders;
 
@@ -1715,7 +1732,10 @@ export default function OrderManager({
           console.error('[Bulk Confirm Sync] Auto-print lỗi (continue):', printErr);
           queuePendingAutoPrint({}, successfullyConfirmedIds);
         }
-        await refreshOrdersAfterShip(queuedOrders, { markPrinted: successCount > 0 });
+        await refreshOrdersAfterShip(queuedOrders, {
+          markPrinted: successCount > 0,
+          shipMethod,
+        });
         markProgressComplete('Xác nhận & in đơn hoàn tất!');
         return;
       }

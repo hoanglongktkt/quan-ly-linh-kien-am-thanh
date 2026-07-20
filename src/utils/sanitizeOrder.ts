@@ -55,6 +55,24 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     tracking_no: raw.tracking_no || raw.trackingNumber || raw.return_tracking_no
       ? String(raw.tracking_no || raw.trackingNumber || raw.return_tracking_no)
       : undefined,
+    fulfillment_type: (() => {
+      const v = String(
+        raw.fulfillment_type || raw.ship_method || raw.shipping_method || raw.fulfillmentType || '',
+      )
+        .trim()
+        .toLowerCase();
+      if (v === 'dropoff' || v === 'drop_off' || v === 'drop-off') return 'dropoff';
+      if (v === 'pickup' || v === 'pick_up' || v === 'pick-up') return 'pickup';
+      return v || undefined;
+    })(),
+    ship_method: (() => {
+      const v = String(raw.ship_method || raw.fulfillment_type || raw.shipping_method || '')
+        .trim()
+        .toLowerCase();
+      if (v === 'dropoff' || v === 'drop_off' || v === 'drop-off') return 'dropoff';
+      if (v === 'pickup' || v === 'pick_up' || v === 'pick-up') return 'pickup';
+      return undefined;
+    })(),
     return_tracking_no: raw.return_tracking_no
       ? String(raw.return_tracking_no)
       : undefined,
