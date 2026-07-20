@@ -90,6 +90,14 @@ function getOrderWaybillCode(order: Order): string {
   if (fallback && !/^0FG/i.test(fallback) && fallback !== String(order.orderSn || '')) {
     return fallback;
   }
+  // #region agent log
+  if (
+    order.status === 'processed' ||
+    String(order.shopee_order_status || '').toUpperCase() === 'PROCESSED'
+  ) {
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6d934e'},body:JSON.stringify({sessionId:'6d934e',runId:'pre-fix',hypothesisId:'D',location:'OrderManager.tsx:getOrderWaybillCode',message:'UI empty waybill for processed order',data:{orderSn:order.orderSn,status:order.status,raw:order.shopee_order_status,trackingNumber:order.trackingNumber||null,tracking_no:order.tracking_no||null,fromHelper:fromHelper||null,fallback:fallback||null,fulfillment:(order as any).fulfillment_type||(order as any).ship_method||null},timestamp:Date.now()})}).catch(()=>{});
+  }
+  // #endregion
   return '';
 }
 

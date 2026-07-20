@@ -7779,7 +7779,7 @@ async function ensureTrackingBeforePrint(
       } else {
         console.error(`[Shopee Print Gate] VẪN thiếu tracking_no order_sn=${o.orderSn} sau ${retries} lần thử`);
       }
-      await sleep(200);
+      await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
   }
   if (filled > 0) saveOrders(orders);
@@ -15401,7 +15401,7 @@ async function startServer() {
       }
 
       console.log(`[Orders Pull] Hoàn thành mode=${mode}: ${pulledCount} đơn đã cập nhật/thêm mới.`);
-      await forceFetchMissingTrackingAfterSync(orders, { max: 100 });
+      await forceFetchMissingTrackingAfterSync(orders, { max: 40 });
       // Sau sync: heal tracking_no | PROCESSED | dropoff → Đã xử lý (Pickup + Drop-off).
       let postHeal = 0;
       for (const o of orders) {
