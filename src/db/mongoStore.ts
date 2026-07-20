@@ -1056,11 +1056,18 @@ export async function updateOrderPendingShopeeCheckInStore(
   return (result.matchedCount || 0) > 0 || (result.modifiedCount || 0) > 0;
 }
 
-/** findOneAndUpdate tracking_no / trackingNumber vào Mongo theo order_sn. */
+/** findOneAndUpdate tracking_no / trackingNumber (+ status heal) vào Mongo theo order_sn. */
 export async function updateOrderTrackingInStore(
   orderSn: string,
   trackingNo: string,
-  extra?: { internalTrackingCode?: string; packageNumber?: string },
+  extra?: {
+    internalTrackingCode?: string;
+    packageNumber?: string;
+    status?: string;
+    isPrepared?: boolean;
+    shopee_order_status?: string;
+    is_pending_shopee_check?: boolean;
+  },
 ): Promise<boolean> {
   if (!isMongoReady()) return false;
   requireMongo();
@@ -1079,13 +1086,27 @@ export async function updateOrderTrackingInStore(
   if (extra?.packageNumber) {
     $set["data.packageNumber"] = extra.packageNumber;
   }
+  if (extra?.status != null) {
+    $set.status = String(extra.status);
+    $set["data.status"] = String(extra.status);
+  }
+  if (extra?.isPrepared != null) {
+    $set["data.isPrepared"] = extra.isPrepared;
+  }
+  if (extra?.shopee_order_status != null) {
+    $set["data.shopee_order_status"] = String(extra.shopee_order_status);
+  }
+  if (extra?.is_pending_shopee_check != null) {
+    $set.is_pending_shopee_check = extra.is_pending_shopee_check;
+    $set["data.is_pending_shopee_check"] = extra.is_pending_shopee_check;
+  }
   const result = await OrderModel.findOneAndUpdate(
     { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] },
     { $set },
     { new: true, upsert: false },
   );
   console.log(
-    `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} ok=${Boolean(result)}`,
+    `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} status=${extra?.status || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
 }
