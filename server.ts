@@ -5901,7 +5901,15 @@ type ShipMethod = "pickup" | "dropoff";
 // honor the method the seller explicitly picked in the "Xác nhận đơn hàng" modal,
 // then call ship_order. Fails clearly if Shopee doesn't support the chosen method
 // for this specific order's logistics channel (info_needed doesn't list it).
-async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ success: boolean; error?: string; message?: string; mode?: string; shopId?: string }> {
+async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
+  success: boolean;
+  error?: string;
+  message?: string;
+  mode?: string;
+  shopId?: string;
+  trackingNumber?: string;
+  alreadyShipped?: boolean;
+}> {
   try {
   const shopCheck = validateOrderShopForShipment(order);
   if (!shopCheck.ok) {
@@ -5922,6 +5930,30 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ su
   console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (get_shipping_parameter) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(paramResult));
   if (paramResult.error) {
     console.error(`[Shopee L\u1ED6I] get_shipping_parameter th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${paramResult.error}" message="${paramResult.message}"`);
+    // Đơn GHN/SPX đã PROCESSED thường fail parameter — thử recover tracking thay vì báo lỗi.
+    if (isAlreadyShippedError(paramResult)) {
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+      if (recovered.ok) {
+        return {
+          success: true,
+          alreadyShipped: true,
+          mode: method,
+          shopId,
+          trackingNumber: recovered.trackingNumber || order.trackingNumber,
+        };
+      }
+    }
+    // Fallback: dù không khớp pattern, vẫn probe 1 lần (tránh kẹt GHN có mã nhưng lỗi lạ).
+    const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+    if (recovered.ok) {
+      return {
+        success: true,
+        alreadyShipped: true,
+        mode: method,
+        shopId,
+        trackingNumber: recovered.trackingNumber || order.trackingNumber,
+      };
+    }
     return { success: false, error: paramResult.error, message: paramResult.message };
   }
 
@@ -5931,6 +5963,17 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ su
   if (method === "dropoff") {
     if (!Object.prototype.hasOwnProperty.call(infoNeeded, "dropoff")) {
       console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 dropoff. info_needed=${JSON.stringify(infoNeeded)}`);
+      // Có thể đơn đã arrange — recover trước khi trả lỗi method.
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+      if (recovered.ok) {
+        return {
+          success: true,
+          alreadyShipped: true,
+          mode: method,
+          shopId,
+          trackingNumber: recovered.trackingNumber || order.trackingNumber,
+        };
+      }
       return { success: false, error: "dropoff_not_supported", message: "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Tự mang hàng ra bưu cục\". Vui lòng chọn \"Lấy hàng\" (pickup) thay thế." };
     }
     const dropoffRequirements = Array.isArray(infoNeeded.dropoff) ? infoNeeded.dropoff : [];
@@ -5945,6 +5988,16 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ su
   } else {
     if (!Object.prototype.hasOwnProperty.call(infoNeeded, "pickup")) {
       console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 pickup. info_needed=${JSON.stringify(infoNeeded)}`);
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+      if (recovered.ok) {
+        return {
+          success: true,
+          alreadyShipped: true,
+          mode: method,
+          shopId,
+          trackingNumber: recovered.trackingNumber || order.trackingNumber,
+        };
+      }
       return { success: false, error: "pickup_not_supported", message: "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Lấy hàng\". Vui lòng chọn \"Tự mang hàng ra bưu cục\" (dropoff) thay thế." };
     }
     // Lấy danh sách địa chỉ kho mới nhất + khớp với get_shipping_parameter (tránh address_id cũ).
@@ -5964,6 +6017,16 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ su
       console.error(
         `[Shopee LỖI] Đơn ${order.orderSn} không có address/time_slot pickup khả dụng. pickup=${JSON.stringify(paramResult.response?.pickup)} shopAddresses=${JSON.stringify(shopAddressList)}`,
       );
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+      if (recovered.ok) {
+        return {
+          success: true,
+          alreadyShipped: true,
+          mode: method,
+          shopId,
+          trackingNumber: recovered.trackingNumber || order.trackingNumber,
+        };
+      }
       return {
         success: false,
         error: "no_pickup_slot_available",
@@ -5985,9 +6048,40 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{ su
   console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (ship_order) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(shipResult));
   if (shipResult.error) {
     console.error(`[Shopee L\u1ED6I] ship_order th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${shipResult.error}" message="${shipResult.message}" request_id="${shipResult.request_id || ""}"`);
+    if (isAlreadyShippedError(shipResult)) {
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+      if (recovered.ok) {
+        return {
+          success: true,
+          alreadyShipped: true,
+          mode: method,
+          shopId,
+          trackingNumber: recovered.trackingNumber || order.trackingNumber,
+        };
+      }
+    }
+    const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+    if (recovered.ok) {
+      return {
+        success: true,
+        alreadyShipped: true,
+        mode: method,
+        shopId,
+        trackingNumber: recovered.trackingNumber || order.trackingNumber,
+      };
+    }
     return { success: false, error: shipResult.error, message: shipResult.message, mode: method, shopId };
   }
-  return { success: true, mode: method, shopId };
+
+  // Sau ship thành công: chờ + lấy mã vận đơn (GHN thường có ngay như GYA9LYP6).
+  await sleep(1500);
+  await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, { retries: 4 });
+  return {
+    success: true,
+    mode: method,
+    shopId,
+    trackingNumber: order.trackingNumber || order.tracking_no || undefined,
+  };
   } catch (error: any) {
     console.error(`[Shopee LỖI] shipShopeeOrderReal exception đơn ${order?.orderSn}:`, error?.stack || error);
     return {
@@ -7684,7 +7778,8 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     } else if (finalRaw === "UNPAID" || finalRaw === "PENDING") {
       order.status = "pending_confirm";
       order.isPrepared = false;
-    } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP") {
+    } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP" || finalRaw === "PROCESSED") {
+      // PROCESSED + mã GHN/SPX → Đã xử lý; thiếu mã → Chưa xử lý (sẽ enrich get_tracking_number).
       order.status = hasUsableShopeeTrackingNumber(order) ? "processed" : "unprocessed";
       order.isPrepared = order.status === "processed";
     }
@@ -7966,13 +8061,16 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     }
   }
 
-  // READY_TO_SHIP + đã có tracking → Chờ lấy hàng (Đã xử lý)
+  // READY_TO_SHIP / PROCESSED + đã có tracking (GHN GYA9LYP6, SPX...) → Đã xử lý
   if (
-    (incomingRaw === "READY_TO_SHIP" || incomingRaw === "RETRY_SHIP") &&
+    (incomingRaw === "READY_TO_SHIP" ||
+      incomingRaw === "RETRY_SHIP" ||
+      incomingRaw === "PROCESSED") &&
     hasUsableShopeeTrackingNumber(merged)
   ) {
     merged.status = "processed";
     merged.isPrepared = true;
+    merged.is_pending_shopee_check = false;
   }
   const mergedCustomCosts = getGlobalPackagingCostPerOrder();
   merged.custom_costs = mergedCustomCosts;
@@ -11021,16 +11119,101 @@ function resolveOrdersFromRequest(orders: any[], orderIds?: string[], orderSns?:
   return hits;
 }
 
-// Shopee sometimes returns an "already shipped" style error when ship_order is
-// retried on an order that was actually prepared earlier — treat as success so
-// bulk runs don't report 0/N for orders that are already on Shopee's side.
+// Shopee trả lỗi kiểu "already shipped / order_status_invalid" khi ship_order được
+// gọi lại trên đơn đã chuẩn bị (đặc biệt GHN/J&T đã có mã vận đơn). Coi là thành công.
 function isAlreadyShippedError(result: any): boolean {
-  const blob = `${result?.error || ""} ${result?.message || ""}`.toLowerCase();
-  return blob.includes("already") || blob.includes("has been shipped") || blob.includes("logistics order is completed");
+  const error = String(result?.error || "").toLowerCase();
+  const message = String(result?.message || result?.msg || "").toLowerCase();
+  const blob = `${error} ${message}`;
+  if (!blob.trim()) return false;
+
+  // Mã lỗi Shopee thường gặp khi đơn đã arrange / đã có tracking.
+  if (
+    error.includes("package_can_not_ship") ||
+    error.includes("order_has_shipped") ||
+    error.includes("logistics_order_completed") ||
+    error.includes("ship_order_limit") ||
+    error.includes("order_status_error") ||
+    error.includes("order_status_invalid") ||
+    error.includes("package_number_not_found") ||
+    error.includes("logistics.order_status")
+  ) {
+    return true;
+  }
+
+  return (
+    blob.includes("already") ||
+    blob.includes("has been shipped") ||
+    blob.includes("has been arranged") ||
+    blob.includes("already arranged") ||
+    blob.includes("already been processed") ||
+    blob.includes("logistics order is completed") ||
+    blob.includes("order status does not support") ||
+    blob.includes("order_status does not support") ||
+    blob.includes("không thể giao") ||
+    blob.includes("da duoc xu ly") ||
+    blob.includes("đã được xử lý") ||
+    blob.includes("đã chuẩn bị") ||
+    blob.includes("da chuan bi") ||
+    blob.includes("đã sắp xếp") ||
+    blob.includes("da sap xep")
+  );
+}
+
+/**
+ * Khi ship_order / get_shipping_parameter fail vì đơn ĐÃ chuẩn bị trên Shopee:
+ * lấy lại order detail + tracking (GHN: GYA9LYP6, SPX: SPXVN...) và coi là thành công.
+ */
+async function tryRecoverAlreadyShippedShopeeOrder(
+  shopId: string,
+  accessToken: string,
+  order: any,
+): Promise<{ ok: boolean; trackingNumber?: string; shopeeStatus?: string }> {
+  try {
+    const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [String(order.orderSn)]);
+    const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
+    const detail = Array.isArray(detailList) ? detailList[0] : null;
+    if (detail) {
+      applyShopeePackageListTracking(order, detail);
+      const raw = String(detail.order_status || detail.status || "").toUpperCase();
+      if (raw) order.shopee_order_status = raw;
+      const pkg = Array.isArray(detail.package_list) ? detail.package_list[0] : null;
+      if (pkg?.package_number) order.packageNumber = String(pkg.package_number);
+    }
+
+    await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, { retries: 4 });
+    repairMisassignedTracking(order);
+
+    const tn = String(order.trackingNumber || order.tracking_no || "").trim();
+    const rawStatus = String(order.shopee_order_status || "").toUpperCase();
+    const alreadyOnShopee =
+      Boolean(tn && !isShopeeInternalTrackingCode(tn)) ||
+      rawStatus === "PROCESSED" ||
+      rawStatus === "SHIPPED" ||
+      rawStatus === "TO_CONFIRM_RECEIVE" ||
+      rawStatus === "COMPLETED";
+
+    if (alreadyOnShopee) {
+      console.log(
+        `[Shopee Ship Recover] order_sn=${order.orderSn} OK status=${rawStatus || "?"} tn=${tn || "—"} (GHN/SPX/J&T đều chấp nhận)`,
+      );
+      return { ok: true, trackingNumber: tn || undefined, shopeeStatus: rawStatus || undefined };
+    }
+    console.warn(
+      `[Shopee Ship Recover] order_sn=${order.orderSn} chưa recover được (status=${rawStatus || "?"} tn=${tn || "—"})`,
+    );
+    return { ok: false };
+  } catch (err: any) {
+    console.error(`[Shopee Ship Recover] exception order_sn=${order?.orderSn}:`, err?.message || err);
+    return { ok: false };
+  }
 }
 
 /** Bẫy lỗi "đang kiểm tra bởi Shopee" khi gọi ship_order / chuẩn bị hàng. */
 function isShopeePendingVerificationError(result: any): boolean {
+  // Đã arrange / đã có mã → KHÔNG coi là pending (tránh kẹt GHN ở "Chưa xử lý").
+  if (isAlreadyShippedError(result)) return false;
+
   const blob = `${result?.error || ""} ${result?.message || ""} ${result?.msg || ""} ${result?.stack || ""}`.toLowerCase();
   if (!blob.trim()) return false;
   return (
@@ -11038,14 +11221,10 @@ function isShopeePendingVerificationError(result: any): boolean {
     blob.includes("pending_verification") ||
     blob.includes("order_is_under_status") ||
     blob.includes("order status is not ready") ||
-    blob.includes("order_status_invalid") ||
     blob.includes("order is pending") ||
     blob.includes("order not ready") ||
     blob.includes("not ready to ship") ||
     blob.includes("not ready for shipment") ||
-    blob.includes("cannot arrange shipment") ||
-    blob.includes("can not arrange") ||
-    blob.includes("unable to arrange") ||
     blob.includes("system_pending") ||
     blob.includes("kyc_pending") ||
     blob.includes("arrange_shipment_pending") ||
@@ -15508,16 +15687,48 @@ async function startServer() {
             };
           }
         } else {
+          // success hoặc already-shipped (kèm tracking GHN/SPX đã recover trên object order).
+          const tn = String(
+            order.trackingNumber ||
+              order.tracking_no ||
+              result.trackingNumber ||
+              orders[index].trackingNumber ||
+              "",
+          ).trim();
           orders[index] = {
             ...orders[index],
+            ...order,
             isPrepared: true,
-            status: "processed",
+            status: tn && !isShopeeInternalTrackingCode(tn) ? "processed" : "processed",
             is_pending_shopee_check: false,
-            trackingNumber: orders[index].trackingNumber || result.trackingNumber,
-            shopId: orders[index].shopId || result.shopId || resolvedShopId,
+            trackingNumber: tn || orders[index].trackingNumber,
+            tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
+            shopId: orders[index].shopId || order.shopId || result.shopId || resolvedShopId,
+            shopee_order_status:
+              order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
             shopeeSyncPending: false,
             shopeeSyncError: undefined,
           };
+          // Nếu vẫn thiếu mã — fetch thêm 1 lần (GHN đôi khi trễ vài giây).
+          if (!hasUsableShopeeTrackingNumber(orders[index]) && resolvedShopId) {
+            try {
+              const token = await getValidShopeeAccessToken(resolvedShopId);
+              if (token) {
+                await enrichShopeeOrderTrackingFromApi(resolvedShopId, token, orders[index], {
+                  retries: 4,
+                });
+              }
+            } catch (trackErr: any) {
+              console.warn(
+                `[Ship Order Bulk] Fetch tracking sau ship thất bại ${order.orderSn}:`,
+                trackErr?.message || trackErr,
+              );
+            }
+          }
+          if (hasUsableShopeeTrackingNumber(orders[index])) {
+            orders[index].status = "processed";
+            orders[index].isPrepared = true;
+          }
           if (orders[index].channel === "shopee") {
             successfulShopeeOrders.push(orders[index]);
           }
@@ -15598,16 +15809,43 @@ async function startServer() {
 
       const index = orders.findIndex((o: any) => o.id === orderId);
       if (result.success || isAlreadyShippedError(result)) {
+        const tn = String(
+          order.trackingNumber ||
+            order.tracking_no ||
+            result.trackingNumber ||
+            orders[index].trackingNumber ||
+            "",
+        ).trim();
         orders[index] = {
           ...orders[index],
+          ...order,
           isPrepared: true,
-          // Move the order into "Chờ lấy hàng (Đã xử lý)" the INSTANT ship_order
-          // succeeds — no need to wait for the print step to flip this anymore.
           status: "processed",
           is_pending_shopee_check: false,
-          trackingNumber: orders[index].trackingNumber || result.trackingNumber,
-          shopId: orders[index].shopId || result.shopId, // self-heal orders that lost shop_id from an old webhook bug
+          trackingNumber: tn || orders[index].trackingNumber,
+          tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
+          shopId: orders[index].shopId || order.shopId || result.shopId,
+          shopee_order_status:
+            order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
         };
+        if (!hasUsableShopeeTrackingNumber(orders[index]) && orders[index].shopId) {
+          try {
+            const token = await getValidShopeeAccessToken(String(orders[index].shopId));
+            if (token) {
+              await enrichShopeeOrderTrackingFromApi(
+                String(orders[index].shopId),
+                token,
+                orders[index],
+                { retries: 4 },
+              );
+            }
+          } catch (trackErr: any) {
+            console.warn(
+              `[Ship Order] Fetch tracking sau ship thất bại ${order.orderSn}:`,
+              trackErr?.message || trackErr,
+            );
+          }
+        }
         saveOrders(orders);
         return res.json({ success: true, mode: result.mode, order: orders[index] });
       }
