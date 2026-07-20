@@ -143,6 +143,9 @@ const WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
 /** PDF vận đơn chỉ giữ trong RAM (TTL 15 phút) — tránh tràn ổ cứng AZDIGI. */
 const LABEL_TTL_MS = 15 * 60 * 1000;
 const labelMemCache = new Map<string, { buf: Buffer; expires: number; contentType?: string }>();
+/** Giới hạn RAM cache PDF hàng loạt — tránh OOM khi gen nhiều vận đơn. */
+const LABEL_MEM_MAX_ENTRIES = 48;
+const LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 
 function safeLabelFilename(raw: string): string | null {
   const base = path.basename(String(raw || "").trim());
@@ -155,12 +158,42 @@ function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
   return buffer.length > 4 && buffer.subarray(0, 4).toString() === "%PDF";
 }
 
+function getLabelMemTotalBytes(): number {
+  let total = 0;
+  for (const val of labelMemCache.values()) total += val.buf.length;
+  return total;
+}
+
+function evictLabelMemIfNeeded(incomingBytes: number): void {
+  purgeExpiredLabelMem();
+  while (
+    labelMemCache.size > 0 &&
+    (labelMemCache.size >= LABEL_MEM_MAX_ENTRIES ||
+      getLabelMemTotalBytes() + Math.max(0, incomingBytes) > LABEL_MEM_MAX_BYTES)
+  ) {
+    let oldestKey: string | null = null;
+    let oldestExp = Infinity;
+    for (const [key, val] of labelMemCache) {
+      if (val.expires < oldestExp) {
+        oldestExp = val.expires;
+        oldestKey = key;
+      }
+    }
+    if (!oldestKey) break;
+    labelMemCache.delete(oldestKey);
+    console.log(
+      `[Labels RAM] Evict ${oldestKey} (entries=${labelMemCache.size}, bytes≈${getLabelMemTotalBytes()})`,
+    );
+  }
+}
+
 function putLabelMem(filename: string, buffer: Buffer, contentType?: string): string {
   const safe = safeLabelFilename(filename);
   if (!safe) throw new Error(`Tên file vận đơn không hợp lệ: ${filename}`);
   if (!isPdfBuffer(buffer, contentType)) {
     throw new Error("Dữ liệu vận đơn từ Shopee không phải PDF hợp lệ.");
   }
+  evictLabelMemIfNeeded(buffer.length);
   labelMemCache.set(safe, {
     buf: buffer,
     expires: Date.now() + LABEL_TTL_MS,
@@ -15854,9 +15887,19 @@ async function startServer() {
     let pdfFilename: string | null = null;
 
     if (pdfBuffers.length > 0) {
+      // Giải phóng buffer từng shop sớm sau khi merge — giảm peak RAM hàng loạt.
       const mergedBuf = pdfBuffers.length === 1 ? pdfBuffers[0] : await mergePdfBuffers(pdfBuffers);
+      pdfBuffers.length = 0;
       pdfFilename = buildMergedLabelFilename(printedOrderSns);
-      pdfBase64 = mergedBuf.toString("base64");
+      // Giới hạn base64 trả job (~12MB PDF) để tránh phình response/RAM khi batch lớn.
+      const MAX_JOB_PDF_BYTES = 12 * 1024 * 1024;
+      if (mergedBuf.length <= MAX_JOB_PDF_BYTES) {
+        pdfBase64 = mergedBuf.toString("base64");
+      } else {
+        console.warn(
+          `[Ship Order Bulk Auto-Print] PDF gộp ${mergedBuf.length} bytes > ${MAX_JOB_PDF_BYTES} — chỉ trả URL RAM, bỏ pdfBase64.`,
+        );
+      }
       primaryUrl = `/labels/${pdfFilename}`;
       saveLabelFileAsync(mergedBuf, pdfFilename, "application/pdf");
     } else if (savedFilenames.length > 0) {
