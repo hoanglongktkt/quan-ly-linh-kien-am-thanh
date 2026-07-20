@@ -1,0 +1,9 @@
+node_modules
+.git
+.cursor
+dist
+coverage
+*.log
+.DS_Store
+agent-transcripts
+terminals

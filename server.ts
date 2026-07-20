@@ -15547,7 +15547,16 @@ async function startServer() {
     }
   }
 
-  // Download AWB PDFs — parallel batches (5/lần), cache từng đơn trong RAM.
+  async function countPdfPages(buffer: Buffer): Promise<number> {
+    try {
+      const doc = await PDFDocument.load(buffer, { ignoreEncryption: true });
+      return doc.getPageCount();
+    } catch {
+      return 0;
+    }
+  }
+
+  // Download AWB — ưu tiên 1 lần batch Shopee (đủ trang); fallback Promise.all từng đơn rồi pdf-lib merge.
   async function downloadShippingDocumentsMerged(
     shopId: string,
     accessToken: string,
@@ -15558,39 +15567,69 @@ async function startServer() {
     }
 
     const savedFiles: string[] = [];
-    const pdfBuffers: Buffer[] = [];
+    const orderSns = cleanOrderList.map((o) => o.order_sn);
+    const mergedName = buildMergedLabelFilename(orderSns);
 
     const cacheOne = (orderSn: string, buffer: Buffer, contentType?: string) => {
       const filename = buildMergedLabelFilename([orderSn]);
       saveLabelFile(buffer, filename, contentType);
       savedFiles.push(filename);
-      pdfBuffers.push(buffer);
     };
 
-    if (cleanOrderList.length === 1) {
-      const single = await shopeeDownloadShippingDocument(shopId, accessToken, cleanOrderList);
-      if (single.error || !single.buffer) {
-        return { error: single.error || "download_failed", message: single.message };
+    // 1) Thử download batch 1 request — Shopee trả PDF nhiều trang
+    try {
+      const batch = await shopeeDownloadShippingDocument(shopId, accessToken, cleanOrderList);
+      if (batch.buffer && isPdfBuffer(batch.buffer, batch.contentType)) {
+        const pages = await countPdfPages(batch.buffer);
+        if (pages >= cleanOrderList.length || cleanOrderList.length === 1) {
+          saveLabelFile(batch.buffer, mergedName, batch.contentType || "application/pdf");
+          savedFiles.push(mergedName);
+          console.log(
+            `[Shopee Print] Batch download OK: ${cleanOrderList.length} đơn → ${pages} trang (${batch.buffer.length} bytes).`,
+          );
+          return {
+            buffer: batch.buffer,
+            contentType: batch.contentType || "application/pdf",
+            savedFiles,
+          };
+        }
+        console.warn(
+          `[Shopee Print] Batch PDF chỉ ${pages}/${cleanOrderList.length} trang — fallback tải từng đơn + merge.`,
+        );
+      } else {
+        console.warn(
+          `[Shopee Print] Batch download thất bại: ${batch.error || batch.message || "unknown"} — fallback từng đơn.`,
+        );
       }
-      cacheOne(cleanOrderList[0].order_sn, single.buffer, single.contentType);
-      return { buffer: single.buffer, contentType: single.contentType || "application/pdf", savedFiles };
+    } catch (err: any) {
+      console.warn(`[Shopee Print] Batch download exception:`, err?.message || err);
     }
 
+    // 2) Promise.all theo chunk — tải song song từng đơn, rồi pdf-lib gộp 1 file
+    const pdfBuffers: Buffer[] = [];
     for (let i = 0; i < cleanOrderList.length; i += LABEL_DOWNLOAD_CONCURRENCY) {
       const chunk = cleanOrderList.slice(i, i + LABEL_DOWNLOAD_CONCURRENCY);
-      for (const order of chunk) {
-        try {
-          const one = await shopeeDownloadShippingDocument(shopId, accessToken, [order]);
-          if (one.buffer && isPdfBuffer(one.buffer, one.contentType)) {
-            cacheOne(order.order_sn, one.buffer, one.contentType);
-            console.log(`[Shopee Print] Cache ${order.order_sn} (${one.buffer.length} bytes).`);
-          } else {
-            console.warn(`[Shopee Print] Không tải PDF ${order.order_sn}: ${one.error || one.message || "unknown"}`);
+      const settled = await Promise.all(
+        chunk.map(async (order) => {
+          try {
+            const one = await shopeeDownloadShippingDocument(shopId, accessToken, [order]);
+            if (one.buffer && isPdfBuffer(one.buffer, one.contentType)) {
+              cacheOne(order.order_sn, one.buffer, one.contentType);
+              console.log(`[Shopee Print] Cache ${order.order_sn} (${one.buffer.length} bytes).`);
+              return one.buffer;
+            }
+            console.warn(
+              `[Shopee Print] Không tải PDF ${order.order_sn}: ${one.error || one.message || "unknown"}`,
+            );
+            return null;
+          } catch (err: any) {
+            console.warn(`[Shopee Print] Download failed ${order.order_sn}:`, err?.message || err);
+            return null;
           }
-        } catch (err: any) {
-          console.warn(`[Shopee Print] Download failed ${order.order_sn}:`, err?.message || err);
-        }
-        await sleep(SHOPEE_PRODUCT_API_DELAY_MS);
+        }),
+      );
+      for (const buf of settled) {
+        if (buf) pdfBuffers.push(buf);
       }
       if (i + LABEL_DOWNLOAD_CONCURRENCY < cleanOrderList.length) {
         await sleep(SHOPEE_PRODUCT_BATCH_PAUSE_MS);
@@ -15598,27 +15637,22 @@ async function startServer() {
     }
 
     if (pdfBuffers.length === 0) {
-      try {
-        const batch = await shopeeDownloadShippingDocument(shopId, accessToken, cleanOrderList);
-        if (batch.error || !batch.buffer) {
-          return { error: batch.error || "download_failed", message: batch.message };
-        }
-        const mergedName = buildMergedLabelFilename(cleanOrderList.map((o) => o.order_sn));
-        saveLabelFile(batch.buffer, mergedName, batch.contentType);
-        return { buffer: batch.buffer, contentType: batch.contentType || "application/pdf", savedFiles: [mergedName] };
-      } catch (err: any) {
-        return { error: "batch_download_failed", message: err?.message || String(err) };
-      }
+      return { error: "download_failed", message: "Không tải được PDF vận đơn nào từ Shopee." };
     }
 
     if (pdfBuffers.length < cleanOrderList.length) {
-      console.warn(`[Shopee Print] Parallel: ${pdfBuffers.length}/${cleanOrderList.length} PDF — gộp các file đã có.`);
+      console.warn(
+        `[Shopee Print] Parallel: ${pdfBuffers.length}/${cleanOrderList.length} PDF — vẫn gộp các file đã có.`,
+      );
     }
 
     const merged = await mergePdfBuffers(pdfBuffers);
-    const mergedName = buildMergedLabelFilename(cleanOrderList.map((o) => o.order_sn));
     saveLabelFile(merged, mergedName, "application/pdf");
     savedFiles.push(mergedName);
+    const mergedPages = await countPdfPages(merged);
+    console.log(
+      `[Shopee Print] Đã merge pdf-lib: ${pdfBuffers.length} file → ${mergedPages} trang (${mergedName}).`,
+    );
     return { buffer: merged, contentType: "application/pdf", savedFiles };
   }
 
@@ -16132,37 +16166,17 @@ async function startServer() {
 
     const documents: any[] = [];
     const savedFilenames: string[] = [];
+    const mergeBuffers: Buffer[] = [];
     const allPrintedSns: string[] = [];
     const missingTrackingOrders: any[] = [];
 
     const labelUrl = (filename: string) => absoluteLabelUrl(`/labels/${filename}`);
 
     for (const [shopId, groupOrders] of Object.entries(groups)) {
-      const needsGenerate: any[] = [];
-
-      for (const o of groupOrders) {
-        const cachedBuf = readExistingLabelBuffer(o.orderSn);
-        if (cachedBuf) {
-          const existing = buildMergedLabelFilename([o.orderSn]);
-          savedFilenames.push(existing);
-          allPrintedSns.push(o.orderSn);
-          documents.push({
-            shopId,
-            orderSns: [o.orderSn],
-            url: labelUrl(existing),
-            contentType: "application/pdf",
-            fromCache: true,
-          });
-        } else {
-          needsGenerate.push(o);
-        }
-      }
-
-      if (needsGenerate.length === 0) continue;
-
-      // Chặn cứng: tracking_no rỗng → KHÔNG gọi create_shipping_document
+      // Không dùng cache từng đơn lẻ khi in hàng loạt — luôn tạo/gộp đủ order_list.
+      // (Cache lẻ dễ khiến response chỉ trả PDF đơn đầu tiên.)
       const readyToPrint: any[] = [];
-      for (const o of needsGenerate) {
+      for (const o of groupOrders) {
         const tn = String(trackingForShopeeShippingDoc(o) || "").trim();
         if (!tn) {
           console.error(
@@ -16189,7 +16203,7 @@ async function startServer() {
         tracking_number: trackingForShopeeShippingDoc(o),
       }));
       console.log(
-        `[Shopee Print] Đang tạo vận đơn cho ${orderList.length} đơn shop_id=${shopId} (payload tracking):`,
+        `[Shopee Print] Đang tạo vận đơn GỘP cho ${orderList.length} đơn shop_id=${shopId}:`,
         JSON.stringify(orderList),
       );
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
@@ -16198,6 +16212,12 @@ async function startServer() {
         savedFilenames.push(docResult.filename);
         const sns = docResult.orderSns || readyToPrint.map((o: any) => o.orderSn);
         allPrintedSns.push(...sns);
+        if (docResult.buffer && isPdfBuffer(docResult.buffer)) {
+          mergeBuffers.push(docResult.buffer);
+        } else {
+          const hit = getLabelMem(docResult.filename);
+          if (hit?.buf && isPdfBuffer(hit.buf)) mergeBuffers.push(hit.buf);
+        }
         const docUrl = docResult.url || labelUrl(docResult.filename);
         documents.push({
           shopId,
@@ -16223,6 +16243,7 @@ async function startServer() {
             const existing = buildMergedLabelFilename([o.orderSn]);
             savedFilenames.push(existing);
             allPrintedSns.push(o.orderSn);
+            mergeBuffers.push(cachedBuf);
             documents.push({
               shopId,
               orderSns: [o.orderSn],
@@ -16288,28 +16309,41 @@ async function startServer() {
 
     let primaryUrl: string | null = null;
     let pdfFilename: string | null = null;
-
     let pdfBase64: string | null = null;
 
-    if (allPrintedSns.length > 0) {
-      pdfFilename = buildMergedLabelFilename(allPrintedSns);
-      const mergedInRam = hasLabelMem(pdfFilename);
-      if (!mergedInRam && savedFilenames.length > 1) {
-        primaryUrl = await mergeLabelFilesToSingleUrl(savedFilenames, allPrintedSns);
-        if (primaryUrl) primaryUrl = absoluteLabelUrl(primaryUrl);
-      } else if (mergedInRam) {
-        primaryUrl = labelUrl(pdfFilename);
-      } else if (savedFilenames.length === 1) {
-        primaryUrl = labelUrl(savedFilenames[0]);
-        pdfFilename = savedFilenames[0];
-      } else {
-        primaryUrl = documents.find((d: any) => d.url)?.url || null;
-        pdfFilename = savedFilenames[0] || null;
+    // LUÔN gộp thành 1 PDF duy nhất trước khi trả FE — tuyệt đối không trả URL đơn đầu tiên.
+    if (mergeBuffers.length > 0 || allPrintedSns.length > 0) {
+      pdfFilename = buildMergedLabelFilename(allPrintedSns.length > 0 ? allPrintedSns : ["bulk"]);
+      let mergedBuf: Buffer | null = null;
+
+      if (mergeBuffers.length === 1) {
+        mergedBuf = mergeBuffers[0];
+      } else if (mergeBuffers.length > 1) {
+        mergedBuf = await mergePdfBuffers(mergeBuffers);
+      } else if (savedFilenames.length > 0) {
+        const fromFiles: Buffer[] = [];
+        for (const name of savedFilenames) {
+          const hit = getLabelMem(name);
+          if (hit?.buf && isPdfBuffer(hit.buf)) fromFiles.push(hit.buf);
+        }
+        if (fromFiles.length === 1) mergedBuf = fromFiles[0];
+        else if (fromFiles.length > 1) mergedBuf = await mergePdfBuffers(fromFiles);
       }
-      const memHit = getLabelMem(pdfFilename || "") || (savedFilenames[0] ? getLabelMem(savedFilenames[0]) : null);
-      if (memHit?.buf) pdfBase64 = memHit.buf.toString("base64");
-    } else {
-      primaryUrl = documents.find((d: any) => d.url)?.url || null;
+
+      if (mergedBuf && isPdfBuffer(mergedBuf)) {
+        saveLabelFile(mergedBuf, pdfFilename, "application/pdf");
+        primaryUrl = labelUrl(pdfFilename);
+        const MAX_RESP_PDF_BYTES = 12 * 1024 * 1024;
+        if (mergedBuf.length <= MAX_RESP_PDF_BYTES) {
+          pdfBase64 = mergedBuf.toString("base64");
+        }
+        const pages = await countPdfPages(mergedBuf);
+        console.log(
+          `[Shopee Print] Response PDF gộp: ${allPrintedSns.length} đơn / ${pages} trang → ${pdfFilename}`,
+        );
+      } else {
+        console.error(`[Shopee Print] Không tạo được buffer PDF gộp cho ${allPrintedSns.length} đơn.`);
+      }
     }
 
     // Mark successfully-printed orders (isPrinted=true, and auto-advance status like the old UI mock did).

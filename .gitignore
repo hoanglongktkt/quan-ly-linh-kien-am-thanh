@@ -28,3 +28,6 @@ database.sqlite-shm
 *.sqlite-shm
 data/*.migrated.*
 data/*.legacy.*
+
+.vercel
+.env*

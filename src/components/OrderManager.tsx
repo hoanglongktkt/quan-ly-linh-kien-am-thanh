@@ -1338,7 +1338,8 @@ export default function OrderManager({
     return { success: false, message: detail || 'Shopee chưa trả về file vận đơn PDF.' };
   };
 
-  // Shopee: create → poll → download NORMAL_AIR_WAYBILL PDF, mở tab mới (không ép window.print).
+  // Shopee batch print: 1 request duy nhất với toàn bộ orderIds → BE merge 1 PDF → mở/in 1 lần.
+  // TUYỆT ĐỐI không loop window.open / fetch từng đơn trên FE (popup blocker).
   const printShopeeDocuments = async (
     orderIds: string[],
     options: { openPdf?: boolean; onProgress?: (completed: number, total: number) => void } = {}
@@ -1353,59 +1354,7 @@ export default function OrderManager({
 
     try {
       if (onProgress) onProgress(0, total);
-
-      // Tuần tự từng đơn để cập nhật tiến trình; cache từng PDF trước khi gộp/mở.
-      if (total > 1 && onProgress) {
-        const stepErrors: string[] = [];
-        const stepUrls: string[] = [];
-
-        for (let i = 0; i < uniqueIds.length; i++) {
-          try {
-            const step = await fetchPrintDocumentApi([uniqueIds[i]]);
-            if (!step.ok) {
-              if (step.data.error === 'tracking_number_missing' || step.status === 409) {
-                stepErrors.push(step.data.message || TRACKING_MISSING_TOAST);
-              } else {
-                stepErrors.push(step.data.error || `Đơn ${uniqueIds[i]}: lỗi HTTP ${step.status}`);
-              }
-            } else {
-              const stepResult = await applyPrintDocumentResponse(step.data, false);
-              if (stepResult.mergedUrl) stepUrls.push(stepResult.mergedUrl);
-              if (!stepResult.success && stepResult.message) stepErrors.push(stepResult.message);
-            }
-          } catch (stepErr) {
-            stepErrors.push(stepErr instanceof Error ? stepErr.message : `Đơn ${uniqueIds[i]}: lỗi không xác định`);
-          }
-          onProgress(i + 1, total);
-        }
-
-        try {
-          const final = await fetchPrintDocumentApi(uniqueIds);
-          if (final.ok) {
-            const result = await applyPrintDocumentResponse(final.data, openPdf);
-            if (stepErrors.length > 0 && result.success) {
-              return { ...result, message: stepErrors.join('; ') };
-            }
-            return result;
-          }
-          stepErrors.push(final.data.error || 'Không thể gộp vận đơn Shopee.');
-        } catch (mergeErr) {
-          stepErrors.push(mergeErr instanceof Error ? mergeErr.message : 'Lỗi gộp vận đơn.');
-        }
-
-        const fallbackUrl = stepUrls[stepUrls.length - 1] || null;
-        if (fallbackUrl && openPdf) {
-          await openShopeeLabelFromStream({ url: fallbackUrl });
-          return {
-            success: true,
-            mergedUrl: fallbackUrl,
-            message: stepErrors.length > 0 ? stepErrors.join('; ') : undefined,
-          };
-        }
-
-        return { success: false, message: stepErrors.join('; ') || 'Không thể tạo vận đơn Shopee.' };
-      }
-
+      // Một request duy nhất — backend gộp PDF toàn bộ orderIds.
       const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds);
       if (!ok) {
         if (data.error === 'tracking_number_missing' || status === 409) {
@@ -1576,28 +1525,46 @@ export default function OrderManager({
       );
     }
 
-    // Chỉ in các đơn đã xác nhận thành công — sau khi await confirm hoàn tất 100%.
+    // Chỉ in đơn đã xác nhận thành công — 1 PDF gộp / 1 lần mở. Không loop popup.
     if (successfullyConfirmedIds.length > 0) {
-      if (finalJob?.printDocument?.pdfBase64 || finalJob?.printDocument?.url) {
-        await openShopeeLabelFromStream(
-          {
-            pdfBase64: finalJob.printDocument.pdfBase64,
-            pdfFilename: finalJob.printDocument.pdfFilename,
-            url: finalJob.printDocument.url,
-          },
-          { successfullyConfirmedIds, showContinueModalOnBlock: true }
-        );
-      } else {
-        try {
+      const printedSnsFromJob: string[] = Array.isArray(finalJob?.printDocument?.printedOrderSns)
+        ? finalJob.printDocument.printedOrderSns.map(String)
+        : [];
+      const coversAllConfirmed =
+        printedSnsFromJob.length >= successfullyConfirmedIds.length &&
+        !!(finalJob?.printDocument?.pdfBase64 || finalJob?.printDocument?.url);
+
+      try {
+        if (coversAllConfirmed) {
+          await openShopeeLabelFromStream(
+            {
+              pdfBase64: finalJob.printDocument.pdfBase64,
+              pdfFilename: finalJob.printDocument.pdfFilename,
+              url: finalJob.printDocument.url,
+            },
+            { successfullyConfirmedIds, showContinueModalOnBlock: true }
+          );
+        } else {
+          // PDF job thiếu đơn / thiếu file → 1 request batch merge toàn bộ ID thành công.
+          console.warn(
+            `[Bulk Confirm] Auto-print job chỉ có ${printedSnsFromJob.length}/${successfullyConfirmedIds.length} đơn — gọi print-document gộp lại.`,
+          );
           const printResult = await printShopeeDocuments(successfullyConfirmedIds);
           if (!printResult.success && printResult.message) {
             showToast(printResult.message);
-            queuePendingAutoPrint({}, successfullyConfirmedIds);
+            queuePendingAutoPrint(
+              {
+                pdfBase64: finalJob?.printDocument?.pdfBase64,
+                url: finalJob?.printDocument?.url,
+                pdfFilename: finalJob?.printDocument?.pdfFilename,
+              },
+              successfullyConfirmedIds
+            );
           }
-        } catch (printErr) {
-          console.error('[Bulk Confirm] Auto-print fallback lỗi (continue):', printErr);
-          queuePendingAutoPrint({}, successfullyConfirmedIds);
         }
+      } catch (printErr) {
+        console.error('[Bulk Confirm] Auto-print lỗi (continue):', printErr);
+        queuePendingAutoPrint({}, successfullyConfirmedIds);
       }
     } else if (finalJob?.printDocument?.message) {
       showToast(finalJob.printDocument.message);
@@ -1708,23 +1675,29 @@ export default function OrderManager({
           clearShipProgressOverlay();
           return;
         }
-        // await confirm xong → chỉ in đơn thành công
-        if (syncData.printDocument?.pdfBase64 || syncData.printDocument?.url) {
-          await openShopeeLabelFromStream(
-            {
-              pdfBase64: syncData.printDocument.pdfBase64,
-              pdfFilename: syncData.printDocument.pdfFilename,
-              url: syncData.printDocument.url,
-            },
-            { successfullyConfirmedIds, showContinueModalOnBlock: true }
-          );
-        } else {
-          try {
+        // await confirm xong → 1 PDF gộp cho toàn bộ đơn thành công
+        const printedSnsSync: string[] = Array.isArray(syncData.printDocument?.printedOrderSns)
+          ? syncData.printDocument.printedOrderSns.map(String)
+          : [];
+        const syncCoversAll =
+          printedSnsSync.length >= successfullyConfirmedIds.length &&
+          !!(syncData.printDocument?.pdfBase64 || syncData.printDocument?.url);
+        try {
+          if (syncCoversAll) {
+            await openShopeeLabelFromStream(
+              {
+                pdfBase64: syncData.printDocument.pdfBase64,
+                pdfFilename: syncData.printDocument.pdfFilename,
+                url: syncData.printDocument.url,
+              },
+              { successfullyConfirmedIds, showContinueModalOnBlock: true }
+            );
+          } else {
             await printShopeeDocuments(successfullyConfirmedIds);
-          } catch (printErr) {
-            console.error('[Bulk Confirm Sync] Auto-print lỗi (continue):', printErr);
-            queuePendingAutoPrint({}, successfullyConfirmedIds);
           }
+        } catch (printErr) {
+          console.error('[Bulk Confirm Sync] Auto-print lỗi (continue):', printErr);
+          queuePendingAutoPrint({}, successfullyConfirmedIds);
         }
         await refreshOrdersAfterShip(queuedOrders, { markPrinted: successCount > 0 });
         markProgressComplete('Xác nhận & in đơn hoàn tất!');
