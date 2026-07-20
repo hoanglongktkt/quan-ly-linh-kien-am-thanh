@@ -15690,15 +15690,18 @@ async function startServer() {
       console.log(`[Ship Order Bulk] T\u1EF1 \u0111\u1ED9ng l\u1EA5y v\u1EAD n g\u1ED9p cho ${successfulShopeeOrders.length} \u0111\u01A1n Shopee v\u1EEBa chu\u1EA9n b\u1EB1...`);
       printDocument = await autoPrintLabelsForShopeeOrders(orders, successfulShopeeOrders);
       if (printDocument?.printedOrderSns?.length) {
-        const printedSet = new Set(printDocument.printedOrderSns);
+        const printedSet = new Set(printDocument.printedOrderSns.map(String));
         for (let i = 0; i < orders.length; i++) {
-          if (printedSet.has(orders[i].orderSn)) {
-            // Chỉ đánh dấu Đã in / Đã xử lý khi đơn THỰC SỰ đã có mã vận đơn.
-            if (hasUsableShopeeTrackingNumber(orders[i])) {
-              orders[i] = { ...orders[i], isPrinted: true, status: "processed" };
-            } else {
-              orders[i] = { ...orders[i], isPrepared: true };
-            }
+          if (printedSet.has(String(orders[i].orderSn))) {
+            // Đánh dấu Đã in cho MỌI đơn đã có trong PDF (SPX/GHN/J&T/...).
+            const hasTn =
+              hasUsableShopeeTrackingNumber(orders[i]) || orderHasPrintableTracking(orders[i]);
+            orders[i] = {
+              ...orders[i],
+              isPrinted: true,
+              isPrepared: true,
+              ...(hasTn ? { status: "processed" } : {}),
+            };
           }
         }
         saveOrders(orders);
@@ -15983,13 +15986,40 @@ async function startServer() {
   // rejects the WHOLE batch download with "logistics.shipping_document_should_
   // print_first" — one bad order poisons every other order's PDF. So: split
   // successes from failures right here, and only poll/download the orders
-  // that actually got a package_number back.
+  // that actually got accepted (KHÔNG yêu cầu package_number — GHN/J&T/Ninja
+  // thường không trả package_number nhưng vẫn in được).
   async function tryGenerateShopeeShippingDocumentOnce(shopId: string, accessToken: string, orderList: { order_sn: string; package_number?: string; tracking_number?: string }[]) {
     const createResult = await shopeeCreateShippingDocument(shopId, accessToken, orderList);
     const createList: any[] = createResult.response?.result_list || [];
     const failedItems: any[] = createList.filter((it: any) => it.fail_error);
-    // Only orders that got a real package_number back are safe to poll/download.
-    const okItems: any[] = createList.filter((it: any) => it.package_number && !it.fail_error);
+    const failedSnSet = new Set(failedItems.map((it: any) => String(it.order_sn || "")));
+    const originalBySn = new Map(orderList.map((o) => [o.order_sn, o]));
+
+    // Thành công = có order_sn và KHÔNG fail — tuyệt đối KHÔNG hardcode/filter theo SPX,
+    // và KHÔNG bắt buộc package_number (GHN / "Nhanh Giao Hàng Nhanh" thường thiếu field này).
+    let okItems: any[] = createList.filter((it: any) => it?.order_sn && !it.fail_error);
+
+    // Nếu result_list thiếu một phần đơn đã gửi (không nằm trong fail) → vẫn giữ lại để poll/download.
+    if (createList.length > 0 || !createResult.error) {
+      const okSnSet = new Set(okItems.map((it: any) => String(it.order_sn)));
+      for (const orig of orderList) {
+        const sn = String(orig.order_sn || "");
+        if (!sn || failedSnSet.has(sn) || okSnSet.has(sn)) continue;
+        okItems.push({
+          order_sn: sn,
+          package_number: orig.package_number,
+        });
+        okSnSet.add(sn);
+      }
+    }
+
+    // result_list rỗng + không lỗi top-level → Shopee chấp nhận cả batch, poll theo orderList gốc.
+    if (okItems.length === 0 && !createResult.error && failedItems.length === 0 && orderList.length > 0) {
+      okItems = orderList.map((o) => ({
+        order_sn: o.order_sn,
+        package_number: o.package_number,
+      }));
+    }
 
     if (createResult.error && okItems.length === 0) {
       // Top-level error AND nothing usable in result_list — total failure.
@@ -15999,7 +16029,7 @@ async function startServer() {
         return {
           success: false,
           error: first.fail_error || createResult.error,
-          message: failedItems.length > 1 ? `${failedItems.length} \u0111\u01A1n l\u1ED7i: ${detail}` : (first.fail_message || detail),
+          message: failedItems.length > 1 ? `${failedItems.length} đơn lỗi: ${detail}` : (first.fail_message || detail),
           permanent: PERMANENT_SHOPEE_DOC_ERRORS.has(first.fail_error),
         };
       }
@@ -16012,49 +16042,102 @@ async function startServer() {
       return {
         success: false,
         error: failedItems[0]?.fail_error || "document_generation_failed",
-        message: detail || "Kh\xF4ng c\xF3 \u0111\u01A1n n\xE0o t\u1EA1o v\u1EAD n th\xE0nh c\xF4ng trong l\u1EA7n g\u1ECDi n\xE0y.",
+        message: detail || "Không có đơn nào tạo vận thành công trong lần gọi này.",
         permanent: PERMANENT_SHOPEE_DOC_ERRORS.has(failedItems[0]?.fail_error),
       };
     }
 
-    // Rebuild orderList from ONLY the successfully-created items, carrying over
-    // each order's real package_number (required by poll/download) and any
-    // tracking_number we already had, keyed by order_sn.
-    const originalBySn = new Map(orderList.map(o => [o.order_sn, o]));
-    const cleanOrderList = okItems.map((it: any) => ({
-      order_sn: it.order_sn,
-      package_number: it.package_number,
-      tracking_number: originalBySn.get(it.order_sn)?.tracking_number,
-    }));
+    // Rebuild orderList — giữ đủ mọi carrier (SPX/GHN/J&T/...), package_number optional.
+    const cleanOrderList = okItems.map((it: any) => {
+      const orig = originalBySn.get(it.order_sn);
+      return {
+        order_sn: it.order_sn,
+        package_number: it.package_number || orig?.package_number,
+        tracking_number: orig?.tracking_number,
+      };
+    });
     const skippedOrders = failedItems.map((it: any) => ({ orderSn: it.order_sn, error: it.fail_error, message: it.fail_message }));
     if (skippedOrders.length > 0) {
-      console.warn(`[Shopee Print] ${skippedOrders.length}/${orderList.length} \u0111\u01A1n b\u1ECB lo\u1EB7i b\u1ECF kh\u1ECFi l\u1EA7n t\u1EA1o v\u1EAD n n\xE0y (kh\xF4ng \u1EA3nh h\u01B0\u1EDFng \u0111\u1EBFn ${cleanOrderList.length} \u0111\u01A1n c\xF2n l\u1EA1i): ${JSON.stringify(skippedOrders)}`);
+      console.warn(`[Shopee Print] ${skippedOrders.length}/${orderList.length} đơn bị lỗi bỏ khỏi lần tạo vận này (không ảnh hưởng đến ${cleanOrderList.length} đơn còn lại): ${JSON.stringify(skippedOrders)}`);
     }
+    console.log(
+      `[Shopee Print] create_shipping_document OK ${cleanOrderList.length}/${orderList.length} đơn (mọi ĐVVC, không lọc SPX): ${cleanOrderList.map((o) => o.order_sn).join(", ")}`,
+    );
 
-    // Poll get_shipping_document_result until READY/FAILED. First wait 2s after
-    // create_shipping_document — Shopee needs a moment to actually render the
-    // AWB before it's ready to be fetched (matches the create -> 2s -> fetch flow).
-    let status = "PROCESSING";
+    // Poll get_shipping_document_result until MỌI order_sn READY/FAILED.
+    // GHN thường chậm hơn SPX 1–2s — tăng attempts để không tải PDF thiếu trang.
+    const MAX_POLL_ATTEMPTS = 12;
+    const POLL_INTERVAL_MS = 2500;
+    let pendingList = [...cleanOrderList];
+    let readyDownloadList: typeof cleanOrderList = [];
+    let pollFailed: any[] = [];
     let attempts = 0;
-    while (status === "PROCESSING" && attempts < 6) {
-      await new Promise(r => setTimeout(r, 2000));
-      const pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, cleanOrderList);
+
+    while (pendingList.length > 0 && attempts < MAX_POLL_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      const pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, pendingList);
       const items: any[] = pollResult.response?.result_list || [];
-      // Consider the batch READY once none of the still-pending items are PROCESSING.
-      const anyProcessing = items.some((it: any) => it.status === "PROCESSING");
-      const anyFailed = items.some((it: any) => it.status === "FAILED");
-      status = anyProcessing ? "PROCESSING" : (anyFailed && items.every((it: any) => it.status !== "READY") ? "FAILED" : "READY");
-      if (status === "FAILED") {
-        const item = items[0];
-        return { success: false, error: item?.fail_error || "document_generation_failed", message: item?.fail_message || "Shopee kh\xF4ng th\u1EC3 t\u1EA1o v\u1EAD n \u0111\u01A1n cho \u0111\u01A1n h\xE0ng n\xE0y (c\xF3 th\u1EC3 \u0111\u01A1n ch\u01B0a \u1EDF tr\u1EA1ng th\xE1i \u0111\xE3 x\u1EED l\xFD)." };
+      const bySn = new Map(items.map((it: any) => [String(it.order_sn || ""), it]));
+
+      const stillProcessing: typeof pendingList = [];
+      for (const o of pendingList) {
+        const it = bySn.get(String(o.order_sn));
+        const st = String(it?.status || "").toUpperCase();
+        if (st === "FAILED") {
+          pollFailed.push({
+            orderSn: o.order_sn,
+            error: it?.fail_error || "document_generation_failed",
+            message: it?.fail_message || "Shopee không tạo được vận đơn cho đơn này.",
+          });
+        } else if (st === "READY") {
+          readyDownloadList.push({
+            ...o,
+            package_number: it?.package_number || o.package_number,
+          });
+        } else {
+          // PROCESSING / thiếu item → tiếp tục chờ (GHN hay chậm hơn SPX).
+          stillProcessing.push(o);
+        }
       }
+
+      console.log(
+        `[Shopee Print] Poll ${attempts + 1}/${MAX_POLL_ATTEMPTS}: READY=${readyDownloadList.length} PROCESSING=${stillProcessing.length} FAILED=${pollFailed.length}`,
+      );
+      pendingList = stillProcessing;
       attempts++;
     }
-    if (status !== "READY") {
-      return { success: false, error: "document_still_processing", message: "Shopee v\u1EABn \u0111ang x\u1EED l\xFD v\u1EAD n \u0111\u01A1n, vui l\xF2ng th\u1EED l\u1EA1i sau v\xE0i gi\xE2y." };
+
+    if (pendingList.length > 0) {
+      console.warn(
+        `[Shopee Print] Hết lượt poll — ${pendingList.length} đơn vẫn PROCESSING: ${pendingList.map((o) => o.order_sn).join(", ")}`,
+      );
+      for (const o of pendingList) {
+        pollFailed.push({
+          orderSn: o.order_sn,
+          error: "document_still_processing",
+          message: "Shopee vẫn đang generate vận đơn (hãng ngoài SPX thường chậm hơn) — thử in lại đơn này.",
+        });
+      }
     }
 
-    const downloadResult = await downloadShippingDocumentsMerged(shopId, accessToken, cleanOrderList);
+    if (readyDownloadList.length === 0) {
+      const item = pollFailed[0];
+      return {
+        success: false,
+        error: item?.error || "document_generation_failed",
+        message: item?.message || "Shopee không thể tạo vận đơn cho đơn hàng này (có thể đơn chưa ở trạng thái đã xử lý).",
+        skippedOrders: [...skippedOrders, ...pollFailed],
+      };
+    }
+
+    const downloadList = readyDownloadList;
+    if (downloadList.length < cleanOrderList.length) {
+      console.warn(
+        `[Shopee Print] Tải ${downloadList.length}/${cleanOrderList.length} đơn READY — các đơn còn lại sẽ retry riêng nếu cần.`,
+      );
+    }
+
+    const downloadResult = await downloadShippingDocumentsMerged(shopId, accessToken, downloadList);
     if ("error" in downloadResult || !downloadResult.buffer) {
       return { success: false, error: (downloadResult as any).error, message: (downloadResult as any).message };
     }
@@ -16062,28 +16145,36 @@ async function startServer() {
       return {
         success: false,
         error: "empty_label_file",
-        message: "Shopee trả về file vận đơn rỗng — vui lòng thử lại sau khi đơn đã có mã vận đơn thật (SPXVN...).",
+        message: "Shopee trả về file vận đơn rỗng — vui lòng thử lại sau khi đơn đã có mã vận đơn thật.",
       };
     }
 
+    const pages = await countPdfPages(downloadResult.buffer);
+    if (pages > 0 && pages < downloadList.length) {
+      console.warn(
+        `[Shopee Print] PDF gộp thiếu trang ${pages}/${downloadList.length} — vẫn trả file + đánh dấu các đơn đã có trong request download.`,
+      );
+    }
+
     const ext = extensionForContentType(downloadResult.contentType);
-    const orderSns = cleanOrderList.map((o: any) => o.order_sn);
+    const orderSns = downloadList.map((o: any) => o.order_sn);
     const filename = ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`;
     const alreadyCached = "savedFiles" in downloadResult && downloadResult.savedFiles.includes(filename);
     if (!alreadyCached) {
       saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
-    console.log(`[Shopee Print] Cached vận đơn RAM (${cleanOrderList.length} đơn → ${filename}, ${downloadResult.buffer.length} bytes).`);
+    console.log(`[Shopee Print] Cached vận đơn RAM (${downloadList.length} đơn → ${filename}, ${downloadResult.buffer.length} bytes, ~${pages} trang).`);
 
     return {
       success: true,
       filename,
       contentType: downloadResult.contentType,
       orderSns,
-      skippedOrders,
+      skippedOrders: [...skippedOrders, ...pollFailed],
       buffer: downloadResult.buffer,
       pdfBase64: downloadResult.buffer.toString("base64"),
       url: absoluteLabelUrl(`/labels/${filename}`),
+      pageCount: pages,
     };
   }
 
@@ -16130,6 +16221,7 @@ async function startServer() {
     const pdfBuffers: Buffer[] = [];
 
     for (const [shopId, groupOrders] of Object.entries(groups)) {
+      // Mọi đơn Shopee đã chọn — không lọc theo SPX/GHN/J&T.
       const ready = groupOrders.filter((o: any) => orderHasPrintableTracking(o));
       const missing = groupOrders.filter((o: any) => !orderHasPrintableTracking(o));
       for (const o of missing) {
@@ -16149,18 +16241,44 @@ async function startServer() {
         tracking_number: trackingForShopeeShippingDoc(o),
       }));
       console.log(
-        `[Ship Order Bulk Auto-Print] Tạo vận gộp ${orderList.length} đơn shop_id=${shopId}:`,
+        `[Ship Order Bulk Auto-Print] Tạo vận gộp ${orderList.length} đơn (mọi ĐVVC) shop_id=${shopId}:`,
         JSON.stringify(orderList),
       );
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
       if (docResult.success && docResult.filename) {
         savedFilenames.push(docResult.filename);
         if (docResult.buffer && isPdfBuffer(docResult.buffer)) pdfBuffers.push(docResult.buffer);
-        printedOrderSns.push(...(docResult.orderSns || groupOrders.map((o: any) => o.orderSn)));
+        printedOrderSns.push(...(docResult.orderSns || ready.map((o: any) => o.orderSn)));
         if (Array.isArray(docResult.skippedOrders)) skippedOrders.push(...docResult.skippedOrders);
       } else {
         console.error(`[Ship Order Bulk Auto-Print] Thất bại shop_id=${shopId}: ${docResult.error} - ${docResult.message}`);
         skippedOrders.push({ shopId, error: docResult.error, message: docResult.message });
+      }
+
+      // Retry từng đơn còn thiếu (GHN thường chậm / bị sót khỏi batch PDF).
+      const printedSet = new Set(printedOrderSns);
+      const stillMissing = ready.filter((o: any) => !printedSet.has(o.orderSn));
+      for (const o of stillMissing) {
+        console.log(`[Ship Order Bulk Auto-Print] Retry in lẻ order_sn=${o.orderSn}...`);
+        await sleep(2000);
+        const one = await generateShopeeShippingDocument(shopId, [
+          {
+            order_sn: o.orderSn,
+            package_number: o.packageNumber,
+            tracking_number: trackingForShopeeShippingDoc(o),
+          },
+        ]);
+        if (one.success && one.filename) {
+          savedFilenames.push(one.filename);
+          if (one.buffer && isPdfBuffer(one.buffer)) pdfBuffers.push(one.buffer);
+          printedOrderSns.push(...(one.orderSns || [o.orderSn]));
+        } else {
+          skippedOrders.push({
+            orderSn: o.orderSn,
+            error: one.error || "print_retry_failed",
+            message: one.message || "In lại đơn thất bại",
+          });
+        }
       }
     }
 
@@ -16243,14 +16361,17 @@ async function startServer() {
         try {
           const printDocument = await autoPrintLabelsForShopeeOrders(orders, batch.successfulShopeeOrders);
           if (printDocument?.printedOrderSns?.length) {
-            const printedSet = new Set(printDocument.printedOrderSns);
+            const printedSet = new Set(printDocument.printedOrderSns.map(String));
             for (let i = 0; i < orders.length; i++) {
-              if (printedSet.has(orders[i].orderSn)) {
-                if (hasUsableShopeeTrackingNumber(orders[i])) {
-                  orders[i] = { ...orders[i], isPrinted: true, status: "processed" };
-                } else {
-                  orders[i] = { ...orders[i], isPrepared: true };
-                }
+              if (printedSet.has(String(orders[i].orderSn))) {
+                const hasTn =
+                  hasUsableShopeeTrackingNumber(orders[i]) || orderHasPrintableTracking(orders[i]);
+                orders[i] = {
+                  ...orders[i],
+                  isPrinted: true,
+                  isPrepared: true,
+                  ...(hasTn ? { status: "processed" } : {}),
+                };
               }
             }
             saveOrders(orders);
@@ -16449,13 +16570,14 @@ async function startServer() {
 
       if (readyToPrint.length === 0) continue;
 
+      // Payload đủ mọi order_sn đã chọn — không lọc SPX/GHN/J&T.
       const orderList = readyToPrint.map((o: any) => ({
         order_sn: o.orderSn,
         package_number: o.packageNumber,
         tracking_number: trackingForShopeeShippingDoc(o),
       }));
       console.log(
-        `[Shopee Print] Đang tạo vận đơn GỘP cho ${orderList.length} đơn shop_id=${shopId}:`,
+        `[Shopee Print] Đang tạo vận đơn GỘP cho ${orderList.length} đơn (mọi ĐVVC) shop_id=${shopId}:`,
         JSON.stringify(orderList),
       );
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
@@ -16512,6 +16634,45 @@ async function startServer() {
               message: docResult.message,
             });
           }
+        }
+      }
+
+      // Retry in lẻ các đơn còn thiếu (GHN/J&T thường chậm hơn SPX).
+      const printedSet = new Set(allPrintedSns);
+      const stillMissing = readyToPrint.filter((o: any) => !printedSet.has(o.orderSn));
+      for (const o of stillMissing) {
+        console.log(`[Shopee Print] Retry in lẻ order_sn=${o.orderSn} (không lọc carrier)...`);
+        await sleep(2000);
+        const one = await generateShopeeShippingDocument(shopId, [
+          {
+            order_sn: o.orderSn,
+            package_number: o.packageNumber,
+            tracking_number: trackingForShopeeShippingDoc(o),
+          },
+        ]);
+        if (one.success && one.filename) {
+          savedFilenames.push(one.filename);
+          allPrintedSns.push(...(one.orderSns || [o.orderSn]));
+          if (one.buffer && isPdfBuffer(one.buffer)) mergeBuffers.push(one.buffer);
+          else {
+            const hit = getLabelMem(one.filename);
+            if (hit?.buf && isPdfBuffer(hit.buf)) mergeBuffers.push(hit.buf);
+          }
+          documents.push({
+            shopId,
+            orderSns: one.orderSns || [o.orderSn],
+            url: one.url || labelUrl(one.filename),
+            contentType: one.contentType,
+            retried: true,
+          });
+        } else {
+          documents.push({
+            shopId,
+            orderSns: [o.orderSn],
+            success: false,
+            error: one.error || "print_retry_failed",
+            message: one.message || "In lại đơn thất bại",
+          });
         }
       }
     }
@@ -16598,20 +16759,23 @@ async function startServer() {
       }
     }
 
-    // Mark successfully-printed orders — chỉ "Đã in/Đã xử lý" khi đã có mã VĐ.
-    const printedOrderSns = new Set(allPrintedSns);
+    // Mark successfully-printed orders — mọi ĐVVC (SPX/GHN/J&T/...) đều được đánh dấu Đã in.
+    const printedOrderSns = new Set(allPrintedSns.map(String));
     const updatedOrders = orders.map((o: any) => {
-      if (printedOrderSns.has(o.orderSn)) {
-        if (hasUsableShopeeTrackingNumber(o)) {
-          return { ...o, isPrinted: true, status: "processed", isPrepared: true };
-        }
-        return { ...o, isPrepared: true };
-      }
-      return o;
+      if (!printedOrderSns.has(String(o.orderSn))) return o;
+      const hasTn = hasUsableShopeeTrackingNumber(o) || orderHasPrintableTracking(o);
+      return {
+        ...o,
+        isPrinted: true,
+        isPrepared: true,
+        ...(hasTn ? { status: "processed" } : {}),
+      };
     });
     saveOrders(updatedOrders);
 
-    console.log(`[Shopee Print] Ho\xE0n t\u1EA5t: ${documents.filter(d => d.url).length}/${Object.keys(groups).length} nh\xF3m shop t\u1EA1o v\u1EAD n th\xE0nh c\xF4ng (RAM cache).`);
+    console.log(
+      `[Shopee Print] Hoàn tất: đã in ${printedOrderSns.size} đơn / ${shopeeCandidates.length} ứng viên (không lọc carrier).`,
+    );
 
     purgeExpiredLabelMem();
 
