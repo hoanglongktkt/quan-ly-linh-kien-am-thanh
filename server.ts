@@ -17208,7 +17208,7 @@ async function startServer() {
           orderSn: o.orderSn,
           error: "tracking_number_missing",
           message:
-            "Chưa đồng bộ được mã vận đơn từ Shopee, hệ thống đang tự động lấy lại, vui lòng thử lại sau!",
+            "Chưa thể lấy được mã vận đơn từ Shopee, vui lòng chờ Shopee duyệt đơn",
         });
       }
       if (ready.length === 0) continue;
