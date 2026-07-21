@@ -49,10 +49,25 @@ function sign(apiPath, timestamp, accessToken, shopId) {
   return crypto.createHmac("sha256", PARTNER_KEY).update(base).digest("hex");
 }
 
+/** Chuẩn hóa shop_id — cùng logic server.ts normalizeShopIdKey. */
+function normalizeShopIdKey(shopId) {
+  const key = String(shopId ?? "").trim();
+  return /^\d+$/.test(key) ? key : "";
+}
+
 function loadTokens() {
   if (!fs.existsSync(TOKENS_PATH)) return {};
   try {
-    return JSON.parse(fs.readFileSync(TOKENS_PATH, "utf8")) || {};
+    const parsed = JSON.parse(fs.readFileSync(TOKENS_PATH, "utf8"));
+    if (Array.isArray(parsed)) {
+      const map = {};
+      for (const row of parsed) {
+        const k = normalizeShopIdKey(row?.shop_id ?? row?.shopId);
+        if (k) map[k] = row;
+      }
+      return map;
+    }
+    return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
   }
@@ -60,6 +75,84 @@ function loadTokens() {
 
 function saveTokens(tokens) {
   fs.writeFileSync(TOKENS_PATH, JSON.stringify(tokens, null, 2) + "\n", "utf8");
+}
+
+/**
+ * Tìm record token giống server.ts getShopeeTokenRecord:
+ * key trực tiếp → so khớp normalize → shop_id_list liên kết.
+ */
+function getShopeeTokenRecord(tokens, shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) return null;
+  if (tokens[key]) return tokens[key];
+  for (const [k, v] of Object.entries(tokens)) {
+    if (normalizeShopIdKey(k) === key) return v;
+    const linked = Array.isArray(v?.shop_id_list) ? v.shop_id_list : [];
+    if (linked.some((id) => normalizeShopIdKey(id) === key)) return v;
+  }
+  return null;
+}
+
+/** shop_id dùng khi gọi Shopee API — cùng resolveShopeeApiShopId (server.ts). */
+function resolveShopeeApiShopId(record, configuredShopId) {
+  const configured = normalizeShopIdKey(configuredShopId);
+  const recordKey = normalizeShopIdKey(record?.shop_id);
+  if (recordKey === configured) return configured;
+  const oauth = normalizeShopIdKey(record?.oauth_shop_id);
+  if (oauth) return oauth;
+  return recordKey || configured;
+}
+
+function listOAuthShopIds(tokens) {
+  return Object.keys(tokens || {})
+    .map(normalizeShopIdKey)
+    .filter(Boolean)
+    .sort();
+}
+
+/** Log điều tra: mọi shop_id / alias đang có trong file token. */
+function logTokenInventory(tokens) {
+  const abs = path.resolve(TOKENS_PATH);
+  const keys = listOAuthShopIds(tokens);
+  console.log(`[Token] PATH=${abs} | exists=${fs.existsSync(TOKENS_PATH)} | keys=[${keys.join(", ") || "không có"}]`);
+  for (const key of keys) {
+    const r = tokens[key] || {};
+    const list = Array.isArray(r.shop_id_list) ? r.shop_id_list.map(normalizeShopIdKey).filter(Boolean) : [];
+    console.log(
+      `[Token]   • key=${key} | shop_id=${r.shop_id ?? key} | oauth_shop_id=${r.oauth_shop_id ?? ""} | shop_id_list=[${list.join(", ")}] | has_access=${Boolean(r.access_token)} | has_refresh=${Boolean(r.refresh_token)} | expire_in=${r.expire_in ?? "?"} | obtained_at=${r.obtained_at ?? "?"}`,
+    );
+  }
+  if (keys.length === 1) {
+    console.log(
+      `[Token] Chỉ 1 shop OAuth (${keys[0]}) — đơn gắn shop_id khác sẽ map về shop này (cùng cơ chế app khi lệch dữ liệu).`,
+    );
+  }
+}
+
+/**
+ * Resolve record token cho shop trên đơn hàng (khớp app chính).
+ * Fallback: nếu không khớp key/list nhưng chỉ có đúng 1 shop OAuth → dùng shop đó.
+ */
+function resolveTokenRecordForOrderShop(tokens, orderShopId) {
+  const key = normalizeShopIdKey(orderShopId);
+  let record = key ? getShopeeTokenRecord(tokens, key) : null;
+  let fileKey = key;
+  let via = record ? "direct_or_shop_id_list" : "none";
+
+  if (!record) {
+    const oauthIds = listOAuthShopIds(tokens);
+    if (oauthIds.length === 1) {
+      fileKey = oauthIds[0];
+      record = tokens[fileKey] || getShopeeTokenRecord(tokens, fileKey);
+      via = record ? "single_oauth_fallback" : "none";
+    }
+  } else {
+    fileKey = normalizeShopIdKey(record.shop_id) || key;
+  }
+
+  if (!record) return null;
+  const apiShopId = resolveShopeeApiShopId(record, fileKey);
+  return { record, fileKey, apiShopId, orderShopId: key, via };
 }
 
 async function refreshAccessToken(shopId, refreshToken) {
@@ -79,50 +172,65 @@ async function refreshAccessToken(shopId, refreshToken) {
   return res.json();
 }
 
-/** Lấy access_token hợp lệ cho shop (refresh nếu cần). Cache theo shopId. */
+/**
+ * Lấy access_token hợp lệ — cùng cơ chế getValidShopeeAccessToken / getShopeeAccessTokenForApi.
+ * Trả về { accessToken, apiShopId, fileKey } hoặc null.
+ */
 async function getAccessToken(shopId, tokenCache, tokens) {
-  const key = String(shopId || "").trim();
+  const key = normalizeShopIdKey(shopId) || String(shopId || "").trim();
   if (!key) return null;
   if (tokenCache.has(key)) return tokenCache.get(key);
 
-  const record = tokens[key];
-  if (!record?.access_token && !record?.refresh_token) {
+  const resolved = resolveTokenRecordForOrderShop(tokens, key);
+  if (!resolved?.record?.access_token && !resolved?.record?.refresh_token) {
+    const available = listOAuthShopIds(tokens);
+    console.warn(
+      `[Token] Chưa có access_token cho shop_id=${key}. Token đang có: [${available.join(", ") || "không có"}]`,
+    );
     tokenCache.set(key, null);
     return null;
   }
 
+  const { record, fileKey, apiShopId, via } = resolved;
+  if (via === "single_oauth_fallback" && key !== fileKey) {
+    console.log(`[Token] Map đơn shop_id=${key} → OAuth shop_id=${fileKey} (api=${apiShopId}, via=${via})`);
+  }
+
   let accessToken = record.access_token || "";
   const obtainedAt = Number(record.obtained_at || 0);
-  const expireIn = Number(record.expire_in || 0);
-  const expired =
-    !accessToken ||
-    (obtainedAt > 0 && expireIn > 0 && Date.now() / 1000 > obtainedAt + expireIn - 300);
+  const expireIn = Number(record.expire_in || 14400);
+  const now = Math.floor(Date.now() / 1000);
+  const expired = !accessToken || (obtainedAt > 0 && now - obtainedAt >= expireIn - 60);
 
   if (expired && record.refresh_token) {
     try {
-      const refreshed = await refreshAccessToken(key, record.refresh_token);
+      const refreshed = await refreshAccessToken(apiShopId, record.refresh_token);
       if (refreshed?.access_token) {
         accessToken = refreshed.access_token;
-        tokens[key] = {
+        const updated = {
           ...record,
           access_token: refreshed.access_token,
           refresh_token: refreshed.refresh_token || record.refresh_token,
           expire_in: refreshed.expire_in || record.expire_in,
           obtained_at: Math.floor(Date.now() / 1000),
         };
+        tokens[fileKey] = updated;
         saveTokens(tokens);
-        console.log(`[Token] Đã refresh access_token cho shop_id=${key}`);
+        console.log(`[Token] Đã refresh access_token cho shop_id=${fileKey} (api=${apiShopId})`);
       } else {
-        console.warn(`[Token] Refresh thất bại shop_id=${key}:`, refreshed?.error || refreshed?.message || refreshed);
+        console.warn(
+          `[Token] Refresh thất bại shop_id=${fileKey} (api=${apiShopId}):`,
+          refreshed?.error || refreshed?.message || refreshed,
+        );
       }
     } catch (err) {
-      console.warn(`[Token] Refresh exception shop_id=${key}:`, err?.message || err);
+      console.warn(`[Token] Refresh exception shop_id=${fileKey}:`, err?.message || err);
     }
   }
 
-  const ok = accessToken || null;
-  tokenCache.set(key, ok);
-  return ok;
+  const result = accessToken ? { accessToken, apiShopId, fileKey } : null;
+  tokenCache.set(key, result);
+  return result;
 }
 
 async function getTrackingNumber(shopId, accessToken, orderSn, packageNumber) {
@@ -168,7 +276,7 @@ function orderSnOf(doc) {
 }
 
 function shopIdOf(doc) {
-  return String(doc?.shopId || doc?.data?.shopId || "").trim();
+  return normalizeShopIdKey(doc?.shopId || doc?.data?.shopId) || String(doc?.shopId || doc?.data?.shopId || "").trim();
 }
 
 function packageNumberOf(doc) {
@@ -353,12 +461,12 @@ async function main() {
   }
 
   const tokens = loadTokens();
-  const shopKeys = Object.keys(tokens);
+  logTokenInventory(tokens);
+  const shopKeys = listOAuthShopIds(tokens);
   if (shopKeys.length === 0) {
     console.error(`Không có token trong ${TOKENS_PATH}. Cần OAuth shop trước.`);
     process.exit(1);
   }
-  console.log(`[Token] Shop có sẵn: [${shopKeys.join(", ")}]`);
   if (dryRun) console.log("[Mode] DRY-RUN — chỉ gọi API, không UPDATE DB");
 
   const filter = missingTrackingFilter();
@@ -409,19 +517,20 @@ async function main() {
   for (let i = 0; i < total; i++) {
     const doc = orders[i];
     const sn = orderSnOf(doc);
-    const shopId = shopIdOf(doc) || shopKeys[0];
+    const orderShopId = normalizeShopIdKey(shopIdOf(doc)) || shopKeys[0];
     const pkg = packageNumberOf(doc);
     const prefix = `Đang xử lý đơn ${i + 1}/${total}: ${sn}`;
 
     try {
-      const accessToken = await getAccessToken(shopId, tokenCache, tokens);
-      if (!accessToken) {
+      const tokenInfo = await getAccessToken(orderShopId, tokenCache, tokens);
+      if (!tokenInfo?.accessToken) {
         skippedNoToken++;
-        console.log(`${prefix}... Thất bại: không có access_token (shop_id=${shopId})`);
+        console.log(`${prefix}... Thất bại: không có access_token (shop_id=${orderShopId})`);
         continue;
       }
 
-      const { json } = await getTrackingNumber(shopId, accessToken, sn, pkg || undefined);
+      const { accessToken, apiShopId } = tokenInfo;
+      const { json } = await getTrackingNumber(apiShopId, accessToken, sn, pkg || undefined);
       if (json?.error && !json?.response) {
         failed++;
         console.log(
