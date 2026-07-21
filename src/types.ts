@@ -156,6 +156,8 @@ export interface Order {
   logistics_channel_id?: number;
   /** Loại/dịch vụ giao (nếu có) — Instant / Hỏa Tốc */
   shipping_type?: string;
+  /** Trạng thái logistics Shopee (package_list.logistics_status) — dùng phân loại giao thất bại */
+  logistics_status?: string;
   totalAmount: number;
   /** Tổng tiền sản phẩm gốc từ get_escrow_detail (item_amount) */
   item_amount?: number;

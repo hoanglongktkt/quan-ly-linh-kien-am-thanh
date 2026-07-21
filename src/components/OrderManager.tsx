@@ -364,6 +364,7 @@ const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending'
 function isCancelReturnOrder(order: Order): boolean {
   const local = String(order.local_status || order.localStatus || '').toUpperCase();
   const raw = String(order.shopee_order_status || '').toUpperCase();
+  const logistics = String((order as any).logistics_status || '').toUpperCase();
   return (
     CANCEL_RETURN_STATUSES.includes(order.status) ||
     local === 'CANCELLED_STORED' ||
@@ -374,7 +375,10 @@ function isCancelReturnOrder(order: Order): boolean {
     raw === 'TO_RETURN' ||
     order.shopee_cancel_return_kind === 'refund_return' ||
     order.shopee_cancel_return_kind === 'failed_delivery' ||
-    order.shopee_cancel_return_kind === 'cancelled'
+    order.shopee_cancel_return_kind === 'cancelled' ||
+    /DELIVERY_FAILED|FAILED_DELIVERY|LOGISTICS_DELIVERY_FAILED|UNDELIVERABLE|PICKUP_FAILED/.test(
+      logistics,
+    )
   );
 }
 
@@ -385,23 +389,36 @@ function resolveCancelReturnKind(order: Order): CancelReturnTab | null {
   if (kind === 'refund_return' || kind === 'cancelled' || kind === 'failed_delivery') {
     return kind;
   }
+
   const logistics = String((order as any).logistics_status || '').toUpperCase();
-  if (logistics.includes('DELIVERY_FAILED') || logistics.includes('FAILED_DELIVERY')) {
+  const returnStatus = String(order.return_status || '').toUpperCase();
+  // 1) Giao không thành công — ưu tiên logistics / return type
+  if (
+    /DELIVERY_FAILED|FAILED_DELIVERY|LOGISTICS_DELIVERY_FAILED|UNDELIVERABLE|PICKUP_FAILED|LOST/.test(
+      logistics,
+    ) ||
+    /FAILED_DELIVERY|UNDELIVERABLE|NOT_RECEIVE/.test(returnStatus)
+  ) {
     return 'failed_delivery';
   }
   const type = Number(order.return_refund_request_type);
   if (type === 2) return 'failed_delivery';
-  if (order.return_sn || order.status === 'return_pending' || order.status === 'return_received') {
-    return 'refund_return';
-  }
+
+  // 2) Đơn Hủy — CANCELLED / IN_CANCEL
   const raw = String(order.shopee_order_status || '').toUpperCase();
-  if (raw === 'TO_RETURN') return 'refund_return';
   if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || order.status === 'cancelled') {
     return 'cancelled';
   }
   const local = String(order.local_status || order.localStatus || '').toUpperCase();
-  if (local === 'RETURN_RECEIVED') return 'refund_return';
   if (local === 'CANCELLED_STORED') return 'cancelled';
+
+  // 3) Trả hàng / Hoàn tiền — TO_RETURN / return_sn / khiếu nại
+  if (raw === 'TO_RETURN') return 'refund_return';
+  if (order.return_sn || order.status === 'return_pending' || order.status === 'return_received') {
+    return 'refund_return';
+  }
+  if (local === 'RETURN_RECEIVED') return 'refund_return';
+
   return 'cancelled';
 }
 

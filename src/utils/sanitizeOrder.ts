@@ -96,6 +96,10 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
         ? logisticsChannelId
         : undefined,
     shipping_type: shippingTypeRaw || undefined,
+    logistics_status: (() => {
+      const v = String(raw.logistics_status || raw.logisticsStatus || '').trim();
+      return v || undefined;
+    })(),
     return_tracking_no: raw.return_tracking_no
       ? String(raw.return_tracking_no)
       : undefined,
