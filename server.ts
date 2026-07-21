@@ -7657,20 +7657,20 @@ async function forceFetchMissingTrackingAfterSync(
   orders: any[],
   opts?: { max?: number; shopId?: string },
 ): Promise<number> {
-  const max = Math.max(1, Math.min(opts?.max ?? 40, 50));
+  const max = Math.max(1, Math.min(opts?.max ?? 80, 120));
   const targets = orders.filter((o: any) => {
     if (String(o?.channel) !== "shopee") return false;
     if (opts?.shopId && String(o.shopId) !== String(opts.shopId)) return false;
     return needsShopeeTrackingEnrichment(o);
   });
   // #region agent log
-  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6d934e'},body:JSON.stringify({sessionId:'6d934e',runId:'perf-fix',hypothesisId:'PERF',location:'server.ts:forceFetchMissingTrackingAfterSync',message:'force fetch targets',data:{totalOrders:orders.length,targetCount:targets.length,max,delayMs:SHOPEE_TRACKING_FETCH_DELAY_MS,sample:targets.slice(0,8).map((o:any)=>({sn:o.orderSn,status:o.status,raw:o.shopee_order_status,tn:o.trackingNumber||o.tracking_no||null}))},timestamp:Date.now()})}).catch(()=>{});
+  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'post-fix',hypothesisId:'B,E',location:'server.ts:forceFetchMissingTrackingAfterSync',message:'force fetch targets',data:{totalOrders:orders.length,targetCount:targets.length,max,shopIdFilter:opts?.shopId||null,delayMs:SHOPEE_TRACKING_FETCH_DELAY_MS,sample:targets.slice(0,10).map((o:any)=>({sn:o.orderSn,status:o.status,raw:o.shopee_order_status,shopId:o.shopId,tn:o.trackingNumber||o.tracking_no||null}))},timestamp:Date.now()})}).catch(()=>{});
   // #endregion
   if (targets.length === 0) return 0;
   console.log(
     `[Shopee Tracking] Force fetch tuần tự: ${Math.min(targets.length, max)}/${targets.length} đơn (delay=${SHOPEE_TRACKING_FETCH_DELAY_MS}ms).`,
   );
-  return repairMissingShopeeTrackingInOrders(targets, { max, retries: 2 });
+  return repairMissingShopeeTrackingInOrders(targets, { max, retries: 3 });
 }
 
 /** Gọi get_tracking_number kèm retry (rate-limit / delay Shopee). */
@@ -7765,11 +7765,12 @@ async function enrichShopeeOrderTrackingFromApi(
     }
 
     // Nguồn 2: logistics.get_tracking_number (caller PHẢI await tuần tự từng đơn)
-    const result = await shopeeGetTrackingNumberWithRetry(
+    const pkgNum = String(order.packageNumber || "").trim() || undefined;
+    let result = await shopeeGetTrackingNumberWithRetry(
       shopId,
       accessToken,
       order.orderSn,
-      order.packageNumber,
+      pkgNum,
       retries,
     );
     console.log(
@@ -7780,11 +7781,26 @@ async function enrichShopeeOrderTrackingFromApi(
       JSON.stringify(result),
     );
     applyShopeeGetTrackingResponse(order, result);
+
+    // Retry không kèm package_number — một số shop Shopee trả rỗng khi OFG package_number lệch.
+    if (!hasUsableShopeeTrackingNumber(order) && pkgNum) {
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'post-fix',hypothesisId:'A',location:'server.ts:enrichShopeeOrderTrackingFromApi:retryNoPkg',message:'retry get_tracking_number without package_number',data:{orderSn:order?.orderSn,pkgNum,prevError:result?.error||null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      result = await shopeeGetTrackingNumberWithRetry(
+        shopId,
+        accessToken,
+        order.orderSn,
+        undefined,
+        Math.max(2, retries),
+      );
+      applyShopeeGetTrackingResponse(order, result);
+    }
     // #region agent log
     {
       const respTn = String(result?.response?.tracking_number || result?.tracking_number || "").trim();
       const extracted = deepExtractShopeeTrackingCodes(result);
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6d934e'},body:JSON.stringify({sessionId:'6d934e',runId:'perf-fix',hypothesisId:'B',location:'server.ts:enrichShopeeOrderTrackingFromApi:afterGetTracking',message:'get_tracking_number result',data:{orderSn:order?.orderSn,apiError:result?.error||null,apiMessage:String(result?.message||'').slice(0,120),respTn:respTn||null,extractedCarrier:extracted.carrier||null,extractedInternal:extracted.internal||null,afterHasUsable:hasUsableShopeeTrackingNumber(order),afterTn:String(order.trackingNumber||order.tracking_no||'')||null,internalOnly:Boolean(extracted.internal&&!extracted.carrier&&!respTn),hypothesisE:Boolean(order.internalTrackingCode&&!hasUsableShopeeTrackingNumber(order)),light},timestamp:Date.now()})}).catch(()=>{});
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'post-fix',hypothesisId:'A,B',location:'server.ts:enrichShopeeOrderTrackingFromApi:afterGetTracking',message:'get_tracking_number result',data:{orderSn:order?.orderSn,apiError:result?.error||null,apiMessage:String(result?.message||'').slice(0,120),respTn:respTn||null,extractedCarrier:extracted.carrier||null,extractedInternal:extracted.internal||null,afterHasUsable:hasUsableShopeeTrackingNumber(order),afterTn:String(order.trackingNumber||order.tracking_no||'')||null,pkgUsed:pkgNum||null,light},timestamp:Date.now()})}).catch(()=>{});
     }
     // #endregion
 
@@ -7899,18 +7915,22 @@ async function scanAndRetryMissingTrackingNumbers(opts?: {
   );
 
   let filled = 0;
-  const tokenCache = new Map<string, string | null>();
+  const authCache = new Map<string, { token: string; apiShopId: string } | null>();
   for (let i = 0; i < slice.length; i++) {
     const o = slice[i];
     const shopKey = String(o.shopId);
-    if (!tokenCache.has(shopKey)) {
-      tokenCache.set(shopKey, await getValidShopeeAccessToken(shopKey));
+    if (!authCache.has(shopKey)) {
+      const auth = await getShopeeAccessTokenForApi(shopKey);
+      authCache.set(
+        shopKey,
+        auth?.token ? { token: auth.token, apiShopId: auth.apiShopId } : null,
+      );
     }
-    const accessToken = tokenCache.get(shopKey);
-    if (!accessToken) continue;
+    const auth = authCache.get(shopKey);
+    if (!auth?.token) continue;
 
     const before = hasUsableShopeeTrackingNumber(o);
-    await enrichShopeeOrderTrackingFromApi(shopKey, accessToken, o, {
+    await enrichShopeeOrderTrackingFromApi(auth.apiShopId, auth.token, o, {
       retries,
       light: true,
     });
@@ -8218,23 +8238,43 @@ async function repairMissingShopeeTrackingInOrders(
   orders: any[],
   opts?: { max?: number; retries?: number },
 ): Promise<number> {
-  const max = Math.max(1, Math.min(opts?.max ?? 30, 40));
+  // Cap cao hơn — đủ bù đơn PROCESSED thiếu mã sau khi chuẩn bị trên App Shopee.
+  const max = Math.max(1, Math.min(opts?.max ?? 80, 120));
   const retries = opts?.retries ?? 2;
   let attempted = 0;
   let filled = 0;
-  const tokenCache = new Map<string, string | null>();
-  for (const o of orders) {
+  const authCache = new Map<string, { token: string; apiShopId: string } | null>();
+
+  // Ưu tiên đơn đã xử lý / READY_TO_SHIP thiếu mã (đúng bug user báo).
+  const prioritized = [...orders].sort((a, b) => {
+    const score = (o: any) => {
+      const raw = String(o?.shopee_order_status || "").toUpperCase();
+      const st = String(o?.status || "");
+      if (st === "processed" || raw === "PROCESSED") return 0;
+      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || st === "unprocessed") return 1;
+      if (st === "shipping" || raw === "SHIPPED") return 2;
+      return 3;
+    };
+    return score(a) - score(b);
+  });
+
+  for (const o of prioritized) {
     if (attempted >= max) break;
     if (!needsShopeeTrackingEnrichment(o) || !o.shopId) continue;
     const shopKey = String(o.shopId);
     try {
-      if (!tokenCache.has(shopKey)) {
-        tokenCache.set(shopKey, await getValidShopeeAccessToken(shopKey));
+      if (!authCache.has(shopKey)) {
+        const auth = await getShopeeAccessTokenForApi(shopKey);
+        authCache.set(
+          shopKey,
+          auth?.token ? { token: auth.token, apiShopId: auth.apiShopId } : null,
+        );
       }
-      const accessToken = tokenCache.get(shopKey);
-      if (!accessToken) continue;
+      const auth = authCache.get(shopKey);
+      if (!auth?.token) continue;
       const before = hasUsableShopeeTrackingNumber(o);
-      await enrichShopeeOrderTrackingFromApi(shopKey, accessToken, o, {
+      // BẮT BUỘC dùng apiShopId (không dùng fileKey) cho get_tracking_number.
+      await enrichShopeeOrderTrackingFromApi(auth.apiShopId, auth.token, o, {
         retries,
         light: true,
       });
@@ -8254,6 +8294,9 @@ async function repairMissingShopeeTrackingInOrders(
       await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
   }
+  // #region agent log
+  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'post-fix',hypothesisId:'B',location:'server.ts:repairMissingShopeeTrackingInOrders',message:'repair missing tracking done',data:{attempted,filled,max,inputLen:orders.length},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   if (attempted > 0) {
     saveOrders(orders);
     console.log(
@@ -8276,6 +8319,9 @@ async function ensureShopeeTrackingForBatch(
     if (!needsShopeeTrackingEnrichment(order)) continue;
     needFetch.push(order);
   }
+  // #region agent log
+  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'pre-fix',hypothesisId:'A,D,E',location:'server.ts:ensureShopeeTrackingForBatch',message:'batch tracking enrich plan',data:{apiShopId,batchLen:batch.length,needFetch:needFetch.length,sample:needFetch.slice(0,6).map((o:any)=>({sn:o.orderSn,status:o.status,raw:o.shopee_order_status,tn:o.trackingNumber||o.tracking_no||null,pkg:o.packageNumber||null,channel:o.channel}))},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   for (const order of needFetch) {
     try {
       await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, order, {
@@ -8295,6 +8341,9 @@ async function ensureShopeeTrackingForBatch(
       await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
   }
+  // #region agent log
+  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'pre-fix',hypothesisId:'A',location:'server.ts:ensureShopeeTrackingForBatch:done',message:'batch tracking enrich result',data:{apiShopId,needFetch:needFetch.length,fetched,stillEmpty:needFetch.filter((o:any)=>!hasUsableShopeeTrackingNumber(o)).slice(0,8).map((o:any)=>({sn:o.orderSn,raw:o.shopee_order_status,status:o.status,tn:o.trackingNumber||o.tracking_no||null,internal:o.internalTrackingCode||null}))},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   if (fetched > 0) {
     console.log(
       `[Shopee Tracking] ensureShopeeTrackingForBatch: đã lấy ${fetched}/${needFetch.length} đơn (shop=${apiShopId}).`,
@@ -8384,6 +8433,12 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     applyShopeePartialCancelMeta(order, item, mappedItems);
     applyShopeeEstimatedFinance(order, item);
     applyShopeePackageListTracking(order, item);
+    // #region agent log
+    {
+      const pkg0 = Array.isArray(item?.package_list) ? item.package_list[0] : null;
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'pre-fix',hypothesisId:'A',location:'server.ts:normalizeShopeeOrderDetail',message:'after detail normalize tracking',data:{sn:order.orderSn,raw:order.shopee_order_status,status:order.status,tn:order.trackingNumber||order.tracking_no||null,pkgTn:pkg0?.tracking_number||pkg0?.tracking_no||null,pkgNum:order.packageNumber||pkg0?.package_number||null,hasPkgList:Array.isArray(item?.package_list)?item.package_list.length:0},timestamp:Date.now()})}).catch(()=>{});
+    }
+    // #endregion
     // Cưỡng bức lại sau package_list: SHIPPED/COMPLETED luôn thắng PROCESSED.
     const finalRaw = String(order.shopee_order_status || rawStatus).toUpperCase();
     if (finalRaw === "COMPLETED") {
@@ -9586,6 +9641,10 @@ async function persistShopeeOrderChunk(
 
   if (syncCtx) {
     await ensureShopeeTrackingForBatch(syncCtx.apiShopId, syncCtx.accessToken, batchNormalized);
+  } else {
+    // #region agent log
+    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'pre-fix',hypothesisId:'D',location:'server.ts:persistShopeeOrderChunk',message:'persist WITHOUT syncCtx — skip ensureShopeeTrackingForBatch',data:{batchLen:batchNormalized.length,sns:batchNormalized.slice(0,8).map((o:any)=>o.orderSn)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
   }
 
   const touched: any[] = [];
@@ -9597,6 +9656,7 @@ async function persistShopeeOrderChunk(
       if (existing) {
         preserveExistingTrackingIfIncomingEmpty(normalized, existing);
       }
+      const tnBeforeMerge = String(normalized.trackingNumber || normalized.tracking_no || "").trim();
       forceHealPickupOrderIfHasTracking(normalized);
       // SHIPPED → shipping (Đang giao), COMPLETED → completed (Đã giao) — cho phép đè.
       enforceShopeeTerminalLocalStatus(normalized);
@@ -9623,6 +9683,14 @@ async function persistShopeeOrderChunk(
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);
+      // #region agent log
+      {
+        const tnAfter = String(row.trackingNumber || row.tracking_no || "").trim();
+        if (tnBeforeMerge || !tnAfter) {
+          fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'pre-fix',hypothesisId:'C',location:'server.ts:persistShopeeOrderChunk:afterMerge',message:'tracking before/after merge',data:{sn:row.orderSn,tnBeforeMerge:tnBeforeMerge||null,tnAfter:tnAfter||null,lost:Boolean(tnBeforeMerge&&!tnAfter),raw:row.shopee_order_status,status:row.status},timestamp:Date.now()})}).catch(()=>{});
+        }
+      }
+      // #endregion
       touched.push(row);
     } catch (e) {
       console.error("Lỗi 1 đơn (skip, tiếp batch):", e);
@@ -9945,7 +10013,7 @@ async function syncShopeeOrdersFromApi(
 
       orderSnList = [];
 
-      await forceFetchMissingTrackingAfterSync(orders, { max: 40, shopId: fileKey });
+      await forceFetchMissingTrackingAfterSync(orders, { max: 100, shopId: fileKey });
 
       return { shopErrors, syncedSnSet, totalSnTarget };
     };
@@ -10049,7 +10117,7 @@ async function syncShopeeOrdersFromApi(
   };
   console.log(`[Shopee Sync] UI counts sau đồng bộ:`, JSON.stringify(uiStatusCounts));
 
-  await forceFetchMissingTrackingAfterSync(orders, { max: 40 });
+  await forceFetchMissingTrackingAfterSync(orders, { max: 100 });
 
   const uniqueErrors = dedupeErrors(errors);
 
@@ -16510,7 +16578,16 @@ async function startServer() {
       }
 
       console.log(`[Orders Pull] Hoàn thành mode=${mode}: ${pulledCount} đơn đã cập nhật/thêm mới.`);
-      await forceFetchMissingTrackingAfterSync(orders, { max: 40 });
+      await forceFetchMissingTrackingAfterSync(orders, { max: 100 });
+      // Quét bù lần 2 — đơn PROCESSED chuẩn bị trên App Shopee ngoài cửa sổ update_time.
+      try {
+        const scan = await scanAndRetryMissingTrackingNumbers({ max: 100, retries: 3 });
+        console.log(
+          `[Orders Pull] Tracking scanner: scanned=${scan.scanned} filled=${scan.filled}`,
+        );
+      } catch (scanErr: any) {
+        console.warn("[Orders Pull] Tracking scanner failed:", scanErr?.message || scanErr);
+      }
       // Sau sync: heal + ép SHIPPED/COMPLETED ghi đè PROCESSED local.
       let postHeal = 0;
       for (const o of orders) {
