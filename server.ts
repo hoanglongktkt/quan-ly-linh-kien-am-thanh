@@ -6972,11 +6972,57 @@ function isCarrierTrackingCode(code: unknown): boolean {
   return false;
 }
 
+/** Family từ tiền tố mã vận đơn (SPX... / GYA... / GHN...). */
+function trackingPrefixFamily(code: unknown): "spx" | "ghn" | "" {
+  const k = String(code || "").trim().toUpperCase();
+  if (!k || isShopeeInternalTrackingCode(k)) return "";
+  if (/^SPX/.test(k)) return "spx";
+  if (/^GYA/.test(k) || /^GHN/.test(k)) return "ghn";
+  return "";
+}
+
+/** Family từ tên ĐVVC (shipping_carrier / checkout_shipping_carrier). */
+function shippingCarrierFamily(carrier: unknown): "spx" | "ghn" | "" {
+  const raw = String(carrier || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .trim();
+  if (!raw) return "";
+  if (/giao hang nhanh|giaohangnhanh|\bghn\b/.test(raw)) return "ghn";
+  if (/spx|shopee\s*x?press|shopee express|standard express/.test(raw)) return "spx";
+  return "";
+}
+
+/**
+ * Validation: tiền tố mã vận đơn không được đá với tên ĐVVC.
+ * VD: SPXVN... ≠ Giao Hàng Nhanh; GYA... ≠ SPX Express.
+ */
+function isTrackingCompatibleWithCarrier(trackingNo: unknown, carrier: unknown): boolean {
+  const tf = trackingPrefixFamily(trackingNo);
+  const cf = shippingCarrierFamily(carrier);
+  if (!tf || !cf) return true;
+  return tf === cf;
+}
+
 function applyShopeeTrackingCode(order: any, rawCode: unknown) {
   const code = String(rawCode || "").trim();
   if (!code) return;
   if (isShopeeInternalTrackingCode(code)) {
     order.internalTrackingCode = code;
+    return;
+  }
+  const carrierHint =
+    order?.shipping_carrier ||
+    order?.checkout_shipping_carrier ||
+    order?.carrier ||
+    "";
+  if (!isTrackingCompatibleWithCarrier(code, carrierHint)) {
+    console.warn(
+      `[Shopee Tracking] REJECT mismatch order_sn=${order?.orderSn} tn=${code} carrier=${carrierHint}`,
+    );
     return;
   }
   // Mọi mã vận đơn thực (kể cả format lạ GHN) — mirror tracking_no cho DB/UI.
@@ -6994,18 +7040,33 @@ function repairMisassignedTracking(order: any): any {
     order.trackingNumber = undefined;
     order.tracking_no = undefined;
   }
+  // Chữa cháy: SPX mã gắn đơn GHN (hoặc ngược lại) → xóa mã sai, giữ carrier.
+  const tn = String(order.trackingNumber || order.tracking_no || "").trim();
+  const carrierHint =
+    order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || "";
+  if (tn && !isTrackingCompatibleWithCarrier(tn, carrierHint)) {
+    console.warn(
+      `[Shopee Tracking] CLEAR mismatched tracking order_sn=${order.orderSn} tn=${tn} carrier=${carrierHint}`,
+    );
+    order.trackingNumber = undefined;
+    order.tracking_no = undefined;
+  }
   return order;
 }
 
 /**
- * Deep fallback: quét toàn bộ payload Shopee tìm mã vận đơn.
- * Ưu tiên: response.tracking_number → order_list[].tracking_no → shipping_document_info → mọi key tracking_*.
+ * Deep fallback: quét payload Shopee tìm mã vận đơn.
+ * BẮT BUỘC lọc theo order_sn khi payload có order_list — tuyệt đối không gán theo index mảng.
  */
-function deepExtractShopeeTrackingCodes(payload: unknown): {
+function deepExtractShopeeTrackingCodes(
+  payload: unknown,
+  opts?: { orderSn?: string },
+): {
   carrier?: string;
   internal?: string;
   sources: string[];
 } {
+  const wantSn = String(opts?.orderSn || "").replace(/^shopee-/i, "").trim();
   const sources: string[] = [];
   let carrier: string | undefined;
   let internal: string | undefined;
@@ -7048,6 +7109,11 @@ function deepExtractShopeeTrackingCodes(payload: unknown): {
       return;
     }
     if (typeof node !== "object") return;
+    // Không đi vào subtree của đơn khác (tránh gán nhầm mã theo index order_list).
+    if (wantSn) {
+      const nodeSn = String((node as any).order_sn || "").replace(/^shopee-/i, "").trim();
+      if (nodeSn && nodeSn !== wantSn) return;
+    }
     for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
       const childPath = path ? `${path}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
@@ -7080,12 +7146,24 @@ function deepExtractShopeeTrackingCodes(payload: unknown): {
       resp?.shipping_document_info?.shopee_tracking_number,
     ],
   ];
+  // Single-order detail object (đã có order_sn) — lấy tracking trên chính object đó.
+  const rootSn = String(root?.order_sn || "").replace(/^shopee-/i, "").trim();
+  if (!wantSn || !rootSn || rootSn === wantSn) {
+    priorityPaths.push(["root.tracking_no", root?.tracking_no]);
+    priorityPaths.push(["root.tracking_number", root?.tracking_number]);
+    priorityPaths.push(["root.package_list[0].tracking_number", root?.package_list?.[0]?.tracking_number]);
+    priorityPaths.push(["root.package_list[0].tracking_no", root?.package_list?.[0]?.tracking_no]);
+  }
   const orderList = Array.isArray(resp?.order_list)
     ? resp.order_list
     : Array.isArray(root?.order_list)
       ? root.order_list
       : [];
+  // Map theo order_sn — bỏ qua phần tử lệch (API có thể trả lệch thứ tự).
   orderList.forEach((o: any, i: number) => {
+    const sn = String(o?.order_sn || "").replace(/^shopee-/i, "").trim();
+    if (wantSn && sn && sn !== wantSn) return;
+    if (wantSn && !sn) return;
     priorityPaths.push([`order_list[${i}].tracking_no`, o?.tracking_no]);
     priorityPaths.push([`order_list[${i}].tracking_number`, o?.tracking_number]);
     priorityPaths.push([
@@ -7110,18 +7188,28 @@ function deepExtractShopeeTrackingCodes(payload: unknown): {
 }
 
 function applyDeepShopeeTrackingPayload(order: any, payload: unknown, label = "payload"): boolean {
-  const extracted = deepExtractShopeeTrackingCodes(payload);
+  const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+  const extracted = deepExtractShopeeTrackingCodes(payload, { orderSn });
   if (extracted.internal) order.internalTrackingCode = extracted.internal;
   if (extracted.carrier) {
+    const carrierHint =
+      order?.shipping_carrier || order?.checkout_shipping_carrier || order?.carrier || "";
+    if (!isTrackingCompatibleWithCarrier(extracted.carrier, carrierHint)) {
+      console.warn(
+        `[Shopee Tracking] Deep extract REJECT mismatch order_sn=${orderSn} from=${label} tn=${extracted.carrier} carrier=${carrierHint}`,
+      );
+      repairMisassignedTracking(order);
+      return false;
+    }
     applyShopeeTrackingCode(order, extracted.carrier);
     console.log(
-      `[Shopee Tracking] Deep extract OK order_sn=${order?.orderSn} from=${label} carrier=${extracted.carrier} sources=${extracted.sources.slice(0, 6).join(" | ")}`,
+      `[Shopee Tracking] Deep extract OK order_sn=${orderSn} from=${label} carrier=${extracted.carrier} sources=${extracted.sources.slice(0, 6).join(" | ")}`,
     );
     return true;
   }
   if (extracted.sources.length) {
     console.log(
-      `[Shopee Tracking] Deep extract chỉ thấy internal/partial order_sn=${order?.orderSn} from=${label}: ${extracted.sources.slice(0, 8).join(" | ")}`,
+      `[Shopee Tracking] Deep extract chỉ thấy internal/partial order_sn=${orderSn} from=${label}: ${extracted.sources.slice(0, 8).join(" | ")}`,
     );
   }
   repairMisassignedTracking(order);
@@ -7132,6 +7220,16 @@ async function persistOrderTrackingToDb(order: any): Promise<void> {
   repairMisassignedTracking(order);
   const tn = String(order?.trackingNumber || order?.tracking_no || "").trim();
   if (!tn || !order?.orderSn) return;
+  const carrierHint =
+    order?.shipping_carrier || order?.checkout_shipping_carrier || order?.carrier || "";
+  if (!isTrackingCompatibleWithCarrier(tn, carrierHint)) {
+    console.warn(
+      `[Shopee Tracking] SKIP persist mismatch order_sn=${order.orderSn} tn=${tn} carrier=${carrierHint}`,
+    );
+    order.trackingNumber = undefined;
+    order.tracking_no = undefined;
+    return;
+  }
   order.trackingNumber = tn;
   order.tracking_no = tn;
   // JSON DB được saveOrders gọi từ caller; ở đây sync Mongo nếu có.
@@ -9187,7 +9285,23 @@ async function fetchNormalizeShopeeOrderChunk(
       return { normalized, errors };
     }
 
+    // Map theo order_sn (API có thể trả order_list lệch thứ tự so với snList).
+    const detailBySn = new Map<string, any>();
     for (const detail of detailList) {
+      const sn = String(detail?.order_sn || "").trim();
+      if (sn) detailBySn.set(sn, detail);
+    }
+    for (const requestedSn of snList) {
+      const detail = detailBySn.get(requestedSn);
+      if (!detail) {
+        errors.push({
+          shopId: fileKey,
+          error: "order_detail_missing_in_batch",
+          message: `get_order_detail không trả order_sn=${requestedSn} trong batch`,
+          orderSn: requestedSn,
+        });
+        continue;
+      }
       try {
         const norm = normalizeShopeeOrderDetail(fileKey, detail?.shop_name, detail);
         if (!norm) continue;

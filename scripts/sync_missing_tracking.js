@@ -269,6 +269,48 @@ function pickTrackingFromResponse(json) {
   return "";
 }
 
+function trackingPrefixFamily(code) {
+  const k = String(code || "").trim().toUpperCase();
+  if (!k || /^0FG/i.test(k)) return "";
+  if (/^SPX/.test(k)) return "spx";
+  if (/^GYA/.test(k) || /^GHN/.test(k)) return "ghn";
+  return "";
+}
+
+function shippingCarrierFamily(carrier) {
+  const raw = String(carrier || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .trim();
+  if (!raw) return "";
+  if (/giao hang nhanh|giaohangnhanh|\bghn\b/.test(raw)) return "ghn";
+  if (/spx|shopee\s*x?press|shopee express|standard express/.test(raw)) return "spx";
+  return "";
+}
+
+/** Validation: tiền tố mã (SPX/GYA) không được đá với shipping_carrier. */
+function isTrackingCompatibleWithCarrier(trackingNo, carrier) {
+  const tf = trackingPrefixFamily(trackingNo);
+  const cf = shippingCarrierFamily(carrier);
+  if (!tf || !cf) return true;
+  return tf === cf;
+}
+
+function carrierOf(doc) {
+  return String(
+    doc?.shipping_carrier ||
+      doc?.data?.shipping_carrier ||
+      doc?.checkout_shipping_carrier ||
+      doc?.data?.checkout_shipping_carrier ||
+      doc?.carrier ||
+      doc?.data?.carrier ||
+      "",
+  ).trim();
+}
+
 function orderSnOf(doc) {
   return String(doc?.orderSn || doc?.data?.orderSn || doc?._id || "")
     .replace(/^shopee-/i, "")
@@ -315,12 +357,13 @@ async function updateTrackingInDb(col, doc, trackingNo) {
   const tn = String(trackingNo).trim();
   if (!sn || !tn) return false;
 
+  // BẮT BUỘC update theo order_sn — không bao giờ theo index mảng batch.
   const filter = {
     $or: [
-      { _id: doc._id },
       { orderSn: sn },
       { "data.orderSn": sn },
       { _id: `shopee-${sn}` },
+      ...(doc?._id != null ? [{ _id: doc._id }] : []),
     ],
   };
   const $set = {
@@ -481,11 +524,17 @@ async function main() {
     orderSn: 1,
     shopId: 1,
     tracking_no: 1,
+    shipping_carrier: 1,
+    checkout_shipping_carrier: 1,
+    carrier: 1,
     status: 1,
     "data.orderSn": 1,
     "data.shopId": 1,
     "data.tracking_no": 1,
     "data.trackingNumber": 1,
+    "data.shipping_carrier": 1,
+    "data.checkout_shipping_carrier": 1,
+    "data.carrier": 1,
     "data.packageNumber": 1,
     "data.package_number": 1,
     "data.channel": 1,
@@ -541,6 +590,11 @@ async function main() {
         if (!tn) {
           skippedEmpty++;
           console.log(`${prefix}... Thất bại: API trả về rỗng`);
+        } else if (!isTrackingCompatibleWithCarrier(tn, carrierOf(doc))) {
+          failed++;
+          console.log(
+            `${prefix}... REJECT: mã ${tn} đá carrier=${carrierOf(doc) || "(empty)"} — không ghi DB`,
+          );
         } else if (dryRun) {
           updated++;
           console.log(`${prefix}... [DRY-RUN] Có mã: ${tn} (chưa ghi DB)`);
