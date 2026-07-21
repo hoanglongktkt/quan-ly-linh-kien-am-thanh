@@ -210,15 +210,16 @@ export function resolveOrderBadgeStatus(
 }
 
 /**
- * TAB "ĐÃ GIAO CHO ĐVVC":
- * is_handed_over AND chưa SHIPPED/CANCELLED AND isProcessedCondition (có mã VĐ).
+ * TAB "ĐÃ GIAO CHO ĐVVC" — đối soát nội bộ sau QUÉT QR.
+ * Nguồn duy nhất: cờ local HANDED_OVER / is_handed_over_to_carrier.
+ * KHÔNG phụ thuộc order_status Shopee (READY_TO_SHIP / PROCESSED...).
+ * Rời tab khi Shopee thật sự SHIPPED / COMPLETED (hoặc hủy/hoàn).
  */
 export function matchesHandedOverCarrierTab(order: Order): boolean {
   if (!isOrderHandedOverToCarrier(order)) return false;
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
-  // Chốt KPI: chưa có mã = chưa chuẩn bị → không vào ĐVVC.
-  return isProcessedCondition(order);
+  return true;
 }
 
 /**

@@ -3516,7 +3516,7 @@ export default function OrderManager({
                   const badge =
                     matchesHandedOverCarrierTab(order)
                       ? {
-                          text: 'Đã giao cho ĐVVC',
+                          text: 'Đã quét QR - Chờ ĐVVC nhận',
                           color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',
                         }
                       : badgeBase;
@@ -3773,7 +3773,7 @@ export default function OrderManager({
               const badge =
                 matchesHandedOverCarrierTab(order)
                   ? {
-                      text: 'Đã giao cho ĐVVC',
+                      text: 'Đã quét QR - Chờ ĐVVC nhận',
                       color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',
                     }
                   : badgeBase;
