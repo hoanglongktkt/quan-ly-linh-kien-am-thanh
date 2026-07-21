@@ -12449,6 +12449,49 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+  /**
+   * Shopee Push/Webhook POST — đăng ký SỚM (trước mọi route nặng / catch-all 404).
+   * URL Console thường dùng /api/auth/shopee/callback — bắt buộc nhận POST, luôn 200.
+   */
+  const handleShopeeCallbackPostEarly = (req: any, res: any) => {
+    try {
+      console.log(
+        "[Shopee Callback POST]",
+        JSON.stringify({
+          method: req.method,
+          url: req.originalUrl || req.url,
+          hasBody: Boolean(req.body && Object.keys(req.body || {}).length),
+        }),
+      );
+      if (!res.headersSent) {
+        res.status(200).json({ success: true });
+      }
+      const payload = req.body;
+      setImmediate(() => {
+        void processShopeeWebhookPayload(payload)
+          .then(() => console.log("[Shopee Callback POST] Đã xử lý payload."))
+          .catch((error) => console.error("[Shopee Callback POST] Lỗi xử lý:", error));
+      });
+    } catch (error) {
+      console.error("[Shopee Callback POST] handler crash:", error);
+      if (!res.headersSent) {
+        res.status(200).json({ success: true });
+      }
+    }
+  };
+  // Dùng mảng path — tránh wrapper string-only bỏ sót alias.
+  app.post(
+    [
+      "/api/auth/shopee/callback",
+      "/api/auth/shopee/callback/",
+      "/api/shopee/callback",
+      "/api/shopee/callback/",
+      "/api/shopee/webhook",
+      "/api/shopee/webhook/",
+    ],
+    handleShopeeCallbackPostEarly,
+  );
+
   /** DB chưa sẵn sàng → trả 503 NGAY (sync, không await/chờ). Auth/health/oauth/ship-order vẫn chạy. */
   app.use((req, res, next) => {
     const pathName = String(req.path || req.originalUrl || "").split("?")[0];
@@ -13028,31 +13071,16 @@ async function startServer() {
     }
   });
 
-  /** Push webhook POST — trả 200 "success" ngay, xử lý async. Alias auth/callback = URL Shopee Console. */
-  const handleShopeePushIngress = (req: any, res: any) => {
-    logShopeeIngress("[Shopee Webhook]", req);
-    res.status(200).type("text/plain; charset=utf-8").send("success");
-    const payload = req.body;
-    setImmediate(() => {
-      void processShopeeWebhookPayload(payload)
-        .then(() => {
-          console.log("[Shopee Webhook] Đã xử lý và lưu payload vào database.");
-        })
-        .catch((error) => {
-          console.error("[Shopee Webhook] Lỗi xử lý payload:", error);
-        });
-    });
-  };
-
+  /** Push webhook POST — đã đăng ký SỚM (handleShopeeCallbackPostEarly). Giữ GET probe. */
   app.get("/api/shopee/webhook", (req, res) => {
     logShopeeIngress("[Shopee Webhook]", req);
     console.log("[Shopee Webhook] GET verification probe — 200 success");
     res.status(200).type("text/plain; charset=utf-8").send("success");
   });
-
-  app.post("/api/shopee/webhook", handleShopeePushIngress);
-  app.post("/api/auth/shopee/callback", handleShopeePushIngress);
-  app.post("/api/shopee/callback", handleShopeePushIngress);
+  // Alias POST dự phòng (nếu early route bị bỏ qua vì mount khác).
+  app.post("/api/auth/shopee/callback", handleShopeeCallbackPostEarly);
+  app.post("/api/shopee/callback", handleShopeeCallbackPostEarly);
+  app.post("/api/shopee/webhook", handleShopeeCallbackPostEarly);
 
   // Real synced orders list — this is what the Order Management UI reads from.
   // --- Products warehouse API (MongoDB products) ---
