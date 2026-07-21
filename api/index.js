@@ -18,6 +18,7 @@ import { handleScanBulkUpdate } from '../_lib/handlers/scanBulkUpdate.js';
 import { handleHandOverCarrier } from '../_lib/handlers/handOverCarrier.js';
 import { handleCleanupHandedOver } from '../_lib/handlers/cleanupHandedOver.js';
 import { handleCleanupProcessedPickup } from '../_lib/handlers/cleanupProcessedPickup.js';
+import { handleHydrateTracking } from '../_lib/handlers/hydrateTracking.js';
 import { handleLabelProxy } from '../_lib/handlers/labels.js';
 import { proxyRequestToCpanel, resolveProxyTimeoutMs } from '../_lib/cpanelProxy.js';
 
@@ -62,6 +63,8 @@ const LOCAL_ROUTES = {
   'orders/hand-over-carrier': handleHandOverCarrier,
   'orders/cleanup-handed-over': handleCleanupHandedOver,
   'orders/cleanup-processed-pickup': handleCleanupProcessedPickup,
+  // cPanel cũ chưa có route — hydrate tracking Mongo → PATCH orders trên cPanel.
+  'orders/hydrate-tracking': handleHydrateTracking,
 };
 
 export default async function handler(req, res) {
