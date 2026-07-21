@@ -16995,7 +16995,20 @@ async function startServer() {
     let lastError: { error?: string; message?: string } = {};
 
     for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
-      const result: any = await tryGenerateShopeeShippingDocumentOnce(shopId, accessToken, orderList);
+      let result: any;
+      try {
+        result = await tryGenerateShopeeShippingDocumentOnce(shopId, accessToken, orderList);
+      } catch (error: any) {
+        const msg = String(error?.message || error || "Shopee API Error");
+        console.error(`[Shopee Print] Exception tạo vận (lần ${attempt}):`, msg);
+        // Đẩy nguyên văn ra ngoài — không nuốt bằng message generic.
+        return {
+          success: false,
+          error: "shopee_api_error",
+          message: msg.startsWith("Shopee API Error:") ? msg : `Shopee API Error: ${msg}`,
+          permanent: true,
+        };
+      }
       if (result.success) return result;
 
       lastError = { error: result.error, message: result.message };
@@ -17043,11 +17056,74 @@ async function startServer() {
   // that actually got accepted (KHÔNG yêu cầu package_number — GHN/J&T/Ninja
   // thường không trả package_number nhưng vẫn in được).
   async function tryGenerateShopeeShippingDocumentOnce(shopId: string, accessToken: string, orderList: { order_sn: string; package_number?: string; tracking_number?: string }[]) {
-    const createResult = await shopeeCreateShippingDocument(shopId, accessToken, orderList);
+    // Chốt tracking_no TỪNG đơn ngay trước create_shipping_document (tránh invalid bị nuốt bởi try-catch ngoài).
+    const enrichedOrderList: { order_sn: string; package_number?: string; tracking_number?: string }[] = [];
+    for (const row of orderList) {
+      const order_sn = String(row.order_sn || "").trim();
+      let tracking_no = String(row.tracking_number || "").trim();
+      if (tracking_no && isShopeeInternalTrackingCode(tracking_no)) tracking_no = "";
+
+      console.log("=== BẮT ĐẦU IN ĐƠN ===", "Mã đơn:", order_sn, "Tracking No hiện tại:", tracking_no || "(rỗng)");
+      if (!tracking_no) {
+        console.log("-> Đơn chưa có tracking_no, thử gọi API get_tracking_number...");
+        try {
+          const trackingResponse = await shopeeGetTrackingNumberWithRetry(
+            shopId,
+            accessToken,
+            order_sn,
+            row.package_number,
+            3,
+          );
+          console.log("-> Kết quả xin tracking:", JSON.stringify(trackingResponse));
+          const resp = trackingResponse?.response ?? trackingResponse ?? {};
+          const candidates = [
+            resp?.tracking_number,
+            resp?.tracking_no,
+            resp?.last_mile_tracking_number,
+            resp?.third_party_tracking_number,
+          ];
+          for (const c of candidates) {
+            const s = String(c || "").trim();
+            if (s && !isShopeeInternalTrackingCode(s)) {
+              tracking_no = s;
+              break;
+            }
+          }
+          if (!tracking_no) {
+            // Ném nguyên văn Shopee — không để catch ngoài đè message generic.
+            throw new Error("Shopee API Error: " + JSON.stringify(trackingResponse ?? {}));
+          }
+        } catch (error: any) {
+          console.error("-> Lỗi khi xin tracking:", error);
+          const msg = String(error?.message || error || "");
+          if (msg.startsWith("Shopee API Error:")) throw error;
+          throw new Error(
+            "Shopee API Error: " + JSON.stringify({ order_sn, error: msg || String(error) }),
+          );
+        }
+      }
+
+      enrichedOrderList.push({
+        order_sn,
+        package_number: row.package_number,
+        tracking_number: tracking_no,
+      });
+    }
+
+    const createResult = await shopeeCreateShippingDocument(shopId, accessToken, enrichedOrderList);
+    console.log(
+      "=== KẾT QUẢ create_shipping_document ===",
+      JSON.stringify({
+        shopId,
+        error: createResult?.error || null,
+        message: createResult?.message || null,
+        result_list: createResult?.response?.result_list || createResult?.result_list || null,
+      }),
+    );
     const createList: any[] = createResult.response?.result_list || [];
     const failedItems: any[] = createList.filter((it: any) => it.fail_error);
     const failedSnSet = new Set(failedItems.map((it: any) => String(it.order_sn || "")));
-    const originalBySn = new Map(orderList.map((o) => [o.order_sn, o]));
+    const originalBySn = new Map(enrichedOrderList.map((o) => [o.order_sn, o]));
 
     // Thành công = có order_sn và KHÔNG fail — tuyệt đối KHÔNG hardcode/filter theo SPX,
     // và KHÔNG bắt buộc package_number (GHN / "Nhanh Giao Hàng Nhanh" thường thiếu field này).
@@ -17056,7 +17132,7 @@ async function startServer() {
     // Nếu result_list thiếu một phần đơn đã gửi (không nằm trong fail) → vẫn giữ lại để poll/download.
     if (createList.length > 0 || !createResult.error) {
       const okSnSet = new Set(okItems.map((it: any) => String(it.order_sn)));
-      for (const orig of orderList) {
+      for (const orig of enrichedOrderList) {
         const sn = String(orig.order_sn || "");
         if (!sn || failedSnSet.has(sn) || okSnSet.has(sn)) continue;
         okItems.push({
@@ -17068,8 +17144,8 @@ async function startServer() {
     }
 
     // result_list rỗng + không lỗi top-level → Shopee chấp nhận cả batch, poll theo orderList gốc.
-    if (okItems.length === 0 && !createResult.error && failedItems.length === 0 && orderList.length > 0) {
-      okItems = orderList.map((o) => ({
+    if (okItems.length === 0 && !createResult.error && failedItems.length === 0 && enrichedOrderList.length > 0) {
+      okItems = enrichedOrderList.map((o) => ({
         order_sn: o.order_sn,
         package_number: o.package_number,
       }));
@@ -17077,26 +17153,34 @@ async function startServer() {
 
     if (createResult.error && okItems.length === 0) {
       // Top-level error AND nothing usable in result_list — total failure.
+      // Trả nguyên văn payload Shopee (không generic).
+      const rawPayload = JSON.stringify(createResult);
       if (failedItems.length > 0) {
         const first = failedItems[0];
         const detail = failedItems.map((it: any) => `${it.order_sn}: ${it.fail_message || it.fail_error}`).join("; ");
         return {
           success: false,
           error: first.fail_error || createResult.error,
-          message: failedItems.length > 1 ? `${failedItems.length} đơn lỗi: ${detail}` : (first.fail_message || detail),
+          message: `Shopee API Error: ${rawPayload}` + (detail ? ` | ${detail}` : ""),
           permanent: PERMANENT_SHOPEE_DOC_ERRORS.has(first.fail_error),
         };
       }
-      return { success: false, error: createResult.error, message: createResult.message, permanent: PERMANENT_SHOPEE_DOC_ERRORS.has(createResult.error) };
+      return {
+        success: false,
+        error: createResult.error,
+        message: `Shopee API Error: ${rawPayload}`,
+        permanent: PERMANENT_SHOPEE_DOC_ERRORS.has(createResult.error),
+      };
     }
 
     if (okItems.length === 0) {
       // No top-level error, but every order in this batch individually failed.
+      const rawPayload = JSON.stringify({ result_list: failedItems, createResult });
       const detail = failedItems.map((it: any) => `${it.order_sn}: ${it.fail_message || it.fail_error}`).join("; ");
       return {
         success: false,
         error: failedItems[0]?.fail_error || "document_generation_failed",
-        message: detail || "Không có đơn nào tạo vận thành công trong lần gọi này.",
+        message: `Shopee API Error: ${rawPayload}` + (detail ? ` | ${detail}` : ""),
         permanent: PERMANENT_SHOPEE_DOC_ERRORS.has(failedItems[0]?.fail_error),
       };
     }
@@ -17110,12 +17194,16 @@ async function startServer() {
         tracking_number: orig?.tracking_number,
       };
     });
-    const skippedOrders = failedItems.map((it: any) => ({ orderSn: it.order_sn, error: it.fail_error, message: it.fail_message }));
+    const skippedOrders = failedItems.map((it: any) => ({
+      orderSn: it.order_sn,
+      error: it.fail_error,
+      message: it.fail_message || `Shopee API Error: ${JSON.stringify(it)}`,
+    }));
     if (skippedOrders.length > 0) {
-      console.warn(`[Shopee Print] ${skippedOrders.length}/${orderList.length} đơn bị lỗi bỏ khỏi lần tạo vận này (không ảnh hưởng đến ${cleanOrderList.length} đơn còn lại): ${JSON.stringify(skippedOrders)}`);
+      console.warn(`[Shopee Print] ${skippedOrders.length}/${enrichedOrderList.length} đơn bị lỗi bỏ khỏi lần tạo vận này (không ảnh hưởng đến ${cleanOrderList.length} đơn còn lại): ${JSON.stringify(skippedOrders)}`);
     }
     console.log(
-      `[Shopee Print] create_shipping_document OK ${cleanOrderList.length}/${orderList.length} đơn (mọi ĐVVC, không lọc SPX): ${cleanOrderList.map((o) => o.order_sn).join(", ")}`,
+      `[Shopee Print] create_shipping_document OK ${cleanOrderList.length}/${enrichedOrderList.length} đơn (mọi ĐVVC, không lọc SPX): ${cleanOrderList.map((o) => o.order_sn).join(", ")}`,
     );
 
     // Poll get_shipping_document_result until MỌI order_sn READY/FAILED.
@@ -17130,6 +17218,13 @@ async function startServer() {
     while (pendingList.length > 0 && attempts < MAX_POLL_ATTEMPTS) {
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       const pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, pendingList);
+      console.log(
+        "=== KẾT QUẢ get_shipping_document_result ===",
+        "attempt:",
+        attempts + 1,
+        "Response:",
+        JSON.stringify(pollResult),
+      );
       const items: any[] = pollResult.response?.result_list || [];
       const bySn = new Map(items.map((it: any) => [String(it.order_sn || ""), it]));
 
@@ -17137,49 +17232,39 @@ async function startServer() {
       for (const o of pendingList) {
         const it = bySn.get(String(o.order_sn));
         const st = String(it?.status || "").toUpperCase();
-        if (st === "FAILED") {
+        if (st === "READY") {
+          readyDownloadList.push(o);
+        } else if (st === "FAILED" || it?.fail_error) {
           pollFailed.push({
             orderSn: o.order_sn,
-            error: it?.fail_error || "document_generation_failed",
-            message: it?.fail_message || "Shopee không tạo được vận đơn cho đơn này.",
-          });
-        } else if (st === "READY") {
-          readyDownloadList.push({
-            ...o,
-            package_number: it?.package_number || o.package_number,
+            error: it?.fail_error || "document_failed",
+            message: it?.fail_message || `Shopee API Error: ${JSON.stringify(it || pollResult)}`,
           });
         } else {
-          // PROCESSING / thiếu item → tiếp tục chờ (GHN hay chậm hơn SPX).
           stillProcessing.push(o);
         }
       }
-
-      console.log(
-        `[Shopee Print] Poll ${attempts + 1}/${MAX_POLL_ATTEMPTS}: READY=${readyDownloadList.length} PROCESSING=${stillProcessing.length} FAILED=${pollFailed.length}`,
-      );
       pendingList = stillProcessing;
       attempts++;
+      if (pendingList.length === 0) break;
     }
 
-    if (pendingList.length > 0) {
-      console.warn(
-        `[Shopee Print] Hết lượt poll — ${pendingList.length} đơn vẫn PROCESSING: ${pendingList.map((o) => o.order_sn).join(", ")}`,
-      );
-      for (const o of pendingList) {
-        pollFailed.push({
-          orderSn: o.order_sn,
-          error: "document_still_processing",
-          message: "Shopee vẫn đang generate vận đơn (hãng ngoài SPX thường chậm hơn) — thử in lại đơn này.",
-        });
-      }
+    // Đơn còn pending sau max poll → coi như failed với raw poll context
+    for (const o of pendingList) {
+      pollFailed.push({
+        orderSn: o.order_sn,
+        error: "document_not_ready",
+        message: `Shopee API Error: document not READY after poll (order_sn=${o.order_sn})`,
+      });
     }
 
     if (readyDownloadList.length === 0) {
-      const item = pollFailed[0];
+      const first = pollFailed[0];
       return {
         success: false,
-        error: item?.error || "document_generation_failed",
-        message: item?.message || "Shopee không thể tạo vận đơn cho đơn hàng này (có thể đơn chưa ở trạng thái đã xử lý).",
+        error: first?.error || "document_not_ready",
+        message: first?.message || "Shopee API Error: no READY shipping document",
+        permanent: PERMANENT_SHOPEE_DOC_ERRORS.has(first?.error),
         skippedOrders: [...skippedOrders, ...pollFailed],
       };
     }
