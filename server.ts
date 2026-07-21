@@ -7975,9 +7975,9 @@ async function ensureShopeeTrackingForBatch(
         fetched++;
         await persistOrderTrackingToDb(order);
       }
-    } catch (err) {
-      // Catch + continue — tránh rò rỉ / treo process khi 1 đơn GHN lỗi API.
-      console.warn(`[Shopee Tracking] auto-fetch ${order?.orderSn}:`, err);
+    } catch (error) {
+      console.error("Lỗi 1 đơn:", error);
+      continue;
     } finally {
       await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
