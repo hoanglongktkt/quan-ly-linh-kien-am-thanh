@@ -8861,7 +8861,7 @@ function upsertShopeeOrdersIntoStore(
 
 /** Tránh gọi Shopee backfill ĐVVC liên tục mỗi lần refresh trang. */
 let lastShippingCarrierBackfillAt = 0;
-const SHIPPING_CARRIER_BACKFILL_COOLDOWN_MS = 5 * 60 * 1000;
+const SHIPPING_CARRIER_BACKFILL_COOLDOWN_MS = 60 * 1000;
 
 /**
  * Backfill shipping_carrier từ get_order_detail cho đơn READY_TO_SHIP thiếu ĐVVC.

@@ -71,6 +71,8 @@ import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse, readRes
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import {
+  collectCarrierDebugFields,
+  getOrderCarrierText,
   getShippingCarrierGroup,
   orderMatchesShippingCarrierFilter,
   type ShippingCarrierFilter,
@@ -1995,9 +1997,24 @@ export default function OrderManager({
     };
     if (activeSubTab !== 'unprocessed') return counts;
     for (const order of ordersPoolBeforeCarrier) {
+      const group = getShippingCarrierGroup(order);
       counts.all += 1;
-      counts[getShippingCarrierGroup(order)] += 1;
+      counts[group] += 1;
+      // TEMP DEBUG — xem field ĐVVC thực tế từ API/DB (xóa sau khi ổn định)
+      console.log('Check carrier:', {
+        orderSn: order.orderSn,
+        group,
+        text: getOrderCarrierText(order),
+        shipping_carrier: (order as any).shipping_carrier,
+        checkout_shipping_carrier: (order as any).checkout_shipping_carrier,
+        logistics_channel_name: (order as any).logistics_channel_name,
+        logistics_channel_id: (order as any).logistics_channel_id,
+        channel_id: (order as any).channel_id,
+        trackingNumber: order.trackingNumber || order.tracking_no,
+        fields: collectCarrierDebugFields(order),
+      });
     }
+    console.log('Check carrier COUNTS:', counts);
     return counts;
   }, [activeSubTab, ordersPoolBeforeCarrier]);
 
