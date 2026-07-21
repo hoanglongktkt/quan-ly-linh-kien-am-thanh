@@ -31,6 +31,7 @@ export function getOrderTrackingNo(
   order: Partial<Order> & Record<string, unknown>,
 ): string {
   const candidates = [
+    order.return_tracking_no,
     order.trackingNumber,
     order.tracking_no,
     order.shopee_tracking_number,
@@ -232,7 +233,8 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 }
 
 /**
- * Đủ điều kiện BÀN GIAO ĐVVC (QR / nút): đang ở pool "Chờ lấy hàng (đã xử lý)".
+ * Đủ điều kiện BÀN GIAO ĐVVC (QR / nút):
+ * trùng pool Tab "Chờ lấy hàng (đã xử lý)" + có mã VĐ hiển thị được.
  */
 export function isEligibleForHandOverToCarrier(order: Order): boolean {
   if (isOrderHandedOverToCarrier(order)) return false;
@@ -240,8 +242,32 @@ export function isEligibleForHandOverToCarrier(order: Order): boolean {
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (!isShopeeReadyToShipStatus(order)) return false;
   if (!isProcessedCondition(order)) return false;
+  // Cùng nguồn với UI mã VĐ (getCarrierWaybillDisplay) — tránh lệch return_tracking_no.
   if (!hasOrderTrackingNo(order)) return false;
   return true;
+}
+
+/** Lý do từ chối bàn giao — dùng toast/debug. */
+export function getHandOverIneligibleReason(order: Order): string {
+  if (isOrderHandedOverToCarrier(order)) {
+    return 'Đơn đã có cờ bàn giao ĐVVC nội bộ';
+  }
+  if (hasLeftHandedOverCarrierTab(order)) {
+    return `Đơn đã Đang giao/hoàn tất/hủy (status=${order.status}, shopee=${order.shopee_order_status || '-'})`;
+  }
+  if (isShopeeCancelledLikeStatus(order)) {
+    return 'Đơn thuộc hủy/hoàn — không vào tab ĐVVC';
+  }
+  if (!isShopeeReadyToShipStatus(order)) {
+    return `Không còn chờ lấy hàng (status=${order.status}, shopee=${order.shopee_order_status || '-'})`;
+  }
+  if (!isProcessedCondition(order)) {
+    return 'Chưa đủ điều kiện Đã xử lý (thiếu PROCESSED/mã VĐ)';
+  }
+  if (!hasOrderTrackingNo(order)) {
+    return 'Chưa có mã vận đơn trong trackingNumber/tracking_no/return_tracking_no';
+  }
+  return '';
 }
 
 /**

@@ -25,6 +25,7 @@ import {
   isShopeeShippingStatus,
   isShopeeReadyToShipStatus,
   hasOrderTrackingNo,
+  getOrderTrackingNo,
   isProcessedCondition,
   isOrderPrintedEffective,
   isOrderPreparedEffective,
@@ -32,6 +33,7 @@ import {
   applyHandedOverWrite,
   buildHandedOverWritePatch,
   isEligibleForHandOverToCarrier,
+  getHandOverIneligibleReason,
   HANDED_OVER_SOURCE,
   UI_TAB_HANDED_OVER_CARRIER,
 } from '../utils/orderHandover';
@@ -752,10 +754,8 @@ export default function OrderManager({
         return false;
       }
       if (!isEligibleForHandOverToCarrier(order) && !isOrderHandedOverToCarrier(order)) {
-        showScanToast(
-          `Đơn #${order.orderSn} không ở Chờ lấy hàng (đã xử lý) — không giao ĐVVC.`,
-          'error',
-        );
+        const why = getHandOverIneligibleReason(order) || 'không đủ điều kiện';
+        showScanToast(`Đơn #${order.orderSn}: ${why}`, 'error');
         return false;
       }
       if (isOrderHandedOverToCarrier(order)) {
@@ -771,13 +771,21 @@ export default function OrderManager({
       setHandingOverOrderId(order.id);
       try {
         const orderKey = order.id || order.orderSn;
+        const waybill = getOrderWaybillCode(order) || getOrderTrackingNo(order) || order.trackingNumber || order.tracking_no || '';
+        const handOverBody = JSON.stringify({
+          orderId: order.id,
+          orderSn: order.orderSn,
+          trackingNumber: waybill,
+          tracking_no: waybill,
+          waybill,
+        });
         let res = await fetch(`/api/orders/${encodeURIComponent(orderKey)}/hand-over-carrier`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ orderId: order.id, orderSn: order.orderSn }),
+          body: handOverBody,
         });
         let data = await res.json().catch(() => ({}));
 
@@ -789,7 +797,7 @@ export default function OrderManager({
               Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ orderId: order.id, orderSn: order.orderSn }),
+            body: handOverBody,
           });
           if (altRes.ok) {
             res = altRes;
@@ -2543,8 +2551,12 @@ export default function OrderManager({
       (o) => isEligibleForHandOverToCarrier(o) && !isOrderHandedOverToCarrier(o),
     );
     if (eligible.length === 0) {
+      const sample = selected[0];
+      const why = sample ? getHandOverIneligibleReason(sample) : '';
       showToast(
-        'Không có đơn hợp lệ (chỉ Chờ lấy hàng đã xử lý + có mã VĐ + chưa giao ĐVVC).',
+        why
+          ? `Không bàn giao được: ${why}`
+          : 'Không có đơn hợp lệ (chỉ Chờ lấy hàng đã xử lý + có mã VĐ + chưa giao ĐVVC).',
       );
       return;
     }
@@ -4105,7 +4117,9 @@ export default function OrderManager({
                             </>
                           )}
 
-                          {isEligibleForHandOverToCarrier(order) && !isOrderHandedOverToCarrier(order) && (
+                          {(isEligibleForHandOverToCarrier(order) ||
+                            (matchesProcessedPickupTab(order) && Boolean(getOrderWaybillCode(order)))) &&
+                            !isOrderHandedOverToCarrier(order) && (
                             <>
                               <span className={`om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded ${
                                 isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50'
@@ -4363,7 +4377,9 @@ export default function OrderManager({
                         </>
                       )}
 
-                      {isEligibleForHandOverToCarrier(order) && !isOrderHandedOverToCarrier(order) && (
+                      {(isEligibleForHandOverToCarrier(order) ||
+                        (matchesProcessedPickupTab(order) && Boolean(getOrderWaybillCode(order)))) &&
+                        !isOrderHandedOverToCarrier(order) && (
                         <>
                           <span className={`om-mobile-hide-print text-[11px] font-black px-2.5 py-1 rounded-xl border ${
                             isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-rose-600 bg-rose-50 border-rose-100'

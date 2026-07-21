@@ -24,6 +24,8 @@ import {
 import {
   isEligibleForHandOverToCarrier as isEligibleForHandOverShared,
   matchesProcessedPickupTab as matchesProcessedPickupTabShared,
+  getHandOverIneligibleReason as getHandOverIneligibleReasonShared,
+  hasOrderTrackingNo as hasOrderTrackingNoShared,
 } from "./src/utils/orderHandover.ts";
 import {
   initMongo,
@@ -7665,7 +7667,11 @@ const SHOPEE_RAW_STATUSES_MAY_HAVE_TRACKING = new Set([
 
 function hasUsableShopeeTrackingNumber(order: any): boolean {
   const tn = String(
-    order?.trackingNumber || order?.tracking_no || order?.return_tracking_no || "",
+    order?.return_tracking_no ||
+      order?.trackingNumber ||
+      order?.tracking_no ||
+      order?.shopee_tracking_number ||
+      "",
   ).trim();
   if (tn && !isShopeeInternalTrackingCode(tn)) {
     // Đồng bộ mirror fields để UI/quét barcode nhận cùng một mã.
@@ -15624,12 +15630,23 @@ async function startServer() {
   async function handOverOrderToCarrierByIndex(
     orders: any[],
     index: number,
-    opts?: { persist?: boolean; source?: "qr_scan" | "manual_button" },
+    opts?: {
+      persist?: boolean;
+      source?: "qr_scan" | "manual_button";
+      trackingHint?: string;
+    },
   ): Promise<{ ok: true; order: any; changed: boolean } | { ok: false; status: number; error: string }> {
     if (index < 0) {
       return { ok: false, status: 404, error: "Không tìm thấy đơn hàng." };
     }
     const order = orders[index];
+
+    // FE gửi mã VĐ đang hiện trên UI → merge trước khi check (tránh JSON thiếu tracking).
+    const hint = String(opts?.trackingHint || "").trim();
+    if (hint && !isShopeeInternalTrackingCode(hint)) {
+      if (!order.trackingNumber) order.trackingNumber = hint;
+      if (!order.tracking_no) order.tracking_no = hint;
+    }
 
     // EXIT / terminal — không ghi vào tab ĐVVC.
     if (hasLeftHandedOverCarrierTab(order)) {
@@ -15644,12 +15661,21 @@ async function startServer() {
       return { ok: true, order, changed: false };
     }
 
-    // STRICT: chỉ đơn thuộc "Chờ lấy hàng (đã xử lý)" + có mã VĐ.
-    if (!isEligibleForHandOverShared(order)) {
+    // Cho phép nếu khớp Tab Đã xử lý + có mã VĐ (cùng nguồn UI).
+    const eligible =
+      isEligibleForHandOverShared(order) ||
+      (matchesProcessedPickupTabShared(order) && hasOrderTrackingNoShared(order));
+    if (!eligible) {
+      const detail =
+        getHandOverIneligibleReasonShared(order) ||
+        `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}, tn=${order?.trackingNumber || order?.tracking_no || "-"}`;
+      console.warn(
+        `[Orders Handover] REJECT ${order?.orderSn}: ${detail}`,
+      );
       return {
         ok: false,
         status: 400,
-        error: `Đơn ${order?.orderSn || order?.id} không nằm ở Chờ lấy hàng (đã xử lý) — chỉ QR/nút bàn giao mới đưa vào ĐVVC.`,
+        error: `Đơn ${order?.orderSn || order?.id} không đủ điều kiện bàn giao ĐVVC: ${detail}`,
       };
     }
 
@@ -15663,7 +15689,7 @@ async function startServer() {
       await persistOrdersToDatabase(orders, [updated]);
     }
     console.log(
-      `[Orders Handover] đơn ${updated.orderSn} → ${ORDER_LOCAL_STATUS.HANDED_OVER} source=${source}`,
+      `[Orders Handover] đơn ${updated.orderSn} → ${ORDER_LOCAL_STATUS.HANDED_OVER} source=${source} tn=${updated.trackingNumber || updated.tracking_no || "-"}`,
     );
     return { ok: true, order: updated, changed: true };
   }
@@ -15987,8 +16013,16 @@ async function startServer() {
       const loaded = await loadOrdersForApi();
       const orders = loaded.orders;
       const hit = findOrderRecord(orders, String(req.params.id || ""));
+      const trackingHint = String(
+        req.body?.trackingNumber ||
+          req.body?.tracking_no ||
+          req.body?.waybill ||
+          req.body?.code ||
+          "",
+      ).trim();
       const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1, {
         source: "manual_button",
+        trackingHint,
       });
       if (!result.ok) {
         return res.status(result.status).json({ success: false, error: result.error, message: result.error });
@@ -16036,6 +16070,7 @@ async function startServer() {
 
       const result = await handOverOrderToCarrierByIndex(orders, index, {
         source: code ? "qr_scan" : "manual_button",
+        trackingHint: code || String(req.body?.trackingNumber || req.body?.tracking_no || "").trim(),
       });
       if (!result.ok) {
         return res.status(result.status).json({ success: false, error: result.error, message: result.error });
