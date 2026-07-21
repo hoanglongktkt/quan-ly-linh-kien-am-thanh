@@ -10147,32 +10147,28 @@ function saveOrders(orders: any[]): void {
   }
 }
 
-/** Đơn rác tab ĐÃ GIAO CHO ĐVVC (cờ quét QR nội bộ cũ). */
+/** Đơn đang hiện ở tab ĐÃ GIAO CHO ĐVVC — cùng điều kiện UI (truthy flags). */
 function isHandedOverGarbageOrder(order: any): boolean {
-  if (!order || typeof order !== "object") return false;
-  const local = String(order.local_status || order.localStatus || "").toUpperCase();
-  return (
-    local === "HANDED_OVER" ||
-    order.isHandedOverToCarrier === true ||
-    order.is_handed_over_to_carrier === true
-  );
+  return matchesHandedOverCarrierTabOrder(order);
 }
 
-const HANDED_OVER_CLEANUP_MARKER = path.join(APP_ROOT, "data", ".cleanup-handed-over-v1");
+const HANDED_OVER_CLEANUP_MARKER = path.join(APP_ROOT, "data", ".cleanup-handed-over-v2");
 
 /**
- * One-shot: XÓA đơn có cờ HANDED_OVER khỏi JSON (+ Mongo nếu sẵn sàng).
- * Chạy 1 lần sau deploy để dọn 14 đơn kẹt logic cũ.
+ * XÓA HẾT đơn match tab ĐÃ GIAO CHO ĐVVC (JSON bulk + Mongo deleteMany).
+ * Không skip nếu vẫn còn đơn match (tránh marker v1 xóa sót).
  */
 async function purgeHandedOverGarbageOrdersOnce(
   opts?: { force?: boolean },
 ): Promise<{ removed: number; sns: string[]; skipped: boolean }> {
   const force = Boolean(opts?.force);
-  if (!force && fs.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
-    return { removed: 0, sns: [], skipped: true };
-  }
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
+
+  if (!force && garbage.length === 0 && fs.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+    return { removed: 0, sns: [], skipped: true };
+  }
+
   const sns = garbage
     .map((o) => String(o.orderSn || o.id || "").trim())
     .filter(Boolean);
@@ -10180,6 +10176,7 @@ async function purgeHandedOverGarbageOrdersOnce(
 
   if (garbage.length > 0) {
     saveOrders(orders.filter((o) => !isHandedOverGarbageOrder(o)));
+    console.log(`Deleted count (JSON): ${garbage.length}`);
   }
 
   let mongoDeleted = 0;
@@ -10189,10 +10186,10 @@ async function purgeHandedOverGarbageOrdersOnce(
       if (ids.length || sns.length) {
         mongoDeleted += await deleteOrdersFromStore([...ids, ...sns]);
       }
-      // Xóa theo cờ trên Mongo (kể cả khi JSON local không còn bản ghi).
       const byFlag = await deleteHandedOverOrdersFromStore();
       mongoDeleted += byFlag.deleted;
       mongoSns = byFlag.sns;
+      console.log(`Deleted count (Mongo): ${mongoDeleted}`);
     } catch (err: any) {
       console.warn("[Cleanup HandedOver] Mongo delete failed:", err?.message || err);
     }
@@ -10200,26 +10197,34 @@ async function purgeHandedOverGarbageOrdersOnce(
 
   const allSns = [...new Set([...sns, ...mongoSns])];
   const removed = Math.max(garbage.length, allSns.length, mongoDeleted);
+  console.log(`Deleted count: ${removed}`);
 
-  try {
-    fs.mkdirSync(path.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-    fs.writeFileSync(
-      HANDED_OVER_CLEANUP_MARKER,
-      JSON.stringify(
-        {
-          at: new Date().toISOString(),
-          removed,
-          jsonRemoved: garbage.length,
-          mongoDeleted,
-          sns: allSns,
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
-  } catch {
-    /* ignore */
+  const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
+  if (stillLeft === 0) {
+    try {
+      const v1 = path.join(APP_ROOT, "data", ".cleanup-handed-over-v1");
+      if (fs.existsSync(v1)) fs.unlinkSync(v1);
+      fs.mkdirSync(path.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      fs.writeFileSync(
+        HANDED_OVER_CLEANUP_MARKER,
+        JSON.stringify(
+          {
+            at: new Date().toISOString(),
+            removed,
+            jsonRemoved: garbage.length,
+            mongoDeleted,
+            sns: allSns,
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+    } catch {
+      /* ignore */
+    }
+  } else {
+    console.warn(`[Cleanup HandedOver] Vẫn còn ${stillLeft} đơn ĐVVC sau purge — sẽ chạy lại.`);
   }
 
   console.log(
@@ -15186,15 +15191,17 @@ async function startServer() {
 
   app.post("/api/orders/cleanup-handed-over", authMiddleware, async (_req, res) => {
     try {
-      // Force: cho phép chạy lại nếu marker đã có.
-      try {
-        if (fs.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
-          fs.unlinkSync(HANDED_OVER_CLEANUP_MARKER);
+      // Force: xóa mọi marker để chạy lại deleteMany.
+      for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
+        try {
+          const p = path.join(APP_ROOT, "data", name);
+          if (fs.existsSync(p)) fs.unlinkSync(p);
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
       }
       const result = await purgeHandedOverGarbageOrdersOnce({ force: true });
+      console.log(`Deleted count: ${result.removed}`);
       return res.json({
         success: true,
         removed: result.removed,
@@ -15484,6 +15491,45 @@ async function startServer() {
     }
     await persistOrdersToDatabase(orders, [orders[index]]);
     return res.json(orders[index]);
+  });
+
+  // Xóa hẳn 1 đơn khỏi JSON + Mongo (dùng cho cleanup tab ĐVVC).
+  app.delete("/api/orders/:id", authMiddleware, async (req, res) => {
+    const key = String(req.params.id || "").trim();
+    if (!key) {
+      return res.status(400).json({ success: false, error: "Thiếu id đơn." });
+    }
+    const orders = loadOrders();
+    const index = orders.findIndex(
+      (o: any) =>
+        o.id === key ||
+        o.orderSn === key ||
+        o.id === `shopee-${key}` ||
+        String(o.orderSn || "") === key.replace(/^shopee-/i, ""),
+    );
+    if (index === -1) {
+      return res.status(404).json({ success: false, error: "Không tìm thấy đơn hàng." });
+    }
+    const removed = orders[index];
+    const sn = String(removed.orderSn || removed.id || "").trim();
+    const id = String(removed.id || "").trim();
+    orders.splice(index, 1);
+    saveOrders(orders);
+    let mongoDeleted = 0;
+    if (isMongoReady()) {
+      try {
+        mongoDeleted = await deleteOrdersFromStore([id, sn].filter(Boolean));
+      } catch (err: any) {
+        console.warn("[Orders DELETE] Mongo:", err?.message || err);
+      }
+    }
+    console.log(`Deleted count: 1 (orderSn=${sn}, mongoDeleted=${mongoDeleted})`);
+    return res.json({
+      success: true,
+      removed: 1,
+      orderSn: sn,
+      mongoDeleted,
+    });
   });
 
   // Ghi nhận nội bộ: đã bàn giao cho bưu tá/ĐVVC (chưa quét nhập kho Shopee).

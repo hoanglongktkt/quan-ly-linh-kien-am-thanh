@@ -1139,12 +1139,15 @@ export async function deleteHandedOverOrdersFromStore(): Promise<{
   requireMongo();
   const filter = {
     $or: [
-      { "data.local_status": "HANDED_OVER" },
-      { "data.localStatus": "HANDED_OVER" },
-      { "data.isHandedOverToCarrier": true },
-      { "data.is_handed_over_to_carrier": true },
-      { local_status: "HANDED_OVER" },
-      { is_handed_over_to_carrier: true },
+      { "data.local_status": { $regex: /^HANDED_OVER$/i } },
+      { "data.localStatus": { $regex: /^HANDED_OVER$/i } },
+      { "data.isHandedOverToCarrier": { $in: [true, "true", 1, "1"] } },
+      { "data.is_handed_over_to_carrier": { $in: [true, "true", 1, "1"] } },
+      { local_status: { $regex: /^HANDED_OVER$/i } },
+      { is_handed_over_to_carrier: { $in: [true, "true", 1, "1"] } },
+      { isHandedOverToCarrier: { $in: [true, "true", 1, "1"] } },
+      { status: "handed_over" },
+      { "data.status": "handed_over" },
     ],
   };
   const docs = await OrderModel.find(filter)
@@ -1159,11 +1162,14 @@ export async function deleteHandedOverOrdersFromStore(): Promise<{
         .filter(Boolean),
     ),
   ];
+  // deleteMany — không deleteOne / không LIMIT
   const result = await OrderModel.deleteMany(filter);
+  const deleted = Number(result.deletedCount || 0);
+  console.log(`Deleted count: ${deleted}`);
   console.log(
-    `[MongoDB] deleteHandedOver — deleted=${result.deletedCount || 0} sns=${sns.join(",") || "(none)"}`,
+    `[MongoDB] deleteHandedOver deleteMany — deleted=${deleted} matched=${docs.length} sns=${sns.join(",") || "(none)"}`,
   );
-  return { deleted: Number(result.deletedCount || 0), sns };
+  return { deleted, sns };
 }
 
 export async function flushDbWrites(): Promise<void> {
