@@ -73,6 +73,10 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (v === 'pickup' || v === 'pick_up' || v === 'pick-up') return 'pickup';
       return undefined;
     })(),
+    shipping_carrier: (() => {
+      const v = String(raw.shipping_carrier || raw.shippingCarrier || '').trim();
+      return v || undefined;
+    })(),
     return_tracking_no: raw.return_tracking_no
       ? String(raw.return_tracking_no)
       : undefined,

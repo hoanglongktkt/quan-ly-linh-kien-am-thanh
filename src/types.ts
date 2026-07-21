@@ -148,6 +148,8 @@ export interface Order {
     fullAddress?: string;
   };
   carrier?: 'self' | 'ghn' | 'spx';
+  /** Tên ĐVVC từ Shopee (shipping_carrier / package_list) — VD: SPX Express, Giao Hàng Nhanh */
+  shipping_carrier?: string;
   totalAmount: number;
   /** Tổng tiền sản phẩm gốc từ get_escrow_detail (item_amount) */
   item_amount?: number;

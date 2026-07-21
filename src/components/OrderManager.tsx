@@ -1002,6 +1002,8 @@ export default function OrderManager({
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
   /** Toolbar: chỉ hiện đơn chưa in (theo isOrderPrintedEffective). */
   const [filterUnprinted, setFilterUnprinted] = useState(false);
+  /** Tab Chờ lấy hàng (Chưa xử lý): lọc theo ĐVVC — all | spx | ghn | other */
+  const [selectedShippingCarrier, setSelectedShippingCarrier] = useState<'all' | 'spx' | 'ghn' | 'other'>('all');
 
   // Detail Modal & Bulk Print Modal
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -1910,6 +1912,29 @@ export default function OrderManager({
     return String(item.productTitle || item.modelSku || item.modelName || '').trim();
   };
 
+  /** Nhóm ĐVVC cho bộ lọc chip: SPX / GHN / Khác */
+  const getShippingCarrierGroup = (order: Order): 'spx' | 'ghn' | 'other' => {
+    const raw = String(order.shipping_carrier || '').trim().toLowerCase();
+    if (!raw) return 'other';
+    if (
+      raw.includes('spx') ||
+      raw.includes('shopee express') ||
+      raw.includes('shopee xpress') ||
+      raw.includes('shopeeexpress')
+    ) {
+      return 'spx';
+    }
+    if (
+      raw.includes('ghn') ||
+      raw.includes('giao hàng nhanh') ||
+      raw.includes('giao hang nhanh') ||
+      raw.includes('giaohangnhanh')
+    ) {
+      return 'ghn';
+    }
+    return 'other';
+  };
+
   const filteredOrdersBase = orders.filter(order => {
     // 1. Tab filter
     if (activeSubTab === 'cancel_returns') {
@@ -1950,6 +1975,11 @@ export default function OrderManager({
       if (!matchSn && !matchTracking && !matchInternal && !matchProduct) return false;
     }
 
+    // 5. ĐVVC filter — chỉ áp dụng tab Chờ lấy hàng (Chưa xử lý)
+    if (activeSubTab === 'unprocessed' && selectedShippingCarrier !== 'all') {
+      if (getShippingCarrierGroup(order) !== selectedShippingCarrier) return false;
+    }
+
     return true;
   }).sort((a, b) => {
     const dateMs = (o: Order) => new Date(o.date || 0).getTime() || 0;
@@ -1988,12 +2018,41 @@ export default function OrderManager({
     ? filteredOrdersSorted.filter((o) => !isOrderPrintedEffective(o))
     : filteredOrdersSorted;
 
-  // Resolve checkbox selections to full Order rows — match internal id, orderSn,
-  // or the normalized shopee-{orderSn} id so bulk actions never lose selections.
+  /** Đếm ĐVVC trên tab unprocessed (trước khi áp carrier filter) để hiển thị chip. */
+  const shippingCarrierCounts = useMemo(() => {
+    const counts = { all: 0, spx: 0, ghn: 0, other: 0 };
+    for (const order of orders) {
+      if (!matchesUnprocessedPickupTab(order) || isPendingConfirmOrder(order)) continue;
+      if (selectedPlatform !== 'all') {
+        if (selectedPlatform === 'lazada') continue;
+        if (order.channel !== selectedPlatform) continue;
+      }
+      if (selectedShopId !== 'all' && order.shopId !== selectedShopId) continue;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
+        const matchTracking = order.trackingNumber ? order.trackingNumber.toLowerCase().includes(q) : false;
+        const matchInternal = order.internalTrackingCode
+          ? order.internalTrackingCode.toLowerCase().includes(q)
+          : false;
+        const matchProduct = (order.items || []).some((it) =>
+          String(it.productTitle || '').toLowerCase().includes(q),
+        );
+        if (!matchSn && !matchTracking && !matchInternal && !matchProduct) continue;
+      }
+      const group = getShippingCarrierGroup(order);
+      counts.all += 1;
+      counts[group] += 1;
+    }
+    return counts;
+  }, [orders, selectedPlatform, selectedShopId, searchQuery]);
+
+  // Resolve checkbox selections to full Order rows — CHỈ lấy đơn đang hiển thị
+  // (đã lọc ĐVVC), để In/Xác nhận hàng loạt không đụng đơn bị ẩn.
   const getSelectedOrders = (): Order[] => {
     if (selectedOrderIds.length === 0) return [];
     const keySet = new Set(selectedOrderIds.map(k => String(k).trim()).filter(Boolean));
-    return orders.filter(o =>
+    return filteredOrders.filter(o =>
       keySet.has(o.id) ||
       keySet.has(o.orderSn) ||
       keySet.has(`shopee-${o.orderSn}`)
@@ -3179,6 +3238,39 @@ export default function OrderManager({
               Ưu tiên đơn 1 sản phẩm (Gom nhóm nhặt hàng)
             </span>
           </label>
+        )}
+        {activeSubTab === 'unprocessed' && (
+          <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="text-xs font-bold text-slate-600 shrink-0">Đơn vị vận chuyển</span>
+            {(
+              [
+                { key: 'all' as const, label: 'Tất cả' },
+                { key: 'spx' as const, label: 'SPX Express' },
+                { key: 'ghn' as const, label: 'Giao Hàng Nhanh' },
+                { key: 'other' as const, label: 'ĐVVC Khác' },
+              ] as const
+            ).map((opt) => {
+              const count = shippingCarrierCounts[opt.key];
+              const active = selectedShippingCarrier === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedShippingCarrier(opt.key);
+                    setSelectedOrderIds([]);
+                  }}
+                  className={`text-[11px] font-bold px-3.5 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap ${
+                    active
+                      ? 'border-[#ee4d2d] text-[#ee4d2d] bg-orange-50/40'
+                      : 'border-gray-200 text-slate-700 bg-white hover:border-gray-300'
+                  }`}
+                >
+                  {opt.label} ({count})
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
       )}
