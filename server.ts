@@ -17588,9 +17588,6 @@ async function startServer() {
       groups[o.shopId].push(o);
     }
 
-    const TRACKING_MISSING_MSG =
-      "Chưa thể lấy được mã vận đơn từ Shopee, vui lòng chờ Shopee duyệt đơn";
-
     const documents: any[] = [];
     const savedFilenames: string[] = [];
     const mergeBuffers: Buffer[] = [];
