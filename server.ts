@@ -1473,14 +1473,14 @@ const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
 /** get_return_list: page_size tối đa Shopee = 100; paginate đầy đủ. */
 const SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
 const SHOPEE_RETURN_LIST_MAX_PAGES = 50;
-/** Shopee v2 get_order_detail cho phép tối đa 50 order_sn / 1 lần gọi — giữ 1 để tuần tự chống 503. */
-const SHOPEE_SYNC_CHUNK_SIZE = 1;
-/** Delay giữa các lô khi đồng bộ đơn hàng (ms). */
-const ORDER_SYNC_SAVE_DELAY_MS = 500;
-/** Nghỉ giữa mỗi lần get_tracking_number — tránh cạn process / 429. */
-const SHOPEE_TRACKING_FETCH_DELAY_MS = 500;
-/** Nghỉ giữa các chunk đơn hàng (đồng bộ nền). */
-const SHOPEE_SYNC_CHUNK_DELAY_MS = 500;
+/** Batch sync: 10–20 đơn/lô — 1 lần get_order_detail + 1 lần Mongo bulkWrite (không update từng đơn). */
+const SHOPEE_SYNC_CHUNK_SIZE = 15;
+/** Nghỉ 1s giữa các lô — nhường GC / giải phóng process cPanel. */
+const ORDER_SYNC_SAVE_DELAY_MS = 1000;
+/** Nghỉ giữa mỗi lần get_tracking_number — tránh 429. */
+const SHOPEE_TRACKING_FETCH_DELAY_MS = 200;
+/** Nghỉ giữa các chunk đơn hàng (đồng bộ nền) = 1s. */
+const SHOPEE_SYNC_CHUNK_DELAY_MS = 1000;
 const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
 const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1000;
 /** Delay tối thiểu giữa mỗi lần gọi API sản phẩm Shopee */
@@ -1535,7 +1535,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** Nghỉ giữa mỗi đơn khi sync — bắt buộc chống spike process cPanel. */
+/** Nghỉ giữa các batch sync (mặc định 1s) — GC / chống spike process cPanel. */
 function delay(ms: number = ORDER_SYNC_SAVE_DELAY_MS): Promise<void> {
   return sleep(ms);
 }
@@ -8224,9 +8224,6 @@ async function ensureShopeeTrackingForBatch(
     if (!needsShopeeTrackingEnrichment(order)) continue;
     needFetch.push(order);
   }
-  // #region agent log
-  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6d934e'},body:JSON.stringify({sessionId:'6d934e',runId:'perf-fix',hypothesisId:'PERF',location:'server.ts:ensureShopeeTrackingForBatch',message:'sequential tracking batch start',data:{batchSize:batch.length,needFetch:needFetch.length,delayMs:SHOPEE_TRACKING_FETCH_DELAY_MS},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   for (const order of needFetch) {
     try {
       await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, order, {
@@ -8234,12 +8231,13 @@ async function ensureShopeeTrackingForBatch(
         retries: 2,
       });
       promoteOrderStatusWhenTrackingReady(order);
+      enforceShopeeTerminalLocalStatus(order);
       if (hasUsableShopeeTrackingNumber(order)) {
         fetched++;
-        await persistOrderTrackingToDb(order);
+        // Không ghi Mongo từng đơn — bulkWrite 1 lần ở persistShopeeOrderChunk.
       }
     } catch (error) {
-      console.error("Lỗi 1 đơn:", error);
+      console.error("Lỗi 1 đơn (tracking skip):", error);
       continue;
     } finally {
       await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
@@ -8247,7 +8245,7 @@ async function ensureShopeeTrackingForBatch(
   }
   if (fetched > 0) {
     console.log(
-      `[Shopee Tracking] ensureShopeeTrackingForBatch: đã lấy ${fetched}/${needFetch.length} đơn (shop=${apiShopId}, delay=${SHOPEE_TRACKING_FETCH_DELAY_MS}ms).`,
+      `[Shopee Tracking] ensureShopeeTrackingForBatch: đã lấy ${fetched}/${needFetch.length} đơn (shop=${apiShopId}).`,
     );
   }
   return fetched;
@@ -9305,7 +9303,7 @@ async function syncShopeeCancelReturnsForShop(
         }
       }
       if (i + SHOPEE_SYNC_CHUNK_SIZE < toFetch.length) {
-        await sleep(ORDER_SYNC_SAVE_DELAY_MS);
+        await new Promise((r) => setTimeout(r, 1000));
       }
     }
   } catch (cancelErr: any) {
@@ -9333,8 +9331,9 @@ async function syncShopeeCancelReturnsForShop(
 }
 
 /**
- * Upsert lô đơn — STRICT tuần tự for...of, try/catch từng đơn, delay 500ms sau mỗi đơn.
- * CẤM Promise.all / map(async). SHIPPED/COMPLETED luôn ghi đè PROCESSED.
+ * Upsert lô đơn — map SHIPPED→shipping (Đang giao) / COMPLETED→completed (Đã giao) in-memory,
+ * rồi 1 lần Mongo bulkWrite cho cả lô. CẤM update/upsert từng đơn + CẤM Promise.all.
+ * Nghỉ 1s giữa các lô do caller (`await new Promise(r => setTimeout(r, 1000))`).
  */
 async function persistShopeeOrderChunk(
   orders: any[],
@@ -9347,9 +9346,26 @@ async function persistShopeeOrderChunk(
     return { added, updated };
   }
 
+  // Quá 20 đơn → chia sub-batch, nghỉ 1s giữa các sub-batch (GC).
+  const MAX_BATCH = 20;
+  if (batchNormalized.length > MAX_BATCH) {
+    for (let i = 0; i < batchNormalized.length; i += MAX_BATCH) {
+      const sub = batchNormalized.slice(i, i + MAX_BATCH);
+      const part = await persistShopeeOrderChunk(orders, sub, syncCtx);
+      added += part.added;
+      updated += part.updated;
+      if (i + MAX_BATCH < batchNormalized.length) {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    return { added, updated };
+  }
+
   if (syncCtx) {
     await ensureShopeeTrackingForBatch(syncCtx.apiShopId, syncCtx.accessToken, batchNormalized);
   }
+
+  const touched: any[] = [];
 
   for (const normalized of batchNormalized) {
     try {
@@ -9359,6 +9375,7 @@ async function persistShopeeOrderChunk(
         preserveExistingTrackingIfIncomingEmpty(normalized, existing);
       }
       forceHealPickupOrderIfHasTracking(normalized);
+      // SHIPPED → shipping (Đang giao), COMPLETED → completed (Đã giao) — cho phép đè.
       enforceShopeeTerminalLocalStatus(normalized);
 
       if (normalized.partialCancel) {
@@ -9370,44 +9387,42 @@ async function persistShopeeOrderChunk(
       }
 
       const existingIndex = orders.findIndex((o: any) => o.orderSn === normalized.orderSn);
+      let row: any;
       if (existingIndex >= 0) {
         orders[existingIndex] = mergeShopeeOrderOnSync(orders[existingIndex], normalized);
-        enforceShopeeTerminalLocalStatus(orders[existingIndex]);
+        row = orders[existingIndex];
         updated++;
       } else {
         orders.unshift(normalized);
-        enforceShopeeTerminalLocalStatus(orders[0]);
+        row = orders[0];
         added++;
       }
-
-      const row = orders.find((o: any) => String(o.orderSn) === String(normalized.orderSn));
-      if (row) {
-        forceHealPickupOrderIfHasTracking(row);
-        promoteOrderStatusWhenTrackingReady(row);
-        enforceShopeeTerminalLocalStatus(row);
-        if (hasUsableShopeeTrackingNumber(row)) {
-          await persistOrderTrackingToDb(row);
-        }
-        if (isMongoReady()) {
-          try {
-            await bulkUpsertOrdersToStore([row]);
-          } catch (mongoErr: any) {
-            console.error(
-              `[Orders Sync] Mongo upsert thất bại order_sn=${row.orderSn}:`,
-              mongoErr?.message || mongoErr,
-            );
-          }
-        }
-      }
+      forceHealPickupOrderIfHasTracking(row);
+      promoteOrderStatusWhenTrackingReady(row);
+      enforceShopeeTerminalLocalStatus(row);
+      touched.push(row);
     } catch (e) {
-      console.error("Lỗi 1 đơn:", e);
+      console.error("Lỗi 1 đơn (skip, tiếp batch):", e);
       continue;
     }
-    // Bắt buộc nghỉ 500ms sau mỗi đơn — chống 503 / spike process.
-    await delay(ORDER_SYNC_SAVE_DELAY_MS);
   }
 
+  // 1 lần JSON + 1 lần Mongo bulkWrite cho cả lô — không chọc DB từng đơn.
   saveOrders(orders);
+  if (touched.length > 0 && isMongoReady()) {
+    try {
+      await bulkUpsertOrdersToStore(touched);
+      console.log(
+        `[Orders Sync] Mongo bulkWrite OK — batch=${touched.length} (+${added}/~${updated})`,
+      );
+    } catch (mongoErr: any) {
+      console.error(
+        `[Orders Sync] Mongo bulkWrite lô thất bại:`,
+        mongoErr?.message || mongoErr,
+      );
+    }
+  }
+
   return { added, updated };
 }
 
@@ -9484,7 +9499,7 @@ async function healStuckLocalShopeeOrders(
         healed += normalized.length;
       }
       if (i + SHOPEE_SYNC_CHUNK_SIZE < sns.length) {
-        await sleep(ORDER_SYNC_SAVE_DELAY_MS);
+        await new Promise((r) => setTimeout(r, 1000));
       }
     }
   }
@@ -9693,7 +9708,7 @@ async function syncShopeeOrdersFromApi(
         }
 
         if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
-          await delay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+          await new Promise((r) => setTimeout(r, 1000));
         }
       }
 
@@ -15823,7 +15838,8 @@ async function startServer() {
               }
 
                 if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
-                await delay(ORDER_SYNC_SAVE_DELAY_MS);
+                // Nghỉ 1s sau mỗi batch — Server kịp GC, tránh OOM / spike process.
+                await new Promise((r) => setTimeout(r, 1000));
               }
             }
             console.log(`[Orders Pull] Shop ${shopId}: hoàn thành xử lý ${orderSnList.length} đơn.`);
