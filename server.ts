@@ -1480,8 +1480,8 @@ const SHOPEE_RETURN_LIST_MAX_PAGES = 50;
 const SHOPEE_SYNC_CHUNK_SIZE = 15;
 /** Nghỉ 1s giữa các lô — nhường GC / giải phóng process cPanel. */
 const ORDER_SYNC_SAVE_DELAY_MS = 1000;
-/** Nghỉ giữa mỗi lần get_tracking_number — tránh 429. */
-const SHOPEE_TRACKING_FETCH_DELAY_MS = 200;
+/** Nghỉ giữa mỗi lần get_tracking_number — tránh 429 (200–500ms). */
+const SHOPEE_TRACKING_FETCH_DELAY_MS = 350;
 /** Nghỉ giữa các chunk đơn hàng (đồng bộ nền) = 1s. */
 const SHOPEE_SYNC_CHUNK_DELAY_MS = 1000;
 const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
@@ -6141,28 +6141,35 @@ const SHOPEE_SHIPPING_DOCUMENT_TYPE = "NORMAL_AIR_WAYBILL";
 // already-shipped order. This fetches the authoritative tracking_number.
 async function shopeeGetTrackingNumber(shopId: string, accessToken: string, orderSn: string, packageNumber?: string) {
   const apiPath = "/api/v2/logistics/get_tracking_number";
-  const timestamp = Math.floor(Date.now() / 1000);
-  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
-  const params = new URLSearchParams({
-    partner_id: SHOPEE_PARTNER_ID,
-    timestamp: String(timestamp),
-    access_token: accessToken,
-    shop_id: shopId,
-    sign,
-    order_sn: orderSn,
-    response_optional_fields: "plp_number,first_mile_tracking_number,last_mile_tracking_number",
-  });
-  if (packageNumber) params.set("package_number", packageNumber);
+  try {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+    const params = new URLSearchParams({
+      partner_id: SHOPEE_PARTNER_ID,
+      timestamp: String(timestamp),
+      access_token: accessToken,
+      shop_id: shopId,
+      sign,
+      order_sn: orderSn,
+      response_optional_fields: "plp_number,first_mile_tracking_number,last_mile_tracking_number",
+    });
+    if (packageNumber) params.set("package_number", packageNumber);
 
-  const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const res = await fetchWithTimeout(url);
-  const json: any = await res.json();
-  // Log FULL payload để lần ra vị trí mã GHN / ĐVVC (VD: GYAGLRYW).
-  console.log(
-    `[Shopee API] GET ${apiPath} FULL PAYLOAD order_sn=${orderSn} HTTP=${res.status}:`,
-    JSON.stringify(json),
-  );
-  return json;
+    const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+    const res = await fetchWithTimeout(url);
+    const json: any = await res.json();
+    // Log FULL payload để lần ra vị trí mã GHN / ĐVVC (VD: GYAGLRYW).
+    console.log(
+      `[Shopee API] GET ${apiPath} FULL PAYLOAD order_sn=${orderSn} HTTP=${res.status}:`,
+      JSON.stringify(json),
+    );
+    return json;
+  } catch (err: any) {
+    // Không throw — caller try/catch / vòng lặp sync không bị sập.
+    const message = err?.message || String(err);
+    console.warn(`[Shopee API] get_tracking_number exception order_sn=${orderSn}:`, message);
+    return { error: "get_tracking_number_exception", message, order_sn: orderSn };
+  }
 }
 
 /** Fallback: bóc mã từ shipping_document_info khi get_tracking_number trả rỗng. */
@@ -7605,7 +7612,7 @@ function applyShopeePackageListTracking(order: any, shopeeOrder: any): void {
   repairMisassignedTracking(order);
 }
 
-/** Các tab cần có mã vận đơn để quét QR — gồm PROCESSED, CANCELLED, hoàn hàng. */
+/** Các tab local cần có mã vận đơn để quét QR. */
 const SHOPEE_TRACKING_ENRICH_STATUSES = new Set([
   "pending_confirm",
   "unprocessed",
@@ -7615,6 +7622,24 @@ const SHOPEE_TRACKING_ENRICH_STATUSES = new Set([
   "cancelled",
   "return_pending",
   "return_received",
+]);
+
+/**
+ * Trạng thái Shopee CÓ THỂ đã có mã vận đơn → bắt buộc gọi get_tracking_number nếu DB trống.
+ * Chuẩn: READY_TO_SHIP, SHIPPED, TO_CONFIRM_RECEIVE, COMPLETED, CANCELLED, INVOICE_PENDING
+ * (+ PROCESSED/RETRY_SHIP/IN_CANCEL/TO_RETURN — App Shopee / hoàn hàng).
+ */
+const SHOPEE_RAW_STATUSES_MAY_HAVE_TRACKING = new Set([
+  "READY_TO_SHIP",
+  "PROCESSED",
+  "RETRY_SHIP",
+  "SHIPPED",
+  "TO_CONFIRM_RECEIVE",
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN",
+  "INVOICE_PENDING",
 ]);
 
 function hasUsableShopeeTrackingNumber(order: any): boolean {
@@ -7630,42 +7655,71 @@ function hasUsableShopeeTrackingNumber(order: any): boolean {
   return false;
 }
 
-function needsShopeeTrackingEnrichment(order: any): boolean {
-  if (order.channel !== "shopee") return false;
-  if (hasUsableShopeeTrackingNumber(order)) return false;
+/** Đơn có thể đã có tracking_no trên Shopee (kể cả Hủy / Đang giao / App). */
+function orderMayHaveShopeeTrackingNumber(order: any): boolean {
+  if (!order || String(order.channel || "") !== "shopee") return false;
   const status = String(order.status || "");
   const raw = String(order.shopee_order_status || "").toUpperCase();
-  // Cưỡng bức lấy mã cho Chờ lấy hàng / Đang giao / Đã xử lý (READY_TO_SHIP, PROCESSED, SHIPPED...).
   if (SHOPEE_TRACKING_ENRICH_STATUSES.has(status)) return true;
-  if (
-    raw === "READY_TO_SHIP" ||
-    raw === "PROCESSED" ||
-    raw === "RETRY_SHIP" ||
-    raw === "SHIPPED" ||
-    raw === "TO_CONFIRM_RECEIVE" ||
-    raw === "CANCELLED" ||
-    raw === "IN_CANCEL" ||
-    raw === "TO_RETURN"
-  ) {
-    return true;
-  }
+  if (SHOPEE_RAW_STATUSES_MAY_HAVE_TRACKING.has(raw)) return true;
+  // Giao không thành công / hoàn hàng
+  if (order.shopee_cancel_return_kind || order.return_sn) return true;
   return false;
 }
 
-/** Sau sync: cưỡng bức gọi get_tracking_number cho mọi đơn thiếu mã ở tab Chờ lấy hàng / Đang giao. */
+function needsShopeeTrackingEnrichment(order: any): boolean {
+  if (order.channel !== "shopee") return false;
+  if (hasUsableShopeeTrackingNumber(order)) return false;
+  return orderMayHaveShopeeTrackingNumber(order);
+}
+
+/**
+ * Gọi ĐỘC LẬP v2.logistics.get_tracking_number → ép ghi tracking_no vào DB (updateOne).
+ * Bọc try/catch: lỗi 1 đơn (CANCELLED chưa có mã, error code Shopee…) KHÔNG làm sập vòng lặp.
+ */
+async function fetchAndForceSaveTrackingNumber(
+  apiShopId: string,
+  accessToken: string,
+  order: any,
+  opts?: { retries?: number },
+): Promise<boolean> {
+  if (!order?.orderSn) return false;
+  if (!needsShopeeTrackingEnrichment(order)) return hasUsableShopeeTrackingNumber(order);
+
+  try {
+    await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, order, {
+      light: true,
+      retries: opts?.retries ?? 2,
+    });
+    promoteOrderStatusWhenTrackingReady(order);
+    enforceShopeeTerminalLocalStatus(order);
+
+    if (hasUsableShopeeTrackingNumber(order)) {
+      // Cưỡng chế ghi đè tracking_no thẳng DB (độc lập, không phụ thuộc bulkWrite).
+      await persistOrderTrackingToDb(order);
+      return true;
+    }
+    return false;
+  } catch (err: any) {
+    console.warn(
+      `[Shopee Tracking] get_tracking_number skip order_sn=${order.orderSn} status=${order.shopee_order_status || order.status}:`,
+      err?.message || err,
+    );
+    return false;
+  }
+}
+
+/** Sau sync: cưỡng bức gọi get_tracking_number cho mọi đơn thiếu mã ở tab Chờ lấy hàng / Đang giao / Hủy. */
 async function forceFetchMissingTrackingAfterSync(
   orders: any[],
   opts?: { max?: number; shopId?: string },
 ): Promise<number> {
-  const max = Math.max(1, Math.min(opts?.max ?? 80, 120));
+  const max = Math.max(1, Math.min(opts?.max ?? 120, 200));
   const targets = orders.filter((o: any) => {
     if (String(o?.channel) !== "shopee") return false;
     if (opts?.shopId && String(o.shopId) !== String(opts.shopId)) return false;
     return needsShopeeTrackingEnrichment(o);
   });
-  // #region agent log
-  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'post-fix',hypothesisId:'B,E',location:'server.ts:forceFetchMissingTrackingAfterSync',message:'force fetch targets',data:{totalOrders:orders.length,targetCount:targets.length,max,shopIdFilter:opts?.shopId||null,delayMs:SHOPEE_TRACKING_FETCH_DELAY_MS,sample:targets.slice(0,10).map((o:any)=>({sn:o.orderSn,status:o.status,raw:o.shopee_order_status,shopId:o.shopId,tn:o.trackingNumber||o.tracking_no||null}))},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   if (targets.length === 0) return 0;
   console.log(
     `[Shopee Tracking] Force fetch tuần tự: ${Math.min(targets.length, max)}/${targets.length} đơn (delay=${SHOPEE_TRACKING_FETCH_DELAY_MS}ms).`,
@@ -7713,7 +7767,8 @@ async function shopeeGetTrackingNumberWithRetry(
         `[Shopee Tracking] attempt ${attempt}/${maxAttempts} order_sn=${orderSn} exception:`,
         err?.message || err,
       );
-      if (attempt >= maxAttempts) throw err;
+      last = { error: "exception", message: err?.message || String(err) };
+      if (attempt >= maxAttempts) return last;
     }
     await sleep(400 * attempt);
   }
@@ -8238,8 +8293,8 @@ async function repairMissingShopeeTrackingInOrders(
   orders: any[],
   opts?: { max?: number; retries?: number },
 ): Promise<number> {
-  // Cap cao hơn — đủ bù đơn PROCESSED thiếu mã sau khi chuẩn bị trên App Shopee.
-  const max = Math.max(1, Math.min(opts?.max ?? 80, 120));
+  // Cap cao hơn — đủ bù đơn PROCESSED/SHIPPED/CANCELLED thiếu mã sau App Shopee.
+  const max = Math.max(1, Math.min(opts?.max ?? 80, 200));
   const retries = opts?.retries ?? 2;
   let attempted = 0;
   let filled = 0;
@@ -8252,8 +8307,9 @@ async function repairMissingShopeeTrackingInOrders(
       const st = String(o?.status || "");
       if (st === "processed" || raw === "PROCESSED") return 0;
       if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || st === "unprocessed") return 1;
-      if (st === "shipping" || raw === "SHIPPED") return 2;
-      return 3;
+      if (st === "shipping" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return 2;
+      if (st === "cancelled" || raw === "CANCELLED" || st === "return_pending") return 3;
+      return 4;
     };
     return score(a) - score(b);
   });
@@ -8274,18 +8330,11 @@ async function repairMissingShopeeTrackingInOrders(
       if (!auth?.token) continue;
       const before = hasUsableShopeeTrackingNumber(o);
       // BẮT BUỘC dùng apiShopId (không dùng fileKey) cho get_tracking_number.
-      await enrichShopeeOrderTrackingFromApi(auth.apiShopId, auth.token, o, {
+      const ok = await fetchAndForceSaveTrackingNumber(auth.apiShopId, auth.token, o, {
         retries,
-        light: true,
       });
       attempted++;
-      promoteOrderStatusWhenTrackingReady(o);
-      if (!before && hasUsableShopeeTrackingNumber(o)) {
-        filled++;
-        await persistOrderTrackingToDb(o);
-      } else if (hasUsableShopeeTrackingNumber(o)) {
-        await persistOrderTrackingToDb(o);
-      }
+      if (!before && ok) filled++;
     } catch (error) {
       console.error("Lỗi 1 đơn:", error);
       attempted++;
@@ -8294,9 +8343,6 @@ async function repairMissingShopeeTrackingInOrders(
       await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
   }
-  // #region agent log
-  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'post-fix',hypothesisId:'B',location:'server.ts:repairMissingShopeeTrackingInOrders',message:'repair missing tracking done',data:{attempted,filled,max,inputLen:orders.length},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   if (attempted > 0) {
     saveOrders(orders);
     console.log(
@@ -8306,7 +8352,7 @@ async function repairMissingShopeeTrackingInOrders(
   return filled;
 }
 
-/** Tự động gọi get_tracking_number khi sync — STRICT tuần tự for...of + delay. */
+/** Tự động gọi get_tracking_number khi sync — STRICT tuần tự for...of + delay + updateOne độc lập. */
 async function ensureShopeeTrackingForBatch(
   apiShopId: string,
   accessToken: string,
@@ -8319,31 +8365,30 @@ async function ensureShopeeTrackingForBatch(
     if (!needsShopeeTrackingEnrichment(order)) continue;
     needFetch.push(order);
   }
-  // #region agent log
-  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'pre-fix',hypothesisId:'A,D,E',location:'server.ts:ensureShopeeTrackingForBatch',message:'batch tracking enrich plan',data:{apiShopId,batchLen:batch.length,needFetch:needFetch.length,sample:needFetch.slice(0,6).map((o:any)=>({sn:o.orderSn,status:o.status,raw:o.shopee_order_status,tn:o.trackingNumber||o.tracking_no||null,pkg:o.packageNumber||null,channel:o.channel}))},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
+  if (needFetch.length === 0) return 0;
+
+  console.log(
+    `[Shopee Tracking] ensureShopeeTrackingForBatch: ${needFetch.length}/${batch.length} đơn thiếu tracking_no → gọi get_tracking_number tuần tự (delay=${SHOPEE_TRACKING_FETCH_DELAY_MS}ms)`,
+  );
+
   for (const order of needFetch) {
     try {
-      await enrichShopeeOrderTrackingFromApi(apiShopId, accessToken, order, {
-        light: true,
+      const ok = await fetchAndForceSaveTrackingNumber(apiShopId, accessToken, order, {
         retries: 2,
       });
-      promoteOrderStatusWhenTrackingReady(order);
-      enforceShopeeTerminalLocalStatus(order);
-      if (hasUsableShopeeTrackingNumber(order)) {
-        fetched++;
-        // Không ghi Mongo từng đơn — bulkWrite 1 lần ở persistShopeeOrderChunk.
-      }
+      if (ok) fetched++;
     } catch (error) {
-      console.error("Lỗi 1 đơn (tracking skip):", error);
+      // CANCELLED / API error → bỏ qua, KHÔNG dừng vòng lặp các đơn khác.
+      console.error(
+        `[Shopee Tracking] Lỗi 1 đơn (tracking skip) order_sn=${order?.orderSn}:`,
+        error,
+      );
       continue;
     } finally {
       await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
   }
-  // #region agent log
-  fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'pre-fix',hypothesisId:'A',location:'server.ts:ensureShopeeTrackingForBatch:done',message:'batch tracking enrich result',data:{apiShopId,needFetch:needFetch.length,fetched,stillEmpty:needFetch.filter((o:any)=>!hasUsableShopeeTrackingNumber(o)).slice(0,8).map((o:any)=>({sn:o.orderSn,raw:o.shopee_order_status,status:o.status,tn:o.trackingNumber||o.tracking_no||null,internal:o.internalTrackingCode||null}))},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
+
   if (fetched > 0) {
     console.log(
       `[Shopee Tracking] ensureShopeeTrackingForBatch: đã lấy ${fetched}/${needFetch.length} đơn (shop=${apiShopId}).`,
@@ -9611,6 +9656,7 @@ async function syncShopeeCancelReturnsForShop(
 /**
  * Upsert lô đơn — map SHIPPED→shipping (Đang giao) / COMPLETED→completed (Đã giao) in-memory,
  * rồi 1 lần Mongo bulkWrite cho cả lô. CẤM update/upsert từng đơn + CẤM Promise.all.
+ * SAU khi lưu thông tin cơ bản: gọi ĐỘC LẬP get_tracking_number cho đơn thiếu tracking_no.
  * Nghỉ 1s giữa các lô do caller (`await new Promise(r => setTimeout(r, 1000))`).
  */
 async function persistShopeeOrderChunk(
@@ -9639,14 +9685,7 @@ async function persistShopeeOrderChunk(
     return { added, updated };
   }
 
-  if (syncCtx) {
-    await ensureShopeeTrackingForBatch(syncCtx.apiShopId, syncCtx.accessToken, batchNormalized);
-  } else {
-    // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'pre-fix',hypothesisId:'D',location:'server.ts:persistShopeeOrderChunk',message:'persist WITHOUT syncCtx — skip ensureShopeeTrackingForBatch',data:{batchLen:batchNormalized.length,sns:batchNormalized.slice(0,8).map((o:any)=>o.orderSn)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-  }
-
+  // ——— BƯỚC 1: Lưu thông tin cơ bản từ get_order_detail (chưa gọi logistics) ———
   const touched: any[] = [];
 
   for (const normalized of batchNormalized) {
@@ -9683,14 +9722,6 @@ async function persistShopeeOrderChunk(
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);
-      // #region agent log
-      {
-        const tnAfter = String(row.trackingNumber || row.tracking_no || "").trim();
-        if (tnBeforeMerge || !tnAfter) {
-          fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'pre-fix',hypothesisId:'C',location:'server.ts:persistShopeeOrderChunk:afterMerge',message:'tracking before/after merge',data:{sn:row.orderSn,tnBeforeMerge:tnBeforeMerge||null,tnAfter:tnAfter||null,lost:Boolean(tnBeforeMerge&&!tnAfter),raw:row.shopee_order_status,status:row.status},timestamp:Date.now()})}).catch(()=>{});
-        }
-      }
-      // #endregion
       touched.push(row);
     } catch (e) {
       console.error("Lỗi 1 đơn (skip, tiếp batch):", e);
@@ -9698,7 +9729,7 @@ async function persistShopeeOrderChunk(
     }
   }
 
-  // 1 lần JSON + 1 lần Mongo bulkWrite cho cả lô — không chọc DB từng đơn.
+  // 1 lần JSON + 1 lần Mongo bulkWrite cho cả lô — thông tin cơ bản.
   saveOrders(orders);
   if (touched.length > 0 && isMongoReady()) {
     try {
@@ -9711,6 +9742,39 @@ async function persistShopeeOrderChunk(
         `[Orders Sync] Mongo bulkWrite lô thất bại:`,
         mongoErr?.message || mongoErr,
       );
+    }
+  }
+
+  // ——— BƯỚC 2: SAU khi lưu cơ bản — gọi ĐỘC LẬP get_tracking_number nếu DB trống ———
+  if (syncCtx) {
+    const needTn = touched.filter((o) => needsShopeeTrackingEnrichment(o));
+    if (needTn.length > 0) {
+      console.log(
+        `[Shopee Tracking] Sau lưu cơ bản: ${needTn.length} đơn thiếu tracking_no → logistics.get_tracking_number`,
+      );
+      for (const row of needTn) {
+        try {
+          await fetchAndForceSaveTrackingNumber(
+            syncCtx.apiShopId,
+            syncCtx.accessToken,
+            row,
+            { retries: 2 },
+          );
+          // Đồng bộ lại vào mảng orders (row đã là reference)
+          promoteOrderStatusWhenTrackingReady(row);
+          enforceShopeeTerminalLocalStatus(row);
+        } catch (error) {
+          console.error(
+            `[Shopee Tracking] Lỗi 1 đơn (không dừng vòng lặp) order_sn=${row?.orderSn}:`,
+            error,
+          );
+          continue;
+        } finally {
+          await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
+        }
+      }
+      // Ghi lại JSON sau khi đã ép tracking_no (Mongo đã updateOne từng đơn).
+      saveOrders(orders);
     }
   }
 
@@ -10013,7 +10077,7 @@ async function syncShopeeOrdersFromApi(
 
       orderSnList = [];
 
-      await forceFetchMissingTrackingAfterSync(orders, { max: 100, shopId: fileKey });
+      await forceFetchMissingTrackingAfterSync(orders, { max: 200, shopId: fileKey });
 
       return { shopErrors, syncedSnSet, totalSnTarget };
     };
@@ -10117,7 +10181,7 @@ async function syncShopeeOrdersFromApi(
   };
   console.log(`[Shopee Sync] UI counts sau đồng bộ:`, JSON.stringify(uiStatusCounts));
 
-  await forceFetchMissingTrackingAfterSync(orders, { max: 100 });
+  await forceFetchMissingTrackingAfterSync(orders, { max: 200 });
 
   const uniqueErrors = dedupeErrors(errors);
 
@@ -16578,7 +16642,7 @@ async function startServer() {
       }
 
       console.log(`[Orders Pull] Hoàn thành mode=${mode}: ${pulledCount} đơn đã cập nhật/thêm mới.`);
-      await forceFetchMissingTrackingAfterSync(orders, { max: 100 });
+      await forceFetchMissingTrackingAfterSync(orders, { max: 200 });
       // Quét bù lần 2 — đơn PROCESSED chuẩn bị trên App Shopee ngoài cửa sổ update_time.
       try {
         const scan = await scanAndRetryMissingTrackingNumbers({ max: 100, retries: 3 });

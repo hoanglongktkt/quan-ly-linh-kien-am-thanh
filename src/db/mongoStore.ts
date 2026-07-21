@@ -40,6 +40,8 @@ type OrderDoc = {
   orderSn?: string | null;
   status?: string | null;
   shopId?: string | null;
+  /** Mã vận đơn (SPXVN / GHN / ...) — top-level để query & force update */
+  tracking_no?: string | null;
   /** Flag bẫy lỗi: đơn đang chờ Shopee kiểm tra — default false */
   is_pending_shopee_check?: boolean;
   data: any;
@@ -87,6 +89,8 @@ const OrderSchema = new Schema<OrderDoc>(
     orderSn: { type: String, default: null, index: true },
     status: { type: String, default: null, index: true },
     shopId: { type: String, default: null, index: true },
+    /** Mã vận đơn Shopee / ĐVVC — String bắt buộc trong schema */
+    tracking_no: { type: String, default: null, index: true },
     /** Boolean flag — đơn bị bẫy "đang kiểm tra bởi Shopee" (default: false) */
     is_pending_shopee_check: { type: Boolean, default: false, index: true },
     /**
@@ -996,6 +1000,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     if (!id && !orderSn) continue;
     const _id = id || `shopee-${orderSn}`;
     const pendingFlag = order.is_pending_shopee_check === true;
+    const tn = String(order.tracking_no || order.trackingNumber || "").trim() || null;
     ops.push({
       updateOne: {
         filter: { _id },
@@ -1005,8 +1010,15 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             orderSn: orderSn || null,
             status: order.status != null ? String(order.status) : null,
             shopId: order.shopId != null ? String(order.shopId) : null,
+            tracking_no: tn,
             is_pending_shopee_check: pendingFlag,
-            data: { ...order, id: _id, is_pending_shopee_check: pendingFlag },
+            data: {
+              ...order,
+              id: _id,
+              is_pending_shopee_check: pendingFlag,
+              tracking_no: tn || order.tracking_no,
+              trackingNumber: tn || order.trackingNumber,
+            },
           },
         },
         upsert: true,
