@@ -47,11 +47,110 @@ import {
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
 
+const MAIN_NAV_TABS = new Set([
+  'dashboard',
+  'products',
+  'publish',
+  'orders',
+  'picking',
+  'bulk',
+  'suppliers',
+  'imports',
+  'financials',
+  'settings',
+]);
+
+const ORDERS_SUB_TAB_IDS = new Set<string>([
+  'all',
+  'pending_verification',
+  'pending_confirm',
+  'unprocessed',
+  'processed',
+  'handed_over_carrier',
+  'shipping',
+  'cancel_returns',
+  'received_cancel_returns',
+  'order_products',
+]);
+
+/** Alias URL thân thiện → id tab nội bộ (vd: ?tab=da-giao-dvvc). */
+const ORDERS_SUB_TAB_ALIASES: Record<string, OrdersSubTabId> = {
+  'da-giao-dvvc': 'handed_over_carrier',
+  'handed_over_carrier': 'handed_over_carrier',
+  'cho-xac-nhan': 'pending_confirm',
+  'cho-lay-hang': 'unprocessed',
+  'da-xu-ly': 'processed',
+  'dang-giao': 'shipping',
+  'don-huy-hoan': 'cancel_returns',
+  'da-nhan-huy-hoan': 'received_cancel_returns',
+};
+
+function normalizeOrdersSubTab(raw: string | null | undefined): OrdersSubTabId | null {
+  if (!raw) return null;
+  const key = String(raw).trim();
+  if (!key) return null;
+  if (ORDERS_SUB_TAB_ALIASES[key]) return ORDERS_SUB_TAB_ALIASES[key];
+  if (key === 'pending_verification') return 'pending_confirm';
+  if (ORDERS_SUB_TAB_IDS.has(key)) return key as OrdersSubTabId;
+  return null;
+}
+
+function readSessionTab(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeSessionTab(key: string, value: string) {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    /* ignore */
+  }
+}
+
+function resolveOrdersSubTabFromUrl(): OrdersSubTabId | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const fromQuery =
+    normalizeOrdersSubTab(params.get('ordersTab')) ||
+    normalizeOrdersSubTab(params.get('subtab')) ||
+    normalizeOrdersSubTab(params.get('tab'));
+  if (fromQuery) return fromQuery;
+  return normalizeOrdersSubTab(readSessionTab('omni_orders_subtab'));
+}
+
 function resolveTabFromPath(): string {
   if (typeof window === 'undefined') return 'dashboard';
   const path = window.location.pathname.replace(/\/$/, '') || '/';
   if (path === '/picking') return 'picking';
+
+  const params = new URLSearchParams(window.location.search);
+  const qTab = params.get('tab');
+  // ?tab=da-giao-dvvc (alias sub-tab) → mở màn Quản lý đơn
+  if (qTab && normalizeOrdersSubTab(qTab) && !MAIN_NAV_TABS.has(qTab)) {
+    return 'orders';
+  }
+  if (qTab && MAIN_NAV_TABS.has(qTab)) return qTab;
+  if (params.get('ordersTab') || params.get('subtab')) return 'orders';
+
+  const stored = readSessionTab('omni_active_tab');
+  if (stored && MAIN_NAV_TABS.has(stored)) return stored;
+
   return 'dashboard';
+}
+
+function buildNavUrl(tab: string, ordersSubTab?: string | null): string {
+  if (tab === 'picking') return '/picking';
+  const params = new URLSearchParams();
+  params.set('tab', tab);
+  if (tab === 'orders' && ordersSubTab) {
+    params.set('ordersTab', ordersSubTab);
+  }
+  const qs = params.toString();
+  return qs ? `/?${qs}` : '/';
 }
 
 const DEMO_SHOP_INTERNAL_IDS = new Set(['shop-shopee-1', 'shop-shopee-2', 'shop-tiktok-1', 'shop-woo-1']);
@@ -153,11 +252,13 @@ export default function App() {
   const [highlightProductId, setHighlightProductId] = useState<string | null>(null);
   const [importPrefillProductId, setImportPrefillProductId] = useState<string | null>(null);
 
-  // Active navigation tab
+  // Active navigation tab — khôi phục từ URL (?tab=) hoặc sessionStorage khi F5
   const [activeTab, setActiveTab] = useState(() => resolveTabFromPath());
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [focusScanner, setFocusScanner] = useState<boolean>(false);
-  const [ordersSubTabHint, setOrdersSubTabHint] = useState<OrdersSubTabId | null>(null);
+  const [ordersSubTabHint, setOrdersSubTabHint] = useState<OrdersSubTabId | null>(() =>
+    resolveOrdersSubTabFromUrl(),
+  );
   // Mobile: tab 'products' có 2 màn — Kiểm hàng (audit) và Danh sách sản phẩm (list).
   const [mobileProductsView, setMobileProductsView] = useState<'audit' | 'list'>('audit');
   
@@ -166,11 +267,31 @@ export default function App() {
 
   useEffect(() => {
     const onPopState = () => {
-      setActiveTab(resolveTabFromPath());
+      const nextTab = resolveTabFromPath();
+      setActiveTab(nextTab);
+      setOrdersSubTabHint(nextTab === 'orders' ? resolveOrdersSubTabFromUrl() : null);
       setFocusScanner(false);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  // Chuẩn hóa URL khi F5 vào tab đã lưu (vd: ?tab=da-giao-dvvc → ?tab=orders&ordersTab=handed_over_carrier)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const path = window.location.pathname.replace(/\/$/, '') || '/';
+    if (path === '/picking') {
+      writeSessionTab('omni_active_tab', 'picking');
+      return;
+    }
+    const sub = activeTab === 'orders' ? ordersSubTabHint || resolveOrdersSubTabFromUrl() : null;
+    const nextUrl = buildNavUrl(activeTab, sub);
+    const cur = `${window.location.pathname}${window.location.search}`;
+    if (cur !== nextUrl) {
+      window.history.replaceState({ tab: activeTab, ordersTab: sub }, '', nextUrl);
+    }
+    writeSessionTab('omni_active_tab', activeTab);
+    if (sub) writeSessionTab('omni_orders_subtab', sub);
   }, []);
 
   // Đơn hàng: RAM (React state) + IndexedDB cache — không dùng localStorage.
@@ -617,6 +738,8 @@ export default function App() {
     setAdminUser('');
     setActiveTab('dashboard');
     setFocusScanner(false);
+    writeSessionTab('omni_active_tab', 'dashboard');
+    window.history.replaceState({ tab: 'dashboard' }, '', '/?tab=dashboard');
   };
 
   // 3. Actions handlers
@@ -1262,17 +1385,6 @@ export default function App() {
     });
   };
 
-  const handleEditProductShortcut = (productId: string) => {
-    setHighlightProductId(productId);
-    setActiveTab('products');
-  };
-
-  const handleNavigateToImport = (productId: string) => {
-    setImportPrefillProductId(productId);
-    setActiveTab('imports');
-    setMobileDrawerOpen(false);
-  };
-
   const navigateTab = (
     tab: string,
     opts?: { openScanner?: boolean; ordersSubTab?: OrdersSubTabId | null },
@@ -1280,17 +1392,37 @@ export default function App() {
     setActiveTab(tab);
     setMobileDrawerOpen(false);
     setFocusScanner(tab === 'orders' && Boolean(opts?.openScanner));
+
+    let nextOrdersSub: OrdersSubTabId | null = null;
     if (tab === 'orders') {
-      setOrdersSubTabHint(opts?.ordersSubTab ?? null);
+      // Ưu tiên URL/session (user vừa đổi sub-tab) hơn hint cũ từ menu
+      nextOrdersSub =
+        opts?.ordersSubTab ??
+        resolveOrdersSubTabFromUrl() ??
+        normalizeOrdersSubTab(readSessionTab('omni_orders_subtab')) ??
+        ordersSubTabHint;
+      setOrdersSubTabHint(nextOrdersSub);
     } else {
       setOrdersSubTabHint(null);
     }
 
-    if (tab === 'picking') {
-      window.history.pushState({ tab: 'picking' }, '', '/picking');
-    } else if (window.location.pathname.replace(/\/$/, '') === '/picking') {
-      window.history.pushState({ tab }, '', '/');
+    writeSessionTab('omni_active_tab', tab);
+    if (tab === 'orders' && nextOrdersSub) {
+      writeSessionTab('omni_orders_subtab', nextOrdersSub);
     }
+
+    const nextUrl = buildNavUrl(tab, tab === 'orders' ? nextOrdersSub : null);
+    window.history.pushState({ tab, ordersTab: nextOrdersSub }, '', nextUrl);
+  };
+
+  const handleEditProductShortcut = (productId: string) => {
+    setHighlightProductId(productId);
+    navigateTab('products');
+  };
+
+  const handleNavigateToImport = (productId: string) => {
+    setImportPrefillProductId(productId);
+    navigateTab('imports');
   };
 
   const navButtonClass = (tab: string) =>
@@ -1658,14 +1790,22 @@ export default function App() {
               onUpdateProduct={handleUpdateProduct}
               focusScanner={focusScanner}
               initialOrdersSubTab={ordersSubTabHint}
+              onOrdersSubTabChange={(tab) => {
+                setOrdersSubTabHint(tab);
+                writeSessionTab('omni_orders_subtab', tab);
+              }}
               onCloseScanner={() => {
                 // Chỉ đóng UI quét — giữ nguyên tab Quản lý đơn, không về trang chủ.
                 setFocusScanner(false);
-                setActiveTab('orders');
+                navigateTab('orders', {
+                  ordersSubTab: ordersSubTabHint ?? resolveOrdersSubTabFromUrl(),
+                });
               }}
               onEndScanSession={() => {
                 setFocusScanner(false);
-                setActiveTab('orders');
+                navigateTab('orders', {
+                  ordersSubTab: ordersSubTabHint ?? resolveOrdersSubTabFromUrl(),
+                });
               }}
             />
             </ErrorBoundary>

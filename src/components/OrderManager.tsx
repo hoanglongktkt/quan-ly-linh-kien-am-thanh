@@ -343,6 +343,102 @@ type OrderTab =
 
 export type OrdersSubTabId = OrderTab;
 
+type CancelReturnTab = 'all' | 'refund_return' | 'cancelled' | 'failed_delivery';
+
+const ORDER_TAB_SET = new Set<string>([
+  'all',
+  'pending_verification',
+  'pending_confirm',
+  'unprocessed',
+  'processed',
+  'handed_over_carrier',
+  'shipping',
+  'cancel_returns',
+  'received_cancel_returns',
+  'order_products',
+]);
+
+const ORDER_TAB_ALIASES: Record<string, OrderTab> = {
+  'da-giao-dvvc': 'handed_over_carrier',
+  'handed_over_carrier': 'handed_over_carrier',
+  'cho-xac-nhan': 'pending_confirm',
+  'cho-lay-hang': 'unprocessed',
+  'da-xu-ly': 'processed',
+  'dang-giao': 'shipping',
+  'don-huy-hoan': 'cancel_returns',
+  'da-nhan-huy-hoan': 'received_cancel_returns',
+};
+
+function normalizeOrderTab(raw: string | null | undefined): OrderTab | null {
+  if (!raw) return null;
+  const key = String(raw).trim();
+  if (!key) return null;
+  if (ORDER_TAB_ALIASES[key]) return ORDER_TAB_ALIASES[key];
+  if (key === 'pending_verification') return 'pending_confirm';
+  if (ORDER_TAB_SET.has(key)) return key as OrderTab;
+  return null;
+}
+
+function readStoredOrdersTab(): OrderTab | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return (
+      normalizeOrderTab(params.get('ordersTab')) ||
+      normalizeOrderTab(params.get('subtab')) ||
+      normalizeOrderTab(params.get('tab')) ||
+      normalizeOrderTab(sessionStorage.getItem('omni_orders_subtab'))
+    );
+  } catch {
+    return null;
+  }
+}
+
+function readStoredCancelTab(): CancelReturnTab {
+  if (typeof window === 'undefined') return 'all';
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get('cancelTab') || sessionStorage.getItem('omni_cancel_tab') || 'all';
+    if (raw === 'refund_return' || raw === 'cancelled' || raw === 'failed_delivery' || raw === 'all') {
+      return raw;
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'all';
+}
+
+/** Đồng bộ sub-tab đơn hàng lên URL + sessionStorage (giữ nguyên khi F5). */
+function syncOrdersTabToUrl(subTab: OrderTab, cancelTab: CancelReturnTab) {
+  if (typeof window === 'undefined') return;
+  try {
+    const path = window.location.pathname.replace(/\/$/, '') || '/';
+    if (path === '/picking') return;
+
+    const params = new URLSearchParams(window.location.search);
+    params.set('tab', 'orders');
+    params.set('ordersTab', subTab);
+    if (subTab === 'cancel_returns' && cancelTab !== 'all') {
+      params.set('cancelTab', cancelTab);
+    } else {
+      params.delete('cancelTab');
+    }
+    // Xóa alias cũ nếu còn
+    if (params.get('subtab')) params.delete('subtab');
+
+    const next = `${path === '/' ? '/' : path}?${params.toString()}`;
+    const cur = `${window.location.pathname}${window.location.search}`;
+    if (cur !== next) {
+      window.history.replaceState({ tab: 'orders', ordersTab: subTab, cancelTab }, '', next);
+    }
+    sessionStorage.setItem('omni_active_tab', 'orders');
+    sessionStorage.setItem('omni_orders_subtab', subTab);
+    sessionStorage.setItem('omni_cancel_tab', cancelTab);
+  } catch {
+    /* ignore */
+  }
+}
+
 interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[], opts?: { persist?: boolean }) => void;
@@ -361,9 +457,9 @@ interface OrderManagerProps {
   onEndScanSession?: () => void;
   /** Mở sẵn sub-tab khi vào từ menu (vd: received_cancel_returns) */
   initialOrdersSubTab?: OrderTab | null;
+  /** Báo App khi user đổi sub-tab (để giữ hint/menu + URL đồng bộ) */
+  onOrdersSubTabChange?: (tab: OrderTab) => void;
 }
-
-type CancelReturnTab = 'all' | 'refund_return' | 'cancelled' | 'failed_delivery';
 
 const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending', 'return_received'];
 
@@ -466,11 +562,18 @@ export default function OrderManager({
   onCloseScanner,
   onEndScanSession,
   initialOrdersSubTab = null,
+  onOrdersSubTabChange,
 }: OrderManagerProps) {
-  const [activeSubTab, setActiveSubTab] = useState<OrderTab>(
-    initialOrdersSubTab || 'unprocessed',
-  );
-  const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>('all');
+  const [activeSubTab, setActiveSubTab] = useState<OrderTab>(() => {
+    const restored =
+      (initialOrdersSubTab
+        ? normalizeOrderTab(initialOrdersSubTab)
+        : null) ||
+      readStoredOrdersTab() ||
+      'unprocessed';
+    return restored === 'pending_verification' ? 'pending_confirm' : restored;
+  });
+  const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>(() => readStoredCancelTab());
 
   useEffect(() => {
     if (initialOrdersSubTab) {
@@ -484,6 +587,16 @@ export default function OrderManager({
       setActiveSubTab('pending_confirm');
     }
   }, [activeSubTab]);
+
+  // Đồng bộ URL/sessionStorage + tự fetch dữ liệu mới khi đổi tab (và khi F5 giữ tab).
+  useEffect(() => {
+    if (activeSubTab === 'pending_verification') return;
+    syncOrdersTabToUrl(activeSubTab, cancelReturnTab);
+    onOrdersSubTabChange?.(activeSubTab);
+    void onFetchOrders?.();
+    // onFetchOrders / onOrdersSubTabChange không ổn định reference — chỉ phụ thuộc tab
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSubTab, cancelReturnTab]);
   
   // Camera Barcode Scanning States and Ref
   const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét mã QR...');
