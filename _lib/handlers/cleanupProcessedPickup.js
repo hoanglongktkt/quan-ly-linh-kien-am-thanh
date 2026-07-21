@@ -206,11 +206,42 @@ export async function handleCleanupProcessedPickup(req, res) {
         });
         if (del.ok) {
           deletedSns.push(sn);
+          continue;
+        }
+
+        // Fallback cPanel cũ: vô hiệu hóa đơn (0đ + không items) rồi cleanup-mock deleteMany.
+        const patch = await fetchJson(backend.url, req, `orders/${encodeURIComponent(key)}`, {
+          method: 'PATCH',
+          body: {
+            items: [],
+            totalAmount: 0,
+            item_amount: 0,
+            _cleanup_processed_pickup: true,
+          },
+        });
+        if (patch.ok) {
+          deletedSns.push(sn);
         } else {
-          errors.push({ sn, error: del.data?.error || `status_${del.status}` });
+          errors.push({ sn, error: patch.data?.error || `status_${patch.status}` });
         }
       } catch (err) {
         errors.push({ sn, error: err?.message || String(err) });
+      }
+    }
+
+    let mockRemoved = 0;
+    if (deletedSns.length > 0) {
+      try {
+        const mock = await fetchJson(backend.url, req, 'orders/cleanup-mock', {
+          method: 'POST',
+          body: {},
+        });
+        if (mock.ok) {
+          mockRemoved = Number(mock.data?.removed || 0);
+          console.log(`Deleted count (cleanup-mock): ${mockRemoved}`);
+        }
+      } catch (e) {
+        console.warn('[Cleanup Processed Pickup] cleanup-mock failed:', e?.message || e);
       }
     }
 
@@ -219,6 +250,7 @@ export async function handleCleanupProcessedPickup(req, res) {
       success: true,
       removed: deletedSns.length,
       matched: garbage.length,
+      mockRemoved,
       orderSns: deletedSns,
       errors: errors.length ? errors : undefined,
       message:
@@ -226,7 +258,7 @@ export async function handleCleanupProcessedPickup(req, res) {
           ? `Đã xóa ${deletedSns.length}/${garbage.length} đơn tab Chờ lấy hàng (Đã xử lý).`
           : garbage.length === 0
             ? 'Không còn đơn Đã xử lý để xóa.'
-            : `Khớp ${garbage.length} đơn nhưng xóa thất bại — cần deploy DELETE trên cPanel.`,
+            : `Khớp ${garbage.length} đơn nhưng xóa thất bại.`,
     });
   } catch (error) {
     console.error('[Cleanup Processed Pickup] error:', error);
