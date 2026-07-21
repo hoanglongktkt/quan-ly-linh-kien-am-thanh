@@ -3512,7 +3512,14 @@ export default function OrderManager({
               <tbody className="divide-y divide-gray-50">
                 {filteredOrders.map(order => {
                   const isChecked = selectedOrderIds.includes(order.id);
-                  const badge = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
+                  const badgeBase = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
+                  const badge =
+                    matchesHandedOverCarrierTab(order)
+                      ? {
+                          text: 'Đã giao cho ĐVVC',
+                          color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',
+                        }
+                      : badgeBase;
                   const isExpanded = expandedOrderId === order.id;
                   return (
                     <React.Fragment key={order.id}>
@@ -3762,7 +3769,14 @@ export default function OrderManager({
           <div className="om-order-card-list flex flex-col divide-y divide-gray-100 w-full">
             {filteredOrders.map(order => {
               const isChecked = selectedOrderIds.includes(order.id);
-              const badge = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
+              const badgeBase = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
+              const badge =
+                matchesHandedOverCarrierTab(order)
+                  ? {
+                      text: 'Đã giao cho ĐVVC',
+                      color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',
+                    }
+                  : badgeBase;
               const isExpanded = expandedOrderId === order.id;
               return (
                 <div

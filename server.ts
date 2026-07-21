@@ -7433,6 +7433,10 @@ function isStuckShopeePickupOrder(order: any): boolean {
   ) {
     return false;
   }
+  // Đã bàn giao ĐVVC nhưng sàn chưa kịp SHIPPED trên local → BẮT BUỘC refresh.
+  if (resolveOrderHandoverFlag(order) && hasUsableShopeeTrackingNumber(order)) {
+    return true;
+  }
   const pickupLike =
     raw === "READY_TO_SHIP" ||
     raw === "RETRY_SHIP" ||
@@ -7447,6 +7451,42 @@ function isStuckShopeePickupOrder(order: any): boolean {
   // Local vẫn PROCESSED/processed — cưỡng chế get_order_detail để bắt SHIPPED/COMPLETED.
   if (status === "processed" || raw === "PROCESSED") return true;
   return false;
+}
+
+/** Đơn tab ĐÃ GIAO CHO ĐVVC — chờ Shopee chuyển SHIPPED/COMPLETED. */
+function isHandedOverAwaitingShipUpdate(order: any): boolean {
+  if (!order || String(order.channel || "") !== "shopee") return false;
+  if (!resolveOrderHandoverFlag(order)) return false;
+  if (!hasUsableShopeeTrackingNumber(order)) return false;
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  const status = String(order.status || "");
+  if (
+    raw === "SHIPPED" ||
+    raw === "TO_CONFIRM_RECEIVE" ||
+    raw === "COMPLETED" ||
+    status === "shipping" ||
+    status === "completed"
+  ) {
+    return false;
+  }
+  if (
+    raw === "CANCELLED" ||
+    raw === "IN_CANCEL" ||
+    raw === "TO_RETURN" ||
+    status === "cancelled" ||
+    status === "return_pending" ||
+    status === "return_received"
+  ) {
+    return false;
+  }
+  return (
+    status === "processed" ||
+    status === "unprocessed" ||
+    raw === "PROCESSED" ||
+    raw === "READY_TO_SHIP" ||
+    raw === "RETRY_SHIP" ||
+    !raw
+  );
 }
 
 function applyShopeeGetTrackingResponse(order: any, trackResult: any): void {
@@ -8948,6 +8988,9 @@ function upsertShopeeOrdersIntoStore(
 /** Tránh gọi Shopee backfill ĐVVC liên tục mỗi lần refresh trang. */
 let lastShippingCarrierBackfillAt = 0;
 const SHIPPING_CARRIER_BACKFILL_COOLDOWN_MS = 60 * 1000;
+/** Refresh tab ĐÃ GIAO CHO ĐVVC (SHIPPED/COMPLETED) — cooldown riêng. */
+let lastHandedOverHealAt = 0;
+const HANDED_OVER_HEAL_COOLDOWN_MS = 90 * 1000;
 
 /**
  * Backfill shipping_carrier từ get_order_detail cho đơn READY_TO_SHIP thiếu ĐVVC.
@@ -9664,19 +9707,27 @@ async function healStuckLocalShopeeOrders(
   accessToken: string,
   opts?: { max?: number },
 ): Promise<number> {
-  const max = Math.max(1, Math.min(opts?.max ?? 50, 80));
-  const stuck = orders
-    .filter((o: any) => String(o.shopId || "") === String(shopId) && isStuckShopeePickupOrder(o))
-    .slice(0, max);
+  const max = Math.max(1, Math.min(opts?.max ?? 80, 120));
+  // Ưu tiên đơn ĐÃ GIAO CHO ĐVVC (thường Shopee đã SHIPPED từ lâu nhưng local kẹt PROCESSED).
+  const handedStuck = orders.filter(
+    (o: any) => String(o.shopId || "") === String(shopId) && isHandedOverAwaitingShipUpdate(o),
+  );
+  const otherStuck = orders.filter(
+    (o: any) =>
+      String(o.shopId || "") === String(shopId) &&
+      isStuckShopeePickupOrder(o) &&
+      !isHandedOverAwaitingShipUpdate(o),
+  );
+  const stuck = [...handedStuck, ...otherStuck].slice(0, max);
   if (stuck.length === 0) return 0;
 
   console.log(
-    `[Orders Heal] shop=${shopId}: ${stuck.length} đơn kẹt (thiếu tracking / sai tab) — cưỡng chế reconcile...`,
+    `[Orders Heal] shop=${shopId}: ${stuck.length} đơn kẹt (handedOver=${handedStuck.length}) — cưỡng chế reconcile SHIPPED/COMPLETED...`,
   );
 
   let healed = 0;
   // 1) Có mã / PROCESSED / dropoff → heal local ngay
-  // 2) Đơn processed/PROCESSED luôn needFetch — bắt SHIPPED/COMPLETED từ get_order_detail.
+  // 2) Đơn processed/PROCESSED / đã bàn giao luôn needFetch — bắt SHIPPED/COMPLETED từ get_order_detail.
   const needFetch: any[] = [];
   for (const o of stuck) {
     const raw = String(o.shopee_order_status || "").toUpperCase();
@@ -9690,7 +9741,9 @@ async function healStuckLocalShopeeOrders(
       healed++;
       if (hasUsableShopeeTrackingNumber(o)) void persistOrderTrackingToDb(o);
     }
+    // Đơn đã bàn giao ĐVVC: LUÔN gọi get_order_detail (không tin local PROCESSED).
     const needsStatusRefresh =
+      isHandedOverAwaitingShipUpdate(o) ||
       String(o.status || "") === "processed" ||
       raw === "PROCESSED" ||
       raw === "READY_TO_SHIP" ||
@@ -9718,6 +9771,16 @@ async function healStuckLocalShopeeOrders(
       for (const n of normalized) {
         forceHealPickupOrderIfHasTracking(n);
         enforceShopeeTerminalLocalStatus(n);
+        // Terminal → gỡ cờ bàn giao để bay khỏi tab ĐVVC.
+        if (
+          n.status === "shipping" ||
+          n.status === "completed" ||
+          isShopeeTerminalRawStatus(String(n.shopee_order_status || ""))
+        ) {
+          setOrderHandoverFlag(n, false);
+          n.isHandedOverToCarrier = false;
+          n.is_handed_over_to_carrier = false;
+        }
       }
       if (normalized.length > 0) {
         await persistShopeeOrderChunk(orders, normalized, {
@@ -9735,6 +9798,72 @@ async function healStuckLocalShopeeOrders(
   if (healed > 0) {
     saveOrders(orders);
     console.log(`[Orders Heal] shop=${shopId}: đã heal ${healed} đơn (tracking + SHIPPED/COMPLETED).`);
+  }
+  return healed;
+}
+
+/** Refresh riêng tab ĐÃ GIAO CHO ĐVVC — lấy status mới từ Shopee (SHIPPED/COMPLETED). */
+async function healHandedOverOrdersFromShopee(
+  orders: any[],
+  limit = 40,
+): Promise<number> {
+  const targets = orders.filter(isHandedOverAwaitingShipUpdate).slice(0, Math.max(1, limit));
+  if (targets.length === 0) return 0;
+
+  const byShop = new Map<string, string[]>();
+  for (const o of targets) {
+    const shopKey = String(o.shopId || "").trim();
+    const sn = String(o.orderSn || "").trim();
+    if (!shopKey || !sn) continue;
+    if (!byShop.has(shopKey)) byShop.set(shopKey, []);
+    byShop.get(shopKey)!.push(sn);
+  }
+
+  let healed = 0;
+  for (const [shopKey, sns] of byShop) {
+    const auth = await getShopeeAccessTokenForApi(shopKey);
+    if (!auth?.token) continue;
+    for (let i = 0; i < sns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+      const chunk = sns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+      try {
+        const { normalized } = await fetchNormalizeShopeeOrderChunk(
+          auth.apiShopId,
+          auth.token,
+          auth.fileKey || shopKey,
+          chunk,
+          { enrichTracking: true },
+        );
+        for (const n of normalized) {
+          forceHealPickupOrderIfHasTracking(n);
+          enforceShopeeTerminalLocalStatus(n);
+          if (
+            n.status === "shipping" ||
+            n.status === "completed" ||
+            isShopeeTerminalRawStatus(String(n.shopee_order_status || ""))
+          ) {
+            setOrderHandoverFlag(n, false);
+            n.isHandedOverToCarrier = false;
+            n.is_handed_over_to_carrier = false;
+          }
+        }
+        if (normalized.length > 0) {
+          await persistShopeeOrderChunk(orders, normalized, {
+            apiShopId: auth.apiShopId,
+            accessToken: auth.token,
+          });
+          healed += normalized.length;
+        }
+      } catch (err: any) {
+        console.warn(`[HandedOver Heal] shop=${shopKey}:`, err?.message || err);
+      }
+      if (i + SHOPEE_SYNC_CHUNK_SIZE < sns.length) {
+        await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+      }
+    }
+  }
+  if (healed > 0) {
+    saveOrders(orders);
+    console.log(`[HandedOver Heal] đã refresh ${healed} đơn ĐÃ GIAO CHO ĐVVC từ Shopee.`);
   }
   return healed;
 }
@@ -14944,7 +15073,23 @@ async function startServer() {
     let rawOrders = loadOrders().filter(isValidOrder);
     let dirty = false;
 
-    // Đơn chờ lấy hàng thiếu shipping_carrier → gọi Shopee lấy ĐVVC (cooldown 5 phút).
+    // Đơn ĐÃ GIAO CHO ĐVVC còn PROCESSED — refresh SHIPPED/COMPLETED từ Shopee.
+    try {
+      const nowMs = Date.now();
+      const hasHandedStuck = rawOrders.some(isHandedOverAwaitingShipUpdate);
+      if (
+        hasHandedStuck &&
+        nowMs - lastHandedOverHealAt >= HANDED_OVER_HEAL_COOLDOWN_MS
+      ) {
+        lastHandedOverHealAt = nowMs;
+        const healed = await healHandedOverOrdersFromShopee(rawOrders, 45);
+        if (healed > 0) dirty = true;
+      }
+    } catch (handedErr: any) {
+      console.warn("[HandedOver Heal] GET /api/orders skip:", handedErr?.message || handedErr);
+    }
+
+    // Đơn chờ lấy hàng thiếu shipping_carrier → gọi Shopee lấy ĐVVC (cooldown).
     try {
       const nowMs = Date.now();
       const missingCarrier = rawOrders.some(
@@ -16092,16 +16237,24 @@ async function startServer() {
 
           console.log(`[Orders Pull] Shop ${shopId}: đang gọi Shopee get_order_list (mode=${mode})...`);
           let orderSnList = await shopeeFetchAllOrderSns(shopId, accessToken, { mode });
-          // Cưỡng chế: gộp đơn local kẹt (thiếu mã / sai tab) — dù ngoài cửa sổ 6h update_time.
+          // Cưỡng chế: gộp đơn local kẹt + ĐÃ GIAO CHO ĐVVC — dù ngoài cửa sổ 6h update_time.
           // Ưu tiên đầu list để không bị cắt bởi SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP.
+          const handedOverSns = orders
+            .filter(
+              (o: any) =>
+                String(o.shopId || "") === String(shopId) && isHandedOverAwaitingShipUpdate(o),
+            )
+            .map((o: any) => String(o.orderSn || "").trim())
+            .filter(Boolean);
           const stuckLocalSns = orders
             .filter((o: any) => String(o.shopId || "") === String(shopId) && isStuckShopeePickupOrder(o))
             .map((o: any) => String(o.orderSn || "").trim())
             .filter(Boolean);
-          if (stuckLocalSns.length > 0) {
+          const prioritySns = [...new Set([...handedOverSns, ...stuckLocalSns])];
+          if (prioritySns.length > 0) {
             const snSet = new Set(orderSnList.map((s) => String(s)));
             const inject: string[] = [];
-            for (const sn of stuckLocalSns) {
+            for (const sn of prioritySns) {
               if (!snSet.has(sn)) {
                 inject.push(sn);
                 snSet.add(sn);
@@ -16110,7 +16263,7 @@ async function startServer() {
             if (inject.length > 0) {
               orderSnList = [...inject, ...orderSnList];
               console.log(
-                `[Orders Pull] Shop ${shopId}: inject ${inject.length} đơn kẹt local vào ĐẦU sync (heal GHN/tracking).`,
+                `[Orders Pull] Shop ${shopId}: inject ${inject.length} đơn (ĐVVC/kẹt) vào ĐẦU sync (heal SHIPPED).`,
               );
             }
           }
