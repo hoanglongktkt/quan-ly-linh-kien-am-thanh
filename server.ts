@@ -15483,7 +15483,13 @@ async function startServer() {
       return { ok: false, status: 404, error: "Không tìm thấy đơn hàng." };
     }
     const order = orders[index];
-    if (!isOrderAwaitingCarrierPickupStatus(order?.status)) {
+    const shopeeRaw = String(order?.shopee_order_status || "").toUpperCase();
+    const awaitingPickup =
+      isOrderAwaitingCarrierPickupStatus(order?.status) ||
+      shopeeRaw === "READY_TO_SHIP" ||
+      shopeeRaw === "RETRY_SHIP" ||
+      shopeeRaw === "PROCESSED";
+    if (!awaitingPickup) {
       return {
         ok: false,
         status: 400,

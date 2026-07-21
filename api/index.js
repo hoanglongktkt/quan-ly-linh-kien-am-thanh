@@ -15,6 +15,7 @@ import { handleMappingBulkAutoLink } from '../_lib/handlers/mappingBulkAutoLink.
 import { handleProductSyncShopee } from '../_lib/handlers/productSyncShopee.js';
 import { handleProductsSearch } from '../_lib/handlers/productsSearch.js';
 import { handleScanBulkUpdate } from '../_lib/handlers/scanBulkUpdate.js';
+import { handleHandOverCarrier } from '../_lib/handlers/handOverCarrier.js';
 import { handleCleanupHandedOver } from '../_lib/handlers/cleanupHandedOver.js';
 import { handleCleanupProcessedPickup } from '../_lib/handlers/cleanupProcessedPickup.js';
 import { handleLabelProxy } from '../_lib/handlers/labels.js';
@@ -58,6 +59,7 @@ const LOCAL_ROUTES = {
   'products/search': handleProductsSearch,
   // cPanel cũ trả 404 cho route bulk quét — xử lý local trên Vercel.
   'orders/scan-bulk-update': handleScanBulkUpdate,
+  'orders/hand-over-carrier': handleHandOverCarrier,
   'orders/cleanup-handed-over': handleCleanupHandedOver,
   'orders/cleanup-processed-pickup': handleCleanupProcessedPickup,
 };
@@ -72,6 +74,12 @@ export default async function handler(req, res) {
   // PDF vận đơn: /api?path=labels/xxx.pdf hoặc /api/labels/...
   if (route === 'labels' || route.startsWith('labels/')) {
     return handleLabelProxy(req, res, route.replace(/^labels\/?/, ''));
+  }
+
+  // Dynamic: POST /api/orders/:id/hand-over-carrier
+  const handOverMatch = route.match(/^orders\/([^/]+)\/hand-over-carrier$/);
+  if (handOverMatch) {
+    return handleHandOverCarrier(req, res, decodeURIComponent(handOverMatch[1]));
   }
 
   const local = LOCAL_ROUTES[route];

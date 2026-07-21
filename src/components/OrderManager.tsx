@@ -24,7 +24,6 @@ import {
   matchesUnprocessedPickupTab,
   isShopeeShippingStatus,
   isShopeeReadyToShipStatus,
-  isOrderAwaitingCarrierPickup,
   hasOrderTrackingNo,
   isProcessedCondition,
   isOrderPrintedEffective,
@@ -503,6 +502,7 @@ export default function OrderManager({
   const [daNhanHoanList, setDaNhanHoanList] = useState<ScanVerifiedItem[]>([]);
   const [scanStatModal, setScanStatModal] = useState<ScanStatModalKey | null>(null);
   const [scanToast, setScanToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [handingOverOrderId, setHandingOverOrderId] = useState<string | null>(null);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
@@ -511,6 +511,7 @@ export default function OrderManager({
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
   const verifyScanRef = React.useRef<(query: string) => void>(() => {});
   const isScanBusyRef = React.useRef(false);
+  const isHandingOverRef = React.useRef(false);
   const daXuatKhoListRef = React.useRef(daXuatKhoList);
   const donHuyListRef = React.useRef(donHuyList);
   const daNhanHoanListRef = React.useRef(daNhanHoanList);
@@ -548,8 +549,19 @@ export default function OrderManager({
 
   const applyHandoverToLocalOrders = React.useCallback(
     (updatedOrder: Order) => {
+      const now = new Date().toISOString();
+      const patched: Order = {
+        ...updatedOrder,
+        isHandedOverToCarrier: true,
+        is_handed_over_to_carrier: true,
+        local_status: 'HANDED_OVER',
+        localStatus: 'HANDED_OVER',
+        handedOverAt: updatedOrder.handedOverAt || now,
+        localStatusAt: updatedOrder.localStatusAt || now,
+        local_status_updated_at: updatedOrder.local_status_updated_at || now,
+      };
       const merged = ordersRef.current.map((o) =>
-        o.id === updatedOrder.id ? { ...o, ...updatedOrder } : o
+        o.id === patched.id || o.orderSn === patched.orderSn ? { ...o, ...patched } : o
       );
       ordersRef.current = merged;
       onUpdateOrders(merged);
@@ -564,7 +576,7 @@ export default function OrderManager({
         showScanToast('Chưa đăng nhập — không thể ghi nhận bàn giao ĐVVC.', 'error');
         return false;
       }
-      if (!isOrderAwaitingCarrierPickup(order)) {
+      if (!isShopeeReadyToShipStatus(order) || !isProcessedCondition(order)) {
         showScanToast(`Đơn #${order.orderSn} không ở trạng thái chờ lấy hàng.`, 'error');
         return false;
       }
@@ -580,20 +592,48 @@ export default function OrderManager({
         showScanToast(`Đơn #${order.orderSn} đã ghi nhận giao cho ĐVVC trước đó.`, 'success');
         return true;
       }
+      if (isHandingOverRef.current || handingOverOrderId) return false;
+      isHandingOverRef.current = true;
+      setHandingOverOrderId(order.id);
       try {
-        const res = await fetch(`/api/orders/${encodeURIComponent(order.id)}/hand-over-carrier`, {
+        const orderKey = order.id || order.orderSn;
+        let res = await fetch(`/api/orders/${encodeURIComponent(orderKey)}/hand-over-carrier`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
+          body: JSON.stringify({ orderId: order.id, orderSn: order.orderSn }),
         });
-        const data = await res.json().catch(() => ({}));
+        let data = await res.json().catch(() => ({}));
+
+        // Fallback: PATCH local_status nếu endpoint bàn giao lỗi/404
         if (!res.ok) {
-          throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+          const patchRes = await fetch(`/api/orders/${encodeURIComponent(order.id)}`, {
+            method: 'PATCH',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              local_status: 'HANDED_OVER',
+              localStatus: 'HANDED_OVER',
+              isHandedOverToCarrier: true,
+              is_handed_over_to_carrier: true,
+            }),
+          });
+          const patchData = await patchRes.json().catch(() => ({}));
+          if (!patchRes.ok) {
+            throw new Error(
+              data?.message || data?.error || patchData?.message || patchData?.error || `HTTP ${res.status}`,
+            );
+          }
+          res = patchRes;
+          data = { success: true, order: patchData };
         }
+
         const saved = (data?.order || data) as Order;
-        applyHandoverToLocalOrders({ ...order, ...saved, isHandedOverToCarrier: true, is_handed_over_to_carrier: true });
+        applyHandoverToLocalOrders({ ...order, ...saved });
         onAddLog({
           id: `log-${Date.now()}`,
           timestamp: new Date().toISOString(),
@@ -611,9 +651,12 @@ export default function OrderManager({
         const msg = err instanceof Error ? err.message : String(err);
         showScanToast(`Không ghi nhận bàn giao: ${msg}`, 'error');
         return false;
+      } finally {
+        isHandingOverRef.current = false;
+        setHandingOverOrderId(null);
       }
     },
-    [applyHandoverToLocalOrders, onAddLog]
+    [applyHandoverToLocalOrders, onAddLog, handingOverOrderId]
   );
 
   const handleOrderScan = React.useCallback(
@@ -3670,7 +3713,7 @@ export default function OrderManager({
                             </>
                           )}
 
-                          {isShopeeReadyToShipStatus(order) && isProcessedCondition(order) && !isOrderHandedOverToCarrier(order) && (
+                          {isShopeeReadyToShipStatus(order) && isProcessedCondition(order) && hasOrderTrackingNo(order) && !isOrderHandedOverToCarrier(order) && (
                             <>
                               <span className={`om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded ${
                                 isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50'
@@ -3687,10 +3730,12 @@ export default function OrderManager({
                                 <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                               </button>
                               <button
+                                type="button"
                                 onClick={() => void handOverOrderToCarrier(order)}
-                                className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg transition-all"
+                                disabled={handingOverOrderId === order.id}
+                                className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg transition-all disabled:opacity-60"
                               >
-                                Giao cho ĐVVC
+                                {handingOverOrderId === order.id ? 'Đang xử lý...' : 'Giao cho ĐVVC'}
                               </button>
                             </>
                           )}
@@ -3926,7 +3971,7 @@ export default function OrderManager({
                         </>
                       )}
 
-                      {isShopeeReadyToShipStatus(order) && isProcessedCondition(order) && !isOrderHandedOverToCarrier(order) && (
+                      {isShopeeReadyToShipStatus(order) && isProcessedCondition(order) && hasOrderTrackingNo(order) && !isOrderHandedOverToCarrier(order) && (
                         <>
                           <span className={`om-mobile-hide-print text-[11px] font-black px-2.5 py-1 rounded-xl border ${
                             isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-rose-600 bg-rose-50 border-rose-100'
@@ -3943,10 +3988,12 @@ export default function OrderManager({
                             <Printer className={`w-3.5 h-3.5 ${printingOrderId === order.id ? 'animate-spin' : ''}`} />
                           </button>
                           <button
+                            type="button"
                             onClick={() => void handOverOrderToCarrier(order)}
-                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all"
+                            disabled={handingOverOrderId === order.id}
+                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all disabled:opacity-60"
                           >
-                            Giao cho ĐVVC
+                            {handingOverOrderId === order.id ? 'Đang xử lý...' : 'Giao cho ĐVVC'}
                           </button>
                         </>
                       )}
