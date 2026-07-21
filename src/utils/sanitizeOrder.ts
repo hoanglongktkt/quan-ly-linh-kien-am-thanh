@@ -120,28 +120,69 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     is_pending_shopee_check: Boolean(raw.is_pending_shopee_check),
     isPrepared: Boolean(raw.isPrepared),
     isPrinted: Boolean(raw.isPrinted),
-    isHandedOverToCarrier: isTruthyFlag(raw.isHandedOverToCarrier ?? raw.is_handed_over_to_carrier),
-    is_handed_over_to_carrier: isTruthyFlag(raw.is_handed_over_to_carrier ?? raw.isHandedOverToCarrier),
+    isHandedOverToCarrier: isTruthyFlag(
+      raw.isHandedOverToCarrier ??
+        raw.is_handed_over_to_carrier ??
+        raw.is_handed_over_to_courier,
+    ),
+    is_handed_over_to_carrier: isTruthyFlag(
+      raw.is_handed_over_to_carrier ??
+        raw.isHandedOverToCarrier ??
+        raw.is_handed_over_to_courier,
+    ),
+    is_handed_over_to_courier: isTruthyFlag(
+      raw.is_handed_over_to_courier ??
+        raw.is_handed_over_to_carrier ??
+        raw.isHandedOverToCarrier,
+    ),
     local_status: (() => {
-      const v = String(raw.local_status ?? raw.localStatus ?? '').toUpperCase();
+      const v = String(
+        raw.local_status ?? raw.localStatus ?? raw.internal_status ?? '',
+      ).toUpperCase();
       if (v === 'HANDED_OVER' || v === 'CANCELLED_STORED' || v === 'RETURN_RECEIVED' || v === 'NONE') {
         return v as Order['local_status'];
       }
-      if (isTruthyFlag(raw.isHandedOverToCarrier) || isTruthyFlag(raw.is_handed_over_to_carrier)) {
+      if (
+        isTruthyFlag(raw.isHandedOverToCarrier) ||
+        isTruthyFlag(raw.is_handed_over_to_carrier) ||
+        isTruthyFlag(raw.is_handed_over_to_courier)
+      ) {
         return 'HANDED_OVER';
       }
       if (raw.status === 'return_received') return 'RETURN_RECEIVED';
       return undefined;
     })(),
     localStatus: (() => {
-      const v = String(raw.localStatus ?? raw.local_status ?? '').toUpperCase();
+      const v = String(
+        raw.localStatus ?? raw.local_status ?? raw.internal_status ?? '',
+      ).toUpperCase();
       if (v === 'HANDED_OVER' || v === 'CANCELLED_STORED' || v === 'RETURN_RECEIVED' || v === 'NONE') {
         return v as Order['localStatus'];
       }
-      if (isTruthyFlag(raw.isHandedOverToCarrier) || isTruthyFlag(raw.is_handed_over_to_carrier)) {
+      if (
+        isTruthyFlag(raw.isHandedOverToCarrier) ||
+        isTruthyFlag(raw.is_handed_over_to_carrier) ||
+        isTruthyFlag(raw.is_handed_over_to_courier)
+      ) {
         return 'HANDED_OVER';
       }
       if (raw.status === 'return_received') return 'RETURN_RECEIVED';
+      return undefined;
+    })(),
+    internal_status: (() => {
+      const v = String(
+        raw.internal_status ?? raw.local_status ?? raw.localStatus ?? '',
+      ).toUpperCase();
+      if (v === 'HANDED_OVER' || v === 'CANCELLED_STORED' || v === 'RETURN_RECEIVED' || v === 'NONE') {
+        return v as Order['internal_status'];
+      }
+      if (
+        isTruthyFlag(raw.isHandedOverToCarrier) ||
+        isTruthyFlag(raw.is_handed_over_to_carrier) ||
+        isTruthyFlag(raw.is_handed_over_to_courier)
+      ) {
+        return 'HANDED_OVER';
+      }
       return undefined;
     })(),
     localStatusAt: raw.localStatusAt || raw.local_status_updated_at
@@ -152,6 +193,16 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       : undefined,
     is_local_return_archived: Boolean(raw.is_local_return_archived),
     handedOverAt: raw.handedOverAt ? String(raw.handedOverAt) : undefined,
+    handed_over_source: raw.handed_over_source
+      ? String(raw.handed_over_source)
+      : raw.handedOverSource
+        ? String(raw.handedOverSource)
+        : undefined,
+    handedOverSource: raw.handedOverSource
+      ? String(raw.handedOverSource)
+      : raw.handed_over_source
+        ? String(raw.handed_over_source)
+        : undefined,
     notes: raw.notes ? String(raw.notes) : undefined,
   };
 }

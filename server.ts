@@ -23,6 +23,7 @@ import {
 } from "./src/utils/orderWarehouseStatus.ts";
 import {
   isEligibleForHandOverToCarrier as isEligibleForHandOverShared,
+  matchesProcessedPickupTab as matchesProcessedPickupTabShared,
 } from "./src/utils/orderHandover.ts";
 import {
   initMongo,
@@ -15431,6 +15432,10 @@ async function startServer() {
     if (tab === "handed_over_carrier" || tab === "handed-over-carrier") {
       rawOrders = rawOrders.filter((o: any) => matchesHandedOverCarrierTabOrder(o));
     }
+    if (tab === "processed" || tab === "da-xu-ly" || tab === "processed_pickup") {
+      // Tab Đã xử lý: Shopee chờ lấy/đã xử lý VÀ is_handed_over_* = false.
+      rawOrders = rawOrders.filter((o: any) => matchesProcessedPickupTabShared(o));
+    }
     if (
       tab === "received_cancel_returns" ||
       tab === "received-cancel-returns" ||
@@ -15901,6 +15906,8 @@ async function startServer() {
       if (localPatch === "HANDED_OVER") {
         patch.isHandedOverToCarrier = true;
         patch.is_handed_over_to_carrier = true;
+        patch.is_handed_over_to_courier = true;
+        patch.internal_status = "HANDED_OVER";
         patch.handedOverAt = patch.handedOverAt || nowIso;
       }
       if (localPatch === "RETURN_RECEIVED") {

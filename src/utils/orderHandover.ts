@@ -218,22 +218,24 @@ export function resolveOrderBadgeStatus(
 }
 
 /**
- * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" — đơn ĐVVC (SSOT matchesHandedOverCarrierTab) không hiện ở đây.
+ * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" —
+ * BẮT BUỘC loại trừ mọi đơn đã bàn giao nội bộ (kể cả Shopee vẫn READY_TO_SHIP).
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
-  if (matchesHandedOverCarrierTab(order)) return false;
+  // Exclude tuyệt đối theo cờ nội bộ — không phụ thuộc tab ĐVVC exit.
+  if (isOrderHandedOverToCarrier(order)) return false;
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (!isShopeeReadyToShipStatus(order)) return false;
   if (!isProcessedCondition(order)) return false;
-  return !isOrderHandedOverToCarrier(order);
+  return true;
 }
 
 /**
  * Đủ điều kiện BÀN GIAO ĐVVC (QR / nút): đang ở pool "Chờ lấy hàng (đã xử lý)".
- * Không gồm unprocessed, không gồm đơn Shopee đã Đang giao.
  */
 export function isEligibleForHandOverToCarrier(order: Order): boolean {
+  if (isOrderHandedOverToCarrier(order)) return false;
   if (hasLeftHandedOverCarrierTab(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (!isShopeeReadyToShipStatus(order)) return false;
@@ -246,7 +248,7 @@ export function isEligibleForHandOverToCarrier(order: Order): boolean {
  * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)".
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
-  if (matchesHandedOverCarrierTab(order)) return false;
+  if (isOrderHandedOverToCarrier(order)) return false;
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (!isShopeeReadyToShipStatus(order)) return false;

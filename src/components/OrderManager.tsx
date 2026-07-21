@@ -685,9 +685,22 @@ export default function OrderManager({
         undefined,
         source === 'qr_scan' ? HANDED_OVER_SOURCE.QR_SCAN : HANDED_OVER_SOURCE.MANUAL_BUTTON,
       ) as Order;
-      const merged = ordersRef.current.map((o) =>
-        o.id === patched.id || o.orderSn === patched.orderSn ? { ...o, ...patched } : o
-      );
+      const sn = String(patched.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+      const id = String(patched.id || '').trim().toLowerCase();
+      let hit = false;
+      const merged = ordersRef.current.map((o) => {
+        const oSn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+        const oId = String(o.id || '').trim().toLowerCase();
+        const same =
+          (id && oId && oId === id) ||
+          (sn && oSn && oSn === sn) ||
+          (id && oSn && `shopee-${oSn}` === id) ||
+          (sn && oId && oId === `shopee-${sn}`);
+        if (!same) return o;
+        hit = true;
+        return { ...o, ...patched };
+      });
+      if (!hit) merged.unshift(patched);
       ordersRef.current = merged;
       onUpdateOrders(merged, { persist: false });
     },
@@ -698,17 +711,31 @@ export default function OrderManager({
     (updatedList: Order[]) => {
       if (!updatedList.length) return;
       const byKey = new Map<string, Order>();
+      const addKeys = (patched: Order) => {
+        const sn = String(patched.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+        const id = String(patched.id || '').trim().toLowerCase();
+        if (id) byKey.set(id, patched);
+        if (sn) {
+          byKey.set(sn, patched);
+          byKey.set(`shopee-${sn}`, patched);
+        }
+      };
       for (const u of updatedList) {
-        const patched = applyHandedOverWrite(
-          { ...u },
-          undefined,
-          HANDED_OVER_SOURCE.MANUAL_BUTTON,
-        ) as Order;
-        if (patched.id) byKey.set(String(patched.id), patched);
-        if (patched.orderSn) byKey.set(String(patched.orderSn), patched);
+        addKeys(
+          applyHandedOverWrite(
+            { ...u },
+            undefined,
+            HANDED_OVER_SOURCE.MANUAL_BUTTON,
+          ) as Order,
+        );
       }
       const merged = ordersRef.current.map((o) => {
-        const hit = byKey.get(String(o.id)) || byKey.get(String(o.orderSn));
+        const oSn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+        const oId = String(o.id || '').trim().toLowerCase();
+        const hit =
+          byKey.get(oId) ||
+          byKey.get(oSn) ||
+          (oSn ? byKey.get(`shopee-${oSn}`) : undefined);
         return hit ? { ...o, ...hit } : o;
       });
       ordersRef.current = merged;

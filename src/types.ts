@@ -211,18 +211,24 @@ export interface Order {
   isHandedOverToCarrier?: boolean;
   /** Mirror snake_case for DB / API */
   is_handed_over_to_carrier?: boolean;
+  /** Alias nghiệp vụ — đồng bộ với is_handed_over_to_carrier */
+  is_handed_over_to_courier?: boolean;
   /**
    * Cờ trạng thái nội bộ kho (chỉ DB local — không gọi Shopee):
    * NONE | HANDED_OVER | CANCELLED_STORED | RETURN_RECEIVED
    */
   local_status?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED' | null;
   localStatus?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED' | null;
+  /** Alias = local_status */
+  internal_status?: 'NONE' | 'HANDED_OVER' | 'CANCELLED_STORED' | 'RETURN_RECEIVED' | null;
   /** Thời điểm cập nhật local_status (ISO) — dùng retention 14 ngày */
   local_status_updated_at?: string;
   localStatusAt?: string;
   /** Đã đưa ra khỏi tab đối soát hủy/hoàn sau 14 ngày (không xóa đơn) */
   is_local_return_archived?: boolean;
   handedOverAt?: string;
+  handed_over_source?: 'qr_scan' | 'manual_button' | string | null;
+  handedOverSource?: 'qr_scan' | 'manual_button' | string | null;
   items: {
     productId: string;
     productTitle: string;

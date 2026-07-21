@@ -72,10 +72,12 @@ function buildLocalPatch(targetStatus) {
     return {
       local_status: 'HANDED_OVER',
       localStatus: 'HANDED_OVER',
+      internal_status: 'HANDED_OVER',
       localStatusAt: now,
       local_status_updated_at: now,
       isHandedOverToCarrier: true,
       is_handed_over_to_carrier: true,
+      is_handed_over_to_courier: true,
       handedOverAt: now,
     };
   }
