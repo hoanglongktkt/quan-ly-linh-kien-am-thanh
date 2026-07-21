@@ -993,6 +993,29 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
   const list = Array.isArray(orders)
     ? orders.filter((o) => o != null && typeof o === "object")
     : [];
+  if (list.length === 0) return 0;
+
+  // Giữ tracking_no đã sync (GHN GYA...) — không để pull/Shopee rỗng ghi đè mất.
+  const ids = list
+    .map((order) => {
+      const id = String(order.id || "").trim();
+      const orderSn = String(order.orderSn || "").trim();
+      return id || (orderSn ? `shopee-${orderSn}` : "");
+    })
+    .filter(Boolean);
+  const existingDocs = ids.length
+    ? await OrderModel.find({ _id: { $in: ids } })
+        .select({ _id: 1, tracking_no: 1, "data.tracking_no": 1, "data.trackingNumber": 1 })
+        .lean()
+    : [];
+  const existingTnById = new Map<string, string>();
+  for (const d of existingDocs as any[]) {
+    const tn = String(
+      d?.tracking_no || d?.data?.tracking_no || d?.data?.trackingNumber || "",
+    ).trim();
+    if (tn && !/^0FG/i.test(tn)) existingTnById.set(String(d._id), tn);
+  }
+
   const ops = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
@@ -1000,7 +1023,12 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     if (!id && !orderSn) continue;
     const _id = id || `shopee-${orderSn}`;
     const pendingFlag = order.is_pending_shopee_check === true;
-    const tn = String(order.tracking_no || order.trackingNumber || "").trim() || null;
+    const incomingTn = String(order.tracking_no || order.trackingNumber || "").trim();
+    const preservedTn = existingTnById.get(_id) || "";
+    const tn =
+      (incomingTn && !/^0FG/i.test(incomingTn) ? incomingTn : "") ||
+      preservedTn ||
+      null;
     ops.push({
       updateOne: {
         filter: { _id },
@@ -1010,14 +1038,15 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             orderSn: orderSn || null,
             status: order.status != null ? String(order.status) : null,
             shopId: order.shopId != null ? String(order.shopId) : null,
-            tracking_no: tn,
+            ...(tn ? { tracking_no: tn } : {}),
             is_pending_shopee_check: pendingFlag,
             data: {
               ...order,
               id: _id,
               is_pending_shopee_check: pendingFlag,
-              tracking_no: tn || order.tracking_no,
-              trackingNumber: tn || order.trackingNumber,
+              ...(tn
+                ? { tracking_no: tn, trackingNumber: tn }
+                : {}),
             },
           },
         },
@@ -1219,6 +1248,45 @@ export async function loadOrderTrackingMapFromStore(): Promise<Map<string, strin
     map.set(sn, tn);
   }
   return map;
+}
+
+/**
+ * Đồng bộ tracking_no top-level → data.tracking_no / data.trackingNumber (Mongo).
+ * Script sync cũ đôi khi chỉ ghi top-level → UI/API đọc data bị trống.
+ */
+export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const docs = await OrderModel.find({
+    tracking_no: { $exists: true, $nin: [null, ""] },
+  })
+    .select({ _id: 1, tracking_no: 1, "data.tracking_no": 1, "data.trackingNumber": 1 })
+    .lean();
+
+  const ops = [];
+  for (const d of docs as any[]) {
+    const tn = String(d?.tracking_no || "").trim();
+    if (!tn || /^0FG/i.test(tn)) continue;
+    const dataTn = String(d?.data?.tracking_no || d?.data?.trackingNumber || "").trim();
+    if (dataTn === tn) continue;
+    ops.push({
+      updateOne: {
+        filter: { _id: d._id },
+        update: {
+          $set: {
+            "data.tracking_no": tn,
+            "data.trackingNumber": tn,
+          },
+        },
+      },
+    });
+  }
+  if (ops.length === 0) return 0;
+  const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
+  console.log(
+    `[MongoDB] mirrorTopLevelTrackingIntoData — modified=${result.modifiedCount || 0} ops=${ops.length}`,
+  );
+  return ops.length;
 }
 
 /** Đọc toàn bộ đơn từ Mongo — ưu tiên top-level tracking_no cho UI/API. */

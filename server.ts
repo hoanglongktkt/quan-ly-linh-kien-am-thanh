@@ -37,6 +37,7 @@ import {
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
   loadOrdersFromStore,
+  mirrorTopLevelTrackingIntoData,
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
 
@@ -10332,6 +10333,36 @@ async function loadOrdersForApi(): Promise<{ orders: any[]; dirty: boolean }> {
   return { orders: Array.from(bySn.values()), dirty };
 }
 
+/** API: ép đổ tracking Mongo → orders.json (cứu mã GHN sau sync script). */
+async function hydrateTrackingFromMongoToJson(): Promise<{
+  mirrored: number;
+  filled: number;
+  total: number;
+}> {
+  let mirrored = 0;
+  try {
+    mirrored = await mirrorTopLevelTrackingIntoData();
+  } catch (err: any) {
+    console.warn("[Orders] mirrorTopLevelTrackingIntoData:", err?.message || err);
+  }
+  const { orders, dirty } = await loadOrdersForApi();
+  if (dirty) {
+    saveOrders(orders);
+    try {
+      const withTn = orders.filter(
+        (o) => String(o.trackingNumber || o.tracking_no || "").trim(),
+      );
+      if (withTn.length) await bulkUpsertOrdersToStore(withTn);
+    } catch (err: any) {
+      console.warn("[Orders] hydrate bulkUpsert:", err?.message || err);
+    }
+  }
+  const filled = orders.filter((o) =>
+    String(o.trackingNumber || o.tracking_no || "").trim(),
+  ).length;
+  return { mirrored, filled, total: orders.length };
+}
+
 function saveOrders(orders: any[]): void {
   try {
     fs.mkdirSync(path.dirname(ORDERS_DB_PATH), { recursive: true });
@@ -15226,6 +15257,12 @@ async function startServer() {
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
 
+    try {
+      await mirrorTopLevelTrackingIntoData();
+    } catch {
+      /* ignore */
+    }
+
     let { orders: rawOrders, dirty } = await loadOrdersForApi();
     rawOrders = rawOrders.filter(isValidOrder);
 
@@ -15758,15 +15795,44 @@ async function startServer() {
     });
   });
 
+  app.post("/api/orders/hydrate-tracking", authMiddleware, async (_req, res) => {
+    try {
+      const result = await hydrateTrackingFromMongoToJson();
+      console.log(
+        `[Orders] hydrate-tracking mirrored=${result.mirrored} filled=${result.filled}/${result.total}`,
+      );
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error("[Orders] hydrate-tracking failed:", err?.message || err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+      });
+    }
+  });
+
   // Update a real order's status/tracking after a warehouse/UI action.
   app.patch("/api/orders/:id", authMiddleware, async (req, res) => {
     const orders = loadOrders();
-    const index = orders.findIndex((o: any) => o.id === req.params.id);
+    const key = String(req.params.id || "").trim();
+    const index = orders.findIndex(
+      (o: any) =>
+        o.id === key ||
+        o.orderSn === key ||
+        o.id === `shopee-${key}` ||
+        String(o.orderSn || "") === key.replace(/^shopee-/i, ""),
+    );
     if (index === -1) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
     }
     const patch = { ...req.body };
     delete patch.id;
+    // Mirror tracking fields — GHN/SPX phải ghi cả tracking_no + trackingNumber.
+    const patchTn = String(patch.tracking_no || patch.trackingNumber || "").trim();
+    if (patchTn && !/^0FG/i.test(patchTn)) {
+      patch.tracking_no = patchTn;
+      patch.trackingNumber = patchTn;
+    }
     const patchRaw = String(patch.shopee_order_status || "").toUpperCase();
     const clearHandover =
       patch.status === "shipping" ||
@@ -15808,6 +15874,17 @@ async function startServer() {
       }
     }
     orders[index] = { ...orders[index], ...patch, id: orders[index].id };
+    // Mirror tracking fields — GHN GYA... phải hiện cả tracking_no + trackingNumber.
+    {
+      const tn = String(
+        orders[index].tracking_no || orders[index].trackingNumber || "",
+      ).trim();
+      if (tn && !/^0FG/i.test(tn)) {
+        orders[index].tracking_no = tn;
+        orders[index].trackingNumber = tn;
+      }
+      repairMisassignedTracking(orders[index]);
+    }
     if ("custom_costs" in patch || "custom_cost_items" in patch) {
       applyShopeeOrderFinanceFields(orders[index], {
         totalAmount: orders[index].totalAmount,
