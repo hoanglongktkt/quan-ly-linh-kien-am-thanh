@@ -7920,11 +7920,46 @@ function isShopeeOrderPreparedForPrint(order: any): boolean {
   );
 }
 
+function resolveAutoShipMethodForPrint(order: any): ShipMethod {
+  const raw = String(order?.fulfillment_type || order?.ship_method || order?.shipping_method || "pickup").toLowerCase();
+  return raw === "dropoff" ? "dropoff" : "pickup";
+}
+
+/** Debug NDJSON — file + ingest (session ac966f). */
+function agentDebugLogAc966f(payload: {
+  hypothesisId: string;
+  location: string;
+  message: string;
+  data?: Record<string, unknown>;
+  runId?: string;
+}) {
+  const body = {
+    sessionId: "ac966f",
+    runId: payload.runId || "post-fix",
+    hypothesisId: payload.hypothesisId,
+    location: payload.location,
+    message: payload.message,
+    data: payload.data || {},
+    timestamp: Date.now(),
+  };
+  // #region agent log
+  try {
+    fs.appendFileSync(path.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
+  } catch {
+    /* ignore */
+  }
+  fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ac966f" },
+    body: JSON.stringify(body),
+  }).catch(() => {});
+  // #endregion
+}
+
 /**
  * Chốt chặn 1 đơn trước khi in:
- * - Chưa ship_order/Init → lỗi rõ ràng
- * - Thiếu tracking_no → gọi get_tracking_number, ghi DB
- * - Vẫn không có mã → ném nguyên văn response Shopee
+ * - Thiếu tracking_no → tự động ship_order → chờ → get_tracking_number → ghi DB
+ * - Vẫn không có mã → ném lỗi rõ cho Frontend
  */
 async function ensureOrderTrackingNoForPrint(
   order: any,
@@ -7937,79 +7972,103 @@ async function ensureOrderTrackingNoForPrint(
     };
   }
 
-  if (!isShopeeOrderPreparedForPrint(order)) {
-    throw new Error(
-      "Đơn hàng chưa được chuẩn bị (Init/Ship Order) trên Shopee, vui lòng chuẩn bị hàng trước khi in",
-    );
-  }
-
   if (!order.shopId) {
     const resolved = resolveOrderShopId(order);
     if (resolved) order.shopId = resolved;
   }
   if (!order.shopId) {
-    throw new Error("Shopee API Error: thiếu shop_id — không gọi được get_tracking_number");
+    throw new Error("Lỗi tự động lấy mã từ Shopee: " + JSON.stringify({ error: "missing_shop_id" }));
   }
 
   const accessToken = await getValidShopeeAccessToken(String(order.shopId));
   if (!accessToken) {
-    throw new Error("Shopee API Error: không có access_token hợp lệ cho shop");
+    throw new Error("Lỗi tự động lấy mã từ Shopee: " + JSON.stringify({ error: "no_valid_access_token" }));
   }
 
-  console.log(
-    `[Shopee Print Gate] get_tracking_number order_sn=${order.orderSn} package=${order.packageNumber || "-"}`,
-  );
-  const shopeeResponse = await shopeeGetTrackingNumberWithRetry(
-    String(order.shopId),
-    accessToken,
-    String(order.orderSn),
-    order.packageNumber,
-    4,
-  );
-  console.log(
-    "=== KẾT QUẢ API TRACKING ===",
-    "Đơn:",
-    order.orderSn,
-    "Response:",
-    JSON.stringify(shopeeResponse),
-  );
-
-  applyShopeeGetTrackingResponse(order, shopeeResponse);
-  const resp = shopeeResponse?.response ?? shopeeResponse ?? {};
-  const candidates = [
-    resp?.tracking_number,
-    resp?.tracking_no,
-    resp?.last_mile_tracking_number,
-    resp?.third_party_tracking_number,
-    order.trackingNumber,
-    order.tracking_no,
-  ];
-  let tn = "";
-  for (const c of candidates) {
-    const s = String(c || "").trim();
-    if (s && !isShopeeInternalTrackingCode(s)) {
-      tn = s;
-      break;
+  try {
+    const method = resolveAutoShipMethodForPrint(order);
+    agentDebugLogAc966f({
+      hypothesisId: "B",
+      location: "server.ts:ensureOrderTrackingNoForPrint:ship",
+      message: "auto ship_order before get_tracking",
+      data: { orderSn: order.orderSn, method, wasPrepared: isShopeeOrderPreparedForPrint(order) },
+    });
+    const shipResult = await arrangeShipment(order, method);
+    if (!shipResult.success && !isAlreadyShippedError(shipResult)) {
+      throw new Error("Lỗi tự động lấy mã từ Shopee: " + JSON.stringify(shipResult));
     }
-  }
+    order.isPrepared = true;
 
-  if (tn) {
-    order.trackingNumber = tn;
-    order.tracking_no = tn;
-    const idx = ordersStore.findIndex((x: any) => String(x.orderSn) === String(order.orderSn));
-    if (idx >= 0) {
-      ordersStore[idx].trackingNumber = tn;
-      ordersStore[idx].tracking_no = tn;
-      ordersStore[idx].internalTrackingCode = order.internalTrackingCode;
-      ordersStore[idx].packageNumber = order.packageNumber || ordersStore[idx].packageNumber;
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    console.log(
+      `[Shopee Print Gate] get_tracking_number order_sn=${order.orderSn} package=${order.packageNumber || "-"}`,
+    );
+    const shopeeResponse = await shopeeGetTrackingNumberWithRetry(
+      String(order.shopId),
+      accessToken,
+      String(order.orderSn),
+      order.packageNumber,
+      4,
+    );
+    console.log(
+      "=== KẾT QUẢ API TRACKING ===",
+      "Đơn:",
+      order.orderSn,
+      "Response:",
+      JSON.stringify(shopeeResponse),
+    );
+
+    applyShopeeGetTrackingResponse(order, shopeeResponse);
+    const resp = shopeeResponse?.response ?? shopeeResponse ?? {};
+    const candidates = [
+      resp?.tracking_number,
+      resp?.tracking_no,
+      resp?.last_mile_tracking_number,
+      resp?.third_party_tracking_number,
+      order.trackingNumber,
+      order.tracking_no,
+      shipResult.trackingNumber,
+    ];
+    let tn = "";
+    for (const c of candidates) {
+      const s = String(c || "").trim();
+      if (s && !isShopeeInternalTrackingCode(s)) {
+        tn = s;
+        break;
+      }
     }
-    await persistOrderTrackingToDb(order);
-    saveOrders(ordersStore);
-    return { trackingNo: tn, shopeeResponse };
-  }
 
-  // Không có mã → ném nguyên văn phản hồi Shopee ra frontend.
-  throw new Error("Shopee API Error: " + JSON.stringify(shopeeResponse ?? {}));
+    if (tn) {
+      order.trackingNumber = tn;
+      order.tracking_no = tn;
+      const idx = ordersStore.findIndex((x: any) => String(x.orderSn) === String(order.orderSn));
+      if (idx >= 0) {
+        ordersStore[idx].trackingNumber = tn;
+        ordersStore[idx].tracking_no = tn;
+        ordersStore[idx].isPrepared = true;
+        ordersStore[idx].internalTrackingCode = order.internalTrackingCode;
+        ordersStore[idx].packageNumber = order.packageNumber || ordersStore[idx].packageNumber;
+      }
+      await persistOrderTrackingToDb(order);
+      saveOrders(ordersStore);
+      agentDebugLogAc966f({
+        hypothesisId: "D",
+        location: "server.ts:ensureOrderTrackingNoForPrint:ok",
+        message: "auto fetch tracking success",
+        data: { orderSn: order.orderSn, tn },
+      });
+      return { trackingNo: tn, shopeeResponse };
+    }
+
+    throw new Error("Lỗi tự động lấy mã từ Shopee: " + JSON.stringify(shopeeResponse ?? {}));
+  } catch (error: any) {
+    const msg = String(error?.message || error || "");
+    if (msg.startsWith("Lỗi tự động lấy mã từ Shopee:")) throw error;
+    throw new Error(
+      "Lỗi tự động lấy mã từ Shopee: " + JSON.stringify(error?.response?.data || error?.message || msg),
+    );
+  }
 }
 
 async function enrichShopeeOrdersTrackingBatch(
@@ -17064,23 +17123,70 @@ async function startServer() {
       if (tracking_no && isShopeeInternalTrackingCode(tracking_no)) tracking_no = "";
 
       console.log("=== BẮT ĐẦU IN ĐƠN ===", "Mã đơn:", order_sn, "Tracking No hiện tại:", tracking_no || "(rỗng)");
+      // #region agent log
+      agentDebugLogAc966f({
+        hypothesisId: "A",
+        location: "server.ts:tryGenerateShopeeShippingDocumentOnce:entry",
+        message: "print doc tracking check",
+        data: {
+          order_sn,
+          tracking_no: tracking_no || null,
+          rawRowTn: row.tracking_number || null,
+          package_number: row.package_number || null,
+          empty: !tracking_no,
+        },
+      });
+      // #endregion
       if (!tracking_no) {
-        console.log("-> Đơn chưa có tracking_no, thử gọi API get_tracking_number...");
+        console.log("-> Đơn chưa có tracking_no, tự động ship_order + get_tracking_number...");
+        // #region agent log
+        agentDebugLogAc966f({
+          hypothesisId: "B",
+          location: "server.ts:tryGenerateShopeeShippingDocumentOnce:emptyTn",
+          message: "empty tracking — auto ship_order then get_tracking",
+          data: { order_sn, willCallShipOrder: true },
+        });
+        // #endregion
         try {
+          const ordersStore = loadOrders();
+          let orderObj = ordersStore.find((o: any) => String(o.orderSn) === order_sn);
+          if (!orderObj) {
+            orderObj = {
+              orderSn: order_sn,
+              shopId,
+              channel: "shopee",
+              packageNumber: row.package_number,
+            };
+          }
+          if (!orderObj.shopId) orderObj.shopId = shopId;
+
+          const method = resolveAutoShipMethodForPrint(orderObj);
+          const shipResult = await arrangeShipment(orderObj, method);
+          if (!shipResult.success && !isAlreadyShippedError(shipResult)) {
+            throw new Error("Lỗi tự động lấy mã từ Shopee: " + JSON.stringify(shipResult));
+          }
+          orderObj.isPrepared = true;
+
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+
           const trackingResponse = await shopeeGetTrackingNumberWithRetry(
             shopId,
             accessToken,
             order_sn,
-            row.package_number,
+            row.package_number || orderObj.packageNumber,
             3,
           );
           console.log("-> Kết quả xin tracking:", JSON.stringify(trackingResponse));
+          applyShopeeGetTrackingResponse(orderObj, trackingResponse);
           const resp = trackingResponse?.response ?? trackingResponse ?? {};
           const candidates = [
             resp?.tracking_number,
             resp?.tracking_no,
             resp?.last_mile_tracking_number,
             resp?.third_party_tracking_number,
+            orderObj.trackingNumber,
+            orderObj.tracking_no,
+            shipResult.trackingNumber,
           ];
           for (const c of candidates) {
             const s = String(c || "").trim();
@@ -17089,16 +17195,51 @@ async function startServer() {
               break;
             }
           }
+          // #region agent log
+          agentDebugLogAc966f({
+            hypothesisId: "D",
+            location: "server.ts:tryGenerateShopeeShippingDocumentOnce:afterGetTn",
+            message: "after auto ship + get_tracking_number",
+            data: {
+              order_sn,
+              apiError: trackingResponse?.error || null,
+              apiMessage: String(trackingResponse?.message || "").slice(0, 160),
+              respTn: resp?.tracking_number || null,
+              resolvedTn: tracking_no || null,
+              gotUsable: Boolean(tracking_no),
+            },
+          });
+          // #endregion
           if (!tracking_no) {
-            // Ném nguyên văn Shopee — không để catch ngoài đè message generic.
-            throw new Error("Shopee API Error: " + JSON.stringify(trackingResponse ?? {}));
+            throw new Error("Lỗi tự động lấy mã từ Shopee: " + JSON.stringify(trackingResponse ?? {}));
           }
+
+          orderObj.trackingNumber = tracking_no;
+          orderObj.tracking_no = tracking_no;
+          const idx = ordersStore.findIndex((x: any) => String(x.orderSn) === order_sn);
+          if (idx >= 0) {
+            ordersStore[idx].trackingNumber = tracking_no;
+            ordersStore[idx].tracking_no = tracking_no;
+            ordersStore[idx].isPrepared = true;
+            ordersStore[idx].packageNumber = orderObj.packageNumber || ordersStore[idx].packageNumber;
+          }
+          await persistOrderTrackingToDb(orderObj);
+          saveOrders(ordersStore);
         } catch (error: any) {
-          console.error("-> Lỗi khi xin tracking:", error);
+          console.error("-> Lỗi khi tự động lấy mã:", error);
+          // #region agent log
+          agentDebugLogAc966f({
+            hypothesisId: "B",
+            location: "server.ts:tryGenerateShopeeShippingDocumentOnce:getTnError",
+            message: "auto ship/get_tracking failed",
+            data: { order_sn, err: String(error?.message || error).slice(0, 300) },
+          });
+          // #endregion
           const msg = String(error?.message || error || "");
-          if (msg.startsWith("Shopee API Error:")) throw error;
+          if (msg.startsWith("Lỗi tự động lấy mã từ Shopee:")) throw error;
           throw new Error(
-            "Shopee API Error: " + JSON.stringify({ order_sn, error: msg || String(error) }),
+            "Lỗi tự động lấy mã từ Shopee: " +
+              JSON.stringify(error?.response?.data || error?.message || msg),
           );
         }
       }
@@ -17110,6 +17251,18 @@ async function startServer() {
       });
     }
 
+    // #region agent log
+    agentDebugLogAc966f({
+      hypothesisId: "A",
+      location: "server.ts:tryGenerateShopeeShippingDocumentOnce:beforeCreate",
+      message: "calling create_shipping_document",
+      data: {
+        shopId,
+        count: enrichedOrderList.length,
+        items: enrichedOrderList.map((x) => ({ sn: x.order_sn, tn: x.tracking_number || null })),
+      },
+    });
+    // #endregion
     const createResult = await shopeeCreateShippingDocument(shopId, accessToken, enrichedOrderList);
     console.log(
       "=== KẾT QUẢ create_shipping_document ===",
@@ -17120,6 +17273,25 @@ async function startServer() {
         result_list: createResult?.response?.result_list || createResult?.result_list || null,
       }),
     );
+    // #region agent log
+    agentDebugLogAc966f({
+      hypothesisId: "E",
+      location: "server.ts:tryGenerateShopeeShippingDocumentOnce:afterCreate",
+      message: "create_shipping_document result",
+      data: {
+        shopId,
+        error: createResult?.error || null,
+        message: String(createResult?.message || "").slice(0, 200),
+        failList: (createResult?.response?.result_list || [])
+          .filter((it: any) => it?.fail_error)
+          .map((it: any) => ({
+            sn: it.order_sn,
+            err: it.fail_error,
+            msg: String(it.fail_message || "").slice(0, 120),
+          })),
+      },
+    });
+    // #endregion
     const createList: any[] = createResult.response?.result_list || [];
     const failedItems: any[] = createList.filter((it: any) => it.fail_error);
     const failedSnSet = new Set(failedItems.map((it: any) => String(it.order_sn || "")));
@@ -17687,13 +17859,24 @@ async function startServer() {
       const readyToPrint: any[] = [];
       for (const o of groupOrders) {
         try {
-          // Chưa Init/ship_order → chặn sớm với message rõ.
-          if (!hasUsableShopeeTrackingNumber(o) && !isShopeeOrderPreparedForPrint(o)) {
-            throw new Error(
-              "Đơn hàng chưa được chuẩn bị (Init/Ship Order) trên Shopee, vui lòng chuẩn bị hàng trước khi in",
-            );
-          }
-
+          // #region agent log
+          agentDebugLogAc966f({
+            hypothesisId: "C",
+            location: "server.ts:print-document:gate",
+            message: "print gate per order",
+            data: {
+              orderSn: o.orderSn,
+              hasUsable: hasUsableShopeeTrackingNumber(o),
+              isPrepared: isShopeeOrderPreparedForPrint(o),
+              isPreparedFlag: o.isPrepared === true,
+              status: o.status || null,
+              raw: o.shopee_order_status || null,
+              tn: o.trackingNumber || o.tracking_no || null,
+              carrier: o.shipping_carrier || null,
+            },
+          });
+          // #endregion
+          // Thiếu mã → tự động ship_order + get_tracking trong ensureOrderTrackingNoForPrint.
           let tn = String(trackingForShopeeShippingDoc(o) || "").trim();
           if (!tn) {
             const ensured = await ensureOrderTrackingNoForPrint(o, orders);
