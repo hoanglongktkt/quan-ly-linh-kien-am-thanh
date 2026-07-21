@@ -1111,6 +1111,61 @@ export async function updateOrderTrackingInStore(
   return Boolean(result);
 }
 
+/** Xóa đơn theo id / orderSn khỏi collection orders (Mongo). */
+export async function deleteOrdersFromStore(
+  idsOrSns: string[],
+): Promise<number> {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const keys = [...new Set(idsOrSns.map((k) => String(k || "").trim()).filter(Boolean))];
+  if (keys.length === 0) return 0;
+  const idList = keys.flatMap((k) => (k.startsWith("shopee-") ? [k] : [k, `shopee-${k}`]));
+  const snList = keys.map((k) => k.replace(/^shopee-/i, "")).filter(Boolean);
+  const result = await OrderModel.deleteMany({
+    $or: [{ _id: { $in: idList } }, { orderSn: { $in: snList } }, { "data.orderSn": { $in: snList } }],
+  });
+  console.log(
+    `[MongoDB] deleteMany orders — deleted=${result.deletedCount || 0} keys=${keys.length}`,
+  );
+  return Number(result.deletedCount || 0);
+}
+
+/** Xóa mọi đơn Mongo có cờ ĐÃ GIAO CHO ĐVVC (HANDED_OVER). */
+export async function deleteHandedOverOrdersFromStore(): Promise<{
+  deleted: number;
+  sns: string[];
+}> {
+  if (!isMongoReady()) return { deleted: 0, sns: [] };
+  requireMongo();
+  const filter = {
+    $or: [
+      { "data.local_status": "HANDED_OVER" },
+      { "data.localStatus": "HANDED_OVER" },
+      { "data.isHandedOverToCarrier": true },
+      { "data.is_handed_over_to_carrier": true },
+      { local_status: "HANDED_OVER" },
+      { is_handed_over_to_carrier: true },
+    ],
+  };
+  const docs = await OrderModel.find(filter)
+    .select({ _id: 1, orderSn: 1, "data.orderSn": 1 })
+    .lean();
+  const sns = [
+    ...new Set(
+      docs
+        .map((d: any) =>
+          String(d?.orderSn || d?.data?.orderSn || d?._id || "").trim(),
+        )
+        .filter(Boolean),
+    ),
+  ];
+  const result = await OrderModel.deleteMany(filter);
+  console.log(
+    `[MongoDB] deleteHandedOver — deleted=${result.deletedCount || 0} sns=${sns.join(",") || "(none)"}`,
+  );
+  return { deleted: Number(result.deletedCount || 0), sns };
+}
+
 export async function flushDbWrites(): Promise<void> {
   await writeChain;
 }
