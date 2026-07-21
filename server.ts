@@ -7654,6 +7654,7 @@ async function enrichShopeeOrderTrackingFromApi(
       order.packageNumber,
       retries,
     );
+    console.log("DEBUG_GHN_TRACKING - Mã đơn:", order.orderSn, " - Dữ liệu trả về:", result);
     applyShopeeGetTrackingResponse(order, result);
     // #region agent log
     {
@@ -7930,13 +7931,10 @@ async function repairMissingShopeeTrackingInOrders(
       } else if (hasUsableShopeeTrackingNumber(o)) {
         await persistOrderTrackingToDb(o);
       }
-    } catch (err: any) {
-      // Bắt buộc continue — không để 1 đơn lỗi treo toàn bộ sync/process.
-      console.warn(
-        `[Shopee Tracking] repair skip order_sn=${o?.orderSn}:`,
-        err?.message || err,
-      );
+    } catch (error) {
+      console.error("Lỗi 1 đơn:", error);
       attempted++;
+      continue;
     } finally {
       await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
     }
