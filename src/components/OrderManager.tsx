@@ -2416,32 +2416,56 @@ export default function OrderManager({
         throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
       }
 
+      // Không dùng `|| eligible.length` — updated=0 từng báo giả "thành công 3 đơn".
+      const updatedCount = Number(data?.updated);
+      const skippedCount = Number(data?.skipped) || 0;
+      const failedArr = Array.isArray(data?.failed) ? data.failed : [];
+      const realUpdated = Number.isFinite(updatedCount) ? updatedCount : 0;
+
+      if (realUpdated <= 0 && skippedCount <= 0) {
+        throw new Error(
+          failedArr[0]?.error || data?.message || 'Không bàn giao được đơn nào vào DB.',
+        );
+      }
+
       const savedList = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
-      if (savedList.length) {
+      if (savedList.length > 0) {
         applyHandoverBulkToLocalOrders(savedList);
-      } else {
+      } else if (realUpdated > 0) {
         applyHandoverBulkToLocalOrders(eligible);
       }
 
-      const updatedCount = Number(data?.updated ?? savedList.length) || eligible.length;
-      const failedCount = Array.isArray(data?.failed) ? data.failed.length : 0;
       onAddLog({
         id: `log-${Date.now()}`,
         timestamp: new Date().toISOString(),
         channel: 'all',
         type: 'stock_sync',
-        status: failedCount > 0 ? 'error' : 'success',
-        message: `[BÀN GIAO HÀNG LOẠT] ${updatedCount} đơn → Đã giao cho ĐVVC${
-          failedCount ? ` (lỗi ${failedCount})` : ''
-        }.`,
+        status: failedArr.length > 0 ? 'error' : 'success',
+        message: `[BÀN GIAO HÀNG LOẠT] ${realUpdated} đơn → Đã giao cho ĐVVC${
+          skippedCount ? ` (bỏ qua ${skippedCount})` : ''
+        }${failedArr.length ? ` (lỗi ${failedArr.length})` : ''}.`,
       });
-      setActiveSubTab('handed_over_carrier');
       setSelectedOrderIds([]);
-      showToast(
-        failedCount > 0
-          ? `Đã giao ĐVVC ${updatedCount} đơn, lỗi ${failedCount} đơn.`
-          : `Đã giao cho ĐVVC hàng loạt ${updatedCount} đơn.`,
-      );
+
+      // Đọc lại từ DB (cùng nguồn Tab) — đảm bảo F5 cũng thấy đúng.
+      if (onFetchOrders) {
+        try {
+          await onFetchOrders();
+        } catch {
+          /* giữ state local nếu refetch lỗi */
+        }
+      }
+      setActiveSubTab('handed_over_carrier');
+
+      if (realUpdated <= 0 && skippedCount > 0) {
+        showToast(`Các đơn đã chọn đã ở tab Đã giao cho ĐVVC trước đó (${skippedCount}).`);
+      } else {
+        showToast(
+          failedArr.length > 0
+            ? `Đã giao ĐVVC ${realUpdated} đơn, lỗi ${failedArr.length} đơn.`
+            : `Đã giao cho ĐVVC hàng loạt ${realUpdated} đơn.`,
+        );
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       showToast(`Không bàn giao hàng loạt: ${msg}`);

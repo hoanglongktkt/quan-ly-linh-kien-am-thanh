@@ -8648,6 +8648,45 @@ function setOrderHandoverFlag(order: any, value: boolean): void {
   }
 }
 
+/**
+ * Dọn cờ HANDED_OVER lưu sai — chỉ giữ đơn thật sự hợp lệ cho tab Đã giao ĐVVC:
+ * chờ lấy hàng + có mã vận đơn. Terminal Shopee đã clear ở enforceShopeeTerminalLocalStatus.
+ */
+function healInvalidHandedOverFlags(orders: any[]): any[] {
+  const changed: any[] = [];
+  for (let i = 0; i < orders.length; i++) {
+    const order = orders[i];
+    if (!resolveOrderHandoverFlag(order)) continue;
+
+    // Terminal / hủy-hoàn: bỏ cờ (không thuộc tab ĐVVC).
+    if (enforceShopeeTerminalLocalStatus(order)) {
+      changed.push(order);
+      continue;
+    }
+
+    const raw = String(order?.shopee_order_status || "").toUpperCase();
+    const awaitingPickup =
+      isOrderAwaitingCarrierPickupStatus(order?.status) ||
+      raw === "READY_TO_SHIP" ||
+      raw === "RETRY_SHIP" ||
+      raw === "PROCESSED";
+    const hasTn = hasUsableShopeeTrackingNumber(order);
+
+    // Cờ dính nhầm: thiếu mã VĐ hoặc không còn chờ lấy hàng → gỡ về NONE.
+    if (!awaitingPickup || !hasTn) {
+      const next = { ...order };
+      setOrderHandoverFlag(next, false);
+      next.local_status = "NONE";
+      next.localStatus = "NONE";
+      next.isHandedOverToCarrier = false;
+      next.is_handed_over_to_carrier = false;
+      orders[i] = next;
+      changed.push(next);
+    }
+  }
+  return changed;
+}
+
 function isOrderAwaitingCarrierPickupStatus(status: unknown): boolean {
   const s = String(status || "");
   return s === "processed" || s === "unprocessed";
@@ -10328,19 +10367,11 @@ async function loadOrdersForApi(): Promise<{
       }
     }
 
-    // Đồng bộ cờ ĐÃ GIAO CHO ĐVVC giữa Mongo ↔ JSON (tránh tab lệch nguồn).
+    // JSON = nguồn sự thật cho cờ ĐVVC. Không copy cờ stale từ Mongo → JSON
+    // (tránh tab Đã giao ĐVVC hiện đơn lưu nhầm). Chỉ đẩy JSON → Mongo khi lệch.
     const mongoHanded = resolveOrderHandoverFlag(m);
     const jsonHanded = resolveOrderHandoverFlag(existing);
-    if (mongoHanded && !jsonHanded) {
-      setOrderHandoverFlag(existing, true);
-      if (m.handedOverAt) existing.handedOverAt = m.handedOverAt;
-      if (m.localStatusAt || m.local_status_updated_at) {
-        existing.localStatusAt = m.localStatusAt || m.local_status_updated_at;
-        existing.local_status_updated_at =
-          m.local_status_updated_at || m.localStatusAt;
-      }
-      dirty = true;
-    } else if (jsonHanded && !mongoHanded) {
+    if (jsonHanded && !mongoHanded) {
       handoverMongoSync.push(existing);
       dirty = true;
     }
@@ -12424,7 +12455,8 @@ function validateOrderShopForShipment(order: any): {
 function findOrderRecord(orders: any[], idOrSn: string): { index: number; order: any } | null {
   const key = String(idOrSn || "").trim();
   if (!key) return null;
-  const idx = getOrderLookupIndex(orders);
+  // Luôn rebuild từ mảng đang thao tác (JSON∪Mongo) — không dùng cache JSON cũ.
+  const idx = rebuildOrderLookupIndex(orders);
   const normalized = normalizeOrderIndexKey(key);
   let index =
     idx.byId.get(normalized) ??
@@ -15427,8 +15459,21 @@ async function startServer() {
       }
       return o;
     });
+
+    // Dọn cờ HANDED_OVER lưu sai (thiếu mã VĐ / không còn chờ lấy / terminal).
+    try {
+      const healed = healInvalidHandedOverFlags(rawOrders);
+      if (healed.length) {
+        dirty = true;
+        handoverMongoSync = [...(handoverMongoSync || []), ...healed];
+        console.log(`[Orders Heal Handover] cleared invalid flags=${healed.length}`);
+      }
+    } catch (healErr: any) {
+      console.warn("[Orders Heal Handover] skip:", healErr?.message || healErr);
+    }
+
     if (dirty) {
-      // JSON luôn lưu; Mongo chỉ upsert đơn lệch cờ ĐVVC (tránh bulk thừa mỗi GET).
+      // JSON luôn lưu; Mongo upsert đơn cần sync cờ ĐVVC.
       await persistOrdersToDatabase(rawOrders, handoverMongoSync || []);
     }
 
@@ -15985,7 +16030,9 @@ async function startServer() {
   // Ghi nhận nội bộ: đã bàn giao cho bưu tá/ĐVVC (chưa quét nhập kho Shopee).
   app.post("/api/orders/:id/hand-over-carrier", authMiddleware, async (req, res) => {
     try {
-      const orders = loadOrders();
+      // Cùng nguồn với GET /api/orders (JSON ∪ Mongo) — không chỉ loadOrders() JSON.
+      const loaded = await loadOrdersForApi();
+      const orders = loaded.orders;
       const hit = findOrderRecord(orders, String(req.params.id || ""));
       const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1);
       if (!result.ok) {
@@ -16011,7 +16058,8 @@ async function startServer() {
       const orderId = String(
         req.body?.orderId || req.body?.id || req.body?.orderSn || req.body?.order_sn || "",
       ).trim();
-      const orders = loadOrders();
+      const loaded = await loadOrdersForApi();
+      const orders = loaded.orders;
 
       let index = -1;
       if (orderId) {
@@ -16048,7 +16096,7 @@ async function startServer() {
     }
   });
 
-  // Bàn giao ĐVVC hàng loạt — JSON + Mongo đồng bộ 1 lần.
+  // Bàn giao ĐVVC hàng loạt — ghi thẳng cùng nguồn Tab ĐVVC đọc (JSON + Mongo).
   app.post("/api/orders/hand-over-carrier/bulk", authMiddleware, async (req, res) => {
     try {
       const rawIds = Array.isArray(req.body?.orderIds)
@@ -16057,13 +16105,19 @@ async function startServer() {
           ? req.body.ids
           : [];
       const rawSns = Array.isArray(req.body?.orderSns) ? req.body.orderSns : [];
+      // Ưu tiên orderIds; tránh đếm trùng khi gửi cả id + orderSn.
       const keys = [
         ...new Set(
-          [...rawIds, ...rawSns]
+          (rawIds.length ? rawIds : rawSns)
             .map((v: unknown) => String(v || "").trim())
             .filter(Boolean),
         ),
       ];
+      if (!keys.length && rawSns.length) {
+        keys.push(
+          ...new Set(rawSns.map((v: unknown) => String(v || "").trim()).filter(Boolean)),
+        );
+      }
       if (!keys.length) {
         return res.status(400).json({
           success: false,
@@ -16072,10 +16126,13 @@ async function startServer() {
         });
       }
 
-      const orders = loadOrders();
+      // Cùng nguồn GET /api/orders — Tab Đã giao ĐVVC đọc từ đây sau F5.
+      const loaded = await loadOrdersForApi();
+      const orders = loaded.orders;
       const updatedOrders: any[] = [];
       const failed: { key: string; error: string }[] = [];
       let skipped = 0;
+      const seenIdx = new Set<number>();
 
       for (const key of keys) {
         const hit = findOrderRecord(orders, key);
@@ -16083,6 +16140,11 @@ async function startServer() {
           failed.push({ key, error: "Không tìm thấy đơn hàng." });
           continue;
         }
+        if (seenIdx.has(hit.index)) {
+          skipped++;
+          continue;
+        }
+        seenIdx.add(hit.index);
         const result = await handOverOrderToCarrierByIndex(orders, hit.index, { persist: false });
         if (!result.ok) {
           failed.push({ key, error: result.error });
@@ -16101,6 +16163,19 @@ async function startServer() {
       console.log(
         `[Orders Handover Bulk] keys=${keys.length} updated=${updatedOrders.length} skipped=${skipped} failed=${failed.length}`,
       );
+
+      if (updatedOrders.length === 0 && skipped === 0) {
+        return res.status(400).json({
+          success: false,
+          updated: 0,
+          skipped: 0,
+          failed,
+          orders: [],
+          error: failed[0]?.error || "Không bàn giao được đơn nào.",
+          message: failed[0]?.error || "Không bàn giao được đơn nào.",
+        });
+      }
+
       return res.json({
         success: true,
         updated: updatedOrders.length,
@@ -16114,6 +16189,33 @@ async function startServer() {
         success: false,
         error: error?.message || "hand_over_bulk_failed",
         message: error?.message || "Không thể bàn giao ĐVVC hàng loạt.",
+      });
+    }
+  });
+
+  // Dọn cờ ĐVVC lưu sai (JSON + Mongo) — gọi tay khi tab bị bẩn.
+  app.post("/api/orders/heal-handed-over", authMiddleware, async (_req, res) => {
+    try {
+      const loaded = await loadOrdersForApi();
+      const orders = loaded.orders;
+      const healed = healInvalidHandedOverFlags(orders);
+      if (healed.length) {
+        await persistOrdersToDatabase(orders, healed);
+      }
+      return res.json({
+        success: true,
+        healed: healed.length,
+        orderSns: healed.map((o) => o.orderSn || o.id).filter(Boolean),
+        message:
+          healed.length > 0
+            ? `Đã gỡ ${healed.length} cờ ĐVVC lưu sai.`
+            : "Không còn cờ ĐVVC lưu sai.",
+      });
+    } catch (error: any) {
+      console.error("[Heal HandedOver] error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "heal_failed",
       });
     }
   });
