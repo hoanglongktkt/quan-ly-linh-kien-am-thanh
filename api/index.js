@@ -16,6 +16,7 @@ import { handleProductSyncShopee } from '../_lib/handlers/productSyncShopee.js';
 import { handleProductsSearch } from '../_lib/handlers/productsSearch.js';
 import { handleScanBulkUpdate } from '../_lib/handlers/scanBulkUpdate.js';
 import { handleCleanupHandedOver } from '../_lib/handlers/cleanupHandedOver.js';
+import { handleCleanupProcessedPickup } from '../_lib/handlers/cleanupProcessedPickup.js';
 import { handleLabelProxy } from '../_lib/handlers/labels.js';
 import { proxyRequestToCpanel, resolveProxyTimeoutMs } from '../_lib/cpanelProxy.js';
 
@@ -58,6 +59,7 @@ const LOCAL_ROUTES = {
   // cPanel cũ trả 404 cho route bulk quét — xử lý local trên Vercel.
   'orders/scan-bulk-update': handleScanBulkUpdate,
   'orders/cleanup-handed-over': handleCleanupHandedOver,
+  'orders/cleanup-processed-pickup': handleCleanupProcessedPickup,
 };
 
 export default async function handler(req, res) {

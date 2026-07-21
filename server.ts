@@ -15220,6 +15220,132 @@ async function startServer() {
     }
   });
 
+  /**
+   * Xóa HẾT đơn đang ở tab "Chờ lấy hàng (Đã xử lý)" — deleteMany trên JSON (+ Mongo).
+   * Điều kiện copy từ matchesProcessedPickupTab — KHÔNG sửa filter/tab UI.
+   */
+  app.post("/api/orders/cleanup-processed-pickup", authMiddleware, async (_req, res) => {
+    try {
+      const isInternalTracking = (code: unknown) => /^0FG/i.test(String(code || "").trim());
+      const getRaw = (o: any) => String(o?.shopee_order_status || "").toUpperCase();
+      const getTn = (o: any) => {
+        for (const c of [o?.trackingNumber, o?.tracking_no, o?.shopee_tracking_number]) {
+          const tn = String(c || "").trim();
+          if (!tn || tn === "0" || isInternalTracking(tn)) continue;
+          return tn;
+        }
+        return "";
+      };
+      const getFulfillment = (o: any) => {
+        const raw = String(
+          o?.fulfillment_type || o?.ship_method || o?.shipping_method || o?.fulfillmentType || "",
+        )
+          .trim()
+          .toLowerCase();
+        if (raw === "dropoff" || raw === "drop_off" || raw === "drop-off") return "dropoff";
+        if (raw === "pickup" || raw === "pick_up" || raw === "pick-up") return "pickup";
+        return "";
+      };
+      const isProcessed = (o: any) => {
+        if (getTn(o)) return true;
+        if (getRaw(o) === "PROCESSED") return true;
+        if (o?.status === "processed") return true;
+        if (getFulfillment(o) === "dropoff" && Boolean(o?.isPrepared)) return true;
+        return false;
+      };
+      const truthy = (v: unknown) =>
+        v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
+      const isHanded = (o: any) => {
+        const local = String(o?.local_status ?? o?.localStatus ?? "").toUpperCase();
+        return (
+          local === "HANDED_OVER" ||
+          truthy(o?.isHandedOverToCarrier) ||
+          truthy(o?.is_handed_over_to_carrier)
+        );
+      };
+      const isShipping = (o: any) => {
+        const raw = getRaw(o);
+        return raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || o?.status === "shipping";
+      };
+      const isCompleted = (o: any) => getRaw(o) === "COMPLETED" || o?.status === "completed";
+      const isCancelLike = (o: any) => {
+        const raw = getRaw(o);
+        return (
+          raw === "CANCELLED" ||
+          raw === "IN_CANCEL" ||
+          raw === "TO_RETURN" ||
+          o?.status === "cancelled" ||
+          o?.status === "return_pending" ||
+          o?.status === "return_received"
+        );
+      };
+      const isReadyToShip = (o: any) => {
+        const raw = getRaw(o);
+        if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED") return true;
+        if (isShipping(o) || isCompleted(o)) return false;
+        if (
+          ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "CANCELLED", "IN_CANCEL", "TO_RETURN"].includes(
+            raw,
+          )
+        ) {
+          return false;
+        }
+        return o?.status === "unprocessed" || o?.status === "processed";
+      };
+      // === matchesProcessedPickupTab (copy — không đụng hàm filter gốc) ===
+      const matchesProcessedPickup = (o: any) => {
+        if (!o || typeof o !== "object") return false;
+        if (isShipping(o) || isCompleted(o)) return false;
+        if (isCancelLike(o)) return false;
+        if (!isReadyToShip(o)) return false;
+        if (!isProcessed(o)) return false;
+        return !isHanded(o);
+      };
+
+      const orders = loadOrders();
+      const garbage = orders.filter(matchesProcessedPickup);
+      const kept = orders.filter((o: any) => !matchesProcessedPickup(o));
+      const sns = garbage
+        .map((o: any) => String(o.orderSn || o.id || "").trim())
+        .filter(Boolean);
+      const ids = garbage.map((o: any) => String(o.id || "").trim()).filter(Boolean);
+
+      if (garbage.length > 0) {
+        saveOrders(kept);
+      }
+
+      let mongoDeleted = 0;
+      if (isMongoReady() && (ids.length || sns.length)) {
+        try {
+          mongoDeleted = await deleteOrdersFromStore([...ids, ...sns]);
+        } catch (err: any) {
+          console.warn("[Cleanup Processed Pickup] Mongo:", err?.message || err);
+        }
+      }
+
+      console.log(`Deleted count (JSON): ${garbage.length}`);
+      console.log(`Deleted count (Mongo): ${mongoDeleted}`);
+      console.log(`Deleted count: ${garbage.length}`);
+
+      return res.json({
+        success: true,
+        removed: garbage.length,
+        mongoDeleted,
+        orderSns: sns,
+        message:
+          garbage.length > 0
+            ? `Đã xóa ${garbage.length} đơn tab Chờ lấy hàng (Đã xử lý).`
+            : "Không còn đơn Đã xử lý để xóa.",
+      });
+    } catch (error: any) {
+      console.error("[Cleanup Processed Pickup] API error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "cleanup_failed",
+      });
+    }
+  });
+
   function handOverOrderToCarrierByIndex(orders: any[], index: number): { ok: true; order: any } | { ok: false; status: number; error: string } {
     if (index < 0) {
       return { ok: false, status: 404, error: "Không tìm thấy đơn hàng." };
