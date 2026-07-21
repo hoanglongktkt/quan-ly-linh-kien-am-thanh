@@ -7232,10 +7232,74 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
 }
 
 /**
+ * SHIPPED / COMPLETED / logistics đã lấy-đang giao → BẮT BUỘC ghi đè tab local
+ * (không bị PROCESSED / forceHeal / local_status kéo ngược về "Đã xử lý").
+ */
+function enforceShopeeTerminalLocalStatus(order: any): boolean {
+  if (!order || String(order.channel || "") !== "shopee") return false;
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  const logistics = String(order.logistics_status || "").toUpperCase();
+  const logisticsFailed = /FAILED|CANCEL/.test(logistics);
+  const logisticsInTransit =
+    !logisticsFailed &&
+    (logistics.includes("PICKUP_DONE") ||
+      logistics.includes("DELIVERY_DONE") ||
+      logistics.includes("IN_TRANSIT") ||
+      logistics.includes("TRANSPORTING") ||
+      logistics === "LOGISTICS_PICKUP_DONE" ||
+      logistics === "LOGISTICS_DELIVERY_DONE");
+
+  if (raw === "COMPLETED") {
+    order.status = "completed";
+    order.shopee_order_status = "COMPLETED";
+    order.isPrepared = true;
+    order.is_pending_shopee_check = false;
+    order.isHandedOverToCarrier = false;
+    order.is_handed_over_to_carrier = false;
+    const local = String(order.local_status ?? order.localStatus ?? "").toUpperCase();
+    if (local === "HANDED_OVER") {
+      order.local_status = "NONE";
+      order.localStatus = "NONE";
+    }
+    return true;
+  }
+  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
+    order.status = "shipping";
+    order.shopee_order_status = raw;
+    order.isPrepared = true;
+    order.is_pending_shopee_check = false;
+    order.isHandedOverToCarrier = false;
+    order.is_handed_over_to_carrier = false;
+    const local = String(order.local_status ?? order.localStatus ?? "").toUpperCase();
+    if (local === "HANDED_OVER") {
+      order.local_status = "NONE";
+      order.localStatus = "NONE";
+    }
+    return true;
+  }
+  // Sàn còn PROCESSED nhưng ĐVVC đã lấy / đang giao → Đang giao (ghi đè PROCESSED local).
+  if (
+    (raw === "PROCESSED" ||
+      raw === "READY_TO_SHIP" ||
+      raw === "RETRY_SHIP" ||
+      order.status === "processed" ||
+      order.status === "unprocessed") &&
+    logisticsInTransit
+  ) {
+    order.status = "shipping";
+    order.isPrepared = true;
+    order.is_pending_shopee_check = false;
+    return true;
+  }
+  return false;
+}
+
+/**
  * Heal đơn kẹt tab "Chưa xử lý":
  * - Có tracking_no (GHN GYA..., SPX...) → Đã xử lý
  * - Shopee PROCESSED (sau ship pickup/dropoff) → Đã xử lý (không cần pickup_time)
  * - fulfillment_type=dropoff + isPrepared → Đã xử lý
+ * - SHIPPED / COMPLETED luôn thắng (không downgrade về processed)
  * Manual Sync là nguồn chân lý — không chờ webhook.
  */
 function forceHealPickupOrderIfHasTracking(order: any): boolean {
@@ -7248,6 +7312,9 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
     order.tracking_no = tn;
   }
 
+  // Terminal Shopee luôn ghi đè — không rơi xuống nhánh PROCESSED.
+  if (enforceShopeeTerminalLocalStatus(order)) return true;
+
   const raw = String(order.shopee_order_status || "").toUpperCase();
   const fulfillment = String(
     order.fulfillment_type || order.ship_method || order.shipping_method || "",
@@ -7257,18 +7324,9 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
   const isDropoff =
     fulfillment === "dropoff" || fulfillment === "drop_off" || fulfillment === "drop-off";
 
-  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
-    order.status = "shipping";
-    order.isPrepared = true;
-    order.is_pending_shopee_check = false;
-    return true;
-  }
-  if (raw === "COMPLETED") {
-    order.status = "completed";
-    order.isPrepared = true;
-    order.is_pending_shopee_check = false;
-    return true;
-  }
+  // Không kéo lùi đơn đã Đang giao / Hoàn thành.
+  if (order.status === "shipping" || order.status === "completed") return hasTn;
+
   if (
     raw === "CANCELLED" ||
     raw === "IN_CANCEL" ||
@@ -7334,7 +7392,10 @@ function isStuckShopeePickupOrder(order: any): boolean {
   if (!pickupLike) return false;
   if (!hasUsableShopeeTrackingNumber(order)) return true;
   // Có mã nhưng vẫn tab Chưa xử lý → heal status
-  return status === "unprocessed" || status === "pending_verification";
+  if (status === "unprocessed" || status === "pending_verification") return true;
+  // Local vẫn PROCESSED/processed — cưỡng chế get_order_detail để bắt SHIPPED/COMPLETED.
+  if (status === "processed" || raw === "PROCESSED") return true;
+  return false;
 }
 
 function applyShopeeGetTrackingResponse(order: any, trackResult: any): void {
@@ -8237,9 +8298,14 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     applyShopeePartialCancelMeta(order, item, mappedItems);
     applyShopeeEstimatedFinance(order, item);
     applyShopeePackageListTracking(order, item);
-    // Cưỡng bức lại sau package_list: SHIPPED luôn vào Đang giao (API v2.2.9).
+    // Cưỡng bức lại sau package_list: SHIPPED/COMPLETED luôn thắng PROCESSED.
     const finalRaw = String(order.shopee_order_status || rawStatus).toUpperCase();
-    if (finalRaw === "SHIPPED" || finalRaw === "TO_CONFIRM_RECEIVE") {
+    if (finalRaw === "COMPLETED") {
+      order.status = "completed";
+      order.shopee_order_status = "COMPLETED";
+      order.isPrepared = true;
+      order.is_pending_shopee_check = false;
+    } else if (finalRaw === "SHIPPED" || finalRaw === "TO_CONFIRM_RECEIVE") {
       order.status = "shipping";
       order.isPrepared = true;
       order.is_pending_shopee_check = false;
@@ -8247,14 +8313,15 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       order.status = "pending_confirm";
       order.isPrepared = false;
     } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP" || finalRaw === "PROCESSED") {
-      // PROCESSED (sau ship pickup/dropoff) → Đã xử lý ngay, không cần pickup_time.
-      // READY_TO_SHIP + mã GHN/SPX → Đã xử lý; thiếu mã → Chưa xử lý.
-      if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
-        order.status = "processed";
-        order.isPrepared = true;
-      } else {
-        order.status = "unprocessed";
-        order.isPrepared = false;
+      // Chỉ ép processed khi CHƯA bị logistics đẩy sang shipping (package_list).
+      if (order.status !== "shipping" && order.status !== "completed") {
+        if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
+          order.status = "processed";
+          order.isPrepared = true;
+        } else {
+          order.status = "unprocessed";
+          order.isPrepared = false;
+        }
       }
     }
     // Suy luận dropoff từ logistics_status (không có pickup_time).
@@ -8268,6 +8335,8 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     forceHealPickupOrderIfHasTracking(order);
     // GHN Drop-off đã có mã → Đang giao (local), giống hành vi SPX đã ship.
     promoteOrderStatusWhenTrackingReady(order);
+    // Chốt cuối: SHIPPED/COMPLETED/logistics in-transit luôn ghi đè PROCESSED.
+    enforceShopeeTerminalLocalStatus(order);
     return order;
   } catch (err) {
     console.error(`[Shopee Sync] normalizeShopeeOrderDetail lỗi order_sn=${item?.order_sn}:`, err);
@@ -8580,11 +8649,17 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   }
 
   // READY_TO_SHIP / PROCESSED + đã có tracking (GHN GYA9LYP6, SPX...) → Đã xử lý
+  // KHÔNG áp dụng khi Shopee đã SHIPPED/COMPLETED (tránh kéo ngược về processed).
   if (
     (incomingRaw === "READY_TO_SHIP" ||
       incomingRaw === "RETRY_SHIP" ||
       incomingRaw === "PROCESSED") &&
-    hasUsableShopeeTrackingNumber(merged)
+    hasUsableShopeeTrackingNumber(merged) &&
+    merged.status !== "shipping" &&
+    merged.status !== "completed" &&
+    incomingRaw !== "SHIPPED" &&
+    incomingRaw !== "TO_CONFIRM_RECEIVE" &&
+    incomingRaw !== "COMPLETED"
   ) {
     merged.status = "processed";
     merged.isPrepared = true;
@@ -8684,8 +8759,16 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
         merged.is_handed_over_to_carrier = true;
         if (existing?.handedOverAt) merged.handedOverAt = existing.handedOverAt;
       }
-      if (existingLocal === "RETURN_RECEIVED") {
+      if (
+        existingLocal === "RETURN_RECEIVED" &&
+        incomingRaw !== "SHIPPED" &&
+        incomingRaw !== "TO_CONFIRM_RECEIVE" &&
+        incomingRaw !== "COMPLETED" &&
+        merged.status !== "shipping" &&
+        merged.status !== "completed"
+      ) {
         // Tab "Đã nhận hoàn" dựa trên cờ nội bộ — giữ status hiển thị ổn định.
+        // Không ghi đè khi Shopee đã SHIPPED/COMPLETED.
         merged.status = "return_received";
       }
     }
@@ -8694,6 +8777,8 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   delete merged.customerName;
   delete merged.customerPhone;
   delete merged.customerAddress;
+  // Chốt tuyệt đối: SHIPPED → shipping, COMPLETED → completed (ghi đè PROCESSED local).
+  enforceShopeeTerminalLocalStatus(merged);
   return merged;
 }
 
@@ -9275,17 +9360,10 @@ async function persistShopeeOrderChunk(
     if (row) {
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
+      enforceShopeeTerminalLocalStatus(row);
       if (hasUsableShopeeTrackingNumber(row)) {
         void persistOrderTrackingToDb(row);
       }
-      // #region agent log
-      {
-        const raw = String(row.shopee_order_status || "").toUpperCase();
-        if (raw === "PROCESSED" || row.status === "processed" || row.status === "shipping") {
-          fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6d934e'},body:JSON.stringify({sessionId:'6d934e',runId:'ghn-fix',hypothesisId:'C',location:'server.ts:persistShopeeOrderChunk:afterMerge',message:'store row after upsert',data:{orderSn:sn,status:row.status,raw,fulfillment:row.fulfillment_type||row.ship_method||null,carrier:row.shipping_carrier||null,trackingNumber:row.trackingNumber||null,tracking_no:row.tracking_no||null,hasUsable:hasUsableShopeeTrackingNumber(row)},timestamp:Date.now()})}).catch(()=>{});
-        }
-      }
-      // #endregion
     }
   }
   saveOrders(orders);
@@ -9326,6 +9404,7 @@ async function healStuckLocalShopeeOrders(
 
   let healed = 0;
   // 1) Có mã / PROCESSED / dropoff → heal local ngay
+  // 2) Đơn processed/PROCESSED luôn needFetch — bắt SHIPPED/COMPLETED từ get_order_detail.
   const needFetch: any[] = [];
   for (const o of stuck) {
     const raw = String(o.shopee_order_status || "").toUpperCase();
@@ -9339,14 +9418,19 @@ async function healStuckLocalShopeeOrders(
       healed++;
       if (hasUsableShopeeTrackingNumber(o)) void persistOrderTrackingToDb(o);
     }
-    if (!hasUsableShopeeTrackingNumber(o)) {
+    const needsStatusRefresh =
+      String(o.status || "") === "processed" ||
+      raw === "PROCESSED" ||
+      raw === "READY_TO_SHIP" ||
+      raw === "RETRY_SHIP";
+    if (!hasUsableShopeeTrackingNumber(o) || needsStatusRefresh) {
       needFetch.push(o);
     }
   }
 
-  // 2) Thiếu mã → get_order_detail + get_tracking_number theo lô
+  // 2) get_order_detail (+ tracking nếu thiếu) theo lô — ghi đè SHIPPED/COMPLETED
   if (needFetch.length > 0) {
-    const sns = needFetch.map((o) => String(o.orderSn)).filter(Boolean);
+    const sns = [...new Set(needFetch.map((o) => String(o.orderSn)).filter(Boolean))];
     for (let i = 0; i < sns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
       const chunk = sns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
       const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
@@ -9361,13 +9445,14 @@ async function healStuckLocalShopeeOrders(
       }
       for (const n of normalized) {
         forceHealPickupOrderIfHasTracking(n);
+        enforceShopeeTerminalLocalStatus(n);
       }
       if (normalized.length > 0) {
         await persistShopeeOrderChunk(orders, normalized, {
           apiShopId: shopId,
           accessToken,
         });
-        healed += normalized.filter((n) => hasUsableShopeeTrackingNumber(n)).length;
+        healed += normalized.length;
       }
       if (i + SHOPEE_SYNC_CHUNK_SIZE < sns.length) {
         await sleep(ORDER_SYNC_SAVE_DELAY_MS);
@@ -9377,7 +9462,7 @@ async function healStuckLocalShopeeOrders(
 
   if (healed > 0) {
     saveOrders(orders);
-    console.log(`[Orders Heal] shop=${shopId}: đã heal ${healed} đơn (tracking_no + processed).`);
+    console.log(`[Orders Heal] shop=${shopId}: đã heal ${healed} đơn (tracking + SHIPPED/COMPLETED).`);
   }
   return healed;
 }
@@ -15750,7 +15835,7 @@ async function startServer() {
 
       console.log(`[Orders Pull] Hoàn thành mode=${mode}: ${pulledCount} đơn đã cập nhật/thêm mới.`);
       await forceFetchMissingTrackingAfterSync(orders, { max: 40 });
-      // Sau sync: heal tracking_no | PROCESSED | dropoff → Đã xử lý (Pickup + Drop-off).
+      // Sau sync: heal + ép SHIPPED/COMPLETED ghi đè PROCESSED local.
       let postHeal = 0;
       for (const o of orders) {
         if (String(o?.channel) !== "shopee") continue;
@@ -15759,17 +15844,23 @@ async function startServer() {
         const worth =
           hasUsableShopeeTrackingNumber(o) ||
           raw === "PROCESSED" ||
+          raw === "SHIPPED" ||
+          raw === "TO_CONFIRM_RECEIVE" ||
+          raw === "COMPLETED" ||
           fulfillment === "dropoff" ||
           fulfillment === "drop_off";
         if (!worth) continue;
-        if (forceHealPickupOrderIfHasTracking(o)) {
+        const before = String(o.status || "");
+        forceHealPickupOrderIfHasTracking(o);
+        enforceShopeeTerminalLocalStatus(o);
+        if (String(o.status || "") !== before) {
           postHeal++;
           if (hasUsableShopeeTrackingNumber(o)) void persistOrderTrackingToDb(o);
         }
       }
       if (postHeal > 0) {
         saveOrders(orders);
-        console.log(`[Orders Pull] Post-sync force-heal ${postHeal} đơn (tracking/PROCESSED/dropoff) → processed.`);
+        console.log(`[Orders Pull] Post-sync force-heal ${postHeal} đơn (SHIPPED/COMPLETED/PROCESSED/tracking).`);
       }
       ordersPullSyncMeta.pulled = pulledCount;
       if (errors.length > 0 && !ordersPullSyncMeta.error) {
