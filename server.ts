@@ -36,6 +36,7 @@ import {
   updateOrderTrackingInStore,
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
+  loadOrdersFromStore,
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
 
@@ -10268,6 +10269,69 @@ function loadOrders(): any[] {
   }
 }
 
+/**
+ * Nguồn đơn cho API/UI: JSON ∪ Mongo.
+ * - Ưu tiên tracking_no từ Mongo (script sync / webhook).
+ * - Đơn chỉ có trên Mongo vẫn hiện (kèm mã vận đơn).
+ * - Đơn chỉ có trên JSON (manual / local) vẫn giữ.
+ */
+async function loadOrdersForApi(): Promise<{ orders: any[]; dirty: boolean }> {
+  const jsonOrders = loadOrders().filter(isValidOrder).map(repairMisassignedTracking);
+  if (!isMongoReady()) return { orders: jsonOrders, dirty: false };
+
+  let mongoOrders: any[] = [];
+  try {
+    mongoOrders = (await loadOrdersFromStore()).map(repairMisassignedTracking);
+  } catch (err: any) {
+    console.warn("[Orders] loadOrdersFromStore skip:", err?.message || err);
+    return { orders: jsonOrders, dirty: false };
+  }
+  if (mongoOrders.length === 0) return { orders: jsonOrders, dirty: false };
+
+  const bySn = new Map<string, any>();
+  for (const o of jsonOrders) {
+    const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (sn) bySn.set(sn, o);
+  }
+
+  let dirty = false;
+  let added = 0;
+  let trackingFilled = 0;
+
+  for (const m of mongoOrders) {
+    if (!isValidOrder(m)) continue;
+    const sn = String(m.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!sn) continue;
+    const existing = bySn.get(sn);
+    const mTn = String(m.trackingNumber || m.tracking_no || "").trim();
+
+    if (!existing) {
+      bySn.set(sn, m);
+      added++;
+      dirty = true;
+      continue;
+    }
+
+    if (mTn && !isShopeeInternalTrackingCode(mTn)) {
+      const eTn = String(existing.trackingNumber || existing.tracking_no || "").trim();
+      if (!eTn || isShopeeInternalTrackingCode(eTn)) {
+        existing.trackingNumber = mTn;
+        existing.tracking_no = mTn;
+        trackingFilled++;
+        dirty = true;
+      }
+    }
+  }
+
+  if (added > 0 || trackingFilled > 0) {
+    console.log(
+      `[Orders] loadOrdersForApi: json=${jsonOrders.length} mongo=${mongoOrders.length} +added=${added} +tracking=${trackingFilled}`,
+    );
+  }
+
+  return { orders: Array.from(bySn.values()), dirty };
+}
+
 function saveOrders(orders: any[]): void {
   try {
     fs.mkdirSync(path.dirname(ORDERS_DB_PATH), { recursive: true });
@@ -15162,15 +15226,16 @@ async function startServer() {
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
 
-    let rawOrders = loadOrders().filter(isValidOrder);
-    let dirty = false;
+    let { orders: rawOrders, dirty } = await loadOrdersForApi();
+    rawOrders = rawOrders.filter(isValidOrder);
 
     // One-shot dọn đơn rác ĐÃ GIAO CHO ĐVVC (logic cũ) — chạy 1 lần sau deploy.
     try {
       const purged = await purgeHandedOverGarbageOrdersOnce();
       if (purged.removed > 0) {
-        rawOrders = loadOrders().filter(isValidOrder);
-        dirty = true;
+        const reloaded = await loadOrdersForApi();
+        rawOrders = reloaded.orders.filter(isValidOrder);
+        dirty = dirty || reloaded.dirty;
       }
     } catch (purgeErr: any) {
       console.warn("[Cleanup HandedOver] GET skip:", purgeErr?.message || purgeErr);
@@ -15659,7 +15724,8 @@ async function startServer() {
     if (!code) {
       return res.status(400).json({ error: "Thi\u1EBFu m\u00E3 qu\u00E9t (code)." });
     }
-    const rawOrders = loadOrders().filter(isValidOrder);
+    let { orders: rawOrders } = await loadOrdersForApi();
+    rawOrders = rawOrders.filter(isValidOrder);
     const foundRaw = await findOrderByScanLookup(rawOrders, code);
     if (!foundRaw) {
       return res.status(404).json({

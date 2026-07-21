@@ -272,13 +272,13 @@ function OrderDetailAccordionPanel({
         </p>
       </div>
 
-      {getCarrierWaybillDisplay(order) && (
-        <div className="bg-white p-4 rounded-2xl border border-gray-100">
+      {getOrderWaybillCode(order) && (
+        <div className="bg-white p-4 rounded-2xl border border-indigo-100">
           <div className="flex items-center gap-2 text-xs">
             <Barcode className="w-4 h-4 text-indigo-500 shrink-0" />
             <div>
               <span className="text-gray-400">Mã vận đơn:</span>{' '}
-              <strong className="text-gray-800 font-mono">{getCarrierWaybillDisplay(order)}</strong>
+              <strong className="text-gray-900 font-mono text-sm">{getOrderWaybillCode(order)}</strong>
             </div>
           </div>
         </div>
@@ -703,12 +703,17 @@ export default function OrderManager({
         }
 
         if (order.status === 'unprocessed' || order.status === 'processed') {
+          const waybill = getOrderWaybillCode(order);
           const ok = await handOverOrderToCarrier(order, { fromScan: true });
           if (ok) {
             scanFeedback('success');
             setCameraScanError(false);
             setCameraScanSuccess(true);
-            setCameraScanResult(`✓ Giao ĐVVC #${order.orderSn}`);
+            setCameraScanResult(
+              waybill
+                ? `✓ Giao ĐVVC · VĐ ${waybill} · #${order.orderSn}`
+                : `✓ Giao ĐVVC #${order.orderSn}`,
+            );
             setTimeout(() => setCameraScanSuccess(false), 2000);
           } else {
             scanFeedback('error');
@@ -889,9 +894,14 @@ export default function OrderManager({
           return;
         }
 
-        // Trùng theo orderId đã có trong list phiên hiện tại
+        const waybill = getOrderWaybillCode(order);
         const orderKey = normalizeOrderScanKey(order.orderSn || order.id);
-        if (isCodeAlreadyVerified(orderKey) || isCodeAlreadyVerified(normalizeOrderScanKey(order.trackingNumber || ''))) {
+        if (
+          isCodeAlreadyVerified(orderKey) ||
+          isCodeAlreadyVerified(normalizeOrderScanKey(waybill)) ||
+          isCodeAlreadyVerified(normalizeOrderScanKey(order.trackingNumber || '')) ||
+          isCodeAlreadyVerified(normalizeOrderScanKey(order.tracking_no || ''))
+        ) {
           playScanSound('warning');
           vibrateScan('warning');
           flashViewfinder('error', 500);
@@ -904,7 +914,7 @@ export default function OrderManager({
           code: trimmed,
           orderId: order.id,
           orderSn: order.orderSn,
-          trackingNumber: order.trackingNumber || order.internalTrackingCode,
+          trackingNumber: waybill || order.trackingNumber || order.tracking_no || order.internalTrackingCode,
           at: now,
         };
 
@@ -917,8 +927,17 @@ export default function OrderManager({
             daXuatKhoListRef.current = next;
             return next;
           });
-          setCameraScanResult(`✓ Xuất kho #${order.orderSn}`);
-          showScanToast(`Đơn chờ lấy hàng #${order.orderSn} — đã ghi nhận xuất kho`, 'success');
+          setCameraScanResult(
+            waybill
+              ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
+              : `✓ Xuất kho #${order.orderSn}`,
+          );
+          showScanToast(
+            waybill
+              ? `Xuất kho #${order.orderSn} — mã VĐ: ${waybill}`
+              : `Đơn chờ lấy hàng #${order.orderSn} — đã ghi nhận xuất kho`,
+            'success',
+          );
           return;
         }
 
@@ -931,7 +950,11 @@ export default function OrderManager({
             donHuyListRef.current = next;
             return next;
           });
-          setCameraScanResult(`⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`);
+          setCameraScanResult(
+            waybill
+              ? `⚠ ĐƠN HỦY · VĐ ${waybill} · #${order.orderSn}`
+              : `⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`,
+          );
           showScanToast(`CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`, 'error');
           return;
         }
@@ -945,8 +968,17 @@ export default function OrderManager({
             daNhanHoanListRef.current = next;
             return next;
           });
-          setCameraScanResult(`✓ Nhận hoàn #${order.orderSn}`);
-          showScanToast(`Đơn hoàn #${order.orderSn} — đã ghi nhận nhận hàng hoàn`, 'success');
+          setCameraScanResult(
+            waybill
+              ? `✓ Nhận hoàn · VĐ ${waybill} · #${order.orderSn}`
+              : `✓ Nhận hoàn #${order.orderSn}`,
+          );
+          showScanToast(
+            waybill
+              ? `Nhận hoàn #${order.orderSn} — mã VĐ: ${waybill}`
+              : `Đơn hoàn #${order.orderSn} — đã ghi nhận nhận hàng hoàn`,
+            'success',
+          );
           return;
         }
 
@@ -2014,9 +2046,11 @@ export default function OrderManager({
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
-      const matchTracking = order.trackingNumber
-        ? order.trackingNumber.toLowerCase().includes(q)
-        : false;
+      const matchTracking = Boolean(
+        (order.trackingNumber && order.trackingNumber.toLowerCase().includes(q)) ||
+          (order.tracking_no && String(order.tracking_no).toLowerCase().includes(q)) ||
+          (getOrderWaybillCode(order) && getOrderWaybillCode(order).toLowerCase().includes(q)),
+      );
       const matchInternal = order.internalTrackingCode
         ? order.internalTrackingCode.toLowerCase().includes(q)
         : false;
@@ -2070,7 +2104,7 @@ export default function OrderManager({
         logistics_channel_name: (order as any).logistics_channel_name,
         logistics_channel_id: (order as any).logistics_channel_id,
         channel_id: (order as any).channel_id,
-        trackingNumber: order.trackingNumber || order.tracking_no,
+        trackingNumber: getOrderWaybillCode(order) || order.trackingNumber || order.tracking_no,
         fields: collectCarrierDebugFields(order),
       });
     }

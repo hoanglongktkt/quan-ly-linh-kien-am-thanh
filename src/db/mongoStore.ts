@@ -1184,6 +1184,74 @@ export async function deleteHandedOverOrdersFromStore(): Promise<{
   return { deleted, sns };
 }
 
+/**
+ * Map orderSn → tracking_no từ Mongo (top-level + data).
+ * Dùng để hydrate orders.json / API khi mã đã sync Mongo nhưng JSON local còn trống.
+ */
+export async function loadOrderTrackingMapFromStore(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (!isMongoReady()) return map;
+  requireMongo();
+  const docs = await OrderModel.find({
+    $or: [
+      { tracking_no: { $exists: true, $nin: [null, ""] } },
+      { "data.tracking_no": { $exists: true, $nin: [null, ""] } },
+      { "data.trackingNumber": { $exists: true, $nin: [null, ""] } },
+    ],
+  })
+    .select({
+      orderSn: 1,
+      tracking_no: 1,
+      "data.orderSn": 1,
+      "data.tracking_no": 1,
+      "data.trackingNumber": 1,
+    })
+    .lean();
+
+  for (const d of docs as any[]) {
+    const sn = String(d?.orderSn || d?.data?.orderSn || d?._id || "")
+      .replace(/^shopee-/i, "")
+      .trim();
+    const tn = String(
+      d?.tracking_no || d?.data?.tracking_no || d?.data?.trackingNumber || "",
+    ).trim();
+    if (!sn || !tn || /^0FG/i.test(tn)) continue;
+    map.set(sn, tn);
+  }
+  return map;
+}
+
+/** Đọc toàn bộ đơn từ Mongo — ưu tiên top-level tracking_no cho UI/API. */
+export async function loadOrdersFromStore(): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const docs = await OrderModel.find({}).lean();
+  const out: any[] = [];
+  for (const d of docs as any[]) {
+    const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
+    const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, ""))
+      .trim();
+    if (!sn && !d?._id) continue;
+    const tn = String(
+      d?.tracking_no || data.tracking_no || data.trackingNumber || "",
+    ).trim();
+    out.push({
+      ...data,
+      id: data.id || d._id || (sn ? `shopee-${sn}` : undefined),
+      orderSn: sn || data.orderSn,
+      status: d?.status != null ? d.status : data.status,
+      shopId: d?.shopId != null ? d.shopId : data.shopId,
+      tracking_no: tn || undefined,
+      trackingNumber: tn || undefined,
+      is_pending_shopee_check:
+        d?.is_pending_shopee_check != null
+          ? Boolean(d.is_pending_shopee_check)
+          : Boolean(data.is_pending_shopee_check),
+    });
+  }
+  return out;
+}
+
 export async function flushDbWrites(): Promise<void> {
   await writeChain;
 }
