@@ -150,6 +150,12 @@ export interface Order {
   carrier?: 'self' | 'ghn' | 'spx';
   /** Tên ĐVVC từ Shopee (shipping_carrier / package_list) — VD: SPX Express, Giao Hàng Nhanh */
   shipping_carrier?: string;
+  /** Tên kênh giao khi mask (checkout_shipping_carrier) — VD: Nhanh, Hỏa Tốc */
+  checkout_shipping_carrier?: string;
+  /** ID kênh logistics Shopee (package_list.logistics_channel_id) */
+  logistics_channel_id?: number;
+  /** Loại/dịch vụ giao (nếu có) — Instant / Hỏa Tốc */
+  shipping_type?: string;
   totalAmount: number;
   /** Tổng tiền sản phẩm gốc từ get_escrow_detail (item_amount) */
   item_amount?: number;

@@ -70,6 +70,10 @@ import ManualOrderPage from './ManualOrderPage';
 import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse, readResponseJson, base64ToPdfBlob } from '../utils/apiClient';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
+import {
+  getShippingCarrierGroup,
+  type ShippingCarrierFilter,
+} from '../utils/shippingCarrier';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
 import {
   computeShopeeSurchargeTotal,
@@ -1002,8 +1006,9 @@ export default function OrderManager({
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
   /** Toolbar: chỉ hiện đơn chưa in (theo isOrderPrintedEffective). */
   const [filterUnprinted, setFilterUnprinted] = useState(false);
-  /** Tab Chờ lấy hàng (Chưa xử lý): lọc theo ĐVVC — all | spx | ghn | other */
-  const [selectedShippingCarrier, setSelectedShippingCarrier] = useState<'all' | 'spx' | 'ghn' | 'other'>('all');
+  /** Tab Chờ lấy hàng (Chưa xử lý): lọc theo ĐVVC — all | spx | ghn | instant | other */
+  const [selectedShippingCarrier, setSelectedShippingCarrier] =
+    useState<ShippingCarrierFilter>('all');
 
   // Detail Modal & Bulk Print Modal
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -1912,29 +1917,6 @@ export default function OrderManager({
     return String(item.productTitle || item.modelSku || item.modelName || '').trim();
   };
 
-  /** Nhóm ĐVVC cho bộ lọc chip: SPX / GHN / Khác */
-  const getShippingCarrierGroup = (order: Order): 'spx' | 'ghn' | 'other' => {
-    const raw = String(order.shipping_carrier || '').trim().toLowerCase();
-    if (!raw) return 'other';
-    if (
-      raw.includes('spx') ||
-      raw.includes('shopee express') ||
-      raw.includes('shopee xpress') ||
-      raw.includes('shopeeexpress')
-    ) {
-      return 'spx';
-    }
-    if (
-      raw.includes('ghn') ||
-      raw.includes('giao hàng nhanh') ||
-      raw.includes('giao hang nhanh') ||
-      raw.includes('giaohangnhanh')
-    ) {
-      return 'ghn';
-    }
-    return 'other';
-  };
-
   const filteredOrdersBase = orders.filter(order => {
     // 1. Tab filter
     if (activeSubTab === 'cancel_returns') {
@@ -2020,7 +2002,13 @@ export default function OrderManager({
 
   /** Đếm ĐVVC trên tab unprocessed (trước khi áp carrier filter) để hiển thị chip. */
   const shippingCarrierCounts = useMemo(() => {
-    const counts = { all: 0, spx: 0, ghn: 0, other: 0 };
+    const counts: Record<ShippingCarrierFilter, number> = {
+      all: 0,
+      spx: 0,
+      ghn: 0,
+      instant: 0,
+      other: 0,
+    };
     for (const order of orders) {
       if (!matchesUnprocessedPickupTab(order) || isPendingConfirmOrder(order)) continue;
       if (selectedPlatform !== 'all') {
@@ -3244,10 +3232,11 @@ export default function OrderManager({
             <span className="text-xs font-bold text-slate-600 shrink-0">Đơn vị vận chuyển</span>
             {(
               [
-                { key: 'all' as const, label: 'Tất cả' },
-                { key: 'spx' as const, label: 'SPX Express' },
-                { key: 'ghn' as const, label: 'Giao Hàng Nhanh' },
-                { key: 'other' as const, label: 'ĐVVC Khác' },
+                { key: 'all' as const, label: 'Tất cả', highlight: false },
+                { key: 'spx' as const, label: 'SPX Express', highlight: false },
+                { key: 'ghn' as const, label: 'Giao Hàng Nhanh', highlight: false },
+                { key: 'instant' as const, label: 'Đơn Hỏa Tốc', highlight: true },
+                { key: 'other' as const, label: 'ĐVVC Khác', highlight: false },
               ] as const
             ).map((opt) => {
               const count = shippingCarrierCounts[opt.key];
@@ -3260,10 +3249,14 @@ export default function OrderManager({
                     setSelectedShippingCarrier(opt.key);
                     setSelectedOrderIds([]);
                   }}
-                  className={`text-[11px] font-bold px-3.5 py-1.5 rounded-full border transition-all cursor-pointer whitespace-nowrap ${
-                    active
-                      ? 'border-[#ee4d2d] text-[#ee4d2d] bg-orange-50/40'
-                      : 'border-gray-200 text-slate-700 bg-white hover:border-gray-300'
+                  className={`text-[11px] px-3.5 py-1.5 rounded-full transition-all cursor-pointer whitespace-nowrap ${
+                    opt.highlight
+                      ? active
+                        ? 'border-2 border-orange-500 text-orange-600 bg-orange-100 font-black shadow-sm'
+                        : 'border-2 border-orange-400 text-orange-500 bg-orange-50 font-black hover:bg-orange-100'
+                      : active
+                        ? 'border border-[#ee4d2d] text-[#ee4d2d] bg-orange-50/40 font-bold'
+                        : 'border border-gray-200 text-slate-700 bg-white font-bold hover:border-gray-300'
                   }`}
                 >
                   {opt.label} ({count})

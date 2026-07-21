@@ -9,6 +9,7 @@ import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
+import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
 import {
   initMongo,
   loadProductsFromStore,
@@ -8291,11 +8292,26 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       isPrinted: false,
       is_pending_shopee_check: false,
       items: mappedItems,
-      shipping_carrier: item?.shipping_carrier
-        ? String(item.shipping_carrier)
-        : pkg?.shipping_carrier
-          ? String(pkg.shipping_carrier)
-          : undefined,
+      shipping_carrier: (() => {
+        const v = String(
+          item?.shipping_carrier ||
+            pkg?.shipping_carrier ||
+            item?.checkout_shipping_carrier ||
+            pkg?.checkout_shipping_carrier ||
+            "",
+        ).trim();
+        return v || undefined;
+      })(),
+      checkout_shipping_carrier: (() => {
+        const v = String(
+          item?.checkout_shipping_carrier || pkg?.checkout_shipping_carrier || "",
+        ).trim();
+        return v || undefined;
+      })(),
+      logistics_channel_id: (() => {
+        const n = Number(pkg?.logistics_channel_id ?? item?.logistics_channel_id);
+        return Number.isFinite(n) && n > 0 ? n : undefined;
+      })(),
     };
     if (logisticsStatus) order.logistics_status = logisticsStatus;
     applyShopeePartialCancelMeta(order, item, mappedItems);
@@ -8334,6 +8350,11 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       order.ship_method = "dropoff";
     }
     repairMisassignedTracking(order);
+    // Heal ĐVVC khi API thiếu shipping_carrier nhưng có mã SPXVN/GHN.
+    if (!order.shipping_carrier) {
+      const inferredCarrier = inferShippingCarrierLabel(order);
+      if (inferredCarrier) order.shipping_carrier = inferredCarrier;
+    }
     // Heal ngay khi normalize — Drop-off/PROCESSED/tracking.
     forceHealPickupOrderIfHasTracking(order);
     // GHN Drop-off đã có mã → Đang giao (local), giống hành vi SPX đã ship.
@@ -8568,6 +8589,16 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   }
   if (!incoming.packageNumber && existing.packageNumber) {
     merged.packageNumber = existing.packageNumber;
+  }
+  // Giữ ĐVVC đã biết — sync thiếu field không được xoá.
+  if (!merged.shipping_carrier && existing.shipping_carrier) {
+    merged.shipping_carrier = existing.shipping_carrier;
+  }
+  if (!merged.checkout_shipping_carrier && existing.checkout_shipping_carrier) {
+    merged.checkout_shipping_carrier = existing.checkout_shipping_carrier;
+  }
+  if (!merged.logistics_channel_id && existing.logistics_channel_id) {
+    merged.logistics_channel_id = existing.logistics_channel_id;
   }
   if (!incoming.shopId && existing.shopId) {
     merged.shopId = existing.shopId;
@@ -14692,6 +14723,14 @@ async function startServer() {
       repairMisassignedTracking(o);
       const after = `${o.trackingNumber || ""}|${o.internalTrackingCode || ""}`;
       if (before !== after) dirty = true;
+      // Backfill ĐVVC từ mã vận đơn khi DB cũ thiếu shipping_carrier.
+      if (!o.shipping_carrier) {
+        const inferredCarrier = inferShippingCarrierLabel(o);
+        if (inferredCarrier) {
+          o.shipping_carrier = inferredCarrier;
+          dirty = true;
+        }
+      }
 
       // Remap tab theo API v2.2.9 — sửa đơn SHIPPED/UNPAID bị kẹt tab cũ.
       if (String(o.channel || "") === "shopee") {

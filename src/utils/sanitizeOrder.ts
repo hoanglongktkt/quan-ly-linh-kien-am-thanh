@@ -77,6 +77,20 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       const v = String(raw.shipping_carrier || raw.shippingCarrier || '').trim();
       return v || undefined;
     })(),
+    checkout_shipping_carrier: (() => {
+      const v = String(
+        raw.checkout_shipping_carrier || raw.checkoutShippingCarrier || '',
+      ).trim();
+      return v || undefined;
+    })(),
+    logistics_channel_id: (() => {
+      const n = Number(raw.logistics_channel_id ?? raw.logisticsChannelId);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    })(),
+    shipping_type: (() => {
+      const v = String(raw.shipping_type || raw.shippingType || '').trim();
+      return v || undefined;
+    })(),
     return_tracking_no: raw.return_tracking_no
       ? String(raw.return_tracking_no)
       : undefined,
