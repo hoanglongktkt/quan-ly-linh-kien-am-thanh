@@ -8984,6 +8984,13 @@ async function syncShopeeCancelReturnsForShop(
               n.packageNumber,
               2,
             );
+            console.log(
+              "=== KẾT QUẢ API TRACKING ===",
+              "Đơn:",
+              n.orderSn,
+              "Response:",
+              JSON.stringify(trackResult),
+            );
             applyShopeeGetTrackingResponse(n, trackResult);
             const logisticsTn = pickBestTrackingNumber(
               trackResult?.response?.tracking_number,
