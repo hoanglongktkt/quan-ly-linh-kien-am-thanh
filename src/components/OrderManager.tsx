@@ -72,6 +72,7 @@ import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import {
   getShippingCarrierGroup,
+  orderMatchesShippingCarrierFilter,
   type ShippingCarrierFilter,
 } from '../utils/shippingCarrier';
 import { resolveOrderShopDisplayName } from '../utils/resolveOrderShopName';
@@ -1917,7 +1918,8 @@ export default function OrderManager({
     return String(item.productTitle || item.modelSku || item.modelName || '').trim();
   };
 
-  const filteredOrdersBase = orders.filter(order => {
+  /** Tab + sàn + shop + search (+ chưa in) — CHƯA lọc ĐVVC. Count và list dùng chung pool này. */
+  const matchesOrdersListBaseFilters = (order: Order): boolean => {
     // 1. Tab filter
     if (activeSubTab === 'cancel_returns') {
       if (!matchesCancelReturnTab(order, cancelReturnTab)) return false;
@@ -1939,41 +1941,86 @@ export default function OrderManager({
 
     // 2. Platform filter
     if (selectedPlatform !== 'all') {
-      if (selectedPlatform === 'lazada') return false; // Lazada is a mock demo
+      if (selectedPlatform === 'lazada') return false;
       if (order.channel !== selectedPlatform) return false;
     }
 
     // 3. Shop Filter
     if (selectedShopId !== 'all' && order.shopId !== selectedShopId) return false;
 
-    // 4. Search query search
+    // 4. Search query
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
-      const matchTracking = order.trackingNumber ? order.trackingNumber.toLowerCase().includes(q) : false;
-      const matchInternal = order.internalTrackingCode ? order.internalTrackingCode.toLowerCase().includes(q) : false;
-      const matchProduct = (order.items || []).some(it => String(it.productTitle || '').toLowerCase().includes(q));
-
+      const matchTracking = order.trackingNumber
+        ? order.trackingNumber.toLowerCase().includes(q)
+        : false;
+      const matchInternal = order.internalTrackingCode
+        ? order.internalTrackingCode.toLowerCase().includes(q)
+        : false;
+      const matchProduct = (order.items || []).some((it) =>
+        String(it.productTitle || '').toLowerCase().includes(q),
+      );
       if (!matchSn && !matchTracking && !matchInternal && !matchProduct) return false;
     }
 
-    // 5. ĐVVC filter — chỉ áp dụng tab Chờ lấy hàng (Chưa xử lý)
-    if (activeSubTab === 'unprocessed' && selectedShippingCarrier !== 'all') {
-      if (getShippingCarrierGroup(order) !== selectedShippingCarrier) return false;
-    }
+    // 5. Lọc chưa in (áp dụng trước ĐVVC để count khớp list khi bật)
+    if (filterUnprinted && isOrderPrintedEffective(order)) return false;
 
     return true;
-  }).sort((a, b) => {
-    const dateMs = (o: Order) => new Date(o.date || 0).getTime() || 0;
-    if (selectedSort === 'newest') return dateMs(b) - dateMs(a);
-    if (selectedSort === 'oldest') return dateMs(a) - dateMs(b);
-    if (selectedSort === 'highest_value') return (Number(b.totalAmount) || 0) - (Number(a.totalAmount) || 0);
-    return 0;
-  });
+  };
+
+  const ordersPoolBeforeCarrier = useMemo(
+    () => orders.filter(matchesOrdersListBaseFilters),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mirrors live filter inputs below
+    [
+      orders,
+      activeSubTab,
+      cancelReturnTab,
+      selectedPlatform,
+      selectedShopId,
+      searchQuery,
+      filterUnprinted,
+    ],
+  );
+
+  /** Badge count ĐVVC — cùng logic getShippingCarrierGroup với filter list. */
+  const shippingCarrierCounts = useMemo(() => {
+    const counts: Record<ShippingCarrierFilter, number> = {
+      all: 0,
+      spx: 0,
+      ghn: 0,
+      instant: 0,
+      other: 0,
+    };
+    if (activeSubTab !== 'unprocessed') return counts;
+    for (const order of ordersPoolBeforeCarrier) {
+      counts.all += 1;
+      counts[getShippingCarrierGroup(order)] += 1;
+    }
+    return counts;
+  }, [activeSubTab, ordersPoolBeforeCarrier]);
+
+  const filteredOrdersBase = ordersPoolBeforeCarrier
+    .filter((order) => {
+      // ĐVVC filter — chỉ tab Chờ lấy hàng (Chưa xử lý)
+      if (activeSubTab === 'unprocessed') {
+        return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const dateMs = (o: Order) => new Date(o.date || 0).getTime() || 0;
+      if (selectedSort === 'newest') return dateMs(b) - dateMs(a);
+      if (selectedSort === 'oldest') return dateMs(a) - dateMs(b);
+      if (selectedSort === 'highest_value') {
+        return (Number(b.totalAmount) || 0) - (Number(a.totalAmount) || 0);
+      }
+      return 0;
+    });
 
   // Smart pick sort: không ẩn đơn — chỉ sắp xếp lại trên client khi bật toggle (tab unprocessed).
-  // Tắt toggle → dùng lại filteredOrdersBase (thứ tự thời gian gốc).
-  const filteredOrdersSorted =
+  const filteredOrders =
     smartPickSort && activeSubTab === 'unprocessed'
       ? [...filteredOrdersBase].sort((a, b) => {
           const aSingle = (a.items || []).length === 1;
@@ -1990,50 +2037,9 @@ export default function OrderManager({
             const bq = Number(b.items[0]?.quantity) || 0;
             return aq - bq;
           }
-          // Đơn ≥2 SP: giữ nguyên thứ tự thời gian gốc (stable sort).
           return 0;
         })
       : filteredOrdersBase;
-
-  // Lọc nhanh "Chưa in" trên toolbar (không phá tab/filter khác).
-  const filteredOrders = filterUnprinted
-    ? filteredOrdersSorted.filter((o) => !isOrderPrintedEffective(o))
-    : filteredOrdersSorted;
-
-  /** Đếm ĐVVC trên tab unprocessed (trước khi áp carrier filter) để hiển thị chip. */
-  const shippingCarrierCounts = useMemo(() => {
-    const counts: Record<ShippingCarrierFilter, number> = {
-      all: 0,
-      spx: 0,
-      ghn: 0,
-      instant: 0,
-      other: 0,
-    };
-    for (const order of orders) {
-      if (!matchesUnprocessedPickupTab(order) || isPendingConfirmOrder(order)) continue;
-      if (selectedPlatform !== 'all') {
-        if (selectedPlatform === 'lazada') continue;
-        if (order.channel !== selectedPlatform) continue;
-      }
-      if (selectedShopId !== 'all' && order.shopId !== selectedShopId) continue;
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matchSn = String(order.orderSn || '').toLowerCase().includes(q);
-        const matchTracking = order.trackingNumber ? order.trackingNumber.toLowerCase().includes(q) : false;
-        const matchInternal = order.internalTrackingCode
-          ? order.internalTrackingCode.toLowerCase().includes(q)
-          : false;
-        const matchProduct = (order.items || []).some((it) =>
-          String(it.productTitle || '').toLowerCase().includes(q),
-        );
-        if (!matchSn && !matchTracking && !matchInternal && !matchProduct) continue;
-      }
-      const group = getShippingCarrierGroup(order);
-      counts.all += 1;
-      counts[group] += 1;
-    }
-    return counts;
-  }, [orders, selectedPlatform, selectedShopId, searchQuery]);
 
   // Resolve checkbox selections to full Order rows — CHỈ lấy đơn đang hiển thị
   // (đã lọc ĐVVC), để In/Xác nhận hàng loạt không đụng đơn bị ẩn.

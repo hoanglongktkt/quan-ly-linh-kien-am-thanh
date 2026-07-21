@@ -8859,6 +8859,98 @@ function upsertShopeeOrdersIntoStore(
   return { added, updated };
 }
 
+/** Tránh gọi Shopee backfill ĐVVC liên tục mỗi lần refresh trang. */
+let lastShippingCarrierBackfillAt = 0;
+const SHIPPING_CARRIER_BACKFILL_COOLDOWN_MS = 5 * 60 * 1000;
+
+/**
+ * Backfill shipping_carrier từ get_order_detail cho đơn READY_TO_SHIP thiếu ĐVVC.
+ * Giới hạn số đơn/lần để không block API quá lâu.
+ */
+async function backfillMissingShippingCarriersFromShopee(
+  orders: any[],
+  limit = 40,
+): Promise<number> {
+  const need = orders.filter((o) => {
+    if (String(o?.channel || "") !== "shopee") return false;
+    if (String(o?.shipping_carrier || "").trim()) return false;
+    const status = String(o?.status || "");
+    const raw = String(o?.shopee_order_status || "").toUpperCase();
+    return (
+      status === "unprocessed" ||
+      status === "processed" ||
+      raw === "READY_TO_SHIP" ||
+      raw === "RETRY_SHIP" ||
+      raw === "PROCESSED"
+    );
+  });
+  if (need.length === 0) return 0;
+
+  const byShop = new Map<string, string[]>();
+  for (const o of need.slice(0, Math.max(1, limit))) {
+    const shopKey = String(o.shopId || "").trim();
+    const sn = String(o.orderSn || "").trim();
+    if (!shopKey || !sn) continue;
+    if (!byShop.has(shopKey)) byShop.set(shopKey, []);
+    byShop.get(shopKey)!.push(sn);
+  }
+
+  let filled = 0;
+  for (const [shopKey, sns] of byShop) {
+    const auth = await getShopeeAccessTokenForApi(shopKey);
+    if (!auth?.token) continue;
+    for (let i = 0; i < sns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+      const chunk = sns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+      try {
+        const { normalized } = await fetchNormalizeShopeeOrderChunk(
+          auth.apiShopId,
+          auth.token,
+          auth.fileKey || shopKey,
+          chunk,
+          { enrichTracking: false },
+        );
+        for (const n of normalized) {
+          const idx = orders.findIndex((o) => String(o.orderSn) === String(n.orderSn));
+          if (idx < 0) continue;
+          let changed = false;
+          if (n.shipping_carrier && !orders[idx].shipping_carrier) {
+            orders[idx].shipping_carrier = String(n.shipping_carrier);
+            changed = true;
+          }
+          if (n.checkout_shipping_carrier) {
+            orders[idx].checkout_shipping_carrier = String(n.checkout_shipping_carrier);
+            changed = true;
+          }
+          if (n.logistics_channel_id) {
+            orders[idx].logistics_channel_id = Number(n.logistics_channel_id);
+            changed = true;
+          }
+          if (!orders[idx].shipping_carrier) {
+            const inferred = inferShippingCarrierLabel(orders[idx]);
+            if (inferred) {
+              orders[idx].shipping_carrier = inferred;
+              changed = true;
+            }
+          }
+          if (changed) filled++;
+        }
+      } catch (err: any) {
+        console.warn(
+          `[Carrier Backfill] shop=${shopKey} lỗi:`,
+          err?.message || err,
+        );
+      }
+      if (i + SHOPEE_SYNC_CHUNK_SIZE < sns.length) {
+        await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+      }
+    }
+  }
+  if (filled > 0) {
+    console.log(`[Carrier Backfill] đã điền shipping_carrier cho ${filled} đơn.`);
+  }
+  return filled;
+}
+
 /** Lấy chi tiết + chuẩn hóa THEO LÔ — 1 lần get_order_detail tối đa 50 order_sn (Shopee v2). */
 async function fetchNormalizeShopeeOrderChunk(
   apiShopId: string,
@@ -14717,6 +14809,28 @@ async function startServer() {
 
     let rawOrders = loadOrders().filter(isValidOrder);
     let dirty = false;
+
+    // Đơn chờ lấy hàng thiếu shipping_carrier → gọi Shopee lấy ĐVVC (cooldown 5 phút).
+    try {
+      const nowMs = Date.now();
+      const missingCarrier = rawOrders.some(
+        (o: any) =>
+          String(o?.channel || "") === "shopee" &&
+          !String(o?.shipping_carrier || "").trim() &&
+          (o.status === "unprocessed" || o.status === "processed"),
+      );
+      if (
+        missingCarrier &&
+        nowMs - lastShippingCarrierBackfillAt >= SHIPPING_CARRIER_BACKFILL_COOLDOWN_MS
+      ) {
+        lastShippingCarrierBackfillAt = nowMs;
+        const filled = await backfillMissingShippingCarriersFromShopee(rawOrders, 40);
+        if (filled > 0) dirty = true;
+      }
+    } catch (backfillErr: any) {
+      console.warn("[Carrier Backfill] GET /api/orders skip:", backfillErr?.message || backfillErr);
+    }
+
     rawOrders = rawOrders.map((o: any) => {
       if (o.is_pending_shopee_check == null) o.is_pending_shopee_check = false;
       const before = `${o.trackingNumber || ""}|${o.internalTrackingCode || ""}`;

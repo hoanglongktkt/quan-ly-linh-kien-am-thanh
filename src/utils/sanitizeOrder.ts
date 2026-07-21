@@ -1,10 +1,26 @@
 import type { AppliedSystemFee, Order } from '../types';
 import { parseShopeeFees, parseCustomCostItems } from './shopeeFees';
+import { inferShippingCarrierLabel } from './shippingCarrier';
 
 /** Chuẩn hóa đơn từ API — tránh crash khi thiếu date/orderSn/items. */
 export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Order {
   const orderSn = String(raw.orderSn || raw.id || '').replace(/^shopee-/i, '').trim();
   const id = String(raw.id || (orderSn ? `shopee-${orderSn}` : `order-${Date.now()}`));
+  const shippingCarrierRaw = String(raw.shipping_carrier || raw.shippingCarrier || '').trim();
+  const checkoutCarrierRaw = String(
+    raw.checkout_shipping_carrier || raw.checkoutShippingCarrier || '',
+  ).trim();
+  const shippingTypeRaw = String(raw.shipping_type || raw.shippingType || '').trim();
+  const logisticsChannelId = Number(raw.logistics_channel_id ?? raw.logisticsChannelId);
+  const draftForInfer = {
+    ...raw,
+    shipping_carrier: shippingCarrierRaw || undefined,
+    checkout_shipping_carrier: checkoutCarrierRaw || undefined,
+    shipping_type: shippingTypeRaw || undefined,
+    trackingNumber: raw.trackingNumber || raw.tracking_no,
+    tracking_no: raw.tracking_no || raw.trackingNumber,
+  };
+  const inferredCarrier = shippingCarrierRaw || inferShippingCarrierLabel(draftForInfer) || '';
   return {
     id,
     orderSn: orderSn || id,
@@ -73,24 +89,13 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (v === 'pickup' || v === 'pick_up' || v === 'pick-up') return 'pickup';
       return undefined;
     })(),
-    shipping_carrier: (() => {
-      const v = String(raw.shipping_carrier || raw.shippingCarrier || '').trim();
-      return v || undefined;
-    })(),
-    checkout_shipping_carrier: (() => {
-      const v = String(
-        raw.checkout_shipping_carrier || raw.checkoutShippingCarrier || '',
-      ).trim();
-      return v || undefined;
-    })(),
-    logistics_channel_id: (() => {
-      const n = Number(raw.logistics_channel_id ?? raw.logisticsChannelId);
-      return Number.isFinite(n) && n > 0 ? n : undefined;
-    })(),
-    shipping_type: (() => {
-      const v = String(raw.shipping_type || raw.shippingType || '').trim();
-      return v || undefined;
-    })(),
+    shipping_carrier: inferredCarrier || undefined,
+    checkout_shipping_carrier: checkoutCarrierRaw || undefined,
+    logistics_channel_id:
+      Number.isFinite(logisticsChannelId) && logisticsChannelId > 0
+        ? logisticsChannelId
+        : undefined,
+    shipping_type: shippingTypeRaw || undefined,
     return_tracking_no: raw.return_tracking_no
       ? String(raw.return_tracking_no)
       : undefined,
