@@ -1474,7 +1474,7 @@ const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
 const SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
 const SHOPEE_RETURN_LIST_MAX_PAGES = 50;
 /** Shopee v2 get_order_detail cho phép tối đa 50 order_sn / 1 lần gọi — BẮT BUỘC batch. */
-const SHOPEE_SYNC_CHUNK_SIZE = 50;
+const SHOPEE_SYNC_CHUNK_SIZE = 3;
 /** Delay giữa các lô khi đồng bộ đơn hàng (ms). */
 const ORDER_SYNC_SAVE_DELAY_MS = 500;
 /** Nghỉ giữa mỗi lần get_tracking_number — tránh cạn process / 429. */
@@ -7654,7 +7654,13 @@ async function enrichShopeeOrderTrackingFromApi(
       order.packageNumber,
       retries,
     );
-    console.log("DEBUG_GHN_TRACKING - Mã đơn:", order.orderSn, " - Dữ liệu trả về:", result);
+    console.log(
+      "=== KẾT QUẢ API TRACKING ===",
+      "Đơn:",
+      order.orderSn,
+      "Response:",
+      JSON.stringify(result),
+    );
     applyShopeeGetTrackingResponse(order, result);
     // #region agent log
     {
@@ -15439,36 +15445,41 @@ async function startServer() {
               const chunkSns = orderSnList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
               const chunkNo = Math.floor(i / SHOPEE_SYNC_CHUNK_SIZE) + 1;
               const totalChunks = Math.ceil(orderSnList.length / SHOPEE_SYNC_CHUNK_SIZE);
-              console.log(
-                `[Orders Pull] Shop ${shopId}: lô ${chunkNo}/${totalChunks} — ${chunkSns.length} đơn`,
-              );
+              try {
+                console.log(
+                  `[Orders Pull] Shop ${shopId}: lô ${chunkNo}/${totalChunks} — ${chunkSns.length} đơn`,
+                );
 
-              const { normalized: batchNormalized, errors: chunkErrors } = await fetchNormalizeShopeeOrderChunk(
-                shopId,
-                accessToken,
-                shopId,
-                chunkSns,
-                { enrichTracking: true },
-              );
-              errors.push(...chunkErrors);
+                const { normalized: batchNormalized, errors: chunkErrors } = await fetchNormalizeShopeeOrderChunk(
+                  shopId,
+                  accessToken,
+                  shopId,
+                  chunkSns,
+                  { enrichTracking: true },
+                );
+                errors.push(...chunkErrors);
 
-              if (batchNormalized.length > 0) {
-                try {
-                  const upsert = await persistShopeeOrderChunk(orders, batchNormalized, {
-                    apiShopId: shopId,
-                    accessToken,
-                  });
-                  pulledCount += upsert.added + upsert.updated;
-                  console.log(
-                    `[Orders Pull] Shop ${shopId}: đã lưu lô ${chunkNo} (+${upsert.added} mới, ~${upsert.updated} cập nhật).`,
-                  );
-                } catch (saveErr: any) {
-                  const saveMessage = saveErr?.message || String(saveErr);
-                  console.error(`[Orders Pull] Shop ${shopId}: lỗi lưu DB lô ${chunkNo}:`, saveMessage);
-                  errors.push({ shopId, error: "save_orders_failed", message: saveMessage });
+                if (batchNormalized.length > 0) {
+                  try {
+                    const upsert = await persistShopeeOrderChunk(orders, batchNormalized, {
+                      apiShopId: shopId,
+                      accessToken,
+                    });
+                    pulledCount += upsert.added + upsert.updated;
+                    console.log(
+                      `[Orders Pull] Shop ${shopId}: đã lưu lô ${chunkNo} (+${upsert.added} mới, ~${upsert.updated} cập nhật).`,
+                    );
+                  } catch (saveErr: any) {
+                    const saveMessage = saveErr?.message || String(saveErr);
+                    console.error(`[Orders Pull] Shop ${shopId}: lỗi lưu DB lô ${chunkNo}:`, saveMessage);
+                    errors.push({ shopId, error: "save_orders_failed", message: saveMessage });
+                  }
+                } else {
+                  console.warn(`[Orders Pull] Shop ${shopId}: lô ${chunkNo} không có dữ liệu hợp lệ.`);
                 }
-              } else {
-                console.warn(`[Orders Pull] Shop ${shopId}: lô ${chunkNo} không có dữ liệu hợp lệ.`);
+              } catch (e) {
+                console.error("Lỗi 1 đơn:", e);
+                continue;
               }
 
               if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
