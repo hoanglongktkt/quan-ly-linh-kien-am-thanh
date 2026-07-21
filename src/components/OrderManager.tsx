@@ -29,6 +29,9 @@ import {
   isOrderPrintedEffective,
   isOrderPreparedEffective,
   resolveOrderBadgeStatus,
+  applyHandedOverWrite,
+  buildHandedOverWritePatch,
+  UI_TAB_HANDED_OVER_CARRIER,
 } from '../utils/orderHandover';
 import {
   isOrderAlreadyScanProcessed,
@@ -115,8 +118,12 @@ function isPendingConfirmOrder(order: Order): boolean {
   return raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK';
 }
 
-/** SHIPPED / TO_CONFIRM_RECEIVE → luôn Đang giao (ưu tiên tuyệt đối từ Shopee). */
+/** SHIPPED / TO_CONFIRM_RECEIVE → Đang giao. Đơn còn cờ ĐVVC thì ưu tiên tab ĐVVC. */
 function isShippingTabOrder(order: Order): boolean {
+  if (isOrderHandedOverToCarrier(order)) {
+    const raw = String(order.shopee_order_status || '').toUpperCase();
+    return raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE';
+  }
   return isShopeeShippingStatus(order);
 }
 
@@ -548,24 +555,24 @@ export default function OrderManager({
     setTimeout(() => setScanToast(null), 2800);
   };
 
+  const [selectedShopId, setSelectedShopId] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterUnprinted, setFilterUnprinted] = useState(false);
+
+  const openHandedOverCarrierTab = React.useCallback(() => {
+    setFilterUnprinted(false);
+    setSearchQuery('');
+    setSelectedShopId('all');
+    setActiveSubTab(UI_TAB_HANDED_OVER_CARRIER);
+  }, []);
+
   const applyHandoverToLocalOrders = React.useCallback(
     (updatedOrder: Order) => {
-      const now = new Date().toISOString();
-      const patched: Order = {
-        ...updatedOrder,
-        isHandedOverToCarrier: true,
-        is_handed_over_to_carrier: true,
-        local_status: 'HANDED_OVER',
-        localStatus: 'HANDED_OVER',
-        handedOverAt: updatedOrder.handedOverAt || now,
-        localStatusAt: updatedOrder.localStatusAt || now,
-        local_status_updated_at: updatedOrder.local_status_updated_at || now,
-      };
+      const patched = applyHandedOverWrite({ ...updatedOrder }) as Order;
       const merged = ordersRef.current.map((o) =>
         o.id === patched.id || o.orderSn === patched.orderSn ? { ...o, ...patched } : o
       );
       ordersRef.current = merged;
-      // API hand-over đã ghi JSON+Mongo — không PATCH full order lại (tránh lệch nguồn).
       onUpdateOrders(merged, { persist: false });
     },
     [onUpdateOrders]
@@ -574,19 +581,9 @@ export default function OrderManager({
   const applyHandoverBulkToLocalOrders = React.useCallback(
     (updatedList: Order[]) => {
       if (!updatedList.length) return;
-      const now = new Date().toISOString();
       const byKey = new Map<string, Order>();
       for (const u of updatedList) {
-        const patched: Order = {
-          ...u,
-          isHandedOverToCarrier: true,
-          is_handed_over_to_carrier: true,
-          local_status: 'HANDED_OVER',
-          localStatus: 'HANDED_OVER',
-          handedOverAt: u.handedOverAt || now,
-          localStatusAt: u.localStatusAt || now,
-          local_status_updated_at: u.local_status_updated_at || now,
-        };
+        const patched = applyHandedOverWrite({ ...u }) as Order;
         if (patched.id) byKey.set(String(patched.id), patched);
         if (patched.orderSn) byKey.set(String(patched.orderSn), patched);
       }
@@ -607,19 +604,20 @@ export default function OrderManager({
         showScanToast('Chưa đăng nhập — không thể ghi nhận bàn giao ĐVVC.', 'error');
         return false;
       }
-      if (!isShopeeReadyToShipStatus(order) || !isProcessedCondition(order)) {
-        showScanToast(`Đơn #${order.orderSn} không ở trạng thái chờ lấy hàng.`, 'error');
-        return false;
-      }
-      if (!hasOrderTrackingNo(order)) {
-        showScanToast(
-          `Đơn #${order.orderSn} chưa có mã vận đơn (chưa chuẩn bị hàng) — không thể bàn giao ĐVVC.`,
-          'error',
-        );
-        return false;
+      if (!isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && !order.isPrepared && !order.isPrinted) {
+        const raw = String(order.shopee_order_status || '').toUpperCase();
+        if (
+          order.status === 'completed' ||
+          raw === 'SHIPPED' ||
+          raw === 'COMPLETED' ||
+          raw === 'TO_CONFIRM_RECEIVE'
+        ) {
+          showScanToast(`Đơn #${order.orderSn} đã ${order.status || raw} — không giao ĐVVC.`, 'error');
+          return false;
+        }
       }
       if (isOrderHandedOverToCarrier(order)) {
-        if (opts?.switchTab !== false) setActiveSubTab('handed_over_carrier');
+        if (opts?.switchTab !== false) openHandedOverCarrierTab();
         showScanToast(`Đơn #${order.orderSn} đã ghi nhận giao cho ĐVVC trước đó.`, 'success');
         return true;
       }
@@ -661,12 +659,7 @@ export default function OrderManager({
                 Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({
-                local_status: 'HANDED_OVER',
-                localStatus: 'HANDED_OVER',
-                isHandedOverToCarrier: true,
-                is_handed_over_to_carrier: true,
-              }),
+              body: JSON.stringify(buildHandedOverWritePatch()),
             });
             const patchData = await patchRes.json().catch(() => ({}));
             if (!patchRes.ok) {
@@ -699,7 +692,7 @@ export default function OrderManager({
             ? `[QUÉT QR] Bàn giao ĐVVC đơn ${order.orderSn} → Tab Đã giao cho ĐVVC.`
             : `[BÀN GIAO] Đơn ${order.orderSn} → Đã giao cho ĐVVC.`,
         });
-        if (opts?.switchTab !== false) setActiveSubTab('handed_over_carrier');
+        if (opts?.switchTab !== false) openHandedOverCarrierTab();
         showScanToast(`Đã giao cho ĐVVC — đơn #${order.orderSn}`, 'success');
         return true;
       } catch (err: unknown) {
@@ -711,7 +704,7 @@ export default function OrderManager({
         setHandingOverOrderId(null);
       }
     },
-    [applyHandoverToLocalOrders, onAddLog]
+    [applyHandoverToLocalOrders, onAddLog, openHandedOverCarrierTab]
   );
 
   const handleOrderScan = React.useCallback(
@@ -1140,13 +1133,11 @@ export default function OrderManager({
 
   // Platform filtering & dropdown states
   const [selectedPlatform, setSelectedPlatform] = useState<'all' | 'shopee' | 'tiktok' | 'lazada' | 'woocommerce' | 'manual'>('all');
-  const [selectedShopId, setSelectedShopId] = useState<string>('all');
   const [showShopeeDropdown, setShowShopeeDropdown] = useState(false);
   const [showTikTokDropdown, setShowTikTokDropdown] = useState(false);
   const [showWooDropdown, setShowWooDropdown] = useState(false);
   
-  // Search state
-  const [searchQuery, setSearchQuery] = useState('');
+  // Search / sort
   const [selectedSort] = useState<'newest' | 'oldest' | 'highest_value'>('newest');
   /** Client-side: ưu tiên + gom nhóm đơn 1 SP (tab Chờ lấy hàng chưa xử lý). */
   const [smartPickSort, setSmartPickSort] = useState(false);
@@ -1154,8 +1145,6 @@ export default function OrderManager({
   // Multi-select bulk state
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
-  /** Toolbar: chỉ hiện đơn chưa in (theo isOrderPrintedEffective). */
-  const [filterUnprinted, setFilterUnprinted] = useState(false);
   /** Tab Chờ lấy hàng (Chưa xử lý): lọc theo ĐVVC — all | spx | ghn | instant | other */
   const [selectedShippingCarrier, setSelectedShippingCarrier] =
     useState<ShippingCarrierFilter>('all');
@@ -2429,11 +2418,7 @@ export default function OrderManager({
       }
 
       const savedList = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
-      if (savedList.length > 0) {
-        applyHandoverBulkToLocalOrders(savedList);
-      } else if (realUpdated > 0) {
-        applyHandoverBulkToLocalOrders(eligible);
-      }
+      applyHandoverBulkToLocalOrders(savedList.length > 0 ? savedList : eligible);
 
       onAddLog({
         id: `log-${Date.now()}`,
@@ -2442,12 +2427,11 @@ export default function OrderManager({
         type: 'stock_sync',
         status: failedArr.length > 0 ? 'error' : 'success',
         message: `[BÀN GIAO HÀNG LOẠT] ${realUpdated} đơn → Đã giao cho ĐVVC${
-          skippedCount ? ` (bỏ qua ${skippedCount})` : ''
+          skippedCount ? ` (đã có sẵn ${skippedCount})` : ''
         }${failedArr.length ? ` (lỗi ${failedArr.length})` : ''}.`,
       });
       setSelectedOrderIds([]);
 
-      // Đọc lại từ DB (cùng nguồn Tab) — đảm bảo F5 cũng thấy đúng.
       if (onFetchOrders) {
         try {
           await onFetchOrders();
@@ -2455,15 +2439,18 @@ export default function OrderManager({
           /* giữ state local nếu refetch lỗi */
         }
       }
-      setActiveSubTab('handed_over_carrier');
+      openHandedOverCarrierTab();
 
+      const visibleAfter = ordersRef.current.filter((o) => matchesHandedOverCarrierTab(o)).length;
       if (realUpdated <= 0 && skippedCount > 0) {
-        showToast(`Các đơn đã chọn đã ở tab Đã giao cho ĐVVC trước đó (${skippedCount}).`);
+        showToast(
+          `Đã có ${skippedCount} đơn mang cờ ĐVVC — tab đang hiện ${visibleAfter} đơn.`,
+        );
       } else {
         showToast(
           failedArr.length > 0
-            ? `Đã giao ĐVVC ${realUpdated} đơn, lỗi ${failedArr.length} đơn.`
-            : `Đã giao cho ĐVVC hàng loạt ${realUpdated} đơn.`,
+            ? `Xuất kho ${realUpdated} / Lỗi ${failedArr.length}. Tab hiện ${visibleAfter}.`
+            : `Xuất kho ${realUpdated} đơn — tab hiện ${visibleAfter}.`,
         );
       }
     } catch (err: unknown) {
@@ -2648,11 +2635,17 @@ export default function OrderManager({
         donHuy?: number;
         daNhanHoan?: number;
       };
-      const daXuatKho = Number(summaryRaw.daXuatKho ?? shipped.length);
-      const donHuy = Number(summaryRaw.donHuy ?? cancelled.length);
-      const daNhanHoan = Number(summaryRaw.daNhanHoan ?? returned.length);
-      const processedCount =
-        Number(data?.processedCount) || daXuatKho + donHuy + daNhanHoan || codes.length;
+      // NO FAKE SUCCESS: 0 là số thật — không fallback sang codes.length.
+      const daXuatKho = Number(summaryRaw.daXuatKho);
+      const donHuy = Number(summaryRaw.donHuy);
+      const daNhanHoan = Number(summaryRaw.daNhanHoan);
+      const safeXuat = Number.isFinite(daXuatKho) ? daXuatKho : 0;
+      const safeHuy = Number.isFinite(donHuy) ? donHuy : 0;
+      const safeHoan = Number.isFinite(daNhanHoan) ? daNhanHoan : 0;
+      const processedRaw = Number(data?.processedCount);
+      const processedCount = Number.isFinite(processedRaw)
+        ? processedRaw
+        : safeXuat + safeHuy + safeHoan;
 
       const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
       if (updatedOrders.length > 0) {
@@ -2665,11 +2658,11 @@ export default function OrderManager({
           if (!merged.some((x) => x.id === o.id)) merged.unshift(o);
         }
         ordersRef.current = merged;
-        onUpdateOrders(merged);
+        onUpdateOrders(merged, { persist: false });
       }
 
-      if (daXuatKho > 0) setActiveSubTab('handed_over_carrier');
-      else if (daNhanHoan > 0 || donHuy > 0) {
+      if (safeXuat > 0) openHandedOverCarrierTab();
+      else if (safeHoan > 0 || safeHuy > 0) {
         setActiveSubTab('received_cancel_returns');
       }
 
@@ -2678,32 +2671,37 @@ export default function OrderManager({
         timestamp: new Date().toISOString(),
         channel: 'shopee',
         type: 'stock_sync',
-        status: 'success',
-        message: `[QUÉT QR COMMIT] xuất kho ${daXuatKho}, đơn hủy ${donHuy}, nhận hoàn ${daNhanHoan}.`,
+        status: processedCount > 0 ? 'success' : 'error',
+        message: `[QUÉT QR COMMIT] xuất kho ${safeXuat}, đơn hủy ${safeHuy}, nhận hoàn ${safeHoan}.`,
       });
 
       const failedScans = Array.isArray(data?.failed_scans) ? data.failed_scans : [];
       clearVerifiedScanLists();
       if (processedCount > 0) {
-        showScanToast(`Đã ghi DB thành công ${processedCount} đơn hàng!`, 'success');
+        showScanToast(
+          `Xuất kho ${safeXuat} / Hủy ${safeHuy} / Nhận hoàn ${safeHoan}${
+            failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
+          }`,
+          'success',
+        );
       } else {
         showScanToast(
           failedScans.length > 0
-            ? String(failedScans[0]?.reason || 'Không có đơn mới được cập nhật (có thể đã quét trước đó)')
-            : 'Không có đơn mới được cập nhật vào DB',
+            ? String(failedScans[0]?.reason || 'Xuất kho 0 — không có đơn nào được ghi DB')
+            : 'Xuất kho 0 — Database không ghi nhận đơn nào',
           'error',
         );
       }
       if (failedScans.length > 0 && processedCount > 0) {
         window.setTimeout(() => {
           showScanToast(
-            `${failedScans.length} mã bị bỏ qua (trùng/không hợp lệ)`,
+            `Bỏ qua ${failedScans.length} mã (trùng/không hợp lệ)`,
             'error',
           );
         }, 1600);
       }
       setCameraScanResult(
-        `✓ DB: Xuất kho ${daXuatKho} · Hủy ${donHuy} · Nhận hoàn ${daNhanHoan}${
+        `✓ DB: Xuất kho ${safeXuat} · Hủy ${safeHuy} · Nhận hoàn ${safeHoan}${
           failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
         }. Sẵn sàng quét tiếp`,
       );
@@ -3379,7 +3377,7 @@ export default function OrderManager({
         </button>
 
         <button
-          onClick={() => setActiveSubTab('handed_over_carrier')}
+          onClick={() => openHandedOverCarrierTab()}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
             activeSubTab === 'handed_over_carrier' 
               ? 'border-blue-600 text-blue-600 font-extrabold bg-blue-50/20' 

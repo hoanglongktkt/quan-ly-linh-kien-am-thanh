@@ -140,13 +140,17 @@ export async function handleScanBulkUpdate(req, res) {
           donHuy: Number(direct.data?.stats?.cancelled || 0),
           daNhanHoan: Number(direct.data?.stats?.returnReceived || 0),
         };
+        const pc = Number(direct.data?.processedCount);
+        const processedCount = Number.isFinite(pc)
+          ? pc
+          : Number(summary.daXuatKho || 0) +
+            Number(summary.donHuy || 0) +
+            Number(summary.daNhanHoan || 0);
         return res.status(200).json({
           ...direct.data,
           success: true,
           summary,
-          processedCount:
-            Number(direct.data?.processedCount) ||
-            Number(summary.daXuatKho || 0) + Number(summary.donHuy || 0) + Number(summary.daNhanHoan || 0),
+          processedCount,
         });
       }
       const msg = String(direct.data?.message || direct.data?.error || '');
@@ -162,12 +166,24 @@ export async function handleScanBulkUpdate(req, res) {
     }
 
     // 2) Fallback: lookup + PATCH local_status từng đơn (vẫn chỉ DB nội bộ).
+    const toSet = (arr) =>
+      new Set(
+        (Array.isArray(arr) ? arr : [])
+          .map((c) => String(c || '').trim().toUpperCase())
+          .filter(Boolean),
+      );
+    const forceHandOver = toSet(req.body?.daXuatKhoCodes);
+    const forceCancel = toSet(req.body?.donHuyCodes);
+    const forceReturn = toSet(req.body?.daNhanHoanCodes);
+    const norm = (c) => String(c || '').trim().toUpperCase();
+
     const results = [];
     const failed_scans = [];
     const updatedOrders = [];
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
 
     for (const code of codes) {
+      const codeKey = norm(code);
       const lookup = await fetchJson(backend.url, req, 'orders/lookup', {
         method: 'GET',
         query: { code },
@@ -199,9 +215,23 @@ export async function handleScanBulkUpdate(req, res) {
 
       const status = String(order.status || '');
       let target = null;
-      if (status === 'unprocessed' || status === 'processed') target = 'HANDED_OVER';
-      else if (status === 'cancelled') target = 'CANCELLED_STORED';
-      else if (status === 'return_pending' || status === 'return_received') target = 'RETURN_RECEIVED';
+      if (
+        forceHandOver.has(codeKey) ||
+        forceHandOver.has(norm(order.orderSn)) ||
+        forceHandOver.has(norm(order.trackingNumber || order.tracking_no))
+      ) {
+        target = 'HANDED_OVER';
+      } else if (forceCancel.has(codeKey) || forceCancel.has(norm(order.orderSn))) {
+        target = 'CANCELLED_STORED';
+      } else if (forceReturn.has(codeKey) || forceReturn.has(norm(order.orderSn))) {
+        target = 'RETURN_RECEIVED';
+      } else if (status === 'unprocessed' || status === 'processed') {
+        target = 'HANDED_OVER';
+      } else if (status === 'cancelled') {
+        target = 'CANCELLED_STORED';
+      } else if (status === 'return_pending' || status === 'return_received') {
+        target = 'RETURN_RECEIVED';
+      }
 
       if (!target) {
         results.push({

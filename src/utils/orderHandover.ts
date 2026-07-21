@@ -1,6 +1,18 @@
 import type { Order } from '../types';
-import { resolveOrderLocalStatus } from './orderLocalStatus';
 import { isShopeeInternalTrackingCode } from './orderTracking';
+import {
+  isOrderHandedOverToCarrier,
+  matchesHandedOverCarrierTab,
+} from './orderWarehouseStatus';
+
+export {
+  isOrderHandedOverToCarrier,
+  matchesHandedOverCarrierTab,
+  buildHandedOverWritePatch,
+  applyHandedOverWrite,
+  ORDER_LOCAL_STATUS,
+  UI_TAB_HANDED_OVER_CARRIER,
+} from './orderWarehouseStatus';
 
 export function getShopeeOrderRawStatus(
   order: Partial<Order> & Record<string, unknown>,
@@ -76,16 +88,6 @@ export function isProcessedCondition(
   }
 
   return false;
-}
-
-/** is_handed_over — cờ nội bộ user đã quẹt mã giao bưu tá. */
-export function isOrderHandedOverToCarrier(
-  order: Partial<Order> & Record<string, unknown>,
-): boolean {
-  return (
-    resolveOrderLocalStatus(order) === 'HANDED_OVER' ||
-    Boolean(order.isHandedOverToCarrier ?? order.is_handed_over_to_carrier)
-  );
 }
 
 /** SHIPPED / TO_CONFIRM_RECEIVE → Đang giao. */
@@ -210,23 +212,10 @@ export function resolveOrderBadgeStatus(
 }
 
 /**
- * TAB "ĐÃ GIAO CHO ĐVVC" — đối soát nội bộ sau QUÉT QR.
- * Nguồn duy nhất: cờ local HANDED_OVER / is_handed_over_to_carrier.
- * KHÔNG phụ thuộc order_status Shopee (READY_TO_SHIP / PROCESSED...).
- * Rời tab khi Shopee thật sự SHIPPED / COMPLETED (hoặc hủy/hoàn).
- */
-export function matchesHandedOverCarrierTab(order: Order): boolean {
-  if (!isOrderHandedOverToCarrier(order)) return false;
-  if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
-  if (isShopeeCancelledLikeStatus(order)) return false;
-  return true;
-}
-
-/**
- * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" — áp dụng cả Pickup và Drop-off (gửi tại bưu cục).
- * Không yêu cầu pickup_time. Chỉ cần isProcessedCondition (tracking_no | PROCESSED | ...).
+ * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" — đơn ĐVVC (SSOT matchesHandedOverCarrierTab) không hiện ở đây.
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
+  if (matchesHandedOverCarrierTab(order)) return false;
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (!isShopeeReadyToShipStatus(order)) return false;
@@ -235,14 +224,13 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 }
 
 /**
- * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)" — Pickup/Drop-off chưa arrange / chưa có mã.
- * Đơn PROCESSED hoặc đã có tracking_no KHÔNG được ở đây (kể cả Drop-off).
+ * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)".
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
+  if (matchesHandedOverCarrierTab(order)) return false;
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (!isShopeeReadyToShipStatus(order)) return false;
-  // PROCESSED = đã ship_order (dropoff/pickup) → luôn sang Đã xử lý.
   if (getShopeeOrderRawStatus(order) === 'PROCESSED') return false;
   return !isProcessedCondition(order);
 }
