@@ -20,6 +20,15 @@ export {
 } from './orderWarehouseStatus';
 export type { HandedOverSource } from './orderWarehouseStatus';
 
+/**
+ * STATE MACHINE — Tab filter (SSOT, không giao thoa):
+ *
+ *  Chờ lấy hàng  = READY_TO_SHIP-like AND is_handed_over = false
+ *                  (TUYỆT ĐỐI loại SHIPPED / COMPLETED / CANCELLED)
+ *  Đã giao ĐVVC  = READY_TO_SHIP-like AND is_handed_over = true
+ *  Đang giao     = SHIPPED (hoặc TO_CONFIRM_RECEIVE) — bỏ qua is_handed_over
+ */
+
 export function getShopeeOrderRawStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): string {
@@ -69,13 +78,8 @@ export function getOrderFulfillmentType(
 }
 
 /**
- * isProcessedCondition — NGUỒN SỰ THẬT DUY NHẤT cho Tab Filter + UI Badge/Nút.
- * Đã xử lý (Pickup HOẶC Drop-off) khi THỎA 1 trong các điều kiện:
- *   1) Có tracking_no thực (GHN GYA..., SPX...)
- *   2) Shopee order_status = PROCESSED (sau ship_order — cả dropoff lẫn pickup)
- *   3) local status = processed (đã xác nhận gửi hàng trên app)
- *   4) Drop-off + isPrepared (không cần pickup_time)
- * TUYỆT ĐỐI KHÔNG yêu cầu pickup_time / is_pickup.
+ * isProcessedCondition — chỉ phân nhánh Chưa xử lý / Đã xử lý
+ * trong pool READY_TO_SHIP (không quyết định tab Đang giao).
  */
 export function isProcessedCondition(
   order: Partial<Order> & Record<string, unknown>,
@@ -83,13 +87,10 @@ export function isProcessedCondition(
   if (hasOrderTrackingNo(order)) return true;
 
   const raw = getShopeeOrderRawStatus(order);
-  // Sau arrange shipment (dropoff/pickup) Shopee chuyển PROCESSED — Đã xử lý ngay.
   if (raw === 'PROCESSED') return true;
 
-  // Local đã đánh dấu sau ship_order thành công (kể cả khi sync chưa kịp tracking).
   if (order.status === 'processed') return true;
 
-  // Drop-off: đã chuẩn bị gửi bưu cục — không phụ thuộc pickup_time.
   if (getOrderFulfillmentType(order) === 'dropoff' && Boolean(order.isPrepared)) {
     return true;
   }
@@ -97,20 +98,18 @@ export function isProcessedCondition(
   return false;
 }
 
-/** SHIPPED / TO_CONFIRM_RECEIVE → Đang giao. */
+/** Terminal / thoát pool chờ lấy hàng — ưu tiên raw Shopee. */
 export function isShopeeShippingStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return true;
-  return order.status === 'shipping';
+  return raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE';
 }
 
 export function isShopeeCompletedStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
-  if (getShopeeOrderRawStatus(order) === 'COMPLETED') return true;
-  return order.status === 'completed';
+  return getShopeeOrderRawStatus(order) === 'COMPLETED';
 }
 
 export function isShopeeCancelledLikeStatus(
@@ -126,34 +125,27 @@ export function isShopeeCancelledLikeStatus(
 }
 
 /**
- * Giai đoạn chờ lấy hàng trên sàn (KPI Shopee):
- * READY_TO_SHIP | RETRY_SHIP | PROCESSED
+ * READY_TO_SHIP-like — CHỈ raw Shopee.
+ * Không fallback local status (tránh SHIPPED/thiếu raw lọt vào Chờ lấy hàng).
  */
 export function isShopeeReadyToShipStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || raw === 'PROCESSED') {
-    return true;
-  }
-  if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
-  if (
-    raw === 'UNPAID' ||
-    raw === 'PENDING' ||
-    raw === 'IN_REVIEW' ||
-    raw === 'FRAUD_CHECK' ||
-    raw === 'CANCELLED' ||
-    raw === 'IN_CANCEL' ||
-    raw === 'TO_RETURN'
-  ) {
-    return false;
-  }
-  return order.status === 'unprocessed' || order.status === 'processed';
+  return raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || raw === 'PROCESSED';
 }
 
 export function isShopeeReadyToShipLike(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
+  return isShopeeReadyToShipStatus(order);
+}
+
+/** Gate chung: còn trong giai đoạn chờ lấy trên sàn (raw = SSOT). */
+function isPickupPoolOrder(order: Partial<Order> & Record<string, unknown>): boolean {
+  if (isShopeeShippingStatus(order)) return false;
+  if (isShopeeCompletedStatus(order)) return false;
+  if (isShopeeCancelledLikeStatus(order)) return false;
   return isShopeeReadyToShipStatus(order);
 }
 
@@ -167,18 +159,12 @@ export function isOrderAwaitingCarrierPickup(order: Pick<Order, 'status'>): bool
   return order.status === 'processed' || order.status === 'unprocessed';
 }
 
-/**
- * UI "✓ Đã in" chỉ sáng khi ĐÃ CÓ MÃ VẬN ĐƠN + cờ isPrinted.
- */
 export function isOrderPrintedEffective(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   return isProcessedCondition(order) && Boolean(order.isPrinted);
 }
 
-/**
- * UI "✓ Đã chuẩn bị" chỉ sáng khi ĐÃ CÓ MÃ VẬN ĐƠN.
- */
 export function isOrderPreparedEffective(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
@@ -186,14 +172,11 @@ export function isOrderPreparedEffective(
 }
 
 /**
- * Badge status đồng nhất với Tab Filter (1:1).
- * Trả về status dùng cho nhãn UI — không phụ thuộc order.status lệch.
+ * Badge status = Tab Filter (1:1) theo State Machine.
  */
-export function resolveOrderBadgeStatus(
-  order: Order,
-): Order['status'] {
-  if (isShopeeShippingStatus(order)) return 'shipping';
-  if (isShopeeCompletedStatus(order)) return 'completed';
+export function resolveOrderBadgeStatus(order: Order): Order['status'] {
+  if (matchesShippingTab(order)) return 'shipping';
+  if (isShopeeCompletedStatus(order) || order.status === 'completed') return 'completed';
   if (isShopeeCancelledLikeStatus(order)) {
     if (order.status === 'return_pending' || order.status === 'return_received') {
       return order.status;
@@ -211,43 +194,53 @@ export function resolveOrderBadgeStatus(
   ) {
     return 'pending_confirm';
   }
-  if (isShopeeReadyToShipStatus(order)) {
-    // Đã bàn giao vẫn hiển thị "Đã xử lý" (đã có mã), tab ĐVVC tách riêng.
+  if (isPickupPoolOrder(order)) {
     return isProcessedCondition(order) ? 'processed' : 'unprocessed';
   }
   return order.status;
 }
 
 /**
- * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" —
- * BẮT BUỘC loại trừ mọi đơn đã bàn giao nội bộ (kể cả Shopee vẫn READY_TO_SHIP).
+ * TAB "ĐANG GIAO" — Status = SHIPPED (hoặc TO_CONFIRM_RECEIVE).
+ * Bỏ qua is_handed_over (ĐVVC đã quét mã trên sàn).
  */
-export function matchesProcessedPickupTab(order: Order): boolean {
-  // Exclude tuyệt đối theo cờ nội bộ — không phụ thuộc tab ĐVVC exit.
-  if (isOrderHandedOverToCarrier(order)) return false;
-  if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
-  if (isShopeeCancelledLikeStatus(order)) return false;
-  if (!isShopeeReadyToShipStatus(order)) return false;
-  if (!isProcessedCondition(order)) return false;
-  return true;
+export function matchesShippingTab(order: Order): boolean {
+  return isShopeeShippingStatus(order);
 }
 
 /**
- * Đủ điều kiện BÀN GIAO ĐVVC (QR / nút):
- * trùng pool Tab "Chờ lấy hàng (đã xử lý)" + có mã VĐ hiển thị được.
+ * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" —
+ * READY_TO_SHIP-like AND is_handed_over = false AND đã xử lý.
+ */
+export function matchesProcessedPickupTab(order: Order): boolean {
+  if (isOrderHandedOverToCarrier(order)) return false;
+  if (!isPickupPoolOrder(order)) return false;
+  return isProcessedCondition(order);
+}
+
+/**
+ * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)" —
+ * READY_TO_SHIP-like AND is_handed_over = false AND chưa xử lý.
+ */
+export function matchesUnprocessedPickupTab(order: Order): boolean {
+  if (isOrderHandedOverToCarrier(order)) return false;
+  if (!isPickupPoolOrder(order)) return false;
+  if (getShopeeOrderRawStatus(order) === 'PROCESSED') return false;
+  return !isProcessedCondition(order);
+}
+
+/**
+ * Đủ điều kiện BÀN GIAO ĐVVC (QR / nút).
  */
 export function isEligibleForHandOverToCarrier(order: Order): boolean {
   if (isOrderHandedOverToCarrier(order)) return false;
   if (hasLeftHandedOverCarrierTab(order)) return false;
-  if (isShopeeCancelledLikeStatus(order)) return false;
-  if (!isShopeeReadyToShipStatus(order)) return false;
+  if (!isPickupPoolOrder(order)) return false;
   if (!isProcessedCondition(order)) return false;
-  // Cùng nguồn với UI mã VĐ (getCarrierWaybillDisplay) — tránh lệch return_tracking_no.
   if (!hasOrderTrackingNo(order)) return false;
   return true;
 }
 
-/** Lý do từ chối bàn giao — dùng toast/debug. */
 export function getHandOverIneligibleReason(order: Order): string {
   if (isOrderHandedOverToCarrier(order)) {
     return 'Đơn đã có cờ bàn giao ĐVVC nội bộ';
@@ -255,10 +248,7 @@ export function getHandOverIneligibleReason(order: Order): string {
   if (hasLeftHandedOverCarrierTab(order)) {
     return `Đơn đã Đang giao/hoàn tất/hủy (status=${order.status}, shopee=${order.shopee_order_status || '-'})`;
   }
-  if (isShopeeCancelledLikeStatus(order)) {
-    return 'Đơn thuộc hủy/hoàn — không vào tab ĐVVC';
-  }
-  if (!isShopeeReadyToShipStatus(order)) {
+  if (!isPickupPoolOrder(order)) {
     return `Không còn chờ lấy hàng (status=${order.status}, shopee=${order.shopee_order_status || '-'})`;
   }
   if (!isProcessedCondition(order)) {
@@ -268,16 +258,4 @@ export function getHandOverIneligibleReason(order: Order): string {
     return 'Chưa có mã vận đơn trong trackingNumber/tracking_no/return_tracking_no';
   }
   return '';
-}
-
-/**
- * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)".
- */
-export function matchesUnprocessedPickupTab(order: Order): boolean {
-  if (isOrderHandedOverToCarrier(order)) return false;
-  if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
-  if (isShopeeCancelledLikeStatus(order)) return false;
-  if (!isShopeeReadyToShipStatus(order)) return false;
-  if (getShopeeOrderRawStatus(order) === 'PROCESSED') return false;
-  return !isProcessedCondition(order);
 }

@@ -58,23 +58,24 @@ function truthyFlag(v) {
 }
 
 function isOrderHandedOverToCarrier(order) {
-  const local = String(order?.local_status ?? order?.localStatus ?? '').toUpperCase();
+  const local = String(
+    order?.internal_status ?? order?.local_status ?? order?.localStatus ?? '',
+  ).toUpperCase();
   return (
     local === 'HANDED_OVER' ||
     truthyFlag(order?.isHandedOverToCarrier) ||
-    truthyFlag(order?.is_handed_over_to_carrier)
+    truthyFlag(order?.is_handed_over_to_carrier) ||
+    truthyFlag(order?.is_handed_over_to_courier)
   );
 }
 
 function isShopeeShippingStatus(order) {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return true;
-  return order?.status === 'shipping';
+  return raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE';
 }
 
 function isShopeeCompletedStatus(order) {
-  if (getShopeeOrderRawStatus(order) === 'COMPLETED') return true;
-  return order?.status === 'completed';
+  return getShopeeOrderRawStatus(order) === 'COMPLETED';
 }
 
 function isShopeeCancelledLikeStatus(order) {
@@ -89,30 +90,17 @@ function isShopeeCancelledLikeStatus(order) {
 
 function isShopeeReadyToShipStatus(order) {
   const raw = getShopeeOrderRawStatus(order);
-  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || raw === 'PROCESSED') return true;
-  if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
-  if (
-    raw === 'UNPAID' ||
-    raw === 'PENDING' ||
-    raw === 'IN_REVIEW' ||
-    raw === 'FRAUD_CHECK' ||
-    raw === 'CANCELLED' ||
-    raw === 'IN_CANCEL' ||
-    raw === 'TO_RETURN'
-  ) {
-    return false;
-  }
-  return order?.status === 'unprocessed' || order?.status === 'processed';
+  return raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || raw === 'PROCESSED';
 }
 
-/** Cùng matchesProcessedPickupTab — tab Chờ lấy hàng (Đã xử lý). */
+/** State Machine: READY_TO_SHIP-like AND is_handed_over = false AND đã xử lý. */
 export function matchesProcessedPickupTab(order) {
   if (!order || typeof order !== 'object') return false;
+  if (isOrderHandedOverToCarrier(order)) return false;
   if (isShopeeShippingStatus(order) || isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
   if (!isShopeeReadyToShipStatus(order)) return false;
-  if (!isProcessedCondition(order)) return false;
-  return !isOrderHandedOverToCarrier(order);
+  return isProcessedCondition(order);
 }
 
 async function fetchJson(backendUrl, req, pathPart, init = {}, timeoutMs = 180000) {

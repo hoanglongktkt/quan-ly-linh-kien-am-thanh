@@ -1,9 +1,10 @@
 /**
  * SSOT — Tab "Đã giao cho ĐVVC" (trạm trung chuyển nội bộ).
  *
- * WRITE: chỉ từ Quét QR hoặc nút Bàn giao ĐVVC (lẻ/hàng loạt).
- * READ: chỉ đơn có cờ nội bộ HANDED_OVER.
- * EXIT: khi Shopee raw SHIPPED / Đang giao → gỡ cờ, rời tab.
+ * STATE MACHINE:
+ *   READ  = READY_TO_SHIP-like AND is_handed_over = true
+ *   WRITE = Quét QR / nút Bàn giao ĐVVC
+ *   EXIT  = Shopee SHIPPED / COMPLETED / CANCELLED → gỡ cờ
  */
 import type { Order } from '../types';
 
@@ -51,15 +52,12 @@ function getInternalStatusRaw(
   ).toUpperCase();
 }
 
-/** Đơn đã sang Đang giao / hoàn tất trên Shopee → RỜI tab ĐVVC. */
+/** Đơn đã sang Đang giao / hoàn tất trên Shopee → RỜI tab ĐVVC (raw = SSOT). */
 export function hasLeftHandedOverCarrierTab(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   const raw = getShopeeRaw(order);
   if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE' || raw === 'COMPLETED') {
-    return true;
-  }
-  if (order.status === 'shipping' || order.status === 'completed') {
     return true;
   }
   if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || raw === 'TO_RETURN') {
@@ -171,12 +169,24 @@ export function resolveOrderLocalStatus(
 }
 
 /**
- * TAB "ĐÃ GIAO CHO ĐVVC" — CHỈ cờ nội bộ (is_handed_over_* / internal_status).
+ * TAB "ĐÃ GIAO CHO ĐVVC" —
+ * Status READY_TO_SHIP-like AND is_handed_over = true.
+ * TUYỆT ĐỐI loại SHIPPED / COMPLETED / CANCELLED (theo raw).
  */
 export function matchesHandedOverCarrierTab(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   if (!isOrderHandedOverToCarrier(order)) return false;
-  if (hasLeftHandedOverCarrierTab(order)) return false;
+  const raw = getShopeeRaw(order);
+  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE' || raw === 'COMPLETED') {
+    return false;
+  }
+  if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || raw === 'TO_RETURN') {
+    return false;
+  }
+  // Chỉ giữ đơn còn giai đoạn chờ lấy trên sàn.
+  if (raw !== 'READY_TO_SHIP' && raw !== 'RETRY_SHIP' && raw !== 'PROCESSED') {
+    return false;
+  }
   return true;
 }

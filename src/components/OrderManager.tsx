@@ -22,7 +22,7 @@ import {
   matchesHandedOverCarrierTab,
   matchesProcessedPickupTab,
   matchesUnprocessedPickupTab,
-  isShopeeShippingStatus,
+  matchesShippingTab,
   isShopeeReadyToShipStatus,
   hasOrderTrackingNo,
   getOrderTrackingNo,
@@ -77,7 +77,6 @@ import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse, readRes
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import {
-  collectCarrierDebugFields,
   getOrderCarrierText,
   getShippingCarrierGroup,
   orderMatchesShippingCarrierFilter,
@@ -103,14 +102,6 @@ function getOrderWaybillCode(order: Order): string {
   if (fallback && !/^0FG/i.test(fallback) && fallback !== String(order.orderSn || '')) {
     return fallback;
   }
-  // #region agent log
-  if (
-    order.status === 'processed' ||
-    String(order.shopee_order_status || '').toUpperCase() === 'PROCESSED'
-  ) {
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'6d934e'},body:JSON.stringify({sessionId:'6d934e',runId:'pre-fix',hypothesisId:'D',location:'OrderManager.tsx:getOrderWaybillCode',message:'UI empty waybill for processed order',data:{orderSn:order.orderSn,status:order.status,raw:order.shopee_order_status,trackingNumber:order.trackingNumber||null,tracking_no:order.tracking_no||null,fromHelper:fromHelper||null,fallback:fallback||null,fulfillment:(order as any).fulfillment_type||(order as any).ship_method||null},timestamp:Date.now()})}).catch(()=>{});
-  }
-  // #endregion
   return '';
 }
 
@@ -120,12 +111,6 @@ function isPendingConfirmOrder(order: Order): boolean {
   if (order.status === 'pending_verification') return true;
   const raw = String(order.shopee_order_status || '').toUpperCase();
   return raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK';
-}
-
-/** Đang giao: Shopee SHIPPED thắng. Đơn còn cờ ĐVVC (chưa exit) không vào tab này. */
-function isShippingTabOrder(order: Order): boolean {
-  if (matchesHandedOverCarrierTab(order)) return false;
-  return isShopeeShippingStatus(order) || order.status === 'shipping';
 }
 
 function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
@@ -910,7 +895,7 @@ export default function OrderManager({
           return;
         }
 
-        if (isEligibleForHandOverToCarrier(order) || matchesProcessedPickupTab(order)) {
+        if (isEligibleForHandOverToCarrier(order)) {
           const waybill = getOrderWaybillCode(order);
           const ok = await handOverOrderToCarrier(order, { fromScan: true });
           if (ok) {
@@ -1139,7 +1124,7 @@ export default function OrderManager({
           at: now,
         };
 
-        if (isEligibleForHandOverToCarrier(order) || matchesProcessedPickupTab(order)) {
+        if (isEligibleForHandOverToCarrier(order)) {
           playScanSound('success');
           vibrateScan('success');
           flashViewfinder('success', 500);
@@ -2228,7 +2213,7 @@ export default function OrderManager({
       }
       if (status === 'unprocessed') return matchesUnprocessedPickupTab(o) && !isPendingConfirmOrder(o);
       if (status === 'processed') return matchesProcessedPickupTab(o);
-      if (status === 'shipping') return isShippingTabOrder(o);
+      if (status === 'shipping') return matchesShippingTab(o);
       if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
       return o.status === status;
     }).length;
@@ -2257,7 +2242,7 @@ export default function OrderManager({
     } else if (activeSubTab === 'unprocessed') {
       if (!matchesUnprocessedPickupTab(order) || isPendingConfirmOrder(order)) return false;
     } else if (activeSubTab === 'shipping') {
-      if (!isShippingTabOrder(order)) return false;
+      if (!matchesShippingTab(order)) return false;
     } else if (activeSubTab !== 'all' && activeSubTab !== 'order_products') {
       if (order.status !== activeSubTab) return false;
     }
@@ -2323,21 +2308,7 @@ export default function OrderManager({
       const group = getShippingCarrierGroup(order);
       counts.all += 1;
       counts[group] += 1;
-      // TEMP DEBUG — xem field ĐVVC thực tế từ API/DB (xóa sau khi ổn định)
-      console.log('Check carrier:', {
-        orderSn: order.orderSn,
-        group,
-        text: getOrderCarrierText(order),
-        shipping_carrier: (order as any).shipping_carrier,
-        checkout_shipping_carrier: (order as any).checkout_shipping_carrier,
-        logistics_channel_name: (order as any).logistics_channel_name,
-        logistics_channel_id: (order as any).logistics_channel_id,
-        channel_id: (order as any).channel_id,
-        trackingNumber: getOrderWaybillCode(order) || order.trackingNumber || order.tracking_no,
-        fields: collectCarrierDebugFields(order),
-      });
     }
-    console.log('Check carrier COUNTS:', counts);
     return counts;
   }, [activeSubTab, ordersPoolBeforeCarrier]);
 

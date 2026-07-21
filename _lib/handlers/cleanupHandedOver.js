@@ -22,34 +22,25 @@ function resolveLocalStatus(order) {
   return 'NONE';
 }
 
-/** Cùng matchesHandedOverCarrierTab trên FE/server. */
+/** State Machine: READY_TO_SHIP-like AND is_handed_over = true. */
 export function matchesHandedOverCarrierTab(order) {
   if (!order || typeof order !== 'object') return false;
   const handed =
     resolveLocalStatus(order) === 'HANDED_OVER' ||
     truthyFlag(order.isHandedOverToCarrier) ||
-    truthyFlag(order.is_handed_over_to_carrier);
+    truthyFlag(order.is_handed_over_to_carrier) ||
+    truthyFlag(order.is_handed_over_to_courier);
   if (!handed) return false;
   const raw = String(
     order.shopee_order_status || order.order_status || order.shopeeOrderStatus || '',
   ).toUpperCase();
-  if (
-    raw === 'SHIPPED' ||
-    raw === 'TO_CONFIRM_RECEIVE' ||
-    raw === 'COMPLETED' ||
-    order.status === 'shipping' ||
-    order.status === 'completed'
-  ) {
+  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE' || raw === 'COMPLETED') {
     return false;
   }
-  if (
-    raw === 'CANCELLED' ||
-    raw === 'IN_CANCEL' ||
-    raw === 'TO_RETURN' ||
-    order.status === 'cancelled' ||
-    order.status === 'return_pending' ||
-    order.status === 'return_received'
-  ) {
+  if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || raw === 'TO_RETURN') {
+    return false;
+  }
+  if (raw !== 'READY_TO_SHIP' && raw !== 'RETRY_SHIP' && raw !== 'PROCESSED') {
     return false;
   }
   return true;
