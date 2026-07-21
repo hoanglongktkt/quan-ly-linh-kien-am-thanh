@@ -3,6 +3,7 @@ import { isShopeeInternalTrackingCode } from './orderTracking';
 import {
   isOrderHandedOverToCarrier,
   matchesHandedOverCarrierTab,
+  hasLeftHandedOverCarrierTab,
 } from './orderWarehouseStatus';
 
 export {
@@ -10,9 +11,14 @@ export {
   matchesHandedOverCarrierTab,
   buildHandedOverWritePatch,
   applyHandedOverWrite,
+  applyClearHandedOver,
+  buildClearHandedOverPatch,
+  hasLeftHandedOverCarrierTab,
   ORDER_LOCAL_STATUS,
+  HANDED_OVER_SOURCE,
   UI_TAB_HANDED_OVER_CARRIER,
 } from './orderWarehouseStatus';
+export type { HandedOverSource } from './orderWarehouseStatus';
 
 export function getShopeeOrderRawStatus(
   order: Partial<Order> & Record<string, unknown>,
@@ -221,6 +227,19 @@ export function matchesProcessedPickupTab(order: Order): boolean {
   if (!isShopeeReadyToShipStatus(order)) return false;
   if (!isProcessedCondition(order)) return false;
   return !isOrderHandedOverToCarrier(order);
+}
+
+/**
+ * Đủ điều kiện BÀN GIAO ĐVVC (QR / nút): đang ở pool "Chờ lấy hàng (đã xử lý)".
+ * Không gồm unprocessed, không gồm đơn Shopee đã Đang giao.
+ */
+export function isEligibleForHandOverToCarrier(order: Order): boolean {
+  if (hasLeftHandedOverCarrierTab(order)) return false;
+  if (isShopeeCancelledLikeStatus(order)) return false;
+  if (!isShopeeReadyToShipStatus(order)) return false;
+  if (!isProcessedCondition(order)) return false;
+  if (!hasOrderTrackingNo(order)) return false;
+  return true;
 }
 
 /**

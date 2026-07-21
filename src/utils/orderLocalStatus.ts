@@ -13,7 +13,10 @@ export {
   matchesHandedOverCarrierTab,
   buildHandedOverWritePatch,
   applyHandedOverWrite,
+  applyClearHandedOver,
+  hasLeftHandedOverCarrierTab,
   UI_TAB_HANDED_OVER_CARRIER,
+  HANDED_OVER_SOURCE,
 } from './orderWarehouseStatus';
 
 /** Tab "Đã nhận đơn hủy, đơn hoàn" — chỉ đơn còn active trong 14 ngày. */

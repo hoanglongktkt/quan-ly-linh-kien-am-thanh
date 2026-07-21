@@ -31,6 +31,8 @@ import {
   resolveOrderBadgeStatus,
   applyHandedOverWrite,
   buildHandedOverWritePatch,
+  isEligibleForHandOverToCarrier,
+  HANDED_OVER_SOURCE,
   UI_TAB_HANDED_OVER_CARRIER,
 } from '../utils/orderHandover';
 import {
@@ -118,13 +120,10 @@ function isPendingConfirmOrder(order: Order): boolean {
   return raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK';
 }
 
-/** SHIPPED / TO_CONFIRM_RECEIVE → Đang giao. Đơn còn cờ ĐVVC thì ưu tiên tab ĐVVC. */
+/** Đang giao: Shopee SHIPPED thắng. Đơn còn cờ ĐVVC (chưa exit) không vào tab này. */
 function isShippingTabOrder(order: Order): boolean {
-  if (isOrderHandedOverToCarrier(order)) {
-    const raw = String(order.shopee_order_status || '').toUpperCase();
-    return raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE';
-  }
-  return isShopeeShippingStatus(order);
+  if (matchesHandedOverCarrierTab(order)) return false;
+  return isShopeeShippingStatus(order) || order.status === 'shipping';
 }
 
 function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {
@@ -680,8 +679,12 @@ export default function OrderManager({
   }, []);
 
   const applyHandoverToLocalOrders = React.useCallback(
-    (updatedOrder: Order) => {
-      const patched = applyHandedOverWrite({ ...updatedOrder }) as Order;
+    (updatedOrder: Order, source: 'qr_scan' | 'manual_button' = 'manual_button') => {
+      const patched = applyHandedOverWrite(
+        { ...updatedOrder },
+        undefined,
+        source === 'qr_scan' ? HANDED_OVER_SOURCE.QR_SCAN : HANDED_OVER_SOURCE.MANUAL_BUTTON,
+      ) as Order;
       const merged = ordersRef.current.map((o) =>
         o.id === patched.id || o.orderSn === patched.orderSn ? { ...o, ...patched } : o
       );
@@ -696,7 +699,11 @@ export default function OrderManager({
       if (!updatedList.length) return;
       const byKey = new Map<string, Order>();
       for (const u of updatedList) {
-        const patched = applyHandedOverWrite({ ...u }) as Order;
+        const patched = applyHandedOverWrite(
+          { ...u },
+          undefined,
+          HANDED_OVER_SOURCE.MANUAL_BUTTON,
+        ) as Order;
         if (patched.id) byKey.set(String(patched.id), patched);
         if (patched.orderSn) byKey.set(String(patched.orderSn), patched);
       }
@@ -717,17 +724,12 @@ export default function OrderManager({
         showScanToast('Chưa đăng nhập — không thể ghi nhận bàn giao ĐVVC.', 'error');
         return false;
       }
-      if (!isShopeeReadyToShipStatus(order) && !isProcessedCondition(order) && !order.isPrepared && !order.isPrinted) {
-        const raw = String(order.shopee_order_status || '').toUpperCase();
-        if (
-          order.status === 'completed' ||
-          raw === 'SHIPPED' ||
-          raw === 'COMPLETED' ||
-          raw === 'TO_CONFIRM_RECEIVE'
-        ) {
-          showScanToast(`Đơn #${order.orderSn} đã ${order.status || raw} — không giao ĐVVC.`, 'error');
-          return false;
-        }
+      if (!isEligibleForHandOverToCarrier(order) && !isOrderHandedOverToCarrier(order)) {
+        showScanToast(
+          `Đơn #${order.orderSn} không ở Chờ lấy hàng (đã xử lý) — không giao ĐVVC.`,
+          'error',
+        );
+        return false;
       }
       if (isOrderHandedOverToCarrier(order)) {
         if (opts?.switchTab !== false) openHandedOverCarrierTab();
@@ -772,7 +774,14 @@ export default function OrderManager({
                 Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify(buildHandedOverWritePatch()),
+              body: JSON.stringify(
+                buildHandedOverWritePatch(
+                  undefined,
+                  opts?.fromScan
+                    ? HANDED_OVER_SOURCE.QR_SCAN
+                    : HANDED_OVER_SOURCE.MANUAL_BUTTON,
+                ),
+              ),
             });
             const patchData = await patchRes.json().catch(() => ({}));
             if (!patchRes.ok) {
@@ -794,7 +803,10 @@ export default function OrderManager({
         }
 
         const saved = (data?.order || data) as Order;
-        applyHandoverToLocalOrders({ ...order, ...saved });
+        applyHandoverToLocalOrders(
+          { ...order, ...saved },
+          opts?.fromScan ? 'qr_scan' : 'manual_button',
+        );
         onAddLog({
           id: `log-${Date.now()}`,
           timestamp: new Date().toISOString(),
@@ -863,7 +875,7 @@ export default function OrderManager({
           return;
         }
 
-        if (order.status === 'unprocessed' || order.status === 'processed') {
+        if (isEligibleForHandOverToCarrier(order) || matchesProcessedPickupTab(order)) {
           const waybill = getOrderWaybillCode(order);
           const ok = await handOverOrderToCarrier(order, { fromScan: true });
           if (ok) {
@@ -882,6 +894,19 @@ export default function OrderManager({
             setCameraScanError(true);
             setTimeout(() => setCameraScanError(false), 2000);
           }
+          return;
+        }
+
+        if (order.status === 'unprocessed') {
+          scanFeedback('error');
+          setCameraScanSuccess(false);
+          setCameraScanError(true);
+          setCameraScanResult(`Đơn #${order.orderSn} còn Chưa xử lý — không giao ĐVVC`);
+          showScanToast(
+            `Đơn #${order.orderSn} phải ở Chờ lấy hàng (đã xử lý) mới quét ĐVVC`,
+            'error',
+          );
+          setTimeout(() => setCameraScanError(false), 2000);
           return;
         }
 
@@ -1079,7 +1104,7 @@ export default function OrderManager({
           at: now,
         };
 
-        if (order.status === 'unprocessed' || order.status === 'processed') {
+        if (isEligibleForHandOverToCarrier(order) || matchesProcessedPickupTab(order)) {
           playScanSound('success');
           vibrateScan('success');
           flashViewfinder('success', 500);
@@ -1096,8 +1121,20 @@ export default function OrderManager({
           showScanToast(
             waybill
               ? `Xuất kho #${order.orderSn} — mã VĐ: ${waybill}`
-              : `Đơn chờ lấy hàng #${order.orderSn} — đã ghi nhận xuất kho`,
+              : `Đơn chờ lấy hàng (đã xử lý) #${order.orderSn} — đã ghi nhận xuất kho`,
             'success',
+          );
+          return;
+        }
+
+        if (order.status === 'unprocessed') {
+          playScanSound('error');
+          vibrateScan('error');
+          flashViewfinder('error', 500);
+          setCameraScanResult(`Đơn #${order.orderSn} còn Chưa xử lý — không xuất kho ĐVVC`);
+          showScanToast(
+            `Chỉ quét đơn ở Chờ lấy hàng (đã xử lý) hoặc Đơn hủy`,
+            'error',
           );
           return;
         }
@@ -2476,15 +2513,11 @@ export default function OrderManager({
     }
 
     const eligible = selected.filter(
-      (o) =>
-        isShopeeReadyToShipStatus(o) &&
-        isProcessedCondition(o) &&
-        hasOrderTrackingNo(o) &&
-        !isOrderHandedOverToCarrier(o),
+      (o) => isEligibleForHandOverToCarrier(o) && !isOrderHandedOverToCarrier(o),
     );
     if (eligible.length === 0) {
       showToast(
-        'Không có đơn hợp lệ trong danh sách đã chọn (cần đã xử lý + có mã vận đơn + chưa giao ĐVVC).',
+        'Không có đơn hợp lệ (chỉ Chờ lấy hàng đã xử lý + có mã VĐ + chưa giao ĐVVC).',
       );
       return;
     }
@@ -2531,7 +2564,11 @@ export default function OrderManager({
       }
 
       const savedList = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
-      applyHandoverBulkToLocalOrders(savedList.length > 0 ? savedList : eligible);
+      if (savedList.length > 0) {
+        applyHandoverBulkToLocalOrders(savedList);
+      } else if (realUpdated > 0) {
+        applyHandoverBulkToLocalOrders(eligible.slice(0, realUpdated));
+      }
 
       onAddLog({
         id: `log-${Date.now()}`,
@@ -4041,7 +4078,7 @@ export default function OrderManager({
                             </>
                           )}
 
-                          {isShopeeReadyToShipStatus(order) && isProcessedCondition(order) && hasOrderTrackingNo(order) && !isOrderHandedOverToCarrier(order) && (
+                          {isEligibleForHandOverToCarrier(order) && !isOrderHandedOverToCarrier(order) && (
                             <>
                               <span className={`om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded ${
                                 isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50'
@@ -4299,7 +4336,7 @@ export default function OrderManager({
                         </>
                       )}
 
-                      {isShopeeReadyToShipStatus(order) && isProcessedCondition(order) && hasOrderTrackingNo(order) && !isOrderHandedOverToCarrier(order) && (
+                      {isEligibleForHandOverToCarrier(order) && !isOrderHandedOverToCarrier(order) && (
                         <>
                           <span className={`om-mobile-hide-print text-[11px] font-black px-2.5 py-1 rounded-xl border ${
                             isOrderPrintedEffective(order) ? 'text-emerald-600 bg-emerald-50 border-emerald-100' : 'text-rose-600 bg-rose-50 border-rose-100'

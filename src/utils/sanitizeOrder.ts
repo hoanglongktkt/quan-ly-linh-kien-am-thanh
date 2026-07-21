@@ -1,6 +1,7 @@
 import type { AppliedSystemFee, Order } from '../types';
 import { parseShopeeFees, parseCustomCostItems } from './shopeeFees';
 import { inferShippingCarrierLabel } from './shippingCarrier';
+import { isTruthyFlag } from './orderWarehouseStatus';
 
 /** Chuẩn hóa đơn từ API — tránh crash khi thiếu date/orderSn/items. */
 export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Order {
@@ -119,14 +120,16 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     is_pending_shopee_check: Boolean(raw.is_pending_shopee_check),
     isPrepared: Boolean(raw.isPrepared),
     isPrinted: Boolean(raw.isPrinted),
-    isHandedOverToCarrier: Boolean(raw.isHandedOverToCarrier ?? raw.is_handed_over_to_carrier),
-    is_handed_over_to_carrier: Boolean(raw.is_handed_over_to_carrier ?? raw.isHandedOverToCarrier),
+    isHandedOverToCarrier: isTruthyFlag(raw.isHandedOverToCarrier ?? raw.is_handed_over_to_carrier),
+    is_handed_over_to_carrier: isTruthyFlag(raw.is_handed_over_to_carrier ?? raw.isHandedOverToCarrier),
     local_status: (() => {
       const v = String(raw.local_status ?? raw.localStatus ?? '').toUpperCase();
       if (v === 'HANDED_OVER' || v === 'CANCELLED_STORED' || v === 'RETURN_RECEIVED' || v === 'NONE') {
         return v as Order['local_status'];
       }
-      if (raw.isHandedOverToCarrier || raw.is_handed_over_to_carrier) return 'HANDED_OVER';
+      if (isTruthyFlag(raw.isHandedOverToCarrier) || isTruthyFlag(raw.is_handed_over_to_carrier)) {
+        return 'HANDED_OVER';
+      }
       if (raw.status === 'return_received') return 'RETURN_RECEIVED';
       return undefined;
     })(),
@@ -135,7 +138,9 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       if (v === 'HANDED_OVER' || v === 'CANCELLED_STORED' || v === 'RETURN_RECEIVED' || v === 'NONE') {
         return v as Order['localStatus'];
       }
-      if (raw.isHandedOverToCarrier || raw.is_handed_over_to_carrier) return 'HANDED_OVER';
+      if (isTruthyFlag(raw.isHandedOverToCarrier) || isTruthyFlag(raw.is_handed_over_to_carrier)) {
+        return 'HANDED_OVER';
+      }
       if (raw.status === 'return_received') return 'RETURN_RECEIVED';
       return undefined;
     })(),

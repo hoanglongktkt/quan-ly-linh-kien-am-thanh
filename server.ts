@@ -13,11 +13,17 @@ import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
 import {
   ORDER_LOCAL_STATUS,
   applyHandedOverWrite,
+  buildClearHandedOverPatch,
   buildHandedOverWritePatch,
   matchesHandedOverCarrierTab,
+  hasLeftHandedOverCarrierTab,
   resolveOrderLocalStatus as resolveOrderLocalStatusShared,
   isOrderHandedOverToCarrier as isOrderHandedOverShared,
+  HANDED_OVER_SOURCE,
 } from "./src/utils/orderWarehouseStatus.ts";
+import {
+  isEligibleForHandOverToCarrier as isEligibleForHandOverShared,
+} from "./src/utils/orderHandover.ts";
 import {
   initMongo,
   loadProductsFromStore,
@@ -7304,6 +7310,7 @@ function isShopeeTerminalRawStatus(raw: string): boolean {
 /**
  * SHIPPED / COMPLETED / logistics đã lấy-đang giao → BẮT BUỘC ghi đè tab local
  * (không bị PROCESSED / forceHeal / local_status kéo ngược về "Đã xử lý").
+ * EXIT tab ĐVVC: gỡ HANDED_OVER khi đã Đang giao.
  */
 function enforceShopeeTerminalLocalStatus(order: any): boolean {
   if (!order || String(order.channel || "") !== "shopee") return false;
@@ -7319,18 +7326,19 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
       logistics === "LOGISTICS_PICKUP_DONE" ||
       logistics === "LOGISTICS_DELIVERY_DONE");
 
+  const clearHandedOverExit = () => {
+    if (!resolveOrderHandoverFlag(order) && String(order.local_status || "").toUpperCase() !== "HANDED_OVER") {
+      return;
+    }
+    Object.assign(order, buildClearHandedOverPatch());
+  };
+
   if (raw === "COMPLETED") {
     order.status = "completed";
     order.shopee_order_status = "COMPLETED";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
-    order.isHandedOverToCarrier = false;
-    order.is_handed_over_to_carrier = false;
-    const local = String(order.local_status ?? order.localStatus ?? "").toUpperCase();
-    if (local === "HANDED_OVER") {
-      order.local_status = "NONE";
-      order.localStatus = "NONE";
-    }
+    clearHandedOverExit();
     return true;
   }
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
@@ -7338,16 +7346,10 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
     order.shopee_order_status = raw;
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
-    order.isHandedOverToCarrier = false;
-    order.is_handed_over_to_carrier = false;
-    const local = String(order.local_status ?? order.localStatus ?? "").toUpperCase();
-    if (local === "HANDED_OVER") {
-      order.local_status = "NONE";
-      order.localStatus = "NONE";
-    }
+    clearHandedOverExit();
     return true;
   }
-  // Sàn còn PROCESSED nhưng ĐVVC đã lấy / đang giao → Đang giao (ghi đè PROCESSED local).
+  // Sàn còn PROCESSED nhưng ĐVVC đã lấy / đang giao → Đang giao + EXIT tab ĐVVC.
   if (
     (raw === "PROCESSED" ||
       raw === "READY_TO_SHIP" ||
@@ -7359,7 +7361,15 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
     order.status = "shipping";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
+    clearHandedOverExit();
     return true;
+  }
+  // Local đã là shipping (sync trước đó) → vẫn EXIT tab ĐVVC.
+  if (order.status === "shipping" || order.status === "completed") {
+    if (resolveOrderHandoverFlag(order)) {
+      clearHandedOverExit();
+      return true;
+    }
   }
   return false;
 }
@@ -8592,7 +8602,7 @@ function setOrderHandoverFlag(order: any, value: boolean): void {
 }
 
 /**
- * Dọn cờ HANDED_OVER — CHỈ khi Shopee đã SHIPPED/COMPLETED (terminal).
+ * Dọn cờ HANDED_OVER khi đã EXIT (Đang giao / hoàn tất / hủy).
  */
 function healInvalidHandedOverFlags(orders: any[]): any[] {
   const changed: any[] = [];
@@ -8600,6 +8610,11 @@ function healInvalidHandedOverFlags(orders: any[]): any[] {
     const order = orders[i];
     if (!resolveOrderHandoverFlag(order)) continue;
     if (enforceShopeeTerminalLocalStatus(order)) {
+      changed.push(order);
+      continue;
+    }
+    if (hasLeftHandedOverCarrierTab(order)) {
+      Object.assign(order, buildClearHandedOverPatch());
       changed.push(order);
     }
   }
@@ -8918,13 +8933,7 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""));
 
   if (clearHandoverOnShip) {
-    setOrderHandoverFlag(merged, false);
-    merged.isHandedOverToCarrier = false;
-    merged.is_handed_over_to_carrier = false;
-    if (resolveOrderLocalStatus(merged) === "HANDED_OVER") {
-      merged.local_status = "NONE";
-      merged.localStatus = "NONE";
-    }
+    Object.assign(merged, buildClearHandedOverPatch());
   } else if (existing) {
     setOrderHandoverFlag(merged, resolveOrderHandoverFlag(existing));
   }
@@ -15610,77 +15619,46 @@ async function startServer() {
   async function handOverOrderToCarrierByIndex(
     orders: any[],
     index: number,
-    opts?: { persist?: boolean; force?: boolean },
+    opts?: { persist?: boolean; source?: "qr_scan" | "manual_button" },
   ): Promise<{ ok: true; order: any; changed: boolean } | { ok: false; status: number; error: string }> {
     if (index < 0) {
       return { ok: false, status: 404, error: "Không tìm thấy đơn hàng." };
     }
     const order = orders[index];
-    const shopeeRaw = String(order?.shopee_order_status || "").toUpperCase();
-    const localStatus = String(order?.status || "");
 
-    // Terminal — không đưa vào tab ĐVVC.
-    if (
-      shopeeRaw === "SHIPPED" ||
-      shopeeRaw === "TO_CONFIRM_RECEIVE" ||
-      shopeeRaw === "COMPLETED" ||
-      localStatus === "completed"
-    ) {
+    // EXIT / terminal — không ghi vào tab ĐVVC.
+    if (hasLeftHandedOverCarrierTab(order)) {
       return {
         ok: false,
         status: 400,
-        error: `Đơn ${order?.orderSn || order?.id} đã ${localStatus || shopeeRaw} — không ghi Đã giao ĐVVC.`,
-      };
-    }
-    if (
-      shopeeRaw === "CANCELLED" ||
-      shopeeRaw === "IN_CANCEL" ||
-      shopeeRaw === "TO_RETURN" ||
-      localStatus === "cancelled" ||
-      localStatus === "return_pending" ||
-      localStatus === "return_received"
-    ) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Đơn ${order?.orderSn || order?.id} thuộc hủy/hoàn — dùng tab nhận hủy/hoàn.`,
+        error: `Đơn ${order?.orderSn || order?.id} đã Đang giao/hoàn tất/hủy — không ghi Đã giao ĐVVC.`,
       };
     }
 
-    const awaitingPickup =
-      isOrderAwaitingCarrierPickupStatus(order?.status) ||
-      shopeeRaw === "READY_TO_SHIP" ||
-      shopeeRaw === "RETRY_SHIP" ||
-      shopeeRaw === "PROCESSED" ||
-      Boolean(order?.isPrepared) ||
-      Boolean(order?.isPrinted);
-
-    if (!opts?.force && !awaitingPickup) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Đơn ${order?.orderSn || order?.id} không ở trạng thái chờ lấy hàng — không thể ghi nhận bàn giao ĐVVC.`,
-      };
-    }
-    if (!opts?.force && !hasUsableShopeeTrackingNumber(order)) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Đơn ${order?.orderSn || order?.id} chưa có mã vận đơn — không thể bàn giao ĐVVC.`,
-      };
-    }
     if (resolveOrderHandoverFlag(order)) {
       return { ok: true, order, changed: false };
     }
 
-    // WRITE = READ: local_status HANDED_OVER (SSOT buildHandedOverWritePatch).
-    const updated = applyHandedOverWrite({ ...order });
+    // STRICT: chỉ đơn thuộc "Chờ lấy hàng (đã xử lý)" + có mã VĐ.
+    if (!isEligibleForHandOverShared(order)) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Đơn ${order?.orderSn || order?.id} không nằm ở Chờ lấy hàng (đã xử lý) — chỉ QR/nút bàn giao mới đưa vào ĐVVC.`,
+      };
+    }
+
+    const source =
+      opts?.source === "qr_scan"
+        ? HANDED_OVER_SOURCE.QR_SCAN
+        : HANDED_OVER_SOURCE.MANUAL_BUTTON;
+    const updated = applyHandedOverWrite({ ...order }, undefined, source);
     orders[index] = updated;
     if (opts?.persist !== false) {
       await persistOrdersToDatabase(orders, [updated]);
     }
     console.log(
-      `[Orders Handover] đơn ${updated.orderSn} → ${ORDER_LOCAL_STATUS.HANDED_OVER} force=${Boolean(opts?.force)}`,
+      `[Orders Handover] đơn ${updated.orderSn} → ${ORDER_LOCAL_STATUS.HANDED_OVER} source=${source}`,
     );
     return { ok: true, order: updated, changed: true };
   }
@@ -16003,7 +15981,7 @@ async function startServer() {
       const orders = loaded.orders;
       const hit = findOrderRecord(orders, String(req.params.id || ""));
       const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1, {
-        force: true,
+        source: "manual_button",
       });
       if (!result.ok) {
         return res.status(result.status).json({ success: false, error: result.error, message: result.error });
@@ -16049,7 +16027,9 @@ async function startServer() {
         });
       }
 
-      const result = await handOverOrderToCarrierByIndex(orders, index, { force: true });
+      const result = await handOverOrderToCarrierByIndex(orders, index, {
+        source: code ? "qr_scan" : "manual_button",
+      });
       if (!result.ok) {
         return res.status(result.status).json({ success: false, error: result.error, message: result.error });
       }
@@ -16117,7 +16097,7 @@ async function startServer() {
         seenIdx.add(hit.index);
         const result = await handOverOrderToCarrierByIndex(orders, hit.index, {
           persist: false,
-          force: true,
+          source: "manual_button",
         });
         if (!result.ok) {
           failed.push({ key, error: result.error });
@@ -16315,11 +16295,11 @@ async function startServer() {
           continue;
         }
 
-        // FE đã phân loại xuất kho → WRITE SSOT HANDED_OVER (force).
+        // FE phân loại xuất kho (chỉ Chờ lấy hàng đã xử lý) → WRITE HANDED_OVER.
         if (forceHandOver) {
           const result = await handOverOrderToCarrierByIndex(orders, index, {
             persist: false,
-            force: true,
+            source: "qr_scan",
           });
           if (!result.ok) {
             results.push({
@@ -16356,7 +16336,8 @@ async function startServer() {
           continue;
         }
 
-        if (forceCancel || status === "cancelled") {
+        // Đơn hủy → CANCELLED_STORED (không vào tab ĐVVC).
+        if (status === "cancelled" || (forceCancel && status === "cancelled")) {
           const updated = { ...order };
           setOrderLocalStatus(updated, "CANCELLED_STORED");
           orders[index] = updated;
@@ -16370,6 +16351,23 @@ async function startServer() {
             orderSn: updated.orderSn,
             message: `Đơn hủy #${updated.orderSn} → CANCELLED_STORED`,
             local_status: "CANCELLED_STORED",
+          });
+          continue;
+        }
+        if (forceCancel && status !== "cancelled") {
+          results.push({
+            code,
+            action: "rejected",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Mã "${code}" không thuộc Đơn hủy trong DB`,
+            local_status: existingLocal,
+          });
+          failed_scans.push({
+            code,
+            orderId: order.id,
+            orderSn: order.orderSn,
+            reason: `Không thuộc Đơn hủy (status=${status})`,
           });
           continue;
         }
@@ -16392,11 +16390,11 @@ async function startServer() {
           continue;
         }
 
-        // Auto: chờ lấy hàng → HANDED_OVER (SSOT) nếu đủ điều kiện.
-        if (isOrderAwaitingCarrierPickupStatus(status)) {
+        // Không có phân loại FE: chỉ bàn giao nếu đúng Chờ lấy hàng (đã xử lý).
+        if (isEligibleForHandOverShared(order)) {
           const result = await handOverOrderToCarrierByIndex(orders, index, {
             persist: false,
-            force: false,
+            source: "qr_scan",
           });
           if (!result.ok) {
             results.push({
@@ -16436,13 +16434,13 @@ async function startServer() {
           action: "skipped",
           orderId: order.id,
           orderSn: order.orderSn,
-          message: `Đơn #${order.orderSn} trạng thái "${status}" — bỏ qua`,
+          message: `Đơn #${order.orderSn} không thuộc Chờ lấy hàng (đã xử lý) / Đơn hủy — bỏ qua`,
         });
         failed_scans.push({
           code,
           orderId: order.id,
           orderSn: order.orderSn,
-          reason: `Trạng thái "${status}" không thuộc quy tắc phân loại`,
+          reason: `Trạng thái "${status}" không thuộc quy tắc quét ĐVVC`,
         });
       }
 
