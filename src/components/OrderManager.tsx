@@ -1000,6 +1000,8 @@ export default function OrderManager({
   // Multi-select bulk state
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
+  /** Toolbar: chỉ hiện đơn chưa in (theo isOrderPrintedEffective). */
+  const [filterUnprinted, setFilterUnprinted] = useState(false);
 
   // Detail Modal & Bulk Print Modal
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -1959,7 +1961,7 @@ export default function OrderManager({
 
   // Smart pick sort: không ẩn đơn — chỉ sắp xếp lại trên client khi bật toggle (tab unprocessed).
   // Tắt toggle → dùng lại filteredOrdersBase (thứ tự thời gian gốc).
-  const filteredOrders =
+  const filteredOrdersSorted =
     smartPickSort && activeSubTab === 'unprocessed'
       ? [...filteredOrdersBase].sort((a, b) => {
           const aSingle = (a.items || []).length === 1;
@@ -1980,6 +1982,11 @@ export default function OrderManager({
           return 0;
         })
       : filteredOrdersBase;
+
+  // Lọc nhanh "Chưa in" trên toolbar (không phá tab/filter khác).
+  const filteredOrders = filterUnprinted
+    ? filteredOrdersSorted.filter((o) => !isOrderPrintedEffective(o))
+    : filteredOrdersSorted;
 
   // Resolve checkbox selections to full Order rows — match internal id, orderSn,
   // or the normalized shopee-{orderSn} id so bulk actions never lose selections.
@@ -3179,13 +3186,13 @@ export default function OrderManager({
       {/* 5. BULK ACTION BAR — chỉ giữ In đơn hàng loạt + Xác nhận đơn hàng loạt */}
       {activeSubTab !== 'order_products' && (
       <div className="om-orders-mobile-hide-bulk-bar bg-slate-50 border border-slate-200/80 p-3 max-md:p-2.5 rounded-2xl flex items-center justify-between gap-4 max-md:gap-2">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button 
             type="button"
             onClick={handleToggleSelectAll}
             className="text-gray-500 hover:text-gray-800 transition-all cursor-pointer"
           >
-            {selectedOrderIds.length === filteredOrders.length ? (
+            {selectedOrderIds.length === filteredOrders.length && filteredOrders.length > 0 ? (
               <CheckSquare className="w-5 h-5 text-blue-600" />
             ) : (
               <Square className="w-5 h-5 text-gray-400" />
@@ -3194,6 +3201,17 @@ export default function OrderManager({
           <span className="text-xs font-extrabold text-slate-700">
             Đã chọn <strong className="text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md font-black">{selectedOrderIds.length}</strong> đơn hàng trên trang này
           </span>
+          <button
+            type="button"
+            onClick={() => setFilterUnprinted((v) => !v)}
+            className={`text-[11px] font-black px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+              filterUnprinted
+                ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            {filterUnprinted ? 'Đang lọc: Chưa in (Bấm để Hủy)' : 'Lọc đơn Chưa in'}
+          </button>
         </div>
 
         <div className="relative shrink-0">
