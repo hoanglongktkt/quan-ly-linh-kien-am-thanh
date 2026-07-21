@@ -1,5 +1,5 @@
 /**
- * POST orders/:id/hand-over-carrier | orders/hand-over-carrier
+ * POST orders/:id/hand-over-carrier | orders/hand-over-carrier | orders/hand-over-carrier/bulk
  * Ghi nhận bàn giao ĐVVC (local_status = HANDED_OVER).
  * Ưu tiên proxy cPanel; fallback PATCH local_status nếu route cũ 404.
  */
@@ -61,6 +61,128 @@ function resolveOrderKey(req, orderIdFromPath) {
   ).trim();
 }
 
+function extractBulkKeys(body) {
+  const rawIds = Array.isArray(body?.orderIds)
+    ? body.orderIds
+    : Array.isArray(body?.ids)
+      ? body.ids
+      : [];
+  const rawSns = Array.isArray(body?.orderSns) ? body.orderSns : [];
+  return [
+    ...new Set(
+      [...rawIds, ...rawSns].map((v) => String(v || '').trim()).filter(Boolean),
+    ),
+  ];
+}
+
+async function lookupOrder(backendUrl, req, orderKey) {
+  const lookup = await fetchJson(backendUrl, req, `orders/${encodeURIComponent(orderKey)}`, {
+    method: 'GET',
+  }).catch(() => null);
+  if (lookup?.ok && (lookup.data?.id || lookup.data?.orderSn || lookup.data?.order?.id)) {
+    return lookup.data?.order || lookup.data;
+  }
+  const bySn = await fetchJson(backendUrl, req, 'orders/lookup', {
+    method: 'GET',
+    query: { code: orderKey },
+  }).catch(() => null);
+  return (
+    bySn?.data?.order ||
+    (bySn?.ok && bySn?.data?.id ? bySn.data : null) ||
+    null
+  );
+}
+
+async function patchOrderHandedOver(backendUrl, req, order) {
+  const patch = buildHandedOverPatch();
+  const patched = await fetchJson(backendUrl, req, `orders/${encodeURIComponent(order.id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+  if (!patched.ok) {
+    const reason = patched.data?.message || patched.data?.error || 'PATCH thất bại';
+    return { ok: false, error: reason, status: patched.status || 500 };
+  }
+  const saved = patched.data?.id ? patched.data : { ...order, ...patch };
+  return { ok: true, order: saved };
+}
+
+async function handleBulkHandOver(req, res, backend) {
+  const keys = extractBulkKeys(req.body || {});
+  if (!keys.length) {
+    return res.status(400).json({
+      success: false,
+      error: 'Thiếu danh sách đơn (orderIds / orderSns).',
+      message: 'Thiếu danh sách đơn (orderIds / orderSns).',
+    });
+  }
+
+  try {
+    const direct = await fetchJson(backend.url, req, 'orders/hand-over-carrier/bulk', {
+      method: 'POST',
+      body: JSON.stringify(req.body || { orderIds: keys }),
+    });
+    if (direct.ok && direct.data?.success !== false) {
+      return res.status(200).json({ success: true, ...direct.data });
+    }
+    const msg = String(direct.data?.message || direct.data?.error || '');
+    if (direct.status !== 404 && !msg.includes('API không tồn tại')) {
+      return res.status(direct.status || 500).json({
+        success: false,
+        message: msg || 'hand_over_bulk_failed',
+        error: msg || 'hand_over_bulk_failed',
+      });
+    }
+    console.warn('[Hand Over Carrier Bulk] cPanel chưa có route — fallback PATCH từng đơn');
+  } catch (directErr) {
+    console.warn(
+      '[Hand Over Carrier Bulk] direct proxy failed, fallback:',
+      directErr?.message || directErr,
+    );
+  }
+
+  const updated = [];
+  const failed = [];
+  let skipped = 0;
+
+  for (const key of keys) {
+    try {
+      const order = await lookupOrder(backend.url, req, key);
+      if (!order?.id) {
+        failed.push({ key, error: 'Không tìm thấy đơn hàng.' });
+        continue;
+      }
+      const already =
+        String(order.local_status || order.localStatus || '').toUpperCase() === 'HANDED_OVER' ||
+        Boolean(order.isHandedOverToCarrier || order.is_handed_over_to_carrier);
+      if (already) {
+        skipped++;
+        updated.push(order);
+        continue;
+      }
+      const patched = await patchOrderHandedOver(backend.url, req, order);
+      if (!patched.ok) {
+        failed.push({ key, error: patched.error });
+        continue;
+      }
+      updated.push(patched.order);
+    } catch (err) {
+      failed.push({ key, error: err?.message || 'patch_failed' });
+    }
+  }
+
+  console.log(
+    `[Hand Over Carrier Bulk] fallback keys=${keys.length} updated=${updated.length} skipped=${skipped} failed=${failed.length}`,
+  );
+  return res.status(200).json({
+    success: true,
+    updated: Math.max(0, updated.length - skipped),
+    skipped,
+    failed,
+    orders: updated,
+  });
+}
+
 export async function handleHandOverCarrier(req, res, orderIdFromPath = '') {
   if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') {
     return res.status(405).json({ success: false, message: 'Method Not Allowed' });
@@ -77,7 +199,12 @@ export async function handleHandOverCarrier(req, res, orderIdFromPath = '') {
       return res.status(503).json({ success: false, message: backend.error });
     }
 
-    const orderKey = resolveOrderKey(req, orderIdFromPath);
+    const pathId = String(orderIdFromPath || '').trim();
+    if (pathId === 'bulk') {
+      return handleBulkHandOver(req, res, backend);
+    }
+
+    const orderKey = resolveOrderKey(req, pathId);
     const code = String(req.body?.code || req.body?.scanCode || req.body?.q || '').trim();
 
     if (!orderKey && !code) {
@@ -88,7 +215,6 @@ export async function handleHandOverCarrier(req, res, orderIdFromPath = '') {
       });
     }
 
-    // 1) Proxy native cPanel hand-over endpoint.
     try {
       const pathPart = orderKey
         ? `orders/${encodeURIComponent(orderKey)}/hand-over-carrier`
@@ -117,25 +243,9 @@ export async function handleHandOverCarrier(req, res, orderIdFromPath = '') {
       console.warn('[Hand Over Carrier] direct proxy failed, fallback:', directErr?.message || directErr);
     }
 
-    // 2) Fallback: resolve order + PATCH local_status = HANDED_OVER.
     let order = null;
     if (orderKey) {
-      const lookup = await fetchJson(backend.url, req, `orders/${encodeURIComponent(orderKey)}`, {
-        method: 'GET',
-      }).catch(() => null);
-      if (lookup?.ok && (lookup.data?.id || lookup.data?.orderSn)) {
-        order = lookup.data?.order || lookup.data;
-      }
-      if (!order) {
-        const bySn = await fetchJson(backend.url, req, 'orders/lookup', {
-          method: 'GET',
-          query: { code: orderKey },
-        }).catch(() => null);
-        order =
-          bySn?.data?.order ||
-          (bySn?.ok && bySn?.data?.id ? bySn.data : null) ||
-          null;
-      }
+      order = await lookupOrder(backend.url, req, orderKey);
     } else if (code) {
       const byCode = await fetchJson(backend.url, req, 'orders/lookup', {
         method: 'GET',
@@ -162,24 +272,19 @@ export async function handleHandOverCarrier(req, res, orderIdFromPath = '') {
       return res.status(200).json({ success: true, order });
     }
 
-    const patch = buildHandedOverPatch();
-    const patched = await fetchJson(backend.url, req, `orders/${encodeURIComponent(order.id)}`, {
-      method: 'PATCH',
-      body: JSON.stringify(patch),
-    });
-
+    const patched = await patchOrderHandedOver(backend.url, req, order);
     if (!patched.ok) {
-      const reason = patched.data?.message || patched.data?.error || 'PATCH thất bại';
       return res.status(patched.status || 500).json({
         success: false,
-        error: reason,
-        message: reason,
+        error: patched.error,
+        message: patched.error,
       });
     }
 
-    const saved = patched.data?.id ? patched.data : { ...order, ...patch };
-    console.log(`[Hand Over Carrier] fallback PATCH đơn ${saved.orderSn || saved.id} → HANDED_OVER`);
-    return res.status(200).json({ success: true, order: saved });
+    console.log(
+      `[Hand Over Carrier] fallback PATCH đơn ${patched.order.orderSn || patched.order.id} → HANDED_OVER`,
+    );
+    return res.status(200).json({ success: true, order: patched.order });
   } catch (err) {
     console.error('[Hand Over Carrier]', err);
     return res.status(500).json({

@@ -578,11 +578,14 @@ export default function App() {
   };
 
   // Persist status/tracking changes made in the UI back to the real orders database.
-  const handleUpdateOrders = (updatedOrders: Order[]) => {
+  const handleUpdateOrders = (updatedOrders: Order[], opts?: { persist?: boolean }) => {
     const sanitized = sanitizeOrders(updatedOrders);
     const previousById = new Map(orders.map(o => [o.id, o]));
     setOrders(sanitized);
     void saveOrdersCache(sanitized);
+
+    // Handover/API đã persist JSON+Mongo — chỉ cập nhật state, tránh PATCH full order ghi đè lệch.
+    if (opts?.persist === false) return;
 
     const token = localStorage.getItem('admin_token');
     if (!token) return;

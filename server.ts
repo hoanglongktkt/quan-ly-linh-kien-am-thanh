@@ -10276,18 +10276,22 @@ function loadOrders(): any[] {
  * - Đơn chỉ có trên Mongo vẫn hiện (kèm mã vận đơn).
  * - Đơn chỉ có trên JSON (manual / local) vẫn giữ.
  */
-async function loadOrdersForApi(): Promise<{ orders: any[]; dirty: boolean }> {
+async function loadOrdersForApi(): Promise<{
+  orders: any[];
+  dirty: boolean;
+  handoverMongoSync: any[];
+}> {
   const jsonOrders = loadOrders().filter(isValidOrder).map(repairMisassignedTracking);
-  if (!isMongoReady()) return { orders: jsonOrders, dirty: false };
+  if (!isMongoReady()) return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
 
   let mongoOrders: any[] = [];
   try {
     mongoOrders = (await loadOrdersFromStore()).map(repairMisassignedTracking);
   } catch (err: any) {
     console.warn("[Orders] loadOrdersFromStore skip:", err?.message || err);
-    return { orders: jsonOrders, dirty: false };
+    return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
   }
-  if (mongoOrders.length === 0) return { orders: jsonOrders, dirty: false };
+  if (mongoOrders.length === 0) return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
 
   const bySn = new Map<string, any>();
   for (const o of jsonOrders) {
@@ -10298,6 +10302,7 @@ async function loadOrdersForApi(): Promise<{ orders: any[]; dirty: boolean }> {
   let dirty = false;
   let added = 0;
   let trackingFilled = 0;
+  const handoverMongoSync: any[] = [];
 
   for (const m of mongoOrders) {
     if (!isValidOrder(m)) continue;
@@ -10322,15 +10327,36 @@ async function loadOrdersForApi(): Promise<{ orders: any[]; dirty: boolean }> {
         dirty = true;
       }
     }
+
+    // Đồng bộ cờ ĐÃ GIAO CHO ĐVVC giữa Mongo ↔ JSON (tránh tab lệch nguồn).
+    const mongoHanded = resolveOrderHandoverFlag(m);
+    const jsonHanded = resolveOrderHandoverFlag(existing);
+    if (mongoHanded && !jsonHanded) {
+      setOrderHandoverFlag(existing, true);
+      if (m.handedOverAt) existing.handedOverAt = m.handedOverAt;
+      if (m.localStatusAt || m.local_status_updated_at) {
+        existing.localStatusAt = m.localStatusAt || m.local_status_updated_at;
+        existing.local_status_updated_at =
+          m.local_status_updated_at || m.localStatusAt;
+      }
+      dirty = true;
+    } else if (jsonHanded && !mongoHanded) {
+      handoverMongoSync.push(existing);
+      dirty = true;
+    }
   }
 
-  if (added > 0 || trackingFilled > 0) {
+  if (added > 0 || trackingFilled > 0 || handoverMongoSync.length > 0) {
     console.log(
-      `[Orders] loadOrdersForApi: json=${jsonOrders.length} mongo=${mongoOrders.length} +added=${added} +tracking=${trackingFilled}`,
+      `[Orders] loadOrdersForApi: json=${jsonOrders.length} mongo=${mongoOrders.length} +added=${added} +tracking=${trackingFilled} +handoverMongoSync=${handoverMongoSync.length}`,
     );
   }
 
-  return { orders: Array.from(bySn.values()), dirty };
+  return {
+    orders: Array.from(bySn.values()),
+    dirty,
+    handoverMongoSync,
+  };
 }
 
 /** API: ép đổ tracking Mongo → orders.json (cứu mã GHN sau sync script). */
@@ -10345,14 +10371,20 @@ async function hydrateTrackingFromMongoToJson(): Promise<{
   } catch (err: any) {
     console.warn("[Orders] mirrorTopLevelTrackingIntoData:", err?.message || err);
   }
-  const { orders, dirty } = await loadOrdersForApi();
+  const { orders, dirty, handoverMongoSync } = await loadOrdersForApi();
   if (dirty) {
     saveOrders(orders);
     try {
       const withTn = orders.filter(
         (o) => String(o.trackingNumber || o.tracking_no || "").trim(),
       );
-      if (withTn.length) await bulkUpsertOrdersToStore(withTn);
+      const toUpsert = [
+        ...withTn,
+        ...handoverMongoSync.filter(
+          (o) => !withTn.some((t) => t.id === o.id || t.orderSn === o.orderSn),
+        ),
+      ];
+      if (toUpsert.length) await bulkUpsertOrdersToStore(toUpsert);
     } catch (err: any) {
       console.warn("[Orders] hydrate bulkUpsert:", err?.message || err);
     }
@@ -15263,7 +15295,7 @@ async function startServer() {
       /* ignore */
     }
 
-    let { orders: rawOrders, dirty } = await loadOrdersForApi();
+    let { orders: rawOrders, dirty, handoverMongoSync } = await loadOrdersForApi();
     rawOrders = rawOrders.filter(isValidOrder);
 
     // One-shot dọn đơn rác ĐÃ GIAO CHO ĐVVC (logic cũ) — chạy 1 lần sau deploy.
@@ -15273,6 +15305,12 @@ async function startServer() {
         const reloaded = await loadOrdersForApi();
         rawOrders = reloaded.orders.filter(isValidOrder);
         dirty = dirty || reloaded.dirty;
+        if (reloaded.handoverMongoSync?.length) {
+          handoverMongoSync = [
+            ...(handoverMongoSync || []),
+            ...reloaded.handoverMongoSync,
+          ];
+        }
       }
     } catch (purgeErr: any) {
       console.warn("[Cleanup HandedOver] GET skip:", purgeErr?.message || purgeErr);
@@ -15389,7 +15427,10 @@ async function startServer() {
       }
       return o;
     });
-    if (dirty) saveOrders(rawOrders);
+    if (dirty) {
+      // JSON luôn lưu; Mongo chỉ upsert đơn lệch cờ ĐVVC (tránh bulk thừa mỗi GET).
+      await persistOrdersToDatabase(rawOrders, handoverMongoSync || []);
+    }
 
     const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
     if (tab === "handed_over_carrier" || tab === "handed-over-carrier") {
@@ -15580,7 +15621,11 @@ async function startServer() {
     }
   });
 
-  function handOverOrderToCarrierByIndex(orders: any[], index: number): { ok: true; order: any } | { ok: false; status: number; error: string } {
+  async function handOverOrderToCarrierByIndex(
+    orders: any[],
+    index: number,
+    opts?: { persist?: boolean },
+  ): Promise<{ ok: true; order: any; changed: boolean } | { ok: false; status: number; error: string }> {
     if (index < 0) {
       return { ok: false, status: 404, error: "Không tìm thấy đơn hàng." };
     }
@@ -15607,7 +15652,7 @@ async function startServer() {
       };
     }
     if (resolveOrderHandoverFlag(order)) {
-      return { ok: true, order };
+      return { ok: true, order, changed: false };
     }
     // CHỈ ghi cờ nội bộ quét QR — tuyệt đối không đụng shopee_order_status / status gốc Shopee.
     const updated = { ...order };
@@ -15617,16 +15662,14 @@ async function startServer() {
     updated.shopee_order_status = preservedShopeeStatus;
     updated.status = preservedLocalStatus;
     orders[index] = updated;
-    saveOrders(orders);
-    if (isMongoReady()) {
-      void bulkUpsertOrdersToStore([updated]).catch((err: any) =>
-        console.warn("[Orders Handover] Mongo sync failed:", err?.message || err),
-      );
+    // Đồng bộ tuyệt đối JSON + Mongo (tránh lệch nguồn như bài học tracking).
+    if (opts?.persist !== false) {
+      await persistOrdersToDatabase(orders, [updated]);
     }
     console.log(
       `[Orders Handover] QR nội bộ đơn ${updated.orderSn} → HANDED_OVER (giữ status Shopee=${preservedShopeeStatus || preservedLocalStatus})`,
     );
-    return { ok: true, order: updated };
+    return { ok: true, order: updated, changed: true };
   }
 
   function normalizeScanLookupKey(raw: string): string {
@@ -15941,46 +15984,138 @@ async function startServer() {
 
   // Ghi nhận nội bộ: đã bàn giao cho bưu tá/ĐVVC (chưa quét nhập kho Shopee).
   app.post("/api/orders/:id/hand-over-carrier", authMiddleware, async (req, res) => {
-    const orders = loadOrders();
-    const index = orders.findIndex((o: any) => o.id === req.params.id || o.orderSn === req.params.id);
-    const result = handOverOrderToCarrierByIndex(orders, index);
-    if (!result.ok) {
-      return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+    try {
+      const orders = loadOrders();
+      const hit = findOrderRecord(orders, String(req.params.id || ""));
+      const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1);
+      if (!result.ok) {
+        return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+      }
+      const products = await loadProductsForOrders([result.order]);
+      const enriched = enrichOrdersFromCatalog([result.order], products)[0];
+      return res.json({ success: true, order: enriched });
+    } catch (error: any) {
+      console.error("[Orders Handover] single error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "hand_over_failed",
+        message: error?.message || "Không thể ghi nhận bàn giao ĐVVC.",
+      });
     }
-    const products = await loadProductsForOrders([result.order]);
-    const enriched = enrichOrdersFromCatalog([result.order], products)[0];
-    return res.json({ success: true, order: enriched });
   });
 
   // Quét QR/mã vận đơn → ghi nhận bàn giao ĐVVC.
   app.post("/api/orders/hand-over-carrier", authMiddleware, async (req, res) => {
-    const code = String(req.body?.code || req.body?.scanCode || req.body?.q || "").trim();
-    const orderId = String(req.body?.orderId || req.body?.id || "").trim();
-    const orders = loadOrders();
+    try {
+      const code = String(req.body?.code || req.body?.scanCode || req.body?.q || "").trim();
+      const orderId = String(
+        req.body?.orderId || req.body?.id || req.body?.orderSn || req.body?.order_sn || "",
+      ).trim();
+      const orders = loadOrders();
 
-    let index = -1;
-    if (orderId) {
-      index = orders.findIndex((o: any) => o.id === orderId || o.orderSn === orderId);
-    } else if (code) {
-      const found = await findOrderByScanLookup(orders.filter(isValidOrder), code);
-      if (found) {
-        index = orders.findIndex((o: any) => o.id === found.id);
+      let index = -1;
+      if (orderId) {
+        const hit = findOrderRecord(orders, orderId);
+        index = hit ? hit.index : -1;
+      } else if (code) {
+        const found = await findOrderByScanLookup(orders.filter(isValidOrder), code);
+        if (found) {
+          const hit = findOrderRecord(orders, String(found.id || found.orderSn || ""));
+          index = hit ? hit.index : orders.findIndex((o: any) => o.id === found.id);
+        }
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: "Thiếu orderId hoặc mã quét (code).",
+          message: "Thiếu orderId hoặc mã quét (code).",
+        });
       }
-    } else {
-      return res.status(400).json({
+
+      const result = await handOverOrderToCarrierByIndex(orders, index);
+      if (!result.ok) {
+        return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+      }
+      const products = await loadProductsForOrders([result.order]);
+      const enriched = enrichOrdersFromCatalog([result.order], products)[0];
+      return res.json({ success: true, order: enriched });
+    } catch (error: any) {
+      console.error("[Orders Handover] by-code error:", error);
+      return res.status(500).json({
         success: false,
-        error: "Thiếu orderId hoặc mã quét (code).",
-        message: "Thiếu orderId hoặc mã quét (code).",
+        error: error?.message || "hand_over_failed",
+        message: error?.message || "Không thể ghi nhận bàn giao ĐVVC.",
       });
     }
+  });
 
-    const result = handOverOrderToCarrierByIndex(orders, index);
-    if (!result.ok) {
-      return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+  // Bàn giao ĐVVC hàng loạt — JSON + Mongo đồng bộ 1 lần.
+  app.post("/api/orders/hand-over-carrier/bulk", authMiddleware, async (req, res) => {
+    try {
+      const rawIds = Array.isArray(req.body?.orderIds)
+        ? req.body.orderIds
+        : Array.isArray(req.body?.ids)
+          ? req.body.ids
+          : [];
+      const rawSns = Array.isArray(req.body?.orderSns) ? req.body.orderSns : [];
+      const keys = [
+        ...new Set(
+          [...rawIds, ...rawSns]
+            .map((v: unknown) => String(v || "").trim())
+            .filter(Boolean),
+        ),
+      ];
+      if (!keys.length) {
+        return res.status(400).json({
+          success: false,
+          error: "Thiếu danh sách đơn (orderIds / orderSns).",
+          message: "Thiếu danh sách đơn (orderIds / orderSns).",
+        });
+      }
+
+      const orders = loadOrders();
+      const updatedOrders: any[] = [];
+      const failed: { key: string; error: string }[] = [];
+      let skipped = 0;
+
+      for (const key of keys) {
+        const hit = findOrderRecord(orders, key);
+        if (!hit) {
+          failed.push({ key, error: "Không tìm thấy đơn hàng." });
+          continue;
+        }
+        const result = await handOverOrderToCarrierByIndex(orders, hit.index, { persist: false });
+        if (!result.ok) {
+          failed.push({ key, error: result.error });
+          continue;
+        }
+        if (result.changed) updatedOrders.push(result.order);
+        else skipped++;
+      }
+
+      if (updatedOrders.length) {
+        await persistOrdersToDatabase(orders, updatedOrders);
+      }
+
+      const products = await loadProductsForOrders(updatedOrders);
+      const enriched = enrichOrdersFromCatalog(updatedOrders, products);
+      console.log(
+        `[Orders Handover Bulk] keys=${keys.length} updated=${updatedOrders.length} skipped=${skipped} failed=${failed.length}`,
+      );
+      return res.json({
+        success: true,
+        updated: updatedOrders.length,
+        skipped,
+        failed,
+        orders: enriched,
+      });
+    } catch (error: any) {
+      console.error("[Orders Handover Bulk] error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "hand_over_bulk_failed",
+        message: error?.message || "Không thể bàn giao ĐVVC hàng loạt.",
+      });
     }
-    const products = await loadProductsForOrders([result.order]);
-    const enriched = enrichOrdersFromCatalog([result.order], products)[0];
-    return res.json({ success: true, order: enriched });
   });
 
   /**

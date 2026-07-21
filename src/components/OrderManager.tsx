@@ -338,7 +338,7 @@ export type OrdersSubTabId = OrderTab;
 
 interface OrderManagerProps {
   orders: Order[];
-  onUpdateOrders: (orders: Order[]) => void;
+  onUpdateOrders: (orders: Order[], opts?: { persist?: boolean }) => void;
   /** Kéo đơn từ Shopee API — incremental (mặc định) hoặc full 30 ngày */
   onRefreshOrders?: (opts?: { type?: 'incremental' | 'full' }) => Promise<void> | void;
   /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
@@ -503,6 +503,7 @@ export default function OrderManager({
   const [scanStatModal, setScanStatModal] = useState<ScanStatModalKey | null>(null);
   const [scanToast, setScanToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [handingOverOrderId, setHandingOverOrderId] = useState<string | null>(null);
+  const [isBulkHandingOver, setIsBulkHandingOver] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
@@ -564,7 +565,37 @@ export default function OrderManager({
         o.id === patched.id || o.orderSn === patched.orderSn ? { ...o, ...patched } : o
       );
       ordersRef.current = merged;
-      onUpdateOrders(merged);
+      // API hand-over đã ghi JSON+Mongo — không PATCH full order lại (tránh lệch nguồn).
+      onUpdateOrders(merged, { persist: false });
+    },
+    [onUpdateOrders]
+  );
+
+  const applyHandoverBulkToLocalOrders = React.useCallback(
+    (updatedList: Order[]) => {
+      if (!updatedList.length) return;
+      const now = new Date().toISOString();
+      const byKey = new Map<string, Order>();
+      for (const u of updatedList) {
+        const patched: Order = {
+          ...u,
+          isHandedOverToCarrier: true,
+          is_handed_over_to_carrier: true,
+          local_status: 'HANDED_OVER',
+          localStatus: 'HANDED_OVER',
+          handedOverAt: u.handedOverAt || now,
+          localStatusAt: u.localStatusAt || now,
+          local_status_updated_at: u.local_status_updated_at || now,
+        };
+        if (patched.id) byKey.set(String(patched.id), patched);
+        if (patched.orderSn) byKey.set(String(patched.orderSn), patched);
+      }
+      const merged = ordersRef.current.map((o) => {
+        const hit = byKey.get(String(o.id)) || byKey.get(String(o.orderSn));
+        return hit ? { ...o, ...hit } : o;
+      });
+      ordersRef.current = merged;
+      onUpdateOrders(merged, { persist: false });
     },
     [onUpdateOrders]
   );
@@ -592,7 +623,10 @@ export default function OrderManager({
         showScanToast(`Đơn #${order.orderSn} đã ghi nhận giao cho ĐVVC trước đó.`, 'success');
         return true;
       }
-      if (isHandingOverRef.current || handingOverOrderId) return false;
+      if (isHandingOverRef.current) {
+        showScanToast('Đang xử lý bàn giao ĐVVC — vui lòng đợi.', 'error');
+        return false;
+      }
       isHandingOverRef.current = true;
       setHandingOverOrderId(order.id);
       try {
@@ -607,29 +641,50 @@ export default function OrderManager({
         });
         let data = await res.json().catch(() => ({}));
 
-        // Fallback: PATCH local_status nếu endpoint bàn giao lỗi/404
+        // Fallback: POST by body, rồi PATCH local_status nếu endpoint bàn giao lỗi/404
         if (!res.ok) {
-          const patchRes = await fetch(`/api/orders/${encodeURIComponent(order.id)}`, {
-            method: 'PATCH',
+          const altRes = await fetch('/api/orders/hand-over-carrier', {
+            method: 'POST',
             headers: {
               Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-              local_status: 'HANDED_OVER',
-              localStatus: 'HANDED_OVER',
-              isHandedOverToCarrier: true,
-              is_handed_over_to_carrier: true,
-            }),
+            body: JSON.stringify({ orderId: order.id, orderSn: order.orderSn }),
           });
-          const patchData = await patchRes.json().catch(() => ({}));
-          if (!patchRes.ok) {
-            throw new Error(
-              data?.message || data?.error || patchData?.message || patchData?.error || `HTTP ${res.status}`,
-            );
+          if (altRes.ok) {
+            res = altRes;
+            data = await altRes.json().catch(() => ({}));
+          } else {
+            const patchRes = await fetch(`/api/orders/${encodeURIComponent(order.id)}`, {
+              method: 'PATCH',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                local_status: 'HANDED_OVER',
+                localStatus: 'HANDED_OVER',
+                isHandedOverToCarrier: true,
+                is_handed_over_to_carrier: true,
+              }),
+            });
+            const patchData = await patchRes.json().catch(() => ({}));
+            if (!patchRes.ok) {
+              throw new Error(
+                data?.message ||
+                  data?.error ||
+                  patchData?.message ||
+                  patchData?.error ||
+                  `HTTP ${res.status}`,
+              );
+            }
+            res = patchRes;
+            data = { success: true, order: patchData };
           }
-          res = patchRes;
-          data = { success: true, order: patchData };
+        }
+
+        if (data?.success === false) {
+          throw new Error(data?.message || data?.error || 'hand_over_failed');
         }
 
         const saved = (data?.order || data) as Order;
@@ -656,7 +711,7 @@ export default function OrderManager({
         setHandingOverOrderId(null);
       }
     },
-    [applyHandoverToLocalOrders, onAddLog, handingOverOrderId]
+    [applyHandoverToLocalOrders, onAddLog]
   );
 
   const handleOrderScan = React.useCallback(
@@ -2306,6 +2361,96 @@ export default function OrderManager({
     setSelectedOrderIds([]);
   };
 
+  /** Giao cho ĐVVC hàng loạt — đơn đã chọn (đã có mã vận đơn, chưa bàn giao). */
+  const handleBulkHandOverCarrier = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    setShowBulkActionsDropdown(false);
+
+    const selected = getSelectedOrders();
+    if (selected.length === 0) {
+      showToast('Vui lòng chọn ít nhất 1 đơn hàng để giao cho ĐVVC!');
+      return;
+    }
+
+    const eligible = selected.filter(
+      (o) =>
+        isShopeeReadyToShipStatus(o) &&
+        isProcessedCondition(o) &&
+        hasOrderTrackingNo(o) &&
+        !isOrderHandedOverToCarrier(o),
+    );
+    if (eligible.length === 0) {
+      showToast(
+        'Không có đơn hợp lệ trong danh sách đã chọn (cần đã xử lý + có mã vận đơn + chưa giao ĐVVC).',
+      );
+      return;
+    }
+
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      showToast('Chưa đăng nhập — không thể bàn giao ĐVVC hàng loạt.');
+      return;
+    }
+
+    if (isHandingOverRef.current || isBulkHandingOver) {
+      showToast('Đang xử lý bàn giao ĐVVC — vui lòng đợi.');
+      return;
+    }
+
+    isHandingOverRef.current = true;
+    setIsBulkHandingOver(true);
+    try {
+      const orderIds = eligible.map((o) => o.id).filter(Boolean);
+      const orderSns = eligible.map((o) => o.orderSn).filter(Boolean);
+      const res = await fetch('/api/orders/hand-over-carrier/bulk', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ orderIds, orderSns }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+      }
+
+      const savedList = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
+      if (savedList.length) {
+        applyHandoverBulkToLocalOrders(savedList);
+      } else {
+        applyHandoverBulkToLocalOrders(eligible);
+      }
+
+      const updatedCount = Number(data?.updated ?? savedList.length) || eligible.length;
+      const failedCount = Array.isArray(data?.failed) ? data.failed.length : 0;
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'all',
+        type: 'stock_sync',
+        status: failedCount > 0 ? 'error' : 'success',
+        message: `[BÀN GIAO HÀNG LOẠT] ${updatedCount} đơn → Đã giao cho ĐVVC${
+          failedCount ? ` (lỗi ${failedCount})` : ''
+        }.`,
+      });
+      setActiveSubTab('handed_over_carrier');
+      setSelectedOrderIds([]);
+      showToast(
+        failedCount > 0
+          ? `Đã giao ĐVVC ${updatedCount} đơn, lỗi ${failedCount} đơn.`
+          : `Đã giao cho ĐVVC hàng loạt ${updatedCount} đơn.`,
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(`Không bàn giao hàng loạt: ${msg}`);
+    } finally {
+      isHandingOverRef.current = false;
+      setIsBulkHandingOver(false);
+    }
+  };
+
   // Single-order "Chuẩn bị hàng" — opens the pickup/dropoff confirmation modal;
   // the real ship_order call fires only after the seller confirms a method.
   const handleSinglePrepare = (order: Order) => {
@@ -3455,6 +3600,20 @@ export default function OrderManager({
               >
                 <Check className="w-4 h-4 text-emerald-600 shrink-0" />
                 <span>Xác nhận đơn hàng loạt</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void handleBulkHandOverCarrier(e);
+                }}
+                disabled={isBulkHandingOver}
+                className="w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5 disabled:opacity-50"
+              >
+                <Truck className={`w-4 h-4 text-indigo-600 shrink-0 ${isBulkHandingOver ? 'animate-pulse' : ''}`} />
+                <span>{isBulkHandingOver ? 'Đang giao ĐVVC hàng loạt...' : 'Giao cho ĐVVC hàng loạt'}</span>
               </button>
             </div>
           )}

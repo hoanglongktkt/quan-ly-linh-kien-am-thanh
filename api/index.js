@@ -61,6 +61,7 @@ const LOCAL_ROUTES = {
   // cPanel cũ trả 404 cho route bulk quét — xử lý local trên Vercel.
   'orders/scan-bulk-update': handleScanBulkUpdate,
   'orders/hand-over-carrier': handleHandOverCarrier,
+  'orders/hand-over-carrier/bulk': handleHandOverCarrier,
   'orders/cleanup-handed-over': handleCleanupHandedOver,
   'orders/cleanup-processed-pickup': handleCleanupProcessedPickup,
   // cPanel cũ chưa có route — hydrate tracking Mongo → PATCH orders trên cPanel.
@@ -80,9 +81,13 @@ export default async function handler(req, res) {
   }
 
   // Dynamic: POST /api/orders/:id/hand-over-carrier
+  // bulk: orders/hand-over-carrier/bulk đã map LOCAL_ROUTES; tránh bắt nhầm :id=hand-over-carrier
   const handOverMatch = route.match(/^orders\/([^/]+)\/hand-over-carrier$/);
-  if (handOverMatch) {
+  if (handOverMatch && handOverMatch[1] !== 'hand-over-carrier') {
     return handleHandOverCarrier(req, res, decodeURIComponent(handOverMatch[1]));
+  }
+  if (route === 'orders/hand-over-carrier/bulk') {
+    return handleHandOverCarrier(req, res, 'bulk');
   }
 
   const local = LOCAL_ROUTES[route];
