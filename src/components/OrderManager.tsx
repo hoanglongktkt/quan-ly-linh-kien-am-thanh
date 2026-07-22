@@ -2869,8 +2869,8 @@ export default function OrderManager({
       setIsFlushingQueue(false);
 
       try {
+        // Chỉ đọc DB nội bộ — CẤM fallback onRefreshOrders (đó là pull Shopee).
         if (onFetchOrders) void onFetchOrders();
-        else if (onRefreshOrders) void onRefreshOrders();
       } catch (refreshErr) {
         console.error('Refresh orders after scan failed:', refreshErr);
       }

@@ -13320,6 +13320,16 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
   try {
     if (!body || typeof body !== "object") return;
 
+    // IRON FIST: tắt lazy sync qua webhook — không fetch Shopee / không ghi orders.
+    // Bật lại: set SHOPEE_WEBHOOK_ORDERS_ENABLED=1 trong .env
+    if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "").trim() !== "1") {
+      const peek = parseShopeePushEvent(body);
+      console.log(
+        `[Shopee Webhook] IGNORED (iron-fist) order_sn=${peek.orderSn || "?"} code=${peek.code} — chỉ sync qua POST /api/orders/pull`,
+      );
+      return;
+    }
+
     const parsed = parseShopeePushEvent(body);
     console.log(
       "[Shopee Webhook] Push event",
@@ -15456,7 +15466,8 @@ async function startServer() {
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
 
-    // TRACE nguồn dữ liệu — debug đơn bóng ma (JSON ∪ Mongo).
+    // GET = READ ONLY tuyệt đối — CẤM sync/fetch Shopee/GHN/backup dù DB rỗng [].
+    // Không gọi executeOrdersPullSync / syncShopeeOrdersFromApi / hydrateTracking / webhook.
     const jsonCount = loadOrders().filter(isValidOrder).length;
     let mongoCount = 0;
     if (isMongoReady()) {
@@ -15467,7 +15478,6 @@ async function startServer() {
       }
     }
 
-    // GET = READ ONLY — tuyệt đối không mirror/heal/backfill/purge/persist.
     let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
     rawOrders = rawOrders.filter(isValidOrder);
 
@@ -15806,7 +15816,8 @@ async function startServer() {
     if (!code) {
       return res.status(400).json({ error: "Thi\u1EBFu m\u00E3 qu\u00E9t (code)." });
     }
-    let { orders: rawOrders } = await loadOrdersForApi();
+    // READ ONLY — không dirty/mirror/sync khi lookup.
+    let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
     rawOrders = rawOrders.filter(isValidOrder);
     const foundRaw = await findOrderByScanLookup(rawOrders, code);
     if (!foundRaw) {
@@ -20582,37 +20593,17 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       // DB non-blocking: fire-and-forget sau khi port đã mở
       void connectDB();
 
-      // [BÀN TAY SẮT] Tạm tắt mọi job nền kéo/ghi đơn khi boot — tránh đắp dữ liệu bóng ma.
-      // Bật lại sau khi đã sync tay và xác nhận DB sạch.
-      // // Scanner chuyên trị mã vận đơn — chạy nền mỗi 3 phút.
-      // const TRACKING_SCAN_INTERVAL_MS = 3 * 60 * 1000;
-      // setTimeout(() => {
-      //   void scanAndRetryMissingTrackingNumbers({ max: 60, retries: 3 }).catch((err) =>
-      //     console.warn("[Shopee Tracking Scanner] boot scan error:", err),
-      //   );
-      // }, 20_000);
-      // setInterval(() => {
-      //   void scanAndRetryMissingTrackingNumbers({ max: 80, retries: 3 }).catch((err) =>
-      //     console.warn("[Shopee Tracking Scanner] interval error:", err),
-      //   );
-      // }, TRACKING_SCAN_INTERVAL_MS);
-      // console.log(`[Shopee Tracking Scanner] Đã bật job nền mỗi ${TRACKING_SCAN_INTERVAL_MS / 1000}s`);
+      // [IRON FIST] CẤM mọi job nền kéo/ghi đơn khi boot — kể cả tracking scanner / archive.
+      // Sync đơn CHỈ qua: POST /api/orders/pull hoặc POST /api/shopee/orders/sync (nút UI).
+      // KHÔNG có fs.watch / chokidar trên orders.json để auto-restore.
+      console.log("[Boot] Lazy-sync DISABLED — empty DB stays empty until user clicks sync.");
       console.log("[Shopee Tracking Scanner] TẠM TẮT (iron-fist purge) — không quét khi boot.");
-
-      // // Retention 14 ngày — tab "Đã nhận đơn hủy, đơn hoàn".
-      // const LOCAL_RETURN_ARCHIVE_INTERVAL_MS = 24 * 60 * 60 * 1000;
-      // setTimeout(() => {
-      //   void archiveStaleReceivedCancelReturnOrders(14).catch((err) =>
-      //     console.warn("[Local Return Archive] boot error:", err),
-      //   );
-      // }, 45_000);
-      // setInterval(() => {
-      //   void archiveStaleReceivedCancelReturnOrders(14).catch((err) =>
-      //     console.warn("[Local Return Archive] interval error:", err),
-      //   );
-      // }, LOCAL_RETURN_ARCHIVE_INTERVAL_MS);
-      // console.log("[Local Return Archive] Đã bật job dọn tab hủy/hoàn mỗi 24h (retention 14 ngày)");
       console.log("[Local Return Archive] TẠM TẮT (iron-fist purge).");
+      console.log(
+        `[Shopee Webhook] orders write ${
+          String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "").trim() === "1" ? "ON" : "OFF (iron-fist)"
+        }`,
+      );
     };
 
     if (process.env.PORT) {
