@@ -33,3 +33,13 @@ export async function saveOrdersCache(orders: Order[]): Promise<void> {
 export function clearLegacyOrdersLocalStorage(): void {
   safeRemoveItem('omni_orders');
 }
+
+/** Xóa IndexedDB orders cache (đơn bóng ma sau khi purge server). */
+export async function clearOrdersCache(): Promise<void> {
+  try {
+    await ordersStore.removeItem(ORDERS_CACHE_KEY);
+    clearLegacyOrdersLocalStorage();
+  } catch (err) {
+    console.warn('[orderCache] clear failed:', err);
+  }
+}

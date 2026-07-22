@@ -22,7 +22,7 @@ import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStor
 import { sanitizeOrders } from './utils/sanitizeOrder';
 import { safeGetItem, safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
-import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
+import { clearLegacyOrdersLocalStorage, clearOrdersCache, saveOrdersCache } from './utils/orderCache';
 import { 
   LayoutDashboard, 
   Package, 
@@ -370,7 +370,11 @@ export default function App() {
         const data: Order[] = await response.json();
         const sanitized = sanitizeOrders(data);
         setOrders(sanitized);
-        void saveOrdersCache(sanitized);
+        if (sanitized.length === 0) {
+          void clearOrdersCache();
+        } else {
+          void saveOrdersCache(sanitized);
+        }
       }
     } catch (err) {
       console.error("Fetch orders error:", err);
@@ -1208,8 +1212,8 @@ export default function App() {
     const bootstrapCatalog = async () => {
       purgeLegacyCatalogCache();
 
-      const cached = await loadOrdersCache();
-      if (cached.length) setOrders(cached);
+      // Không hydrate IndexedDB cũ trước API — tránh hiện đơn bóng ma sau purge.
+      await clearOrdersCache();
 
       if (safeGetItem(CATALOG_PURGE_FLAG) !== '1') {
         try {

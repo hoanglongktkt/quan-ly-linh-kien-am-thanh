@@ -10553,6 +10553,7 @@ async function hydrateTrackingFromMongoToJson(): Promise<{
 
 function saveOrders(orders: any[]): boolean {
   try {
+    // Không dùng file lock / exclusive lock — deleteMany Mongo & ghi JSON luôn được phép.
     fs.mkdirSync(path.dirname(ORDERS_DB_PATH), { recursive: true });
     const sanitized = orders.map(repairMisassignedTracking);
     fs.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
@@ -15455,6 +15456,17 @@ async function startServer() {
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
 
+    // TRACE nguồn dữ liệu — debug đơn bóng ma (JSON ∪ Mongo).
+    const jsonCount = loadOrders().filter(isValidOrder).length;
+    let mongoCount = 0;
+    if (isMongoReady()) {
+      try {
+        mongoCount = (await loadOrdersFromStore()).filter(isValidOrder).length;
+      } catch {
+        mongoCount = -1;
+      }
+    }
+
     // GET = READ ONLY — tuyệt đối không mirror/heal/backfill/purge/persist.
     let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
     rawOrders = rawOrders.filter(isValidOrder);
@@ -15497,6 +15509,9 @@ async function startServer() {
 
     const products = await loadProductsForOrders(rawOrders);
     const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
+    console.log(
+      `[GET /api/orders] TRACE length=${orders.length} | source=JSON∪Mongo | json=${jsonCount} mongo=${mongoCount} mongoReady=${isMongoReady()} file=${ORDERS_DB_PATH} tab=${tab || "(all)"}`,
+    );
     return res.json(orders);
   });
 
