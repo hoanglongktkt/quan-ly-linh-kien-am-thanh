@@ -17518,7 +17518,7 @@ async function startServer() {
         accepted: true,
         mode,
         syncing: true,
-        message: "Đã bắt đầu tiến trình đồng bộ ngầm",
+        message: "Sync started in background",
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));

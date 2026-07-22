@@ -614,7 +614,8 @@ export default function App() {
       })
       .join('; ');
 
-  // Incremental (mặc định) / full sync — API trả 202, sync chạy ngầm; poll + FORCE re-fetch /api/orders.
+  // Incremental / full sync — fire-and-forget: POST trả 202 ngay, KHÔNG chặn UI.
+  // Poll + fetchOrders chạy ngầm (silent), user vẫn thao tác / đổi tab bình thường.
   const pullOrders = async (opts?: { type?: 'incremental' | 'full' }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
@@ -624,7 +625,6 @@ export default function App() {
       'Máy chủ đang bận hoặc phản hồi không hợp lệ. Vui lòng thử lại sau.';
     const readOrderSyncJson = async (response: Response): Promise<Record<string, any>> => {
       const contentType = response.headers.get('content-type') || '';
-      // 202 Accepted cũng là JSON hợp lệ khi bắt đầu sync ngầm.
       const okHttp = response.ok || response.status === 202;
       if (!okHttp || !contentType.includes('application/json')) {
         try {
@@ -648,34 +648,34 @@ export default function App() {
       }
     };
 
-    // Overlay loading xuyên suốt sync + re-fetch — không tắt giữa chừng.
-    setOrdersLoading(true);
-    try {
-      const response = await fetch(`/api/orders/pull?type=${syncType}&t=${Date.now()}`, {
-        method: 'POST',
-        cache: 'no-store',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache',
-          Pragma: 'no-cache',
-        },
-        body: JSON.stringify({ type: syncType }),
-      });
-      const data = await readOrderSyncJson(response);
+    const response = await fetch(`/api/orders/pull?type=${syncType}&t=${Date.now()}`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
+      body: JSON.stringify({ type: syncType }),
+    });
+    const data = await readOrderSyncJson(response);
 
-      if (data.skipped || (data.syncing && response.status !== 202 && !data.accepted)) {
-        throw new Error(String(data.message || 'Đang có tiến trình đồng bộ chạy'));
-      }
-      if (data.warning && !data.accepted && response.status !== 202) {
-        throw new Error(String(data.warning));
-      }
+    if (data.skipped || (data.syncing && response.status !== 202 && !data.accepted)) {
+      throw new Error(String(data.message || 'Đang có tiến trình đồng bộ chạy'));
+    }
+    if (data.warning && !data.accepted && response.status !== 202) {
+      throw new Error(String(data.warning));
+    }
 
-      const startedBackground =
-        response.status === 202 || data.accepted === true || data.message === 'Đã bắt đầu tiến trình đồng bộ ngầm';
+    const startedBackground =
+      response.status === 202 ||
+      data.accepted === true ||
+      /sync started in background|đồng bộ ngầm/i.test(String(data.message || ''));
 
-      if (startedBackground) {
-        // Giữ loading — poll đến khi sync xong rồi FORCE fetchOrders ghi đè state.
+    if (startedBackground) {
+      // Không await — làm mới danh sách ngầm khi sync xong, không overlay.
+      void (async () => {
         const pollMs = syncType === 'full' ? 8_000 : 5_000;
         const maxPolls = syncType === 'full' ? 40 : 24;
         for (let i = 0; i < maxPolls; i++) {
@@ -695,25 +695,22 @@ export default function App() {
               if (!status.syncing) break;
             }
           } catch {
-            /* bỏ qua lỗi status — vẫn tiếp tục poll orders */
+            /* bỏ qua lỗi status */
           }
         }
-        // Bắt buộc re-fetch lần cuối — ghi đè toàn bộ mảng orders (GHN/webhook).
         await fetchOrders({ silent: true, bustCache: true });
-        return;
-      }
+      })();
+      return;
+    }
 
-      const pulled = Number(data.pulled) || 0;
-      const pullErrors = Array.isArray(data.errors) ? data.errors : [];
-      if (pullErrors.length > 0 && pulled === 0) {
-        throw new Error(formatPullErrors(pullErrors));
-      }
-      await fetchOrders({ silent: true, bustCache: true });
-      if (pullErrors.length > 0) {
-        console.warn('[Orders Pull] partial errors:', formatPullErrors(pullErrors));
-      }
-    } finally {
-      setOrdersLoading(false);
+    const pulled = Number(data.pulled) || 0;
+    const pullErrors = Array.isArray(data.errors) ? data.errors : [];
+    if (pullErrors.length > 0 && pulled === 0) {
+      throw new Error(formatPullErrors(pullErrors));
+    }
+    void fetchOrders({ silent: true, bustCache: true });
+    if (pullErrors.length > 0) {
+      console.warn('[Orders Pull] partial errors:', formatPullErrors(pullErrors));
     }
   };
 

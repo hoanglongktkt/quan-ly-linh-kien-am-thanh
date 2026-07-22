@@ -431,7 +431,7 @@ interface OrderManagerProps {
   /** CHỈ gắn nút Đồng bộ — kéo Shopee. CẤM gọi khi refresh/scan/DB rỗng. */
   onPullShopeeOrders?: (opts?: { type?: 'incremental' | 'full' }) => Promise<void> | void;
   /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
-  onFetchOrders?: () => Promise<void> | void;
+  onFetchOrders?: (opts?: { silent?: boolean; bustCache?: boolean }) => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
   systemFees?: SystemFee[];
@@ -574,12 +574,12 @@ export default function OrderManager({
     }
   }, [activeSubTab]);
 
-  // Đồng bộ URL/sessionStorage + tự fetch dữ liệu mới khi đổi tab (và khi F5 giữ tab).
+  // Đổi tab: chỉ đọc DB nội bộ (silent) — CẤM overlay + CẤM kích hoạt pull Shopee.
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
     syncOrdersTabToUrl(activeSubTab, cancelReturnTab);
     onOrdersSubTabChange?.(activeSubTab);
-    void onFetchOrders?.();
+    void onFetchOrders?.({ silent: true });
     // onFetchOrders / onOrdersSubTabChange không ổn định reference — chỉ phụ thuộc tab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubTab, cancelReturnTab]);
@@ -2113,7 +2113,7 @@ export default function OrderManager({
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   const handleSyncOrders = async (type: 'incremental' | 'full' = 'incremental') => {
-    if (isSyncing || ordersLoading) return;
+    if (isSyncing) return;
     setIsSyncing(true);
     const isFull = type === 'full';
     onAddLog({
@@ -2123,27 +2123,19 @@ export default function OrderManager({
       type: 'stock_sync',
       status: 'success',
       message: isFull
-        ? 'Đang Full Sync đơn hàng (quét ~30 ngày update_time) — chờ làm mới UI.'
-        : 'Đang đồng bộ đơn hàng (quét 6 giờ update_time) — chờ làm mới UI.',
+        ? 'Đã gửi Full Sync lịch sử đơn (ngầm) — UI không bị khóa.'
+        : 'Đã gửi đồng bộ đơn 6 giờ (ngầm) — UI không bị khóa.',
     });
 
-    showToast(isFull ? 'Đang Full Sync — vui lòng chờ...' : 'Đang cập nhật đơn hàng — vui lòng chờ...');
+    showToast('Đã gửi yêu cầu đồng bộ ngầm...');
 
     try {
-      // 1) Sync Shopee → DB
+      // Fire-and-forget: backend trả 202 ngay; poll/làm mới chạy nền trong App.pullOrders.
       await onPullShopeeOrders?.({ type });
-      // 2) BẮT BUỘC force re-fetch danh sách → ghi đè state (phá cache UI / IndexedDB cũ).
-      await onFetchOrders?.();
-      showToast(
-        isFull
-          ? 'Full Sync hoàn tất — danh sách đơn đã được làm mới.'
-          : 'Đồng bộ 6 giờ hoàn tất — danh sách đơn đã được làm mới.',
-      );
     } catch (err: any) {
       showToast(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);
-      // Vẫn thử làm mới từ DB nội bộ nếu sync lỗi giữa chừng.
       try {
-        await onFetchOrders?.();
+        void onFetchOrders?.({ silent: true });
       } catch {
         /* ignore */
       }
@@ -2869,8 +2861,8 @@ export default function OrderManager({
       setIsFlushingQueue(false);
 
       try {
-        // Chỉ đọc DB nội bộ — CẤM gọi onPullShopeeOrders (đó là pull Shopee).
-        if (onFetchOrders) void onFetchOrders();
+        // Chỉ đọc DB nội bộ (silent) — CẤM gọi onPullShopeeOrders (đó là pull Shopee).
+        if (onFetchOrders) void onFetchOrders({ silent: true });
       } catch (refreshErr) {
         console.error('Refresh orders after scan failed:', refreshErr);
       }
@@ -3435,11 +3427,11 @@ export default function OrderManager({
 
           <button
             onClick={() => void handleSyncOrders('incremental')}
-            disabled={isSyncing || ordersLoading}
+            disabled={isSyncing}
             className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/15 hover:shadow-blue-500/30 transition-all flex items-center gap-2 cursor-pointer"
-            title="Quick Sync: đơn cập nhật trong 6 giờ gần nhất"
+            title="Quick Sync: đơn cập nhật trong 6 giờ gần nhất (chạy ngầm)"
           >
-            <RefreshCw className={`w-4 h-4 ${(isSyncing || ordersLoading) ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
             <span>Cập nhật đơn hàng</span>
           </button>
 
@@ -3447,18 +3439,18 @@ export default function OrderManager({
             onClick={() => {
               if (
                 !window.confirm(
-                  'Full Sync sẽ quét lại đơn ~30 ngày (nặng hơn). Chỉ dùng khi cần đối soát toàn bộ. Tiếp tục?',
+                  'Full Sync sẽ kéo lịch sử đơn từ 22/10/2021 (chạy ngầm, không khóa UI). Tiếp tục?',
                 )
               ) {
                 return;
               }
               void handleSyncOrders('full');
             }}
-            disabled={isSyncing || ordersLoading}
+            disabled={isSyncing}
             className="om-orders-mobile-hide-primary-actions px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-75 text-slate-700 font-extrabold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-2 cursor-pointer"
-            title="Full Sync: quét ~30 ngày theo update_time (không dùng cho cron)"
+            title="Full Sync: lịch sử từ 22/10/2021 — chạy ngầm"
           >
-            <RefreshCw className={`w-4 h-4 ${(isSyncing || ordersLoading) ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
             <span>Full Sync</span>
           </button>
         </div>
@@ -3467,17 +3459,17 @@ export default function OrderManager({
       {/* Mobile: nút Quick Sync 6 giờ (desktop dùng nút ở top bar) */}
       <div className="hidden max-md:flex items-center justify-between gap-2 px-0.5">
         <p className="text-[11px] font-semibold text-slate-500 truncate">
-          {isSyncing || ordersLoading ? 'Đang đồng bộ ngầm...' : 'Đồng bộ đơn Shopee (6 giờ)'}
+          {isSyncing ? 'Đã gửi đồng bộ ngầm...' : 'Đồng bộ đơn Shopee (6 giờ)'}
         </p>
         <button
           type="button"
           onClick={() => void handleSyncOrders('incremental')}
-          disabled={isSyncing || ordersLoading}
+          disabled={isSyncing}
           className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2.5 min-h-11 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer"
-          title="Cập nhật đơn hàng — quét 6 giờ"
+          title="Cập nhật đơn hàng — quét 6 giờ (ngầm)"
           aria-label="Cập nhật đơn hàng 6 giờ"
         >
-          <RefreshCw className={`w-4 h-4 ${(isSyncing || ordersLoading) ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
           <span>Cập nhật 6 giờ</span>
         </button>
       </div>
@@ -4441,22 +4433,8 @@ export default function OrderManager({
     </div>
       )}
 
-      {/* Floating processing overlay — shown for the full duration of any real
-          Shopee API call (ship_order / create+download shipping document),
-          single or bulk. Highest z-index so it always sits above every other modal. */}
-      {(isSyncing || (ordersLoading && !progressMessage)) && (
-        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-[110] animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-8 shadow-2xl flex flex-col items-center gap-4 text-center">
-            <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
-            <p className="text-sm font-extrabold text-gray-800 leading-relaxed">
-              Đang cập nhật đơn hàng...
-            </p>
-            <p className="text-[11px] text-gray-400 font-semibold">
-              Đang đồng bộ Shopee và làm mới danh sách từ máy chủ — vui lòng không bấm đúp.
-            </p>
-          </div>
-        </div>
-      )}
+      {/* Sync/tab loading: KHÔNG dùng blocking modal — chỉ toast (xem toastMessage).
+          Overlay dưới đây chỉ cho ship_order / in vận đơn (progressMessage). */}
       {progressMessage && (
         <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-100 animate-in fade-in">
           <div className="bg-white rounded-3xl max-w-sm w-full p-8 shadow-2xl flex flex-col items-center gap-4 text-center">
