@@ -2205,7 +2205,7 @@ export default function OrderManager({
       instant: 0,
       other: 0,
     };
-    if (activeSubTab !== 'unprocessed') return counts;
+    if (activeSubTab !== 'unprocessed' && activeSubTab !== 'processed') return counts;
     for (const order of ordersPoolBeforeCarrier) {
       const group = getShippingCarrierGroup(order);
       counts.all += 1;
@@ -2216,8 +2216,8 @@ export default function OrderManager({
 
   const filteredOrdersBase = ordersPoolBeforeCarrier
     .filter((order) => {
-      // ĐVVC filter — chỉ tab Chờ lấy hàng (Chưa xử lý)
-      if (activeSubTab === 'unprocessed') {
+      // ĐVVC filter — tab Chờ lấy hàng (Chưa xử lý + Đã xử lý)
+      if (activeSubTab === 'unprocessed' || activeSubTab === 'processed') {
         return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
       }
       return true;
