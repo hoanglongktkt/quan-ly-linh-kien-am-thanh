@@ -356,8 +356,20 @@ export default function App() {
     if (!silent) setOrdersLoading(true);
     try {
       // Cache bust: timestamp + cache:no-store — tránh trình duyệt trả danh sách cũ (GHN kẹt tab).
-      const url = bustCache ? `/api/orders?t=${Date.now()}` : '/api/orders';
-      const response = await fetch(url, {
+      const path = bustCache ? `/api/orders?t=${Date.now()}` : '/api/orders';
+      const requestUrl =
+        path.startsWith('http://') || path.startsWith('https://')
+          ? path
+          : `${window.location.origin}${path}`;
+      if (
+        typeof window !== 'undefined' &&
+        /quanly\.linhkienamthanh\.net|linhkienamthanh\.net|vercel\.app/i.test(window.location.hostname)
+      ) {
+        console.warn(
+          '⚠️ Đang mở PRODUCTION/REMOTE — /api/orders sẽ lấy data server thật, không phải DB local đã xóa. Dùng http://localhost:3000 để test purge local.',
+        );
+      }
+      const response = await fetch(path, {
         method: 'GET',
         cache: 'no-store',
         headers: {
@@ -368,6 +380,7 @@ export default function App() {
       });
       if (response.ok) {
         const data: Order[] = await response.json();
+        console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', Array.isArray(data) ? data.length : 0);
         const sanitized = sanitizeOrders(data);
         setOrders(sanitized);
         if (sanitized.length === 0) {
@@ -375,6 +388,8 @@ export default function App() {
         } else {
           void saveOrdersCache(sanitized);
         }
+      } else {
+        console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG: (HTTP', response.status, ')');
       }
     } catch (err) {
       console.error("Fetch orders error:", err);

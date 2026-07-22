@@ -25,26 +25,35 @@ function isMainProductionHost(hostname: string): boolean {
 
 /**
  * Base URL cho API (không có slash cuối).
- * - localhost / quanly.linhkienamthanh.net / vercel.app → '' (relative `/api/...`)
- * - Chỉ dùng URL tuyệt đối khi set VITE_API_BASE_URL hoặc bắt buộc cross-origin.
+ * - localhost / 127.0.0.1 → '' (relative `/api/...` cùng origin với `npm run dev`)
+ * - quanly.linhkienamthanh.net / vercel.app → '' (relative — proxy/cPanel production)
+ * - Chỉ dùng URL tuyệt đối khi set VITE_API_BASE_URL (cross-origin).
+ *
+ * CẢNH BÁO: relative trên domain production = lấy data server thật, không phải Mongo/JSON local.
  */
 export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
+
+    // Local dev: LUÔN same-origin — tuyệt đối không fallback PRODUCTION_API_BASE.
+    if (isLocalDevHost(hostname)) {
+      return '';
+    }
 
     // Vercel: thử relative trước (vercel.json edge rewrite). Nếu vẫn lỗi → fallback cross-origin.
     if (isVercelHost(hostname)) {
       return '';
     }
 
-    if (isLocalDevHost(hostname) || isMainProductionHost(hostname)) {
+    if (isMainProductionHost(hostname)) {
       return '';
     }
   }
 
   const fromEnv = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '');
   if (fromEnv) return fromEnv;
-  return typeof window !== 'undefined' ? PRODUCTION_API_BASE : '';
+  // Ngoài browser (SSR/build) — không ép production URL vào localhost bundle.
+  return '';
 }
 
 /**

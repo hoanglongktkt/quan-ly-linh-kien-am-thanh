@@ -3482,7 +3482,7 @@ export default function OrderManager({
         </button>
       </div>
 
-      {/* 2. SUB-TABS: Horizontal scrollable subtabs with counts (Mockup identical) */}
+      {/* 2. SUB-TABS: Horizontal scrollable subtabs with counts — orders[] từ App.fetchOrders → GET /api/orders (cùng origin). Không import mock JSON. */}
       <div className="om-orders-sub-tabs border-b border-gray-200 flex flex-wrap gap-1 bg-white p-1 rounded-xl">
         <button
           onClick={() => setActiveSubTab('all')}
