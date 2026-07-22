@@ -3575,7 +3575,7 @@ export default function OrderManager({
             </span>
           </label>
         )}
-        {activeSubTab === 'unprocessed' && (
+        {(activeSubTab === 'unprocessed' || activeSubTab === 'processed') && (
           <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="text-xs font-bold text-slate-600 shrink-0">Đơn vị vận chuyển</span>
             {(
