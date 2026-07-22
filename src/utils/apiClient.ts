@@ -57,17 +57,29 @@ export function getApiBaseUrl(): string {
 }
 
 /**
- * URL mở file vận đơn PDF (static /prints/... trên cPanel).
- * Absolute URL từ API → dùng nguyên; relative → chuẩn hóa sang /prints/ hoặc proxy API.
+ * URL mở file vận đơn PDF.
+ * Chuẩn hệ thống: `/api/public/labels/...` (cùng path đang chạy ổn ở mục in lại).
  */
 export function resolveBackendFileUrl(path: string): string {
   return resolveLabelFetchUrl(path);
 }
 
-/** URL mở PDF vận đơn — ưu tiên /prints/ static (Sapo-style), fallback /api/labels/. */
+/** URL mở PDF vận đơn — bắt buộc dùng /api/public/labels/ (không dùng /prints/). */
 export function resolveLabelFetchUrl(path: string): string {
   const raw = String(path || '').trim();
-  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^https?:\/\//i.test(raw)) {
+    // Đổi URL /prints/ cũ (nếu còn) sang cổng chuẩn.
+    try {
+      const u = new URL(raw);
+      const fn = decodeURIComponent(u.pathname.split('/').pop() || '');
+      if (fn && /\.pdf$/i.test(fn) && !fn.includes('..')) {
+        return `${PRODUCTION_API_BASE}/api/public/labels/${encodeURIComponent(fn)}`;
+      }
+    } catch {
+      /* keep */
+    }
+    return raw;
+  }
 
   let pathname = raw;
   if (!pathname.startsWith('/')) {
@@ -84,16 +96,15 @@ export function resolveLabelFetchUrl(path: string): string {
     return `${PRODUCTION_API_BASE}${pathname}`;
   }
 
-  // Giữ tên file sạch trong path (không encodeURIComponent) — Apache/Express phục vụ đúng.
+  const encoded = encodeURIComponent(filename);
   if (typeof window === 'undefined') {
-    return `${PRODUCTION_API_BASE}/prints/${filename}`;
+    return `${PRODUCTION_API_BASE}/api/public/labels/${encoded}`;
   }
   const hostname = window.location.hostname;
-  if (isLocalDevHost(hostname)) {
-    return `/prints/${filename}`;
+  if (isLocalDevHost(hostname) || isVercelHost(hostname) || isMainProductionHost(hostname)) {
+    return `/api/labels/${encoded}`;
   }
-  // Production / Vercel: mở thẳng URL API (tránh SPA rewrite nuốt /prints).
-  return `${PRODUCTION_API_BASE}/prints/${filename}`;
+  return `${PRODUCTION_API_BASE}/api/public/labels/${encoded}`;
 }
 
 /** @deprecated Giữ tương thích — không còn dùng blob base64 cho in vận đơn. */

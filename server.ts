@@ -456,8 +456,7 @@ function absoluteLabelUrl(relativePath: string | null | undefined): string | nul
       const u = new URL(relativePath);
       const fn = decodeURIComponent(u.pathname.split("/").pop() || "");
       if (fn && /\.pdf$/i.test(fn) && safeLabelFilename(fn)) {
-        // Không encodeURIComponent toàn bộ tên — giữ URL path sạch cho Apache/Express.
-        return `${resolveLabelsPublicBaseUrl()}/prints/${fn}`;
+        return `${resolveLabelsPublicBaseUrl()}/api/public/labels/${encodeURIComponent(fn)}`;
       }
     } catch {
       /* keep as-is */
@@ -465,16 +464,19 @@ function absoluteLabelUrl(relativePath: string | null | undefined): string | nul
     return relativePath;
   }
   let p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
-  // Chuẩn hóa mọi path cũ (/labels/, /api/labels/, /api/public/labels/) → /prints/
+  // Chuẩn hóa mọi path (/prints/, /labels/, /api/labels/) → /api/public/labels/
   const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
   if (fnMatch?.[1]) {
     const fn = decodeURIComponent(fnMatch[1]);
     if (!safeLabelFilename(fn)) return null;
-    p = `/prints/${fn}`;
-  } else if (!p.startsWith("/prints/")) {
+    p = `/api/public/labels/${encodeURIComponent(fn)}`;
+  } else {
     const bare = path.basename(p);
-    if (/\.pdf$/i.test(bare) && safeLabelFilename(bare)) p = `/prints/${bare}`;
-    else return null;
+    if (/\.pdf$/i.test(bare) && safeLabelFilename(bare)) {
+      p = `/api/public/labels/${encodeURIComponent(bare)}`;
+    } else {
+      return null;
+    }
   }
   return `${resolveLabelsPublicBaseUrl()}${p}`;
 }
@@ -18812,13 +18814,13 @@ async function startServer() {
       if (hit && isPdfBuffer(hit.buf)) pdfBuffers.push(hit.buf);
     }
     if (pdfBuffers.length === 0) return null;
-    if (pdfBuffers.length === 1) return `/prints/${filenames[0]}`;
+    if (pdfBuffers.length === 1) return `/api/public/labels/${filenames[0]}`;
 
     const merged = await mergePdfBuffers(pdfBuffers);
     const mergedName = buildMergedLabelFilename(orderSns);
     saveLabelFile(merged, mergedName, "application/pdf");
     console.log(`[Shopee Print] Đã gộp ${pdfBuffers.length} PDF thành 1 file: ${mergedName}`);
-    return `/prints/${mergedName}`;
+    return `/api/public/labels/${mergedName}`;
   }
 
   // Generates one real Shopee AWB/label document (grouped per shop) for the
@@ -19268,7 +19270,7 @@ async function startServer() {
       orderSns,
       skippedOrders: [...skippedOrders, ...pollFailed],
       buffer: downloadResult.buffer,
-      url: absoluteLabelUrl(`/prints/${filename}`),
+      url: absoluteLabelUrl(`/api/public/labels/${filename}`),
       pageCount: pages,
     };
   }
@@ -19386,7 +19388,7 @@ async function startServer() {
       pdfBuffers.length = 0;
       pdfFilename = buildMergedLabelFilename(printedOrderSns);
       saveLabelFile(mergedBuf, pdfFilename, "application/pdf");
-      primaryUrl = absoluteLabelUrl(`/prints/${pdfFilename}`);
+      primaryUrl = absoluteLabelUrl(`/api/public/labels/${pdfFilename}`);
     } else if (savedFilenames.length > 0) {
       const relative = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
       primaryUrl = absoluteLabelUrl(relative);
@@ -19641,7 +19643,7 @@ async function startServer() {
     const allPrintedSns: string[] = [];
     const missingTrackingOrders: any[] = [];
 
-    const labelUrl = (filename: string) => absoluteLabelUrl(`/prints/${filename}`);
+    const labelUrl = (filename: string) => absoluteLabelUrl(`/api/public/labels/${filename}`);
 
     for (const [shopId, groupOrders] of Object.entries(groups)) {
       // Không dùng cache từng đơn lẻ khi in hàng loạt — luôn tạo/gộp đủ order_list.
@@ -19914,7 +19916,7 @@ async function startServer() {
         d.url
           ? {
               ...d,
-              url: d.url.startsWith("http") ? d.url : absoluteLabelUrl(d.url.startsWith("/") ? d.url : `/prints/${d.url}`),
+              url: d.url.startsWith("http") ? d.url : absoluteLabelUrl(d.url.startsWith("/") ? d.url : `/api/public/labels/${d.url}`),
             }
           : d,
       ),

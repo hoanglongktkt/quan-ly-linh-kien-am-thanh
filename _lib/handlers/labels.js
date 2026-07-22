@@ -38,7 +38,7 @@ export async function handleLabelProxy(req, res, routeFile = '') {
     return res.status(503).json({ error: backend.error, errorCode: 'BACKEND_CONFIG' });
   }
 
-  const target = `${backend.url}/prints/${encodeURIComponent(filename)}`;
+  const target = `${backend.url}/api/public/labels/${encodeURIComponent(filename)}`;
 
   try {
     const upstream = await fetch(target, { method: req.method });
