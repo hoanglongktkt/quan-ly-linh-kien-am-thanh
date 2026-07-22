@@ -1060,6 +1060,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     ).trim();
 
     // ——— $set: CHỈ field Shopee / vận chuyển — CẤM cờ nội bộ ———
+    // KHÔNG ghi status ảo "processed" vào shopee_order_status — chỉ raw Shopee.
     const $set: Record<string, unknown> = {
       orderSn: orderSn || null,
       shopId: order.shopId != null ? String(order.shopId) : null,
@@ -1067,10 +1068,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.id": _id,
       "data.channel": order.channel != null ? String(order.channel) : "shopee",
       "data.orderSn": orderSn || null,
+      "data.order_sn": orderSn || null,
       "data.is_pending_shopee_check": pendingFlag,
     };
 
-    // BẮT BUỘC lưu raw Shopee ở ROOT + data (không thay bằng status local "processed")
+    // BẮT BUỘC lưu raw Shopee ở ROOT (READY_TO_SHIP / SHIPPED / PROCESSED / ...)
     if (rawStatus) {
       $set.shopee_order_status = rawStatus;
       $set["data.shopee_order_status"] = rawStatus;
@@ -1085,6 +1087,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     if (order.shopId != null) $set["data.shopId"] = String(order.shopId);
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
 
+    // BẢO TOÀN tracking_no + shipping_carrier thật từ Shopee
     if (usableTn) {
       $set.tracking_no = usableTn;
       $set["data.tracking_no"] = usableTn;
@@ -1120,13 +1123,12 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       if (key === "id" || key === "_id") continue;
       if (INTERNAL_FLAG_KEYS.has(key)) continue;
       if (value === undefined) continue;
-      // đã set tường minh ở trên — vẫn OK ghi lại cùng giá trị
       $set[`data.${key}`] = value;
     }
 
-    // ——— $setOnInsert: khởi tạo cờ nội bộ CHỈ khi đơn MỚI ———
-    // Tuyệt đối không trùng path với $set
+    // ——— $setOnInsert: cờ nội bộ CHỈ khi INSERT (không đè khi sync lại) ———
     const $setOnInsert: Record<string, unknown> = {
+      _id,
       is_handed_over: false,
       isPrinted: false,
       isPrepared: false,
@@ -1151,9 +1153,12 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false",
     });
 
+    // filter theo order_sn (chuẩn) — fallback _id khi thiếu orderSn
+    const filter = orderSn ? { orderSn } : { _id };
+
     ops.push({
       updateOne: {
-        filter: { _id },
+        filter,
         update: {
           $set,
           $setOnInsert,

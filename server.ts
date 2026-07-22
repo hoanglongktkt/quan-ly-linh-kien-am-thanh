@@ -20567,33 +20567,37 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       // DB non-blocking: fire-and-forget sau khi port đã mở
       void connectDB();
 
-      // Scanner chuyên trị mã vận đơn — chạy nền mỗi 3 phút.
-      const TRACKING_SCAN_INTERVAL_MS = 3 * 60 * 1000;
-      setTimeout(() => {
-        void scanAndRetryMissingTrackingNumbers({ max: 60, retries: 3 }).catch((err) =>
-          console.warn("[Shopee Tracking Scanner] boot scan error:", err),
-        );
-      }, 20_000);
-      setInterval(() => {
-        void scanAndRetryMissingTrackingNumbers({ max: 80, retries: 3 }).catch((err) =>
-          console.warn("[Shopee Tracking Scanner] interval error:", err),
-        );
-      }, TRACKING_SCAN_INTERVAL_MS);
-      console.log(`[Shopee Tracking Scanner] Đã bật job nền mỗi ${TRACKING_SCAN_INTERVAL_MS / 1000}s`);
+      // [BÀN TAY SẮT] Tạm tắt mọi job nền kéo/ghi đơn khi boot — tránh đắp dữ liệu bóng ma.
+      // Bật lại sau khi đã sync tay và xác nhận DB sạch.
+      // // Scanner chuyên trị mã vận đơn — chạy nền mỗi 3 phút.
+      // const TRACKING_SCAN_INTERVAL_MS = 3 * 60 * 1000;
+      // setTimeout(() => {
+      //   void scanAndRetryMissingTrackingNumbers({ max: 60, retries: 3 }).catch((err) =>
+      //     console.warn("[Shopee Tracking Scanner] boot scan error:", err),
+      //   );
+      // }, 20_000);
+      // setInterval(() => {
+      //   void scanAndRetryMissingTrackingNumbers({ max: 80, retries: 3 }).catch((err) =>
+      //     console.warn("[Shopee Tracking Scanner] interval error:", err),
+      //   );
+      // }, TRACKING_SCAN_INTERVAL_MS);
+      // console.log(`[Shopee Tracking Scanner] Đã bật job nền mỗi ${TRACKING_SCAN_INTERVAL_MS / 1000}s`);
+      console.log("[Shopee Tracking Scanner] TẠM TẮT (iron-fist purge) — không quét khi boot.");
 
-      // Retention 14 ngày — tab "Đã nhận đơn hủy, đơn hoàn".
-      const LOCAL_RETURN_ARCHIVE_INTERVAL_MS = 24 * 60 * 60 * 1000;
-      setTimeout(() => {
-        void archiveStaleReceivedCancelReturnOrders(14).catch((err) =>
-          console.warn("[Local Return Archive] boot error:", err),
-        );
-      }, 45_000);
-      setInterval(() => {
-        void archiveStaleReceivedCancelReturnOrders(14).catch((err) =>
-          console.warn("[Local Return Archive] interval error:", err),
-        );
-      }, LOCAL_RETURN_ARCHIVE_INTERVAL_MS);
-      console.log("[Local Return Archive] Đã bật job dọn tab hủy/hoàn mỗi 24h (retention 14 ngày)");
+      // // Retention 14 ngày — tab "Đã nhận đơn hủy, đơn hoàn".
+      // const LOCAL_RETURN_ARCHIVE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+      // setTimeout(() => {
+      //   void archiveStaleReceivedCancelReturnOrders(14).catch((err) =>
+      //     console.warn("[Local Return Archive] boot error:", err),
+      //   );
+      // }, 45_000);
+      // setInterval(() => {
+      //   void archiveStaleReceivedCancelReturnOrders(14).catch((err) =>
+      //     console.warn("[Local Return Archive] interval error:", err),
+      //   );
+      // }, LOCAL_RETURN_ARCHIVE_INTERVAL_MS);
+      // console.log("[Local Return Archive] Đã bật job dọn tab hủy/hoàn mỗi 24h (retention 14 ngày)");
+      console.log("[Local Return Archive] TẠM TẮT (iron-fist purge).");
     };
 
     if (process.env.PORT) {
