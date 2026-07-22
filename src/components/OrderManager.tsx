@@ -2205,7 +2205,13 @@ export default function OrderManager({
       instant: 0,
       other: 0,
     };
-    if (activeSubTab !== 'unprocessed' && activeSubTab !== 'processed') return counts;
+    const carrierFilterTabs = new Set([
+      'unprocessed',
+      'processed',
+      'cancel_returns',
+      'received_cancel_returns',
+    ]);
+    if (!carrierFilterTabs.has(activeSubTab)) return counts;
     for (const order of ordersPoolBeforeCarrier) {
       const group = getShippingCarrierGroup(order);
       counts.all += 1;
@@ -2216,8 +2222,13 @@ export default function OrderManager({
 
   const filteredOrdersBase = ordersPoolBeforeCarrier
     .filter((order) => {
-      // ĐVVC filter — tab Chờ lấy hàng (Chưa xử lý + Đã xử lý)
-      if (activeSubTab === 'unprocessed' || activeSubTab === 'processed') {
+      // ĐVVC filter — Chờ lấy hàng + Đơn hủy/hoàn + Đã nhận hủy/hoàn
+      if (
+        activeSubTab === 'unprocessed' ||
+        activeSubTab === 'processed' ||
+        activeSubTab === 'cancel_returns' ||
+        activeSubTab === 'received_cancel_returns'
+      ) {
         return orderMatchesShippingCarrierFilter(order, selectedShippingCarrier);
       }
       return true;
@@ -3549,8 +3560,8 @@ export default function OrderManager({
         </div>
       )}
 
-      {/* 4. FILTER BOX — search only (ẩn trên màn ĐƠN HỦY, ĐƠN HOÀN) */}
-      {activeSubTab !== 'order_products' && activeSubTab !== 'cancel_returns' && (
+      {/* 4. FILTER BOX — search + ĐVVC (ẩn trên màn sản phẩm trong đơn) */}
+      {activeSubTab !== 'order_products' && (
       <div className="om-orders-filters-panel bg-white p-5 max-md:p-4 rounded-3xl border border-gray-100 shadow-xs">
         <div className="relative w-full">
           <Search className="absolute left-3.5 top-3.5 text-gray-400 w-4 h-4" />
@@ -3575,7 +3586,10 @@ export default function OrderManager({
             </span>
           </label>
         )}
-        {(activeSubTab === 'unprocessed' || activeSubTab === 'processed') && (
+        {(activeSubTab === 'unprocessed' ||
+          activeSubTab === 'processed' ||
+          activeSubTab === 'cancel_returns' ||
+          activeSubTab === 'received_cancel_returns') && (
           <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="text-xs font-bold text-slate-600 shrink-0">Đơn vị vận chuyển</span>
             {(
