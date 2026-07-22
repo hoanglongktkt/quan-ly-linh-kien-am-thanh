@@ -7428,12 +7428,9 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
     return undefined;
   };
 
-  const existingTn = String(
-    existing?.trackingNumber || existing?.tracking_no || existing?.return_tracking_no || "",
-  ).trim();
-  const incomingTn = String(
-    incoming?.trackingNumber || incoming?.tracking_no || incoming?.return_tracking_no || "",
-  ).trim();
+  // Outbound TN theo order_sn — không trộn return_tracking_no vào mã đi.
+  const existingTn = String(existing?.trackingNumber || existing?.tracking_no || "").trim();
+  const incomingTn = String(incoming?.trackingNumber || incoming?.tracking_no || "").trim();
   const cancelReturn = isCancelOrReturnOrderStatus(incoming) || isCancelOrReturnOrderStatus(merged);
 
   if (incoming?.return_sn) merged.return_sn = incoming.return_sn;
@@ -7445,6 +7442,7 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
   } else if (existing?.shopee_cancel_return_kind) {
     merged.shopee_cancel_return_kind = existing.shopee_cancel_return_kind;
   }
+  // return_tracking_no giữ riêng — không ghi đè tracking_no outbound.
   if (incoming?.return_tracking_no) merged.return_tracking_no = incoming.return_tracking_no;
   else if (existing?.return_tracking_no) merged.return_tracking_no = existing.return_tracking_no;
 
@@ -7452,7 +7450,8 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
   if (cancelReturn && existingTn && !incomingTn) {
     merged.trackingNumber = existingTn;
     merged.tracking_no = existingTn;
-    merged.return_tracking_no = merged.return_tracking_no || existingTn;
+    merged.return_tracking_no =
+      merged.return_tracking_no || existing?.return_tracking_no || existingTn;
     const existingInternal = String(existing?.internalTrackingCode || "").trim();
     if (existingInternal) merged.internalTrackingCode = existingInternal;
     if (!merged.packageNumber && existing?.packageNumber) {
@@ -7461,15 +7460,13 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
     return;
   }
 
-  // Manual sync / heal: ƯU TIÊN tracking từ Shopee (incoming) — ghi đè DB cũ nếu sàn có mã mới (GHN).
+  // ƯU TIÊN outbound tracking theo order_sn (không lấy return_tracking_no làm mã đi).
   const nextTracking = pickCarrier(
     incoming.trackingNumber,
     incoming.tracking_no,
-    incoming.return_tracking_no,
     incoming.lastMileTrackingNumber,
     existing.trackingNumber,
     existing.tracking_no,
-    existing.return_tracking_no,
     existing.lastMileTrackingNumber,
   );
   merged.trackingNumber =
@@ -7539,7 +7536,9 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
   if (!order || String(order.channel || "") !== "shopee") return false;
   const raw = String(order.shopee_order_status || "").toUpperCase();
 
-  const clearHandedOverExit = () => {
+  // Chỉ clear cờ bàn giao khi raw === SHIPPED (an toàn dữ liệu).
+  const clearHandedOverOnShipped = () => {
+    if (raw !== "SHIPPED") return;
     if (!resolveOrderHandoverFlag(order) && String(order.local_status || "").toUpperCase() !== "HANDED_OVER") {
       return;
     }
@@ -7551,7 +7550,6 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
     order.shopee_order_status = "COMPLETED";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
-    clearHandedOverExit();
     return true;
   }
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
@@ -7559,10 +7557,9 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
     order.shopee_order_status = raw;
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
-    clearHandedOverExit();
+    clearHandedOverOnShipped();
     return true;
   }
-  // Local đã shipping/completed nhưng raw chưa terminal → chỉ gỡ cờ ĐVVC nếu raw đã SHIPPED+.
   // Không ép status=shipping khi thiếu raw SHIPPED (tránh leak tab).
   return false;
 }
@@ -8762,17 +8759,15 @@ function setOrderHandoverFlag(order: any, value: boolean): void {
 /**
  * Dọn cờ HANDED_OVER khi đã EXIT (Đang giao / hoàn tất / hủy).
  */
+/** Chỉ clear cờ ĐVVC khi Shopee raw === SHIPPED — không clear theo CANCELLED/TO_RETURN trên heal. */
 function healInvalidHandedOverFlags(orders: any[]): any[] {
   const changed: any[] = [];
   for (let i = 0; i < orders.length; i++) {
     const order = orders[i];
     if (!resolveOrderHandoverFlag(order)) continue;
+    const raw = String(order.shopee_order_status || "").toUpperCase();
+    if (raw !== "SHIPPED") continue;
     if (enforceShopeeTerminalLocalStatus(order)) {
-      changed.push(order);
-      continue;
-    }
-    if (hasLeftHandedOverCarrierTab(order)) {
-      Object.assign(order, buildClearHandedOverPatch());
       changed.push(order);
     }
   }
@@ -9079,17 +9074,13 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   }
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
-  // Shopee SHIPPED/COMPLETED → gỡ cờ bàn giao ĐVVC.
-  // CHỈ theo raw Shopee — KHÔNG dùng merged.status (tránh clear nhầm / skip hiển thị).
-  const clearHandoverOnShip =
-    incomingRaw === "SHIPPED" ||
-    incomingRaw === "TO_CONFIRM_RECEIVE" ||
-    incomingRaw === "COMPLETED";
+  // CHỈ clear cờ bàn giao khi Shopee raw === SHIPPED (không clear vô tội vạ).
+  const clearHandoverOnShip = incomingRaw === "SHIPPED";
 
   if (clearHandoverOnShip) {
     Object.assign(merged, buildClearHandedOverPatch());
   } else if (existing) {
-    // Giữ nguyên cờ QR / bàn giao thủ công — sync Shopee không được ghi đè.
+    // BẮT BUỘC preserve: sync KHÔNG được biến is_handed_over true → false.
     const existingHanded = resolveOrderHandoverFlag(existing);
     if (existingHanded) {
       Object.assign(merged, buildHandedOverWritePatch(
@@ -10059,12 +10050,8 @@ async function healStuckLocalShopeeOrders(
       for (const n of normalized) {
         forceHealPickupOrderIfHasTracking(n);
         enforceShopeeTerminalLocalStatus(n);
-        // SHIPPED/COMPLETED → gỡ cờ quét QR nội bộ, sang tab Đang giao.
-        if (
-          n.status === "shipping" ||
-          n.status === "completed" ||
-          isShopeeTerminalRawStatus(String(n.shopee_order_status || ""))
-        ) {
+        // Chỉ clear cờ QR khi Shopee raw === SHIPPED (merge sẽ preserve nếu chưa SHIPPED).
+        if (String(n.shopee_order_status || "").toUpperCase() === "SHIPPED") {
           setOrderHandoverFlag(n, false);
           n.isHandedOverToCarrier = false;
           n.is_handed_over_to_carrier = false;
@@ -10490,17 +10477,29 @@ function loadOrders(): any[] {
  * - Đơn chỉ có trên Mongo vẫn hiện (kèm mã vận đơn).
  * - Đơn chỉ có trên JSON (manual / local) vẫn giữ.
  */
-async function loadOrdersForApi(): Promise<{
+/** Mirror tracking fields for READ — không xóa/sửa mã vận đơn. */
+function mirrorTrackingFieldsForRead(order: any): any {
+  if (!order || typeof order !== "object") return order;
+  if (order.tracking_no && !order.trackingNumber) order.trackingNumber = order.tracking_no;
+  if (order.trackingNumber && !order.tracking_no) order.tracking_no = order.trackingNumber;
+  return order;
+}
+
+async function loadOrdersForApi(opts?: {
+  readOnly?: boolean;
+}): Promise<{
   orders: any[];
   dirty: boolean;
   handoverMongoSync: any[];
 }> {
-  const jsonOrders = loadOrders().filter(isValidOrder).map(repairMisassignedTracking);
+  const readOnly = Boolean(opts?.readOnly);
+  const normalize = readOnly ? mirrorTrackingFieldsForRead : repairMisassignedTracking;
+  const jsonOrders = loadOrders().filter(isValidOrder).map(normalize);
   if (!isMongoReady()) return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
 
   let mongoOrders: any[] = [];
   try {
-    mongoOrders = (await loadOrdersFromStore()).map(repairMisassignedTracking);
+    mongoOrders = (await loadOrdersFromStore()).map(normalize);
   } catch (err: any) {
     console.warn("[Orders] loadOrdersFromStore skip:", err?.message || err);
     return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
@@ -10527,8 +10526,10 @@ async function loadOrdersForApi(): Promise<{
 
     if (!existing) {
       bySn.set(sn, m);
-      added++;
-      dirty = true;
+      if (!readOnly) {
+        added++;
+        dirty = true;
+      }
       continue;
     }
 
@@ -10537,22 +10538,26 @@ async function loadOrdersForApi(): Promise<{
       if (!eTn || isShopeeInternalTrackingCode(eTn)) {
         existing.trackingNumber = mTn;
         existing.tracking_no = mTn;
-        trackingFilled++;
-        dirty = true;
+        if (!readOnly) {
+          trackingFilled++;
+          dirty = true;
+        }
       }
     }
 
-    // JSON = nguồn sự thật cho cờ ĐVVC. Không copy cờ stale từ Mongo → JSON
-    // (tránh tab Đã giao ĐVVC hiện đơn lưu nhầm). Chỉ đẩy JSON → Mongo khi lệch.
-    const mongoHanded = resolveOrderHandoverFlag(m);
-    const jsonHanded = resolveOrderHandoverFlag(existing);
-    if (jsonHanded && !mongoHanded) {
-      handoverMongoSync.push(existing);
-      dirty = true;
+    // JSON = nguồn sự thật cho cờ ĐVVC. Không copy cờ stale từ Mongo → JSON.
+    // GET readOnly: không đánh dấu dirty / không queue sync ghi.
+    if (!readOnly) {
+      const mongoHanded = resolveOrderHandoverFlag(m);
+      const jsonHanded = resolveOrderHandoverFlag(existing);
+      if (jsonHanded && !mongoHanded) {
+        handoverMongoSync.push(existing);
+        dirty = true;
+      }
     }
   }
 
-  if (added > 0 || trackingFilled > 0 || handoverMongoSync.length > 0) {
+  if (!readOnly && (added > 0 || trackingFilled > 0 || handoverMongoSync.length > 0)) {
     console.log(
       `[Orders] loadOrdersForApi: json=${jsonOrders.length} mongo=${mongoOrders.length} +added=${added} +tracking=${trackingFilled} +handoverMongoSync=${handoverMongoSync.length}`,
     );
@@ -10560,8 +10565,8 @@ async function loadOrdersForApi(): Promise<{
 
   return {
     orders: Array.from(bySn.values()),
-    dirty,
-    handoverMongoSync,
+    dirty: readOnly ? false : dirty,
+    handoverMongoSync: readOnly ? [] : handoverMongoSync,
   };
 }
 
@@ -15505,154 +15510,9 @@ async function startServer() {
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
 
-    try {
-      await mirrorTopLevelTrackingIntoData();
-    } catch {
-      /* ignore */
-    }
-
-    let { orders: rawOrders, dirty, handoverMongoSync } = await loadOrdersForApi();
+    // GET = READ ONLY — tuyệt đối không mirror/heal/backfill/purge/persist.
+    let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
     rawOrders = rawOrders.filter(isValidOrder);
-
-    // KHÔNG tự xóa đơn ĐVVC trên GET list — chỉ dọn qua API cleanup tường minh.
-    // (Logic cũ purgeHandedOverGarbageOrdersOnce trên mọi GET làm mất đơn sau sync.)
-
-    // Đơn chờ lấy hàng thiếu shipping_carrier → gọi Shopee lấy ĐVVC (cooldown).
-    try {
-      const nowMs = Date.now();
-      const missingCarrier = rawOrders.some(
-        (o: any) =>
-          String(o?.channel || "") === "shopee" &&
-          !String(o?.shipping_carrier || "").trim() &&
-          (o.status === "unprocessed" || o.status === "processed"),
-      );
-      if (
-        missingCarrier &&
-        nowMs - lastShippingCarrierBackfillAt >= SHIPPING_CARRIER_BACKFILL_COOLDOWN_MS
-      ) {
-        lastShippingCarrierBackfillAt = nowMs;
-        const filled = await backfillMissingShippingCarriersFromShopee(rawOrders, 40);
-        if (filled > 0) dirty = true;
-      }
-    } catch (backfillErr: any) {
-      console.warn("[Carrier Backfill] GET /api/orders skip:", backfillErr?.message || backfillErr);
-    }
-
-    rawOrders = rawOrders.map((o: any) => {
-      if (o.is_pending_shopee_check == null) o.is_pending_shopee_check = false;
-      const before = `${o.trackingNumber || ""}|${o.internalTrackingCode || ""}`;
-      repairMisassignedTracking(o);
-      const after = `${o.trackingNumber || ""}|${o.internalTrackingCode || ""}`;
-      if (before !== after) dirty = true;
-      // Backfill ĐVVC từ mã vận đơn khi DB cũ thiếu shipping_carrier.
-      if (!o.shipping_carrier) {
-        const inferredCarrier = inferShippingCarrierLabel(o);
-        if (inferredCarrier) {
-          o.shipping_carrier = inferredCarrier;
-          dirty = true;
-        }
-      }
-
-      // Remap tab theo State Machine — SHIPPED/COMPLETED luôn ghi đè; không promote từ logistics.
-      if (String(o.channel || "") === "shopee") {
-        if (enforceShopeeTerminalLocalStatus(o)) dirty = true;
-        const raw = String(o.shopee_order_status || "").toUpperCase();
-        const logistics = String(o.logistics_status || "").toUpperCase();
-        const nextStatus = mapShopeeStatusToLocal(raw, {
-          hasTracking: hasUsableShopeeTrackingNumber(o),
-          logisticsStatus: logistics,
-        });
-        // Heal: local status=shipping nhưng raw vẫn READY_TO_SHIP|PROCESSED → kéo về đúng tab chờ lấy.
-        if (
-          (o.status === "shipping" || o.status === "completed") &&
-          (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED")
-        ) {
-          if (nextStatus && o.status !== nextStatus) {
-            o.status = nextStatus;
-            dirty = true;
-          }
-        }
-        if (
-          raw === "SHIPPED" ||
-          raw === "TO_CONFIRM_RECEIVE" ||
-          raw === "COMPLETED" ||
-          o.status === "pending_verification" ||
-          (raw &&
-            nextStatus &&
-            o.status !== nextStatus &&
-            (raw === "UNPAID" ||
-              raw === "PENDING" ||
-              raw === "SHIPPED" ||
-              raw === "TO_CONFIRM_RECEIVE" ||
-              raw === "COMPLETED"))
-        ) {
-          if (o.status !== nextStatus && nextStatus) {
-            // Không kéo lùi terminal đã enforce.
-            if (
-              !(
-                (o.status === "shipping" || o.status === "completed") &&
-                (nextStatus === "processed" || nextStatus === "unprocessed") &&
-                (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED")
-              )
-            ) {
-              o.status = nextStatus;
-              if (nextStatus === "shipping" || nextStatus === "processed" || nextStatus === "completed") {
-                o.isPrepared = true;
-              }
-              if (nextStatus !== "pending_verification") o.is_pending_shopee_check = false;
-              dirty = true;
-            }
-          }
-        }
-        // Phân loại ngoại lệ từ logistics_status khi thiếu kind.
-        if (
-          !o.shopee_cancel_return_kind &&
-          /DELIVERY_FAILED|FAILED_DELIVERY|LOGISTICS_DELIVERY_FAILED|UNDELIVERABLE|PICKUP_FAILED/.test(
-            logistics,
-          )
-        ) {
-          o.shopee_cancel_return_kind = "failed_delivery";
-          if (o.status !== "return_received" && o.status !== "cancelled") {
-            o.status = "return_pending";
-          }
-          dirty = true;
-        } else if (
-          !o.shopee_cancel_return_kind &&
-          (raw === "CANCELLED" || raw === "IN_CANCEL")
-        ) {
-          o.shopee_cancel_return_kind = "cancelled";
-          o.status = "cancelled";
-          dirty = true;
-        } else if (!o.shopee_cancel_return_kind && raw === "TO_RETURN") {
-          o.shopee_cancel_return_kind = "refund_return";
-          if (o.status !== "return_received") o.status = "return_pending";
-          dirty = true;
-        }
-        if (o.status === "pending_verification") {
-          o.status =
-            raw === "UNPAID" || raw === "PENDING" ? "pending_confirm" : "unprocessed";
-          dirty = true;
-        }
-      }
-      return o;
-    });
-
-    // Dọn cờ HANDED_OVER lưu sai (thiếu mã VĐ / không còn chờ lấy / terminal).
-    try {
-      const healed = healInvalidHandedOverFlags(rawOrders);
-      if (healed.length) {
-        dirty = true;
-        handoverMongoSync = [...(handoverMongoSync || []), ...healed];
-        console.log(`[Orders Heal Handover] cleared invalid flags=${healed.length}`);
-      }
-    } catch (healErr: any) {
-      console.warn("[Orders Heal Handover] skip:", healErr?.message || healErr);
-    }
-
-    if (dirty) {
-      // JSON luôn lưu; Mongo upsert đơn cần sync cờ ĐVVC.
-      await persistOrdersToDatabase(rawOrders, handoverMongoSync || []);
-    }
 
     // State Machine tab filter (SSOT) — không giao thoa giữa các tab.
     const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
@@ -17618,69 +17478,7 @@ async function startServer() {
       console.warn(`[DEBUG Return] KHÔNG tìm thấy return_sn cho order_sn=${orderSn} trong cửa sổ 01–19/07/2026`);
     }
 
-    // Persist vào DB (kể cả khi chưa có tracking — vẫn gắn return_sn + kind)
-    let persisted = false;
-    if (matchedReturnSn) {
-      try {
-        const orders = loadOrders();
-        const idx = orders.findIndex((o: any) => String(o.orderSn) === orderSn);
-        const detail = detailRaw?.response ?? detailRaw ?? {};
-        const kind = mapShopeeReturnKind(detail);
-        const best = pickBestTrackingNumber(
-          extractedTn,
-          idx >= 0 ? orders[idx].trackingNumber : "",
-          idx >= 0 ? orders[idx].tracking_no : "",
-        );
-        const patchRow: any = {
-          return_sn: matchedReturnSn,
-          return_status: String(detail.status || ""),
-          return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
-          shopee_cancel_return_kind: kind,
-          status: "return_pending",
-          shopee_order_status: "TO_RETURN",
-          items: [
-            {
-              productId: "return-placeholder",
-              productTitle: `Đơn hoàn ${orderSn}`,
-              quantity: 1,
-              price: Number(detail.refund_amount || 1) || 1,
-            },
-          ],
-          totalAmount: Math.max(1, Number(detail.refund_amount || 0) || 1),
-        };
-        if (best) {
-          patchRow.trackingNumber = best;
-          patchRow.tracking_no = best;
-          patchRow.return_tracking_no = extractedTn || best;
-        }
-        if (idx >= 0) {
-          const existing = orders[idx];
-          if (existing.status === "return_received" || existing.local_status === "RETURN_RECEIVED") {
-            patchRow.status = "return_received";
-          }
-          orders[idx] = { ...existing, ...patchRow };
-        } else {
-          orders.unshift({
-            id: `shopee-${orderSn}`,
-            orderSn,
-            channel: "shopee",
-            shopId,
-            revenue: 0,
-            date: new Date().toISOString(),
-            ...patchRow,
-          });
-        }
-        saveOrders(orders);
-        if (isMongoReady()) {
-          const row = orders.find((o: any) => String(o.orderSn) === orderSn);
-          if (row) await bulkUpsertOrdersToStore([row]);
-        }
-        persisted = true;
-      } catch (persistErr: any) {
-        console.error("[DEBUG Return] persist failed:", persistErr?.message || persistErr);
-      }
-    }
-
+    // GET debug = READ ONLY — không persist/ghi DB.
     return res.json({
       ok: Boolean(matchedReturnSn),
       order_sn: orderSn,
@@ -17696,7 +17494,7 @@ async function startServer() {
       steps,
       return_detail_raw: detailRaw,
       reverse_tracking_raw: reverseRaw,
-      persisted,
+      persisted: false,
       message: matchedReturnSn
         ? extractedTn
           ? `OK — lấy được tracking_number=${extractedTn} (sources: ${Object.keys(trackingSources).join(",")})`

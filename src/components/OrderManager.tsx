@@ -93,11 +93,11 @@ import {
 } from '../utils/shopeeFees';
 
 function getOrderWaybillCode(order: Order): string {
-  // Luôn ưu tiên mã vận đơn (return/forward) — không bao giờ thay bằng order_sn.
+  // Ưu tiên mã đi (tracking_no) theo order_sn — return_tracking_no chỉ fallback.
   const fromHelper = getCarrierWaybillDisplay(order);
   if (fromHelper) return fromHelper;
   const fallback = String(
-    order.return_tracking_no || order.trackingNumber || order.tracking_no || '',
+    order.trackingNumber || order.tracking_no || order.return_tracking_no || '',
   ).trim();
   if (fallback && !/^0FG/i.test(fallback) && fallback !== String(order.orderSn || '')) {
     return fallback;

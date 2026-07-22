@@ -134,7 +134,8 @@ async function fetchJson(backendUrl, req, pathPart, init = {}, timeoutMs = 18000
 }
 
 export async function handleCleanupProcessedPickup(req, res) {
-  if (req.method !== 'POST' && req.method !== 'GET') {
+  // CẤM side-effect trên GET — chỉ POST mới được xóa/dọn.
+  if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'method_not_allowed' });
   }
 

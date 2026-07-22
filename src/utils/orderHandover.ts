@@ -35,15 +35,18 @@ export function getShopeeOrderRawStatus(
   return String(order.shopee_order_status || '').toUpperCase();
 }
 
-/** tracking_no thực tế từ Shopee (bỏ mã nội bộ 0FG...). */
+/**
+ * tracking_no outbound theo order_sn — ưu tiên mã đi (tracking_no),
+ * return_tracking_no chỉ là fallback (tránh UI/Backend lệch mã GHN vs SPX hoàn).
+ */
 export function getOrderTrackingNo(
   order: Partial<Order> & Record<string, unknown>,
 ): string {
   const candidates = [
-    order.return_tracking_no,
     order.trackingNumber,
     order.tracking_no,
     order.shopee_tracking_number,
+    order.return_tracking_no,
   ];
   for (const c of candidates) {
     const tn = String(c || '').trim();
@@ -255,7 +258,7 @@ export function getHandOverIneligibleReason(order: Order): string {
     return 'Chưa đủ điều kiện Đã xử lý (thiếu PROCESSED/mã VĐ)';
   }
   if (!hasOrderTrackingNo(order)) {
-    return 'Chưa có mã vận đơn trong trackingNumber/tracking_no/return_tracking_no';
+    return 'Chưa có mã vận đơn outbound (trackingNumber/tracking_no)';
   }
   return '';
 }

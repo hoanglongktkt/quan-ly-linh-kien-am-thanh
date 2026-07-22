@@ -15,21 +15,23 @@ export function isCarrierTrackingCode(code: unknown): boolean {
   return false;
 }
 
-/** Mã vận đơn thực tế để hiển thị — luôn hiện nếu DB có (kể cả đơn hủy/hoàn). */
+/**
+ * Mã vận đơn hiển thị — ưu tiên outbound (tracking_no / trackingNumber).
+ * return_tracking_no chỉ fallback khi thiếu mã đi (đồng bộ UI ↔ Backend).
+ */
 export function getCarrierWaybillDisplay(
   order: Pick<Order, 'trackingNumber' | 'internalTrackingCode' | 'return_tracking_no'> & {
     tracking_no?: string;
   },
 ): string {
   const candidates = [
-    order.return_tracking_no,
     order.trackingNumber,
     order.tracking_no,
+    order.return_tracking_no,
   ];
   for (const c of candidates) {
     const tn = String(c || '').trim();
     if (!tn || isShopeeInternalTrackingCode(tn)) continue;
-    // Không ẩn mã chỉ vì format lạ — đơn hoàn thường là SPXVN...
     return tn;
   }
   return '';

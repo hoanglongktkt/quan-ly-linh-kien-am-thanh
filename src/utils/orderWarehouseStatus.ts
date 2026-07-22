@@ -4,7 +4,7 @@
  * STATE MACHINE:
  *   READ  = READY_TO_SHIP-like AND is_handed_over = true
  *   WRITE = Quét QR / nút Bàn giao ĐVVC
- *   EXIT  = Shopee SHIPPED / COMPLETED / CANCELLED → gỡ cờ
+ *   EXIT  = Shopee SHIPPED → clear cờ; TO_CONFIRM_RECEIVE/COMPLETED/CANCELLED → rời tab (filter)
  */
 import type { Order } from '../types';
 
