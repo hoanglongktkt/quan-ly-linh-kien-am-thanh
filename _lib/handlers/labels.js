@@ -17,7 +17,7 @@ function extractFilename(routeFile, req) {
   }
   if (!filePath) {
     const u = String(req.url || '');
-    const m = u.match(/\/(?:api\/)?labels\/([^?#]+)/i);
+    const m = u.match(/\/(?:api\/)?(?:labels|prints)\/([^?#]+)/i);
     if (m) filePath = decodeURIComponent(m[1]);
   }
   return filePath.split('/').pop() || filePath;
@@ -38,7 +38,7 @@ export async function handleLabelProxy(req, res, routeFile = '') {
     return res.status(503).json({ error: backend.error, errorCode: 'BACKEND_CONFIG' });
   }
 
-  const target = `${backend.url}/api/public/labels/${encodeURIComponent(filename)}`;
+  const target = `${backend.url}/prints/${encodeURIComponent(filename)}`;
 
   try {
     const upstream = await fetch(target, { method: req.method });

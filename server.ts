@@ -161,17 +161,23 @@ function writeCpanelCrashLogToAppRoot(kind: string, err: unknown): void {
 }
 process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
 process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
-/** Legacy dirs — chỉ dùng để XÓA TRẮNG PDF cũ; không còn ghi file vận đơn xuống đĩa. */
+/** Legacy dirs — chỉ dùng để XÓA TRẮNG PDF cũ (trước khi chuyển sang public/prints). */
 const WAYBILLS_DIR = path.join(APP_ROOT, "storage", "waybills");
 const LEGACY_WAYBILLS_DIR = path.join(APP_ROOT, "storage", "labels");
 const WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
 
-/** PDF vận đơn chỉ giữ trong RAM (TTL 15 phút) — tránh tràn ổ cứng AZDIGI. */
-const LABEL_TTL_MS = 15 * 60 * 1000;
-const labelMemCache = new Map<string, { buf: Buffer; expires: number; contentType?: string }>();
-/** Giới hạn RAM cache PDF hàng loạt — tránh OOM khi gen nhiều vận đơn. */
-const LABEL_MEM_MAX_ENTRIES = 48;
-const LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
+/** PDF vận đơn lưu tĩnh tại public/prints/ — FE mở URL trực tiếp (kiểu Sapo). */
+const PRINTS_DIR = path.join(APP_ROOT, "public", "prints");
+/** Auto-cleanup: xóa PDF vận đơn cũ hơn 72 giờ. */
+const LABEL_TTL_MS = 72 * 60 * 60 * 1000;
+
+function ensurePrintsDir(): void {
+  try {
+    if (!fs.existsSync(PRINTS_DIR)) fs.mkdirSync(PRINTS_DIR, { recursive: true });
+  } catch (err) {
+    console.warn("[Prints] Không tạo được thư mục public/prints:", err);
+  }
+}
 
 function safeLabelFilename(raw: string): string | null {
   const base = path.basename(String(raw || "").trim());
@@ -184,33 +190,33 @@ function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
   return buffer.length > 4 && buffer.subarray(0, 4).toString() === "%PDF";
 }
 
-function getLabelMemTotalBytes(): number {
-  let total = 0;
-  for (const val of labelMemCache.values()) total += val.buf.length;
-  return total;
-}
-
-function evictLabelMemIfNeeded(incomingBytes: number): void {
-  purgeExpiredLabelMem();
-  while (
-    labelMemCache.size > 0 &&
-    (labelMemCache.size >= LABEL_MEM_MAX_ENTRIES ||
-      getLabelMemTotalBytes() + Math.max(0, incomingBytes) > LABEL_MEM_MAX_BYTES)
-  ) {
-    let oldestKey: string | null = null;
-    let oldestExp = Infinity;
-    for (const [key, val] of labelMemCache) {
-      if (val.expires < oldestExp) {
-        oldestExp = val.expires;
-        oldestKey = key;
+/** Xóa file PDF cũ của cùng mã đơn (order_<sn>_*.pdf) trước khi ghi file mới. */
+function removeExistingPrintFilesForOrderSns(orderSns: string[]): number {
+  ensurePrintsDir();
+  const sns = [...new Set(orderSns.map((s) => String(s || "").replace(/[^a-zA-Z0-9_-]/g, "")).filter(Boolean))];
+  if (sns.length === 0) return 0;
+  let deleted = 0;
+  try {
+    for (const name of fs.readdirSync(PRINTS_DIR)) {
+      if (!/\.pdf$/i.test(name)) continue;
+      const hit = sns.some(
+        (sn) =>
+          name === `${sn}.pdf` ||
+          name.startsWith(`${sn}_`) ||
+          name.startsWith(`order_${sn}_`),
+      );
+      if (!hit) continue;
+      try {
+        fs.unlinkSync(path.join(PRINTS_DIR, name));
+        deleted += 1;
+      } catch {
+        /* ignore per-file */
       }
     }
-    if (!oldestKey) break;
-    labelMemCache.delete(oldestKey);
-    console.log(
-      `[Labels RAM] Evict ${oldestKey} (entries=${labelMemCache.size}, bytes≈${getLabelMemTotalBytes()})`,
-    );
+  } catch (err) {
+    console.warn("[Prints] Không quét được thư mục để ghi đè:", err);
   }
+  return deleted;
 }
 
 function putLabelMem(filename: string, buffer: Buffer, contentType?: string): string {
@@ -219,48 +225,75 @@ function putLabelMem(filename: string, buffer: Buffer, contentType?: string): st
   if (!isPdfBuffer(buffer, contentType)) {
     throw new Error("Dữ liệu vận đơn từ Shopee không phải PDF hợp lệ.");
   }
-  evictLabelMemIfNeeded(buffer.length);
-  labelMemCache.set(safe, {
-    buf: buffer,
-    expires: Date.now() + LABEL_TTL_MS,
-    contentType: contentType || "application/pdf",
-  });
-  console.log(`[Labels RAM] Cached ${safe} (${buffer.length} bytes, TTL ${LABEL_TTL_MS / 60000}p, size=${labelMemCache.size})`);
+  ensurePrintsDir();
+  cleanupExpiredPrintFiles();
+  // Ghi đè: xóa file cũ cùng mã đơn trước khi lưu.
+  const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
+  if (snMatch?.[1]) removeExistingPrintFilesForOrderSns([snMatch[1]]);
+  const dest = path.join(PRINTS_DIR, safe);
+  fs.writeFileSync(dest, buffer);
+  console.log(`[Prints] Saved ${safe} (${buffer.length} bytes) → ${dest}`);
   return safe;
 }
 
 function getLabelMem(filename: string): { buf: Buffer; contentType?: string } | null {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-  const hit = labelMemCache.get(safe);
-  if (!hit) return null;
-  if (hit.expires < Date.now()) {
-    labelMemCache.delete(safe);
+  const filePath = path.join(PRINTS_DIR, safe);
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const buf = fs.readFileSync(filePath);
+    if (!isPdfBuffer(buf)) return null;
+    return { buf, contentType: "application/pdf" };
+  } catch {
     return null;
   }
-  return hit;
 }
 
 function hasLabelMem(filename: string): boolean {
-  return !!getLabelMem(filename);
+  const safe = safeLabelFilename(filename);
+  if (!safe) return false;
+  try {
+    return fs.existsSync(path.join(PRINTS_DIR, safe));
+  } catch {
+    return false;
+  }
 }
 
-function purgeExpiredLabelMem(): number {
-  const now = Date.now();
+/** Dọn PDF trong public/prints/ có tuổi đời > 72 giờ. */
+function cleanupExpiredPrintFiles(): number {
+  ensurePrintsDir();
+  const cutoff = Date.now() - LABEL_TTL_MS;
   let deleted = 0;
-  for (const [key, val] of labelMemCache) {
-    if (val.expires < now) {
-      labelMemCache.delete(key);
-      deleted += 1;
+  try {
+    for (const name of fs.readdirSync(PRINTS_DIR)) {
+      if (!WAYBILL_FILE_RE.test(name)) continue;
+      const full = path.join(PRINTS_DIR, name);
+      try {
+        const st = fs.statSync(full);
+        if (st.mtimeMs < cutoff) {
+          fs.unlinkSync(full);
+          deleted += 1;
+        }
+      } catch {
+        /* ignore per-file */
+      }
     }
+  } catch (err) {
+    console.warn("[Prints Cleanup] lỗi quét thư mục:", err);
   }
   if (deleted > 0) {
-    console.log(`[Labels RAM] Đã xóa ${deleted} PDF hết hạn (còn ${labelMemCache.size} trong cache).`);
+    console.log(`[Prints Cleanup] Đã xóa ${deleted} PDF cũ hơn 72 giờ.`);
   }
   return deleted;
 }
 
-/** Xóa trắng mọi file PDF/ZIP/HTML cũ trên đĩa (một lần khi boot + khi cleanup). */
+/** Alias tương thích — cleanup theo TTL 72h trên đĩa. */
+function purgeExpiredLabelMem(): number {
+  return cleanupExpiredPrintFiles();
+}
+
+/** Xóa trắng mọi file PDF/ZIP/HTML cũ trong storage legacy. */
 function wipeLegacyLabelDiskFiles(): number {
   let deleted = 0;
   for (const dir of [WAYBILLS_DIR, LEGACY_WAYBILLS_DIR]) {
@@ -280,7 +313,7 @@ function wipeLegacyLabelDiskFiles(): number {
     }
   }
   if (deleted > 0) {
-    console.log(`[Waybills] Đã xóa trắng ${deleted} file vận đơn cũ trên đĩa (chuyển sang RAM).`);
+    console.log(`[Waybills] Đã xóa trắng ${deleted} file vận đơn legacy trên đĩa.`);
   }
   return deleted;
 }
@@ -288,21 +321,23 @@ function wipeLegacyLabelDiskFiles(): number {
 function scheduleWaybillsCleanup(): void {
   setImmediate(() => {
     try {
-      purgeExpiredLabelMem();
+      cleanupExpiredPrintFiles();
       wipeLegacyLabelDiskFiles();
     } catch (err) {
-      console.warn("[Waybills Cleanup] lỗi:", err);
+      console.warn("[Prints Cleanup] lỗi:", err);
     }
   });
 }
 
-// Boot: dọn disk legacy + interval giải phóng RAM mỗi 5 phút
+// Boot: tạo thư mục prints + dọn legacy + interval cleanup mỗi giờ
+ensurePrintsDir();
 wipeLegacyLabelDiskFiles();
-const labelMemCleanupTimer = setInterval(() => {
-  purgeExpiredLabelMem();
-}, 5 * 60 * 1000);
-if (typeof (labelMemCleanupTimer as any).unref === "function") {
-  (labelMemCleanupTimer as any).unref();
+cleanupExpiredPrintFiles();
+const labelDiskCleanupTimer = setInterval(() => {
+  cleanupExpiredPrintFiles();
+}, 60 * 60 * 1000);
+if (typeof (labelDiskCleanupTimer as any).unref === "function") {
+  (labelDiskCleanupTimer as any).unref();
 }
 
 type ServeLabelPdfResult = "sent" | "not_found" | "invalid";
@@ -319,7 +354,7 @@ function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
   }
   if (!isPdfBuffer(hit.buf, hit.contentType)) {
     console.error(
-      `[Labels] Buffer không phải PDF hợp lệ: ${safe}, size=${hit.buf.length}, head=${hit.buf.subarray(0, 20).toString("hex")}`
+      `[Prints] Buffer không phải PDF hợp lệ: ${safe}, size=${hit.buf.length}, head=${hit.buf.subarray(0, 20).toString("hex")}`
     );
     res.status(415).type("text/plain").send("File vận đơn không phải PDF hợp lệ.");
     return "invalid";
@@ -328,9 +363,9 @@ function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
   res.setHeader("Content-Length", String(hit.buf.length));
-  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Cache-Control", "public, max-age=3600");
   res.end(hit.buf);
-  console.log(`[Labels] Served PDF from RAM ${safe} (${hit.buf.length} bytes)`);
+  console.log(`[Prints] Served PDF ${safe} (${hit.buf.length} bytes)`);
   return "sent";
 }
 
@@ -363,9 +398,9 @@ function absoluteLabelUrl(relativePath: string | null | undefined): string | nul
   if (/^https?:\/\//i.test(relativePath)) {
     try {
       const u = new URL(relativePath);
-      if (u.hostname.includes("quanly.linhkienamthanh.net")) {
-        const fn = decodeURIComponent(u.pathname.split("/").pop() || "");
-        if (fn) return `${resolveLabelsPublicBaseUrl()}/api/public/labels/${encodeURIComponent(fn)}`;
+      const fn = decodeURIComponent(u.pathname.split("/").pop() || "");
+      if (fn && /\.pdf$/i.test(fn)) {
+        return `${resolveLabelsPublicBaseUrl()}/prints/${encodeURIComponent(fn)}`;
       }
     } catch {
       /* keep as-is */
@@ -373,9 +408,13 @@ function absoluteLabelUrl(relativePath: string | null | undefined): string | nul
     return relativePath;
   }
   let p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
-  if (p.startsWith("/labels/")) {
-    const fn = decodeURIComponent(p.replace(/^\/labels\//, ""));
-    if (fn) p = `/api/public/labels/${encodeURIComponent(fn)}`;
+  // Chuẩn hóa mọi path cũ (/labels/, /api/labels/, /api/public/labels/) → /prints/
+  const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
+  if (fnMatch?.[1]) {
+    p = `/prints/${decodeURIComponent(fnMatch[1])}`;
+  } else if (!p.startsWith("/prints/")) {
+    const bare = path.basename(p);
+    if (/\.pdf$/i.test(bare)) p = `/prints/${bare}`;
   }
   return `${resolveLabelsPublicBaseUrl()}${p}`;
 }
@@ -13801,6 +13840,19 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+  // Static PDF vận đơn — mở trực tiếp như file trên mây (Sapo-style).
+  ensurePrintsDir();
+  app.use(
+    "/prints",
+    express.static(PRINTS_DIR, {
+      fallthrough: true,
+      setHeaders(res) {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Cache-Control", "public, max-age=3600");
+      },
+    }),
+  );
+
   /**
    * Shopee Push/Webhook POST — đăng ký SỚM (trước mọi route nặng / catch-all 404).
    * URL Console thường dùng /api/auth/shopee/callback — bắt buộc nhận POST, luôn 200.
@@ -14243,19 +14295,25 @@ async function startServer() {
   app.put("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
   app.post("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
 
-    // PDF vận đơn — public (tab in mới không gửi Bearer). LiteSpeed thường chặn /labels/* trước Node;
-    // route /api/public/labels/* luôn vào Express.
+    // PDF vận đơn — public/prints (static) + fallback route cũ /api/*/labels.
+    app.get("/prints/:filename", (req, res) => {
+      const result = serveLabelPdfFromMem(req.params.filename, res);
+      if (result === "not_found") {
+        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (đã hết hạn hoặc chưa tạo).");
+      }
+    });
+
     app.get("/api/public/labels/:filename", (req, res) => {
       const result = serveLabelPdfFromMem(req.params.filename, res);
       if (result === "not_found") {
-        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (hết hạn hoặc chưa tạo trong RAM).");
+        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (đã hết hạn hoặc chưa tạo).");
       }
     });
 
     app.get("/api/labels/:filename", (req, res) => {
       const result = serveLabelPdfFromMem(req.params.filename, res);
       if (result === "not_found") {
-        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (hết hạn hoặc chưa tạo trong RAM).");
+        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (đã hết hạn hoặc chưa tạo).");
       }
     });
 
@@ -18487,8 +18545,8 @@ async function startServer() {
 
   const LABEL_DOWNLOAD_CONCURRENCY = 5;
 
-  // PDF vận đơn: RAM cache (labelMemCache) + GET /labels|/api/labels|/api/public/labels.
-  // Không ghi đĩa — tab in mới mở URL tạm (TTL 15 phút) không cần Authorization.
+  // PDF vận đơn: lưu public/prints/ + GET /prints|/labels|/api/labels|/api/public/labels.
+  // FE mở URL tĩnh trực tiếp (TTL cleanup 72 giờ) — không cần Authorization.
   scheduleWaybillsCleanup();
 
   app.get("/labels/:filename", (req, res, next) => {
@@ -18520,13 +18578,38 @@ async function startServer() {
   function buildMergedLabelFilename(orderSns: string[]): string {
     const safe = orderSns.map((sn) => String(sn).replace(/[^a-zA-Z0-9_-]/g, "")).filter(Boolean);
     const primarySn = safe[0] || "bulk";
-    return safe.length > 1 ? `${primarySn}_gop_${safe.length}_don.pdf` : `${primarySn}.pdf`;
+    const ts = Date.now();
+    return safe.length > 1
+      ? `order_${primarySn}_gop_${safe.length}_${ts}.pdf`
+      : `order_${primarySn}_${ts}.pdf`;
   }
 
   function findExistingLabelFile(orderSn: string): string | null {
-    const fname = buildMergedLabelFilename([orderSn]);
-    const hit = getLabelMem(fname);
-    return hit && isPdfBuffer(hit.buf) ? fname : null;
+    const sn = String(orderSn || "").replace(/[^a-zA-Z0-9_-]/g, "");
+    if (!sn) return null;
+    ensurePrintsDir();
+    try {
+      const matches = fs
+        .readdirSync(PRINTS_DIR)
+        .filter(
+          (name) =>
+            /\.pdf$/i.test(name) &&
+            (name === `${sn}.pdf` ||
+              name.startsWith(`${sn}_`) ||
+              name.startsWith(`order_${sn}_`)),
+        )
+        .map((name) => {
+          const full = path.join(PRINTS_DIR, name);
+          return { name, mtime: fs.statSync(full).mtimeMs };
+        })
+        .sort((a, b) => b.mtime - a.mtime);
+      const newest = matches[0]?.name;
+      if (!newest) return null;
+      const hit = getLabelMem(newest);
+      return hit && isPdfBuffer(hit.buf) ? newest : null;
+    } catch {
+      return null;
+    }
   }
 
   function readExistingLabelBuffer(orderSn: string): Buffer | null {
@@ -18536,13 +18619,13 @@ async function startServer() {
     return hit && isPdfBuffer(hit.buf) ? hit.buf : null;
   }
 
-  /** Cache PDF vào RAM (không ghi đĩa). */
+  /** Lưu PDF vào public/prints/ (ghi đè file cùng mã đơn). */
   function saveLabelFile(buffer: Buffer, filename: string, contentType?: string): string {
     try {
       return putLabelMem(filename, buffer, contentType);
     } catch (err: any) {
       console.error(
-        `[Shopee Print] Từ chối cache RAM — ${filename}: ${err?.message || err}, size=${buffer.length}, type=${contentType || ""}`
+        `[Shopee Print] Từ chối lưu PDF — ${filename}: ${err?.message || err}, size=${buffer.length}, type=${contentType || ""}`
       );
       throw err;
     }
@@ -18552,7 +18635,7 @@ async function startServer() {
     try {
       saveLabelFile(buffer, filename, contentType);
     } catch (err) {
-      console.warn(`[Shopee Print] Cache RAM thất bại ${filename}:`, err);
+      console.warn(`[Shopee Print] Lưu PDF thất bại ${filename}:`, err);
     }
   }
 
@@ -18661,18 +18744,18 @@ async function startServer() {
       if (hit && isPdfBuffer(hit.buf)) pdfBuffers.push(hit.buf);
     }
     if (pdfBuffers.length === 0) return null;
-    if (pdfBuffers.length === 1) return `/labels/${filenames[0]}`;
+    if (pdfBuffers.length === 1) return `/prints/${filenames[0]}`;
 
     const merged = await mergePdfBuffers(pdfBuffers);
     const mergedName = buildMergedLabelFilename(orderSns);
     saveLabelFile(merged, mergedName, "application/pdf");
-    console.log(`[Shopee Print] Đã gộp ${pdfBuffers.length} PDF (RAM) thành 1 file: ${mergedName}`);
-    return `/labels/${mergedName}`;
+    console.log(`[Shopee Print] Đã gộp ${pdfBuffers.length} PDF thành 1 file: ${mergedName}`);
+    return `/prints/${mergedName}`;
   }
 
   // Generates one real Shopee AWB/label document (grouped per shop) for the
   // given orders, polls until Shopee finishes rendering it, downloads the raw
-  // file and caches it in RAM so the frontend can open/print via a temporary URL.
+  // file and lưu public/prints/ so the frontend can open/print via static URL.
   // The full create→poll→download pipeline is wrapped in a retry loop: Shopee
   // sometimes hasn't finished internally processing the order's logistics
   // status yet (transient "All failed, please check result_list for detail"),
@@ -19108,7 +19191,7 @@ async function startServer() {
     if (!alreadyCached) {
       saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
-    console.log(`[Shopee Print] Cached vận đơn RAM (${downloadList.length} đơn → ${filename}, ${downloadResult.buffer.length} bytes, ~${pages} trang).`);
+    console.log(`[Shopee Print] Saved vận đơn disk (${downloadList.length} đơn → ${filename}, ${downloadResult.buffer.length} bytes, ~${pages} trang).`);
 
     return {
       success: true,
@@ -19117,8 +19200,7 @@ async function startServer() {
       orderSns,
       skippedOrders: [...skippedOrders, ...pollFailed],
       buffer: downloadResult.buffer,
-      pdfBase64: downloadResult.buffer.toString("base64"),
-      url: absoluteLabelUrl(`/labels/${filename}`),
+      url: absoluteLabelUrl(`/prints/${filename}`),
       pageCount: pages,
     };
   }
@@ -19228,7 +19310,6 @@ async function startServer() {
     }
 
     let primaryUrl: string | null = null;
-    let pdfBase64: string | null = null;
     let pdfFilename: string | null = null;
 
     if (pdfBuffers.length > 0) {
@@ -19236,25 +19317,18 @@ async function startServer() {
       const mergedBuf = pdfBuffers.length === 1 ? pdfBuffers[0] : await mergePdfBuffers(pdfBuffers);
       pdfBuffers.length = 0;
       pdfFilename = buildMergedLabelFilename(printedOrderSns);
-      // Giới hạn base64 trả job (~12MB PDF) để tránh phình response/RAM khi batch lớn.
-      const MAX_JOB_PDF_BYTES = 12 * 1024 * 1024;
-      if (mergedBuf.length <= MAX_JOB_PDF_BYTES) {
-        pdfBase64 = mergedBuf.toString("base64");
-      } else {
-        console.warn(
-          `[Ship Order Bulk Auto-Print] PDF gộp ${mergedBuf.length} bytes > ${MAX_JOB_PDF_BYTES} — chỉ trả URL RAM, bỏ pdfBase64.`,
-        );
-      }
-      primaryUrl = `/labels/${pdfFilename}`;
-      saveLabelFileAsync(mergedBuf, pdfFilename, "application/pdf");
+      saveLabelFile(mergedBuf, pdfFilename, "application/pdf");
+      primaryUrl = absoluteLabelUrl(`/prints/${pdfFilename}`);
     } else if (savedFilenames.length > 0) {
-      primaryUrl = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
+      const relative = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
+      primaryUrl = absoluteLabelUrl(relative);
+      pdfFilename = relative ? path.basename(relative) : null;
     }
 
-    if (!primaryUrl && !pdfBase64) {
+    if (!primaryUrl) {
       return { url: null, printedOrderSns, skippedOrders, message: "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c v\u1EAD n \u0111\u01A1n t\u1EF1 \u0111\u1ED9ng sau khi chu\u1EA9n b\u1EB1 h\xE0ng." };
     }
-    return { url: primaryUrl, pdfBase64, pdfFilename, printedOrderSns, skippedOrders };
+    return { success: true, url: primaryUrl, pdfFilename, printedOrderSns, skippedOrders };
   }
 
   async function executeShipOrderBackgroundJob(
@@ -19499,7 +19573,7 @@ async function startServer() {
     const allPrintedSns: string[] = [];
     const missingTrackingOrders: any[] = [];
 
-    const labelUrl = (filename: string) => absoluteLabelUrl(`/labels/${filename}`);
+    const labelUrl = (filename: string) => absoluteLabelUrl(`/prints/${filename}`);
 
     for (const [shopId, groupOrders] of Object.entries(groups)) {
       // Không dùng cache từng đơn lẻ khi in hàng loạt — luôn tạo/gộp đủ order_list.
@@ -19711,7 +19785,6 @@ async function startServer() {
 
     let primaryUrl: string | null = null;
     let pdfFilename: string | null = null;
-    let pdfBase64: string | null = null;
 
     // LUÔN gộp thành 1 PDF duy nhất trước khi trả FE — tuyệt đối không trả URL đơn đầu tiên.
     if (mergeBuffers.length > 0 || allPrintedSns.length > 0) {
@@ -19735,10 +19808,6 @@ async function startServer() {
       if (mergedBuf && isPdfBuffer(mergedBuf)) {
         saveLabelFile(mergedBuf, pdfFilename, "application/pdf");
         primaryUrl = labelUrl(pdfFilename);
-        const MAX_RESP_PDF_BYTES = 12 * 1024 * 1024;
-        if (mergedBuf.length <= MAX_RESP_PDF_BYTES) {
-          pdfBase64 = mergedBuf.toString("base64");
-        }
         const pages = await countPdfPages(mergedBuf);
         console.log(
           `[Shopee Print] Response PDF gộp: ${allPrintedSns.length} đơn / ${pages} trang → ${pdfFilename}`,
@@ -19766,23 +19835,24 @@ async function startServer() {
       `[Shopee Print] Hoàn tất: đã in ${printedOrderSns.size} đơn / ${shopeeCandidates.length} ứng viên (không lọc carrier).`,
     );
 
-    purgeExpiredLabelMem();
+    cleanupExpiredPrintFiles();
 
     return res.json({
+      success: true,
+      url: primaryUrl,
       mergedUrl: primaryUrl,
       pdfFilename,
-      pdfBase64,
       documents: documents.map((d: any) =>
         d.url
           ? {
               ...d,
-              url: d.url.startsWith("http") ? d.url : absoluteLabelUrl(d.url.startsWith("/") ? d.url : `/labels/${d.url}`),
+              url: d.url.startsWith("http") ? d.url : absoluteLabelUrl(d.url.startsWith("/") ? d.url : `/prints/${d.url}`),
             }
           : d,
       ),
       orders: updatedOrders.filter(isValidOrder),
       shippingDocumentType: SHOPEE_SHIPPING_DOCUMENT_TYPE,
-      openMode: pdfBase64 ? "blob_pdf" : "new_tab_pdf",
+      openMode: "static_url",
     });
     } catch (error: any) {
       console.error("[Shopee Print] fatal:", error?.response?.data || error?.message || error);
@@ -20834,7 +20904,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
           details: "not_found",
         });
       }
-      if (pathName.startsWith("/labels/")) {
+      if (pathName.startsWith("/labels/") || pathName.startsWith("/prints/")) {
         return res.status(404).type("text/plain").send("Không tìm thấy file vận đơn.");
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");

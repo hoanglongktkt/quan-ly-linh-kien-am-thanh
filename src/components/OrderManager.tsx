@@ -73,7 +73,7 @@ import {
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
-import { resolveBackendFileUrl, resolveLabelFetchUrl, parseJsonResponse, readResponseJson, base64ToPdfBlob } from '../utils/apiClient';
+import { resolveLabelFetchUrl, parseJsonResponse, readResponseJson } from '../utils/apiClient';
 import { aggregateOrderProducts } from '../utils/aggregateOrderProducts';
 import { getCarrierWaybillDisplay } from '../utils/orderTracking';
 import {
@@ -1341,7 +1341,6 @@ export default function OrderManager({
 
   /** Modal "Tiếp tục In Đơn" — bypass popup blocker sau await xác nhận hàng loạt. */
   type PendingAutoPrint = {
-    pdfBase64?: string | null;
     pdfFilename?: string | null;
     url?: string | null;
     successfullyConfirmedIds: string[];
@@ -1349,7 +1348,6 @@ export default function OrderManager({
   };
   const [pendingAutoPrint, setPendingAutoPrint] = useState<PendingAutoPrint | null>(null);
   const [silentPrintSrc, setSilentPrintSrc] = useState<string | null>(null);
-  const silentPrintBlobUrlRef = React.useRef<string | null>(null);
 
   // Floating "processing..." overlay shown during any real Shopee API call
   // (ship_order / create+download shipping document), single or bulk — gives
@@ -1400,22 +1398,15 @@ export default function OrderManager({
   };
 
   const revokeSilentPrintBlob = () => {
-    if (silentPrintBlobUrlRef.current) {
-      try {
-        URL.revokeObjectURL(silentPrintBlobUrlRef.current);
-      } catch {
-        /* ignore */
-      }
-      silentPrintBlobUrlRef.current = null;
-    }
+    setSilentPrintSrc(null);
   };
 
-  /** In ngầm qua iframe — bypass popup blocker sau await API. */
-  const printPdfViaHiddenIframe = (blob: Blob): void => {
-    revokeSilentPrintBlob();
-    const blobUrl = URL.createObjectURL(blob);
-    silentPrintBlobUrlRef.current = blobUrl;
-    setSilentPrintSrc(blobUrl);
+  /** In ngầm qua iframe — bypass popup blocker sau await API (URL tĩnh, không blob). */
+  const printPdfViaHiddenIframe = (printUrl: string): void => {
+    const absolute = /^https?:\/\//i.test(printUrl)
+      ? printUrl
+      : new URL(printUrl.startsWith('/') ? printUrl : `/${printUrl}`, window.location.origin).href;
+    setSilentPrintSrc(absolute);
   };
 
   const handleSilentPrintIframeLoad = (e: React.SyntheticEvent<HTMLIFrameElement>) => {
@@ -1429,7 +1420,6 @@ export default function OrderManager({
     }
     window.setTimeout(() => {
       revokeSilentPrintBlob();
-      setSilentPrintSrc(null);
     }, 120_000);
   };
 
@@ -1443,23 +1433,14 @@ export default function OrderManager({
     return window.open(absolute, '_blank');
   };
 
-  const openPdfBlobInNewTab = (blob: Blob): Window | null => {
-    const blobUrl = URL.createObjectURL(blob);
-    const win = window.open(blobUrl, '_blank');
-    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 120_000);
-    return win;
-  };
-
   const queuePendingAutoPrint = (
     opts: {
-      pdfBase64?: string | null;
       pdfFilename?: string | null;
       url?: string | null;
     },
     successfullyConfirmedIds: string[] = []
   ) => {
     setPendingAutoPrint({
-      pdfBase64: opts.pdfBase64,
       pdfFilename: opts.pdfFilename,
       url: opts.url,
       successfullyConfirmedIds,
@@ -1467,10 +1448,9 @@ export default function OrderManager({
     });
   };
 
-  /** Mở/in PDF: ưu tiên base64 → iframe print; fallback window.open; popup bị chặn → modal click. */
+  /** Mở PDF qua static URL — window.open trực tiếp (kiểu Sapo), không blob/base64. */
   const openShopeeLabelFromStream = async (
     opts: {
-      pdfBase64?: string | null;
       pdfFilename?: string | null;
       url?: string | null;
     },
@@ -1480,79 +1460,27 @@ export default function OrderManager({
       showContinueModalOnBlock?: boolean;
     }
   ) => {
-    const sessionKey =
-      (opts.pdfBase64 ? `b64:${opts.pdfBase64.slice(0, 48)}` : '') ||
-      (opts.url && String(opts.url).trim()) ||
-      '';
+    const printUrl = String(opts.url || '').trim();
+    const sessionKey = printUrl;
     if (!sessionKey || !beginPdfOpenSession(sessionKey, !!options?.force)) return;
 
     const confirmedIds = options?.successfullyConfirmedIds || [];
     const showModalOnBlock = options?.showContinueModalOnBlock !== false;
+    const fullUrl = resolveLabelFetchUrl(printUrl);
 
-    const openBlobForPrint = (blob: Blob) => {
-      // Thử tab trước (user xem PDF); nếu bị chặn → iframe.print + modal click.
-      const win = openPdfBlobInNewTab(blob);
-      if (win) {
-        showToast('Đã mở vận đơn — bấm In trên trình xem PDF.');
-        return true;
-      }
-      console.warn('[Auto-Print] window.open bị chặn — chuyển iframe print / modal tiếp tục.');
-      printPdfViaHiddenIframe(blob);
-      if (showModalOnBlock) {
-        queuePendingAutoPrint(opts, confirmedIds);
-        showToast('Trình duyệt chặn popup — đang in ngầm; bấm "Tiếp tục In Đơn" nếu cần.');
-      } else {
-        showToast('Đang mở hộp thoại in vận đơn...');
-      }
-      return false;
-    };
-
-    // 1) Ưu tiên pdfBase64 (không phụ thuộc RAM URL / proxy sau await dài)
-    if (opts.pdfBase64) {
-      try {
-        openBlobForPrint(base64ToPdfBlob(opts.pdfBase64));
-      } catch (err) {
-        console.error('[Auto-Print] Decode pdfBase64 lỗi:', err);
-        showToast('Không đọc được file vận đơn PDF.');
-      }
+    const win = openPrintUrlInBlankTab(fullUrl);
+    if (win) {
+      showToast('Đã mở vận đơn — bấm In trên trình xem PDF.');
       return;
     }
 
-    // 2) Fetch URL → blob → iframe/print (tránh window.open URL sau await)
-    if (opts.url) {
-      const fullUrl = resolveLabelFetchUrl(opts.url);
-      try {
-        let res = await fetch(fullUrl, { credentials: 'same-origin' });
-        if (!res.ok && fullUrl.startsWith('/api/labels/')) {
-          const altUrl = resolveBackendFileUrl(opts.url);
-          if (altUrl !== fullUrl) res = await fetch(altUrl, { credentials: 'same-origin' });
-        }
-        if (!res.ok) {
-          const errText = await res.text().catch(() => '');
-          showToast(`Không lấy được vận đơn (HTTP ${res.status}). ${errText.slice(0, 80) || 'Thử lại sau vài giây.'}`);
-          if (showModalOnBlock && confirmedIds.length > 0) {
-            queuePendingAutoPrint(opts, confirmedIds);
-          }
-          return;
-        }
-        const buf = await res.arrayBuffer();
-        const head = new Uint8Array(buf.slice(0, 4));
-        const isPdf = head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46;
-        if (!isPdf) {
-          showToast('File vận đơn không hợp lệ (backend trả HTML thay vì PDF).');
-          return;
-        }
-        openBlobForPrint(new Blob([buf], { type: 'application/pdf' }));
-      } catch (err) {
-        console.error('[Auto-Print] Fetch PDF lỗi:', err);
-        const win = openPrintUrlInBlankTab(fullUrl);
-        if (!win && showModalOnBlock) {
-          queuePendingAutoPrint(opts, confirmedIds);
-          showToast('Không mở được tab PDF — bấm "Tiếp tục In Đơn".');
-        } else if (win) {
-          showToast('Đã mở vận đơn — bấm In trên trình xem PDF.');
-        }
-      }
+    console.warn('[Auto-Print] window.open bị chặn — chuyển iframe print / modal tiếp tục.');
+    printPdfViaHiddenIframe(fullUrl);
+    if (showModalOnBlock) {
+      queuePendingAutoPrint(opts, confirmedIds);
+      showToast('Trình duyệt chặn popup — đang in ngầm; bấm "Tiếp tục In Đơn" nếu cần.');
+    } else {
+      showToast('Đang mở hộp thoại in vận đơn...');
     }
   };
 
@@ -1561,10 +1489,9 @@ export default function OrderManager({
     const payload = pendingAutoPrint;
     setPendingAutoPrint(null);
 
-    if (payload.pdfBase64 || payload.url) {
+    if (payload.url) {
       await openShopeeLabelFromStream(
         {
-          pdfBase64: payload.pdfBase64,
           pdfFilename: payload.pdfFilename,
           url: payload.url,
         },
@@ -1594,8 +1521,9 @@ export default function OrderManager({
   };
 
   type PrintDocumentResponse = {
+    success?: boolean;
+    url?: string;
     mergedUrl?: string;
-    pdfBase64?: string;
     pdfFilename?: string;
     documents?: { url?: string; message?: string; error?: string }[];
     orders?: Order[];
@@ -1625,7 +1553,7 @@ export default function OrderManager({
     openPdf: boolean
   ): Promise<{ success: boolean; message?: string; mergedUrl?: string | null }> => {
     const failedDocs = (data.documents || []).filter((d) => !d.url);
-    const printUrl = data.mergedUrl || (data.documents || []).find((d) => d.url)?.url;
+    const printUrl = data.url || data.mergedUrl || (data.documents || []).find((d) => d.url)?.url;
     const trackingMissing = failedDocs.some((d) => d.error === 'tracking_number_missing')
       || data.error === 'tracking_number_missing';
 
@@ -1633,15 +1561,11 @@ export default function OrderManager({
       onUpdateOrders(data.orders);
     }
 
-    if (openPdf) {
-      // Ưu tiên pdfBase64 (ổn định sau await) — URL chỉ khi không có base64.
-      if (data.pdfBase64 || printUrl) {
-        await openShopeeLabelFromStream({
-          pdfBase64: data.pdfBase64,
-          pdfFilename: data.pdfFilename,
-          url: data.pdfBase64 ? null : printUrl,
-        });
-      }
+    if (openPdf && printUrl) {
+      await openShopeeLabelFromStream({
+        pdfFilename: data.pdfFilename,
+        url: printUrl,
+      });
     }
 
     if (printUrl) {
@@ -1655,18 +1579,6 @@ export default function OrderManager({
         };
       }
       return { success: true, mergedUrl: printUrl };
-    }
-
-    if (data.pdfBase64) {
-      if (failedDocs.length > 0) {
-        return {
-          success: true,
-          message: trackingMissing
-            ? TRACKING_MISSING_TOAST
-            : `Một số đơn lỗi: ${failedDocs.map((d) => d.message || d.error).join('; ')}`,
-        };
-      }
-      return { success: true };
     }
 
     if (trackingMissing) {
@@ -1886,13 +1798,12 @@ export default function OrderManager({
         : [];
       const coversAllConfirmed =
         printedSnsFromJob.length >= successfullyConfirmedIds.length &&
-        !!(finalJob?.printDocument?.pdfBase64 || finalJob?.printDocument?.url);
+        !!finalJob?.printDocument?.url;
 
       try {
         if (coversAllConfirmed) {
           await openShopeeLabelFromStream(
             {
-              pdfBase64: finalJob.printDocument.pdfBase64,
               pdfFilename: finalJob.printDocument.pdfFilename,
               url: finalJob.printDocument.url,
             },
@@ -1908,7 +1819,6 @@ export default function OrderManager({
             showToast(printResult.message);
             queuePendingAutoPrint(
               {
-                pdfBase64: finalJob?.printDocument?.pdfBase64,
                 url: finalJob?.printDocument?.url,
                 pdfFilename: finalJob?.printDocument?.pdfFilename,
               },
@@ -2040,12 +1950,11 @@ export default function OrderManager({
           : [];
         const syncCoversAll =
           printedSnsSync.length >= successfullyConfirmedIds.length &&
-          !!(syncData.printDocument?.pdfBase64 || syncData.printDocument?.url);
+          !!syncData.printDocument?.url;
         try {
           if (syncCoversAll) {
             await openShopeeLabelFromStream(
               {
-                pdfBase64: syncData.printDocument.pdfBase64,
                 pdfFilename: syncData.printDocument.pdfFilename,
                 url: syncData.printDocument.url,
               },

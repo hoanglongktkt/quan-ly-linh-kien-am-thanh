@@ -75,9 +75,18 @@ export default async function handler(req, res) {
     return res.status(404).json({ success: false, error: 'Not found' });
   }
 
-  // PDF vận đơn: /api?path=labels/xxx.pdf hoặc /api/labels/...
-  if (route === 'labels' || route.startsWith('labels/')) {
-    return handleLabelProxy(req, res, route.replace(/^labels\/?/, ''));
+  // PDF vận đơn: /api?path=labels/xxx.pdf | prints/xxx.pdf hoặc /api/labels/...
+  if (
+    route === 'labels' ||
+    route.startsWith('labels/') ||
+    route === 'prints' ||
+    route.startsWith('prints/')
+  ) {
+    return handleLabelProxy(
+      req,
+      res,
+      route.replace(/^(?:labels|prints)\/?/, ''),
+    );
   }
 
   // Dynamic: POST /api/orders/:id/hand-over-carrier

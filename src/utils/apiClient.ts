@@ -57,15 +57,14 @@ export function getApiBaseUrl(): string {
 }
 
 /**
- * URL mở file vận đơn PDF.
- * Vercel / quanly: relative `/labels/...` → vercel.json proxy `/api/labels/...` → cPanel (tránh 508 loop).
- * Khác origin: trỏ thẳng api.linhkienamthanh.net.
+ * URL mở file vận đơn PDF (static /prints/... trên cPanel).
+ * Absolute URL từ API → dùng nguyên; relative → chuẩn hóa sang /prints/ hoặc proxy API.
  */
 export function resolveBackendFileUrl(path: string): string {
   return resolveLabelFetchUrl(path);
 }
 
-/** URL fetch PDF vận đơn — dùng /api/labels/ trực tiếp (tránh rewrite /labels 400). */
+/** URL mở PDF vận đơn — ưu tiên /prints/ static (Sapo-style), fallback /api/labels/. */
 export function resolveLabelFetchUrl(path: string): string {
   const raw = String(path || '').trim();
   if (/^https?:\/\//i.test(raw)) return raw;
@@ -86,17 +85,19 @@ export function resolveLabelFetchUrl(path: string): string {
   }
 
   const encoded = encodeURIComponent(filename);
+  // Absolute static URL trên API (cPanel) — mở thẳng, không blob.
   if (typeof window === 'undefined') {
-    return `${PRODUCTION_API_BASE}/api/public/labels/${encoded}`;
+    return `${PRODUCTION_API_BASE}/prints/${encoded}`;
   }
   const hostname = window.location.hostname;
-  if (isLocalDevHost(hostname) || isVercelHost(hostname) || isMainProductionHost(hostname)) {
-    return `/api/labels/${encoded}`;
+  if (isLocalDevHost(hostname)) {
+    return `/prints/${encoded}`;
   }
-  return `${PRODUCTION_API_BASE}/api/public/labels/${encoded}`;
+  // Production / Vercel: mở thẳng URL API (tránh SPA rewrite nuốt /prints).
+  return `${PRODUCTION_API_BASE}/prints/${encoded}`;
 }
 
-/** Chuyển PDF base64 từ API stream → Blob in ngay (không fetch URL). */
+/** @deprecated Giữ tương thích — không còn dùng blob base64 cho in vận đơn. */
 export function base64ToPdfBlob(base64: string): Blob {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);

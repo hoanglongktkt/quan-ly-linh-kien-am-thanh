@@ -29,6 +29,10 @@
   },
   "rewrites": [
     {
+      "source": "/prints/:path*",
+      "destination": "/api?path=prints/:path*"
+    },
+    {
       "source": "/labels/:path*",
       "destination": "/api?path=labels/:path*"
     },
@@ -41,7 +45,7 @@
       "destination": "/api?path=$1"
     },
     {
-      "source": "/((?!api/|labels/|assets/|logo\\.png|logo\\.svg|favicon\\.ico).*)",
+      "source": "/((?!api/|labels/|prints/|assets/|logo\\.png|logo\\.svg|favicon\\.ico).*)",
       "destination": "/index.html"
     }
   ]
