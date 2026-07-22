@@ -75,7 +75,7 @@ export function resolveLabelFetchUrl(path: string): string {
   }
 
   const filename = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
-  if (!filename || !/\.pdf$/i.test(filename)) {
+  if (!filename || !/\.pdf$/i.test(filename) || filename.includes('..')) {
     if (typeof window === 'undefined') return `${PRODUCTION_API_BASE}${pathname}`;
     const hostname = window.location.hostname;
     if (isLocalDevHost(hostname) || isVercelHost(hostname) || isMainProductionHost(hostname)) {
@@ -84,17 +84,16 @@ export function resolveLabelFetchUrl(path: string): string {
     return `${PRODUCTION_API_BASE}${pathname}`;
   }
 
-  const encoded = encodeURIComponent(filename);
-  // Absolute static URL trên API (cPanel) — mở thẳng, không blob.
+  // Giữ tên file sạch trong path (không encodeURIComponent) — Apache/Express phục vụ đúng.
   if (typeof window === 'undefined') {
-    return `${PRODUCTION_API_BASE}/prints/${encoded}`;
+    return `${PRODUCTION_API_BASE}/prints/${filename}`;
   }
   const hostname = window.location.hostname;
   if (isLocalDevHost(hostname)) {
-    return `/prints/${encoded}`;
+    return `/prints/${filename}`;
   }
   // Production / Vercel: mở thẳng URL API (tránh SPA rewrite nuốt /prints).
-  return `${PRODUCTION_API_BASE}/prints/${encoded}`;
+  return `${PRODUCTION_API_BASE}/prints/${filename}`;
 }
 
 /** @deprecated Giữ tương thích — không còn dùng blob base64 cho in vận đơn. */

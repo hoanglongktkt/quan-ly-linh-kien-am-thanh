@@ -222,7 +222,20 @@ function removeExistingPrintFilesForOrderSns(orderSns: string[]): number {
 function putLabelMem(filename: string, buffer: Buffer, contentType?: string): string {
   const safe = safeLabelFilename(filename);
   if (!safe) throw new Error(`Tên file vận đơn không hợp lệ: ${filename}`);
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+    console.error(`[Prints] TỪ CHỐI ghi file rỗng: ${filename}, type=${contentType || ""}`);
+    throw new Error("Buffer PDF rỗng — không ghi file tĩnh xuống đĩa.");
+  }
+  if (buffer.length < 64) {
+    console.error(
+      `[Prints] Buffer quá nhỏ (${buffer.length} bytes), head=${buffer.subarray(0, Math.min(20, buffer.length)).toString("hex")}`,
+    );
+    throw new Error(`Buffer PDF không hợp lệ (chỉ ${buffer.length} bytes).`);
+  }
   if (!isPdfBuffer(buffer, contentType)) {
+    console.error(
+      `[Prints] Không phải PDF: ${filename}, size=${buffer.length}, head=${buffer.subarray(0, 20).toString("hex")}`,
+    );
     throw new Error("Dữ liệu vận đơn từ Shopee không phải PDF hợp lệ.");
   }
   ensurePrintsDir();
@@ -231,9 +244,42 @@ function putLabelMem(filename: string, buffer: Buffer, contentType?: string): st
   const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
   if (snMatch?.[1]) removeExistingPrintFilesForOrderSns([snMatch[1]]);
   const dest = path.join(PRINTS_DIR, safe);
-  fs.writeFileSync(dest, buffer);
-  console.log(`[Prints] Saved ${safe} (${buffer.length} bytes) → ${dest}`);
-  return safe;
+  try {
+    fs.writeFileSync(dest, buffer);
+    const st = fs.statSync(dest);
+    if (!st.isFile() || st.size <= 0) {
+      try {
+        fs.unlinkSync(dest);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`Ghi PDF thất bại — file trên đĩa rỗng hoặc không tồn tại: ${dest}`);
+    }
+    if (st.size !== buffer.length) {
+      console.warn(`[Prints] Cảnh báo size lệch: buffer=${buffer.length} disk=${st.size} → ${dest}`);
+    }
+    // Xác minh magic bytes sau khi ghi.
+    const head = Buffer.alloc(5);
+    const fd = fs.openSync(dest, "r");
+    try {
+      fs.readSync(fd, head, 0, 5, 0);
+    } finally {
+      fs.closeSync(fd);
+    }
+    if (head.toString("utf8", 0, 4) !== "%PDF") {
+      try {
+        fs.unlinkSync(dest);
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`File ghi ra không còn là PDF hợp lệ: ${safe}`);
+    }
+    console.log(`[Prints] Saved OK ${safe} (${st.size} bytes) → ${dest}`);
+    return safe;
+  } catch (err: any) {
+    console.error(`[Prints] Lỗi ghi file ${dest}:`, err?.message || err);
+    throw err;
+  }
 }
 
 function getLabelMem(filename: string): { buf: Buffer; contentType?: string } | null {
@@ -343,30 +389,40 @@ if (typeof (labelDiskCleanupTimer as any).unref === "function") {
 type ServeLabelPdfResult = "sent" | "not_found" | "invalid";
 
 function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
-  const safe = safeLabelFilename(filename);
-  if (!safe) {
-    res.status(400).type("text/plain").send("Tên file vận đơn không hợp lệ.");
+  try {
+    const safe = safeLabelFilename(decodeURIComponent(String(filename || "")));
+    if (!safe) {
+      res.status(400).type("text/plain").send("Tên file vận đơn không hợp lệ.");
+      return "invalid";
+    }
+    const hit = getLabelMem(safe);
+    if (!hit) {
+      console.warn(`[Prints] 404 — không thấy file: ${safe} (dir=${PRINTS_DIR})`);
+      return "not_found";
+    }
+    if (!hit.buf.length || !isPdfBuffer(hit.buf, hit.contentType)) {
+      console.error(
+        `[Prints] Buffer không phải PDF hợp lệ: ${safe}, size=${hit.buf.length}, head=${hit.buf.subarray(0, 20).toString("hex")}`
+      );
+      res.status(415).type("text/plain").send("File vận đơn không phải PDF hợp lệ.");
+      return "invalid";
+    }
+    res.status(200);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
+    res.setHeader("Content-Length", String(hit.buf.length));
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(hit.buf);
+    console.log(`[Prints] Served PDF ${safe} (${hit.buf.length} bytes)`);
+    return "sent";
+  } catch (err: any) {
+    console.error(`[Prints] serveLabelPdf lỗi:`, err?.message || err);
+    if (!res.headersSent) {
+      res.status(500).type("text/plain").send("Lỗi đọc file vận đơn PDF.");
+    }
     return "invalid";
   }
-  const hit = getLabelMem(safe);
-  if (!hit) {
-    return "not_found";
-  }
-  if (!isPdfBuffer(hit.buf, hit.contentType)) {
-    console.error(
-      `[Prints] Buffer không phải PDF hợp lệ: ${safe}, size=${hit.buf.length}, head=${hit.buf.subarray(0, 20).toString("hex")}`
-    );
-    res.status(415).type("text/plain").send("File vận đơn không phải PDF hợp lệ.");
-    return "invalid";
-  }
-  res.status(200);
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
-  res.setHeader("Content-Length", String(hit.buf.length));
-  res.setHeader("Cache-Control", "public, max-age=3600");
-  res.end(hit.buf);
-  console.log(`[Prints] Served PDF ${safe} (${hit.buf.length} bytes)`);
-  return "sent";
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || "omnisales-vn-super-secret-key-2026";
@@ -399,8 +455,9 @@ function absoluteLabelUrl(relativePath: string | null | undefined): string | nul
     try {
       const u = new URL(relativePath);
       const fn = decodeURIComponent(u.pathname.split("/").pop() || "");
-      if (fn && /\.pdf$/i.test(fn)) {
-        return `${resolveLabelsPublicBaseUrl()}/prints/${encodeURIComponent(fn)}`;
+      if (fn && /\.pdf$/i.test(fn) && safeLabelFilename(fn)) {
+        // Không encodeURIComponent toàn bộ tên — giữ URL path sạch cho Apache/Express.
+        return `${resolveLabelsPublicBaseUrl()}/prints/${fn}`;
       }
     } catch {
       /* keep as-is */
@@ -411,10 +468,13 @@ function absoluteLabelUrl(relativePath: string | null | undefined): string | nul
   // Chuẩn hóa mọi path cũ (/labels/, /api/labels/, /api/public/labels/) → /prints/
   const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
   if (fnMatch?.[1]) {
-    p = `/prints/${decodeURIComponent(fnMatch[1])}`;
+    const fn = decodeURIComponent(fnMatch[1]);
+    if (!safeLabelFilename(fn)) return null;
+    p = `/prints/${fn}`;
   } else if (!p.startsWith("/prints/")) {
     const bare = path.basename(p);
-    if (/\.pdf$/i.test(bare)) p = `/prints/${bare}`;
+    if (/\.pdf$/i.test(bare) && safeLabelFilename(bare)) p = `/prints/${bare}`;
+    else return null;
   }
   return `${resolveLabelsPublicBaseUrl()}${p}`;
 }
@@ -13846,9 +13906,14 @@ async function startServer() {
     "/prints",
     express.static(PRINTS_DIR, {
       fallthrough: true,
-      setHeaders(res) {
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Cache-Control", "public, max-age=3600");
+      index: false,
+      setHeaders(res, filePath) {
+        if (String(filePath || "").toLowerCase().endsWith(".pdf")) {
+          res.setHeader("Content-Type", "application/pdf");
+          res.setHeader("Content-Disposition", "inline");
+          res.setHeader("X-Content-Type-Options", "nosniff");
+          res.setHeader("Cache-Control", "public, max-age=3600");
+        }
       },
     }),
   );
@@ -18619,13 +18684,16 @@ async function startServer() {
     return hit && isPdfBuffer(hit.buf) ? hit.buf : null;
   }
 
-  /** Lưu PDF vào public/prints/ (ghi đè file cùng mã đơn). */
+  /** Lưu PDF vào public/prints/ (ghi đè file cùng mã đơn). Tuyệt đối không ghi file rỗng. */
   function saveLabelFile(buffer: Buffer, filename: string, contentType?: string): string {
     try {
+      if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+        throw new Error(`Buffer PDF rỗng — bỏ qua ghi ${filename}`);
+      }
       return putLabelMem(filename, buffer, contentType);
     } catch (err: any) {
       console.error(
-        `[Shopee Print] Từ chối lưu PDF — ${filename}: ${err?.message || err}, size=${buffer.length}, type=${contentType || ""}`
+        `[Shopee Print] Từ chối lưu PDF — ${filename}: ${err?.message || err}, size=${buffer?.length || 0}, type=${contentType || ""}`
       );
       throw err;
     }

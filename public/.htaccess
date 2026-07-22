@@ -2,9 +2,19 @@
   RewriteEngine On
   RewriteBase /
   RewriteCond %{REQUEST_URI} !^/api/ [NC]
+  RewriteCond %{REQUEST_URI} !^/prints/ [NC]
+  RewriteCond %{REQUEST_URI} !^/labels/ [NC]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule ^ index.html [L]
+</IfModule>
+
+# PDF — MIME inline
+<IfModule mod_headers.c>
+  <FilesMatch "\.pdf$">
+    Header set Content-Type "application/pdf"
+    Header set Content-Disposition "inline"
+  </FilesMatch>
 </IfModule>
 
 # index.html luôn tải mới; file JS/CSS có hash được cache lâu

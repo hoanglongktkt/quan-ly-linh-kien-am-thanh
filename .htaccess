@@ -47,13 +47,29 @@ SetEnv SHOPEE_PARTNER_KEY shpk446c744962586c74506e486e7a4d4c676d527671496e447747
 </IfModule>
 
 # React SPA — F5 / deep link (bổ sung khi Apache phục vụ static từ dist/)
+# /prints/*.pdf → file tĩnh thật (public/prints) — KHÔNG về SPA (tránh màn hình trắng).
 <IfModule mod_rewrite.c>
   RewriteEngine On
+
+  # Phục vụ PDF vận đơn trực tiếp từ public/prints/ (Sapo-style static).
+  RewriteCond %{REQUEST_URI} ^/prints/([A-Za-z0-9._-]+\.pdf)$ [NC]
+  RewriteCond %{DOCUMENT_ROOT}/public/prints/%1 -f
+  RewriteRule ^prints/([A-Za-z0-9._-]+\.pdf)$ public/prints/$1 [L]
+
   RewriteCond %{REQUEST_URI} !^/api/ [NC]
   RewriteCond %{REQUEST_URI} !^/labels/ [NC]
+  RewriteCond %{REQUEST_URI} !^/prints/ [NC]
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule ^ dist/index.html [L]
+</IfModule>
+
+# PDF vận đơn — MIME + inline (hiển thị trên trình duyệt, không tải về)
+<IfModule mod_headers.c>
+  <FilesMatch "\.pdf$">
+    Header set Content-Type "application/pdf"
+    Header set Content-Disposition "inline"
+  </FilesMatch>
 </IfModule>
 
 # Cache: luôn tải mới index.html; JS/CSS có hash cache 1 năm
