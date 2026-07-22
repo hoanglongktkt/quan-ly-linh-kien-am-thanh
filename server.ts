@@ -9051,49 +9051,32 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   }
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
-  // BẢO VỆ TUYỆT ĐỐI is_handed_over — sync Shopee KHÔNG ghi đè / clear cờ.
-  if (existing) {
-    const existingHanded = resolveOrderHandoverFlag(existing);
-    if (existingHanded) {
-      Object.assign(
-        merged,
-        buildHandedOverWritePatch(
-          String(existing.handedOverAt || existing.local_status_updated_at || existing.localStatusAt || "") ||
-            undefined,
-          (existing.handed_over_source ||
-            existing.handedOverSource ||
-            HANDED_OVER_SOURCE.MANUAL_BUTTON) as typeof HANDED_OVER_SOURCE.MANUAL_BUTTON,
-        ),
-      );
-      if (existing.handedOverAt) merged.handedOverAt = existing.handedOverAt;
-    } else {
-      // Giữ false / NONE — không để spread từ incoming đè true→false nhầm.
-      merged.is_handed_over = false;
-      if (merged.isHandedOverToCarrier == null) {
-        Object.assign(merged, buildDefaultInternalFlagsPatch());
-      }
-    }
+
+  // ROLLBACK: sync Shopee thuần — không preserve/khởi tạo cờ ĐVVC.
+  delete merged.is_handed_over;
+  delete merged.isHandedOverToCarrier;
+  delete merged.is_handed_over_to_carrier;
+  delete merged.is_handed_over_to_courier;
+  delete merged.handedOverAt;
+  delete merged.handed_over_source;
+  delete merged.handedOverSource;
+  if (String(merged.local_status || "").toUpperCase() === "HANDED_OVER") {
+    delete merged.local_status;
+    delete merged.localStatus;
+    delete merged.internal_status;
   }
 
-  // GIỮ cờ local_status nội bộ kho (CANCELLED_STORED / RETURN_RECEIVED / HANDED_OVER).
+  // Giữ RETURN_RECEIVED / CANCELLED_STORED nội bộ (không liên quan ĐVVC).
   if (existing?.is_local_return_archived != null) {
     merged.is_local_return_archived = existing.is_local_return_archived;
   }
   const existingLocal = resolveOrderLocalStatus(existing);
-  if (existingLocal !== "NONE") {
+  if (existingLocal === "RETURN_RECEIVED" || existingLocal === "CANCELLED_STORED") {
     merged.local_status = existingLocal;
     merged.localStatus = existingLocal;
     if (existing?.localStatusAt) merged.localStatusAt = existing.localStatusAt;
     if (existing?.local_status_updated_at) {
       merged.local_status_updated_at = existing.local_status_updated_at;
-    } else if (existing?.localStatusAt) {
-      merged.local_status_updated_at = existing.localStatusAt;
-    }
-    if (existingLocal === "HANDED_OVER") {
-      merged.is_handed_over = true;
-      merged.isHandedOverToCarrier = true;
-      merged.is_handed_over_to_carrier = true;
-      if (existing?.handedOverAt) merged.handedOverAt = existing.handedOverAt;
     }
     if (
       existingLocal === "RETURN_RECEIVED" &&
@@ -9111,7 +9094,6 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   delete merged.customerName;
   delete merged.customerPhone;
   delete merged.customerAddress;
-  // Chốt tuyệt đối: SHIPPED → shipping, COMPLETED → completed (ghi đè PROCESSED local).
   enforceShopeeTerminalLocalStatus(merged);
   return merged;
 }
@@ -9856,8 +9838,7 @@ async function persistShopeeOrderChunk(
         row = orders[existingIndex];
         updated++;
       } else {
-        // INSERT: gán cờ nội bộ mặc định (chưa bàn giao).
-        Object.assign(normalized, buildDefaultInternalFlagsPatch());
+        // INSERT: raw Shopee — không gán cờ ĐVVC.
         orders.unshift(normalized);
         row = orders[0];
         added++;
@@ -9870,11 +9851,9 @@ async function persistShopeeOrderChunk(
         orderSn: row.orderSn,
         status: row.status,
         shopee_order_status: row.shopee_order_status,
-        is_handed_over: row.is_handed_over ?? row.isHandedOverToCarrier ?? false,
-        local_status: row.local_status || row.localStatus || null,
         tracking_no: row.trackingNumber || row.tracking_no || null,
         action: existingIndex >= 0 ? "update" : "insert",
-        note: "Mongo upsert: $set=Shopee only; is_handed_over via $setOnInsert/preserve",
+        note: "ROLLBACK: raw Shopee $set only",
       });
 
       touched.push(row);
@@ -15480,13 +15459,9 @@ async function startServer() {
     let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
     rawOrders = rawOrders.filter(isValidOrder);
 
-    // State Machine tab filter (SSOT) — không giao thoa giữa các tab.
+    // ROLLBACK: filter theo raw Shopee — KHÔNG dùng is_handed_over.
     const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
-    if (tab === "handed_over_carrier" || tab === "handed-over-carrier") {
-      // READY_TO_SHIP-like AND is_handed_over = true
-      rawOrders = rawOrders.filter((o: any) => matchesHandedOverCarrierTabOrder(o));
-    } else if (tab === "processed" || tab === "da-xu-ly" || tab === "processed_pickup") {
-      // READY_TO_SHIP-like AND is_handed_over = false AND đã xử lý
+    if (tab === "processed" || tab === "da-xu-ly" || tab === "processed_pickup") {
       rawOrders = rawOrders.filter((o: any) => matchesProcessedPickupTabShared(o));
     } else if (
       tab === "unprocessed" ||
@@ -15494,10 +15469,9 @@ async function startServer() {
       tab === "ready_to_ship" ||
       tab === "cho-lay-hang"
     ) {
-      // READY_TO_SHIP-like AND is_handed_over = false AND chưa xử lý
+      // READY_TO_SHIP-like — hiện hết chờ lấy hàng (bỏ cờ ĐVVC)
       rawOrders = rawOrders.filter((o: any) => matchesUnprocessedPickupTabShared(o));
     } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
-      // Status = SHIPPED (bỏ qua is_handed_over)
       rawOrders = rawOrders.filter((o: any) => matchesShippingTabShared(o));
     } else if (
       tab === "received_cancel_returns" ||
@@ -15519,6 +15493,7 @@ async function startServer() {
           ),
       );
     }
+    // tab handed_over_carrier: tạm bỏ — không filter riêng
 
     const products = await loadProductsForOrders(rawOrders);
     const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));

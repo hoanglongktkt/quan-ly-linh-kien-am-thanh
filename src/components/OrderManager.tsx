@@ -2234,7 +2234,8 @@ export default function OrderManager({
     } else if (activeSubTab === 'received_cancel_returns') {
       if (!matchesReceivedCancelReturnTab(order)) return false;
     } else if (activeSubTab === 'handed_over_carrier') {
-      if (!matchesHandedOverCarrierTab(order)) return false;
+      // ROLLBACK: tab ĐVVC tạm tắt — chuyển về pool chờ lấy hàng (READY_TO_SHIP-like)
+      if (!matchesProcessedPickupTab(order) && !matchesUnprocessedPickupTab(order)) return false;
     } else if (activeSubTab === 'processed') {
       if (!matchesProcessedPickupTab(order)) return false;
     } else if (activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification') {
@@ -3536,6 +3537,7 @@ export default function OrderManager({
           </span>
         </button>
 
+        {/* ROLLBACK: tạm ẩn Tab "Đã giao cho ĐVVC" — khôi phục sync Shopee thuần
         <button
           onClick={() => openHandedOverCarrierTab()}
           className={`om-orders-mobile-show-subtab px-4 py-3 max-md:py-3.5 text-xs font-bold uppercase tracking-wider border-b-2 max-md:border-b-0 max-md:border max-md:border-gray-100 max-md:rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -3549,6 +3551,7 @@ export default function OrderManager({
             {getCount('handed_over_carrier')}
           </span>
         </button>
+        */}
 
         <button
           onClick={() => setActiveSubTab('shipping')}

@@ -997,34 +997,7 @@ export async function deleteAllChannelListingsFromStore(): Promise<void> {
   await setMeta("listings_updated_at", new Date().toISOString());
 }
 
-/** Upsert lô đơn hàng bằng bulkWrite (1 lệnh / tối đa ~25 đơn). */
-/**
- * Cờ nội bộ — TUYỆT ĐỐI không đưa vào `$set` khi sync Shopee.
- * Chỉ khởi tạo qua `$setOnInsert` khi INSERT đơn mới.
- */
-const INTERNAL_FLAG_KEYS = new Set([
-  "is_handed_over",
-  "local_status",
-  "localStatus",
-  "internal_status",
-  "isHandedOverToCarrier",
-  "is_handed_over_to_carrier",
-  "is_handed_over_to_courier",
-  "handedOverAt",
-  "handed_over_source",
-  "handedOverSource",
-  "localStatusAt",
-  "local_status_updated_at",
-  "isPrinted",
-  "is_local_return_archived",
-]);
-
-/**
- * SAFE UPSERT (Shopee sync):
- * - `$set` = CHỈ data Shopee (status, tracking_no, carrier, …) — CẤM cờ nội bộ
- * - `$setOnInsert` = khởi tạo `is_handed_over: false` khi đơn mới
- * → Đơn đã quét QR (`is_handed_over=true`) không bị sync ghi đè.
- */
+/** Upsert lô đơn từ Shopee — ROLLBACK: chỉ `$set` raw data, không cờ nội bộ / $setOnInsert. */
 export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
   requireMongo();
   const list = Array.isArray(orders)
@@ -1039,63 +1012,38 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     if (!id && !orderSn) continue;
     const _id = id || `shopee-${orderSn}`;
     const pendingFlag = order.is_pending_shopee_check === true;
-    const incomingTn = String(order.tracking_no || order.trackingNumber || "").trim();
-    const tn = incomingTn && !/^0FG/i.test(incomingTn) ? incomingTn : null;
+    const tn = String(order.tracking_no || order.trackingNumber || "").trim();
+    const usableTn = tn && !/^0FG/i.test(tn) ? tn : null;
 
-    // ——— $set: CHỈ field Shopee ———
+    const dataPayload = {
+      ...order,
+      id: _id,
+      orderSn: orderSn || order.orderSn,
+      is_pending_shopee_check: pendingFlag,
+      ...(usableTn ? { tracking_no: usableTn, trackingNumber: usableTn } : {}),
+    };
+
     const $set: Record<string, unknown> = {
       orderSn: orderSn || null,
       status: order.status != null ? String(order.status) : null,
       shopId: order.shopId != null ? String(order.shopId) : null,
       is_pending_shopee_check: pendingFlag,
-      "data.id": _id,
-      "data.is_pending_shopee_check": pendingFlag,
+      data: dataPayload,
     };
-    if (orderSn) $set["data.orderSn"] = orderSn;
-    if (tn) {
-      $set.tracking_no = tn;
-      $set["data.tracking_no"] = tn;
-      $set["data.trackingNumber"] = tn;
-    }
+    if (usableTn) $set.tracking_no = usableTn;
 
-    for (const [key, value] of Object.entries(order)) {
-      if (key === "id" || key === "_id") continue;
-      if (INTERNAL_FLAG_KEYS.has(key)) continue; // CẤM đưa cờ nội bộ vào $set
-      if (value === undefined) continue;
-      $set[`data.${key}`] = value;
-    }
-    if (order.status != null) $set["data.status"] = order.status;
-    if (order.shopId != null) $set["data.shopId"] = String(order.shopId);
-
-    // ——— $setOnInsert: khởi tạo cờ nội bộ khi INSERT ———
-    const $setOnInsert: Record<string, unknown> = {
-      _id,
-      is_handed_over: false,
-      "data.is_handed_over": false,
-      "data.local_status": "NONE",
-      "data.localStatus": "NONE",
-      "data.internal_status": "NONE",
-      "data.isHandedOverToCarrier": false,
-      "data.is_handed_over_to_carrier": false,
-      "data.is_handed_over_to_courier": false,
-    };
-
-    console.log("Dữ liệu chuẩn bị lưu DB (safe upsert):", {
+    console.log("Dữ liệu chuẩn bị lưu DB (raw Shopee $set):", {
       _id,
       orderSn,
       status: order.status,
       shopee_order_status: order.shopee_order_status,
-      tracking_no: tn,
-      note: "$set=Shopee only; $setOnInsert=is_handed_over:false",
+      tracking_no: usableTn,
     });
 
     ops.push({
       updateOne: {
         filter: { _id },
-        update: {
-          $set,
-          $setOnInsert,
-        },
+        update: { $set },
         upsert: true,
       },
     });
