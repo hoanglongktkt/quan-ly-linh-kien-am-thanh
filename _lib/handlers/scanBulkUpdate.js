@@ -19,7 +19,9 @@ function extractCodes(body) {
 function resolveLocalStatus(order) {
   const raw = String(order?.local_status ?? order?.localStatus ?? '').toUpperCase();
   if (raw === 'HANDED_OVER' || raw === 'CANCELLED_STORED' || raw === 'RETURN_RECEIVED') return raw;
-  if (order?.isHandedOverToCarrier || order?.is_handed_over_to_carrier) return 'HANDED_OVER';
+  if (order?.is_handed_over || order?.isHandedOverToCarrier || order?.is_handed_over_to_carrier) {
+    return 'HANDED_OVER';
+  }
   if (String(order?.status || '') === 'return_received') return 'RETURN_RECEIVED';
   return 'NONE';
 }
@@ -70,6 +72,7 @@ function buildLocalPatch(targetStatus) {
   const now = new Date().toISOString();
   if (targetStatus === 'HANDED_OVER') {
     return {
+      is_handed_over: true,
       local_status: 'HANDED_OVER',
       localStatus: 'HANDED_OVER',
       internal_status: 'HANDED_OVER',

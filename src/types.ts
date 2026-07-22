@@ -207,11 +207,16 @@ export interface Order {
   is_pending_shopee_check?: boolean;
   isPrepared?: boolean;
   isPrinted?: boolean;
-  /** Trạng thái nội bộ: đã bàn giao cho bưu tá/ĐVVC, chưa quét nhập kho Shopee */
+  /**
+   * Canonical cờ nội bộ: đã bàn giao ĐVVC (QR / nút Bàn giao).
+   * default false — sync Shopee không được ghi đè.
+   */
+  is_handed_over?: boolean;
+  /** @deprecated alias → is_handed_over */
   isHandedOverToCarrier?: boolean;
-  /** Mirror snake_case for DB / API */
+  /** @deprecated alias → is_handed_over */
   is_handed_over_to_carrier?: boolean;
-  /** Alias nghiệp vụ — đồng bộ với is_handed_over_to_carrier */
+  /** @deprecated alias → is_handed_over */
   is_handed_over_to_courier?: boolean;
   /**
    * Cờ trạng thái nội bộ kho (chỉ DB local — không gọi Shopee):

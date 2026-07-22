@@ -120,18 +120,27 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     is_pending_shopee_check: Boolean(raw.is_pending_shopee_check),
     isPrepared: Boolean(raw.isPrepared),
     isPrinted: Boolean(raw.isPrinted),
+    is_handed_over: isTruthyFlag(
+      raw.is_handed_over ??
+        raw.isHandedOverToCarrier ??
+        raw.is_handed_over_to_carrier ??
+        raw.is_handed_over_to_courier,
+    ),
     isHandedOverToCarrier: isTruthyFlag(
-      raw.isHandedOverToCarrier ??
+      raw.is_handed_over ??
+        raw.isHandedOverToCarrier ??
         raw.is_handed_over_to_carrier ??
         raw.is_handed_over_to_courier,
     ),
     is_handed_over_to_carrier: isTruthyFlag(
-      raw.is_handed_over_to_carrier ??
+      raw.is_handed_over ??
+        raw.is_handed_over_to_carrier ??
         raw.isHandedOverToCarrier ??
         raw.is_handed_over_to_courier,
     ),
     is_handed_over_to_courier: isTruthyFlag(
-      raw.is_handed_over_to_courier ??
+      raw.is_handed_over ??
+        raw.is_handed_over_to_courier ??
         raw.is_handed_over_to_carrier ??
         raw.isHandedOverToCarrier,
     ),
@@ -143,6 +152,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
         return v as Order['local_status'];
       }
       if (
+        isTruthyFlag(raw.is_handed_over) ||
         isTruthyFlag(raw.isHandedOverToCarrier) ||
         isTruthyFlag(raw.is_handed_over_to_carrier) ||
         isTruthyFlag(raw.is_handed_over_to_courier)

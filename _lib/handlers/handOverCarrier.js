@@ -10,6 +10,7 @@ import { fetchWithDiagnostics } from '../fetchDiagnostics.js';
 function buildHandedOverPatch() {
   const now = new Date().toISOString();
   return {
+    is_handed_over: true,
     local_status: 'HANDED_OVER',
     localStatus: 'HANDED_OVER',
     internal_status: 'HANDED_OVER',
@@ -138,6 +139,7 @@ async function handOverOneOnCpanel(backendUrl, req, key) {
   }
 
   const already =
+    Boolean(order.is_handed_over) ||
     String(order.local_status || order.localStatus || '').toUpperCase() === 'HANDED_OVER' ||
     Boolean(order.isHandedOverToCarrier || order.is_handed_over_to_carrier);
   if (already) {

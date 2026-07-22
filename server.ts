@@ -52,6 +52,7 @@ import {
   isMongoReady,
   getMongoUriMasked,
   bulkUpsertOrdersToStore,
+  markOrderHandedOverInStore,
   updateOrderPendingShopeeCheckInStore,
   updateOrderTrackingInStore,
   deleteOrdersFromStore,
@@ -7536,15 +7537,7 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
   if (!order || String(order.channel || "") !== "shopee") return false;
   const raw = String(order.shopee_order_status || "").toUpperCase();
 
-  // Chỉ clear cờ bàn giao khi raw === SHIPPED (an toàn dữ liệu).
-  const clearHandedOverOnShipped = () => {
-    if (raw !== "SHIPPED") return;
-    if (!resolveOrderHandoverFlag(order) && String(order.local_status || "").toUpperCase() !== "HANDED_OVER") {
-      return;
-    }
-    Object.assign(order, buildClearHandedOverPatch());
-  };
-
+  // Sync Shopee CHỈ cập nhật status — KHÔNG đụng is_handed_over.
   if (raw === "COMPLETED") {
     order.status = "completed";
     order.shopee_order_status = "COMPLETED";
@@ -7557,10 +7550,8 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
     order.shopee_order_status = raw;
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
-    clearHandedOverOnShipped();
     return true;
   }
-  // Không ép status=shipping khi thiếu raw SHIPPED (tránh leak tab).
   return false;
 }
 
@@ -7712,14 +7703,13 @@ function promoteOrderStatusWhenTrackingReady(order: any): boolean {
     order.status = "shipping";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
-    Object.assign(order, buildClearHandedOverPatch());
+    // Không clear is_handed_over — sync/promote không đụng cờ nội bộ.
     return true;
   }
   if (raw === "COMPLETED") {
     order.status = "completed";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
-    Object.assign(order, buildClearHandedOverPatch());
     return true;
   }
   return false;
@@ -8748,30 +8738,17 @@ function resolveOrderHandoverFlag(order: any): boolean {
 function setOrderHandoverFlag(order: any, value: boolean): void {
   if (value) {
     Object.assign(order, buildHandedOverWritePatch());
-  } else if (resolveOrderLocalStatus(order) === "HANDED_OVER") {
-    order.local_status = ORDER_LOCAL_STATUS.NONE;
-    order.localStatus = ORDER_LOCAL_STATUS.NONE;
-    order.isHandedOverToCarrier = false;
-    order.is_handed_over_to_carrier = false;
+  } else if (resolveOrderLocalStatus(order) === "HANDED_OVER" || resolveOrderHandoverFlag(order)) {
+    Object.assign(order, buildClearHandedOverPatch());
   }
 }
 
 /**
- * Dọn cờ HANDED_OVER khi đã EXIT (Đang giao / hoàn tất / hủy).
+ * Sync Shopee KHÔNG clear/ghi đè is_handed_over — giữ nguyên thao tác QR.
+ * (Tab ĐVVC tự loại SHIPPED bằng filter status.)
  */
-/** Chỉ clear cờ ĐVVC khi Shopee raw === SHIPPED — không clear theo CANCELLED/TO_RETURN trên heal. */
-function healInvalidHandedOverFlags(orders: any[]): any[] {
-  const changed: any[] = [];
-  for (let i = 0; i < orders.length; i++) {
-    const order = orders[i];
-    if (!resolveOrderHandoverFlag(order)) continue;
-    const raw = String(order.shopee_order_status || "").toUpperCase();
-    if (raw !== "SHIPPED") continue;
-    if (enforceShopeeTerminalLocalStatus(order)) {
-      changed.push(order);
-    }
-  }
-  return changed;
+function healInvalidHandedOverFlags(_orders: any[]): any[] {
+  return [];
 }
 
 function isOrderAwaitingCarrierPickupStatus(status: unknown): boolean {
@@ -9074,69 +9051,60 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   }
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
-  // CHỈ clear cờ bàn giao khi Shopee raw === SHIPPED (không clear vô tội vạ).
-  const clearHandoverOnShip = incomingRaw === "SHIPPED";
-
-  if (clearHandoverOnShip) {
-    Object.assign(merged, buildClearHandedOverPatch());
-  } else if (existing) {
-    // BẮT BUỘC preserve: sync KHÔNG được biến is_handed_over true → false.
+  // BẢO VỆ TUYỆT ĐỐI is_handed_over — sync Shopee KHÔNG ghi đè / clear cờ.
+  if (existing) {
     const existingHanded = resolveOrderHandoverFlag(existing);
     if (existingHanded) {
-      Object.assign(merged, buildHandedOverWritePatch(
-        String(existing.handedOverAt || existing.local_status_updated_at || existing.localStatusAt || "") || undefined,
-        (existing.handed_over_source ||
-          existing.handedOverSource ||
-          HANDED_OVER_SOURCE.MANUAL_BUTTON) as typeof HANDED_OVER_SOURCE.MANUAL_BUTTON,
-      ));
+      Object.assign(
+        merged,
+        buildHandedOverWritePatch(
+          String(existing.handedOverAt || existing.local_status_updated_at || existing.localStatusAt || "") ||
+            undefined,
+          (existing.handed_over_source ||
+            existing.handedOverSource ||
+            HANDED_OVER_SOURCE.MANUAL_BUTTON) as typeof HANDED_OVER_SOURCE.MANUAL_BUTTON,
+        ),
+      );
       if (existing.handedOverAt) merged.handedOverAt = existing.handedOverAt;
     } else {
-      // Không có cờ ĐVVC — giữ NONE, đừng để spread mang undefined lẫn lộn.
+      // Giữ false / NONE — không để spread từ incoming đè true→false nhầm.
+      merged.is_handed_over = false;
       if (merged.isHandedOverToCarrier == null) {
         Object.assign(merged, buildDefaultInternalFlagsPatch());
       }
     }
   }
 
-  // GIỮ cờ local_status nội bộ kho — trừ HANDED_OVER khi đơn đã SHIPPED/COMPLETED.
+  // GIỮ cờ local_status nội bộ kho (CANCELLED_STORED / RETURN_RECEIVED / HANDED_OVER).
   if (existing?.is_local_return_archived != null) {
     merged.is_local_return_archived = existing.is_local_return_archived;
   }
   const existingLocal = resolveOrderLocalStatus(existing);
   if (existingLocal !== "NONE") {
-    if (clearHandoverOnShip && existingLocal === "HANDED_OVER") {
-      // Không khôi phục HANDED_OVER — đơn đã sang Đang giao trên Shopee.
-      merged.local_status = "NONE";
-      merged.localStatus = "NONE";
-      merged.isHandedOverToCarrier = false;
-      merged.is_handed_over_to_carrier = false;
-    } else {
-      merged.local_status = existingLocal;
-      merged.localStatus = existingLocal;
-      if (existing?.localStatusAt) merged.localStatusAt = existing.localStatusAt;
-      if (existing?.local_status_updated_at) {
-        merged.local_status_updated_at = existing.local_status_updated_at;
-      } else if (existing?.localStatusAt) {
-        merged.local_status_updated_at = existing.localStatusAt;
-      }
-      if (existingLocal === "HANDED_OVER" && !clearHandoverOnShip) {
-        merged.isHandedOverToCarrier = true;
-        merged.is_handed_over_to_carrier = true;
-        if (existing?.handedOverAt) merged.handedOverAt = existing.handedOverAt;
-      }
-      if (
-        existingLocal === "RETURN_RECEIVED" &&
-        incomingRaw !== "SHIPPED" &&
-        incomingRaw !== "TO_CONFIRM_RECEIVE" &&
-        incomingRaw !== "COMPLETED" &&
-        merged.status !== "shipping" &&
-        merged.status !== "completed" &&
-        !isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""))
-      ) {
-        // Tab "Đã nhận hoàn" dựa trên cờ nội bộ — giữ status hiển thị ổn định.
-        // Không ghi đè khi Shopee đã SHIPPED/COMPLETED.
-        merged.status = "return_received";
-      }
+    merged.local_status = existingLocal;
+    merged.localStatus = existingLocal;
+    if (existing?.localStatusAt) merged.localStatusAt = existing.localStatusAt;
+    if (existing?.local_status_updated_at) {
+      merged.local_status_updated_at = existing.local_status_updated_at;
+    } else if (existing?.localStatusAt) {
+      merged.local_status_updated_at = existing.localStatusAt;
+    }
+    if (existingLocal === "HANDED_OVER") {
+      merged.is_handed_over = true;
+      merged.isHandedOverToCarrier = true;
+      merged.is_handed_over_to_carrier = true;
+      if (existing?.handedOverAt) merged.handedOverAt = existing.handedOverAt;
+    }
+    if (
+      existingLocal === "RETURN_RECEIVED" &&
+      incomingRaw !== "SHIPPED" &&
+      incomingRaw !== "TO_CONFIRM_RECEIVE" &&
+      incomingRaw !== "COMPLETED" &&
+      merged.status !== "shipping" &&
+      merged.status !== "completed" &&
+      !isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""))
+    ) {
+      merged.status = "return_received";
     }
   }
 
@@ -9902,12 +9870,11 @@ async function persistShopeeOrderChunk(
         orderSn: row.orderSn,
         status: row.status,
         shopee_order_status: row.shopee_order_status,
+        is_handed_over: row.is_handed_over ?? row.isHandedOverToCarrier ?? false,
         local_status: row.local_status || row.localStatus || null,
-        internal_status: row.internal_status || null,
-        is_handed_over_to_carrier: row.is_handed_over_to_carrier ?? row.isHandedOverToCarrier ?? false,
-        is_handed_over_to_courier: row.is_handed_over_to_courier ?? false,
         tracking_no: row.trackingNumber || row.tracking_no || null,
         action: existingIndex >= 0 ? "update" : "insert",
+        note: "Mongo upsert: $set=Shopee only; is_handed_over via $setOnInsert/preserve",
       });
 
       touched.push(row);
@@ -10050,12 +10017,7 @@ async function healStuckLocalShopeeOrders(
       for (const n of normalized) {
         forceHealPickupOrderIfHasTracking(n);
         enforceShopeeTerminalLocalStatus(n);
-        // Chỉ clear cờ QR khi Shopee raw === SHIPPED (merge sẽ preserve nếu chưa SHIPPED).
-        if (String(n.shopee_order_status || "").toUpperCase() === "SHIPPED") {
-          setOrderHandoverFlag(n, false);
-          n.isHandedOverToCarrier = false;
-          n.is_handed_over_to_carrier = false;
-        }
+        // Sync KHÔNG clear/ghi is_handed_over — Mongo $setOnInsert / preserve đảm nhiệm.
       }
       if (normalized.length > 0) {
         await persistShopeeOrderChunk(orders, normalized, {
@@ -10545,15 +10507,19 @@ async function loadOrdersForApi(opts?: {
       }
     }
 
-    // JSON = nguồn sự thật cho cờ ĐVVC. Không copy cờ stale từ Mongo → JSON.
-    // GET readOnly: không đánh dấu dirty / không queue sync ghi.
-    if (!readOnly) {
-      const mongoHanded = resolveOrderHandoverFlag(m);
-      const jsonHanded = resolveOrderHandoverFlag(existing);
-      if (jsonHanded && !mongoHanded) {
-        handoverMongoSync.push(existing);
-        dirty = true;
-      }
+    // Mongo = nguồn sự thật cho is_handed_over (QR đã ghi Mongo).
+    // JSON chỉ đẩy → Mongo khi JSON true mà Mongo false (legacy).
+    const mongoHanded = resolveOrderHandoverFlag(m);
+    const jsonHanded = resolveOrderHandoverFlag(existing);
+    if (mongoHanded && !jsonHanded) {
+      Object.assign(existing, buildHandedOverWritePatch(
+        String(m.handedOverAt || m.local_status_updated_at || "") || undefined,
+        (m.handed_over_source || m.handedOverSource || HANDED_OVER_SOURCE.MANUAL_BUTTON) as typeof HANDED_OVER_SOURCE.MANUAL_BUTTON,
+      ));
+      if (m.handedOverAt) existing.handedOverAt = m.handedOverAt;
+    } else if (!readOnly && jsonHanded && !mongoHanded) {
+      handoverMongoSync.push(existing);
+      dirty = true;
     }
   }
 
@@ -15699,10 +15665,21 @@ async function startServer() {
     const updated = applyHandedOverWrite({ ...order }, undefined, source);
     orders[index] = updated;
     if (opts?.persist !== false) {
-      await persistOrdersToDatabase(orders, [updated]);
+      // JSON local + Mongo CHỈ $set is_handed_over=true (không gọi Shopee, không bulk upsert đè cờ).
+      saveOrders(orders);
+      try {
+        if (isMongoReady()) {
+          await markOrderHandedOverInStore(String(updated.orderSn || ""), {
+            source,
+            handedOverAt: String(updated.handedOverAt || ""),
+          });
+        }
+      } catch (err: any) {
+        console.error("[Orders Handover] Mongo markOrderHandedOver failed:", err?.message || err);
+      }
     }
     console.log(
-      `[Orders Handover] đơn ${updated.orderSn} → ${ORDER_LOCAL_STATUS.HANDED_OVER} source=${source} tn=${updated.trackingNumber || updated.tracking_no || "-"}`,
+      `[Orders Handover] đơn ${updated.orderSn} → is_handed_over=true source=${source} tn=${updated.trackingNumber || updated.tracking_no || "-"}`,
     );
     return { ok: true, order: updated, changed: true };
   }
@@ -15911,25 +15888,21 @@ async function startServer() {
       patch.tracking_no = patchTn;
       patch.trackingNumber = patchTn;
     }
-    const patchRaw = String(patch.shopee_order_status || "").toUpperCase();
-    const clearHandover =
-      patch.status === "shipping" ||
-      patch.status === "completed" ||
-      patchRaw === "SHIPPED" ||
-      patchRaw === "TO_CONFIRM_RECEIVE" ||
-      patchRaw === "COMPLETED";
-    if (clearHandover) {
-      patch.isHandedOverToCarrier = false;
-      patch.is_handed_over_to_carrier = false;
-      if (String(patch.local_status || patch.localStatus || orders[index]?.local_status || "").toUpperCase() === "HANDED_OVER") {
-        patch.local_status = "NONE";
-        patch.localStatus = "NONE";
-      }
-    }
-    // Chuẩn hóa cờ nội bộ kho nếu client gửi local_status.
+    // PATCH không tự clear is_handed_over khi đổi status — chỉ ghi cờ khi client gửi tường minh.
     const localPatch = String(patch.local_status || patch.localStatus || "").toUpperCase();
+    const wantHanded =
+      patch.is_handed_over === true ||
+      patch.isHandedOverToCarrier === true ||
+      patch.is_handed_over_to_carrier === true ||
+      localPatch === "HANDED_OVER";
+    if (wantHanded) {
+      Object.assign(patch, buildHandedOverWritePatch(
+        undefined,
+        HANDED_OVER_SOURCE.MANUAL_BUTTON,
+      ));
+    }
+    // Chuẩn hóa cờ nội bộ kho nếu client gửi local_status (không phải HANDED_OVER).
     if (
-      localPatch === "HANDED_OVER" ||
       localPatch === "CANCELLED_STORED" ||
       localPatch === "RETURN_RECEIVED" ||
       localPatch === "NONE"
@@ -15941,13 +15914,6 @@ async function startServer() {
       patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
       if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
         patch.is_local_return_archived = false;
-      }
-      if (localPatch === "HANDED_OVER") {
-        patch.isHandedOverToCarrier = true;
-        patch.is_handed_over_to_carrier = true;
-        patch.is_handed_over_to_courier = true;
-        patch.internal_status = "HANDED_OVER";
-        patch.handedOverAt = patch.handedOverAt || nowIso;
       }
       if (localPatch === "RETURN_RECEIVED") {
         patch.status = "return_received";
@@ -15977,6 +15943,16 @@ async function startServer() {
       });
     }
     await persistOrdersToDatabase(orders, [orders[index]]);
+    if (wantHanded && isMongoReady()) {
+      try {
+        await markOrderHandedOverInStore(String(orders[index].orderSn || ""), {
+          source: HANDED_OVER_SOURCE.MANUAL_BUTTON,
+          handedOverAt: String(orders[index].handedOverAt || ""),
+        });
+      } catch (err: any) {
+        console.error("[Orders PATCH] markOrderHandedOver failed:", err?.message || err);
+      }
+    }
     return res.json(orders[index]);
   });
 

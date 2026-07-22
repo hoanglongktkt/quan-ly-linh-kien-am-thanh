@@ -1,10 +1,11 @@
 /**
- * SSOT — Tab "Đã giao cho ĐVVC" (trạm trung chuyển nội bộ).
+ * SSOT — Cờ nội bộ `is_handed_over` + Tab "Đã giao cho ĐVVC".
  *
  * STATE MACHINE:
  *   READ  = READY_TO_SHIP-like AND is_handed_over = true
- *   WRITE = Quét QR / nút Bàn giao ĐVVC
- *   EXIT  = Shopee SHIPPED → clear cờ; TO_CONFIRM_RECEIVE/COMPLETED/CANCELLED → rời tab (filter)
+ *   WRITE = Quét QR / nút Bàn giao ĐVVC → $set { is_handed_over: true }
+ *   SYNC  = Shopee upsert KHÔNG đụng is_handed_over ($setOnInsert default false)
+ *   EXIT  = raw SHIPPED/COMPLETED/CANCELLED → rời tab (filter), không cần clear cờ trên sync
  */
 import type { Order } from '../types';
 
@@ -74,12 +75,13 @@ export function hasLeftHandedOverCarrierTab(
 }
 
 /**
- * Cờ bàn giao nội bộ (không phụ thuộc status Shopee READY_TO_SHIP).
- * Hỗ trợ mọi alias: local_status / internal_status / is_handed_over_*.
+ * Cờ bàn giao nội bộ — canonical: `is_handed_over`.
+ * Đọc thêm aliases legacy để tương thích dữ liệu cũ.
  */
 export function isOrderHandedOverToCarrier(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
+  if (isTruthyFlag(order.is_handed_over)) return true;
   const internal = getInternalStatusRaw(order);
   if (internal === ORDER_LOCAL_STATUS.HANDED_OVER) return true;
   if (
@@ -92,7 +94,7 @@ export function isOrderHandedOverToCarrier(
   return false;
 }
 
-/** Patch ghi DB khi bàn giao ĐVVC — WRITE duy nhất. */
+/** Patch ghi DB khi bàn giao ĐVVC — WRITE duy nhất (không qua Shopee sync). */
 export function buildHandedOverWritePatch(
   now?: string,
   source: HandedOverSource = HANDED_OVER_SOURCE.MANUAL_BUTTON,
@@ -100,14 +102,15 @@ export function buildHandedOverWritePatch(
   const ts = now || new Date().toISOString();
   return {
     // Canonical
+    is_handed_over: true,
     local_status: ORDER_LOCAL_STATUS.HANDED_OVER,
     localStatus: ORDER_LOCAL_STATUS.HANDED_OVER,
     internal_status: ORDER_LOCAL_STATUS.HANDED_OVER,
     localStatusAt: ts,
     local_status_updated_at: ts,
+    // Aliases legacy (đồng bộ đọc)
     isHandedOverToCarrier: true,
     is_handed_over_to_carrier: true,
-    // Alias theo yêu cầu nghiệp vụ
     is_handed_over_to_courier: true,
     handedOverAt: ts,
     handed_over_source: source,
@@ -129,6 +132,7 @@ export function buildDefaultInternalFlagsPatch(
 ): Record<string, unknown> {
   const ts = now || new Date().toISOString();
   return {
+    is_handed_over: false,
     local_status: ORDER_LOCAL_STATUS.NONE,
     localStatus: ORDER_LOCAL_STATUS.NONE,
     internal_status: ORDER_LOCAL_STATUS.NONE,
@@ -142,7 +146,7 @@ export function buildDefaultInternalFlagsPatch(
   };
 }
 
-/** Gỡ cờ ĐVVC (exit khi Đang giao). */
+/** Gỡ cờ ĐVVC (chỉ dùng thao tác nội bộ tường minh — KHÔNG dùng trong Shopee sync upsert). */
 export function buildClearHandedOverPatch(
   now?: string,
 ): Record<string, unknown> {
@@ -177,8 +181,7 @@ export function resolveOrderLocalStatus(
 
 /**
  * TAB "ĐÃ GIAO CHO ĐVVC" —
- * Status READY_TO_SHIP-like AND is_handed_over = true.
- * TUYỆT ĐỐI loại SHIPPED / COMPLETED / CANCELLED (theo raw).
+ * order_status READY_TO_SHIP-like AND is_handed_over = true.
  */
 export function matchesHandedOverCarrierTab(
   order: Partial<Order> & Record<string, unknown>,
@@ -191,7 +194,6 @@ export function matchesHandedOverCarrierTab(
   if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || raw === 'TO_RETURN') {
     return false;
   }
-  // Chỉ giữ đơn còn giai đoạn chờ lấy trên sàn.
   if (raw !== 'READY_TO_SHIP' && raw !== 'RETRY_SHIP' && raw !== 'PROCESSED') {
     return false;
   }
