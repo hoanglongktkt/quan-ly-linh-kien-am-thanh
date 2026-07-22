@@ -428,8 +428,8 @@ function syncOrdersTabToUrl(subTab: OrderTab, cancelTab: CancelReturnTab) {
 interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[], opts?: { persist?: boolean }) => void;
-  /** Kéo đơn từ Shopee API — incremental (mặc định) hoặc full 30 ngày */
-  onRefreshOrders?: (opts?: { type?: 'incremental' | 'full' }) => Promise<void> | void;
+  /** CHỈ gắn nút Đồng bộ — kéo Shopee. CẤM gọi khi refresh/scan/DB rỗng. */
+  onPullShopeeOrders?: (opts?: { type?: 'incremental' | 'full' }) => Promise<void> | void;
   /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
   onFetchOrders?: () => Promise<void> | void;
   ordersLoading?: boolean;
@@ -536,7 +536,7 @@ function VariationNameBadge({ variationName }: { variationName?: string }) {
 export default function OrderManager({ 
   orders, 
   onUpdateOrders, 
-  onRefreshOrders,
+  onPullShopeeOrders,
   onFetchOrders,
   ordersLoading = false,
   shops, 
@@ -2131,7 +2131,7 @@ export default function OrderManager({
 
     try {
       // 1) Sync Shopee → DB
-      await onRefreshOrders?.({ type });
+      await onPullShopeeOrders?.({ type });
       // 2) BẮT BUỘC force re-fetch danh sách → ghi đè state (phá cache UI / IndexedDB cũ).
       await onFetchOrders?.();
       showToast(
@@ -2869,7 +2869,7 @@ export default function OrderManager({
       setIsFlushingQueue(false);
 
       try {
-        // Chỉ đọc DB nội bộ — CẤM fallback onRefreshOrders (đó là pull Shopee).
+        // Chỉ đọc DB nội bộ — CẤM gọi onPullShopeeOrders (đó là pull Shopee).
         if (onFetchOrders) void onFetchOrders();
       } catch (refreshErr) {
         console.error('Refresh orders after scan failed:', refreshErr);

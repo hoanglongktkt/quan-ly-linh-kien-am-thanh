@@ -1784,7 +1784,7 @@ export default function App() {
               <OrderManager 
               orders={orders}
               onUpdateOrders={handleUpdateOrders}
-              onRefreshOrders={pullOrders}
+              onPullShopeeOrders={pullOrders}
               onFetchOrders={fetchOrders}
               ordersLoading={ordersLoading}
               shops={settings.shops || []}

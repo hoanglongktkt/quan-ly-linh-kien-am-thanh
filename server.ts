@@ -8122,7 +8122,17 @@ async function scanAndRetryMissingTrackingNumbers(opts?: {
   max?: number;
   persist?: boolean;
   retries?: number;
+  /** Chỉ cho phép khi gọi từ POST /api/orders/pull (sau khi user bấm sync). */
+  fromUserPull?: boolean;
 }): Promise<{ scanned: number; filled: number }> {
+  // IRON FIST: chặn mọi lời gọi scanner ngoài luồng nút sync user.
+  if (!opts?.fromUserPull) {
+    console.log(
+      "[Shopee Tracking Scanner] BLOCKED — chỉ chạy khi fromUserPull=true (POST /api/orders/pull).",
+    );
+    return { scanned: 0, filled: 0 };
+  }
+
   const orders = loadOrders();
   const max = Math.max(1, Math.min(opts?.max ?? 100, 200));
   const retries = opts?.retries ?? 3;
@@ -15461,22 +15471,10 @@ async function startServer() {
   });
 
   app.get("/api/orders", authMiddleware, async (req, res) => {
-    // Phá HTTP cache trình duyệt/CDN — GHN/webhook vừa ghi DB phải hiện ngay khi refresh.
+    // GET = READ ONLY — DB/JSON có gì trả nấy; rỗng → []. CẤM sync/pull/fetch ngoài.
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
-
-    // GET = READ ONLY tuyệt đối — CẤM sync/fetch Shopee/GHN/backup dù DB rỗng [].
-    // Không gọi executeOrdersPullSync / syncShopeeOrdersFromApi / hydrateTracking / webhook.
-    const jsonCount = loadOrders().filter(isValidOrder).length;
-    let mongoCount = 0;
-    if (isMongoReady()) {
-      try {
-        mongoCount = (await loadOrdersFromStore()).filter(isValidOrder).length;
-      } catch {
-        mongoCount = -1;
-      }
-    }
 
     let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
     rawOrders = rawOrders.filter(isValidOrder);
@@ -15491,7 +15489,6 @@ async function startServer() {
       tab === "ready_to_ship" ||
       tab === "cho-lay-hang"
     ) {
-      // READY_TO_SHIP-like — hiện hết chờ lấy hàng (bỏ cờ ĐVVC)
       rawOrders = rawOrders.filter((o: any) => matchesUnprocessedPickupTabShared(o));
     } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
       rawOrders = rawOrders.filter((o: any) => matchesShippingTabShared(o));
@@ -15515,12 +15512,11 @@ async function startServer() {
           ),
       );
     }
-    // tab handed_over_carrier: tạm bỏ — không filter riêng
 
     const products = await loadProductsForOrders(rawOrders);
     const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
     console.log(
-      `[GET /api/orders] TRACE length=${orders.length} | source=JSON∪Mongo | json=${jsonCount} mongo=${mongoCount} mongoReady=${isMongoReady()} file=${ORDERS_DB_PATH} tab=${tab || "(all)"}`,
+      `[GET /api/orders] READ-ONLY return length=${orders.length} tab=${tab || "(all)"} mongoReady=${isMongoReady()}`,
     );
     return res.json(orders);
   });
@@ -17137,7 +17133,11 @@ async function startServer() {
       await forceFetchMissingTrackingAfterSync(orders, { max: 200 });
       // Quét bù lần 2 — đơn PROCESSED chuẩn bị trên App Shopee ngoài cửa sổ update_time.
       try {
-        const scan = await scanAndRetryMissingTrackingNumbers({ max: 100, retries: 3 });
+        const scan = await scanAndRetryMissingTrackingNumbers({
+          max: 100,
+          retries: 3,
+          fromUserPull: true,
+        });
         console.log(
           `[Orders Pull] Tracking scanner: scanned=${scan.scanned} filled=${scan.filled}`,
         );
