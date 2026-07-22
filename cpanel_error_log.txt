@@ -1,7 +1,13 @@
-Exception: Error: listen EADDRINUSE: address already in use 0.0.0.0:3000
-    at Server.setupListenHandle [as _listen2] (node:net:2009:16)
-    at listenInCluster (node:net:2066:12)
-    at node:net:2275:7
-    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+Exception: TypeError: Invalid URL
+    at new URL (node:internal/url:840:25)
+    at node_modules/vite/dist/node/constants.js (F:\web ban hang\web goc\server.cjs:77719:41)
+    at __init (F:\web ban hang\web goc\server.cjs:13:59)
+    at node_modules/vite/dist/node/chunks/dep-Dm0c1Wj2.js (F:\web ban hang\web goc\server.cjs:166061:5)
+    at __init (F:\web ban hang\web goc\server.cjs:13:59)
+    at node_modules/vite/dist/node/index.js (F:\web ban hang\web goc\server.cjs:182866:5)
+    at __init (F:\web ban hang\web goc\server.cjs:13:59)
+    at F:\web ban hang\web goc\server.cjs:221061:84
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async startServer2 (F:\web ban hang\web goc\server.cjs:221061:48)
 ---
-2026-07-17T11:47:38.003Z
+2026-07-22T00:41:22.989Z

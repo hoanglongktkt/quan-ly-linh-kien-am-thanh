@@ -38,18 +38,24 @@ type MetaDoc = {
 type OrderDoc = {
   _id: string;
   orderSn?: string | null;
+  /** Trạng thái UI local (processed/shipping/...) — KHÔNG thay thế shopee_order_status */
   status?: string | null;
+  /** Raw Shopee order_status — SSOT (READY_TO_SHIP / SHIPPED / ...) */
+  shopee_order_status?: string | null;
   shopId?: string | null;
   /** Mã vận đơn (SPXVN / GHN / ...) — top-level để query & force update */
   tracking_no?: string | null;
+  /** Tên ĐVVC từ Shopee */
+  shipping_carrier?: string | null;
   /** Flag bẫy lỗi: đơn đang chờ Shopee kiểm tra — default false */
   is_pending_shopee_check?: boolean;
   /**
    * Cờ nội bộ: đã bàn giao ĐVVC (QR / nút Bàn giao).
-   * CHỈ ghi bởi API bàn giao — sync Shopee KHÔNG được đụng.
-   * default = false
+   * CHỈ ghi bởi API bàn giao — sync Shopee chỉ $setOnInsert.
    */
   is_handed_over?: boolean;
+  isPrinted?: boolean;
+  isPrepared?: boolean;
   data: any;
 };
 
@@ -94,20 +100,16 @@ const OrderSchema = new Schema<OrderDoc>(
     _id: { type: String, required: true },
     orderSn: { type: String, default: null, index: true },
     status: { type: String, default: null, index: true },
+    /** Raw Shopee — bắt buộc lưu khi sync (READY_TO_SHIP / SHIPPED / ...) */
+    shopee_order_status: { type: String, default: null, index: true },
     shopId: { type: String, default: null, index: true },
-    /** Mã vận đơn Shopee / ĐVVC — String bắt buộc trong schema */
     tracking_no: { type: String, default: null, index: true },
-    /** Boolean flag — đơn bị bẫy "đang kiểm tra bởi Shopee" (default: false) */
+    shipping_carrier: { type: String, default: null, index: true },
     is_pending_shopee_check: { type: Boolean, default: false, index: true },
-    /**
-     * Cờ nội bộ bàn giao ĐVVC — Boolean bắt buộc, default false.
-     * Sync Shopee chỉ $setOnInsert; QR/nút Bàn giao mới $set = true.
-     */
+    /** Cờ nội bộ — chỉ $setOnInsert khi sync; QR/bàn giao mới $set true */
     is_handed_over: { type: Boolean, default: false, index: true },
-    /**
-     * Full order payload — includes withholding_cit_tax, shopee_fees,
-     * is_handed_over (canonical), aliases legacy, local_status, …
-     */
+    isPrinted: { type: Boolean, default: false },
+    isPrepared: { type: Boolean, default: false },
     data: { type: Schema.Types.Mixed, required: true },
   },
   { collection: "orders", versionKey: false }
@@ -997,7 +999,35 @@ export async function deleteAllChannelListingsFromStore(): Promise<void> {
   await setMeta("listings_updated_at", new Date().toISOString());
 }
 
-/** Upsert lô đơn từ Shopee — ROLLBACK: chỉ `$set` raw data, không cờ nội bộ / $setOnInsert. */
+/**
+ * Cờ nội bộ — CẤM đưa vào `$set` khi sync Shopee.
+ * Chỉ khởi tạo qua `$setOnInsert` khi INSERT.
+ */
+const INTERNAL_FLAG_KEYS = new Set([
+  "is_handed_over",
+  "isPrinted",
+  "isPrepared",
+  "isHandedOverToCarrier",
+  "is_handed_over_to_carrier",
+  "is_handed_over_to_courier",
+  "local_status",
+  "localStatus",
+  "internal_status",
+  "handedOverAt",
+  "handed_over_source",
+  "handedOverSource",
+  "localStatusAt",
+  "local_status_updated_at",
+  "is_local_return_archived",
+]);
+
+/**
+ * Upsert đơn Shopee → Mongo:
+ * - `$set` = data gốc Shopee (shopee_order_status, tracking_no, shipping_carrier, …)
+ * - `$setOnInsert` = is_handed_over / isPrinted / isPrepared = false
+ * - KHÔNG `$set: { data: whole }` (tránh document mỏng / mất field)
+ * - CẤM đưa cờ nội bộ vào `$set`
+ */
 export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
   requireMongo();
   const list = Array.isArray(orders)
@@ -1008,42 +1038,126 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
   const ops = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
-    const orderSn = String(order.orderSn || "").trim();
+    const orderSn = String(order.orderSn || order.order_sn || "").trim();
     if (!id && !orderSn) continue;
     const _id = id || `shopee-${orderSn}`;
+
+    const rawStatus = String(
+      order.shopee_order_status || order.order_status || "",
+    )
+      .trim()
+      .toUpperCase();
+    if (!rawStatus) {
+      console.warn(
+        `[MongoDB] upsert THIẾU shopee_order_status — order_sn=${orderSn || _id} (vẫn lưu các field khác)`,
+      );
+    }
     const pendingFlag = order.is_pending_shopee_check === true;
-    const tn = String(order.tracking_no || order.trackingNumber || "").trim();
-    const usableTn = tn && !/^0FG/i.test(tn) ? tn : null;
+    const tnRaw = String(order.tracking_no || order.trackingNumber || "").trim();
+    const usableTn = tnRaw && !/^0FG/i.test(tnRaw) ? tnRaw : null;
+    const carrier = String(
+      order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || "",
+    ).trim();
 
-    const dataPayload = {
-      ...order,
-      id: _id,
-      orderSn: orderSn || order.orderSn,
-      is_pending_shopee_check: pendingFlag,
-      ...(usableTn ? { tracking_no: usableTn, trackingNumber: usableTn } : {}),
-    };
-
+    // ——— $set: CHỈ field Shopee / vận chuyển — CẤM cờ nội bộ ———
     const $set: Record<string, unknown> = {
       orderSn: orderSn || null,
-      status: order.status != null ? String(order.status) : null,
       shopId: order.shopId != null ? String(order.shopId) : null,
       is_pending_shopee_check: pendingFlag,
-      data: dataPayload,
+      "data.id": _id,
+      "data.channel": order.channel != null ? String(order.channel) : "shopee",
+      "data.orderSn": orderSn || null,
+      "data.is_pending_shopee_check": pendingFlag,
     };
-    if (usableTn) $set.tracking_no = usableTn;
 
-    console.log("Dữ liệu chuẩn bị lưu DB (raw Shopee $set):", {
+    // BẮT BUỘC lưu raw Shopee ở ROOT + data (không thay bằng status local "processed")
+    if (rawStatus) {
+      $set.shopee_order_status = rawStatus;
+      $set["data.shopee_order_status"] = rawStatus;
+    }
+
+    // status local chỉ là helper UI — không thay shopee_order_status
+    if (order.status != null && String(order.status).trim()) {
+      $set.status = String(order.status);
+      $set["data.status"] = String(order.status);
+    }
+
+    if (order.shopId != null) $set["data.shopId"] = String(order.shopId);
+    if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
+
+    if (usableTn) {
+      $set.tracking_no = usableTn;
+      $set["data.tracking_no"] = usableTn;
+      $set["data.trackingNumber"] = usableTn;
+    }
+
+    if (carrier) {
+      $set.shipping_carrier = carrier;
+      $set["data.shipping_carrier"] = carrier;
+      if (order.checkout_shipping_carrier) {
+        $set["data.checkout_shipping_carrier"] = String(order.checkout_shipping_carrier);
+      }
+    }
+
+    if (order.packageNumber != null && String(order.packageNumber).trim()) {
+      $set["data.packageNumber"] = String(order.packageNumber);
+    }
+    if (Array.isArray(order.items)) {
+      $set["data.items"] = order.items;
+    }
+    if (order.date != null) $set["data.date"] = order.date;
+    if (order.totalAmount != null) $set["data.totalAmount"] = order.totalAmount;
+    if (order.fulfillment_type != null) {
+      $set["data.fulfillment_type"] = order.fulfillment_type;
+    }
+    if (order.ship_method != null) $set["data.ship_method"] = order.ship_method;
+    if (order.logistics_status != null) {
+      $set["data.logistics_status"] = order.logistics_status;
+    }
+
+    // Field Shopee còn lại → data.* (bỏ cờ nội bộ — tránh đè true→false)
+    for (const [key, value] of Object.entries(order)) {
+      if (key === "id" || key === "_id") continue;
+      if (INTERNAL_FLAG_KEYS.has(key)) continue;
+      if (value === undefined) continue;
+      // đã set tường minh ở trên — vẫn OK ghi lại cùng giá trị
+      $set[`data.${key}`] = value;
+    }
+
+    // ——— $setOnInsert: khởi tạo cờ nội bộ CHỈ khi đơn MỚI ———
+    // Tuyệt đối không trùng path với $set
+    const $setOnInsert: Record<string, unknown> = {
+      is_handed_over: false,
+      isPrinted: false,
+      isPrepared: false,
+      "data.is_handed_over": false,
+      "data.isPrinted": false,
+      "data.isPrepared": false,
+      "data.isHandedOverToCarrier": false,
+      "data.is_handed_over_to_carrier": false,
+      "data.is_handed_over_to_courier": false,
+      "data.local_status": "NONE",
+      "data.localStatus": "NONE",
+      "data.internal_status": "NONE",
+    };
+
+    console.log("Dữ liệu chuẩn bị lưu DB (upsert $set + $setOnInsert):", {
       _id,
       orderSn,
-      status: order.status,
-      shopee_order_status: order.shopee_order_status,
+      shopee_order_status: rawStatus || null,
+      status_local: order.status || null,
       tracking_no: usableTn,
+      shipping_carrier: carrier || null,
+      setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false",
     });
 
     ops.push({
       updateOne: {
         filter: { _id },
-        update: { $set },
+        update: {
+          $set,
+          $setOnInsert,
+        },
         upsert: true,
       },
     });
@@ -1331,7 +1445,7 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
   return ops.length;
 }
 
-/** Đọc toàn bộ đơn từ Mongo — ưu tiên top-level tracking_no + is_handed_over. */
+/** Đọc toàn bộ đơn từ Mongo — ưu tiên top-level shopee_order_status / tracking / carrier. */
 export async function loadOrdersFromStore(): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
@@ -1345,6 +1459,14 @@ export async function loadOrdersFromStore(): Promise<any[]> {
     const tn = String(
       d?.tracking_no || data.tracking_no || data.trackingNumber || "",
     ).trim();
+    const rawStatus = String(
+      d?.shopee_order_status || data.shopee_order_status || "",
+    )
+      .trim()
+      .toUpperCase();
+    const carrier = String(
+      d?.shipping_carrier || data.shipping_carrier || data.checkout_shipping_carrier || "",
+    ).trim();
     const handed =
       d?.is_handed_over === true ||
       data.is_handed_over === true ||
@@ -1357,18 +1479,21 @@ export async function loadOrdersFromStore(): Promise<any[]> {
       id: data.id || d._id || (sn ? `shopee-${sn}` : undefined),
       orderSn: sn || data.orderSn,
       status: d?.status != null ? d.status : data.status,
+      shopee_order_status: rawStatus || data.shopee_order_status || undefined,
       shopId: d?.shopId != null ? d.shopId : data.shopId,
       tracking_no: tn || undefined,
       trackingNumber: tn || undefined,
+      shipping_carrier: carrier || data.shipping_carrier || undefined,
       is_pending_shopee_check:
         d?.is_pending_shopee_check != null
           ? Boolean(d.is_pending_shopee_check)
           : Boolean(data.is_pending_shopee_check),
-      // Canonical flag — top-level Mongo thắng aliases legacy trong data
       is_handed_over: handed,
       isHandedOverToCarrier: handed,
       is_handed_over_to_carrier: handed,
       is_handed_over_to_courier: handed,
+      isPrinted: d?.isPrinted != null ? Boolean(d.isPrinted) : Boolean(data.isPrinted),
+      isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
       ...(handed
         ? {
             local_status: data.local_status || "HANDED_OVER",
