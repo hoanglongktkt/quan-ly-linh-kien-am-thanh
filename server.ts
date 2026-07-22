@@ -15,6 +15,7 @@ import {
   applyHandedOverWrite,
   buildClearHandedOverPatch,
   buildHandedOverWritePatch,
+  buildDefaultInternalFlagsPatch,
   matchesHandedOverCarrierTab,
   hasLeftHandedOverCarrierTab,
   resolveOrderLocalStatus as resolveOrderLocalStatusShared,
@@ -9078,21 +9079,32 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   }
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
-  // Shopee SHIPPED/COMPLETED → BẮT BUỘC gỡ cờ bàn giao ĐVVC, ép sang tab Đang giao / Hoàn thành.
+  // Shopee SHIPPED/COMPLETED → gỡ cờ bàn giao ĐVVC.
+  // CHỈ theo raw Shopee — KHÔNG dùng merged.status (tránh clear nhầm / skip hiển thị).
   const clearHandoverOnShip =
-    incoming.status === "shipping" ||
-    incoming.status === "completed" ||
     incomingRaw === "SHIPPED" ||
     incomingRaw === "TO_CONFIRM_RECEIVE" ||
-    incomingRaw === "COMPLETED" ||
-    merged.status === "shipping" ||
-    merged.status === "completed" ||
-    isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""));
+    incomingRaw === "COMPLETED";
 
   if (clearHandoverOnShip) {
     Object.assign(merged, buildClearHandedOverPatch());
   } else if (existing) {
-    setOrderHandoverFlag(merged, resolveOrderHandoverFlag(existing));
+    // Giữ nguyên cờ QR / bàn giao thủ công — sync Shopee không được ghi đè.
+    const existingHanded = resolveOrderHandoverFlag(existing);
+    if (existingHanded) {
+      Object.assign(merged, buildHandedOverWritePatch(
+        String(existing.handedOverAt || existing.local_status_updated_at || existing.localStatusAt || "") || undefined,
+        (existing.handed_over_source ||
+          existing.handedOverSource ||
+          HANDED_OVER_SOURCE.MANUAL_BUTTON) as typeof HANDED_OVER_SOURCE.MANUAL_BUTTON,
+      ));
+      if (existing.handedOverAt) merged.handedOverAt = existing.handedOverAt;
+    } else {
+      // Không có cờ ĐVVC — giữ NONE, đừng để spread mang undefined lẫn lộn.
+      if (merged.isHandedOverToCarrier == null) {
+        Object.assign(merged, buildDefaultInternalFlagsPatch());
+      }
+    }
   }
 
   // GIỮ cờ local_status nội bộ kho — trừ HANDED_OVER khi đơn đã SHIPPED/COMPLETED.
@@ -9854,14 +9866,18 @@ async function persistShopeeOrderChunk(
 
   for (const normalized of batchNormalized) {
     try {
-      if (!normalized?.orderSn) continue;
-      const existing = orders.find((o: any) => o.orderSn === normalized.orderSn);
+      if (!normalized?.orderSn) {
+        console.warn("[Orders Sync] SKIP đơn thiếu orderSn — không phải do cờ ĐVVC.");
+        continue;
+      }
+      // KHÔNG skip theo is_handed_over / internal_status — mọi đơn Shopee đều được upsert.
+      const existing = orders.find(
+        (o: any) => String(o.orderSn || "") === String(normalized.orderSn || ""),
+      );
       if (existing) {
         preserveExistingTrackingIfIncomingEmpty(normalized, existing);
       }
-      const tnBeforeMerge = String(normalized.trackingNumber || normalized.tracking_no || "").trim();
       forceHealPickupOrderIfHasTracking(normalized);
-      // SHIPPED → shipping (Đang giao), COMPLETED → completed (Đã giao) — cho phép đè.
       enforceShopeeTerminalLocalStatus(normalized);
 
       if (normalized.partialCancel) {
@@ -9872,13 +9888,17 @@ async function persistShopeeOrderChunk(
         );
       }
 
-      const existingIndex = orders.findIndex((o: any) => o.orderSn === normalized.orderSn);
+      const existingIndex = orders.findIndex(
+        (o: any) => String(o.orderSn || "") === String(normalized.orderSn || ""),
+      );
       let row: any;
       if (existingIndex >= 0) {
         orders[existingIndex] = mergeShopeeOrderOnSync(orders[existingIndex], normalized);
         row = orders[existingIndex];
         updated++;
       } else {
+        // INSERT: gán cờ nội bộ mặc định (chưa bàn giao).
+        Object.assign(normalized, buildDefaultInternalFlagsPatch());
         orders.unshift(normalized);
         row = orders[0];
         added++;
@@ -9886,6 +9906,19 @@ async function persistShopeeOrderChunk(
       forceHealPickupOrderIfHasTracking(row);
       promoteOrderStatusWhenTrackingReady(row);
       enforceShopeeTerminalLocalStatus(row);
+
+      console.log("Dữ liệu chuẩn bị lưu DB:", {
+        orderSn: row.orderSn,
+        status: row.status,
+        shopee_order_status: row.shopee_order_status,
+        local_status: row.local_status || row.localStatus || null,
+        internal_status: row.internal_status || null,
+        is_handed_over_to_carrier: row.is_handed_over_to_carrier ?? row.isHandedOverToCarrier ?? false,
+        is_handed_over_to_courier: row.is_handed_over_to_courier ?? false,
+        tracking_no: row.trackingNumber || row.tracking_no || null,
+        action: existingIndex >= 0 ? "update" : "insert",
+      });
+
       touched.push(row);
     } catch (e: any) {
       console.error(
@@ -15481,23 +15514,8 @@ async function startServer() {
     let { orders: rawOrders, dirty, handoverMongoSync } = await loadOrdersForApi();
     rawOrders = rawOrders.filter(isValidOrder);
 
-    // One-shot dọn đơn rác ĐÃ GIAO CHO ĐVVC (logic cũ) — chạy 1 lần sau deploy.
-    try {
-      const purged = await purgeHandedOverGarbageOrdersOnce();
-      if (purged.removed > 0) {
-        const reloaded = await loadOrdersForApi();
-        rawOrders = reloaded.orders.filter(isValidOrder);
-        dirty = dirty || reloaded.dirty;
-        if (reloaded.handoverMongoSync?.length) {
-          handoverMongoSync = [
-            ...(handoverMongoSync || []),
-            ...reloaded.handoverMongoSync,
-          ];
-        }
-      }
-    } catch (purgeErr: any) {
-      console.warn("[Cleanup HandedOver] GET skip:", purgeErr?.message || purgeErr);
-    }
+    // KHÔNG tự xóa đơn ĐVVC trên GET list — chỉ dọn qua API cleanup tường minh.
+    // (Logic cũ purgeHandedOverGarbageOrdersOnce trên mọi GET làm mất đơn sau sync.)
 
     // Đơn chờ lấy hàng thiếu shipping_carrier → gọi Shopee lấy ĐVVC (cooldown).
     try {
@@ -20769,12 +20787,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
       }
-      // Dọn đơn rác ĐÃ GIAO CHO ĐVVC sau khi Mongo sẵn sàng (1 lần).
-      try {
-        await purgeHandedOverGarbageOrdersOnce();
-      } catch (purgeErr: any) {
-        console.warn("[Cleanup HandedOver] boot skip:", purgeErr?.message || purgeErr);
-      }
+      // KHÔNG tự xóa đơn ĐVVC khi boot — chỉ qua POST /api/orders/cleanup-handed-over.
       console.log(`[MongoDB] connectDB xong — ready=${isMongoReady()} uri=${getMongoUriMasked()}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

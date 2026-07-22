@@ -996,6 +996,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
   if (list.length === 0) return 0;
 
   // Giữ tracking_no đã sync (GHN GYA...) — không để pull/Shopee rỗng ghi đè mất.
+  // Đồng thời giữ cờ ĐVVC nội bộ (QR) nếu sync không cố ý clear.
   const ids = list
     .map((order) => {
       const id = String(order.id || "").trim();
@@ -1005,16 +1006,32 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     .filter(Boolean);
   const existingDocs = ids.length
     ? await OrderModel.find({ _id: { $in: ids } })
-        .select({ _id: 1, tracking_no: 1, "data.tracking_no": 1, "data.trackingNumber": 1 })
+        .select({
+          _id: 1,
+          tracking_no: 1,
+          "data.tracking_no": 1,
+          "data.trackingNumber": 1,
+          "data.local_status": 1,
+          "data.localStatus": 1,
+          "data.internal_status": 1,
+          "data.isHandedOverToCarrier": 1,
+          "data.is_handed_over_to_carrier": 1,
+          "data.is_handed_over_to_courier": 1,
+          "data.handedOverAt": 1,
+          "data.handed_over_source": 1,
+          "data.handedOverSource": 1,
+          "data.localStatusAt": 1,
+          "data.local_status_updated_at": 1,
+        })
         .lean()
     : [];
-  const existingTnById = new Map<string, string>();
+  const existingById = new Map<string, any>();
   for (const d of existingDocs as any[]) {
-    const tn = String(
-      d?.tracking_no || d?.data?.tracking_no || d?.data?.trackingNumber || "",
-    ).trim();
-    if (tn && !/^0FG/i.test(tn)) existingTnById.set(String(d._id), tn);
+    existingById.set(String(d._id), d);
   }
+
+  const isTruthy = (v: unknown) =>
+    v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
 
   const ops = [];
   for (const order of list) {
@@ -1023,12 +1040,95 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     if (!id && !orderSn) continue;
     const _id = id || `shopee-${orderSn}`;
     const pendingFlag = order.is_pending_shopee_check === true;
+    const existing = existingById.get(_id);
+    const existingData = existing?.data && typeof existing.data === "object" ? existing.data : {};
     const incomingTn = String(order.tracking_no || order.trackingNumber || "").trim();
-    const preservedTn = existingTnById.get(_id) || "";
+    const preservedTn = String(
+      existing?.tracking_no || existingData?.tracking_no || existingData?.trackingNumber || "",
+    ).trim();
     const tn =
       (incomingTn && !/^0FG/i.test(incomingTn) ? incomingTn : "") ||
-      preservedTn ||
+      (preservedTn && !/^0FG/i.test(preservedTn) ? preservedTn : "") ||
       null;
+
+    const raw = String(order.shopee_order_status || "").toUpperCase();
+    const clearHandover =
+      raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED";
+
+    // Giữ cờ QR nội bộ khi sync update — trừ khi Shopee đã SHIPPED+.
+    const existingHanded =
+      String(existingData?.local_status || existingData?.localStatus || existingData?.internal_status || "")
+        .toUpperCase() === "HANDED_OVER" ||
+      isTruthy(existingData?.isHandedOverToCarrier) ||
+      isTruthy(existingData?.is_handed_over_to_carrier) ||
+      isTruthy(existingData?.is_handed_over_to_courier);
+
+    const incomingHanded =
+      String(order.local_status || order.localStatus || order.internal_status || "").toUpperCase() ===
+        "HANDED_OVER" ||
+      isTruthy(order.isHandedOverToCarrier) ||
+      isTruthy(order.is_handed_over_to_carrier) ||
+      isTruthy(order.is_handed_over_to_courier);
+
+    let dataPayload: Record<string, unknown> = {
+      ...order,
+      id: _id,
+      is_pending_shopee_check: pendingFlag,
+      ...(tn ? { tracking_no: tn, trackingNumber: tn } : {}),
+    };
+
+    if (clearHandover) {
+      dataPayload = {
+        ...dataPayload,
+        local_status: "NONE",
+        localStatus: "NONE",
+        internal_status: "NONE",
+        isHandedOverToCarrier: false,
+        is_handed_over_to_carrier: false,
+        is_handed_over_to_courier: false,
+      };
+    } else if (existingHanded && !incomingHanded) {
+      // Sync quên mang cờ → khôi phục từ Mongo (không ghi đè thao tác QR).
+      dataPayload = {
+        ...dataPayload,
+        local_status: "HANDED_OVER",
+        localStatus: "HANDED_OVER",
+        internal_status: "HANDED_OVER",
+        isHandedOverToCarrier: true,
+        is_handed_over_to_carrier: true,
+        is_handed_over_to_courier: true,
+        handedOverAt: existingData.handedOverAt || dataPayload.handedOverAt,
+        handed_over_source: existingData.handed_over_source || existingData.handedOverSource,
+        handedOverSource: existingData.handedOverSource || existingData.handed_over_source,
+        localStatusAt: existingData.localStatusAt || dataPayload.localStatusAt,
+        local_status_updated_at:
+          existingData.local_status_updated_at || dataPayload.local_status_updated_at,
+      };
+    } else if (!incomingHanded && !existingHanded) {
+      // Insert / đơn thường: mặc định chưa bàn giao.
+      if (dataPayload.is_handed_over_to_carrier == null && dataPayload.isHandedOverToCarrier == null) {
+        dataPayload.local_status = dataPayload.local_status || "NONE";
+        dataPayload.localStatus = dataPayload.localStatus || "NONE";
+        dataPayload.internal_status = dataPayload.internal_status || "NONE";
+        dataPayload.isHandedOverToCarrier = false;
+        dataPayload.is_handed_over_to_carrier = false;
+        dataPayload.is_handed_over_to_courier = false;
+      }
+    }
+
+    console.log("Dữ liệu chuẩn bị lưu DB:", {
+      _id,
+      orderSn,
+      status: order.status,
+      shopee_order_status: order.shopee_order_status,
+      local_status: dataPayload.local_status,
+      internal_status: dataPayload.internal_status,
+      is_handed_over_to_carrier: dataPayload.is_handed_over_to_carrier,
+      clearHandover,
+      existingHanded,
+      tracking_no: tn,
+    });
+
     ops.push({
       updateOne: {
         filter: { _id },
@@ -1040,14 +1140,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
             shopId: order.shopId != null ? String(order.shopId) : null,
             ...(tn ? { tracking_no: tn } : {}),
             is_pending_shopee_check: pendingFlag,
-            data: {
-              ...order,
-              id: _id,
-              is_pending_shopee_check: pendingFlag,
-              ...(tn
-                ? { tracking_no: tn, trackingNumber: tn }
-                : {}),
-            },
+            data: dataPayload,
           },
         },
         upsert: true,

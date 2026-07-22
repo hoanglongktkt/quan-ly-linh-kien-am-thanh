@@ -123,8 +123,8 @@ export function applyHandedOverWrite<T extends Record<string, unknown>>(
   return { ...order, ...buildHandedOverWritePatch(now, source) };
 }
 
-/** Gỡ cờ ĐVVC (exit khi Đang giao). */
-export function buildClearHandedOverPatch(
+/** Patch mặc định khi INSERT đơn mới từ Shopee — chưa bàn giao ĐVVC. */
+export function buildDefaultInternalFlagsPatch(
   now?: string,
 ): Record<string, unknown> {
   const ts = now || new Date().toISOString();
@@ -140,6 +140,13 @@ export function buildClearHandedOverPatch(
     handed_over_source: null,
     handedOverSource: null,
   };
+}
+
+/** Gỡ cờ ĐVVC (exit khi Đang giao). */
+export function buildClearHandedOverPatch(
+  now?: string,
+): Record<string, unknown> {
+  return buildDefaultInternalFlagsPatch(now);
 }
 
 export function applyClearHandedOver<T extends Record<string, unknown>>(order: T): T {
