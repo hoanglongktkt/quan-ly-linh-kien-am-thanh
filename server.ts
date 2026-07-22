@@ -10585,10 +10585,15 @@ function rebuildOrderLookupIndex(orders: any[]): OrderLookupIndex {
       const key = normalizeOrderIndexKey(String(value || ""));
       if (key) map.set(key, index);
     };
+    // FE có thể gửi id nội bộ, Mongo _id, hoặc order_sn / orderSn.
     put(byId, order.id);
+    put(byId, order._id);
     put(byId, String(order.id || "").replace(/^shopee-/i, ""));
+    put(byId, String(order._id || "").replace(/^shopee-/i, ""));
     put(byOrderSn, order.orderSn);
+    put(byOrderSn, order.order_sn);
     put(byTracking, order.trackingNumber);
+    put(byTracking, order.tracking_no);
     put(byInternal, order.internalTrackingCode);
     put(byPackage, order.packageNumber);
   });
@@ -12795,18 +12800,52 @@ function validateOrderShopForShipment(order: any): {
   };
 }
 
-// Resolve an order row by internal id OR Shopee order_sn (bulk UI may send either).
+// Resolve an order row by internal id, Mongo _id, OR Shopee order_sn (bulk UI may send either).
 function findOrderRecord(orders: any[], idOrSn: string): { index: number; order: any } | null {
   const key = String(idOrSn || "").trim();
   if (!key) return null;
   // Luôn rebuild từ mảng đang thao tác (JSON∪Mongo) — không dùng cache JSON cũ.
   const idx = rebuildOrderLookupIndex(orders);
   const normalized = normalizeOrderIndexKey(key);
+  const stripped = key.replace(/^shopee-/i, "").trim();
   let index =
     idx.byId.get(normalized) ??
     idx.byOrderSn.get(normalized);
-  if (index === undefined && !key.startsWith("shopee-")) {
-    index = idx.byId.get(normalizeOrderIndexKey(`shopee-${key}`));
+  if (index === undefined && stripped && stripped !== key) {
+    const strippedNorm = normalizeOrderIndexKey(stripped);
+    index = idx.byId.get(strippedNorm) ?? idx.byOrderSn.get(strippedNorm);
+  }
+  if (index === undefined && !key.toLowerCase().startsWith("shopee-")) {
+    index =
+      idx.byId.get(normalizeOrderIndexKey(`shopee-${key}`)) ??
+      idx.byOrderSn.get(normalizeOrderIndexKey(`shopee-${key}`));
+  }
+  // Fallback tuyến tính — bắt trường hợp id/_id/order_sn lệch format index.
+  if (index === undefined) {
+    const keyLower = key.toLowerCase();
+    const strippedLower = stripped.toLowerCase();
+    index = orders.findIndex((o: any) => {
+      const candidates = [
+        o?.id,
+        o?._id,
+        o?.orderSn,
+        o?.order_sn,
+        o?.id != null ? String(o.id).replace(/^shopee-/i, "") : "",
+        o?._id != null ? String(o._id).replace(/^shopee-/i, "") : "",
+      ];
+      return candidates.some((c) => {
+        const s = String(c || "").trim();
+        if (!s) return false;
+        return (
+          s === key ||
+          s.toLowerCase() === keyLower ||
+          s === stripped ||
+          s.toLowerCase() === strippedLower ||
+          normalizeOrderIndexKey(s) === normalized
+        );
+      });
+    });
+    if (index < 0) index = undefined;
   }
   if (index === undefined) return null;
   return { index, order: orders[index] };
@@ -12817,7 +12856,9 @@ function resolveOrdersFromRequest(orders: any[], orderIds?: string[], orderSns?:
   const hits: { index: number; order: any }[] = [];
   const seen = new Set<number>();
   const tryAdd = (idOrSn: string) => {
-    const hit = findOrderRecord(orders, idOrSn);
+    const raw = String(idOrSn || "").trim();
+    if (!raw) return;
+    const hit = findOrderRecord(orders, raw);
     if (hit && !seen.has(hit.index)) {
       seen.add(hit.index);
       hits.push(hit);
@@ -18246,13 +18287,16 @@ async function startServer() {
   // "Xác nhận đơn hàng" modal) so it moves to "Chờ lấy hàng".
   app.post("/api/shopee/ship-order", authMiddleware, async (req, res) => {
     try {
-      const { orderId, method } = req.body;
+      const { orderId, orderSn, method } = req.body;
       const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
-      const orders = loadOrders();
-      const order = orders.find((o: any) => o.id === orderId);
-      if (!order) {
+      const loaded = await loadOrdersForApi();
+      const orders = loaded.orders;
+      const hit = findOrderRecord(orders, String(orderId || orderSn || ""));
+      if (!hit) {
         return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
       }
+      const { index } = hit;
+      const order = orders[index];
 
       console.log(`[Ship Order] Y\xEAu c\u1EA7u chu\u1EA9n b\u1EB1 h\xE0ng (${shipMethod}) cho \u0111\u01A1n ${order.orderSn} (channel=${order.channel})...`);
       const result = await withOperationTimeout(
@@ -18266,7 +18310,6 @@ async function startServer() {
         console.error(`[Ship Order] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`);
       }
 
-      const index = orders.findIndex((o: any) => o.id === orderId);
       if (result.success || isAlreadyShippedError(result)) {
         const tn = String(
           order.trackingNumber ||
@@ -18313,7 +18356,7 @@ async function startServer() {
           }
         }
         forceHealPickupOrderIfHasTracking(orders[index]);
-        saveOrders(orders);
+        await persistOrdersToDatabase(orders, [orders[index]]);
         return res.json({ success: true, mode: result.mode, order: orders[index] });
       }
 
@@ -18350,15 +18393,20 @@ async function startServer() {
     try {
     const { orderIds, orderSns, method } = req.body;
     const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
-    const idList = Array.isArray(orderIds) ? orderIds : [];
-    const snList = Array.isArray(orderSns) ? orderSns : [];
+    const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
+    const snList = Array.isArray(orderSns) ? orderSns.map(String) : [];
     if (idList.length === 0 && snList.length === 0) {
       return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns." });
     }
 
-    const orders = loadOrders();
+    // Cùng nguồn GET /api/orders (JSON ∪ Mongo) — tránh 404 lệch ID khi đơn chỉ có trên Mongo.
+    const loaded = await loadOrdersForApi();
+    const orders = loaded.orders;
     const toShip = resolveOrdersFromRequest(orders, idList, snList);
     if (toShip.length === 0) {
+      console.error(
+        `[Ship Order Bulk] orders_not_found ids=${JSON.stringify(idList)} sns=${JSON.stringify(snList)} pool=${orders.length}`,
+      );
       return res.status(404).json({
         error: "orders_not_found",
         message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database kh\u1EDBp v\u1EDBi danh s\xE1ch g\u1EEDi l\xEAn.",
@@ -18376,7 +18424,8 @@ async function startServer() {
     results.push(...batch.results);
     successfulShopeeOrders.push(...batch.successfulShopeeOrders);
 
-    saveOrders(orders);
+    const changedOrders = toShip.map(({ index }) => orders[index]).filter(Boolean);
+    await persistOrdersToDatabase(orders, changedOrders);
     const successCount = batch.successCount;
     console.log(`[Ship Order Bulk] Ho\xE0n t\u1EA5t: ${successCount}/${toShip.length} \u0111\u01A1n chu\u1EA9n b\u1EB1 h\xE0ng th\xE0nh c\xF4ng.`);
 
@@ -18396,6 +18445,7 @@ async function startServer() {
       printDocument = await autoPrintLabelsForShopeeOrders(orders, successfulShopeeOrders);
       if (printDocument?.printedOrderSns?.length) {
         const printedSet = new Set(printDocument.printedOrderSns.map(String));
+        const printedChanged: any[] = [];
         for (let i = 0; i < orders.length; i++) {
           if (printedSet.has(String(orders[i].orderSn))) {
             // Đánh dấu Đã in cho MỌI đơn đã có trong PDF (SPX/GHN/J&T/...).
@@ -18407,9 +18457,12 @@ async function startServer() {
               isPrepared: true,
               ...(hasTn ? { status: "processed" } : {}),
             };
+            printedChanged.push(orders[i]);
           }
         }
-        saveOrders(orders);
+        if (printedChanged.length) {
+          await persistOrdersToDatabase(orders, printedChanged);
+        }
       }
     }
 
@@ -19225,7 +19278,9 @@ async function startServer() {
       job.status = "running";
       job.updatedAt = Date.now();
 
-      const orders = loadOrders();
+      // Cùng nguồn JSON ∪ Mongo như API bulk — tránh lệch ID khi đơn chỉ có trên Mongo.
+      const loaded = await loadOrdersForApi();
+      const orders = loaded.orders;
       const toShip = resolveOrdersFromRequest(orders, idList, snList);
       job.total = toShip.length;
 
@@ -19238,7 +19293,8 @@ async function startServer() {
         },
       });
 
-      saveOrders(orders);
+      const changedOrders = toShip.map(({ index }) => orders[index]).filter(Boolean);
+      await persistOrdersToDatabase(orders, changedOrders);
       job.results = batch.results;
       job.successCount = batch.successCount;
       job.orders = orders.filter(isValidOrder);
@@ -19254,6 +19310,7 @@ async function startServer() {
           const printDocument = await autoPrintLabelsForShopeeOrders(orders, batch.successfulShopeeOrders);
           if (printDocument?.printedOrderSns?.length) {
             const printedSet = new Set(printDocument.printedOrderSns.map(String));
+            const printedChanged: any[] = [];
             for (let i = 0; i < orders.length; i++) {
               if (printedSet.has(String(orders[i].orderSn))) {
                 const hasTn =
@@ -19264,9 +19321,12 @@ async function startServer() {
                   isPrepared: true,
                   ...(hasTn ? { status: "processed" } : {}),
                 };
+                printedChanged.push(orders[i]);
               }
             }
-            saveOrders(orders);
+            if (printedChanged.length) {
+              await persistOrdersToDatabase(orders, printedChanged);
+            }
           }
           job.printDocument = printDocument;
           job.orders = orders.filter(isValidOrder);
@@ -19302,9 +19362,14 @@ async function startServer() {
       return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns." });
     }
 
-    const orders = loadOrders();
+    // Cùng nguồn GET /api/orders (JSON ∪ Mongo) — tránh 404 lệch ID khi đơn chỉ có trên Mongo.
+    const loaded = await loadOrdersForApi();
+    const orders = loaded.orders;
     const toShip = resolveOrdersFromRequest(orders, idList, snList);
     if (toShip.length === 0) {
+      console.error(
+        `[Ship Order Bulk Async] orders_not_found ids=${JSON.stringify(idList)} sns=${JSON.stringify(snList)} pool=${orders.length}`,
+      );
       return res.status(404).json({
         error: "orders_not_found",
         message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database kh\u1EDBp v\u1EDBi danh s\xE1ch g\u1EEDi l\xEAn.",
@@ -19315,6 +19380,7 @@ async function startServer() {
       });
     }
 
+    const optimisticChanged: any[] = [];
     for (const { index } of toShip) {
       orders[index] = {
         ...orders[index],
@@ -19323,8 +19389,9 @@ async function startServer() {
         shopeeSyncPending: true,
         shopeeSyncError: undefined,
       };
+      optimisticChanged.push(orders[index]);
     }
-    saveOrders(orders);
+    await persistOrdersToDatabase(orders, optimisticChanged);
 
     const jobId = createShipOrderJobId();
     shipOrderJobs.set(jobId, {
