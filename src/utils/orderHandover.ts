@@ -175,7 +175,7 @@ export function isOrderPreparedEffective(
  * Badge status = Tab Filter (1:1) theo State Machine.
  */
 export function resolveOrderBadgeStatus(order: Order): Order['status'] {
-  if (matchesShippingTab(order)) return 'shipping';
+  if (isShopeeShippingStatus(order)) return 'shipping';
   if (isShopeeCompletedStatus(order) || order.status === 'completed') return 'completed';
   if (isShopeeCancelledLikeStatus(order)) {
     if (order.status === 'return_pending' || order.status === 'return_received') {

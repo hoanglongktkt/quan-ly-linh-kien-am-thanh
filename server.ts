@@ -1540,20 +1540,61 @@ const SHOPEE_HTTP_TIMEOUT_MS = 12_000;
 /** TLS tối thiểu cho Shopee OpenAPI (cPanel Node ≥20) — tránh ECONNRESET do handshake cũ. */
 const SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
 const SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
-const nodeRequire = createRequire(import.meta.url);
-const { Agent: ShopeeUndiciAgent } = nodeRequire("undici") as {
-  Agent: new (opts?: Record<string, unknown>) => unknown;
-};
-const shopeeHttpDispatcher = new ShopeeUndiciAgent({
-  connect: {
-    rejectUnauthorized: true,
-    minVersion: SHOPEE_TLS_MIN_VERSION,
-    maxVersion: SHOPEE_TLS_MAX_VERSION,
-  },
-  connections: 3,
-  pipelining: 0,
-  keepAliveTimeout: 30_000,
-});
+
+/**
+ * CJS bundle (server.cjs / dist/server.cjs): import.meta.url bị esbuild xoá → undefined
+ * → createRequire crash → Node chết → FE "Máy chủ bận" / sync 500.
+ * ESM (tsx server.ts): dùng import.meta.url; CJS: dùng __filename.
+ */
+function resolveCreateRequireFilename(): string {
+  try {
+    // CJS bundle / Node require() — __filename luôn có.
+    if (typeof __filename === "string" && __filename.length > 0) {
+      return __filename;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const metaUrl = typeof import.meta !== "undefined" ? String((import.meta as any)?.url || "") : "";
+    if (metaUrl && metaUrl !== "undefined") return metaUrl;
+  } catch {
+    /* ignore */
+  }
+  return path.resolve(process.cwd(), "server.cjs");
+}
+
+let shopeeHttpDispatcher: unknown = undefined;
+try {
+  const nodeRequire = createRequire(resolveCreateRequireFilename());
+  let undiciMod: any;
+  try {
+    undiciMod = nodeRequire("node:undici");
+  } catch {
+    undiciMod = nodeRequire("undici");
+  }
+  const ShopeeUndiciAgent = undiciMod?.Agent;
+  if (typeof ShopeeUndiciAgent !== "function") {
+    throw new Error("undici.Agent không khả dụng");
+  }
+  shopeeHttpDispatcher = new ShopeeUndiciAgent({
+    connect: {
+      rejectUnauthorized: true,
+      minVersion: SHOPEE_TLS_MIN_VERSION,
+      maxVersion: SHOPEE_TLS_MAX_VERSION,
+    },
+    connections: 3,
+    pipelining: 0,
+    keepAliveTimeout: 30_000,
+  });
+  console.log("[Shopee HTTP] undici Agent OK — TLS dispatcher sẵn sàng cho sync Shopee.");
+} catch (undiciErr: any) {
+  console.warn(
+    "[Shopee HTTP] undici Agent không khởi tạo được — fallback fetch mặc định:",
+    undiciErr?.message || undiciErr,
+  );
+  shopeeHttpDispatcher = undefined;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -1572,12 +1613,13 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, {
+    const fetchInit: RequestInit & { dispatcher?: unknown } = {
       ...init,
       signal: controller.signal,
-      // @ts-expect-error Node fetch (undici) — dispatcher TLS cho Shopee API trên cPanel
-      dispatcher: shopeeHttpDispatcher,
-    });
+    };
+    // Chỉ gắn dispatcher khi undici Agent khởi tạo OK (tránh crash sync).
+    if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
+    return await fetch(url, fetchInit);
   } catch (error: any) {
     if (error?.name === "AbortError") {
       throw new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`);
@@ -16885,30 +16927,31 @@ async function startServer() {
     warning?: string;
     skipped?: boolean;
   }> {
-    if (!opts?.assumeLocked) {
-      if (isSyncing) {
-        console.log("Sync skipped: Another instance is running");
-        return {
-          success: false,
+    let gotHeavy = false;
+    const heavyName = `orders-pull:${mode}`;
+    try {
+      if (!opts?.assumeLocked) {
+        if (isSyncing) {
+          console.log("Sync skipped: Another instance is running");
+          return {
+            success: false,
+            pulled: 0,
+            skipped: true,
+            warning: "Đang có tiến trình đồng bộ chạy",
+          };
+        }
+        isSyncing = true;
+        ordersPullSyncMeta = {
+          mode,
+          startedAt: Date.now(),
+          finishedAt: 0,
           pulled: 0,
-          skipped: true,
-          warning: "Đang có tiến trình đồng bộ chạy",
+          error: null,
         };
       }
-      isSyncing = true;
-      ordersPullSyncMeta = {
-        mode,
-        startedAt: Date.now(),
-        finishedAt: 0,
-        pulled: 0,
-        error: null,
-      };
-    }
 
-    const heavyName = `orders-pull:${mode}`;
-    const gotHeavy = tryAcquireHeavyJob(heavyName);
+      gotHeavy = tryAcquireHeavyJob(heavyName);
 
-    try {
       if (!gotHeavy) {
         console.log("Sync skipped: Another instance is running (heavy job busy)");
         return {
@@ -17111,32 +17154,44 @@ async function startServer() {
       } catch (scanErr: any) {
         console.warn("[Orders Pull] Tracking scanner failed:", scanErr?.message || scanErr);
       }
-      // Sau sync: heal + ép SHIPPED/COMPLETED ghi đè PROCESSED local.
+      // Sau sync: heal + ép SHIPPED/COMPLETED ghi đè PROCESSED local (không crash sync).
       let postHeal = 0;
-      for (const o of orders) {
-        if (String(o?.channel) !== "shopee") continue;
-        const raw = String(o?.shopee_order_status || "").toUpperCase();
-        const fulfillment = String(o?.fulfillment_type || o?.ship_method || "").toLowerCase();
-        const worth =
-          hasUsableShopeeTrackingNumber(o) ||
-          raw === "PROCESSED" ||
-          raw === "SHIPPED" ||
-          raw === "TO_CONFIRM_RECEIVE" ||
-          raw === "COMPLETED" ||
-          fulfillment === "dropoff" ||
-          fulfillment === "drop_off";
-        if (!worth) continue;
-        const before = String(o.status || "");
-        forceHealPickupOrderIfHasTracking(o);
-        enforceShopeeTerminalLocalStatus(o);
-        if (String(o.status || "") !== before) {
-          postHeal++;
-          if (hasUsableShopeeTrackingNumber(o)) void persistOrderTrackingToDb(o);
+      try {
+        for (const o of orders) {
+          try {
+            if (String(o?.channel) !== "shopee") continue;
+            const raw = String(o?.shopee_order_status || "").toUpperCase();
+            const fulfillment = String(o?.fulfillment_type || o?.ship_method || "").toLowerCase();
+            const worth =
+              hasUsableShopeeTrackingNumber(o) ||
+              raw === "PROCESSED" ||
+              raw === "SHIPPED" ||
+              raw === "TO_CONFIRM_RECEIVE" ||
+              raw === "COMPLETED" ||
+              fulfillment === "dropoff" ||
+              fulfillment === "drop_off";
+            if (!worth) continue;
+            const before = String(o.status || "");
+            forceHealPickupOrderIfHasTracking(o);
+            enforceShopeeTerminalLocalStatus(o);
+            if (String(o.status || "") !== before) {
+              postHeal++;
+              if (hasUsableShopeeTrackingNumber(o)) void persistOrderTrackingToDb(o);
+            }
+          } catch (oneHealErr: any) {
+            console.warn(
+              "[Orders Pull] Post-heal skip 1 đơn:",
+              o?.orderSn || o?.id,
+              oneHealErr?.message || oneHealErr,
+            );
+          }
         }
-      }
-      if (postHeal > 0) {
-        saveOrders(orders);
-        console.log(`[Orders Pull] Post-sync force-heal ${postHeal} đơn (SHIPPED/COMPLETED/PROCESSED/tracking).`);
+        if (postHeal > 0) {
+          saveOrders(orders);
+          console.log(`[Orders Pull] Post-sync force-heal ${postHeal} đơn (SHIPPED/COMPLETED/PROCESSED/tracking).`);
+        }
+      } catch (postHealErr: any) {
+        console.warn("[Orders Pull] Post-heal batch failed:", postHealErr?.message || postHealErr);
       }
       ordersPullSyncMeta.pulled = pulledCount;
       if (errors.length > 0 && !ordersPullSyncMeta.error) {
@@ -17219,15 +17274,23 @@ async function startServer() {
       };
 
       setImmediate(() => {
-        void executeOrdersPullSync(mode, { assumeLocked: true }).then((result) => {
-          if (result.skipped) {
-            console.log("[Orders Pull] Background skipped — mutex busy");
-            return;
-          }
-          console.log(
-            `[Orders Pull] Background xong mode=${mode} pulled=${result.pulled} success=${result.success}`,
-          );
-        });
+        void executeOrdersPullSync(mode, { assumeLocked: true })
+          .then((result) => {
+            if (result.skipped) {
+              console.log("[Orders Pull] Background skipped — mutex busy");
+              return;
+            }
+            console.log(
+              `[Orders Pull] Background xong mode=${mode} pulled=${result.pulled} success=${result.success}`,
+            );
+          })
+          .catch((bgErr: any) => {
+            // Không để unhandled rejection treo isSyncing / crash process.
+            console.error("[Orders Pull] Background unhandled:", bgErr?.message || bgErr);
+            ordersPullSyncMeta.error = bgErr?.message || String(bgErr) || "Internal Server Error";
+            ordersPullSyncMeta.finishedAt = Date.now();
+            isSyncing = false;
+          });
       });
 
       return res.status(202).json({
@@ -17240,11 +17303,13 @@ async function startServer() {
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error("[Orders Pull] fatal:", err.message, err.stack);
+      isSyncing = false;
+      ordersPullSyncMeta.finishedAt = Date.now();
+      ordersPullSyncMeta.error = err.message || "Internal Server Error";
       if (res.headersSent) return;
       return res.status(500).json({
         success: false,
         error: err.message || "Internal Server Error",
-        stack: err.stack,
       });
     }
   });
