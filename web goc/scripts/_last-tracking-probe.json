@@ -1,0 +1,33 @@
+{
+  "finding": "get_order_detail.package_list.tracking_number is empty for GHN SHIPPED, while get_tracking_number returns GYA...",
+  "api_category": "Logistics",
+  "api_name": "v2.logistics.get_tracking_number",
+  "request": {
+    "method": "GET",
+    "path": "/api/v2/logistics/get_tracking_number",
+    "partner_id": 2038162,
+    "shop_id": 4127421,
+    "order_sn": "2607207181SXFP",
+    "package_number": "OFG238241862218943",
+    "response_optional_fields": "plp_number,first_mile_tracking_number,last_mile_tracking_number",
+    "timestamp": 1784636377,
+    "access_token": "(omitted)",
+    "sign": "(omitted)"
+  },
+  "response": {
+    "error": "",
+    "message": "",
+    "response": {
+      "first_mile_tracking_number": null,
+      "hint": "",
+      "last_mile_tracking_number": null,
+      "pickup_code": null,
+      "plp_number": "",
+      "tracking_number": "GYA9LYP6"
+    },
+    "request_id": "e3e3e7f3571e09501593c2f70b2dd700:03000019f0ccd16f:02000010f2ca1339"
+  },
+  "request_id": "e3e3e7f3571e09501593c2f70b2dd700:03000019f0ccd16f:02000010f2ca1339",
+  "request_time": "2026-07-21T12:19:37.950Z",
+  "request_time_local": "19:19:37 21/7/2026"
+}

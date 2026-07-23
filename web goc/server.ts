@@ -8,7 +8,6 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
-import { createShopeeWebhookRouter } from "./src/webhooks/shopeeWebhookHandler.ts";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
 import {
@@ -162,40 +161,21 @@ function writeCpanelCrashLogToAppRoot(kind: string, err: unknown): void {
 }
 process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
 process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
-/** Legacy /prints — chỉ dọn file rỗng cũ, KHÔNG còn dùng để lưu/phục vụ PDF. */
+/** Legacy dirs — chỉ dùng để XÓA TRẮNG PDF cũ (trước khi chuyển sang public/prints). */
 const WAYBILLS_DIR = path.join(APP_ROOT, "storage", "waybills");
-const LEGACY_PUBLIC_PRINTS_DIR = path.join(APP_ROOT, "public", "prints");
+const LEGACY_WAYBILLS_DIR = path.join(APP_ROOT, "storage", "labels");
 const WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
 
-/**
- * PDF vận đơn: RAM + đĩa tại storage/labels/ (ổn định, writable).
- * URL chuẩn phục vụ FE: /api/public/labels/:filename — tuyệt đối KHÔNG dùng /prints/.
- */
-const LABELS_DIR = path.join(APP_ROOT, "storage", "labels");
-/** Disk TTL 72h; RAM TTL 60 phút (đủ cho phiên in). */
-const LABEL_DISK_TTL_MS = 72 * 60 * 60 * 1000;
-const LABEL_RAM_TTL_MS = 60 * 60 * 1000;
-const labelMemCache = new Map<string, { buf: Buffer; expires: number; contentType?: string }>();
-const LABEL_MEM_MAX_ENTRIES = 48;
-const LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
+/** PDF vận đơn lưu tĩnh tại public/prints/ — FE mở URL trực tiếp (kiểu Sapo). */
+const PRINTS_DIR = path.join(APP_ROOT, "public", "prints");
+/** Auto-cleanup: xóa PDF vận đơn cũ hơn 72 giờ. */
+const LABEL_TTL_MS = 72 * 60 * 60 * 1000;
 
-function ensureLabelsDir(): void {
+function ensurePrintsDir(): void {
   try {
-    if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR, { recursive: true });
+    if (!fs.existsSync(PRINTS_DIR)) fs.mkdirSync(PRINTS_DIR, { recursive: true });
   } catch (err) {
-    console.error("[Labels] Không tạo được thư mục storage/labels:", err);
-  }
-}
-
-function assertLabelsDirWritable(): void {
-  ensureLabelsDir();
-  const probe = path.join(LABELS_DIR, `.write_probe_${process.pid}`);
-  try {
-    fs.writeFileSync(probe, "ok");
-    fs.unlinkSync(probe);
-  } catch (err) {
-    console.error("[Labels] Không ghi được thư mục storage/labels:", err);
-    throw err instanceof Error ? err : new Error(String(err));
+    console.warn("[Prints] Không tạo được thư mục public/prints:", err);
   }
 }
 
@@ -206,47 +186,18 @@ function safeLabelFilename(raw: string): string | null {
 }
 
 function isPdfBuffer(buffer: Buffer, contentType?: string): boolean {
-  if (!buffer || buffer.length < 5) return false;
-  if (buffer.subarray(0, 4).toString() === "%PDF") return true;
-  // Chỉ tin contentType khi buffer đã có magic PDF — tránh chấp nhận JSON/HTML.
-  return false;
+  if (contentType?.includes("pdf")) return true;
+  return buffer.length > 4 && buffer.subarray(0, 4).toString() === "%PDF";
 }
 
-function getLabelMemTotalBytes(): number {
-  let total = 0;
-  for (const val of labelMemCache.values()) total += val.buf.length;
-  return total;
-}
-
-function evictLabelMemIfNeeded(): void {
-  while (
-    labelMemCache.size > 0 &&
-    (labelMemCache.size >= LABEL_MEM_MAX_ENTRIES || getLabelMemTotalBytes() >= LABEL_MEM_MAX_BYTES)
-  ) {
-    let oldestKey: string | null = null;
-    let oldestExp = Infinity;
-    for (const [key, val] of labelMemCache) {
-      if (val.expires < oldestExp) {
-        oldestExp = val.expires;
-        oldestKey = key;
-      }
-    }
-    if (!oldestKey) break;
-    labelMemCache.delete(oldestKey);
-    console.log(
-      `[Labels] Evict RAM ${oldestKey} (entries=${labelMemCache.size}, bytes≈${getLabelMemTotalBytes()})`,
-    );
-  }
-}
-
-/** Xóa file PDF cũ của cùng mã đơn trước khi ghi file mới. */
-function removeExistingLabelFilesForOrderSns(orderSns: string[]): number {
-  ensureLabelsDir();
+/** Xóa file PDF cũ của cùng mã đơn (order_<sn>_*.pdf) trước khi ghi file mới. */
+function removeExistingPrintFilesForOrderSns(orderSns: string[]): number {
+  ensurePrintsDir();
   const sns = [...new Set(orderSns.map((s) => String(s || "").replace(/[^a-zA-Z0-9_-]/g, "")).filter(Boolean))];
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of fs.readdirSync(LABELS_DIR)) {
+    for (const name of fs.readdirSync(PRINTS_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) =>
@@ -256,62 +207,45 @@ function removeExistingLabelFilesForOrderSns(orderSns: string[]): number {
       );
       if (!hit) continue;
       try {
-        fs.unlinkSync(path.join(LABELS_DIR, name));
-        labelMemCache.delete(name);
+        fs.unlinkSync(path.join(PRINTS_DIR, name));
         deleted += 1;
       } catch {
         /* ignore per-file */
       }
     }
   } catch (err) {
-    console.warn("[Labels] Không quét được thư mục để ghi đè:", err);
+    console.warn("[Prints] Không quét được thư mục để ghi đè:", err);
   }
   return deleted;
 }
 
-/**
- * Lưu PDF vào RAM + storage/labels/. Từ chối buffer rỗng / không phải PDF.
- * Trả về tên file an toàn sau khi đã xác minh tồn tại và size > 0.
- */
 function putLabelMem(filename: string, buffer: Buffer, contentType?: string): string {
   const safe = safeLabelFilename(filename);
   if (!safe) throw new Error(`Tên file vận đơn không hợp lệ: ${filename}`);
-  console.log(`[Labels] Bắt đầu lưu PDF: ${safe}, size=${buffer?.length || 0}, type=${contentType || ""}`);
   if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
-    console.error(`[Labels] TỪ CHỐI ghi file rỗng: ${filename}, type=${contentType || ""}`);
-    throw new Error("Buffer PDF rỗng — không ghi file và không trả URL.");
+    console.error(`[Prints] TỪ CHỐI ghi file rỗng: ${filename}, type=${contentType || ""}`);
+    throw new Error("Buffer PDF rỗng — không ghi file tĩnh xuống đĩa.");
   }
   if (buffer.length < 64) {
     console.error(
-      `[Labels] Buffer quá nhỏ (${buffer.length} bytes), head=${buffer.subarray(0, Math.min(20, buffer.length)).toString("hex")}`,
+      `[Prints] Buffer quá nhỏ (${buffer.length} bytes), head=${buffer.subarray(0, Math.min(20, buffer.length)).toString("hex")}`,
     );
     throw new Error(`Buffer PDF không hợp lệ (chỉ ${buffer.length} bytes).`);
   }
   if (!isPdfBuffer(buffer, contentType)) {
     console.error(
-      `[Labels] Không phải PDF: ${filename}, size=${buffer.length}, head=${buffer.subarray(0, 20).toString("hex")}`,
+      `[Prints] Không phải PDF: ${filename}, size=${buffer.length}, head=${buffer.subarray(0, 20).toString("hex")}`,
     );
     throw new Error("Dữ liệu vận đơn từ Shopee không phải PDF hợp lệ.");
   }
-
+  ensurePrintsDir();
+  cleanupExpiredPrintFiles();
+  // Ghi đè: xóa file cũ cùng mã đơn trước khi lưu.
+  const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
+  if (snMatch?.[1]) removeExistingPrintFilesForOrderSns([snMatch[1]]);
+  const dest = path.join(PRINTS_DIR, safe);
   try {
-    ensureLabelsDir();
-    assertLabelsDirWritable();
-    evictLabelMemIfNeeded();
-    cleanupExpiredLabelFiles();
-
-    const snMatch =
-      safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) ||
-      safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
-    if (snMatch?.[1]) removeExistingLabelFilesForOrderSns([snMatch[1]]);
-
-    const dest = path.join(LABELS_DIR, safe);
-    console.log(`[Labels] Đường dẫn lưu file dự kiến: ${dest}`);
     fs.writeFileSync(dest, buffer);
-
-    if (!fs.existsSync(dest)) {
-      throw new Error(`Ghi PDF thất bại — file không tồn tại sau writeFileSync: ${dest}`);
-    }
     const st = fs.statSync(dest);
     if (!st.isFile() || st.size <= 0) {
       try {
@@ -319,11 +253,12 @@ function putLabelMem(filename: string, buffer: Buffer, contentType?: string): st
       } catch {
         /* ignore */
       }
-      throw new Error(`Ghi PDF thất bại — file trên đĩa rỗng: ${dest}`);
+      throw new Error(`Ghi PDF thất bại — file trên đĩa rỗng hoặc không tồn tại: ${dest}`);
     }
     if (st.size !== buffer.length) {
-      console.warn(`[Labels] Cảnh báo size lệch: buffer=${buffer.length} disk=${st.size} → ${dest}`);
+      console.warn(`[Prints] Cảnh báo size lệch: buffer=${buffer.length} disk=${st.size} → ${dest}`);
     }
+    // Xác minh magic bytes sau khi ghi.
     const head = Buffer.alloc(5);
     const fd = fs.openSync(dest, "r");
     try {
@@ -339,17 +274,10 @@ function putLabelMem(filename: string, buffer: Buffer, contentType?: string): st
       }
       throw new Error(`File ghi ra không còn là PDF hợp lệ: ${safe}`);
     }
-
-    labelMemCache.set(safe, {
-      buf: buffer,
-      expires: Date.now() + LABEL_RAM_TTL_MS,
-      contentType: "application/pdf",
-    });
-
-    console.log(`[Labels] Kết quả: OK — Saved ${safe} (${st.size} bytes) → ${dest}`);
+    console.log(`[Prints] Saved OK ${safe} (${st.size} bytes) → ${dest}`);
     return safe;
   } catch (err: any) {
-    console.error(`[Labels] Kết quả: Lỗi — ${err?.message || err}`);
+    console.error(`[Prints] Lỗi ghi file ${dest}:`, err?.message || err);
     throw err;
   }
 }
@@ -357,90 +285,40 @@ function putLabelMem(filename: string, buffer: Buffer, contentType?: string): st
 function getLabelMem(filename: string): { buf: Buffer; contentType?: string } | null {
   const safe = safeLabelFilename(filename);
   if (!safe) return null;
-
-  const ram = labelMemCache.get(safe);
-  if (ram) {
-    if (ram.expires < Date.now() || !ram.buf?.length || !isPdfBuffer(ram.buf)) {
-      labelMemCache.delete(safe);
-    } else {
-      return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
-    }
-  }
-
-  const filePath = path.join(LABELS_DIR, safe);
+  const filePath = path.join(PRINTS_DIR, safe);
   try {
     if (!fs.existsSync(filePath)) return null;
-    const st = fs.statSync(filePath);
-    if (!st.isFile() || st.size <= 0) {
-      console.warn(`[Labels] Bỏ qua file rỗng trên đĩa: ${filePath}`);
-      try {
-        fs.unlinkSync(filePath);
-      } catch {
-        /* ignore */
-      }
-      return null;
-    }
     const buf = fs.readFileSync(filePath);
-    if (!buf.length || !isPdfBuffer(buf)) return null;
-    labelMemCache.set(safe, {
-      buf,
-      expires: Date.now() + LABEL_RAM_TTL_MS,
-      contentType: "application/pdf",
-    });
+    if (!isPdfBuffer(buf)) return null;
     return { buf, contentType: "application/pdf" };
-  } catch (err: any) {
-    console.warn(`[Labels] Đọc đĩa lỗi ${safe}:`, err?.message || err);
+  } catch {
     return null;
   }
 }
 
 function hasLabelMem(filename: string): boolean {
-  const hit = getLabelMem(filename);
-  return Boolean(hit && hit.buf.length > 0 && isPdfBuffer(hit.buf));
-}
-
-/** Xác minh file sẵn sàng trước khi trả URL cho FE — tuyệt đối không trả URL file rỗng. */
-function assertLabelFileReady(filename: string): { safe: string; size: number } {
   const safe = safeLabelFilename(filename);
-  if (!safe) throw new Error(`Tên file vận đơn không hợp lệ: ${filename}`);
-  const hit = getLabelMem(safe);
-  if (!hit || !hit.buf.length) {
-    throw new Error(`File vận đơn không tồn tại hoặc rỗng: ${safe}`);
+  if (!safe) return false;
+  try {
+    return fs.existsSync(path.join(PRINTS_DIR, safe));
+  } catch {
+    return false;
   }
-  if (!isPdfBuffer(hit.buf)) {
-    throw new Error(`File vận đơn không phải PDF hợp lệ: ${safe}`);
-  }
-  const diskPath = path.join(LABELS_DIR, safe);
-  if (fs.existsSync(diskPath)) {
-    const st = fs.statSync(diskPath);
-    if (st.size <= 0) {
-      throw new Error(`File vận đơn trên đĩa rỗng (0 bytes): ${diskPath}`);
-    }
-  }
-  return { safe, size: hit.buf.length };
 }
 
-/** Dọn PDF trong storage/labels/ > 72h + RAM hết hạn. */
-function cleanupExpiredLabelFiles(): number {
+/** Dọn PDF trong public/prints/ có tuổi đời > 72 giờ. */
+function cleanupExpiredPrintFiles(): number {
+  ensurePrintsDir();
+  const cutoff = Date.now() - LABEL_TTL_MS;
   let deleted = 0;
-  const now = Date.now();
-  for (const [key, val] of labelMemCache) {
-    if (val.expires < now) {
-      labelMemCache.delete(key);
-      deleted += 1;
-    }
-  }
   try {
-    ensureLabelsDir();
-    const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of fs.readdirSync(LABELS_DIR)) {
+    for (const name of fs.readdirSync(PRINTS_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = path.join(LABELS_DIR, name);
+      const full = path.join(PRINTS_DIR, name);
       try {
         const st = fs.statSync(full);
-        if (st.size <= 0 || st.mtimeMs < cutoff) {
+        if (st.mtimeMs < cutoff) {
           fs.unlinkSync(full);
-          labelMemCache.delete(name);
           deleted += 1;
         }
       } catch {
@@ -448,29 +326,23 @@ function cleanupExpiredLabelFiles(): number {
       }
     }
   } catch (err) {
-    console.warn("[Labels Cleanup] lỗi quét thư mục:", err);
+    console.warn("[Prints Cleanup] lỗi quét thư mục:", err);
   }
   if (deleted > 0) {
-    console.log(`[Labels Cleanup] Đã xóa ${deleted} mục hết hạn/rỗng.`);
+    console.log(`[Prints Cleanup] Đã xóa ${deleted} PDF cũ hơn 72 giờ.`);
   }
   return deleted;
 }
 
-/** Alias tương thích. */
+/** Alias tương thích — cleanup theo TTL 72h trên đĩa. */
 function purgeExpiredLabelMem(): number {
-  return cleanupExpiredLabelFiles();
-}
-function cleanupExpiredPrintFiles(): number {
-  return cleanupExpiredLabelFiles();
-}
-function ensurePrintsDir(): void {
-  ensureLabelsDir();
+  return cleanupExpiredPrintFiles();
 }
 
-/** Xóa file rỗng / PDF cũ trong public/prints (legacy — tránh Apache phục vụ 0 bytes). */
-function wipeLegacyPublicPrints(): number {
+/** Xóa trắng mọi file PDF/ZIP/HTML cũ trong storage legacy. */
+function wipeLegacyLabelDiskFiles(): number {
   let deleted = 0;
-  for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
+  for (const dir of [WAYBILLS_DIR, LEGACY_WAYBILLS_DIR]) {
     try {
       if (!fs.existsSync(dir)) continue;
       for (const name of fs.readdirSync(dir)) {
@@ -479,15 +351,15 @@ function wipeLegacyPublicPrints(): number {
           fs.unlinkSync(path.join(dir, name));
           deleted += 1;
         } catch {
-          /* ignore */
+          /* ignore per-file */
         }
       }
     } catch (err) {
-      console.warn(`[Labels] Không dọn được legacy ${dir}:`, err);
+      console.warn(`[Waybills] Không xóa được thư mục ${dir}:`, err);
     }
   }
   if (deleted > 0) {
-    console.log(`[Labels] Đã xóa ${deleted} file legacy (public/prints|storage/waybills).`);
+    console.log(`[Waybills] Đã xóa trắng ${deleted} file vận đơn legacy trên đĩa.`);
   }
   return deleted;
 }
@@ -495,35 +367,20 @@ function wipeLegacyPublicPrints(): number {
 function scheduleWaybillsCleanup(): void {
   setImmediate(() => {
     try {
-      cleanupExpiredLabelFiles();
-      wipeLegacyPublicPrints();
+      cleanupExpiredPrintFiles();
+      wipeLegacyLabelDiskFiles();
     } catch (err) {
-      console.warn("[Labels Cleanup] lỗi:", err);
+      console.warn("[Prints Cleanup] lỗi:", err);
     }
   });
 }
 
-// Boot: tạo storage/labels + dọn legacy /prints + cleanup mỗi giờ
-try {
-  assertLabelsDirWritable();
-  console.log(`[Labels] LABELS_DIR=${LABELS_DIR} (writable OK)`);
-} catch (err) {
-  console.error("[Labels] BOOT: storage/labels không ghi được — in đơn sẽ thất bại:", err);
-}
-wipeLegacyPublicPrints();
-cleanupExpiredLabelFiles();
-/** Không chạy chồng cleanup — tránh treo/fork thừa trên cPanel. */
-let labelDiskCleanupRunning = false;
+// Boot: tạo thư mục prints + dọn legacy + interval cleanup mỗi giờ
+ensurePrintsDir();
+wipeLegacyLabelDiskFiles();
+cleanupExpiredPrintFiles();
 const labelDiskCleanupTimer = setInterval(() => {
-  if (labelDiskCleanupRunning) return;
-  labelDiskCleanupRunning = true;
-  try {
-    cleanupExpiredLabelFiles();
-  } catch (err) {
-    console.warn("[Labels Cleanup] setInterval lỗi:", err);
-  } finally {
-    labelDiskCleanupRunning = false;
-  }
+  cleanupExpiredPrintFiles();
 }, 60 * 60 * 1000);
 if (typeof (labelDiskCleanupTimer as any).unref === "function") {
   (labelDiskCleanupTimer as any).unref();
@@ -539,13 +396,13 @@ function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
       return "invalid";
     }
     const hit = getLabelMem(safe);
-    if (!hit || !hit.buf.length) {
-      console.warn(`[Labels] 404 — không thấy file: ${safe} (dir=${LABELS_DIR})`);
+    if (!hit) {
+      console.warn(`[Prints] 404 — không thấy file: ${safe} (dir=${PRINTS_DIR})`);
       return "not_found";
     }
-    if (!isPdfBuffer(hit.buf, hit.contentType)) {
+    if (!hit.buf.length || !isPdfBuffer(hit.buf, hit.contentType)) {
       console.error(
-        `[Labels] Buffer không phải PDF hợp lệ: ${safe}, size=${hit.buf.length}, head=${hit.buf.subarray(0, 20).toString("hex")}`,
+        `[Prints] Buffer không phải PDF hợp lệ: ${safe}, size=${hit.buf.length}, head=${hit.buf.subarray(0, 20).toString("hex")}`
       );
       res.status(415).type("text/plain").send("File vận đơn không phải PDF hợp lệ.");
       return "invalid";
@@ -554,13 +411,13 @@ function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
     res.setHeader("Content-Length", String(hit.buf.length));
-    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("Cache-Control", "public, max-age=3600");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.end(hit.buf);
-    console.log(`[Labels] Served PDF /api/public/labels/${safe} (${hit.buf.length} bytes)`);
+    console.log(`[Prints] Served PDF ${safe} (${hit.buf.length} bytes)`);
     return "sent";
   } catch (err: any) {
-    console.error(`[Labels] serveLabelPdf lỗi:`, err?.message || err);
+    console.error(`[Prints] serveLabelPdf lỗi:`, err?.message || err);
     if (!res.headersSent) {
       res.status(500).type("text/plain").send("Lỗi đọc file vận đơn PDF.");
     }
@@ -583,40 +440,45 @@ function resolveAppBaseUrl(): string {
 const APP_BASE_URL = resolveAppBaseUrl();
 
 function resolveLabelsPublicBaseUrl(): string {
-  const explicit = String(
-    process.env.LABELS_BASE_URL || process.env.CPANEL_PUBLIC_URL || process.env.CPANEL_BACKEND_URL || "",
-  ).trim();
+  const explicit = String(process.env.LABELS_BASE_URL || process.env.CPANEL_PUBLIC_URL || "").trim();
   if (explicit) return explicit.replace(/\/$/, "");
-  // Luôn trả về API backend (nơi Node lưu PDF) — không trả domain frontend Vercel/quanly SPA.
-  return "https://api.linhkienamthanh.net";
+  const host = APP_BASE_URL.replace(/^https?:\/\//, "").toLowerCase();
+  if (host.startsWith("quanly.") || host === "www.quanly.linhkienamthanh.net") {
+    return "https://api.linhkienamthanh.net";
+  }
+  return APP_BASE_URL.replace(/\/$/, "");
 }
 
-/** Chuẩn hóa → absolute URL /api/public/labels/:file (không bao giờ /prints/). */
 function absoluteLabelUrl(relativePath: string | null | undefined): string | null {
   if (!relativePath) return null;
-  let fn = "";
   if (/^https?:\/\//i.test(relativePath)) {
     try {
-      fn = decodeURIComponent(new URL(relativePath).pathname.split("/").pop() || "");
+      const u = new URL(relativePath);
+      const fn = decodeURIComponent(u.pathname.split("/").pop() || "");
+      if (fn && /\.pdf$/i.test(fn) && safeLabelFilename(fn)) {
+        return `${resolveLabelsPublicBaseUrl()}/api/public/labels/${encodeURIComponent(fn)}`;
+      }
     } catch {
+      /* keep as-is */
+    }
+    return relativePath;
+  }
+  let p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
+  // Chuẩn hóa mọi path (/prints/, /labels/, /api/labels/) → /api/public/labels/
+  const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
+  if (fnMatch?.[1]) {
+    const fn = decodeURIComponent(fnMatch[1]);
+    if (!safeLabelFilename(fn)) return null;
+    p = `/api/public/labels/${encodeURIComponent(fn)}`;
+  } else {
+    const bare = path.basename(p);
+    if (/\.pdf$/i.test(bare) && safeLabelFilename(bare)) {
+      p = `/api/public/labels/${encodeURIComponent(bare)}`;
+    } else {
       return null;
     }
-  } else {
-    const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
-    const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || path.basename(p));
   }
-  if (!safeLabelFilename(fn)) return null;
-  // Chốt toàn vẹn trước khi công bố URL — không trả link file rỗng/404.
-  try {
-    assertLabelFileReady(fn);
-  } catch (err: any) {
-    console.error(`[Labels] absoluteLabelUrl TỪ CHỐI URL (file chưa sẵn sàng): ${fn} — ${err?.message || err}`);
-    return null;
-  }
-  const url = `${resolveLabelsPublicBaseUrl()}/api/public/labels/${encodeURIComponent(fn)}`;
-  console.log(`[Labels] URL trả về cho FE: ${url}`);
-  return url;
+  return `${resolveLabelsPublicBaseUrl()}${p}`;
 }
 
 async function runInBatches<T>(
@@ -648,7 +510,7 @@ function resolveShopeeCallbackUrl(): string {
 }
 
 const SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
-const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
+const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
 const SHOPEE_CALLBACK_IDLE_MSG =
   "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 
@@ -1284,7 +1146,7 @@ async function exchangeShopeeCodeForToken(
   let res: Response;
   let rawText: string;
   try {
-    res = await fetchWithTimeout(url, {
+    res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -1347,7 +1209,7 @@ async function refreshShopeeToken(shopId: string, refreshToken: string) {
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
 
   try {
-    const res = await fetchWithTimeout(url, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: refreshToken, shop_id: Number(shopId), partner_id: Number(SHOPEE_PARTNER_ID) }),
@@ -1636,22 +1498,10 @@ async function runShopeeConnectivityDiagnostics(shopIdInput?: string) {
   }
 }
 
-// v2.order.get_order_list — mặc định chỉ lấy đơn đổi trạng thái trong 2 giờ
+// v2.order.get_order_list — mặc định chỉ lấy đơn đổi trạng thái trong 6 giờ
 // (update_time). Shopee giới hạn mỗi request ≤ 15 ngày; full sync mới chia cửa sổ.
 // Supports optional order_status filter and cursor pagination (Shopee returns
 // at most page_size orders per call; more/next_cursor must be followed).
-
-/** Chuẩn hóa timestamp Shopee API = GIÂY (10 chữ số). Nếu lỡ truyền ms (13 số) → chia 1000. */
-function toShopeeUnixSeconds(raw: number | string | undefined | null, fallbackSec?: number): number {
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    return fallbackSec != null ? fallbackSec : Math.floor(Date.now() / 1000);
-  }
-  // ms (≥ ~Sep 2001 in ms = 1e12) → seconds
-  if (n >= 1e12) return Math.floor(n / 1000);
-  return Math.floor(n);
-}
-
 async function shopeeGetOrderList(
   shopId: string,
   accessToken: string,
@@ -1667,11 +1517,9 @@ async function shopeeGetOrderList(
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
 
-  const timeTo = toShopeeUnixSeconds(opts?.timeTo, timestamp);
-  // Cập nhật đơn mới: CHỈ 2 giờ gần nhất (Unix seconds, không phải ms).
-  // update_time_from = Math.floor(Date.now()/1000) - (2*60*60)
-  const defaultFrom = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
-  const timeFrom = toShopeeUnixSeconds(opts?.timeFrom, defaultFrom);
+  const timeTo = opts?.timeTo ?? timestamp;
+  // Mặc định 6 giờ theo update_time — tránh timeout serverless / rate limit.
+  const timeFrom = opts?.timeFrom ?? timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
 
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
@@ -1721,85 +1569,47 @@ function extractShopeeOrderListRows(result: any): any[] {
   return Array.isArray(rows) ? rows : [];
 }
 
-/**
- * Shopee v2.order.get_order_list pagination — CHỈ dùng `response.more` + `response.next_cursor`.
- * CẤM page++ / fallback `body.cursor` (echo request → vòng lặp vô tận).
- */
+// Shopee order_list pagination — response uses `more` + `next_cursor` (some SDKs
+// alias has_more). Read both so we never stop after page 1 by mistake.
 function parseShopeeOrderListPagination(result: any): { more: boolean; nextCursor: string } {
   const body = result?.response ?? result ?? {};
-  const nextCursor = String(body.next_cursor ?? "").trim();
-  // Theo docs: more === false → hết trang. Chỉ tiếp tục khi more === true.
-  const more = body.more === true || body.more === 1 || body.more === "true";
+  const more =
+    body.more === true ||
+    body.more === 1 ||
+    body.more === "true" ||
+    body.has_more === true ||
+    body.has_more === 1 ||
+    body.has_more === "true" ||
+    result?.more === true ||
+    result?.more === 1;
+  const nextCursor = String(
+    body.next_cursor ?? body.cursor ?? result?.next_cursor ?? result?.cursor ?? "",
+  ).trim();
   return { more, nextCursor };
-}
-
-/**
- * Đa lớp break chống quirk Shopee (more:true + list rỗng / cursor không đổi).
- * @returns nextCursor cho request sau; null = BẮT BUỘC break.
- */
-function advanceShopeeOrderListCursor(
-  listResult: any,
-  currentCursor: string | undefined,
-  logLabel: string,
-  orderList?: any[],
-): string | null {
-  const body = listResult?.response ?? listResult ?? {};
-  const rows =
-    orderList ??
-    (Array.isArray(body.order_list)
-      ? body.order_list
-      : extractShopeeOrderListRows(listResult));
-  const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
-  const prev = String(currentCursor ?? "").trim();
-
-  // 1) !response.more → break
-  if (!more) {
-    console.log(`[Shopee Cursor] ${logLabel}: more=false — hết trang, break.`);
-    return null;
-  }
-  // 2) order_list rỗng → break (Shopee đôi khi more:true + [])
-  if (!rows || rows.length === 0) {
-    console.warn(`[Shopee Cursor] ${logLabel}: order_list rỗng — BREAK (defensive).`);
-    return null;
-  }
-  // 3) cursor không đổi hoặc next_cursor rỗng → break
-  if (!nextCursor || nextCursor === prev) {
-    console.warn(
-      `[Shopee Cursor] ${logLabel}: cursor không tiến ("${prev.slice(0, 32)}"→"${nextCursor.slice(0, 32)}") — BREAK.`,
-    );
-    return null;
-  }
-  console.log(
-    `[Shopee Cursor] ${logLabel}: more=true → cursor=${nextCursor.slice(0, 48)}${nextCursor.length > 48 ? "…" : ""}`,
-  );
-  return nextCursor;
 }
 
 const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 /** Quick / legacy full list helpers: tối đa 1 cửa sổ 15 ngày. Lịch sử đầy đủ dùng SHOPEE_FULL_SYNC_*. */
 const SHOPEE_ORDER_LIST_MAX_WINDOWS = 1;
 /**
- * Quick Sync / "Cập nhật đơn mới": chỉ lấy đơn CÓ update_time trong 2 giờ gần nhất.
- * Cửa sổ hẹp → thường 1 trang, <1s (Shopee từ chối nếu time_from..time_to > 15 ngày/request).
+ * Quick Sync / mặc định: chỉ lấy đơn CÓ update_time trong 6 giờ gần nhất.
+ * (An toàn trong khoảng 3–6h; Shopee từ chối nếu time_from..time_to quá rộng.)
  */
-const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 2 * 60 * 60;
+const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 6 * 60 * 60;
 /** Full sync hủy/hoàn: tối đa 2 × 15 ngày (= 30 ngày) — giảm so với 120 ngày cũ. */
 const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
 /**
- * Full Sync: chỉ quét 30 ngày gần nhất (tính từ NOW trở về trước).
- * Mỗi chunk 15 ngày (Shopee API ≤ 15 ngày/request) → tối đa 2 chunk + buffer.
+ * Full history sync: mốc lùi xa nhất = 22/10/2021 (Asia/Ho_Chi_Minh).
+ * Mỗi chunk 15 ngày (trong khoảng 15–30 ngày; Shopee API ≤ 15 ngày/request).
+ * Safety break ≤ 200 chunks (~8 năm) — chống vòng lặp vô tận.
  */
-const SHOPEE_FULL_SYNC_LOOKBACK_SEC = 30 * 24 * 60 * 60;
+const SHOPEE_FULL_SYNC_EPOCH_SEC = Math.floor(new Date("2021-10-22T00:00:00+07:00").getTime() / 1000);
 const SHOPEE_FULL_SYNC_CHUNK_SEC = 15 * 24 * 60 * 60;
-const SHOPEE_FULL_SYNC_MAX_CHUNKS = 3;
-/**
- * Phân trang get_order_list — HARD CAP 10 trang/cửa sổ.
- * loopCount > 10 → BẮT BUỘC break (chống vòng lặp vô hạn / zombie process cPanel).
- */
-const SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 10;
-const SHOPEE_FULL_SYNC_MAX_PAGES_PER_CHUNK = SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+const SHOPEE_FULL_SYNC_MAX_CHUNKS = 200;
+/** Phân trang trong 1 date-chunk — break ngay khi [] / hết trang. */
+const SHOPEE_FULL_SYNC_MAX_PAGES_PER_CHUNK = 40;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
-const SHOPEE_ORDER_LIST_MAX_PAGES = SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+const SHOPEE_ORDER_LIST_MAX_PAGES = 8;
 const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 120;
 /** Ngân sách riêng cho đơn hủy/hoàn + returns — đủ để khớp ~163+ đơn Seller Center. */
 const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
@@ -1844,8 +1654,8 @@ const AUTO_LINK_BATCH_LIMIT_MAX = 100;
 const PRODUCT_SYNC_MAX_PAGES = 200;
 const SHOPEE_API_MAX_RETRY = 3;
 const SHOPEE_API_RETRY_BASE_MS = 1500;
-/** Timeout mọi HTTP Shopee — tối đa 15s, tránh treo process vô hạn trên cPanel. */
-const SHOPEE_HTTP_TIMEOUT_MS = 15_000;
+/** Timeout mọi HTTP Shopee — tránh treo process vô hạn trên cPanel. */
+const SHOPEE_HTTP_TIMEOUT_MS = 12_000;
 /** TLS tối thiểu cho Shopee OpenAPI (cPanel Node ≥20) — tránh ECONNRESET do handshake cũ. */
 const SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
 const SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
@@ -1921,8 +1731,6 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  // Lưới an toàn: nếu AbortSignal bị undici/dispatcher bỏ qua vẫn reject sau timeout+1s.
-  let hardTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     const fetchInit: RequestInit & { dispatcher?: unknown } = {
       ...init,
@@ -1930,27 +1738,14 @@ async function fetchWithTimeout(
     };
     // Chỉ gắn dispatcher khi undici Agent khởi tạo OK (tránh crash sync).
     if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
-    const fetchPromise = fetch(url, fetchInit);
-    const hardTimeoutPromise = new Promise<never>((_, reject) => {
-      hardTimer = setTimeout(
-        () => reject(new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`)),
-        timeoutMs + 1000,
-      );
-    });
-    return await Promise.race([fetchPromise, hardTimeoutPromise]);
+    return await fetch(url, fetchInit);
   } catch (error: any) {
-    if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
-      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms — ${String(url).slice(0, 180)}`);
+    if (error?.name === "AbortError") {
       throw new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`);
     }
-    console.error(
-      `[Shopee HTTP] FETCH LỖI — ${String(url).slice(0, 120)}:`,
-      error?.message || error,
-    );
     throw error;
   } finally {
     clearTimeout(timer);
-    if (hardTimer) clearTimeout(hardTimer);
   }
 }
 
@@ -2050,7 +1845,7 @@ function formatShopeeApiError(json: any, httpStatus?: number): string {
   if (status === 504) {
     return (
       parts[0] ||
-      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với đồng bộ nhanh (2 giờ)."
+      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với đồng bộ nhanh (6 giờ)."
     );
   }
   if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
@@ -2290,7 +2085,7 @@ function buildShopeeUpdateStockEntry(
   return entry;
 }
 
-// Paginate get_order_list for one Shopee order_status — mặc định 2h update_time; full = 1×15 ngày.
+// Paginate get_order_list for one Shopee order_status — mặc định 6h update_time; full = 1×15 ngày.
 async function shopeeFetchAllOrderSnsByStatus(
   shopId: string,
   accessToken: string,
@@ -2307,30 +2102,21 @@ async function shopeeFetchAllOrderSnsByStatus(
     let timeFrom: number;
     if (mode === "incremental") {
       timeTo = now;
-      // Công thức bắt buộc: chỉ quét 2 giờ gần nhất (Unix seconds).
-      timeFrom = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
-      console.log("Sync 2 hours: ", timeFrom, " to ", timeTo);
+      timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
     } else {
       timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
       timeFrom = timeTo - SHOPEE_ORDER_LIST_WINDOW_SEC;
     }
-    // Shopee v2: cursor="" lần đầu; thoát khi response.more === false (KHÔNG dùng page++).
-    let cursor = "";
-    let loopCount = 0;
+    let cursor: string | undefined;
+    let page = 0;
     let windowCount = 0;
 
     console.log(
-      `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 2 giờ" : ", ~15 ngày"})`,
+      `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 6 giờ" : ", ~15 ngày"})`,
     );
 
-    while (true) {
-      loopCount += 1;
-      if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
-        console.warn(
-          `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK chống vòng lặp vô hạn.`,
-        );
-        break;
-      }
+    while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
+      page++;
       const listResult = await shopeeGetOrderList(shopId, accessToken, {
         orderStatus,
         cursor,
@@ -2341,7 +2127,7 @@ async function shopeeFetchAllOrderSnsByStatus(
       if (listResult.error) {
         const errMsg = listResult.message || formatShopeeApiError(listResult, listResult.httpStatus);
         console.error(
-          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} cursor-pass=${loopCount} lỗi:`,
+          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} page=${page} lỗi:`,
           listResult.error,
           errMsg,
         );
@@ -2359,26 +2145,24 @@ async function shopeeFetchAllOrderSnsByStatus(
       }
       windowCount += pageList.length;
 
+      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       console.log(
-        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} pass=${loopCount}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
+        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size}), more=${more}`,
       );
 
       if (!pageList.length) break;
+      if (!more) break;
+      if (!nextCursor) {
+        console.warn(
+          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1}: more=true nhưng thiếu next_cursor — dừng sau trang ${page}.`,
+        );
+        break;
+      }
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) {
         console.warn(`[Shopee Sync] shop_id=${shopId} đạt giới hạn ${SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP} đơn — dừng phân trang.`);
         break;
       }
-      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
-      if (!more) break;
-      if (!nextCursor || nextCursor === cursor) break;
-      const advanced = advanceShopeeOrderListCursor(
-        listResult,
-        cursor,
-        `status=${orderStatus} w${windowIdx + 1}p${loopCount}`,
-        pageList,
-      );
-      if (!advanced) break;
-      cursor = advanced;
+      cursor = nextCursor;
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
 
@@ -2391,7 +2175,7 @@ async function shopeeFetchAllOrderSnsByStatus(
   return Array.from(orderSnSet);
 }
 
-/** Quét get_order_list theo create_time cho 1 status (UNPAID) — mặc định 2 giờ. */
+/** Quét get_order_list theo create_time cho 1 status (UNPAID) — mặc định 6 giờ. */
 async function shopeeFetchAllOrderSnsByStatusCreateTime(
   shopId: string,
   accessToken: string,
@@ -2408,28 +2192,21 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
     let timeFrom: number;
     if (mode === "incremental") {
       timeTo = now;
-      timeFrom = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
-      console.log("Sync 2 hours: ", timeFrom, " to ", timeTo);
+      timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
     } else {
       timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
       timeFrom = timeTo - SHOPEE_ORDER_LIST_WINDOW_SEC;
     }
-    let cursor = "";
-    let loopCount = 0;
+    let cursor: string | undefined;
+    let page = 0;
     let windowCount = 0;
 
     console.log(
-      `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo}${mode === "incremental" ? " (2 giờ)" : ""}`,
+      `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo}${mode === "incremental" ? " (6 giờ)" : ""}`,
     );
 
-    while (true) {
-      loopCount += 1;
-      if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
-        console.warn(
-          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK.`,
-        );
-        break;
-      }
+    while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
+      page++;
       const listResult = await shopeeGetOrderList(shopId, accessToken, {
         orderStatus,
         cursor,
@@ -2440,7 +2217,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
       if (listResult.error) {
         const errMsg = listResult.message || formatShopeeApiError(listResult, listResult.httpStatus);
         console.error(
-          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} pass=${loopCount} lỗi:`,
+          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} page=${page} lỗi:`,
           listResult.error,
           errMsg,
         );
@@ -2458,23 +2235,16 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
       }
       windowCount += pageList.length;
 
+      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       console.log(
-        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} pass=${loopCount}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
+        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size}), more=${more}`,
       );
 
       if (!pageList.length) break;
-      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       if (!more) break;
-      if (!nextCursor || nextCursor === cursor) break;
-      const advanced = advanceShopeeOrderListCursor(
-        listResult,
-        cursor,
-        `create_time status=${orderStatus} w${windowIdx + 1}p${loopCount}`,
-        pageList,
-      );
-      if (!advanced) break;
-      cursor = advanced;
+      if (!nextCursor) break;
+      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
+      cursor = nextCursor;
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
 
@@ -2487,9 +2257,8 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
   return Array.from(orderSnSet);
 }
 
-// Paginate get_order_list without status filter.
-// mode=incremental ("Cập nhật đơn mới"): 1 cửa sổ update_time 2 giờ (siêu tốc).
-// mode=full: date-chunk 30 ngày gần nhất (≤3 chunk).
+// Paginate get_order_list without status filter — theo update_time.
+// mode=incremental (Quick Sync): 1 cửa sổ 6 giờ; mode=full: date-chunk lùi về 22/10/2021 (≤200 chunk).
 async function shopeeFetchAllOrderSns(
   shopId: string,
   accessToken: string,
@@ -2497,15 +2266,13 @@ async function shopeeFetchAllOrderSns(
 ): Promise<string[]> {
   const mode = opts?.mode === "full" ? "full" : "incremental";
   const orderSnSet = new Set<string>();
-  /** Giữ thứ tự ưu tiên: đơn mới trước. */
-  const orderSnOrdered: string[] = [];
   const now = Math.floor(Date.now() / 1000);
   const maxWindows =
     mode === "full"
       ? SHOPEE_FULL_SYNC_MAX_CHUNKS
       : 1;
   const windowSec = mode === "full" ? SHOPEE_FULL_SYNC_CHUNK_SEC : SHOPEE_ORDER_LIST_WINDOW_SEC;
-  const epoch = mode === "full" ? now - SHOPEE_FULL_SYNC_LOOKBACK_SEC : 0;
+  const epoch = mode === "full" ? SHOPEE_FULL_SYNC_EPOCH_SEC : 0;
 
   const fetchWindow = async (
     timeRangeField: "update_time" | "create_time",
@@ -2513,48 +2280,38 @@ async function shopeeFetchAllOrderSns(
     timeTo: number,
     windowIdx: number,
   ) => {
-    // Shopee v2 pagination: cursor="" → gọi API → cursor=next_cursor; if (!more) break.
-    let cursor = "";
-    let loopCount = 0;
+    let cursor: string | undefined;
+    let page = 0;
     let windowCount = 0;
-    const safeFrom = toShopeeUnixSeconds(timeFrom, now - SHOPEE_ORDER_LIST_INCREMENTAL_SEC);
-    const safeTo = toShopeeUnixSeconds(timeTo, now);
 
     console.log(
       `[Orders Pull] shop_id=${shopId} mode=${mode} field=${timeRangeField}: cửa sổ ${windowIdx + 1}/${maxWindows}` +
-        ` time_from=${safeFrom} (${new Date(safeFrom * 1000).toISOString()})` +
-        ` time_to=${safeTo} (${new Date(safeTo * 1000).toISOString()})` +
+        ` time_from=${timeFrom} (${new Date(timeFrom * 1000).toISOString()})` +
+        ` time_to=${timeTo} (${new Date(timeTo * 1000).toISOString()})` +
         ` now=${now} (${new Date(now * 1000).toISOString()})`,
     );
 
-    if (safeFrom >= safeTo) {
+    if (timeFrom >= timeTo) {
       console.error(
-        `LỖI SYNC SHOPEE: time_from >= time_to (from=${safeFrom}, to=${safeTo}) — bỏ qua cửa sổ.`,
+        `LỖI SYNC SHOPEE: time_from >= time_to (from=${timeFrom}, to=${timeTo}) — bỏ qua cửa sổ.`,
       );
       return;
     }
-    if (safeFrom > now + 60) {
+    if (timeFrom > now + 60) {
       console.error(
-        `LỖI SYNC SHOPEE: time_from nằm trong TƯƠNG LAI (from=${safeFrom}, now=${now}) — đồng hồ server sai?`,
+        `LỖI SYNC SHOPEE: time_from nằm trong TƯƠNG LAI (from=${timeFrom}, now=${now}) — đồng hồ server sai?`,
       );
     }
 
-    while (true) {
-      loopCount += 1;
-      if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
-        console.warn(
-          `[Orders Pull] shop=${shopId} field=${timeRangeField}: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK chống treo.`,
-        );
-        break;
-      }
-      assertOrdersPullNotTimedOut(`get_order_list ${timeRangeField} pass=${loopCount}`);
+    while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
+      page++;
       let listResult: any;
       try {
         listResult = await shopeeGetOrderList(shopId, accessToken, {
           cursor,
           timeRangeField,
-          timeFrom: safeFrom,
-          timeTo: safeTo,
+          timeFrom,
+          timeTo,
         });
       } catch (error: any) {
         console.error(
@@ -2576,7 +2333,7 @@ async function shopeeFetchAllOrderSns(
 
       const pageList = extractShopeeOrderListRows(listResult);
       console.log(
-        `[Shopee API] RAW order_list shop=${shopId} field=${timeRangeField} pass=${loopCount}: count=${pageList.length}` +
+        `[Shopee API] RAW order_list shop=${shopId} field=${timeRangeField} page=${page}: count=${pageList.length}` +
           ` sns=[${pageList
             .slice(0, 5)
             .map((r: any) => r?.order_sn)
@@ -2587,93 +2344,88 @@ async function shopeeFetchAllOrderSns(
       // Rỗng [] → break ngay phân trang cửa sổ.
       if (!pageList || pageList.length === 0) {
         console.log(
-          `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} pass=${loopCount}: order_list=[] — break.`,
+          `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} page=${page}: order_list=[] — break.`,
         );
         break;
       }
 
       for (const row of pageList) {
-        const sn = row?.order_sn ? String(row.order_sn).trim() : "";
-        if (!sn) continue;
-        if (!orderSnSet.has(sn)) {
-          orderSnSet.add(sn);
-          orderSnOrdered.push(sn);
-        }
+        if (row?.order_sn) orderSnSet.add(String(row.order_sn));
         if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
       }
       windowCount += pageList.length;
 
+      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       console.log(
-        `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} pass=${loopCount}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
+        `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size}), more=${more}`,
       );
 
-      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       if (!more) break;
-      if (!nextCursor || nextCursor === cursor) break;
-      const advanced = advanceShopeeOrderListCursor(
-        listResult,
-        cursor,
-        `pull ${timeRangeField} w${windowIdx + 1}p${loopCount}`,
-        pageList,
-      );
-      if (!advanced) break;
-      cursor = advanced;
+      if (!nextCursor) break;
+      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
+      cursor = nextCursor;
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   };
 
-  if (mode === "incremental") {
-    // Quick Sync siêu tốc: CHỈ 1 lần gọi update_time trong 2 giờ gần nhất.
-    const timeTo = Math.floor(Date.now() / 1000);
-    const timeFrom = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
-    console.log("Sync 2 hours: ", timeFrom, " to ", timeTo);
-    await fetchWindow("update_time", timeFrom, timeTo, 0);
-  } else {
-    for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
-      const timeTo = now - windowIdx * windowSec;
-      const timeFrom = Math.max(epoch, timeTo - windowSec);
+  for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+    let timeTo: number;
+    let timeFrom: number;
+    if (mode === "incremental") {
+      timeTo = now;
+      timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+    } else {
+      timeTo = now - windowIdx * windowSec;
+      timeFrom = Math.max(epoch, timeTo - windowSec);
       if (timeFrom >= timeTo || timeTo <= epoch) {
         console.log(
           `[Orders Pull] shop_id=${shopId}: đã tới epoch ${new Date(epoch * 1000).toISOString()} — dừng date-chunk.`,
         );
         break;
       }
-      await fetchWindow("create_time", timeFrom, timeTo, windowIdx);
-      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-      if (timeFrom <= epoch) break;
-      if (windowIdx < maxWindows - 1) {
-        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
-      }
+    }
+    await fetchWindow(mode === "full" ? "create_time" : "update_time", timeFrom, timeTo, windowIdx);
+    if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
+    if (mode === "full" && timeFrom <= epoch) break;
+    if (windowIdx < maxWindows - 1) {
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   }
 
+  // FALLBACK: update_time rỗng → quét create_time cùng cửa sổ (đơn mới có thể chưa kịp update_time).
+  if (orderSnSet.size === 0 && mode === "incremental") {
+    console.warn(
+      `[Orders Pull] shop_id=${shopId}: update_time 6h TRẢ VỀ RỖNG [] — fallback create_time cùng cửa sổ.`,
+    );
+    const timeTo = now;
+    const timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+    await fetchWindow("create_time", timeFrom, timeTo, 0);
+  }
+
   console.log(
-    `[Orders Pull] shop_id=${shopId} mode=${mode}: TỔNG order_sn lấy được = ${orderSnOrdered.length}`,
+    `[Orders Pull] shop_id=${shopId} mode=${mode}: TỔNG order_sn lấy được = ${orderSnSet.size}`,
   );
-  return orderSnOrdered;
+  return Array.from(orderSnSet);
 }
 
 /**
- * Full Sync an toàn: chia create_time từ NOW → 30 ngày trước thành chunk 15 ngày,
- * phân trang từng chunk, bulkWrite ngay sau mỗi trang.
- * Safety: max 3 chunks; break khi order_list=[]; nghỉ 1s giữa mọi lần gọi API.
+ * Full history sync an toàn: chia create_time từ NOW → 22/10/2021 thành chunk 15 ngày,
+ * phân trang từng chunk, bulkWrite ngay sau mỗi trang — KHÔNG gom đơn nhiều năm vào RAM.
+ * Safety: max 200 chunks; break khi order_list=[]; nghỉ 1s giữa mọi lần gọi API.
  */
 async function syncShopeeFullOrderHistoryStreaming(
   orders: any[],
   shopId: string,
   accessToken: string,
-  opts?: { onProgress?: (shopPulled: number) => void },
 ): Promise<{ pulled: number; chunks: number; errors: any[] }> {
   const now = Math.floor(Date.now() / 1000);
-  const epoch = now - SHOPEE_FULL_SYNC_LOOKBACK_SEC;
+  const epoch = SHOPEE_FULL_SYNC_EPOCH_SEC;
   const chunkSec = SHOPEE_FULL_SYNC_CHUNK_SEC;
   const maxChunks = SHOPEE_FULL_SYNC_MAX_CHUNKS;
   const errors: any[] = [];
   let pulled = 0;
   let chunkIdx = 0;
   let timeTo = now;
-  const onProgress = opts?.onProgress;
 
   console.log(
     `[Shopee Full Sync] shop=${shopId}: NOW=${new Date(now * 1000).toISOString()}` +
@@ -2683,7 +2435,6 @@ async function syncShopeeFullOrderHistoryStreaming(
 
   while (timeTo > epoch && chunkIdx < maxChunks) {
     chunkIdx++;
-    assertOrdersPullNotTimedOut(`fullSync chunk=${chunkIdx}`);
     const timeFrom = Math.max(epoch, timeTo - chunkSec);
     if (timeFrom >= timeTo) {
       console.warn(
@@ -2697,18 +2448,11 @@ async function syncShopeeFullOrderHistoryStreaming(
         ` create_time ${new Date(timeFrom * 1000).toISOString()} → ${new Date(timeTo * 1000).toISOString()}`,
     );
 
-    // Shopee v2: cursor="" lần đầu; thoát khi !response.more (không dùng page++).
-    let cursor = "";
-    let loopCount = 0;
+    let cursor: string | undefined;
+    let page = 0;
 
-    while (true) {
-      loopCount += 1;
-      if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
-        console.warn(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK chống treo.`,
-        );
-        break;
-      }
+    while (page < SHOPEE_FULL_SYNC_MAX_PAGES_PER_CHUNK) {
+      page++;
       // Rate limit — bắt buộc 1s trước mỗi get_order_list.
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -2723,23 +2467,17 @@ async function syncShopeeFullOrderHistoryStreaming(
       } catch (error: any) {
         const msg = error?.message || String(error);
         console.error(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount} fetch lỗi:`,
+          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} page=${page} fetch lỗi:`,
           msg,
         );
-        errors.push({
-          shopId,
-          error: "full_sync_list_failed",
-          message: msg,
-          chunk: chunkIdx,
-          pass: loopCount,
-        });
+        errors.push({ shopId, error: "full_sync_list_failed", message: msg, chunk: chunkIdx, page });
         break;
       }
 
       if (listResult?.error) {
         const msg = listResult.message || formatShopeeApiError(listResult, listResult.httpStatus);
         console.error(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount} API lỗi:`,
+          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} page=${page} API lỗi:`,
           listResult.error,
           msg,
         );
@@ -2748,7 +2486,7 @@ async function syncShopeeFullOrderHistoryStreaming(
           error: listResult.error || "full_sync_list_failed",
           message: msg,
           chunk: chunkIdx,
-          pass: loopCount,
+          page,
         });
         break;
       }
@@ -2757,7 +2495,7 @@ async function syncShopeeFullOrderHistoryStreaming(
       // Rỗng [] → break ngay, sang chunk tiếp theo.
       if (!pageList || pageList.length === 0) {
         console.log(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount}: order_list=[] — break phân trang.`,
+          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} page=${page}: order_list=[] — break phân trang.`,
         );
         break;
       }
@@ -2766,7 +2504,7 @@ async function syncShopeeFullOrderHistoryStreaming(
         .map((row: any) => String(row?.order_sn || "").trim())
         .filter(Boolean);
       console.log(
-        `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount}: ${pageSns.length} order_sn → detail+bulkWrite ngay`,
+        `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} page=${page}: ${pageSns.length} order_sn → detail+bulkWrite ngay`,
       );
 
       // Ghi DB theo trang — không tích lũy SNS sang chunk/năm khác.
@@ -2788,45 +2526,35 @@ async function syncShopeeFullOrderHistoryStreaming(
             });
             pulled += upsert.added + upsert.updated;
             console.log(
-              `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}p${loopCount}: bulkWrite +${upsert.added}/~${upsert.updated} (totalPulled=${pulled})`,
+              `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}p${page}: bulkWrite +${upsert.added}/~${upsert.updated} (totalPulled=${pulled})`,
             );
-            if (typeof onProgress === "function") {
-              try {
-                onProgress(pulled);
-              } catch {
-                /* ignore */
-              }
-            }
           }
         } catch (batchErr: any) {
           const msg = batchErr?.message || String(batchErr);
           console.error(
-            `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount} persist lỗi:`,
+            `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} page=${page} persist lỗi:`,
             msg,
           );
-          errors.push({
-            shopId,
-            error: "full_sync_persist_failed",
-            message: msg,
-            chunk: chunkIdx,
-            pass: loopCount,
-          });
+          errors.push({ shopId, error: "full_sync_persist_failed", message: msg, chunk: chunkIdx, page });
         }
         // Rate limit giữa các lô detail/persist.
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
       const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
-      if (!more) break;
-      if (!nextCursor || nextCursor === cursor) break;
-      const advanced = advanceShopeeOrderListCursor(
-        listResult,
-        cursor,
-        `fullSync shop=${shopId} chunk=${chunkIdx}p${loopCount}`,
-        pageList,
-      );
-      if (!advanced) break;
-      cursor = advanced;
+      if (!more) {
+        console.log(
+          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}: more=false — hết trang, sang chunk tiếp.`,
+        );
+        break;
+      }
+      if (!nextCursor) {
+        console.warn(
+          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}: more=true nhưng thiếu next_cursor — break.`,
+        );
+        break;
+      }
+      cursor = nextCursor;
     }
 
     timeTo = timeFrom;
@@ -2876,18 +2604,10 @@ async function shopeeGetReturnList(
     ),
   });
   if (opts?.status) params.set("status", String(opts.status));
-  if (opts?.updateTimeFrom != null) {
-    params.set("update_time_from", String(toShopeeUnixSeconds(opts.updateTimeFrom)));
-  }
-  if (opts?.updateTimeTo != null) {
-    params.set("update_time_to", String(toShopeeUnixSeconds(opts.updateTimeTo)));
-  }
-  if (opts?.createTimeFrom != null) {
-    params.set("create_time_from", String(toShopeeUnixSeconds(opts.createTimeFrom)));
-  }
-  if (opts?.createTimeTo != null) {
-    params.set("create_time_to", String(toShopeeUnixSeconds(opts.createTimeTo)));
-  }
+  if (opts?.updateTimeFrom != null) params.set("update_time_from", String(opts.updateTimeFrom));
+  if (opts?.updateTimeTo != null) params.set("update_time_to", String(opts.updateTimeTo));
+  if (opts?.createTimeFrom != null) params.set("create_time_from", String(opts.createTimeFrom));
+  if (opts?.createTimeTo != null) params.set("create_time_to", String(opts.createTimeTo));
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
   try {
@@ -3179,8 +2899,10 @@ async function shopeePaginateReturnListWindow(
     console.log(
       `[Shopee Returns] ${opts.label} page=${pageNo}: +${rows.length} (tổng ${opts.out.length}), more=${more}`,
     );
-    // Strict exit: more=false hoặc trang rỗng → dừng (không đoán pageFull → tránh loop).
-    if (!more || rows.length === 0) return;
+    // Tiếp tục paginate khi more=true HOẶC trang đầy (tránh sót khi Shopee không trả more).
+    const pageFull = rows.length >= SHOPEE_RETURN_LIST_PAGE_SIZE;
+    if (!more && !pageFull) return;
+    if (rows.length === 0) return;
     pageNo++;
     await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
@@ -3234,7 +2956,8 @@ async function shopeeFetchAllReturnSns(
     console.log(
       `[Shopee Returns] no-time page=${pageNo}: +${rows.length} (tổng ${out.length}), more=${more}`,
     );
-    if (!more || rows.length === 0) break;
+    if (!more && rows.length < SHOPEE_RETURN_LIST_PAGE_SIZE) break;
+    if (rows.length === 0) break;
     // Incremental: đủ 2 trang đầu (~200 return gần nhất) là đủ nhẹ.
     if (mode === "incremental" && pageNo >= 2) break;
     pageNo++;
@@ -3282,22 +3005,18 @@ async function shopeeFetchCancelReturnOrderSns(
     for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
       const timeTo = now - windowIdx * windowSec;
       const timeFrom = timeTo - windowSec;
-      let cursor = "";
-      let loopCount = 0;
-      while (true) {
-        loopCount += 1;
-        if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
-          console.warn(
-            `[Shopee Cancel/Return] ${orderStatus}: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK.`,
-          );
-          break;
-        }
+      let cursor: string | undefined;
+      let page = 0;
+      // Paginate nhiều trang hơn sync thường — CANCELLED 15 ngày có thể > 50 đơn.
+      const maxPages = 40;
+      while (page < maxPages) {
+        page++;
         const listResult = await shopeeGetOrderList(shopId, accessToken, {
           orderStatus,
           cursor,
           timeRangeField: "update_time",
-          timeFrom: toShopeeUnixSeconds(timeFrom),
-          timeTo: toShopeeUnixSeconds(timeTo),
+          timeFrom,
+          timeTo,
         });
         if (listResult.error) {
           console.warn(
@@ -3312,23 +3031,19 @@ async function shopeeFetchCancelReturnOrderSns(
           if (row?.order_sn) orderSnSet.add(String(row.order_sn));
           if (orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
         }
+        const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
         console.log(
-          `[Shopee Cancel/Return] ${orderStatus} w${windowIdx + 1} p${loopCount}: +${pageRows.length} (tổng ${orderSnSet.size})`,
+          `[Shopee Cancel/Return] ${orderStatus} w${windowIdx + 1} p${page}: +${pageRows.length} (tổng ${orderSnSet.size}) more=${more}`,
         );
-        if (pageRows.length === 0 || orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) {
+        if ((!more && pageRows.length < SHOPEE_ORDER_LIST_PAGE_SIZE) || orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) {
           break;
         }
-        const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
-        if (!more) break;
-        if (!nextCursor || nextCursor === cursor) break;
-        const advanced = advanceShopeeOrderListCursor(
-          listResult,
-          cursor,
-          `cancelReturn ${orderStatus} w${windowIdx + 1}p${loopCount}`,
-          pageRows,
-        );
-        if (!advanced) break;
-        cursor = advanced;
+        if (!nextCursor && !more) break;
+        cursor = nextCursor || undefined;
+        if (!cursor && more) {
+          console.warn(`[Shopee Cancel/Return] more=true nhưng thiếu next_cursor — dừng ${orderStatus}`);
+          break;
+        }
         await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
       }
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
@@ -3441,8 +3156,8 @@ async function shopeeGetItemList(
     item_status: "NORMAL",
   });
   if (updateWindow) {
-    params.set("update_time_from", String(toShopeeUnixSeconds(updateWindow.from)));
-    params.set("update_time_to", String(toShopeeUnixSeconds(updateWindow.to)));
+    params.set("update_time_from", String(updateWindow.from));
+    params.set("update_time_to", String(updateWindow.to));
   }
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
@@ -4856,89 +4571,19 @@ let shopeeSyncQueueRunning = false;
 let cpanelHeavyJobActive: string | null = null;
 /** Mutex chống chồng chéo pull/sync đơn (cron + nút bấm + full sync). */
 let isSyncing = false;
-/** Tăng mỗi lần bắt đầu sync — finally chỉ unlock đúng generation hiện tại. */
-let ordersPullSyncGeneration = 0;
 let ordersPullSyncMeta: {
   mode: "incremental" | "full";
   startedAt: number;
   finishedAt: number;
   pulled: number;
-  target: number | null;
-  message: string;
   error: string | null;
 } = {
   mode: "incremental",
   startedAt: 0,
   finishedAt: 0,
   pulled: 0,
-  target: null,
-  message: "",
   error: null,
 };
-
-function updateOrdersPullProgress(opts: {
-  pulled?: number;
-  target?: number | null;
-  message?: string;
-  mode?: "incremental" | "full";
-  error?: string | null;
-}): void {
-  if (opts.pulled != null && Number.isFinite(opts.pulled)) {
-    ordersPullSyncMeta.pulled = Math.max(0, Math.round(opts.pulled));
-  }
-  if (opts.target !== undefined) {
-    ordersPullSyncMeta.target =
-      opts.target == null || !Number.isFinite(opts.target)
-        ? null
-        : Math.max(0, Math.round(opts.target));
-  }
-  if (opts.message != null) ordersPullSyncMeta.message = String(opts.message);
-  if (opts.mode) ordersPullSyncMeta.mode = opts.mode;
-  if (opts.error !== undefined) ordersPullSyncMeta.error = opts.error;
-}
-
-function buildOrdersPullStatusPayload() {
-  const running = Boolean(isSyncing);
-  const pulled = Number(ordersPullSyncMeta.pulled) || 0;
-  const target =
-    ordersPullSyncMeta.target != null && Number.isFinite(ordersPullSyncMeta.target)
-      ? Number(ordersPullSyncMeta.target)
-      : null;
-  let progress = "";
-  if (target != null && target > 0) {
-    progress = `Đang kéo: ${pulled}/${target} đơn`;
-  } else if (pulled > 0) {
-    progress = running ? `Đang kéo: ${pulled} đơn` : `Đã kéo: ${pulled} đơn`;
-  } else if (running) {
-    // Ưu tiên message bước hiện tại (token / returns / get_order_list...) thay vì "khởi tạo" cứng.
-    progress = ordersPullSyncMeta.message
-      ? String(ordersPullSyncMeta.message)
-      : "Đang khởi tạo đồng bộ...";
-  }
-  const defaultMsg = running
-    ? ordersPullSyncMeta.mode === "full"
-      ? "Đang Full Sync ngầm..."
-      : "Đang đồng bộ đơn mới ngầm..."
-    : ordersPullSyncMeta.error
-      ? "Đồng bộ kết thúc có cảnh báo"
-      : ordersPullSyncMeta.finishedAt
-        ? "Đồng bộ thành công!"
-        : "";
-  return {
-    success: true,
-    isRunning: running,
-    syncing: running,
-    progress,
-    message: ordersPullSyncMeta.message || defaultMsg,
-    mode: ordersPullSyncMeta.mode,
-    startedAt: ordersPullSyncMeta.startedAt || null,
-    finishedAt: ordersPullSyncMeta.finishedAt || null,
-    pulled,
-    target,
-    error: ordersPullSyncMeta.error,
-    heavyJob: cpanelHeavyJobActive,
-  };
-}
 
 function tryAcquireHeavyJob(name: string): boolean {
   if (cpanelHeavyJobActive) {
@@ -4953,60 +4598,25 @@ function releaseHeavyJob(name: string): void {
   if (cpanelHeavyJobActive === name) cpanelHeavyJobActive = null;
 }
 
-/** Sync treo > 3 phút → ép nhả mutex. */
-const ORDERS_PULL_STUCK_MS = 3 * 60 * 1000;
-/** Hard deadline toàn bộ job sync ngầm — tối đa 3 phút (180s). */
-const ORDERS_PULL_HARD_DEADLINE_MS = 3 * 60 * 1000;
-/** @deprecated alias — giữ tương thích chỗ gọi cũ */
-const ORDERS_PULL_HARD_DEADLINE_INCREMENTAL_MS = ORDERS_PULL_HARD_DEADLINE_MS;
-const ORDERS_PULL_HARD_DEADLINE_FULL_MS = ORDERS_PULL_HARD_DEADLINE_MS;
-/** Deadline tuyệt đối của job sync đang chạy (0 = không có). */
-let ordersPullDeadlineAt = 0;
-
-function assertOrdersPullNotTimedOut(label: string): void {
-  if (!ordersPullDeadlineAt) return;
-  if (Date.now() <= ordersPullDeadlineAt) return;
-  const msg = `Time out — sync quá ${Math.round(ORDERS_PULL_HARD_DEADLINE_MS / 1000)}s tại: ${label}`;
-  console.error(`[Orders Pull] ${msg}`);
-  throw new Error(msg);
-}
-
-function forceReleaseOrdersPullLock(reason: string, errorMsg?: string, generation?: number): void {
-  if (generation != null && generation !== ordersPullSyncGeneration) {
-    console.warn(
-      `[Orders Pull] Bỏ qua FORCE UNLOCK (${reason}) — generation cũ ${generation}≠${ordersPullSyncGeneration}`,
-    );
-    return;
-  }
-  console.error(
-    `[Orders Pull] FORCE UNLOCK — ${reason}` +
-      ` | wasSyncing=${isSyncing} heavy=${cpanelHeavyJobActive || "none"}` +
-      ` pulled=${ordersPullSyncMeta.pulled} err=${ordersPullSyncMeta.error || "-"}`,
-  );
-  if (cpanelHeavyJobActive && String(cpanelHeavyJobActive).startsWith("orders-pull:")) {
-    cpanelHeavyJobActive = null;
-  }
-  isSyncing = false;
-  ordersPullDeadlineAt = 0;
-  ordersPullSyncMeta.finishedAt = Date.now();
-  const msg =
-    errorMsg ||
-    ordersPullSyncMeta.error ||
-    `Sync bị treo — đã ép dừng (${reason})`;
-  ordersPullSyncMeta.error = msg;
-  ordersPullSyncMeta.message = msg;
-}
-
+/** Sync treo > 12 phút → ép nhả mutex (tránh "tịt ngòi" im lặng). */
+const ORDERS_PULL_STUCK_MS = 12 * 60 * 1000;
 function clearStuckOrdersPullIfNeeded(reason: string): boolean {
   if (!isSyncing) return false;
   const started = Number(ordersPullSyncMeta.startedAt) || 0;
   if (!started) return false;
   const elapsed = Date.now() - started;
   if (elapsed < ORDERS_PULL_STUCK_MS) return false;
-  forceReleaseOrdersPullLock(
-    reason,
-    `Sync treo ${Math.round(elapsed / 1000)}s — đã ép dừng`,
+  console.error(
+    `LỖI SYNC SHOPEE: sync BỊ TREO ${Math.round(elapsed / 1000)}s — ép nhả mutex (${reason}).` +
+      ` heavy=${cpanelHeavyJobActive || "none"} pulled=${ordersPullSyncMeta.pulled} err=${ordersPullSyncMeta.error || "-"}`,
   );
+  if (cpanelHeavyJobActive && String(cpanelHeavyJobActive).startsWith("orders-pull:")) {
+    cpanelHeavyJobActive = null;
+  }
+  isSyncing = false;
+  ordersPullSyncMeta.finishedAt = Date.now();
+  ordersPullSyncMeta.error =
+    ordersPullSyncMeta.error || `Sync treo ${Math.round(elapsed / 1000)}s — đã ép dừng`;
   return true;
 }
 
@@ -8247,9 +7857,9 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
 
 /**
  * Heal đơn kẹt tab "Chưa xử lý":
- * - Có tracking_no outbound (GHN GYA..., SPX...) → Đã xử lý
- * - Shopee PROCESSED (sau ship pickup/dropoff) → Đã xử lý
- * - fulfillment_type=dropoff + isPrepared → Đã xử lý (KHÔNG auto mọi READY_TO_SHIP)
+ * - Có tracking_no (GHN GYA..., SPX...) → Đã xử lý
+ * - Shopee PROCESSED (sau ship pickup/dropoff) → Đã xử lý (không cần pickup_time)
+ * - fulfillment_type=dropoff + isPrepared → Đã xử lý
  * - SHIPPED / COMPLETED luôn thắng (không downgrade về processed)
  * Manual Sync là nguồn chân lý — không chờ webhook.
  */
@@ -8289,12 +7899,11 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
     return hasTn;
   }
 
-  // PROCESSED / có mã vận đơn outbound → Đã xử lý.
-  // Drop-off: CHỈ khi đã có mã HOẶC user đã chuẩn bị (isPrepared) — KHÔNG auto-process mọi READY_TO_SHIP.
+  // PROCESSED / có mã / dropoff đã chuẩn bị → Đã xử lý (Pickup + Drop-off).
   const shouldProcess =
     hasTn ||
     raw === "PROCESSED" ||
-    (isDropoff && (hasTn || order.isPrepared === true));
+    (isDropoff && (order.isPrepared === true || hasTn || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP"));
 
   if (!shouldProcess) return false;
 
@@ -8306,25 +7915,6 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
     order.fulfillment_type = "dropoff";
     order.ship_method = "dropoff";
   }
-  return true;
-}
-
-/**
- * Sửa đơn READY_TO_SHIP bị đẩy nhầm sang "Đã xử lý" (bug dropoff auto-heal cũ):
- * raw vẫn RTS/RETRY, chưa có mã VĐ outbound, chưa in → về lại Chưa xử lý.
- */
-function repairFalseProcessedReadyToShip(order: any): boolean {
-  if (!order || String(order.channel || "") !== "shopee") return false;
-  const raw = String(order.shopee_order_status || "").toUpperCase();
-  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return false;
-  if (order.status === "shipping" || order.status === "completed") return false;
-  const tn = String(order.trackingNumber || order.tracking_no || "").trim();
-  if (tn && !isShopeeInternalTrackingCode(tn)) return false;
-  if (order.isPrinted === true) return false;
-  if (order.status !== "processed" && order.isPrepared !== true) return false;
-  order.status = "unprocessed";
-  order.isPrepared = false;
-  order.is_pending_shopee_check = false;
   return true;
 }
 
@@ -9406,7 +8996,6 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     }
     // Heal ngay khi normalize — Drop-off/PROCESSED/tracking.
     forceHealPickupOrderIfHasTracking(order);
-    repairFalseProcessedReadyToShip(order);
     promoteOrderStatusWhenTrackingReady(order);
     enforceShopeeTerminalLocalStatus(order);
     return order;
@@ -9729,7 +9318,6 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
 
   // CƯỠNG CHẾ heal: tracking_no | PROCESSED | dropoff — không downgrade terminal.
   forceHealPickupOrderIfHasTracking(merged);
-  repairFalseProcessedReadyToShip(merged);
 
   const mergedCustomCosts = getGlobalPackagingCostPerOrder();
   merged.custom_costs = mergedCustomCosts;
@@ -10541,7 +10129,6 @@ async function persistShopeeOrderChunk(
         preserveExistingTrackingIfIncomingEmpty(normalized, existing);
       }
       forceHealPickupOrderIfHasTracking(normalized);
-      repairFalseProcessedReadyToShip(normalized);
       enforceShopeeTerminalLocalStatus(normalized);
 
       if (normalized.partialCancel) {
@@ -10659,7 +10246,7 @@ async function persistShopeeOrderChunk(
 
 /**
  * Manual Sync heal: đơn local kẹt (thiếu mã / sai tab) — gọi lại get_order_detail + get_tracking_number
- * dù ngoài cửa sổ 24 giờ update_time. Đây là bước chữa cháy GHN không phụ thuộc webhook.
+ * dù ngoài cửa sổ 6 giờ update_time. Đây là bước chữa cháy GHN không phụ thuộc webhook.
  */
 async function healStuckLocalShopeeOrders(
   orders: any[],
@@ -10862,7 +10449,7 @@ async function syncShopeeOrdersFromApi(
         });
       }
 
-      // Quét không lọc trạng thái — cửa sổ 2h update_time (Quick Sync).
+      // Quét không lọc trạng thái — cửa sổ 6h update_time (tránh timeout).
       try {
         const unfilteredSns = await shopeeFetchAllOrderSns(apiShopId, accessToken, {
           mode: "incremental",
@@ -11194,7 +10781,6 @@ async function loadOrdersForApi(opts?: {
     const mTn = String(m.trackingNumber || m.tracking_no || "").trim();
 
     if (!existing) {
-      repairFalseProcessedReadyToShip(m);
       bySn.set(sn, m);
       if (!readOnly) {
         added++;
@@ -11214,39 +10800,6 @@ async function loadOrdersForApi(opts?: {
         }
       }
     }
-
-    // Mongo = SSOT cho raw Shopee + status local (tránh JSON cũ làm trống tab Chưa xử lý).
-    const mRaw = String(m.shopee_order_status || "").trim().toUpperCase();
-    if (mRaw) {
-      existing.shopee_order_status = mRaw;
-    }
-    const mStatus = String(m.status || "").trim();
-    if (mStatus) {
-      // Không downgrade terminal từ Mongo nếu JSON đã shipping/completed —
-      // nhưng ưu tiên Mongo khi JSON thiếu raw / sai tab chờ lấy hàng.
-      const eRaw = String(existing.shopee_order_status || "").trim().toUpperCase();
-      const eStatus = String(existing.status || "").trim();
-      const jsonTerminal =
-        eStatus === "shipping" ||
-        eStatus === "completed" ||
-        eRaw === "SHIPPED" ||
-        eRaw === "TO_CONFIRM_RECEIVE" ||
-        eRaw === "COMPLETED";
-      const mongoTerminal =
-        mStatus === "shipping" ||
-        mStatus === "completed" ||
-        mRaw === "SHIPPED" ||
-        mRaw === "TO_CONFIRM_RECEIVE" ||
-        mRaw === "COMPLETED";
-      if (mongoTerminal || !jsonTerminal) {
-        existing.status = mStatus;
-      }
-    }
-    if (m.isPrepared != null) existing.isPrepared = Boolean(m.isPrepared);
-    if (m.isPrinted != null) existing.isPrinted = Boolean(m.isPrinted);
-    if (m.fulfillment_type) existing.fulfillment_type = m.fulfillment_type;
-    if (m.ship_method) existing.ship_method = m.ship_method;
-    repairFalseProcessedReadyToShip(existing);
 
     // Mongo = nguồn sự thật cho is_handed_over (QR đã ghi Mongo).
     // JSON chỉ đẩy → Mongo khi JSON true mà Mongo false (legacy).
@@ -11268,10 +10821,6 @@ async function loadOrdersForApi(opts?: {
     console.log(
       `[Orders] loadOrdersForApi: json=${jsonOrders.length} mongo=${mongoOrders.length} +added=${added} +tracking=${trackingFilled} +handoverMongoSync=${handoverMongoSync.length}`,
     );
-  }
-
-  for (const o of bySn.values()) {
-    if (repairFalseProcessedReadyToShip(o) && !readOnly) dirty = true;
   }
 
   return {
@@ -13839,19 +13388,6 @@ function parseShopeePushEvent(body: any): {
   return { shopId, orderSn, eventKind, status, trackingNo, packageNumber, returnSn, code };
 }
 
-const SHOPEE_WEBHOOK_ORDER_STATUSES = new Set([
-  "UNPAID",
-  "READY_TO_SHIP",
-  "PROCESSED",
-  "RETRY_SHIP",
-  "SHIPPED",
-  "TO_CONFIRM_RECEIVE",
-  "COMPLETED",
-  "IN_CANCEL",
-  "CANCELLED",
-  "TO_RETURN",
-]);
-
 /**
  * Áp dụng field từ Push (Code 3/4/15) lên đơn trong DB — BẮT BUỘC cho GHN.
  * Code 4 chỉ gửi tracking_no; nếu bỏ qua sẽ mãi "Chưa có mã vận đơn".
@@ -14164,17 +13700,6 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
       console.log(`[Shopee Webhook] Bỏ qua — thiếu order_sn (code=${parsed.code})`);
       return;
     }
-    const shouldPersist =
-      parsed.eventKind === "tracking_no_update" ||
-      parsed.eventKind === "shipping_document" ||
-      parsed.eventKind === "return_refund" ||
-      SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status);
-    if (!shouldPersist) {
-      console.log(
-        `[Shopee Webhook] Bỏ qua status không cần thiết order_sn=${parsed.orderSn} status=${parsed.status || "empty"} code=${parsed.code}`,
-      );
-      return;
-    }
 
     const orders = loadOrders();
     const shopId = parsed.shopId;
@@ -14374,22 +13899,26 @@ async function startServer() {
     next();
   });
 
-  /**
-   * Dùng express.raw CHỈ cho webhook để HMAC đúng bytes Shopee gửi.
-   * Route này phải nằm trước express.json; nếu parse JSON trước, payload gốc mất đi
-   * và chữ ký không thể được xác thực tin cậy.
-   */
-  app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload));
-
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-  // PDF vận đơn CHỈ phục vụ qua /api/public/labels (và alias) — không static /prints.
-  try {
-    ensureLabelsDir();
-  } catch (err) {
-    console.error("[Labels] ensureLabelsDir lúc boot Express:", err);
-  }
+  // Static PDF vận đơn — mở trực tiếp như file trên mây (Sapo-style).
+  ensurePrintsDir();
+  app.use(
+    "/prints",
+    express.static(PRINTS_DIR, {
+      fallthrough: true,
+      index: false,
+      setHeaders(res, filePath) {
+        if (String(filePath || "").toLowerCase().endsWith(".pdf")) {
+          res.setHeader("Content-Type", "application/pdf");
+          res.setHeader("Content-Disposition", "inline");
+          res.setHeader("X-Content-Type-Options", "nosniff");
+          res.setHeader("Cache-Control", "public, max-age=3600");
+        }
+      },
+    }),
+  );
 
   /**
    * Shopee Push/Webhook POST — đăng ký SỚM (trước mọi route nặng / catch-all 404).
@@ -14833,17 +14362,27 @@ async function startServer() {
   app.put("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
   app.post("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
 
-    // PDF vận đơn — chuẩn /api/public/labels + alias /api/labels|/labels|/prints → cùng handler.
-    const handlePublicLabelGet = (req: any, res: any) => {
+    // PDF vận đơn — public/prints (static) + fallback route cũ /api/*/labels.
+    app.get("/prints/:filename", (req, res) => {
       const result = serveLabelPdfFromMem(req.params.filename, res);
       if (result === "not_found") {
         res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (đã hết hạn hoặc chưa tạo).");
       }
-    };
-    app.get("/api/public/labels/:filename", handlePublicLabelGet);
-    app.get("/api/labels/:filename", handlePublicLabelGet);
-    app.get("/labels/:filename", handlePublicLabelGet);
-    app.get("/prints/:filename", handlePublicLabelGet);
+    });
+
+    app.get("/api/public/labels/:filename", (req, res) => {
+      const result = serveLabelPdfFromMem(req.params.filename, res);
+      if (result === "not_found") {
+        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (đã hết hạn hoặc chưa tạo).");
+      }
+    });
+
+    app.get("/api/labels/:filename", (req, res) => {
+      const result = serveLabelPdfFromMem(req.params.filename, res);
+      if (result === "not_found") {
+        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (đã hết hạn hoặc chưa tạo).");
+      }
+    });
 
     function logShopeeIngress(prefix: string, req: any) {
     console.log(
@@ -16305,37 +15844,10 @@ async function startServer() {
     let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
     rawOrders = rawOrders.filter(isValidOrder);
 
-    // Diagnostic: phân bố tab chờ lấy hàng trước khi lọc query.tab
-    const unprocessedPool = rawOrders.filter((o: any) => matchesUnprocessedPickupTabShared(o));
-    const processedPool = rawOrders.filter((o: any) => matchesProcessedPickupTabShared(o));
-    const readyToShipRaw = rawOrders.filter((o: any) => {
-      const raw = String(o?.shopee_order_status || "").toUpperCase();
-      return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
-    });
-    console.log(
-      `[GET /api/orders] tab-diag total=${rawOrders.length}` +
-        ` READY_TO_SHIP|RETRY_SHIP(raw)=${readyToShipRaw.length}` +
-        ` unprocessedTab=${unprocessedPool.length}` +
-        ` processedTab=${processedPool.length}` +
-        ` sampleUnprocessed=${JSON.stringify(
-          unprocessedPool.slice(0, 3).map((o: any) => ({
-            sn: o.orderSn,
-            status: o.status,
-            raw: o.shopee_order_status,
-            tn: o.trackingNumber || o.tracking_no || null,
-            prepared: o.isPrepared,
-            fulfillment: o.fulfillment_type || o.ship_method || null,
-          })),
-        )}`,
-    );
-
     // ROLLBACK: filter theo raw Shopee — KHÔNG dùng is_handed_over.
     const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
     if (tab === "processed" || tab === "da-xu-ly" || tab === "processed_pickup") {
       rawOrders = rawOrders.filter((o: any) => matchesProcessedPickupTabShared(o));
-      console.log(
-        `[GET /api/orders] query.tab=${tab} filter=matchesProcessedPickupTab → ${rawOrders.length} đơn`,
-      );
     } else if (
       tab === "unprocessed" ||
       tab === "chua-xu-ly" ||
@@ -16343,10 +15855,6 @@ async function startServer() {
       tab === "cho-lay-hang"
     ) {
       rawOrders = rawOrders.filter((o: any) => matchesUnprocessedPickupTabShared(o));
-      console.log(
-        `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab → ${rawOrders.length} đơn` +
-          ` | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound, !isProcessedCondition }`,
-      );
     } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
       rawOrders = rawOrders.filter((o: any) => matchesShippingTabShared(o));
     } else if (
@@ -17740,7 +17248,7 @@ async function startServer() {
   /** Pull sync có mutex — dùng chung cho nút bấm, cron, full sync. */
   async function executeOrdersPullSync(
     mode: "incremental" | "full",
-    opts?: { assumeLocked?: boolean; generation?: number },
+    opts?: { assumeLocked?: boolean },
   ): Promise<{
     success: boolean;
     pulled: number;
@@ -17750,7 +17258,6 @@ async function startServer() {
   }> {
     let gotHeavy = false;
     const heavyName = `orders-pull:${mode}`;
-    let myGeneration = opts?.generation ?? ordersPullSyncGeneration;
     try {
       if (!opts?.assumeLocked) {
         if (isSyncing) {
@@ -17763,57 +17270,32 @@ async function startServer() {
           };
         }
         isSyncing = true;
-        ordersPullSyncGeneration += 1;
-        myGeneration = ordersPullSyncGeneration;
         ordersPullSyncMeta = {
           mode,
           startedAt: Date.now(),
           finishedAt: 0,
           pulled: 0,
-          target: null,
-          message:
-            mode === "full"
-              ? "Đang Full Sync lịch sử 30 ngày..."
-              : "Đang cập nhật đơn mới (2 giờ)...",
           error: null,
         };
-      } else if (opts?.generation != null) {
-        myGeneration = opts.generation;
       }
 
       gotHeavy = tryAcquireHeavyJob(heavyName);
 
       if (!gotHeavy) {
-        const busyMsg =
-          "Không chạy được sync — job nặng khác đang chiếm lock (heavy job busy)";
-        console.error(`[Orders Pull] ${busyMsg} — active=${cpanelHeavyJobActive || "none"}`);
-        updateOrdersPullProgress({ message: busyMsg, error: busyMsg });
+        console.log("Sync skipped: Another instance is running (heavy job busy)");
         return {
           success: false,
           pulled: 0,
           skipped: true,
-          warning: busyMsg,
+          warning: "Đang có tiến trình đồng bộ chạy",
         };
       }
 
       console.log(`[Orders Pull] Bắt đầu đồng bộ ngầm mode=${mode}...`);
-      ordersPullDeadlineAt = Date.now() + ORDERS_PULL_HARD_DEADLINE_MS;
-      updateOrdersPullProgress({
-        mode,
-        pulled: 0,
-        target: null,
-        message:
-          mode === "full"
-            ? "Đang Full Sync lịch sử 30 ngày..."
-            : "Đang cập nhật đơn mới (2 giờ)...",
-        error: null,
-      });
       if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) {
         const errMsg =
           "Thiếu SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY (Live) trong file .env. Vui lòng cấu hình trước khi kéo đơn.";
-        console.error(`[Orders Pull] ${errMsg}`);
         ordersPullSyncMeta.error = errMsg;
-        updateOrdersPullProgress({ message: errMsg, error: errMsg });
         return { success: false, pulled: 0, warning: errMsg };
       }
 
@@ -17821,9 +17303,6 @@ async function startServer() {
       const shopIds = Object.keys(tokens);
       if (shopIds.length === 0) {
         console.warn("[Orders Pull] Không có shop_id nào đã liên kết OAuth.");
-        updateOrdersPullProgress({
-          message: "Chưa có shop Shopee Live nào được ủy quyền.",
-        });
         return {
           success: true,
           pulled: 0,
@@ -17834,20 +17313,13 @@ async function startServer() {
       console.log(
         `[Orders Pull] Tìm thấy ${shopIds.length} shop cần đồng bộ (${mode}): ${shopIds.join(", ")}`,
       );
-      updateOrdersPullProgress({
-        message: `Đang tải đơn local + chuẩn bị sync ${shopIds.length} shop...`,
-      });
       const orders = loadOrders();
       let pulledCount = 0;
       const errors: any[] = [];
 
       for (const shopId of shopIds) {
         try {
-          assertOrdersPullNotTimedOut(`shop=${shopId} start`);
           console.log(`[Orders Pull] Shop ${shopId}: đang lấy access token...`);
-          updateOrdersPullProgress({
-            message: `Shop ${shopId}: đang lấy / refresh access token...`,
-          });
           const accessToken = await getValidShopeeAccessToken(shopId);
           if (!accessToken) {
             const tokenFail = describeShopeeTokenFailure(shopId);
@@ -17860,9 +17332,6 @@ async function startServer() {
 
           // QUAN TRỌNG: Returns sync CHẠY TRƯỚC — tránh bị cắt/crash trước khi kịp kéo đơn hoàn.
           console.log(`[Orders Pull] Shop ${shopId}: === BẮT ĐẦU Returns/Cancel sync TRƯỚC (mode=${mode}) ===`);
-          updateOrdersPullProgress({
-            message: `Shop ${shopId}: đang sync đơn hủy/hoàn...`,
-          });
           try {
             const cr = await syncShopeeCancelReturnsForShop(
               orders,
@@ -17873,19 +17342,11 @@ async function startServer() {
             );
             pulledCount += cr.added + cr.updated;
             errors.push(...cr.errors);
-            updateOrdersPullProgress({
-              pulled: pulledCount,
-              message: `Shop ${shopId}: hủy/hoàn xong (+${cr.added}/~${cr.updated})`,
-            });
             console.log(
               `[Orders Pull] Shop ${shopId}: Returns/Cancel xong returns=${cr.returns} +${cr.added}/~${cr.updated} err=${cr.errors.length}`,
             );
           } catch (crErr: any) {
-            console.error(
-              `[Orders Pull] Cancel/Return sync lỗi shop=${shopId}:`,
-              crErr?.message || crErr,
-              crErr?.stack || "",
-            );
+            console.error(`[Orders Pull] Cancel/Return sync lỗi shop=${shopId}:`, crErr?.message || crErr);
             errors.push({
               shopId,
               error: "cancel_return_sync_failed",
@@ -17894,29 +17355,11 @@ async function startServer() {
           }
 
           console.log(`[Orders Pull] Shop ${shopId}: đang gọi Shopee get_order_list (mode=${mode})...`);
-          updateOrdersPullProgress({
-            pulled: pulledCount,
-            message: `Shop ${shopId}: đang gọi get_order_list (${mode})...`,
-          });
 
-          // FULL SYNC: streaming date-chunk từ NOW → 30 ngày trước — ghi DB từng trang, không gom RAM.
+          // FULL SYNC: streaming date-chunk từ NOW → 22/10/2021 — ghi DB từng trang, không gom RAM.
           if (mode === "full") {
-            updateOrdersPullProgress({
-              message: `Full Sync: đang kéo đơn shop ${shopId}...`,
-            });
-            const fullResult = await syncShopeeFullOrderHistoryStreaming(orders, shopId, accessToken, {
-              onProgress: (shopPulled) => {
-                updateOrdersPullProgress({
-                  pulled: pulledCount + shopPulled,
-                  message: `Full Sync shop ${shopId}: đã kéo ${pulledCount + shopPulled} đơn`,
-                });
-              },
-            });
+            const fullResult = await syncShopeeFullOrderHistoryStreaming(orders, shopId, accessToken);
             pulledCount += fullResult.pulled;
-            updateOrdersPullProgress({
-              pulled: pulledCount,
-              message: `Full Sync shop ${shopId}: xong (+${fullResult.pulled} đơn)`,
-            });
             errors.push(...fullResult.errors);
             console.log(
               `[Orders Pull] Shop ${shopId}: Full history xong chunks=${fullResult.chunks} pulled=${fullResult.pulled}`,
@@ -17937,7 +17380,7 @@ async function startServer() {
           }
 
           let orderSnList = await shopeeFetchAllOrderSns(shopId, accessToken, { mode });
-          // Cưỡng chế: gộp đơn local kẹt (thiếu mã / sai tab) — dù ngoài cửa sổ 24h update_time.
+          // Cưỡng chế: gộp đơn local kẹt (thiếu mã / sai tab) — dù ngoài cửa sổ 6h update_time.
           // Không inject riêng đơn ĐÃ GIAO CHO ĐVVC (đối soát QR nội bộ).
           const stuckLocalSns = orders
             .filter((o: any) => String(o.shopId || "") === String(shopId) && isStuckShopeePickupOrder(o))
@@ -17953,12 +17396,9 @@ async function startServer() {
               }
             }
             if (inject.length > 0) {
-              // Ưu tiên đơn API (mới); chỉ inject đơn kẹt vào phần ngân sách còn trống.
-              const keptApi = orderSnList.slice(0, SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP);
-              const remaining = Math.max(0, SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP - keptApi.length);
-              orderSnList = [...keptApi, ...inject.slice(0, remaining)];
+              orderSnList = [...inject, ...orderSnList];
               console.log(
-                `[Orders Pull] Shop ${shopId}: giữ ${keptApi.length} đơn API + inject ${Math.min(inject.length, remaining)}/${inject.length} đơn kẹt.`,
+                `[Orders Pull] Shop ${shopId}: inject ${inject.length} đơn kẹt local vào ĐẦU sync (heal tracking).`,
               );
             }
           }
@@ -17969,14 +17409,6 @@ async function startServer() {
             orderSnList = orderSnList.slice(0, SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP);
           }
           console.log(`[Orders Pull] Shop ${shopId}: lấy được ${orderSnList.length} đơn từ Shopee.`);
-          updateOrdersPullProgress({
-            target: orderSnList.length,
-            pulled: pulledCount,
-            message:
-              orderSnList.length > 0
-                ? `Shop ${shopId}: đang kéo ${orderSnList.length} đơn...`
-                : `Shop ${shopId}: không có đơn mới trong cửa sổ`,
-          });
 
           if (orderSnList.length === 0) {
             console.warn(
@@ -18017,11 +17449,6 @@ async function startServer() {
                       accessToken,
                     });
                     pulledCount += upsert.added + upsert.updated;
-                    updateOrdersPullProgress({
-                      pulled: pulledCount,
-                      target: orderSnList.length,
-                      message: `Đang kéo: ${Math.min(i + chunkSns.length, orderSnList.length)}/${orderSnList.length} đơn (shop ${shopId})`,
-                    });
                     console.log(
                       `[Orders Pull] Shop ${shopId}: ĐÃ LƯU DB lô ${chunkNo} (+${upsert.added} mới, ~${upsert.updated} cập nhật). totalPulled=${pulledCount}`,
                     );
@@ -18146,16 +17573,6 @@ async function startServer() {
         console.warn("[Orders Pull] Post-heal batch failed:", postHealErr?.message || postHealErr);
       }
       ordersPullSyncMeta.pulled = pulledCount;
-      const successMsg =
-        errors.length > 0
-          ? `Đồng bộ xong ${pulledCount} đơn (có cảnh báo)`
-          : `Đồng bộ thành công — ${pulledCount} đơn`;
-      updateOrdersPullProgress({
-        pulled: pulledCount,
-        message: successMsg,
-        error: errors.length > 0 ? ordersPullSyncMeta.error : null,
-      });
-      ordersPullSyncMeta.message = successMsg;
       if (pulledCount === 0 && errors.length === 0) {
         const emptyMsg =
           "Sync xong nhưng 0 đơn được ghi DB (Shopee list rỗng hoặc normalize thất bại). Xem log [Orders Pull].";
@@ -18169,16 +17586,6 @@ async function startServer() {
           formatShopeeApiError(first, first?.httpStatus) ||
           "Đồng bộ gặp lỗi từ Shopee API";
       }
-
-      // Chốt trạng thái thành công TRƯỚC finally — UI poll đọc isRunning từ biến này.
-      ordersPullSyncMeta.finishedAt = Date.now();
-      if (myGeneration === ordersPullSyncGeneration) {
-        isSyncing = false;
-        ordersPullDeadlineAt = 0;
-      }
-      console.log(
-        `[Orders Pull] DONE isSyncing=${isSyncing} pulled=${pulledCount} msg=${successMsg}`,
-      );
 
       return {
         success: true,
@@ -18194,49 +17601,17 @@ async function startServer() {
       };
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
-      console.error("[Orders Pull] fatal:", err.message, err.stack || "");
+      console.error("[Orders Pull] fatal:", err.message, err.stack);
       ordersPullSyncMeta.error = err.message || "Internal Server Error";
-      updateOrdersPullProgress({
-        message: `Đồng bộ thất bại: ${err.message || "Internal Server Error"}`,
-        error: err.message || "Internal Server Error",
-      });
       return { success: false, pulled: 0, warning: err.message || "Internal Server Error" };
     } finally {
-      // BẮT BUỘC: luôn nhả lock đúng generation — GET /api/sync/status đọc isSyncing.
-      try {
-        if (gotHeavy) releaseHeavyJob(heavyName);
-      } catch (releaseErr: any) {
-        console.error(
-          "[Orders Pull] releaseHeavyJob lỗi:",
-          releaseErr?.message || releaseErr,
-        );
-      }
-      if (myGeneration === ordersPullSyncGeneration) {
-        ordersPullDeadlineAt = 0;
-        ordersPullSyncMeta.finishedAt = ordersPullSyncMeta.finishedAt || Date.now();
-        if (!ordersPullSyncMeta.message) {
-          ordersPullSyncMeta.message = ordersPullSyncMeta.error
-            ? `Đồng bộ thất bại: ${ordersPullSyncMeta.error}`
-            : `Đồng bộ thành công — ${ordersPullSyncMeta.pulled || 0} đơn`;
-        }
-        isSyncing = false;
-        console.log(
-          `[Orders Pull] finally UNLOCK isSyncing=false mode=${mode}` +
-            ` gen=${myGeneration}` +
-            ` pulled=${ordersPullSyncMeta.pulled}` +
-            ` err=${ordersPullSyncMeta.error || "-"}` +
-            ` msg=${ordersPullSyncMeta.message || "-"}`,
-        );
-      } else {
-        // Force-stop / job mới đã chiếm generation — không đụng isSyncing của job mới.
-        console.warn(
-          `[Orders Pull] finally bỏ qua unlock isSyncing — gen ${myGeneration}≠${ordersPullSyncGeneration} (đã có job mới hoặc force-stop)`,
-        );
-      }
+      if (gotHeavy) releaseHeavyJob(heavyName);
+      ordersPullSyncMeta.finishedAt = Date.now();
+      isSyncing = false;
     }
   }
 
-  // Active "pull" — trả 202 ngay, chạy sync ngầm (incremental = 2h update_time; ?type=full = lịch sử 30 ngày).
+  // Active "pull" — trả 202 ngay, chạy sync ngầm (incremental = 6h; ?type=full = lịch sử từ 22/10/2021).
   app.post("/api/orders/pull", authMiddleware, async (req, res) => {
     try {
       clearStuckOrdersPullIfNeeded("POST /api/orders/pull");
@@ -18263,76 +17638,44 @@ async function startServer() {
         });
       }
 
-      // Đã có tiến trình ngầm — không trả lỗi; UI hiện floating widget.
+      // Giữ mutex TRƯỚC khi trả 202 — tránh race poll status thấy syncing=false.
       if (isSyncing || cpanelHeavyJobActive) {
-        console.log("Sync skipped: Another instance is running — soft ack for floating widget");
-        const status = buildOrdersPullStatusPayload();
+        console.log("Sync skipped: Another instance is running");
         return res.status(200).json({
-          ...status,
-          success: true,
+          success: false,
           skipped: true,
-          alreadyRunning: true,
-          accepted: false,
           syncing: true,
-          isRunning: true,
-          mode: ordersPullSyncMeta.mode || mode,
-          message: "Tiến trình đồng bộ đang chạy ngầm...",
+          mode,
+          message: "Đang có tiến trình đồng bộ chạy",
         });
       }
 
       isSyncing = true;
-      ordersPullSyncGeneration += 1;
-      const syncGen = ordersPullSyncGeneration;
       ordersPullSyncMeta = {
         mode,
         startedAt: Date.now(),
         finishedAt: 0,
         pulled: 0,
-        target: null,
-        message:
-          mode === "full"
-            ? "Đang Full Sync lịch sử 30 ngày..."
-            : "Đang cập nhật đơn mới (2 giờ)...",
         error: null,
       };
 
-      const hardDeadlineMs = ORDERS_PULL_HARD_DEADLINE_MS;
-      ordersPullDeadlineAt = Date.now() + hardDeadlineMs;
-
       setImmediate(() => {
-        // Watchdog: nếu job treo (không vào finally) → ép unlock sau hard deadline.
-        const watchdog = setTimeout(() => {
-          forceReleaseOrdersPullLock(
-            `watchdog_${Math.round(hardDeadlineMs / 1000)}s`,
-            `Time out — sync treo quá ${Math.round(hardDeadlineMs / 1000)}s — đã ép dừng (watchdog)`,
-            syncGen,
-          );
-        }, hardDeadlineMs);
-
-        void executeOrdersPullSync(mode, { assumeLocked: true, generation: syncGen })
+        void executeOrdersPullSync(mode, { assumeLocked: true })
           .then((result) => {
-            if (result?.skipped) {
+            if (result.skipped) {
               console.log("[Orders Pull] Background skipped — mutex busy");
               return;
             }
             console.log(
-              `[Orders Pull] Background xong mode=${mode} pulled=${result?.pulled ?? 0} success=${result?.success}`,
+              `[Orders Pull] Background xong mode=${mode} pulled=${result.pulled} success=${result.success}`,
             );
           })
           .catch((bgErr: any) => {
-            console.error(
-              "[Orders Pull] Background unhandled:",
-              bgErr?.message || bgErr,
-              bgErr?.stack || "",
-            );
-            forceReleaseOrdersPullLock(
-              "background_catch",
-              bgErr?.message || String(bgErr) || "Internal Server Error",
-              syncGen,
-            );
-          })
-          .finally(() => {
-            clearTimeout(watchdog);
+            // Không để unhandled rejection treo isSyncing / crash process.
+            console.error("[Orders Pull] Background unhandled:", bgErr?.message || bgErr);
+            ordersPullSyncMeta.error = bgErr?.message || String(bgErr) || "Internal Server Error";
+            ordersPullSyncMeta.finishedAt = Date.now();
+            isSyncing = false;
           });
       });
 
@@ -18341,10 +17684,7 @@ async function startServer() {
         accepted: true,
         mode,
         syncing: true,
-        isRunning: true,
-        message: "Tiến trình đồng bộ đang chạy ngầm...",
-        progress: "Đang khởi tạo đồng bộ...",
-        pulled: 0,
+        message: "Sync started in background",
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
@@ -18365,34 +17705,14 @@ async function startServer() {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
-    return res.json(buildOrdersPullStatusPayload());
-  });
-
-  /** Alias rõ ràng cho floating sync widget — cùng payload với /api/orders/pull/status. */
-  app.get("/api/sync/status", authMiddleware, (_req, res) => {
-    clearStuckOrdersPullIfNeeded("GET /api/sync/status");
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-    return res.json(buildOrdersPullStatusPayload());
-  });
-
-  /** Force-stop: reset isRunning khi sync bị kẹt — user bấm dừng trên widget. */
-  app.post("/api/sync/force-stop", authMiddleware, (_req, res) => {
-    console.warn("[Orders Pull] FORCE-STOP API được gọi bởi user");
-    ordersPullSyncGeneration += 1;
-    forceReleaseOrdersPullLock(
-      "user_force_stop",
-      "Đã cưỡng chế dừng tiến trình đồng bộ",
-    );
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    return res.status(200).json({
-      success: true,
-      isRunning: false,
-      syncing: false,
-      message: "Đã cưỡng chế dừng tiến trình đồng bộ",
+    return res.json({
+      syncing: isSyncing,
+      mode: ordersPullSyncMeta.mode,
+      startedAt: ordersPullSyncMeta.startedAt || null,
+      finishedAt: ordersPullSyncMeta.finishedAt || null,
       pulled: ordersPullSyncMeta.pulled,
-      finishedAt: ordersPullSyncMeta.finishedAt || Date.now(),
+      error: ordersPullSyncMeta.error,
+      heavyJob: cpanelHeavyJobActive,
     });
   });
 
@@ -18418,7 +17738,6 @@ async function startServer() {
    * 3) Log + trả JSON đầy đủ (tracking_number chiều hoàn).
    */
   app.get("/api/shopee/debug/return-by-order", authMiddleware, async (req, res) => {
-    try {
     const orderSn = String(req.query.order_sn || "260703PQ2D6RUK").trim();
     const tokens = loadShopeeTokens();
     const shopIds = Object.keys(tokens);
@@ -18548,14 +17867,6 @@ async function startServer() {
           : "Tìm thấy return_sn nhưng tracking rỗng — xem reverse_tracking_raw.response.tracking_number"
         : "Không tìm thấy return trong get_return_list (kiểm tra token/shop/time window)",
     });
-    } catch (error: any) {
-      console.error("[DEBUG Return] exception:", error?.message || error, error?.stack || "");
-      if (res.headersSent) return;
-      return res.status(500).json({
-        ok: false,
-        error: error?.message || String(error) || "Internal Server Error",
-      });
-    }
   });
 
   // Debug/test-only route: call v2.order.get_order_list directly with the
@@ -19252,7 +18563,7 @@ async function startServer() {
       }
     }
 
-    // Closed-loop bulk print: chờ Shopee tạo vận đơn rồi fetch PDF gộp (/api/public/labels/).
+    // Closed-loop bulk print: wait 2s then fetch one merged NORMAL_AIR_WAYBILL PDF.
     let printDocument: any = null;
     if (successfulShopeeOrders.length > 0) {
       console.log(`[Ship Order Bulk] T\u1EF1 \u0111\u1ED9ng l\u1EA5y v\u1EAD n g\u1ED9p cho ${successfulShopeeOrders.length} \u0111\u01A1n Shopee v\u1EEBa chu\u1EA9n b\u1EB1...`);
@@ -19301,8 +18612,14 @@ async function startServer() {
 
   const LABEL_DOWNLOAD_CONCURRENCY = 5;
 
-  // PDF vận đơn: RAM + storage/labels + GET /api/public/labels (chuẩn).
+  // PDF vận đơn: lưu public/prints/ + GET /prints|/labels|/api/labels|/api/public/labels.
+  // FE mở URL tĩnh trực tiếp (TTL cleanup 72 giờ) — không cần Authorization.
   scheduleWaybillsCleanup();
+
+  app.get("/labels/:filename", (req, res, next) => {
+    const result = serveLabelPdfFromMem(req.params.filename, res);
+    if (result === "not_found") return next();
+  });
 
   function extensionForContentType(contentType: string): string {
     if (contentType.includes("zip")) return "zip";
@@ -19337,10 +18654,10 @@ async function startServer() {
   function findExistingLabelFile(orderSn: string): string | null {
     const sn = String(orderSn || "").replace(/[^a-zA-Z0-9_-]/g, "");
     if (!sn) return null;
+    ensurePrintsDir();
     try {
-      ensureLabelsDir();
       const matches = fs
-        .readdirSync(LABELS_DIR)
+        .readdirSync(PRINTS_DIR)
         .filter(
           (name) =>
             /\.pdf$/i.test(name) &&
@@ -19349,10 +18666,9 @@ async function startServer() {
               name.startsWith(`order_${sn}_`)),
         )
         .map((name) => {
-          const full = path.join(LABELS_DIR, name);
-          return { name, mtime: fs.statSync(full).mtimeMs, size: fs.statSync(full).size };
+          const full = path.join(PRINTS_DIR, name);
+          return { name, mtime: fs.statSync(full).mtimeMs };
         })
-        .filter((x) => x.size > 0)
         .sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
       if (!newest) return null;
@@ -19370,18 +18686,16 @@ async function startServer() {
     return hit && isPdfBuffer(hit.buf) ? hit.buf : null;
   }
 
-  /** Lưu PDF vào storage/labels + RAM. Tuyệt đối không ghi/trả file rỗng. */
+  /** Lưu PDF vào public/prints/ (ghi đè file cùng mã đơn). Tuyệt đối không ghi file rỗng. */
   function saveLabelFile(buffer: Buffer, filename: string, contentType?: string): string {
     try {
       if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
         throw new Error(`Buffer PDF rỗng — bỏ qua ghi ${filename}`);
       }
-      const saved = putLabelMem(filename, buffer, contentType);
-      assertLabelFileReady(saved);
-      return saved;
+      return putLabelMem(filename, buffer, contentType);
     } catch (err: any) {
       console.error(
-        `[Shopee Print] Từ chối lưu PDF — ${filename}: ${err?.message || err}, size=${buffer?.length || 0}, type=${contentType || ""}`,
+        `[Shopee Print] Từ chối lưu PDF — ${filename}: ${err?.message || err}, size=${buffer?.length || 0}, type=${contentType || ""}`
       );
       throw err;
     }
@@ -19923,15 +19237,9 @@ async function startServer() {
 
     const downloadResult = await downloadShippingDocumentsMerged(shopId, accessToken, downloadList);
     if ("error" in downloadResult || !downloadResult.buffer) {
-      console.error(
-        `[Shopee Print] Kết quả: Lỗi — download thất bại: ${(downloadResult as any).error || (downloadResult as any).message}`,
-      );
       return { success: false, error: (downloadResult as any).error, message: (downloadResult as any).message };
     }
-    if (downloadResult.buffer.length < 128 || !isPdfBuffer(downloadResult.buffer)) {
-      console.error(
-        `[Shopee Print] Kết quả: Lỗi — buffer rỗng/không phải PDF (${downloadResult.buffer.length} bytes)`,
-      );
+    if (downloadResult.buffer.length < 128) {
       return {
         success: false,
         error: "empty_label_file",
@@ -19948,25 +19256,12 @@ async function startServer() {
 
     const ext = extensionForContentType(downloadResult.contentType);
     const orderSns = downloadList.map((o: any) => o.order_sn);
-    const savedFromDownload =
-      "savedFiles" in downloadResult && Array.isArray(downloadResult.savedFiles)
-        ? downloadResult.savedFiles.filter((n) => safeLabelFilename(n) && hasLabelMem(n))
-        : [];
-    let filename =
-      savedFromDownload[savedFromDownload.length - 1] ||
-      (ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`);
-    console.log(`[Shopee Print] Bắt đầu in cho đơn ${orderSns.join(",")}`);
-    console.log(`[Shopee Print] Đường dẫn lưu file dự kiến: ${path.join(LABELS_DIR, filename)}`);
-    if (!hasLabelMem(filename)) {
-      filename = saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
+    const filename = ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`;
+    const alreadyCached = "savedFiles" in downloadResult && downloadResult.savedFiles.includes(filename);
+    if (!alreadyCached) {
+      saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
-    const ready = assertLabelFileReady(filename);
-    const url = absoluteLabelUrl(`/api/public/labels/${filename}`);
-    if (!url) {
-      throw new Error(`Không tạo được URL sau khi lưu PDF ${filename}`);
-    }
-    console.log(`[Shopee Print] Kết quả: OK — ${filename} (${ready.size} bytes, ~${pages} trang)`);
-    console.log(`[Shopee Print] URL trả về cho FE: ${url}`);
+    console.log(`[Shopee Print] Saved vận đơn disk (${downloadList.length} đơn → ${filename}, ${downloadResult.buffer.length} bytes, ~${pages} trang).`);
 
     return {
       success: true,
@@ -19975,7 +19270,7 @@ async function startServer() {
       orderSns,
       skippedOrders: [...skippedOrders, ...pollFailed],
       buffer: downloadResult.buffer,
-      url,
+      url: absoluteLabelUrl(`/api/public/labels/${filename}`),
       pageCount: pages,
     };
   }
@@ -20009,9 +19304,10 @@ async function startServer() {
     await ensureTrackingBeforePrint(allOrders, candidates, { retries: 4 });
     saveOrders(allOrders);
 
-    // Shopee cần 3–5s sau ship_order mới sẵn sàng create_shipping_document.
-    console.log(`[Ship Order Bulk Auto-Print] Chờ 5 giây để Shopee khởi tạo mã vận đơn cho ${candidates.length} đơn...`);
-    await new Promise((r) => setTimeout(r, 5000));
+    // Shopee needs ~4s after a bulk ship_order run before AWB/tracking numbers are
+    // ready for create_shipping_document — 2s was too fast for newly created orders.
+    console.log(`[Ship Order Bulk Auto-Print] Ch\u1EDD 4 gi\xE2y \u0111\u1EC3 Shopee kh\u1EDfi t\u1EA1o m\xE3 v\u1EADn \u0111\u01A1n cho ${candidates.length} \u0111\u01A1n...`);
+    await new Promise(r => setTimeout(r, 4000));
     // Quét lại lần nữa sau khi chờ (Shopee đôi khi trả mã trễ).
     await ensureTrackingBeforePrint(allOrders, candidates, { retries: 3 });
     saveOrders(allOrders);
@@ -20092,17 +19388,11 @@ async function startServer() {
       pdfBuffers.length = 0;
       pdfFilename = buildMergedLabelFilename(printedOrderSns);
       saveLabelFile(mergedBuf, pdfFilename, "application/pdf");
-      assertLabelFileReady(pdfFilename);
       primaryUrl = absoluteLabelUrl(`/api/public/labels/${pdfFilename}`);
-      console.log(`[Ship Order Bulk Auto-Print] URL trả về cho FE: ${primaryUrl}`);
     } else if (savedFilenames.length > 0) {
       const relative = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
-      if (relative) {
-        const fn = path.basename(relative);
-        assertLabelFileReady(fn);
-        primaryUrl = absoluteLabelUrl(relative);
-        pdfFilename = fn;
-      }
+      primaryUrl = absoluteLabelUrl(relative);
+      pdfFilename = relative ? path.basename(relative) : null;
     }
 
     if (!primaryUrl) {
@@ -20291,20 +19581,9 @@ async function startServer() {
   // Single or bulk print: fetch the REAL Shopee AWB PDF for the given orders.
   app.post("/api/shopee/print-document", authMiddleware, async (req, res) => {
     try {
-    const { orderIds, waitMs: rawWaitMs } = req.body;
-    console.log(
-      `[Shopee Print] Bắt đầu in cho đơn: ${Array.isArray(orderIds) ? orderIds.join(", ") : String(orderIds || "")}`,
-    );
-    console.log(`[Shopee Print] Đường dẫn lưu file dự kiến: ${LABELS_DIR}`);
+    const { orderIds } = req.body;
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds." });
-    }
-
-    // Chờ Shopee tạo vận đơn sau ship_order (FE gửi waitMs khi auto-print sau xác nhận).
-    const waitMs = Math.min(8000, Math.max(0, Number(rawWaitMs) || 0));
-    if (waitMs > 0) {
-      console.log(`[Shopee Print] Chờ ${waitMs}ms trước create_shipping_document...`);
-      await new Promise((r) => setTimeout(r, waitMs));
     }
 
     const orders = loadOrders();
@@ -20461,32 +19740,32 @@ async function startServer() {
             });
           }
         }
-        } else {
-          for (const o of readyToPrint) {
-            const existingName = findExistingLabelFile(o.orderSn);
-            const cachedBuf = existingName ? getLabelMem(existingName)?.buf : null;
-            if (existingName && cachedBuf && isPdfBuffer(cachedBuf)) {
-              savedFilenames.push(existingName);
-              allPrintedSns.push(o.orderSn);
-              mergeBuffers.push(cachedBuf);
-              documents.push({
-                shopId,
-                orderSns: [o.orderSn],
-                url: labelUrl(existingName),
-                contentType: "application/pdf",
-                fromCache: true,
-              });
-            } else {
-              documents.push({
-                shopId,
-                orderSns: [o.orderSn],
-                success: false,
-                error: docResult.error,
-                message: docResult.message,
-              });
-            }
+      } else {
+        for (const o of readyToPrint) {
+          const cachedBuf = readExistingLabelBuffer(o.orderSn);
+          if (cachedBuf) {
+            const existing = buildMergedLabelFilename([o.orderSn]);
+            savedFilenames.push(existing);
+            allPrintedSns.push(o.orderSn);
+            mergeBuffers.push(cachedBuf);
+            documents.push({
+              shopId,
+              orderSns: [o.orderSn],
+              url: labelUrl(existing),
+              contentType: "application/pdf",
+              fromCache: true,
+            });
+          } else {
+            documents.push({
+              shopId,
+              orderSns: [o.orderSn],
+              success: false,
+              error: docResult.error,
+              message: docResult.message,
+            });
           }
         }
+      }
 
       // Retry in lẻ các đơn còn thiếu (GHN/J&T thường chậm hơn SPX).
       const printedSet = new Set(allPrintedSns);
@@ -20596,33 +19875,16 @@ async function startServer() {
         else if (fromFiles.length > 1) mergedBuf = await mergePdfBuffers(fromFiles);
       }
 
-      if (mergedBuf && isPdfBuffer(mergedBuf) && mergedBuf.length > 0) {
-        const savedName = saveLabelFile(mergedBuf, pdfFilename, "application/pdf");
-        pdfFilename = savedName;
-        const ready = assertLabelFileReady(savedName);
-        primaryUrl = absoluteLabelUrl(`/api/public/labels/${savedName}`);
-        if (!primaryUrl) {
-          throw new Error(`Không tạo được URL hợp lệ sau khi lưu PDF (${savedName}, ${ready.size} bytes).`);
-        }
+      if (mergedBuf && isPdfBuffer(mergedBuf)) {
+        saveLabelFile(mergedBuf, pdfFilename, "application/pdf");
+        primaryUrl = labelUrl(pdfFilename);
         const pages = await countPdfPages(mergedBuf);
         console.log(
-          `[Shopee Print] Kết quả: OK — Response PDF gộp: ${allPrintedSns.length} đơn / ${pages} trang → ${savedName} (${ready.size} bytes)`,
+          `[Shopee Print] Response PDF gộp: ${allPrintedSns.length} đơn / ${pages} trang → ${pdfFilename}`,
         );
-        console.log(`[Shopee Print] URL trả về cho FE: ${primaryUrl}`);
       } else {
-        console.error(`[Shopee Print] Kết quả: Lỗi — Không tạo được buffer PDF gộp cho ${allPrintedSns.length} đơn.`);
+        console.error(`[Shopee Print] Không tạo được buffer PDF gộp cho ${allPrintedSns.length} đơn.`);
       }
-    }
-
-    if (!primaryUrl || !pdfFilename) {
-      console.error("[Shopee Print] Kết quả: Lỗi — từ chối trả response vì thiếu PDF hợp lệ (tránh màn hình trắng).");
-      return res.status(500).json({
-        success: false,
-        error: "empty_label_file",
-        message: "Không tạo được file vận đơn PDF hợp lệ (file rỗng hoặc lỗi ghi đĩa). Vui lòng thử lại.",
-        documents,
-        orders: orders.filter(isValidOrder),
-      });
     }
 
     // Mark successfully-printed orders — mọi ĐVVC (SPX/GHN/J&T/...) đều được đánh dấu Đã in.
@@ -21746,15 +21008,6 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     console.log("[Orders Sync] Auto-sync định kỳ đã tắt — chỉ đồng bộ khi user bấm nút.");
 
     const onReady = () => {
-      // Server restart → luôn reset lock sync (tránh kẹt isRunning từ process trước trên hot-reload).
-      isSyncing = false;
-      cpanelHeavyJobActive = null;
-      ordersPullDeadlineAt = 0;
-      ordersPullSyncMeta.finishedAt = ordersPullSyncMeta.finishedAt || Date.now();
-      ordersPullSyncMeta.message = "";
-      ordersPullSyncMeta.error = null;
-      console.log("[Boot] Sync lock RESET — isSyncing=false, heavyJob=null");
-
       console.log(
         process.env.PORT
           ? `Server optimized for cPanel Phusion Passenger: listening on ${PORT}`
