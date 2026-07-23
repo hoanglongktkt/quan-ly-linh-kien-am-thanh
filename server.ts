@@ -19164,7 +19164,7 @@ async function startServer() {
       }
     }
 
-    // Closed-loop bulk print: wait 2s then fetch one merged NORMAL_AIR_WAYBILL PDF.
+    // Closed-loop bulk print: chờ Shopee tạo vận đơn rồi fetch PDF gộp (/api/public/labels/).
     let printDocument: any = null;
     if (successfulShopeeOrders.length > 0) {
       console.log(`[Ship Order Bulk] T\u1EF1 \u0111\u1ED9ng l\u1EA5y v\u1EAD n g\u1ED9p cho ${successfulShopeeOrders.length} \u0111\u01A1n Shopee v\u1EEBa chu\u1EA9n b\u1EB1...`);
@@ -19921,10 +19921,9 @@ async function startServer() {
     await ensureTrackingBeforePrint(allOrders, candidates, { retries: 4 });
     saveOrders(allOrders);
 
-    // Shopee needs ~4s after a bulk ship_order run before AWB/tracking numbers are
-    // ready for create_shipping_document — 2s was too fast for newly created orders.
-    console.log(`[Ship Order Bulk Auto-Print] Ch\u1EDD 4 gi\xE2y \u0111\u1EC3 Shopee kh\u1EDfi t\u1EA1o m\xE3 v\u1EADn \u0111\u01A1n cho ${candidates.length} \u0111\u01A1n...`);
-    await new Promise(r => setTimeout(r, 4000));
+    // Shopee cần 3–5s sau ship_order mới sẵn sàng create_shipping_document.
+    console.log(`[Ship Order Bulk Auto-Print] Chờ 5 giây để Shopee khởi tạo mã vận đơn cho ${candidates.length} đơn...`);
+    await new Promise((r) => setTimeout(r, 5000));
     // Quét lại lần nữa sau khi chờ (Shopee đôi khi trả mã trễ).
     await ensureTrackingBeforePrint(allOrders, candidates, { retries: 3 });
     saveOrders(allOrders);
@@ -20204,13 +20203,20 @@ async function startServer() {
   // Single or bulk print: fetch the REAL Shopee AWB PDF for the given orders.
   app.post("/api/shopee/print-document", authMiddleware, async (req, res) => {
     try {
-    const { orderIds } = req.body;
+    const { orderIds, waitMs: rawWaitMs } = req.body;
     console.log(
       `[Shopee Print] Bắt đầu in cho đơn: ${Array.isArray(orderIds) ? orderIds.join(", ") : String(orderIds || "")}`,
     );
     console.log(`[Shopee Print] Đường dẫn lưu file dự kiến: ${LABELS_DIR}`);
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds." });
+    }
+
+    // Chờ Shopee tạo vận đơn sau ship_order (FE gửi waitMs khi auto-print sau xác nhận).
+    const waitMs = Math.min(8000, Math.max(0, Number(rawWaitMs) || 0));
+    if (waitMs > 0) {
+      console.log(`[Shopee Print] Chờ ${waitMs}ms trước create_shipping_document...`);
+      await new Promise((r) => setTimeout(r, waitMs));
     }
 
     const orders = loadOrders();
