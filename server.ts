@@ -19853,16 +19853,23 @@ async function startServer() {
     );
 
     // Poll get_shipping_document_result until MỌI order_sn READY/FAILED.
-    // GHN thường chậm hơn SPX 1–2s — tăng attempts để không tải PDF thiếu trang.
-    const MAX_POLL_ATTEMPTS = 12;
-    const POLL_INTERVAL_MS = 2500;
+    // Check NGAY lần đầu (không sleep trước) — nhiều đơn đã READY tức thì, tránh
+    // lãng phí 2.5s cố định. Các lần sau nghỉ 1.2s (thay 2.5s) — tăng ATTEMPTS
+    // để tổng timeout vẫn đủ an toàn cho GHN chậm (~18s, trước đây ~30s).
+    const MAX_POLL_ATTEMPTS = 15;
+    const POLL_INTERVAL_MS = 1200;
     let pendingList = [...cleanOrderList];
     let readyDownloadList: typeof cleanOrderList = [];
     let pollFailed: any[] = [];
     let attempts = 0;
+    let isFirstPoll = true;
 
     while (pendingList.length > 0 && attempts < MAX_POLL_ATTEMPTS) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      if (isFirstPoll) {
+        isFirstPoll = false;
+      } else {
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      }
       const pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, pendingList);
       console.log(
         "=== KẾT QUẢ get_shipping_document_result ===",
@@ -20010,9 +20017,11 @@ async function startServer() {
     await ensureTrackingBeforePrint(allOrders, candidates, { retries: 4 });
     saveOrders(allOrders);
 
-    // Shopee cần 3–5s sau ship_order mới sẵn sàng create_shipping_document.
-    console.log(`[Ship Order Bulk Auto-Print] Chờ 5 giây để Shopee khởi tạo mã vận đơn cho ${candidates.length} đơn...`);
-    await new Promise((r) => setTimeout(r, 5000));
+    // Shopee cần vài giây sau ship_order mới sẵn sàng create_shipping_document.
+    // Giảm 5s→2.5s: poll bên trong tryGenerateShopeeShippingDocumentOnce đã tự
+    // retry (check ngay + 15 lần x 1.2s) nên không cần chờ cứng lâu ở đây.
+    console.log(`[Ship Order Bulk Auto-Print] Chờ 2.5 giây để Shopee khởi tạo mã vận đơn cho ${candidates.length} đơn...`);
+    await new Promise((r) => setTimeout(r, 2500));
     // Quét lại lần nữa sau khi chờ (Shopee đôi khi trả mã trễ).
     await ensureTrackingBeforePrint(allOrders, candidates, { retries: 3 });
     saveOrders(allOrders);
