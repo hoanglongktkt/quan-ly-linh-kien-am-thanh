@@ -4530,22 +4530,93 @@ export default function OrderManager({
       {/* Sync/tab loading: KHÔNG dùng blocking modal — chỉ toast (xem toastMessage).
           Overlay dưới đây chỉ cho ship_order / in vận đơn (progressMessage). */}
       {progressMessage && (
-        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-xs flex items-center justify-center p-4 z-100 animate-in fade-in">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-8 shadow-2xl flex flex-col items-center gap-4 text-center">
-            {progressDone ? (
-              <CheckCircle2 className="w-10 h-10 text-emerald-600" />
-            ) : (
-              <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
-            )}
-            {progressTotal > 0 && (
-              <p className={`text-2xl font-black tabular-nums ${progressDone ? 'text-emerald-700' : 'text-blue-700'}`}>
-                {progressCompleted}/{progressTotal}
-              </p>
-            )}
-            <p className="text-sm font-extrabold text-gray-800 leading-relaxed">{progressMessage}</p>
-            <p className="text-[11px] text-gray-400 font-semibold">
-              {progressDone ? 'Modal sẽ tự đóng sau vài giây...' : 'Vui lòng không bấm liên tục — hệ thống đang xử lý phía sau.'}
-            </p>
+        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center p-4 z-100 animate-in fade-in duration-300">
+          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl flex flex-col items-center gap-5 text-center relative overflow-hidden">
+            {/* Background gradient animation */}
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-blue-50 opacity-50 animate-pulse"></div>
+            
+            <div className="relative z-10 flex flex-col items-center gap-5 w-full">
+              {/* Icon with pulse animation */}
+              <div className="relative">
+                {progressDone ? (
+                  <div className="relative">
+                    <CheckCircle2 className="w-16 h-16 text-emerald-600 animate-in zoom-in duration-500" />
+                    <div className="absolute inset-0 rounded-full border-4 border-emerald-200 animate-ping"></div>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <div className="absolute inset-0 rounded-full border-4 border-blue-200 animate-pulse"></div>
+                    <Loader2 className="w-16 h-16 text-blue-600 animate-spin relative z-10" />
+                  </div>
+                )}
+              </div>
+
+              {/* Progress counter with enhanced styling */}
+              {progressTotal > 0 && (
+                <div className="flex flex-col items-center gap-2 w-full">
+                  <div className={`text-4xl font-black tabular-nums ${progressDone ? 'text-emerald-700' : 'text-blue-700'} transition-all duration-300`}>
+                    {progressCompleted}<span className="text-2xl text-gray-400 mx-1">/</span>{progressTotal}
+                  </div>
+                  {/* Visual progress bar */}
+                  <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div 
+                      className={`h-full transition-all duration-500 ease-out ${progressDone ? 'bg-emerald-600' : 'bg-gradient-to-r from-blue-500 to-blue-600'}`}
+                      style={{ width: `${Math.min(100, (progressCompleted / Math.max(1, progressTotal)) * 100)}%` }}
+                    >
+                      {!progressDone && (
+                        <div className="h-full w-full bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-[shimmer_1.5s_infinite]"></div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Main status message */}
+              <div className="flex flex-col gap-2 w-full">
+                <p className="text-base font-bold text-gray-800 leading-relaxed">
+                  {progressMessage}
+                </p>
+                
+                {/* Countdown animation indicator when waiting for Shopee */}
+                {!progressDone && progressMessage.includes('chờ') && (
+                  <div className="flex items-center justify-center gap-2 mt-2">
+                    <div className="flex gap-1">
+                      {[0, 1, 2].map((i) => (
+                        <div
+                          key={i}
+                          className="w-2 h-2 rounded-full bg-blue-500 animate-bounce"
+                          style={{ animationDelay: `${i * 0.15}s` }}
+                        ></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer hint with icon */}
+              <div className={`flex items-center gap-2 text-xs ${progressDone ? 'text-emerald-600' : 'text-gray-500'} font-semibold px-4 py-2 rounded-full ${progressDone ? 'bg-emerald-50' : 'bg-gray-50'} transition-all duration-300`}>
+                {progressDone ? (
+                  <>
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Modal sẽ tự đóng sau vài giây</span>
+                  </>
+                ) : progressMessage.includes('PDF') || progressMessage.includes('vận đơn') ? (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span>PDF sẽ tự mở khi sẵn sàng — vui lòng không đóng tab</span>
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Vui lòng không bấm liên tục — hệ thống đang xử lý</span>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
