@@ -1273,7 +1273,7 @@ async function exchangeShopeeCodeForToken(
   let res: Response;
   let rawText: string;
   try {
-    res = await fetch(url, {
+    res = await fetchWithTimeout(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -1336,7 +1336,7 @@ async function refreshShopeeToken(shopId: string, refreshToken: string) {
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}`;
 
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refresh_token: refreshToken, shop_id: Number(shopId), partner_id: Number(SHOPEE_PARTNER_ID) }),
@@ -1780,8 +1780,8 @@ const AUTO_LINK_BATCH_LIMIT_MAX = 100;
 const PRODUCT_SYNC_MAX_PAGES = 200;
 const SHOPEE_API_MAX_RETRY = 3;
 const SHOPEE_API_RETRY_BASE_MS = 1500;
-/** Timeout mọi HTTP Shopee — tránh treo process vô hạn trên cPanel. */
-const SHOPEE_HTTP_TIMEOUT_MS = 12_000;
+/** Timeout mọi HTTP Shopee — tối đa 15s, tránh treo process vô hạn trên cPanel. */
+const SHOPEE_HTTP_TIMEOUT_MS = 15_000;
 /** TLS tối thiểu cho Shopee OpenAPI (cPanel Node ≥20) — tránh ECONNRESET do handshake cũ. */
 const SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
 const SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
@@ -1857,6 +1857,8 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // Lưới an toàn: nếu AbortSignal bị undici/dispatcher bỏ qua vẫn reject sau timeout+1s.
+  let hardTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     const fetchInit: RequestInit & { dispatcher?: unknown } = {
       ...init,
@@ -1864,14 +1866,27 @@ async function fetchWithTimeout(
     };
     // Chỉ gắn dispatcher khi undici Agent khởi tạo OK (tránh crash sync).
     if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
-    return await fetch(url, fetchInit);
+    const fetchPromise = fetch(url, fetchInit);
+    const hardTimeoutPromise = new Promise<never>((_, reject) => {
+      hardTimer = setTimeout(
+        () => reject(new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`)),
+        timeoutMs + 1000,
+      );
+    });
+    return await Promise.race([fetchPromise, hardTimeoutPromise]);
   } catch (error: any) {
-    if (error?.name === "AbortError") {
+    if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
+      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms — ${String(url).slice(0, 180)}`);
       throw new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`);
     }
+    console.error(
+      `[Shopee HTTP] FETCH LỖI — ${String(url).slice(0, 120)}:`,
+      error?.message || error,
+    );
     throw error;
   } finally {
     clearTimeout(timer);
+    if (hardTimer) clearTimeout(hardTimer);
   }
 }
 
@@ -4727,6 +4742,8 @@ let shopeeSyncQueueRunning = false;
 let cpanelHeavyJobActive: string | null = null;
 /** Mutex chống chồng chéo pull/sync đơn (cron + nút bấm + full sync). */
 let isSyncing = false;
+/** Tăng mỗi lần bắt đầu sync — finally chỉ unlock đúng generation hiện tại. */
+let ordersPullSyncGeneration = 0;
 let ordersPullSyncMeta: {
   mode: "incremental" | "full";
   startedAt: number;
@@ -4779,7 +4796,10 @@ function buildOrdersPullStatusPayload() {
   } else if (pulled > 0) {
     progress = running ? `Đang kéo: ${pulled} đơn` : `Đã kéo: ${pulled} đơn`;
   } else if (running) {
-    progress = "Đang khởi tạo đồng bộ...";
+    // Ưu tiên message bước hiện tại (token / returns / get_order_list...) thay vì "khởi tạo" cứng.
+    progress = ordersPullSyncMeta.message
+      ? String(ordersPullSyncMeta.message)
+      : "Đang khởi tạo đồng bộ...";
   }
   const defaultMsg = running
     ? ordersPullSyncMeta.mode === "full"
@@ -4819,25 +4839,47 @@ function releaseHeavyJob(name: string): void {
   if (cpanelHeavyJobActive === name) cpanelHeavyJobActive = null;
 }
 
-/** Sync treo > 12 phút → ép nhả mutex (tránh "tịt ngòi" im lặng). */
-const ORDERS_PULL_STUCK_MS = 12 * 60 * 1000;
-function clearStuckOrdersPullIfNeeded(reason: string): boolean {
-  if (!isSyncing) return false;
-  const started = Number(ordersPullSyncMeta.startedAt) || 0;
-  if (!started) return false;
-  const elapsed = Date.now() - started;
-  if (elapsed < ORDERS_PULL_STUCK_MS) return false;
+/** Sync treo > 5 phút → ép nhả mutex (widget không kẹt "Đang khởi tạo..." mãi). */
+const ORDERS_PULL_STUCK_MS = 5 * 60 * 1000;
+/** Hard deadline toàn bộ job sync ngầm (incremental / full). */
+const ORDERS_PULL_HARD_DEADLINE_INCREMENTAL_MS = 4 * 60 * 1000;
+const ORDERS_PULL_HARD_DEADLINE_FULL_MS = 8 * 60 * 1000;
+
+function forceReleaseOrdersPullLock(reason: string, errorMsg?: string, generation?: number): void {
+  if (generation != null && generation !== ordersPullSyncGeneration) {
+    console.warn(
+      `[Orders Pull] Bỏ qua FORCE UNLOCK (${reason}) — generation cũ ${generation}≠${ordersPullSyncGeneration}`,
+    );
+    return;
+  }
   console.error(
-    `LỖI SYNC SHOPEE: sync BỊ TREO ${Math.round(elapsed / 1000)}s — ép nhả mutex (${reason}).` +
-      ` heavy=${cpanelHeavyJobActive || "none"} pulled=${ordersPullSyncMeta.pulled} err=${ordersPullSyncMeta.error || "-"}`,
+    `[Orders Pull] FORCE UNLOCK — ${reason}` +
+      ` | wasSyncing=${isSyncing} heavy=${cpanelHeavyJobActive || "none"}` +
+      ` pulled=${ordersPullSyncMeta.pulled} err=${ordersPullSyncMeta.error || "-"}`,
   );
   if (cpanelHeavyJobActive && String(cpanelHeavyJobActive).startsWith("orders-pull:")) {
     cpanelHeavyJobActive = null;
   }
   isSyncing = false;
   ordersPullSyncMeta.finishedAt = Date.now();
-  ordersPullSyncMeta.error =
-    ordersPullSyncMeta.error || `Sync treo ${Math.round(elapsed / 1000)}s — đã ép dừng`;
+  const msg =
+    errorMsg ||
+    ordersPullSyncMeta.error ||
+    `Sync bị treo — đã ép dừng (${reason})`;
+  ordersPullSyncMeta.error = msg;
+  ordersPullSyncMeta.message = msg;
+}
+
+function clearStuckOrdersPullIfNeeded(reason: string): boolean {
+  if (!isSyncing) return false;
+  const started = Number(ordersPullSyncMeta.startedAt) || 0;
+  if (!started) return false;
+  const elapsed = Date.now() - started;
+  if (elapsed < ORDERS_PULL_STUCK_MS) return false;
+  forceReleaseOrdersPullLock(
+    reason,
+    `Sync treo ${Math.round(elapsed / 1000)}s — đã ép dừng`,
+  );
   return true;
 }
 
@@ -17540,7 +17582,7 @@ async function startServer() {
   /** Pull sync có mutex — dùng chung cho nút bấm, cron, full sync. */
   async function executeOrdersPullSync(
     mode: "incremental" | "full",
-    opts?: { assumeLocked?: boolean },
+    opts?: { assumeLocked?: boolean; generation?: number },
   ): Promise<{
     success: boolean;
     pulled: number;
@@ -17550,6 +17592,7 @@ async function startServer() {
   }> {
     let gotHeavy = false;
     const heavyName = `orders-pull:${mode}`;
+    let myGeneration = opts?.generation ?? ordersPullSyncGeneration;
     try {
       if (!opts?.assumeLocked) {
         if (isSyncing) {
@@ -17562,6 +17605,8 @@ async function startServer() {
           };
         }
         isSyncing = true;
+        ordersPullSyncGeneration += 1;
+        myGeneration = ordersPullSyncGeneration;
         ordersPullSyncMeta = {
           mode,
           startedAt: Date.now(),
@@ -17574,17 +17619,22 @@ async function startServer() {
               : "Đang cập nhật đơn mới (24 giờ)...",
           error: null,
         };
+      } else if (opts?.generation != null) {
+        myGeneration = opts.generation;
       }
 
       gotHeavy = tryAcquireHeavyJob(heavyName);
 
       if (!gotHeavy) {
-        console.log("Sync skipped: Another instance is running (heavy job busy)");
+        const busyMsg =
+          "Không chạy được sync — job nặng khác đang chiếm lock (heavy job busy)";
+        console.error(`[Orders Pull] ${busyMsg} — active=${cpanelHeavyJobActive || "none"}`);
+        updateOrdersPullProgress({ message: busyMsg, error: busyMsg });
         return {
           success: false,
           pulled: 0,
           skipped: true,
-          warning: "Đang có tiến trình đồng bộ chạy",
+          warning: busyMsg,
         };
       }
 
@@ -17602,7 +17652,9 @@ async function startServer() {
       if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) {
         const errMsg =
           "Thiếu SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY (Live) trong file .env. Vui lòng cấu hình trước khi kéo đơn.";
+        console.error(`[Orders Pull] ${errMsg}`);
         ordersPullSyncMeta.error = errMsg;
+        updateOrdersPullProgress({ message: errMsg, error: errMsg });
         return { success: false, pulled: 0, warning: errMsg };
       }
 
@@ -17610,6 +17662,9 @@ async function startServer() {
       const shopIds = Object.keys(tokens);
       if (shopIds.length === 0) {
         console.warn("[Orders Pull] Không có shop_id nào đã liên kết OAuth.");
+        updateOrdersPullProgress({
+          message: "Chưa có shop Shopee Live nào được ủy quyền.",
+        });
         return {
           success: true,
           pulled: 0,
@@ -17620,6 +17675,9 @@ async function startServer() {
       console.log(
         `[Orders Pull] Tìm thấy ${shopIds.length} shop cần đồng bộ (${mode}): ${shopIds.join(", ")}`,
       );
+      updateOrdersPullProgress({
+        message: `Đang tải đơn local + chuẩn bị sync ${shopIds.length} shop...`,
+      });
       const orders = loadOrders();
       let pulledCount = 0;
       const errors: any[] = [];
@@ -17627,6 +17685,9 @@ async function startServer() {
       for (const shopId of shopIds) {
         try {
           console.log(`[Orders Pull] Shop ${shopId}: đang lấy access token...`);
+          updateOrdersPullProgress({
+            message: `Shop ${shopId}: đang lấy / refresh access token...`,
+          });
           const accessToken = await getValidShopeeAccessToken(shopId);
           if (!accessToken) {
             const tokenFail = describeShopeeTokenFailure(shopId);
@@ -17639,6 +17700,9 @@ async function startServer() {
 
           // QUAN TRỌNG: Returns sync CHẠY TRƯỚC — tránh bị cắt/crash trước khi kịp kéo đơn hoàn.
           console.log(`[Orders Pull] Shop ${shopId}: === BẮT ĐẦU Returns/Cancel sync TRƯỚC (mode=${mode}) ===`);
+          updateOrdersPullProgress({
+            message: `Shop ${shopId}: đang sync đơn hủy/hoàn...`,
+          });
           try {
             const cr = await syncShopeeCancelReturnsForShop(
               orders,
@@ -17649,11 +17713,19 @@ async function startServer() {
             );
             pulledCount += cr.added + cr.updated;
             errors.push(...cr.errors);
+            updateOrdersPullProgress({
+              pulled: pulledCount,
+              message: `Shop ${shopId}: hủy/hoàn xong (+${cr.added}/~${cr.updated})`,
+            });
             console.log(
               `[Orders Pull] Shop ${shopId}: Returns/Cancel xong returns=${cr.returns} +${cr.added}/~${cr.updated} err=${cr.errors.length}`,
             );
           } catch (crErr: any) {
-            console.error(`[Orders Pull] Cancel/Return sync lỗi shop=${shopId}:`, crErr?.message || crErr);
+            console.error(
+              `[Orders Pull] Cancel/Return sync lỗi shop=${shopId}:`,
+              crErr?.message || crErr,
+              crErr?.stack || "",
+            );
             errors.push({
               shopId,
               error: "cancel_return_sync_failed",
@@ -17662,6 +17734,10 @@ async function startServer() {
           }
 
           console.log(`[Orders Pull] Shop ${shopId}: đang gọi Shopee get_order_list (mode=${mode})...`);
+          updateOrdersPullProgress({
+            pulled: pulledCount,
+            message: `Shop ${shopId}: đang gọi get_order_list (${mode})...`,
+          });
 
           // FULL SYNC: streaming date-chunk từ NOW → 30 ngày trước — ghi DB từng trang, không gom RAM.
           if (mode === "full") {
@@ -17945,13 +18021,45 @@ async function startServer() {
       };
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
-      console.error("[Orders Pull] fatal:", err.message, err.stack);
-      ordersPullSyncMeta.error = err.message || "Internal Server Error";
+      console.error("[Orders Pull] fatal:", err.message, err.stack || "");
+      if (myGeneration === ordersPullSyncGeneration) {
+        ordersPullSyncMeta.error = err.message || "Internal Server Error";
+        updateOrdersPullProgress({
+          message: `Đồng bộ thất bại: ${err.message || "Internal Server Error"}`,
+          error: err.message || "Internal Server Error",
+        });
+      }
       return { success: false, pulled: 0, warning: err.message || "Internal Server Error" };
     } finally {
-      if (gotHeavy) releaseHeavyJob(heavyName);
-      ordersPullSyncMeta.finishedAt = Date.now();
-      isSyncing = false;
+      // BẮT BUỘC: luôn nhả lock đúng generation — không để isSyncing=true vĩnh viễn.
+      try {
+        if (gotHeavy) releaseHeavyJob(heavyName);
+      } catch (releaseErr: any) {
+        console.error(
+          "[Orders Pull] releaseHeavyJob lỗi:",
+          releaseErr?.message || releaseErr,
+        );
+      }
+      if (myGeneration === ordersPullSyncGeneration) {
+        ordersPullSyncMeta.finishedAt = Date.now();
+        if (!ordersPullSyncMeta.message) {
+          ordersPullSyncMeta.message = ordersPullSyncMeta.error
+            ? `Đồng bộ thất bại: ${ordersPullSyncMeta.error}`
+            : `Đồng bộ thành công — ${ordersPullSyncMeta.pulled || 0} đơn`;
+        }
+        isSyncing = false;
+        console.log(
+          `[Orders Pull] finally UNLOCK isSyncing=false mode=${mode}` +
+            ` gen=${myGeneration}` +
+            ` pulled=${ordersPullSyncMeta.pulled}` +
+            ` err=${ordersPullSyncMeta.error || "-"}` +
+            ` msg=${ordersPullSyncMeta.message || "-"}`,
+        );
+      } else {
+        console.warn(
+          `[Orders Pull] finally bỏ qua unlock — gen ${myGeneration}≠${ordersPullSyncGeneration}`,
+        );
+      }
     }
   }
 
@@ -18000,6 +18108,8 @@ async function startServer() {
       }
 
       isSyncing = true;
+      ordersPullSyncGeneration += 1;
+      const syncGen = ordersPullSyncGeneration;
       ordersPullSyncMeta = {
         mode,
         startedAt: Date.now(),
@@ -18013,23 +18123,45 @@ async function startServer() {
         error: null,
       };
 
+      const hardDeadlineMs =
+        mode === "full"
+          ? ORDERS_PULL_HARD_DEADLINE_FULL_MS
+          : ORDERS_PULL_HARD_DEADLINE_INCREMENTAL_MS;
+
       setImmediate(() => {
-        void executeOrdersPullSync(mode, { assumeLocked: true })
+        // Watchdog: nếu job treo (không vào finally) → ép unlock sau hard deadline.
+        const watchdog = setTimeout(() => {
+          forceReleaseOrdersPullLock(
+            `watchdog_${Math.round(hardDeadlineMs / 1000)}s`,
+            `Sync treo quá ${Math.round(hardDeadlineMs / 1000)}s — đã ép dừng (watchdog)`,
+            syncGen,
+          );
+        }, hardDeadlineMs);
+
+        void executeOrdersPullSync(mode, { assumeLocked: true, generation: syncGen })
           .then((result) => {
-            if (result.skipped) {
+            if (result?.skipped) {
               console.log("[Orders Pull] Background skipped — mutex busy");
               return;
             }
             console.log(
-              `[Orders Pull] Background xong mode=${mode} pulled=${result.pulled} success=${result.success}`,
+              `[Orders Pull] Background xong mode=${mode} pulled=${result?.pulled ?? 0} success=${result?.success}`,
             );
           })
           .catch((bgErr: any) => {
-            // Không để unhandled rejection treo isSyncing / crash process.
-            console.error("[Orders Pull] Background unhandled:", bgErr?.message || bgErr);
-            ordersPullSyncMeta.error = bgErr?.message || String(bgErr) || "Internal Server Error";
-            ordersPullSyncMeta.finishedAt = Date.now();
-            isSyncing = false;
+            console.error(
+              "[Orders Pull] Background unhandled:",
+              bgErr?.message || bgErr,
+              bgErr?.stack || "",
+            );
+            forceReleaseOrdersPullLock(
+              "background_catch",
+              bgErr?.message || String(bgErr) || "Internal Server Error",
+              syncGen,
+            );
+          })
+          .finally(() => {
+            clearTimeout(watchdog);
           });
       });
 
