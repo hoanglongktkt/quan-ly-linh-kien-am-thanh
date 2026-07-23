@@ -1804,12 +1804,15 @@ export default function OrderManager({
           ordersRef.current = job.orders;
         }
 
+        const done = Number(job.completed) || 0;
+        const tot = Number(job.total) || total;
         if (job.status === 'printing') {
+          setProgressCompleted(Math.max(done, Number(job.successCount) || 0));
           setProgressMessage(
-            `Đã xác nhận ${job.successCount || job.completed}/${job.total} đơn — Đang chờ tạo vận đơn...`,
+            `Đã xác nhận ${job.successCount || done}/${tot} đơn — Đang chờ tạo vận đơn...`,
           );
         } else if (job.status === 'running' || job.status === 'pending') {
-          setProgressMessage(`Đang xác nhận trên Shopee: ${job.completed}/${job.total} đơn...`);
+          setProgressMessage(`Đang xử lý ${done}/${tot} đơn...`);
         }
 
         if (
@@ -1875,6 +1878,14 @@ export default function OrderManager({
 
     // Chỉ in đơn đã xác nhận thành công — 1 PDF gộp / 1 lần mở. Không loop popup.
     if (successfullyConfirmedIds.length > 0) {
+      setProgressCompleted(successCount);
+      setProgressTotal(Math.max(total, successCount));
+      setProgressMessage(`Đang xử lý ${successCount}/${Math.max(total, successCount)} đơn...`);
+
+      // Bước 3: chờ Shopee sinh mã vận đơn trước khi lấy PDF.
+      setProgressMessage(`Đã xác nhận ${successCount} đơn — Đang chờ tạo vận đơn (3 giây)...`);
+      await new Promise((r) => setTimeout(r, 3000));
+
       const printedSnsFromJob: string[] = Array.isArray(finalJob?.printDocument?.printedOrderSns)
         ? finalJob.printDocument.printedOrderSns.map(String)
         : [];
@@ -1884,7 +1895,8 @@ export default function OrderManager({
 
       try {
         if (coversAllConfirmed) {
-          setProgressMessage('Hoàn tất! Đang mở PDF vận đơn...');
+          // Bước 4–5: mở PDF đã có sẵn từ job (/api/public/labels/).
+          setProgressMessage('Đang mở PDF vận đơn...');
           await openShopeeLabelFromStream(
             {
               pdfFilename: finalJob.printDocument.pdfFilename,
@@ -1897,12 +1909,10 @@ export default function OrderManager({
             }
           );
         } else {
-          // PDF job thiếu đơn / thiếu file → chờ Shopee rồi gọi print-document (cùng /api/public/labels/).
+          // PDF job thiếu đơn / thiếu file → gọi print-document (cùng /api/public/labels/).
           console.warn(
             `[Bulk Confirm] Auto-print job chỉ có ${printedSnsFromJob.length}/${successfullyConfirmedIds.length} đơn — gọi print-document gộp lại.`,
           );
-          setProgressMessage('Đã xác nhận... Đang chờ tạo vận đơn (3 giây)...');
-          await new Promise((r) => setTimeout(r, 3000));
           setProgressMessage('Đang tạo file PDF vận đơn...');
           const printResult = await printShopeeDocuments(successfullyConfirmedIds, {
             waitMs: 2000,
@@ -1924,33 +1934,36 @@ export default function OrderManager({
         closeReservedPrintWindow(reservedPrintWin);
         queuePendingAutoPrint({}, successfullyConfirmedIds);
       }
+
+      // Optimistic local update — refetch thật nằm trong finally của confirmShipOrders.
+      const printedSns = new Set<string>(
+        (finalJob?.printDocument?.printedOrderSns as string[] | undefined) ||
+          results.filter((r: any) => r?.success).map((r: any) => r.orderSn).filter(Boolean)
+      );
+      const queuedForRefresh =
+        queuedCount > 0
+          ? ordersRef.current.filter(
+              (o) =>
+                printedSns.has(o.orderSn) ||
+                results.some(
+                  (r: any) => r?.success && (r.orderId === o.id || r.orderSn === o.orderSn)
+                )
+            )
+          : [];
+      if (queuedForRefresh.length > 0) {
+        const queuedKeys = buildQueuedOrderKeys(queuedForRefresh);
+        const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
+          markPrinted: printedSns.size > 0,
+          shipMethod,
+        });
+        ordersRef.current = patched;
+        onUpdateOrders(patched);
+      }
     } else {
       closeReservedPrintWindow(reservedPrintWin);
       if (finalJob?.printDocument?.message) {
         showToast(finalJob.printDocument.message);
       }
-    }
-
-    const printedSns = new Set<string>(
-      (finalJob?.printDocument?.printedOrderSns as string[] | undefined) ||
-        results.filter((r: any) => r?.success).map((r: any) => r.orderSn).filter(Boolean)
-    );
-    const queuedForRefresh = queuedCount > 0
-      ? ordersRef.current.filter(
-          (o) =>
-            printedSns.has(o.orderSn) ||
-            results.some(
-              (r: any) => r?.success && (r.orderId === o.id || r.orderSn === o.orderSn)
-            )
-        )
-      : [];
-    if (queuedForRefresh.length > 0) {
-      await refreshOrdersAfterShip(queuedForRefresh, {
-        markPrinted: printedSns.size > 0,
-        shipMethod,
-      });
-    } else if (onFetchOrders) {
-      await onFetchOrders();
     }
   };
 
@@ -1959,6 +1972,7 @@ export default function OrderManager({
     const queuedOrders = [...shipConfirmOrders];
     const orderSns = [...new Set(queuedOrders.map(o => o.orderSn).filter(sn => Boolean(sn && String(sn).trim())))];
     const orderIds = [...new Set(queuedOrders.map(o => o.id).filter(id => Boolean(id && String(id).trim())))];
+    const totalQueued = queuedOrders.length;
 
     if (orderSns.length === 0 && orderIds.length === 0) {
       showToast('Không có mã đơn hàng hợp lệ trong danh sách đã chọn. Vui lòng chọn lại.');
@@ -1972,11 +1986,13 @@ export default function OrderManager({
     onUpdateOrders(optimisticOrders);
     ordersRef.current = optimisticOrders;
 
+    // Bước 1: mở Modal tiến trình ngay — đóng popup chọn pickup/dropoff.
+    setShipConfirmOrders(null);
     setIsShipping(true);
     setProgressCompleted(0);
-    setProgressTotal(queuedOrders.length);
+    setProgressTotal(totalQueued);
     setProgressDone(false);
-    setProgressMessage(`Đang xác nhận ${queuedOrders.length} đơn...`);
+    setProgressMessage(`Đang xử lý 0/${totalQueued} đơn...`);
 
     // Mở tab in NGAY trong user-gesture — sau await dài window.open sẽ bị chặn.
     const reservedPrintWin = openReservedPrintPlaceholder();
@@ -1991,6 +2007,7 @@ export default function OrderManager({
     });
 
     try {
+      // Bước 2: gọi API xác nhận đơn hàng lên Shopee.
       let res = await fetch('/api/shopee/ship-order/bulk-async', {
         method: 'POST',
         headers: authHeaders(),
@@ -2004,7 +2021,7 @@ export default function OrderManager({
         (res.status >= 500 && res.status !== 202);
 
       if (shouldFallbackSync) {
-        setProgressMessage(`Backend async lỗi (HTTP ${res.status}) — đang xác nhận ${queuedOrders.length} đơn (có thể mất vài phút)...`);
+        setProgressMessage(`Đang xử lý 0/${totalQueued} đơn (đồng bộ)...`);
         res = await fetch('/api/shopee/ship-order/bulk', {
           method: 'POST',
           headers: authHeaders(),
@@ -2014,15 +2031,12 @@ export default function OrderManager({
         if (!res.ok) {
           closeReservedPrintWindow(reservedPrintWin);
           showToast(syncData.message || syncData.error || `Không xác nhận được đơn (HTTP ${res.status}).`);
-          if (onFetchOrders) await onFetchOrders();
-          clearShipProgressOverlay();
           return;
         }
         if (Array.isArray(syncData.orders)) {
           onUpdateOrders(syncData.orders);
           ordersRef.current = syncData.orders;
         }
-        setShipConfirmOrders(null);
         setSelectedOrderIds([]);
         setActiveSubTab('processed');
 
@@ -2038,16 +2052,21 @@ export default function OrderManager({
         const failedCount =
           Number(syncData.failedCount) ||
           (syncData.results || []).filter((r: any) => !r?.success).length;
+        setProgressCompleted(successCount);
+        setProgressMessage(`Đang xử lý ${successCount}/${totalQueued} đơn...`);
         showToast(
           syncData.message ||
             `Xác nhận thành công ${successCount} đơn. Bỏ qua ${failedCount} đơn bị lỗi.`,
         );
         if (successfullyConfirmedIds.length === 0) {
           closeReservedPrintWindow(reservedPrintWin);
-          clearShipProgressOverlay();
           return;
         }
-        // await confirm xong → chờ Shopee tạo vận đơn → 1 PDF gộp
+
+        // Bước 3: chờ Shopee sinh mã vận đơn.
+        setProgressMessage(`Đã xác nhận ${successCount}/${totalQueued} đơn — Đang chờ tạo vận đơn (3 giây)...`);
+        await new Promise((r) => setTimeout(r, 3000));
+
         const printedSnsSync: string[] = Array.isArray(syncData.printDocument?.printedOrderSns)
           ? syncData.printDocument.printedOrderSns.map(String)
           : [];
@@ -2056,7 +2075,8 @@ export default function OrderManager({
           !!syncData.printDocument?.url;
         try {
           if (syncCoversAll) {
-            setProgressMessage('Hoàn tất! Đang mở PDF vận đơn...');
+            // Bước 4–5: mở PDF (/api/public/labels/).
+            setProgressMessage('Đang mở PDF vận đơn...');
             await openShopeeLabelFromStream(
               {
                 pdfFilename: syncData.printDocument.pdfFilename,
@@ -2069,8 +2089,6 @@ export default function OrderManager({
               }
             );
           } else {
-            setProgressMessage('Đã xác nhận... Đang chờ tạo vận đơn (3 giây)...');
-            await new Promise((r) => setTimeout(r, 3000));
             setProgressMessage('Đang tạo file PDF vận đơn...');
             await printShopeeDocuments(successfullyConfirmedIds, {
               waitMs: 2000,
@@ -2082,11 +2100,13 @@ export default function OrderManager({
           closeReservedPrintWindow(reservedPrintWin);
           queuePendingAutoPrint({}, successfullyConfirmedIds);
         }
-        await refreshOrdersAfterShip(queuedOrders, {
+        // Optimistic — refetch thật ở finally.
+        const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
           markPrinted: successCount > 0,
           shipMethod,
         });
-        markProgressComplete('Hoàn tất! Đã xác nhận & mở vận đơn.');
+        ordersRef.current = patched;
+        onUpdateOrders(patched);
         return;
       }
 
@@ -2094,8 +2114,6 @@ export default function OrderManager({
       if (!res.ok && res.status !== 202) {
         closeReservedPrintWindow(reservedPrintWin);
         showToast(data.message || data.error || data.detail || 'Không thể bắt đầu xác nhận đơn hàng.');
-        if (onFetchOrders) await onFetchOrders();
-        clearShipProgressOverlay();
         return;
       }
 
@@ -2104,37 +2122,40 @@ export default function OrderManager({
         ordersRef.current = data.orders;
       }
 
-      setShipConfirmOrders(null);
       setSelectedOrderIds([]);
       setActiveSubTab('processed');
 
       const jobId = data.jobId as string | undefined;
-      const total = Number(data.total) || queuedOrders.length;
+      const total = Number(data.total) || totalQueued;
       setProgressTotal(total);
 
       if (!jobId) {
         closeReservedPrintWindow(reservedPrintWin);
-        showToast(`Đã ghi nhận ${queuedOrders.length} đơn.`);
-        markProgressComplete('Đã ghi nhận đơn hàng!');
+        setProgressCompleted(totalQueued);
+        showToast(`Đã ghi nhận ${totalQueued} đơn.`);
         return;
       }
 
-      setProgressMessage(`Đang xác nhận trên Shopee: 0/${total} đơn...`);
+      setProgressMessage(`Đang xử lý 0/${total} đơn...`);
       // BẮT BUỘC await xác nhận + gen PDF hoàn tất trước khi trigger in.
       const finalJob = await pollShipJobUntilDone(jobId, total, () => {
-        setProgressMessage('Đã xác nhận... Đang chờ tạo vận đơn...');
+        setProgressMessage('Đã xác nhận — Đang chờ tạo vận đơn...');
         showToast('Đã xác nhận — đang chờ Shopee tạo vận đơn...');
       });
       await finishShipJobResult(finalJob, queuedOrders.length, total, reservedPrintWin);
-      markProgressComplete('Hoàn tất! Đã xác nhận & mở vận đơn.');
     } catch (err) {
       closeReservedPrintWindow(reservedPrintWin);
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
-      if (onFetchOrders) await onFetchOrders();
-      clearShipProgressOverlay();
     } finally {
-      setIsShipping(false);
+      // Bước 6 (BẮT BUỘC): luôn đóng Modal tiến trình + refetch danh sách đơn.
+      clearShipProgressOverlay();
+      setSelectedOrderIds([]);
+      try {
+        if (onFetchOrders) await onFetchOrders();
+      } catch {
+        /* ignore refetch errors */
+      }
     }
   };
 
@@ -2325,6 +2346,8 @@ export default function OrderManager({
       other: 0,
     };
     const carrierFilterTabs = new Set([
+      'pending_confirm',
+      'pending_verification',
       'unprocessed',
       'processed',
       'cancel_returns',
@@ -2341,8 +2364,10 @@ export default function OrderManager({
 
   const filteredOrdersBase = ordersPoolBeforeCarrier
     .filter((order) => {
-      // ĐVVC filter — Chờ lấy hàng + Đơn hủy/hoàn + Đã nhận hủy/hoàn
+      // ĐVVC filter — Chờ xác nhận + Chờ lấy hàng + Đơn hủy/hoàn
       if (
+        activeSubTab === 'pending_confirm' ||
+        activeSubTab === 'pending_verification' ||
         activeSubTab === 'unprocessed' ||
         activeSubTab === 'processed' ||
         activeSubTab === 'cancel_returns' ||
@@ -3705,7 +3730,9 @@ export default function OrderManager({
             </span>
           </label>
         )}
-        {(activeSubTab === 'unprocessed' ||
+        {(activeSubTab === 'pending_confirm' ||
+          activeSubTab === 'pending_verification' ||
+          activeSubTab === 'unprocessed' ||
           activeSubTab === 'processed' ||
           activeSubTab === 'cancel_returns' ||
           activeSubTab === 'received_cancel_returns') && (
