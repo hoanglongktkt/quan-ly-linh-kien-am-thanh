@@ -14446,6 +14446,7 @@ async function startServer() {
       pathName === "/api/auth/shopee/callback" ||
       pathName === "/api/shopee/oauth/complete" ||
       pathName === "/api/shopee/webhook" ||
+      pathName === "/api/webhook/shopee" ||
       pathName.startsWith("/api/public/") ||
       pathName.startsWith("/api/shopee/ship-order") ||
       pathName === "/api/shopee/print-document";

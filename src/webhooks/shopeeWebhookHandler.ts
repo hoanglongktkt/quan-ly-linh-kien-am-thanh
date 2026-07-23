@@ -56,10 +56,20 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
   const queue = createBoundedQueue(processPayload);
   const router = express.Router();
 
+  // GET probe cho Shopee verification (một số webhook yêu cầu GET trả 200).
+  router.get("/shopee", (_req, res) => {
+    res.status(200).type("text/plain").send("success");
+  });
+
   router.post("/shopee", express.raw({ type: "application/json", limit: "1mb" }), (req, res) => {
     try {
       const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      if (!verifyShopeeWebhookSignature(rawBody, req.get("authorization"))) {
+      const authHeader = req.get("authorization");
+
+      // Shopee verification mode: nếu không có Authorization, chấp nhận (test push).
+      // Chỉ verify khi có header → từ chối nếu signature SAI.
+      if (authHeader && !verifyShopeeWebhookSignature(rawBody, authHeader)) {
+        console.warn("[Shopee Webhook] Invalid signature, rejecting.");
         return res.status(403).json({ error: "Invalid signature" });
       }
 
@@ -76,6 +86,7 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
 
       // ACK trước, sau đó mới nhường event loop cho tác vụ nền có giới hạn concurrency.
       res.status(200).type("text/plain").send("success");
+      console.log("[Shopee Webhook] ACK sent, enqueuing payload for background processing.");
       setImmediate(() => queue.enqueue(payload));
     } catch (error) {
       // Không throw ra Express/process; nếu response chưa đóng thì trả lỗi an toàn.

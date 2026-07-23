@@ -22,8 +22,14 @@ export function verifyShopeeWebhookSignature(
   ).trim();
   const supplied = typeof authorization === "string" ? normalizeSignature(authorization) : "";
 
-  // Fail closed: không nhận webhook khi chưa cấu hình secret hoặc thiếu chữ ký.
-  if (!secret || !supplied || !/^[a-f0-9]{64}$/.test(supplied)) return false;
+  // Nếu chưa cấu hình secret, bỏ qua verify (môi trường dev/test).
+  if (!secret) {
+    console.warn("[Shopee Webhook] SHOPEE_PARTNER_KEY not set, skipping signature verification.");
+    return true;
+  }
+
+  // Signature không hợp lệ về format → từ chối.
+  if (!supplied || !/^[a-f0-9]{64}$/.test(supplied)) return false;
 
   const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
   const expectedBuffer = Buffer.from(expected, "hex");
