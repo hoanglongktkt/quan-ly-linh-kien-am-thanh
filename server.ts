@@ -511,8 +511,18 @@ try {
 }
 wipeLegacyPublicPrints();
 cleanupExpiredLabelFiles();
+/** Không chạy chồng cleanup — tránh treo/fork thừa trên cPanel. */
+let labelDiskCleanupRunning = false;
 const labelDiskCleanupTimer = setInterval(() => {
-  cleanupExpiredLabelFiles();
+  if (labelDiskCleanupRunning) return;
+  labelDiskCleanupRunning = true;
+  try {
+    cleanupExpiredLabelFiles();
+  } catch (err) {
+    console.warn("[Labels Cleanup] setInterval lỗi:", err);
+  } finally {
+    labelDiskCleanupRunning = false;
+  }
 }, 60 * 60 * 1000);
 if (typeof (labelDiskCleanupTimer as any).unref === "function") {
   (labelDiskCleanupTimer as any).unref();
@@ -1657,11 +1667,10 @@ async function shopeeGetOrderList(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
 
   const timeTo = toShopeeUnixSeconds(opts?.timeTo, timestamp);
-  // Mặc định 2 giờ theo update_time — Quick Sync siêu tốc (1 trang).
-  const timeFrom = toShopeeUnixSeconds(
-    opts?.timeFrom,
-    timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC,
-  );
+  // Cập nhật đơn mới: CHỈ 2 giờ gần nhất (Unix seconds, không phải ms).
+  // update_time_from = Math.floor(Date.now()/1000) - (2*60*60)
+  const defaultFrom = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
+  const timeFrom = toShopeeUnixSeconds(opts?.timeFrom, defaultFrom);
 
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
@@ -1782,10 +1791,14 @@ const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
 const SHOPEE_FULL_SYNC_LOOKBACK_SEC = 30 * 24 * 60 * 60;
 const SHOPEE_FULL_SYNC_CHUNK_SEC = 15 * 24 * 60 * 60;
 const SHOPEE_FULL_SYNC_MAX_CHUNKS = 3;
-/** Phân trang trong 1 date-chunk — break ngay khi [] / hết trang. */
-const SHOPEE_FULL_SYNC_MAX_PAGES_PER_CHUNK = 40;
+/**
+ * Phân trang get_order_list — HARD CAP 10 trang/cửa sổ.
+ * loopCount > 10 → BẮT BUỘC break (chống vòng lặp vô hạn / zombie process cPanel).
+ */
+const SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 10;
+const SHOPEE_FULL_SYNC_MAX_PAGES_PER_CHUNK = SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
-const SHOPEE_ORDER_LIST_MAX_PAGES = 8;
+const SHOPEE_ORDER_LIST_MAX_PAGES = SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
 const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 120;
 /** Ngân sách riêng cho đơn hủy/hoàn + returns — đủ để khớp ~163+ đơn Seller Center. */
 const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
@@ -2293,7 +2306,8 @@ async function shopeeFetchAllOrderSnsByStatus(
     let timeFrom: number;
     if (mode === "incremental") {
       timeTo = now;
-      timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+      // Công thức bắt buộc: chỉ quét 2 giờ gần nhất (Unix seconds).
+      timeFrom = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
       console.log("Sync 2 hours: ", timeFrom, " to ", timeTo);
     } else {
       timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
@@ -2301,15 +2315,21 @@ async function shopeeFetchAllOrderSnsByStatus(
     }
     // Shopee v2: cursor="" lần đầu; thoát khi response.more === false (KHÔNG dùng page++).
     let cursor = "";
-    let safetyGuard = 0;
+    let loopCount = 0;
     let windowCount = 0;
 
     console.log(
       `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 2 giờ" : ", ~15 ngày"})`,
     );
 
-    while (safetyGuard < SHOPEE_ORDER_LIST_MAX_PAGES) {
-      safetyGuard += 1;
+    while (true) {
+      loopCount += 1;
+      if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
+        console.warn(
+          `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK chống vòng lặp vô hạn.`,
+        );
+        break;
+      }
       const listResult = await shopeeGetOrderList(shopId, accessToken, {
         orderStatus,
         cursor,
@@ -2320,7 +2340,7 @@ async function shopeeFetchAllOrderSnsByStatus(
       if (listResult.error) {
         const errMsg = listResult.message || formatShopeeApiError(listResult, listResult.httpStatus);
         console.error(
-          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} cursor-pass=${safetyGuard} lỗi:`,
+          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} cursor-pass=${loopCount} lỗi:`,
           listResult.error,
           errMsg,
         );
@@ -2339,7 +2359,7 @@ async function shopeeFetchAllOrderSnsByStatus(
       windowCount += pageList.length;
 
       console.log(
-        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} pass=${safetyGuard}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
+        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} pass=${loopCount}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
       );
 
       if (!pageList.length) break;
@@ -2353,7 +2373,7 @@ async function shopeeFetchAllOrderSnsByStatus(
       const advanced = advanceShopeeOrderListCursor(
         listResult,
         cursor,
-        `status=${orderStatus} w${windowIdx + 1}p${safetyGuard}`,
+        `status=${orderStatus} w${windowIdx + 1}p${loopCount}`,
         pageList,
       );
       if (!advanced) break;
@@ -2387,22 +2407,28 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
     let timeFrom: number;
     if (mode === "incremental") {
       timeTo = now;
-      timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+      timeFrom = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
       console.log("Sync 2 hours: ", timeFrom, " to ", timeTo);
     } else {
       timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
       timeFrom = timeTo - SHOPEE_ORDER_LIST_WINDOW_SEC;
     }
     let cursor = "";
-    let safetyGuard = 0;
+    let loopCount = 0;
     let windowCount = 0;
 
     console.log(
       `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo}${mode === "incremental" ? " (2 giờ)" : ""}`,
     );
 
-    while (safetyGuard < SHOPEE_ORDER_LIST_MAX_PAGES) {
-      safetyGuard += 1;
+    while (true) {
+      loopCount += 1;
+      if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
+        console.warn(
+          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK.`,
+        );
+        break;
+      }
       const listResult = await shopeeGetOrderList(shopId, accessToken, {
         orderStatus,
         cursor,
@@ -2413,7 +2439,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
       if (listResult.error) {
         const errMsg = listResult.message || formatShopeeApiError(listResult, listResult.httpStatus);
         console.error(
-          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} pass=${safetyGuard} lỗi:`,
+          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} pass=${loopCount} lỗi:`,
           listResult.error,
           errMsg,
         );
@@ -2432,7 +2458,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
       windowCount += pageList.length;
 
       console.log(
-        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} pass=${safetyGuard}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
+        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} pass=${loopCount}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
       );
 
       if (!pageList.length) break;
@@ -2443,7 +2469,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
       const advanced = advanceShopeeOrderListCursor(
         listResult,
         cursor,
-        `create_time status=${orderStatus} w${windowIdx + 1}p${safetyGuard}`,
+        `create_time status=${orderStatus} w${windowIdx + 1}p${loopCount}`,
         pageList,
       );
       if (!advanced) break;
@@ -2488,7 +2514,7 @@ async function shopeeFetchAllOrderSns(
   ) => {
     // Shopee v2 pagination: cursor="" → gọi API → cursor=next_cursor; if (!more) break.
     let cursor = "";
-    let safetyGuard = 0;
+    let loopCount = 0;
     let windowCount = 0;
     const safeFrom = toShopeeUnixSeconds(timeFrom, now - SHOPEE_ORDER_LIST_INCREMENTAL_SEC);
     const safeTo = toShopeeUnixSeconds(timeTo, now);
@@ -2512,9 +2538,15 @@ async function shopeeFetchAllOrderSns(
       );
     }
 
-    while (safetyGuard < SHOPEE_ORDER_LIST_MAX_PAGES) {
-      safetyGuard += 1;
-      assertOrdersPullNotTimedOut(`get_order_list ${timeRangeField} pass=${safetyGuard}`);
+    while (true) {
+      loopCount += 1;
+      if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
+        console.warn(
+          `[Orders Pull] shop=${shopId} field=${timeRangeField}: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK chống treo.`,
+        );
+        break;
+      }
+      assertOrdersPullNotTimedOut(`get_order_list ${timeRangeField} pass=${loopCount}`);
       let listResult: any;
       try {
         listResult = await shopeeGetOrderList(shopId, accessToken, {
@@ -2543,7 +2575,7 @@ async function shopeeFetchAllOrderSns(
 
       const pageList = extractShopeeOrderListRows(listResult);
       console.log(
-        `[Shopee API] RAW order_list shop=${shopId} field=${timeRangeField} pass=${safetyGuard}: count=${pageList.length}` +
+        `[Shopee API] RAW order_list shop=${shopId} field=${timeRangeField} pass=${loopCount}: count=${pageList.length}` +
           ` sns=[${pageList
             .slice(0, 5)
             .map((r: any) => r?.order_sn)
@@ -2554,7 +2586,7 @@ async function shopeeFetchAllOrderSns(
       // Rỗng [] → break ngay phân trang cửa sổ.
       if (!pageList || pageList.length === 0) {
         console.log(
-          `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} pass=${safetyGuard}: order_list=[] — break.`,
+          `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} pass=${loopCount}: order_list=[] — break.`,
         );
         break;
       }
@@ -2571,7 +2603,7 @@ async function shopeeFetchAllOrderSns(
       windowCount += pageList.length;
 
       console.log(
-        `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} pass=${safetyGuard}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
+        `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} pass=${loopCount}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
       );
 
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
@@ -2581,7 +2613,7 @@ async function shopeeFetchAllOrderSns(
       const advanced = advanceShopeeOrderListCursor(
         listResult,
         cursor,
-        `pull ${timeRangeField} w${windowIdx + 1}p${safetyGuard}`,
+        `pull ${timeRangeField} w${windowIdx + 1}p${loopCount}`,
         pageList,
       );
       if (!advanced) break;
@@ -2592,8 +2624,8 @@ async function shopeeFetchAllOrderSns(
 
   if (mode === "incremental") {
     // Quick Sync siêu tốc: CHỈ 1 lần gọi update_time trong 2 giờ gần nhất.
-    const timeTo = now;
-    const timeFrom = now - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+    const timeTo = Math.floor(Date.now() / 1000);
+    const timeFrom = Math.floor(Date.now() / 1000) - 2 * 60 * 60;
     console.log("Sync 2 hours: ", timeFrom, " to ", timeTo);
     await fetchWindow("update_time", timeFrom, timeTo, 0);
   } else {
@@ -2666,10 +2698,16 @@ async function syncShopeeFullOrderHistoryStreaming(
 
     // Shopee v2: cursor="" lần đầu; thoát khi !response.more (không dùng page++).
     let cursor = "";
-    let safetyGuard = 0;
+    let loopCount = 0;
 
-    while (safetyGuard < SHOPEE_FULL_SYNC_MAX_PAGES_PER_CHUNK) {
-      safetyGuard += 1;
+    while (true) {
+      loopCount += 1;
+      if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
+        console.warn(
+          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK chống treo.`,
+        );
+        break;
+      }
       // Rate limit — bắt buộc 1s trước mỗi get_order_list.
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -2684,7 +2722,7 @@ async function syncShopeeFullOrderHistoryStreaming(
       } catch (error: any) {
         const msg = error?.message || String(error);
         console.error(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${safetyGuard} fetch lỗi:`,
+          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount} fetch lỗi:`,
           msg,
         );
         errors.push({
@@ -2692,7 +2730,7 @@ async function syncShopeeFullOrderHistoryStreaming(
           error: "full_sync_list_failed",
           message: msg,
           chunk: chunkIdx,
-          pass: safetyGuard,
+          pass: loopCount,
         });
         break;
       }
@@ -2700,7 +2738,7 @@ async function syncShopeeFullOrderHistoryStreaming(
       if (listResult?.error) {
         const msg = listResult.message || formatShopeeApiError(listResult, listResult.httpStatus);
         console.error(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${safetyGuard} API lỗi:`,
+          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount} API lỗi:`,
           listResult.error,
           msg,
         );
@@ -2709,7 +2747,7 @@ async function syncShopeeFullOrderHistoryStreaming(
           error: listResult.error || "full_sync_list_failed",
           message: msg,
           chunk: chunkIdx,
-          pass: safetyGuard,
+          pass: loopCount,
         });
         break;
       }
@@ -2718,7 +2756,7 @@ async function syncShopeeFullOrderHistoryStreaming(
       // Rỗng [] → break ngay, sang chunk tiếp theo.
       if (!pageList || pageList.length === 0) {
         console.log(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${safetyGuard}: order_list=[] — break phân trang.`,
+          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount}: order_list=[] — break phân trang.`,
         );
         break;
       }
@@ -2727,7 +2765,7 @@ async function syncShopeeFullOrderHistoryStreaming(
         .map((row: any) => String(row?.order_sn || "").trim())
         .filter(Boolean);
       console.log(
-        `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${safetyGuard}: ${pageSns.length} order_sn → detail+bulkWrite ngay`,
+        `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount}: ${pageSns.length} order_sn → detail+bulkWrite ngay`,
       );
 
       // Ghi DB theo trang — không tích lũy SNS sang chunk/năm khác.
@@ -2749,7 +2787,7 @@ async function syncShopeeFullOrderHistoryStreaming(
             });
             pulled += upsert.added + upsert.updated;
             console.log(
-              `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}p${safetyGuard}: bulkWrite +${upsert.added}/~${upsert.updated} (totalPulled=${pulled})`,
+              `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}p${loopCount}: bulkWrite +${upsert.added}/~${upsert.updated} (totalPulled=${pulled})`,
             );
             if (typeof onProgress === "function") {
               try {
@@ -2762,7 +2800,7 @@ async function syncShopeeFullOrderHistoryStreaming(
         } catch (batchErr: any) {
           const msg = batchErr?.message || String(batchErr);
           console.error(
-            `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${safetyGuard} persist lỗi:`,
+            `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx} pass=${loopCount} persist lỗi:`,
             msg,
           );
           errors.push({
@@ -2770,7 +2808,7 @@ async function syncShopeeFullOrderHistoryStreaming(
             error: "full_sync_persist_failed",
             message: msg,
             chunk: chunkIdx,
-            pass: safetyGuard,
+            pass: loopCount,
           });
         }
         // Rate limit giữa các lô detail/persist.
@@ -2783,7 +2821,7 @@ async function syncShopeeFullOrderHistoryStreaming(
       const advanced = advanceShopeeOrderListCursor(
         listResult,
         cursor,
-        `fullSync shop=${shopId} chunk=${chunkIdx}p${safetyGuard}`,
+        `fullSync shop=${shopId} chunk=${chunkIdx}p${loopCount}`,
         pageList,
       );
       if (!advanced) break;
@@ -2837,10 +2875,18 @@ async function shopeeGetReturnList(
     ),
   });
   if (opts?.status) params.set("status", String(opts.status));
-  if (opts?.updateTimeFrom != null) params.set("update_time_from", String(opts.updateTimeFrom));
-  if (opts?.updateTimeTo != null) params.set("update_time_to", String(opts.updateTimeTo));
-  if (opts?.createTimeFrom != null) params.set("create_time_from", String(opts.createTimeFrom));
-  if (opts?.createTimeTo != null) params.set("create_time_to", String(opts.createTimeTo));
+  if (opts?.updateTimeFrom != null) {
+    params.set("update_time_from", String(toShopeeUnixSeconds(opts.updateTimeFrom)));
+  }
+  if (opts?.updateTimeTo != null) {
+    params.set("update_time_to", String(toShopeeUnixSeconds(opts.updateTimeTo)));
+  }
+  if (opts?.createTimeFrom != null) {
+    params.set("create_time_from", String(toShopeeUnixSeconds(opts.createTimeFrom)));
+  }
+  if (opts?.createTimeTo != null) {
+    params.set("create_time_to", String(toShopeeUnixSeconds(opts.createTimeTo)));
+  }
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
   try {
@@ -3236,17 +3282,21 @@ async function shopeeFetchCancelReturnOrderSns(
       const timeTo = now - windowIdx * windowSec;
       const timeFrom = timeTo - windowSec;
       let cursor = "";
-      let safetyGuard = 0;
-      // Safety cap — CANCELLED 15 ngày có thể > 50 đơn; thoát chính vẫn là !more.
-      const maxPasses = 40;
-      while (safetyGuard < maxPasses) {
-        safetyGuard += 1;
+      let loopCount = 0;
+      while (true) {
+        loopCount += 1;
+        if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
+          console.warn(
+            `[Shopee Cancel/Return] ${orderStatus}: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK.`,
+          );
+          break;
+        }
         const listResult = await shopeeGetOrderList(shopId, accessToken, {
           orderStatus,
           cursor,
           timeRangeField: "update_time",
-          timeFrom,
-          timeTo,
+          timeFrom: toShopeeUnixSeconds(timeFrom),
+          timeTo: toShopeeUnixSeconds(timeTo),
         });
         if (listResult.error) {
           console.warn(
@@ -3262,7 +3312,7 @@ async function shopeeFetchCancelReturnOrderSns(
           if (orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
         }
         console.log(
-          `[Shopee Cancel/Return] ${orderStatus} w${windowIdx + 1} p${safetyGuard}: +${pageRows.length} (tổng ${orderSnSet.size})`,
+          `[Shopee Cancel/Return] ${orderStatus} w${windowIdx + 1} p${loopCount}: +${pageRows.length} (tổng ${orderSnSet.size})`,
         );
         if (pageRows.length === 0 || orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) {
           break;
@@ -3273,7 +3323,7 @@ async function shopeeFetchCancelReturnOrderSns(
         const advanced = advanceShopeeOrderListCursor(
           listResult,
           cursor,
-          `cancelReturn ${orderStatus} w${windowIdx + 1}p${safetyGuard}`,
+          `cancelReturn ${orderStatus} w${windowIdx + 1}p${loopCount}`,
           pageRows,
         );
         if (!advanced) break;
@@ -3390,8 +3440,8 @@ async function shopeeGetItemList(
     item_status: "NORMAL",
   });
   if (updateWindow) {
-    params.set("update_time_from", String(updateWindow.from));
-    params.set("update_time_to", String(updateWindow.to));
+    params.set("update_time_from", String(toShopeeUnixSeconds(updateWindow.from)));
+    params.set("update_time_to", String(toShopeeUnixSeconds(updateWindow.to)));
   }
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
@@ -18336,6 +18386,7 @@ async function startServer() {
    * 3) Log + trả JSON đầy đủ (tracking_number chiều hoàn).
    */
   app.get("/api/shopee/debug/return-by-order", authMiddleware, async (req, res) => {
+    try {
     const orderSn = String(req.query.order_sn || "260703PQ2D6RUK").trim();
     const tokens = loadShopeeTokens();
     const shopIds = Object.keys(tokens);
@@ -18465,6 +18516,14 @@ async function startServer() {
           : "Tìm thấy return_sn nhưng tracking rỗng — xem reverse_tracking_raw.response.tracking_number"
         : "Không tìm thấy return trong get_return_list (kiểm tra token/shop/time window)",
     });
+    } catch (error: any) {
+      console.error("[DEBUG Return] exception:", error?.message || error, error?.stack || "");
+      if (res.headersSent) return;
+      return res.status(500).json({
+        ok: false,
+        error: error?.message || String(error) || "Internal Server Error",
+      });
+    }
   });
 
   // Debug/test-only route: call v2.order.get_order_list directly with the
