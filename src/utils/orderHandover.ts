@@ -21,10 +21,12 @@ export {
 export type { HandedOverSource } from './orderWarehouseStatus';
 
 /**
- * STATE MACHINE — ROLLBACK tạm thời (không dùng cờ is_handed_over):
+ * STATE MACHINE — Tab filter (SSOT, không giao thoa):
  *
- *  Chờ lấy hàng  = READY_TO_SHIP | RETRY_SHIP | PROCESSED (raw Shopee)
- *  Đang giao     = SHIPPED | TO_CONFIRM_RECEIVE
+ *  Chờ lấy hàng  = READY_TO_SHIP-like AND is_handed_over = false
+ *                  (TUYỆT ĐỐI loại SHIPPED / COMPLETED / CANCELLED)
+ *  Đã giao ĐVVC  = READY_TO_SHIP-like AND is_handed_over = true
+ *  Đang giao     = SHIPPED (hoặc TO_CONFIRM_RECEIVE) — bỏ qua is_handed_over
  */
 
 export function getShopeeOrderRawStatus(
@@ -213,10 +215,11 @@ export function matchesShippingTab(order: Order): boolean {
 }
 
 /**
- * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" — ROLLBACK:
- * READY_TO_SHIP-like AND đã xử lý (BỎ filter is_handed_over).
+ * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" —
+ * READY_TO_SHIP-like AND is_handed_over = false AND đã xử lý.
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
+  if (isOrderHandedOverToCarrier(order)) return false;
   if (!isPickupPoolOrder(order)) return false;
   return isProcessedCondition(order);
 }
@@ -225,9 +228,10 @@ export function matchesProcessedPickupTab(order: Order): boolean {
  * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)":
  * - Raw READY_TO_SHIP | RETRY_SHIP (không PROCESSED)
  * - HOẶC local status=unprocessed khi thiếu raw
- * - AND chưa có mã VĐ outbound / chưa isPrepared(dropoff) / chưa status processed
+ * - AND chưa bàn giao ĐVVC / chưa có mã VĐ outbound / chưa isPrepared(dropoff)
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
+  if (isOrderHandedOverToCarrier(order)) return false;
   if (!isPickupPoolOrder(order)) return false;
   const raw = getShopeeOrderRawStatus(order);
   if (raw === 'PROCESSED') return false;
