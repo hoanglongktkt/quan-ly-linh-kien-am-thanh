@@ -1461,17 +1461,183 @@ export default function OrderManager({
     return window.open(absolute, '_blank');
   };
 
-  /** Mở tab placeholder ngay trong user-gesture (tránh popup blocker sau await ship). */
+  /**
+   * Mở tab placeholder ngay trong user-gesture (tránh popup blocker sau await ship).
+   * Tab độc lập (không React) → dùng HTML/CSS/JS thuần: spinner + đếm ngược mượt.
+   */
   const openReservedPrintPlaceholder = (): Window | null => {
     try {
       const win = window.open('about:blank', '_blank');
       if (!win) return null;
       try {
-        win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Đang tạo vận đơn...</title></head>
-<body style="font-family:system-ui,sans-serif;padding:32px;color:#334155;line-height:1.5">
-  <h2 style="margin:0 0 12px;font-size:18px">Đã xác nhận đơn hàng...</h2>
-  <p style="margin:0 0 8px">Đang chờ Shopee tạo vận đơn (3–5 giây)...</p>
-  <p style="margin:0;color:#64748b;font-size:13px">Vui lòng không đóng tab này — PDF sẽ tự mở khi sẵn sàng.</p>
+        win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Đang tạo vận đơn...</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, system-ui, sans-serif;
+    background: linear-gradient(135deg, #eff6ff 0%, #ffffff 50%, #eff6ff 100%);
+    color: #1e293b;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    max-width: 420px;
+    width: 100%;
+    background: #ffffff;
+    border-radius: 24px;
+    box-shadow: 0 20px 60px rgba(15, 23, 42, 0.12);
+    padding: 40px 36px;
+    text-align: center;
+    animation: fadeIn 0.4s ease-out;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .spinner-wrap {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 24px;
+  }
+  .spinner-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 4px solid #dbeafe;
+  }
+  .spinner-arc {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 4px solid transparent;
+    border-top-color: #2563eb;
+    border-right-color: #2563eb;
+    animation: spin 0.9s linear infinite;
+  }
+  .spinner-check {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #059669;
+    animation: popIn 0.4s ease-out;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes popIn {
+    from { transform: scale(0.5); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+  h2 {
+    font-size: 19px;
+    font-weight: 800;
+    color: #0f172a;
+    margin-bottom: 10px;
+  }
+  .status-line {
+    font-size: 14px;
+    color: #475569;
+    font-weight: 600;
+    margin-bottom: 18px;
+    min-height: 20px;
+  }
+  .countdown {
+    color: #2563eb;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+  .progress-track {
+    width: 100%;
+    height: 6px;
+    background: #eef2ff;
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 18px;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #3b82f6, #2563eb);
+    border-radius: 999px;
+    transition: width 0.3s linear;
+  }
+  .progress-fill.done { background: #059669; width: 100% !important; }
+  .hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 600;
+    background: #f8fafc;
+    padding: 8px 14px;
+    border-radius: 999px;
+  }
+  .hint.done { color: #059669; background: #ecfdf5; }
+  .dots span {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #3b82f6;
+    margin: 0 2px;
+    animation: bounce 1.2s infinite;
+  }
+  .dots span:nth-child(2) { animation-delay: 0.15s; }
+  .dots span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner-wrap">
+      <div class="spinner-ring"></div>
+      <div class="spinner-arc" id="spinnerArc"></div>
+      <div class="spinner-check" id="spinnerCheck">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+        </svg>
+      </div>
+    </div>
+    <h2>Đã xác nhận đơn hàng</h2>
+    <div class="status-line" id="statusLine">
+      Đang chờ Shopee tạo vận đơn (<span class="countdown" id="countdown">5</span> giây)
+      <span class="dots" id="dots"><span></span><span></span><span></span></span>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="hint" id="hintBox">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+      </svg>
+      <span>PDF sẽ tự mở khi sẵn sàng — vui lòng không đóng tab này</span>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var totalMs = 5000;
+      var startedAt = Date.now();
+      var countdownEl = document.getElementById('countdown');
+      var fillEl = document.getElementById('progressFill');
+      var tick = function () {
+        var elapsed = Date.now() - startedAt;
+        var remainMs = Math.max(0, totalMs - elapsed);
+        var remainSec = Math.ceil(remainMs / 1000);
+        if (countdownEl) countdownEl.textContent = String(remainSec);
+        if (fillEl) fillEl.style.width = Math.min(100, (elapsed / totalMs) * 100) + '%';
+        if (remainMs > 0) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    })();
+  </script>
 </body></html>`);
         win.document.close();
       } catch {
