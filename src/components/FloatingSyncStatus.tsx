@@ -37,12 +37,13 @@ export default function FloatingSyncStatus({
   active = false,
   onDismiss,
   onFinished,
-  pollIntervalMs = 2500,
+  pollIntervalMs = 2000,
 }: Props) {
   const [phase, setPhase] = useState<Phase>('hidden');
   const [status, setStatus] = useState<SyncStatusPayload | null>(null);
   const [stopping, setStopping] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const seenRunningRef = useRef(false);
   const finishedNotifiedRef = useRef(false);
 
@@ -50,6 +51,13 @@ export default function FloatingSyncStatus({
     if (hideTimerRef.current) {
       clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
+    }
+  };
+
+  const clearPollTimer = () => {
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
     }
   };
 
@@ -67,6 +75,19 @@ export default function FloatingSyncStatus({
     [onDismiss],
   );
 
+  const markFinished = useCallback(
+    (data: SyncStatusPayload, kind: 'success' | 'error') => {
+      if (finishedNotifiedRef.current) return;
+      finishedNotifiedRef.current = true;
+      clearPollTimer();
+      setStatus(data);
+      setPhase(kind);
+      onFinished?.(data);
+      scheduleHide(kind === 'success' ? 2500 : 4500);
+    },
+    [onFinished, scheduleHide],
+  );
+
   const applyStatus = useCallback(
     (data: SyncStatusPayload) => {
       setStatus(data);
@@ -80,26 +101,37 @@ export default function FloatingSyncStatus({
         return;
       }
 
+      // isRunning: false → LẬP TỨC dừng poll + hiện "Đã đồng bộ xong"
       if (!seenRunningRef.current && !active) {
+        clearPollTimer();
         setPhase('hidden');
         return;
       }
 
-      if (finishedNotifiedRef.current) return;
-      finishedNotifiedRef.current = true;
-
-      if (data.error && !running) {
-        setPhase('error');
-        onFinished?.(data);
-        scheduleHide(5000);
+      if (data.error) {
+        markFinished(
+          {
+            ...data,
+            isRunning: false,
+            syncing: false,
+            message: data.message || data.error || 'Đồng bộ gặp lỗi',
+          },
+          'error',
+        );
         return;
       }
 
-      setPhase('success');
-      onFinished?.(data);
-      scheduleHide(3200);
+      markFinished(
+        {
+          ...data,
+          isRunning: false,
+          syncing: false,
+          message: data.message || 'Đã đồng bộ xong',
+        },
+        'success',
+      );
     },
-    [active, onFinished, scheduleHide],
+    [active, markFinished],
   );
 
   const fetchStatus = useCallback(async () => {
@@ -121,6 +153,7 @@ export default function FloatingSyncStatus({
   const handleForceStop = async () => {
     if (stopping) return;
     setStopping(true);
+    clearPollTimer();
     try {
       const res = await fetch('/api/sync/force-stop', {
         method: 'POST',
@@ -132,25 +165,25 @@ export default function FloatingSyncStatus({
         body: '{}',
       });
       const data = (await res.json().catch(() => ({}))) as SyncStatusPayload;
-      setPhase('error');
-      setStatus({
-        ...data,
-        isRunning: false,
-        syncing: false,
-        message: data.message || 'Đã dừng sync thủ công',
-        error: data.message || 'Đã dừng sync thủ công',
-      });
-      finishedNotifiedRef.current = true;
-      onFinished?.({ ...data, isRunning: false });
-      scheduleHide(3500);
+      markFinished(
+        {
+          ...data,
+          isRunning: false,
+          syncing: false,
+          message: data.message || 'Đã dừng sync thủ công',
+          error: data.message || 'Đã dừng sync thủ công',
+        },
+        'error',
+      );
     } catch (err: any) {
-      setPhase('error');
-      setStatus({
-        isRunning: false,
-        message: err?.message || 'Không dừng được sync',
-        error: err?.message || 'Không dừng được sync',
-      });
-      scheduleHide(4000);
+      markFinished(
+        {
+          isRunning: false,
+          message: err?.message || 'Không dừng được sync',
+          error: err?.message || 'Không dừng được sync',
+        },
+        'error',
+      );
     } finally {
       setStopping(false);
     }
@@ -161,6 +194,7 @@ export default function FloatingSyncStatus({
       seenRunningRef.current = true;
       finishedNotifiedRef.current = false;
       clearHideTimer();
+      clearPollTimer();
       setPhase('running');
       setStatus((prev) => ({
         ...(prev || {}),
@@ -173,19 +207,26 @@ export default function FloatingSyncStatus({
     }
   }, [active, fetchStatus]);
 
+  // Chỉ poll khi đang chạy — isRunning:false → clearInterval ngay trong markFinished.
   useEffect(() => {
-    void fetchStatus();
-  }, [fetchStatus]);
-
-  useEffect(() => {
-    if (phase !== 'running' && !active) return;
-    const id = setInterval(() => {
+    if (phase !== 'running') {
+      clearPollTimer();
+      return;
+    }
+    clearPollTimer();
+    pollTimerRef.current = setInterval(() => {
       void fetchStatus();
     }, pollIntervalMs);
-    return () => clearInterval(id);
-  }, [phase, active, pollIntervalMs, fetchStatus]);
+    return () => clearPollTimer();
+  }, [phase, pollIntervalMs, fetchStatus]);
 
-  useEffect(() => () => clearHideTimer(), []);
+  useEffect(
+    () => () => {
+      clearHideTimer();
+      clearPollTimer();
+    },
+    [],
+  );
 
   if (phase === 'hidden') return null;
 
@@ -199,7 +240,7 @@ export default function FloatingSyncStatus({
       : '');
   const messageText =
     phase === 'success'
-      ? status?.message || `Đồng bộ thành công!${pulled > 0 ? ` (${pulled} đơn)` : ''}`
+      ? status?.message || `Đã đồng bộ xong${pulled > 0 ? ` (${pulled} đơn)` : ''}`
       : phase === 'error'
         ? status?.error || status?.message || 'Đồng bộ gặp lỗi'
         : status?.message || progressText;
@@ -256,6 +297,7 @@ export default function FloatingSyncStatus({
         type="button"
         onClick={() => {
           clearHideTimer();
+          clearPollTimer();
           setPhase('hidden');
           onDismiss?.();
         }}

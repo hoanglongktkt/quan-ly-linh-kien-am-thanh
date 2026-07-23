@@ -1709,28 +1709,38 @@ function parseShopeeOrderListPagination(result: any): { more: boolean; nextCurso
 }
 
 /**
- * Tiến cursor theo Shopee v2 — điều kiện thoát: !more.
- * @returns nextCursor cho request sau; null = break vòng lặp.
+ * Đa lớp break chống quirk Shopee (more:true + list rỗng / cursor không đổi).
+ * @returns nextCursor cho request sau; null = BẮT BUỘC break.
  */
 function advanceShopeeOrderListCursor(
   listResult: any,
   currentCursor: string | undefined,
   logLabel: string,
+  orderList?: any[],
 ): string | null {
+  const body = listResult?.response ?? listResult ?? {};
+  const rows =
+    orderList ??
+    (Array.isArray(body.order_list)
+      ? body.order_list
+      : extractShopeeOrderListRows(listResult));
   const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
-  // ĐIỀU KIỆN THOÁT BẮT BUỘC theo Shopee Open Platform API v2.
+  const prev = String(currentCursor ?? "").trim();
+
+  // 1) !response.more → break
   if (!more) {
     console.log(`[Shopee Cursor] ${logLabel}: more=false — hết trang, break.`);
     return null;
   }
-  if (!nextCursor) {
-    console.warn(`[Shopee Cursor] ${logLabel}: more=true nhưng next_cursor rỗng — BREAK.`);
+  // 2) order_list rỗng → break (Shopee đôi khi more:true + [])
+  if (!rows || rows.length === 0) {
+    console.warn(`[Shopee Cursor] ${logLabel}: order_list rỗng — BREAK (defensive).`);
     return null;
   }
-  const prev = String(currentCursor ?? "").trim();
-  if (prev && nextCursor === prev) {
+  // 3) cursor không đổi hoặc next_cursor rỗng → break
+  if (!nextCursor || nextCursor === prev) {
     console.warn(
-      `[Shopee Cursor] ${logLabel}: next_cursor KHÔNG ĐỔI ("${nextCursor.slice(0, 40)}") — BREAK chống infinite loop.`,
+      `[Shopee Cursor] ${logLabel}: cursor không tiến ("${prev.slice(0, 32)}"→"${nextCursor.slice(0, 32)}") — BREAK.`,
     );
     return null;
   }
@@ -2322,15 +2332,16 @@ async function shopeeFetchAllOrderSnsByStatus(
         break;
       }
       const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
-      // ĐIỀU KIỆN THOÁT: if (!response.more) break;
       if (!more) break;
+      if (!nextCursor || nextCursor === cursor) break;
       const advanced = advanceShopeeOrderListCursor(
         listResult,
         cursor,
         `status=${orderStatus} w${windowIdx + 1}p${safetyGuard}`,
+        pageList,
       );
       if (!advanced) break;
-      cursor = advanced || nextCursor;
+      cursor = advanced;
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
 
@@ -2409,12 +2420,14 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
 
       if (!pageList.length) break;
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-      const { more } = parseShopeeOrderListPagination(listResult);
+      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       if (!more) break;
+      if (!nextCursor || nextCursor === cursor) break;
       const advanced = advanceShopeeOrderListCursor(
         listResult,
         cursor,
         `create_time status=${orderStatus} w${windowIdx + 1}p${safetyGuard}`,
+        pageList,
       );
       if (!advanced) break;
       cursor = advanced;
@@ -2545,12 +2558,14 @@ async function shopeeFetchAllOrderSns(
       );
 
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-      const { more } = parseShopeeOrderListPagination(listResult);
+      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       if (!more) break;
+      if (!nextCursor || nextCursor === cursor) break;
       const advanced = advanceShopeeOrderListCursor(
         listResult,
         cursor,
         `pull ${timeRangeField} w${windowIdx + 1}p${safetyGuard}`,
+        pageList,
       );
       if (!advanced) break;
       cursor = advanced;
@@ -2765,12 +2780,14 @@ async function syncShopeeFullOrderHistoryStreaming(
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
-      const { more } = parseShopeeOrderListPagination(listResult);
+      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       if (!more) break;
+      if (!nextCursor || nextCursor === cursor) break;
       const advanced = advanceShopeeOrderListCursor(
         listResult,
         cursor,
         `fullSync shop=${shopId} chunk=${chunkIdx}p${safetyGuard}`,
+        pageList,
       );
       if (!advanced) break;
       cursor = advanced;
@@ -3253,12 +3270,14 @@ async function shopeeFetchCancelReturnOrderSns(
         if (pageRows.length === 0 || orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) {
           break;
         }
-        const { more } = parseShopeeOrderListPagination(listResult);
+        const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
         if (!more) break;
+        if (!nextCursor || nextCursor === cursor) break;
         const advanced = advanceShopeeOrderListCursor(
           listResult,
           cursor,
           `cancelReturn ${orderStatus} w${windowIdx + 1}p${safetyGuard}`,
+          pageRows,
         );
         if (!advanced) break;
         cursor = advanced;
@@ -18048,13 +18067,16 @@ async function startServer() {
         console.warn("[Orders Pull] Post-heal batch failed:", postHealErr?.message || postHealErr);
       }
       ordersPullSyncMeta.pulled = pulledCount;
+      const successMsg =
+        errors.length > 0
+          ? `Đồng bộ xong ${pulledCount} đơn (có cảnh báo)`
+          : `Đồng bộ thành công — ${pulledCount} đơn`;
       updateOrdersPullProgress({
         pulled: pulledCount,
-        message:
-          errors.length > 0
-            ? `Đồng bộ xong ${pulledCount} đơn (có cảnh báo)`
-            : `Đồng bộ thành công — ${pulledCount} đơn`,
+        message: successMsg,
+        error: errors.length > 0 ? ordersPullSyncMeta.error : null,
       });
+      ordersPullSyncMeta.message = successMsg;
       if (pulledCount === 0 && errors.length === 0) {
         const emptyMsg =
           "Sync xong nhưng 0 đơn được ghi DB (Shopee list rỗng hoặc normalize thất bại). Xem log [Orders Pull].";
@@ -18068,6 +18090,16 @@ async function startServer() {
           formatShopeeApiError(first, first?.httpStatus) ||
           "Đồng bộ gặp lỗi từ Shopee API";
       }
+
+      // Chốt trạng thái thành công TRƯỚC finally — UI poll đọc isRunning từ biến này.
+      ordersPullSyncMeta.finishedAt = Date.now();
+      if (myGeneration === ordersPullSyncGeneration) {
+        isSyncing = false;
+        ordersPullDeadlineAt = 0;
+      }
+      console.log(
+        `[Orders Pull] DONE isSyncing=${isSyncing} pulled=${pulledCount} msg=${successMsg}`,
+      );
 
       return {
         success: true,
@@ -18084,16 +18116,14 @@ async function startServer() {
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error("[Orders Pull] fatal:", err.message, err.stack || "");
-      if (myGeneration === ordersPullSyncGeneration) {
-        ordersPullSyncMeta.error = err.message || "Internal Server Error";
-        updateOrdersPullProgress({
-          message: `Đồng bộ thất bại: ${err.message || "Internal Server Error"}`,
-          error: err.message || "Internal Server Error",
-        });
-      }
+      ordersPullSyncMeta.error = err.message || "Internal Server Error";
+      updateOrdersPullProgress({
+        message: `Đồng bộ thất bại: ${err.message || "Internal Server Error"}`,
+        error: err.message || "Internal Server Error",
+      });
       return { success: false, pulled: 0, warning: err.message || "Internal Server Error" };
     } finally {
-      // BẮT BUỘC: luôn nhả lock đúng generation — không để isSyncing=true vĩnh viễn.
+      // BẮT BUỘC: luôn nhả lock đúng generation — GET /api/sync/status đọc isSyncing.
       try {
         if (gotHeavy) releaseHeavyJob(heavyName);
       } catch (releaseErr: any) {
@@ -18104,7 +18134,7 @@ async function startServer() {
       }
       if (myGeneration === ordersPullSyncGeneration) {
         ordersPullDeadlineAt = 0;
-        ordersPullSyncMeta.finishedAt = Date.now();
+        ordersPullSyncMeta.finishedAt = ordersPullSyncMeta.finishedAt || Date.now();
         if (!ordersPullSyncMeta.message) {
           ordersPullSyncMeta.message = ordersPullSyncMeta.error
             ? `Đồng bộ thất bại: ${ordersPullSyncMeta.error}`
@@ -18119,8 +18149,9 @@ async function startServer() {
             ` msg=${ordersPullSyncMeta.message || "-"}`,
         );
       } else {
+        // Force-stop / job mới đã chiếm generation — không đụng isSyncing của job mới.
         console.warn(
-          `[Orders Pull] finally bỏ qua unlock — gen ${myGeneration}≠${ordersPullSyncGeneration}`,
+          `[Orders Pull] finally bỏ qua unlock isSyncing — gen ${myGeneration}≠${ordersPullSyncGeneration} (đã có job mới hoặc force-stop)`,
         );
       }
     }
