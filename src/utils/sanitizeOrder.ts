@@ -22,6 +22,23 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     tracking_no: raw.tracking_no || raw.trackingNumber,
   };
   const inferredCarrier = shippingCarrierRaw || inferShippingCarrierLabel(draftForInfer) || '';
+  const rawShopeeStatus = String(raw.shopee_order_status || '').toUpperCase();
+  let status = (raw.status as Order['status']) || 'unprocessed';
+  // Heal: status local stale pending_* nhưng Shopee đã RTS/PROCESSED/có mã VĐ → đưa về đúng tab.
+  if (status === 'pending_confirm' || status === 'pending_verification') {
+    const hasTracking = Boolean(
+      String(raw.trackingNumber || raw.tracking_no || '').trim(),
+    );
+    if (rawShopeeStatus === 'PROCESSED' || (hasTracking && (rawShopeeStatus === 'READY_TO_SHIP' || rawShopeeStatus === 'RETRY_SHIP'))) {
+      status = 'processed';
+    } else if (rawShopeeStatus === 'READY_TO_SHIP' || rawShopeeStatus === 'RETRY_SHIP') {
+      status = 'unprocessed';
+    } else if (rawShopeeStatus === 'SHIPPED' || rawShopeeStatus === 'TO_CONFIRM_RECEIVE') {
+      status = 'shipping';
+    } else if (rawShopeeStatus === 'COMPLETED') {
+      status = 'completed';
+    }
+  }
   return {
     id,
     orderSn: orderSn || id,
@@ -63,7 +80,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     partialCancel: Boolean(raw.partialCancel),
     canPartialCancel: raw.canPartialCancel != null ? Boolean(raw.canPartialCancel) : undefined,
     shopee_order_status: raw.shopee_order_status ? String(raw.shopee_order_status) : undefined,
-    status: (raw.status as Order['status']) || 'unprocessed',
+    status,
     date: String(raw.date || new Date().toISOString()),
     items: Array.isArray(raw.items) ? raw.items : [],
     trackingNumber: raw.trackingNumber || raw.tracking_no || raw.return_tracking_no

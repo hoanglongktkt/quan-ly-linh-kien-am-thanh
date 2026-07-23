@@ -107,9 +107,37 @@ function getOrderWaybillCode(order: Order): string {
 
 /** UNPAID/PENDING → Chờ xác nhận (tab "Đang kiểm tra bởi Shopee" đã bỏ). */
 function isPendingConfirmOrder(order: Order): boolean {
-  if (order.status === 'pending_confirm') return true;
-  if (order.status === 'pending_verification') return true;
   const raw = String(order.shopee_order_status || '').toUpperCase();
+  // Đã qua chờ xác nhận (raw Shopee / đã xử lý / đã giao) → KHÔNG còn ở tab này.
+  // Tránh đơn stale status=pending_confirm nhưng PROCESSED/có mã VĐ hiện cả 2 tab.
+  if (
+    raw === 'READY_TO_SHIP' ||
+    raw === 'RETRY_SHIP' ||
+    raw === 'PROCESSED' ||
+    raw === 'SHIPPED' ||
+    raw === 'TO_CONFIRM_RECEIVE' ||
+    raw === 'COMPLETED' ||
+    raw === 'CANCELLED' ||
+    raw === 'IN_CANCEL' ||
+    raw === 'TO_RETURN'
+  ) {
+    return false;
+  }
+  if (
+    order.status === 'unprocessed' ||
+    order.status === 'processed' ||
+    order.status === 'shipping' ||
+    order.status === 'completed' ||
+    order.status === 'cancelled' ||
+    order.status === 'return_pending' ||
+    order.status === 'return_received'
+  ) {
+    return false;
+  }
+  if (isProcessedCondition(order)) return false;
+  if (matchesProcessedPickupTab(order) || matchesUnprocessedPickupTab(order)) return false;
+
+  if (order.status === 'pending_confirm' || order.status === 'pending_verification') return true;
   return raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK';
 }
 
@@ -2253,7 +2281,7 @@ export default function OrderManager({
         return isPendingConfirmOrder(o);
       }
       if (status === 'unprocessed') return matchesUnprocessedPickupTab(o) && !isPendingConfirmOrder(o);
-      if (status === 'processed') return matchesProcessedPickupTab(o);
+      if (status === 'processed') return matchesProcessedPickupTab(o) && !isPendingConfirmOrder(o);
       if (status === 'shipping') return matchesShippingTab(o);
       if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
       return o.status === status;
@@ -2278,7 +2306,7 @@ export default function OrderManager({
       // ROLLBACK: tab ĐVVC tạm tắt — chuyển về pool chờ lấy hàng (READY_TO_SHIP-like)
       if (!matchesProcessedPickupTab(order) && !matchesUnprocessedPickupTab(order)) return false;
     } else if (activeSubTab === 'processed') {
-      if (!matchesProcessedPickupTab(order)) return false;
+      if (!matchesProcessedPickupTab(order) || isPendingConfirmOrder(order)) return false;
     } else if (activeSubTab === 'pending_confirm' || activeSubTab === 'pending_verification') {
       if (!isPendingConfirmOrder(order)) return false;
     } else if (activeSubTab === 'unprocessed') {

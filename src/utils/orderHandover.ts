@@ -186,6 +186,10 @@ export function resolveOrderBadgeStatus(order: Order): Order['status'] {
     }
     return 'cancelled';
   }
+  // Pool chờ lấy hàng TRƯỚC — tránh status local stale pending_confirm + PROCESSED/mã VĐ.
+  if (isPickupPoolOrder(order)) {
+    return isProcessedCondition(order) ? 'processed' : 'unprocessed';
+  }
   const raw = getShopeeOrderRawStatus(order);
   if (
     raw === 'UNPAID' ||
@@ -196,9 +200,6 @@ export function resolveOrderBadgeStatus(order: Order): Order['status'] {
     order.status === 'pending_verification'
   ) {
     return 'pending_confirm';
-  }
-  if (isPickupPoolOrder(order)) {
-    return isProcessedCondition(order) ? 'processed' : 'unprocessed';
   }
   return order.status;
 }
