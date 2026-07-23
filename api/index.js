@@ -46,6 +46,7 @@ const LOCAL_ROUTES = {
   'shopee/callback': handleShopeeCallback,
   'auth/shopee/callback': handleShopeeCallback,
   'shopee/webhook': handleShopeeWebhook,
+  'webhook/shopee': handleShopeeWebhook,
   'health/cpanel': handleHealthCpanel,
   // Chạy local trên Vercel — cPanel cũ trả 404 HTML cho route auto-link mới.
   'shopee/channel-products/auto-link': handleChannelAutoLink,
