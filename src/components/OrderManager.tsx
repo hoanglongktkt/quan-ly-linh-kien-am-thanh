@@ -2032,8 +2032,8 @@ export default function OrderManager({
       type: 'stock_sync',
       status: 'success',
       message: isFull
-        ? 'Đã gửi Full Sync lịch sử đơn (ngầm) — UI không bị khóa.'
-        : 'Đã gửi đồng bộ đơn 6 giờ (ngầm) — UI không bị khóa.',
+        ? 'Đã gửi Full Sync lịch sử đơn 30 ngày (ngầm) — UI không bị khóa.'
+        : 'Đã gửi đồng bộ đơn 24 giờ (ngầm) — UI không bị khóa.',
     });
 
     showToast('Đã gửi yêu cầu đồng bộ ngầm...');
@@ -3349,17 +3349,17 @@ export default function OrderManager({
             onClick={() => void handleSyncOrders('incremental')}
             disabled={isSyncing}
             className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/15 hover:shadow-blue-500/30 transition-all flex items-center gap-2 cursor-pointer"
-            title="Quick Sync: đơn cập nhật trong 6 giờ gần nhất (chạy ngầm)"
+            title="Cập nhật đơn mới: quét đơn trong 24 giờ gần nhất (chạy ngầm)"
           >
             <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>Cập nhật đơn hàng</span>
+            <span>Cập nhật đơn mới</span>
           </button>
 
           <button
             onClick={() => {
               if (
                 !window.confirm(
-                  'Full Sync sẽ kéo lịch sử đơn từ 22/10/2021 (chạy ngầm, không khóa UI). Tiếp tục?',
+                  'Full Sync sẽ kéo lịch sử đơn trong 30 ngày qua (chạy ngầm, không khóa UI). Tiếp tục?',
                 )
               ) {
                 return;
@@ -3368,7 +3368,7 @@ export default function OrderManager({
             }}
             disabled={isSyncing}
             className="om-orders-mobile-hide-primary-actions px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-75 text-slate-700 font-extrabold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-2 cursor-pointer"
-            title="Full Sync: lịch sử từ 22/10/2021 — chạy ngầm"
+            title="Full Sync: kéo lịch sử đơn trong 30 ngày qua — chạy ngầm"
           >
             <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
             <span>Full Sync</span>
@@ -3376,21 +3376,21 @@ export default function OrderManager({
         </div>
       </div>
 
-      {/* Mobile: nút Quick Sync 6 giờ (desktop dùng nút ở top bar) */}
+      {/* Mobile: nút Cập nhật đơn mới 24 giờ (desktop dùng nút ở top bar) */}
       <div className="hidden max-md:flex items-center justify-between gap-2 px-0.5">
         <p className="text-[11px] font-semibold text-slate-500 truncate">
-          {isSyncing ? 'Đã gửi đồng bộ ngầm...' : 'Đồng bộ đơn Shopee (6 giờ)'}
+          {isSyncing ? 'Đã gửi đồng bộ ngầm...' : 'Đồng bộ đơn Shopee (24 giờ)'}
         </p>
         <button
           type="button"
           onClick={() => void handleSyncOrders('incremental')}
           disabled={isSyncing}
           className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2.5 min-h-11 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer"
-          title="Cập nhật đơn hàng — quét 6 giờ (ngầm)"
-          aria-label="Cập nhật đơn hàng 6 giờ"
+          title="Cập nhật đơn mới — quét 24 giờ (ngầm)"
+          aria-label="Cập nhật đơn mới 24 giờ"
         >
           <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-          <span>Cập nhật 6 giờ</span>
+          <span>Cập nhật đơn mới</span>
         </button>
       </div>
 

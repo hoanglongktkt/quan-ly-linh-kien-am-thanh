@@ -1498,7 +1498,7 @@ async function runShopeeConnectivityDiagnostics(shopIdInput?: string) {
   }
 }
 
-// v2.order.get_order_list — mặc định chỉ lấy đơn đổi trạng thái trong 6 giờ
+// v2.order.get_order_list — mặc định chỉ lấy đơn đổi trạng thái trong 24 giờ
 // (update_time). Shopee giới hạn mỗi request ≤ 15 ngày; full sync mới chia cửa sổ.
 // Supports optional order_status filter and cursor pagination (Shopee returns
 // at most page_size orders per call; more/next_cursor must be followed).
@@ -1518,7 +1518,7 @@ async function shopeeGetOrderList(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
 
   const timeTo = opts?.timeTo ?? timestamp;
-  // Mặc định 6 giờ theo update_time — tránh timeout serverless / rate limit.
+  // Mặc định 24 giờ theo update_time — tránh timeout serverless / rate limit.
   const timeFrom = opts?.timeFrom ?? timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
 
   const params = new URLSearchParams({
@@ -1592,20 +1592,19 @@ const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 /** Quick / legacy full list helpers: tối đa 1 cửa sổ 15 ngày. Lịch sử đầy đủ dùng SHOPEE_FULL_SYNC_*. */
 const SHOPEE_ORDER_LIST_MAX_WINDOWS = 1;
 /**
- * Quick Sync / mặc định: chỉ lấy đơn CÓ update_time trong 6 giờ gần nhất.
- * (An toàn trong khoảng 3–6h; Shopee từ chối nếu time_from..time_to quá rộng.)
+ * Quick Sync / "Cập nhật đơn mới": chỉ lấy đơn CÓ update_time trong 24 giờ gần nhất.
+ * (Shopee từ chối nếu time_from..time_to > 15 ngày/request.)
  */
-const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 6 * 60 * 60;
+const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
 /** Full sync hủy/hoàn: tối đa 2 × 15 ngày (= 30 ngày) — giảm so với 120 ngày cũ. */
 const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
 /**
- * Full history sync: mốc lùi xa nhất = 22/10/2021 (Asia/Ho_Chi_Minh).
- * Mỗi chunk 15 ngày (trong khoảng 15–30 ngày; Shopee API ≤ 15 ngày/request).
- * Safety break ≤ 200 chunks (~8 năm) — chống vòng lặp vô tận.
+ * Full Sync: chỉ quét 30 ngày gần nhất (tính từ NOW trở về trước).
+ * Mỗi chunk 15 ngày (Shopee API ≤ 15 ngày/request) → tối đa 2 chunk + buffer.
  */
-const SHOPEE_FULL_SYNC_EPOCH_SEC = Math.floor(new Date("2021-10-22T00:00:00+07:00").getTime() / 1000);
+const SHOPEE_FULL_SYNC_LOOKBACK_SEC = 30 * 24 * 60 * 60;
 const SHOPEE_FULL_SYNC_CHUNK_SEC = 15 * 24 * 60 * 60;
-const SHOPEE_FULL_SYNC_MAX_CHUNKS = 200;
+const SHOPEE_FULL_SYNC_MAX_CHUNKS = 3;
 /** Phân trang trong 1 date-chunk — break ngay khi [] / hết trang. */
 const SHOPEE_FULL_SYNC_MAX_PAGES_PER_CHUNK = 40;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
@@ -1845,7 +1844,7 @@ function formatShopeeApiError(json: any, httpStatus?: number): string {
   if (status === 504) {
     return (
       parts[0] ||
-      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với đồng bộ nhanh (6 giờ)."
+      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với đồng bộ nhanh (24 giờ)."
     );
   }
   if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
@@ -2085,7 +2084,7 @@ function buildShopeeUpdateStockEntry(
   return entry;
 }
 
-// Paginate get_order_list for one Shopee order_status — mặc định 6h update_time; full = 1×15 ngày.
+// Paginate get_order_list for one Shopee order_status — mặc định 24h update_time; full = 1×15 ngày.
 async function shopeeFetchAllOrderSnsByStatus(
   shopId: string,
   accessToken: string,
@@ -2112,7 +2111,7 @@ async function shopeeFetchAllOrderSnsByStatus(
     let windowCount = 0;
 
     console.log(
-      `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 6 giờ" : ", ~15 ngày"})`,
+      `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 24 giờ" : ", ~15 ngày"})`,
     );
 
     while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
@@ -2175,7 +2174,7 @@ async function shopeeFetchAllOrderSnsByStatus(
   return Array.from(orderSnSet);
 }
 
-/** Quét get_order_list theo create_time cho 1 status (UNPAID) — mặc định 6 giờ. */
+/** Quét get_order_list theo create_time cho 1 status (UNPAID) — mặc định 24 giờ. */
 async function shopeeFetchAllOrderSnsByStatusCreateTime(
   shopId: string,
   accessToken: string,
@@ -2202,7 +2201,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
     let windowCount = 0;
 
     console.log(
-      `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo}${mode === "incremental" ? " (6 giờ)" : ""}`,
+      `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo}${mode === "incremental" ? " (24 giờ)" : ""}`,
     );
 
     while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
@@ -2258,7 +2257,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
 }
 
 // Paginate get_order_list without status filter — theo update_time.
-// mode=incremental (Quick Sync): 1 cửa sổ 6 giờ; mode=full: date-chunk lùi về 22/10/2021 (≤200 chunk).
+// mode=incremental (Quick Sync): 1 cửa sổ 24 giờ; mode=full: date-chunk 30 ngày gần nhất (≤3 chunk).
 async function shopeeFetchAllOrderSns(
   shopId: string,
   accessToken: string,
@@ -2272,7 +2271,7 @@ async function shopeeFetchAllOrderSns(
       ? SHOPEE_FULL_SYNC_MAX_CHUNKS
       : 1;
   const windowSec = mode === "full" ? SHOPEE_FULL_SYNC_CHUNK_SEC : SHOPEE_ORDER_LIST_WINDOW_SEC;
-  const epoch = mode === "full" ? SHOPEE_FULL_SYNC_EPOCH_SEC : 0;
+  const epoch = mode === "full" ? now - SHOPEE_FULL_SYNC_LOOKBACK_SEC : 0;
 
   const fetchWindow = async (
     timeRangeField: "update_time" | "create_time",
@@ -2395,7 +2394,7 @@ async function shopeeFetchAllOrderSns(
   // FALLBACK: update_time rỗng → quét create_time cùng cửa sổ (đơn mới có thể chưa kịp update_time).
   if (orderSnSet.size === 0 && mode === "incremental") {
     console.warn(
-      `[Orders Pull] shop_id=${shopId}: update_time 6h TRẢ VỀ RỖNG [] — fallback create_time cùng cửa sổ.`,
+      `[Orders Pull] shop_id=${shopId}: update_time 24h TRẢ VỀ RỖNG [] — fallback create_time cùng cửa sổ.`,
     );
     const timeTo = now;
     const timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
@@ -2409,9 +2408,9 @@ async function shopeeFetchAllOrderSns(
 }
 
 /**
- * Full history sync an toàn: chia create_time từ NOW → 22/10/2021 thành chunk 15 ngày,
- * phân trang từng chunk, bulkWrite ngay sau mỗi trang — KHÔNG gom đơn nhiều năm vào RAM.
- * Safety: max 200 chunks; break khi order_list=[]; nghỉ 1s giữa mọi lần gọi API.
+ * Full Sync an toàn: chia create_time từ NOW → 30 ngày trước thành chunk 15 ngày,
+ * phân trang từng chunk, bulkWrite ngay sau mỗi trang.
+ * Safety: max 3 chunks; break khi order_list=[]; nghỉ 1s giữa mọi lần gọi API.
  */
 async function syncShopeeFullOrderHistoryStreaming(
   orders: any[],
@@ -2419,7 +2418,7 @@ async function syncShopeeFullOrderHistoryStreaming(
   accessToken: string,
 ): Promise<{ pulled: number; chunks: number; errors: any[] }> {
   const now = Math.floor(Date.now() / 1000);
-  const epoch = SHOPEE_FULL_SYNC_EPOCH_SEC;
+  const epoch = now - SHOPEE_FULL_SYNC_LOOKBACK_SEC;
   const chunkSec = SHOPEE_FULL_SYNC_CHUNK_SEC;
   const maxChunks = SHOPEE_FULL_SYNC_MAX_CHUNKS;
   const errors: any[] = [];
@@ -10246,7 +10245,7 @@ async function persistShopeeOrderChunk(
 
 /**
  * Manual Sync heal: đơn local kẹt (thiếu mã / sai tab) — gọi lại get_order_detail + get_tracking_number
- * dù ngoài cửa sổ 6 giờ update_time. Đây là bước chữa cháy GHN không phụ thuộc webhook.
+ * dù ngoài cửa sổ 24 giờ update_time. Đây là bước chữa cháy GHN không phụ thuộc webhook.
  */
 async function healStuckLocalShopeeOrders(
   orders: any[],
@@ -10449,7 +10448,7 @@ async function syncShopeeOrdersFromApi(
         });
       }
 
-      // Quét không lọc trạng thái — cửa sổ 6h update_time (tránh timeout).
+      // Quét không lọc trạng thái — cửa sổ 24h update_time (tránh timeout).
       try {
         const unfilteredSns = await shopeeFetchAllOrderSns(apiShopId, accessToken, {
           mode: "incremental",
@@ -17356,7 +17355,7 @@ async function startServer() {
 
           console.log(`[Orders Pull] Shop ${shopId}: đang gọi Shopee get_order_list (mode=${mode})...`);
 
-          // FULL SYNC: streaming date-chunk từ NOW → 22/10/2021 — ghi DB từng trang, không gom RAM.
+          // FULL SYNC: streaming date-chunk từ NOW → 30 ngày trước — ghi DB từng trang, không gom RAM.
           if (mode === "full") {
             const fullResult = await syncShopeeFullOrderHistoryStreaming(orders, shopId, accessToken);
             pulledCount += fullResult.pulled;
@@ -17380,7 +17379,7 @@ async function startServer() {
           }
 
           let orderSnList = await shopeeFetchAllOrderSns(shopId, accessToken, { mode });
-          // Cưỡng chế: gộp đơn local kẹt (thiếu mã / sai tab) — dù ngoài cửa sổ 6h update_time.
+          // Cưỡng chế: gộp đơn local kẹt (thiếu mã / sai tab) — dù ngoài cửa sổ 24h update_time.
           // Không inject riêng đơn ĐÃ GIAO CHO ĐVVC (đối soát QR nội bộ).
           const stuckLocalSns = orders
             .filter((o: any) => String(o.shopId || "") === String(shopId) && isStuckShopeePickupOrder(o))
@@ -17611,7 +17610,7 @@ async function startServer() {
     }
   }
 
-  // Active "pull" — trả 202 ngay, chạy sync ngầm (incremental = 6h; ?type=full = lịch sử từ 22/10/2021).
+  // Active "pull" — trả 202 ngay, chạy sync ngầm (incremental = 24h; ?type=full = lịch sử 30 ngày).
   app.post("/api/orders/pull", authMiddleware, async (req, res) => {
     try {
       clearStuckOrdersPullIfNeeded("POST /api/orders/pull");
