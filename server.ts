@@ -1696,11 +1696,12 @@ function extractShopeeOrderListRows(result: any): any[] {
   return Array.isArray(rows) ? rows : [];
 }
 
-// Shopee order_list pagination — response uses `more` + `next_cursor` (some SDKs
-// alias has_more). Read both so we never stop after page 1 by mistake.
+// Shopee order_list pagination — CHỈ dùng `more` + `next_cursor`.
+// CẤM fallback `body.cursor` (thường echo cursor request → vòng lặp vô tận).
 function parseShopeeOrderListPagination(result: any): { more: boolean; nextCursor: string } {
   const body = result?.response ?? result ?? {};
-  const more =
+  const nextCursor = String(body.next_cursor ?? result?.next_cursor ?? "").trim();
+  const moreFlag =
     body.more === true ||
     body.more === 1 ||
     body.more === "true" ||
@@ -1709,10 +1710,40 @@ function parseShopeeOrderListPagination(result: any): { more: boolean; nextCurso
     body.has_more === "true" ||
     result?.more === true ||
     result?.more === 1;
-  const nextCursor = String(
-    body.next_cursor ?? body.cursor ?? result?.next_cursor ?? result?.cursor ?? "",
-  ).trim();
+  // Chỉ tiếp tục khi more=true VÀ có next_cursor khác rỗng.
+  const more = moreFlag && Boolean(nextCursor);
   return { more, nextCursor };
+}
+
+/**
+ * Tiến cursor an toàn — chống infinite loop khi next_cursor không đổi / rỗng.
+ * @returns nextCursor để gán vào request sau; null = phải break.
+ */
+function advanceShopeeOrderListCursor(
+  listResult: any,
+  currentCursor: string | undefined,
+  logLabel: string,
+): string | null {
+  const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
+  if (!more) {
+    console.log(`[Shopee Cursor] ${logLabel}: more=false hoặc thiếu next_cursor — hết trang.`);
+    return null;
+  }
+  if (!nextCursor) {
+    console.warn(`[Shopee Cursor] ${logLabel}: more=true nhưng next_cursor rỗng — BREAK.`);
+    return null;
+  }
+  const prev = String(currentCursor || "").trim();
+  if (prev && nextCursor === prev) {
+    console.warn(
+      `[Shopee Cursor] ${logLabel}: next_cursor KHÔNG ĐỔI ("${nextCursor.slice(0, 40)}") — BREAK chống infinite loop.`,
+    );
+    return null;
+  }
+  console.log(
+    `[Shopee Cursor] ${logLabel}: next_cursor=${nextCursor.slice(0, 48)}${nextCursor.length > 48 ? "…" : ""}`,
+  );
+  return nextCursor;
 }
 
 const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
@@ -2286,24 +2317,22 @@ async function shopeeFetchAllOrderSnsByStatus(
       }
       windowCount += pageList.length;
 
-      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       console.log(
-        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size}), more=${more}`,
+        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
       );
 
       if (!pageList.length) break;
-      if (!more) break;
-      if (!nextCursor) {
-        console.warn(
-          `[Shopee Sync] shop_id=${shopId} status=${orderStatus} window=${windowIdx + 1}: more=true nhưng thiếu next_cursor — dừng sau trang ${page}.`,
-        );
-        break;
-      }
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) {
         console.warn(`[Shopee Sync] shop_id=${shopId} đạt giới hạn ${SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP} đơn — dừng phân trang.`);
         break;
       }
-      cursor = nextCursor;
+      const advanced = advanceShopeeOrderListCursor(
+        listResult,
+        cursor,
+        `status=${orderStatus} w${windowIdx + 1}p${page}`,
+      );
+      if (!advanced) break;
+      cursor = advanced;
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
 
@@ -2376,16 +2405,19 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
       }
       windowCount += pageList.length;
 
-      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       console.log(
-        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size}), more=${more}`,
+        `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
       );
 
       if (!pageList.length) break;
-      if (!more) break;
-      if (!nextCursor) break;
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-      cursor = nextCursor;
+      const advanced = advanceShopeeOrderListCursor(
+        listResult,
+        cursor,
+        `create_time status=${orderStatus} w${windowIdx + 1}p${page}`,
+      );
+      if (!advanced) break;
+      cursor = advanced;
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
 
@@ -2451,6 +2483,7 @@ async function shopeeFetchAllOrderSns(
 
     while (page < SHOPEE_ORDER_LIST_MAX_PAGES) {
       page++;
+      assertOrdersPullNotTimedOut(`get_order_list ${timeRangeField} page=${page}`);
       let listResult: any;
       try {
         listResult = await shopeeGetOrderList(shopId, accessToken, {
@@ -2506,15 +2539,18 @@ async function shopeeFetchAllOrderSns(
       }
       windowCount += pageList.length;
 
-      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
       console.log(
-        `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size}), more=${more}`,
+        `[Shopee API] shop_id=${shopId} field=${timeRangeField} window=${windowIdx + 1} page=${page}: +${pageList.length} (cửa sổ ${windowCount}, tổng ${orderSnSet.size})`,
       );
 
-      if (!more) break;
-      if (!nextCursor) break;
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-      cursor = nextCursor;
+      const advanced = advanceShopeeOrderListCursor(
+        listResult,
+        cursor,
+        `pull ${timeRangeField} w${windowIdx + 1}p${page}`,
+      );
+      if (!advanced) break;
+      cursor = advanced;
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
     }
   };
@@ -2599,6 +2635,7 @@ async function syncShopeeFullOrderHistoryStreaming(
 
   while (timeTo > epoch && chunkIdx < maxChunks) {
     chunkIdx++;
+    assertOrdersPullNotTimedOut(`fullSync chunk=${chunkIdx}`);
     const timeFrom = Math.max(epoch, timeTo - chunkSec);
     if (timeFrom >= timeTo) {
       console.warn(
@@ -2712,20 +2749,13 @@ async function syncShopeeFullOrderHistoryStreaming(
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
-      const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
-      if (!more) {
-        console.log(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}: more=false — hết trang, sang chunk tiếp.`,
-        );
-        break;
-      }
-      if (!nextCursor) {
-        console.warn(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}: more=true nhưng thiếu next_cursor — break.`,
-        );
-        break;
-      }
-      cursor = nextCursor;
+      const advanced = advanceShopeeOrderListCursor(
+        listResult,
+        cursor,
+        `fullSync shop=${shopId} chunk=${chunkIdx}p${page}`,
+      );
+      if (!advanced) break;
+      cursor = advanced;
     }
 
     timeTo = timeFrom;
@@ -3070,10 +3100,8 @@ async function shopeePaginateReturnListWindow(
     console.log(
       `[Shopee Returns] ${opts.label} page=${pageNo}: +${rows.length} (tổng ${opts.out.length}), more=${more}`,
     );
-    // Tiếp tục paginate khi more=true HOẶC trang đầy (tránh sót khi Shopee không trả more).
-    const pageFull = rows.length >= SHOPEE_RETURN_LIST_PAGE_SIZE;
-    if (!more && !pageFull) return;
-    if (rows.length === 0) return;
+    // Strict exit: more=false hoặc trang rỗng → dừng (không đoán pageFull → tránh loop).
+    if (!more || rows.length === 0) return;
     pageNo++;
     await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
@@ -3127,8 +3155,7 @@ async function shopeeFetchAllReturnSns(
     console.log(
       `[Shopee Returns] no-time page=${pageNo}: +${rows.length} (tổng ${out.length}), more=${more}`,
     );
-    if (!more && rows.length < SHOPEE_RETURN_LIST_PAGE_SIZE) break;
-    if (rows.length === 0) break;
+    if (!more || rows.length === 0) break;
     // Incremental: đủ 2 trang đầu (~200 return gần nhất) là đủ nhẹ.
     if (mode === "incremental" && pageNo >= 2) break;
     pageNo++;
@@ -3202,19 +3229,19 @@ async function shopeeFetchCancelReturnOrderSns(
           if (row?.order_sn) orderSnSet.add(String(row.order_sn));
           if (orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
         }
-        const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
         console.log(
-          `[Shopee Cancel/Return] ${orderStatus} w${windowIdx + 1} p${page}: +${pageRows.length} (tổng ${orderSnSet.size}) more=${more}`,
+          `[Shopee Cancel/Return] ${orderStatus} w${windowIdx + 1} p${page}: +${pageRows.length} (tổng ${orderSnSet.size})`,
         );
-        if ((!more && pageRows.length < SHOPEE_ORDER_LIST_PAGE_SIZE) || orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) {
+        if (pageRows.length === 0 || orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) {
           break;
         }
-        if (!nextCursor && !more) break;
-        cursor = nextCursor || undefined;
-        if (!cursor && more) {
-          console.warn(`[Shopee Cancel/Return] more=true nhưng thiếu next_cursor — dừng ${orderStatus}`);
-          break;
-        }
+        const advanced = advanceShopeeOrderListCursor(
+          listResult,
+          cursor,
+          `cancelReturn ${orderStatus} w${windowIdx + 1}p${page}`,
+        );
+        if (!advanced) break;
+        cursor = advanced;
         await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
       }
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
@@ -4839,11 +4866,23 @@ function releaseHeavyJob(name: string): void {
   if (cpanelHeavyJobActive === name) cpanelHeavyJobActive = null;
 }
 
-/** Sync treo > 5 phút → ép nhả mutex (widget không kẹt "Đang khởi tạo..." mãi). */
-const ORDERS_PULL_STUCK_MS = 5 * 60 * 1000;
-/** Hard deadline toàn bộ job sync ngầm (incremental / full). */
-const ORDERS_PULL_HARD_DEADLINE_INCREMENTAL_MS = 4 * 60 * 1000;
-const ORDERS_PULL_HARD_DEADLINE_FULL_MS = 8 * 60 * 1000;
+/** Sync treo > 3 phút → ép nhả mutex. */
+const ORDERS_PULL_STUCK_MS = 3 * 60 * 1000;
+/** Hard deadline toàn bộ job sync ngầm — tối đa 3 phút (180s). */
+const ORDERS_PULL_HARD_DEADLINE_MS = 3 * 60 * 1000;
+/** @deprecated alias — giữ tương thích chỗ gọi cũ */
+const ORDERS_PULL_HARD_DEADLINE_INCREMENTAL_MS = ORDERS_PULL_HARD_DEADLINE_MS;
+const ORDERS_PULL_HARD_DEADLINE_FULL_MS = ORDERS_PULL_HARD_DEADLINE_MS;
+/** Deadline tuyệt đối của job sync đang chạy (0 = không có). */
+let ordersPullDeadlineAt = 0;
+
+function assertOrdersPullNotTimedOut(label: string): void {
+  if (!ordersPullDeadlineAt) return;
+  if (Date.now() <= ordersPullDeadlineAt) return;
+  const msg = `Time out — sync quá ${Math.round(ORDERS_PULL_HARD_DEADLINE_MS / 1000)}s tại: ${label}`;
+  console.error(`[Orders Pull] ${msg}`);
+  throw new Error(msg);
+}
 
 function forceReleaseOrdersPullLock(reason: string, errorMsg?: string, generation?: number): void {
   if (generation != null && generation !== ordersPullSyncGeneration) {
@@ -4861,6 +4900,7 @@ function forceReleaseOrdersPullLock(reason: string, errorMsg?: string, generatio
     cpanelHeavyJobActive = null;
   }
   isSyncing = false;
+  ordersPullDeadlineAt = 0;
   ordersPullSyncMeta.finishedAt = Date.now();
   const msg =
     errorMsg ||
@@ -17639,6 +17679,7 @@ async function startServer() {
       }
 
       console.log(`[Orders Pull] Bắt đầu đồng bộ ngầm mode=${mode}...`);
+      ordersPullDeadlineAt = Date.now() + ORDERS_PULL_HARD_DEADLINE_MS;
       updateOrdersPullProgress({
         mode,
         pulled: 0,
@@ -17684,6 +17725,7 @@ async function startServer() {
 
       for (const shopId of shopIds) {
         try {
+          assertOrdersPullNotTimedOut(`shop=${shopId} start`);
           console.log(`[Orders Pull] Shop ${shopId}: đang lấy access token...`);
           updateOrdersPullProgress({
             message: `Shop ${shopId}: đang lấy / refresh access token...`,
@@ -18041,6 +18083,7 @@ async function startServer() {
         );
       }
       if (myGeneration === ordersPullSyncGeneration) {
+        ordersPullDeadlineAt = 0;
         ordersPullSyncMeta.finishedAt = Date.now();
         if (!ordersPullSyncMeta.message) {
           ordersPullSyncMeta.message = ordersPullSyncMeta.error
@@ -18123,17 +18166,15 @@ async function startServer() {
         error: null,
       };
 
-      const hardDeadlineMs =
-        mode === "full"
-          ? ORDERS_PULL_HARD_DEADLINE_FULL_MS
-          : ORDERS_PULL_HARD_DEADLINE_INCREMENTAL_MS;
+      const hardDeadlineMs = ORDERS_PULL_HARD_DEADLINE_MS;
+      ordersPullDeadlineAt = Date.now() + hardDeadlineMs;
 
       setImmediate(() => {
         // Watchdog: nếu job treo (không vào finally) → ép unlock sau hard deadline.
         const watchdog = setTimeout(() => {
           forceReleaseOrdersPullLock(
             `watchdog_${Math.round(hardDeadlineMs / 1000)}s`,
-            `Sync treo quá ${Math.round(hardDeadlineMs / 1000)}s — đã ép dừng (watchdog)`,
+            `Time out — sync treo quá ${Math.round(hardDeadlineMs / 1000)}s — đã ép dừng (watchdog)`,
             syncGen,
           );
         }, hardDeadlineMs);
@@ -18204,6 +18245,25 @@ async function startServer() {
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
     return res.json(buildOrdersPullStatusPayload());
+  });
+
+  /** Force-stop: reset isRunning khi sync bị kẹt — user bấm dừng trên widget. */
+  app.post("/api/sync/force-stop", authMiddleware, (_req, res) => {
+    console.warn("[Orders Pull] FORCE-STOP API được gọi bởi user");
+    ordersPullSyncGeneration += 1;
+    forceReleaseOrdersPullLock(
+      "user_force_stop",
+      "Đã dừng sync thủ công (force-stop)",
+    );
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    return res.json({
+      success: true,
+      isRunning: false,
+      syncing: false,
+      message: "Đã dừng tiến trình đồng bộ ngầm.",
+      pulled: ordersPullSyncMeta.pulled,
+      finishedAt: ordersPullSyncMeta.finishedAt || Date.now(),
+    });
   });
 
   // GET /api/shopee/diagnostics?shop_id=4127421 — kiểm tra Partner ID/Key, token OAuth, ping Shopee API
@@ -21541,6 +21601,15 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     console.log("[Orders Sync] Auto-sync định kỳ đã tắt — chỉ đồng bộ khi user bấm nút.");
 
     const onReady = () => {
+      // Server restart → luôn reset lock sync (tránh kẹt isRunning từ process trước trên hot-reload).
+      isSyncing = false;
+      cpanelHeavyJobActive = null;
+      ordersPullDeadlineAt = 0;
+      ordersPullSyncMeta.finishedAt = ordersPullSyncMeta.finishedAt || Date.now();
+      ordersPullSyncMeta.message = "";
+      ordersPullSyncMeta.error = null;
+      console.log("[Boot] Sync lock RESET — isSyncing=false, heavyJob=null");
+
       console.log(
         process.env.PORT
           ? `Server optimized for cPanel Phusion Passenger: listening on ${PORT}`

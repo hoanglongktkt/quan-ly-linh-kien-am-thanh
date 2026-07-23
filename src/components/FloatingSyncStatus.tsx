@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircle2, RefreshCw, X } from 'lucide-react';
+import { CheckCircle2, RefreshCw, Square, X } from 'lucide-react';
 
 export type SyncStatusPayload = {
   success?: boolean;
@@ -41,6 +41,7 @@ export default function FloatingSyncStatus({
 }: Props) {
   const [phase, setPhase] = useState<Phase>('hidden');
   const [status, setStatus] = useState<SyncStatusPayload | null>(null);
+  const [stopping, setStopping] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seenRunningRef = useRef(false);
   const finishedNotifiedRef = useRef(false);
@@ -117,6 +118,44 @@ export default function FloatingSyncStatus({
     }
   }, [applyStatus]);
 
+  const handleForceStop = async () => {
+    if (stopping) return;
+    setStopping(true);
+    try {
+      const res = await fetch('/api/sync/force-stop', {
+        method: 'POST',
+        cache: 'no-store',
+        headers: {
+          ...authHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+      const data = (await res.json().catch(() => ({}))) as SyncStatusPayload;
+      setPhase('error');
+      setStatus({
+        ...data,
+        isRunning: false,
+        syncing: false,
+        message: data.message || 'Đã dừng sync thủ công',
+        error: data.message || 'Đã dừng sync thủ công',
+      });
+      finishedNotifiedRef.current = true;
+      onFinished?.({ ...data, isRunning: false });
+      scheduleHide(3500);
+    } catch (err: any) {
+      setPhase('error');
+      setStatus({
+        isRunning: false,
+        message: err?.message || 'Không dừng được sync',
+        error: err?.message || 'Không dừng được sync',
+      });
+      scheduleHide(4000);
+    } finally {
+      setStopping(false);
+    }
+  };
+
   useEffect(() => {
     if (active) {
       seenRunningRef.current = true;
@@ -135,7 +174,6 @@ export default function FloatingSyncStatus({
   }, [active, fetchStatus]);
 
   useEffect(() => {
-    // Khôi phục widget nếu F5 giữa lúc sync vẫn chạy.
     void fetchStatus();
   }, [fetchStatus]);
 
@@ -168,7 +206,7 @@ export default function FloatingSyncStatus({
 
   return (
     <div
-      className="pointer-events-auto fixed z-[9999] flex max-w-[min(360px,calc(100vw-2.5rem))] items-start gap-2.5 rounded-xl border border-slate-200/80 bg-white/95 px-3.5 py-2.5 shadow-lg shadow-slate-900/10 backdrop-blur-sm"
+      className="pointer-events-auto fixed z-[9999] flex max-w-[min(380px,calc(100vw-2.5rem))] items-start gap-2.5 rounded-xl border border-slate-200/80 bg-white/95 px-3.5 py-2.5 shadow-lg shadow-slate-900/10 backdrop-blur-sm"
       style={{ top: 20, right: 20 }}
       role="status"
       aria-live="polite"
@@ -189,7 +227,9 @@ export default function FloatingSyncStatus({
           }`}
         >
           {phase === 'running'
-            ? progressText.startsWith('Đang')
+            ? progressText.startsWith('Đang') ||
+              progressText.startsWith('Shop') ||
+              progressText.startsWith('Full')
               ? progressText
               : `Đang đồng bộ ngầm... (${pulled} đơn)`
             : messageText}
@@ -199,6 +239,17 @@ export default function FloatingSyncStatus({
         )}
         {phase === 'error' && status?.error && (
           <p className="mt-0.5 line-clamp-2 text-[10px] font-medium text-amber-700/90">{status.error}</p>
+        )}
+        {phase === 'running' && (
+          <button
+            type="button"
+            onClick={() => void handleForceStop()}
+            disabled={stopping}
+            className="mt-1.5 inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-bold text-rose-700 transition hover:bg-rose-100 disabled:opacity-60"
+          >
+            <Square className="h-2.5 w-2.5 fill-current" />
+            {stopping ? 'Đang dừng...' : 'Dừng sync'}
+          </button>
         )}
       </div>
       <button
