@@ -8078,9 +8078,9 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
 
 /**
  * Heal đơn kẹt tab "Chưa xử lý":
- * - Có tracking_no (GHN GYA..., SPX...) → Đã xử lý
- * - Shopee PROCESSED (sau ship pickup/dropoff) → Đã xử lý (không cần pickup_time)
- * - fulfillment_type=dropoff + isPrepared → Đã xử lý
+ * - Có tracking_no outbound (GHN GYA..., SPX...) → Đã xử lý
+ * - Shopee PROCESSED (sau ship pickup/dropoff) → Đã xử lý
+ * - fulfillment_type=dropoff + isPrepared → Đã xử lý (KHÔNG auto mọi READY_TO_SHIP)
  * - SHIPPED / COMPLETED luôn thắng (không downgrade về processed)
  * Manual Sync là nguồn chân lý — không chờ webhook.
  */
@@ -8120,11 +8120,12 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
     return hasTn;
   }
 
-  // PROCESSED / có mã / dropoff đã chuẩn bị → Đã xử lý (Pickup + Drop-off).
+  // PROCESSED / có mã vận đơn outbound → Đã xử lý.
+  // Drop-off: CHỈ khi đã có mã HOẶC user đã chuẩn bị (isPrepared) — KHÔNG auto-process mọi READY_TO_SHIP.
   const shouldProcess =
     hasTn ||
     raw === "PROCESSED" ||
-    (isDropoff && (order.isPrepared === true || hasTn || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP"));
+    (isDropoff && (hasTn || order.isPrepared === true));
 
   if (!shouldProcess) return false;
 
@@ -8136,6 +8137,25 @@ function forceHealPickupOrderIfHasTracking(order: any): boolean {
     order.fulfillment_type = "dropoff";
     order.ship_method = "dropoff";
   }
+  return true;
+}
+
+/**
+ * Sửa đơn READY_TO_SHIP bị đẩy nhầm sang "Đã xử lý" (bug dropoff auto-heal cũ):
+ * raw vẫn RTS/RETRY, chưa có mã VĐ outbound, chưa in → về lại Chưa xử lý.
+ */
+function repairFalseProcessedReadyToShip(order: any): boolean {
+  if (!order || String(order.channel || "") !== "shopee") return false;
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return false;
+  if (order.status === "shipping" || order.status === "completed") return false;
+  const tn = String(order.trackingNumber || order.tracking_no || "").trim();
+  if (tn && !isShopeeInternalTrackingCode(tn)) return false;
+  if (order.isPrinted === true) return false;
+  if (order.status !== "processed" && order.isPrepared !== true) return false;
+  order.status = "unprocessed";
+  order.isPrepared = false;
+  order.is_pending_shopee_check = false;
   return true;
 }
 
@@ -9217,6 +9237,7 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     }
     // Heal ngay khi normalize — Drop-off/PROCESSED/tracking.
     forceHealPickupOrderIfHasTracking(order);
+    repairFalseProcessedReadyToShip(order);
     promoteOrderStatusWhenTrackingReady(order);
     enforceShopeeTerminalLocalStatus(order);
     return order;
@@ -9539,6 +9560,7 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
 
   // CƯỠNG CHẾ heal: tracking_no | PROCESSED | dropoff — không downgrade terminal.
   forceHealPickupOrderIfHasTracking(merged);
+  repairFalseProcessedReadyToShip(merged);
 
   const mergedCustomCosts = getGlobalPackagingCostPerOrder();
   merged.custom_costs = mergedCustomCosts;
@@ -10350,6 +10372,7 @@ async function persistShopeeOrderChunk(
         preserveExistingTrackingIfIncomingEmpty(normalized, existing);
       }
       forceHealPickupOrderIfHasTracking(normalized);
+      repairFalseProcessedReadyToShip(normalized);
       enforceShopeeTerminalLocalStatus(normalized);
 
       if (normalized.partialCancel) {
@@ -11002,6 +11025,7 @@ async function loadOrdersForApi(opts?: {
     const mTn = String(m.trackingNumber || m.tracking_no || "").trim();
 
     if (!existing) {
+      repairFalseProcessedReadyToShip(m);
       bySn.set(sn, m);
       if (!readOnly) {
         added++;
@@ -11021,6 +11045,39 @@ async function loadOrdersForApi(opts?: {
         }
       }
     }
+
+    // Mongo = SSOT cho raw Shopee + status local (tránh JSON cũ làm trống tab Chưa xử lý).
+    const mRaw = String(m.shopee_order_status || "").trim().toUpperCase();
+    if (mRaw) {
+      existing.shopee_order_status = mRaw;
+    }
+    const mStatus = String(m.status || "").trim();
+    if (mStatus) {
+      // Không downgrade terminal từ Mongo nếu JSON đã shipping/completed —
+      // nhưng ưu tiên Mongo khi JSON thiếu raw / sai tab chờ lấy hàng.
+      const eRaw = String(existing.shopee_order_status || "").trim().toUpperCase();
+      const eStatus = String(existing.status || "").trim();
+      const jsonTerminal =
+        eStatus === "shipping" ||
+        eStatus === "completed" ||
+        eRaw === "SHIPPED" ||
+        eRaw === "TO_CONFIRM_RECEIVE" ||
+        eRaw === "COMPLETED";
+      const mongoTerminal =
+        mStatus === "shipping" ||
+        mStatus === "completed" ||
+        mRaw === "SHIPPED" ||
+        mRaw === "TO_CONFIRM_RECEIVE" ||
+        mRaw === "COMPLETED";
+      if (mongoTerminal || !jsonTerminal) {
+        existing.status = mStatus;
+      }
+    }
+    if (m.isPrepared != null) existing.isPrepared = Boolean(m.isPrepared);
+    if (m.isPrinted != null) existing.isPrinted = Boolean(m.isPrinted);
+    if (m.fulfillment_type) existing.fulfillment_type = m.fulfillment_type;
+    if (m.ship_method) existing.ship_method = m.ship_method;
+    repairFalseProcessedReadyToShip(existing);
 
     // Mongo = nguồn sự thật cho is_handed_over (QR đã ghi Mongo).
     // JSON chỉ đẩy → Mongo khi JSON true mà Mongo false (legacy).
@@ -11042,6 +11099,10 @@ async function loadOrdersForApi(opts?: {
     console.log(
       `[Orders] loadOrdersForApi: json=${jsonOrders.length} mongo=${mongoOrders.length} +added=${added} +tracking=${trackingFilled} +handoverMongoSync=${handoverMongoSync.length}`,
     );
+  }
+
+  for (const o of bySn.values()) {
+    if (repairFalseProcessedReadyToShip(o) && !readOnly) dirty = true;
   }
 
   return {
@@ -16044,10 +16105,37 @@ async function startServer() {
     let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
     rawOrders = rawOrders.filter(isValidOrder);
 
+    // Diagnostic: phân bố tab chờ lấy hàng trước khi lọc query.tab
+    const unprocessedPool = rawOrders.filter((o: any) => matchesUnprocessedPickupTabShared(o));
+    const processedPool = rawOrders.filter((o: any) => matchesProcessedPickupTabShared(o));
+    const readyToShipRaw = rawOrders.filter((o: any) => {
+      const raw = String(o?.shopee_order_status || "").toUpperCase();
+      return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
+    });
+    console.log(
+      `[GET /api/orders] tab-diag total=${rawOrders.length}` +
+        ` READY_TO_SHIP|RETRY_SHIP(raw)=${readyToShipRaw.length}` +
+        ` unprocessedTab=${unprocessedPool.length}` +
+        ` processedTab=${processedPool.length}` +
+        ` sampleUnprocessed=${JSON.stringify(
+          unprocessedPool.slice(0, 3).map((o: any) => ({
+            sn: o.orderSn,
+            status: o.status,
+            raw: o.shopee_order_status,
+            tn: o.trackingNumber || o.tracking_no || null,
+            prepared: o.isPrepared,
+            fulfillment: o.fulfillment_type || o.ship_method || null,
+          })),
+        )}`,
+    );
+
     // ROLLBACK: filter theo raw Shopee — KHÔNG dùng is_handed_over.
     const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
     if (tab === "processed" || tab === "da-xu-ly" || tab === "processed_pickup") {
       rawOrders = rawOrders.filter((o: any) => matchesProcessedPickupTabShared(o));
+      console.log(
+        `[GET /api/orders] query.tab=${tab} filter=matchesProcessedPickupTab → ${rawOrders.length} đơn`,
+      );
     } else if (
       tab === "unprocessed" ||
       tab === "chua-xu-ly" ||
@@ -16055,6 +16143,10 @@ async function startServer() {
       tab === "cho-lay-hang"
     ) {
       rawOrders = rawOrders.filter((o: any) => matchesUnprocessedPickupTabShared(o));
+      console.log(
+        `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab → ${rawOrders.length} đơn` +
+          ` | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound, !isProcessedCondition }`,
+      );
     } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
       rawOrders = rawOrders.filter((o: any) => matchesShippingTabShared(o));
     } else if (
@@ -17946,7 +18038,10 @@ async function startServer() {
         accepted: true,
         mode,
         syncing: true,
-        message: "Sync started in background",
+        isRunning: true,
+        message: "Tiến trình đồng bộ đang chạy ngầm...",
+        progress: "Đang khởi tạo đồng bộ...",
+        pulled: 0,
       });
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error));

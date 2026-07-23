@@ -34,8 +34,8 @@ export function getShopeeOrderRawStatus(
 }
 
 /**
- * tracking_no outbound theo order_sn — ưu tiên mã đi (tracking_no),
- * return_tracking_no chỉ là fallback (tránh UI/Backend lệch mã GHN vs SPX hoàn).
+ * tracking_no outbound theo order_sn — ưu tiên mã đi (tracking_no).
+ * Không dùng return_tracking_no (mã hoàn) để quyết định tab Đã xử lý.
  */
 export function getOrderTrackingNo(
   order: Partial<Order> & Record<string, unknown>,
@@ -44,7 +44,6 @@ export function getOrderTrackingNo(
     order.trackingNumber,
     order.tracking_no,
     order.shopee_tracking_number,
-    order.return_tracking_no,
   ];
   for (const c of candidates) {
     const tn = String(c || '').trim();
@@ -147,7 +146,10 @@ function isPickupPoolOrder(order: Partial<Order> & Record<string, unknown>): boo
   if (isShopeeShippingStatus(order)) return false;
   if (isShopeeCompletedStatus(order)) return false;
   if (isShopeeCancelledLikeStatus(order)) return false;
-  return isShopeeReadyToShipStatus(order);
+  if (isShopeeReadyToShipStatus(order)) return true;
+  // Fallback khi thiếu shopee_order_status (doc cũ / merge lệch) nhưng local vẫn chờ lấy hàng.
+  const status = String(order.status || '');
+  return status === 'unprocessed' || status === 'processed';
 }
 
 export function isOrderConfirmedOrPrinted(
@@ -219,13 +221,21 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 }
 
 /**
- * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)" — ROLLBACK:
- * READY_TO_SHIP-like AND chưa xử lý (BỎ filter is_handed_over).
+ * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)":
+ * - Raw READY_TO_SHIP | RETRY_SHIP (không PROCESSED)
+ * - HOẶC local status=unprocessed khi thiếu raw
+ * - AND chưa có mã VĐ outbound / chưa isPrepared(dropoff) / chưa status processed
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (!isPickupPoolOrder(order)) return false;
-  if (getShopeeOrderRawStatus(order) === 'PROCESSED') return false;
-  return !isProcessedCondition(order);
+  const raw = getShopeeOrderRawStatus(order);
+  if (raw === 'PROCESSED') return false;
+  if (isProcessedCondition(order)) return false;
+  // Đủ điều kiện: raw RTS/RETRY hoặc local unprocessed (fallback thiếu raw)
+  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') return true;
+  if (!raw && order.status === 'unprocessed') return true;
+  if (order.status === 'unprocessed') return true;
+  return false;
 }
 
 /**
