@@ -1807,6 +1807,13 @@ export default function OrderManager({
     }
   };
 
+  /**
+   * Delay chờ Shopee sinh mã vận đơn — tỉ lệ theo số đơn thay vì cố định 3s.
+   * ~50ms/đơn (Shopee xử lý theo batch nội bộ), tối thiểu 500ms, tối đa 1.5s.
+   */
+  const computeShopeeTrackingWaitMs = (count: number): number =>
+    Math.min(1500, Math.max(500, count * 50));
+
   const pollShipJobUntilDone = async (
     jobId: string,
     total: number,
@@ -1817,7 +1824,8 @@ export default function OrderManager({
     let shipCompleteNotified = false;
 
     while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 900));
+      // 300ms — nhanh hơn 900ms cũ 3x, vẫn nhẹ (1 request GET job-status/lần).
+      await new Promise((r) => setTimeout(r, 300));
       try {
         const jobRes = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
         if (!jobRes.ok) break;
@@ -1910,9 +1918,10 @@ export default function OrderManager({
       setProgressTotal(Math.max(total, successCount));
       setProgressMessage(`Đang xử lý ${successCount}/${Math.max(total, successCount)} đơn...`);
 
-      // Bước 3: chờ Shopee sinh mã vận đơn trước khi lấy PDF.
-      setProgressMessage(`Đã xác nhận ${successCount} đơn — Đang chờ tạo vận đơn (3 giây)...`);
-      await new Promise((r) => setTimeout(r, 3000));
+      // Bước 3: chờ Shopee sinh mã vận đơn trước khi lấy PDF (adaptive theo số đơn).
+      const trackingWaitMs1 = computeShopeeTrackingWaitMs(successCount);
+      setProgressMessage(`Đã xác nhận ${successCount} đơn — Đang chờ tạo vận đơn (${(trackingWaitMs1 / 1000).toFixed(1)} giây)...`);
+      await new Promise((r) => setTimeout(r, trackingWaitMs1));
 
       const printedSnsFromJob: string[] = Array.isArray(finalJob?.printDocument?.printedOrderSns)
         ? finalJob.printDocument.printedOrderSns.map(String)
@@ -2091,9 +2100,10 @@ export default function OrderManager({
           return;
         }
 
-        // Bước 3: chờ Shopee sinh mã vận đơn.
-        setProgressMessage(`Đã xác nhận ${successCount}/${totalQueued} đơn — Đang chờ tạo vận đơn (3 giây)...`);
-        await new Promise((r) => setTimeout(r, 3000));
+        // Bước 3: chờ Shopee sinh mã vận đơn (adaptive theo số đơn).
+        const trackingWaitMs2 = computeShopeeTrackingWaitMs(successCount);
+        setProgressMessage(`Đã xác nhận ${successCount}/${totalQueued} đơn — Đang chờ tạo vận đơn (${(trackingWaitMs2 / 1000).toFixed(1)} giây)...`);
+        await new Promise((r) => setTimeout(r, trackingWaitMs2));
 
         const printedSnsSync: string[] = Array.isArray(syncData.printDocument?.printedOrderSns)
           ? syncData.printDocument.printedOrderSns.map(String)

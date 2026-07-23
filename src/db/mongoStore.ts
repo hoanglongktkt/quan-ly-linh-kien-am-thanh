@@ -254,7 +254,9 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     if (mongoose.connection.readyState === 0) {
       await mongoose.connect(uri, {
         serverSelectionTimeoutMS: 10000,
-        maxPoolSize: 3,
+        // Tăng nhẹ 3→5: giảm chờ connection khi nhiều query cùng lúc (ship-order/webhook).
+        // Không tạo process con — an toàn với giới hạn NPROC hosting nhỏ.
+        maxPoolSize: 5,
         minPoolSize: 1,
         maxIdleTimeMS: 30000,
       });
