@@ -2039,7 +2039,7 @@ export default function OrderManager({
     showToast('Đã gửi yêu cầu đồng bộ ngầm...');
 
     try {
-      // Fire-and-forget: backend trả 202 ngay; poll/làm mới chạy nền trong App.pullOrders.
+      // Fire-and-forget: backend trả 202 hoặc soft-ack nếu đang chạy — widget góc phải theo dõi.
       await onPullShopeeOrders?.({ type });
     } catch (err: any) {
       showToast(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);

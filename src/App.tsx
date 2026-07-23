@@ -16,6 +16,7 @@ import OrderPicking from './components/OrderPicking';
 import PublishManager from './components/PublishManager';
 import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
+import FloatingSyncStatus from './components/FloatingSyncStatus';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import { APP_TITLE } from './config/brand';
 import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
@@ -223,6 +224,8 @@ export default function App() {
   const [productsLoading, setProductsLoading] = useState<boolean>(false);
   /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
+  /** Floating widget tiến trình đồng bộ đơn ngầm (góc trên phải). */
+  const [syncWidgetActive, setSyncWidgetActive] = useState(false);
   const lastFocusRefreshAtRef = useRef(0);
 
   const [logs, setLogs] = useState<SyncLog[]>(() =>
@@ -661,46 +664,28 @@ export default function App() {
     });
     const data = await readOrderSyncJson(response);
 
-    if (data.skipped || (data.syncing && response.status !== 202 && !data.accepted)) {
-      throw new Error(String(data.message || 'Đang có tiến trình đồng bộ chạy'));
-    }
-    if (data.warning && !data.accepted && response.status !== 202) {
-      throw new Error(String(data.warning));
-    }
-
+    // Tiến trình đang chạy / vừa accept — không ném lỗi; bật floating widget.
+    const alreadyRunning =
+      data.alreadyRunning === true ||
+      data.skipped === true ||
+      (data.syncing === true && response.status !== 202 && !data.accepted);
     const startedBackground =
       response.status === 202 ||
       data.accepted === true ||
       /sync started in background|đồng bộ ngầm/i.test(String(data.message || ''));
 
-    if (startedBackground) {
-      // Không await — làm mới danh sách ngầm khi sync xong, không overlay.
-      void (async () => {
-        const pollMs = syncType === 'full' ? 8_000 : 5_000;
-        const maxPolls = syncType === 'full' ? 40 : 24;
-        for (let i = 0; i < maxPolls; i++) {
-          await new Promise((r) => setTimeout(r, pollMs));
-          await fetchOrders({ silent: true, bustCache: true });
-          try {
-            const statusRes = await fetch(`/api/orders/pull/status?t=${Date.now()}`, {
-              cache: 'no-store',
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Cache-Control': 'no-cache',
-                Pragma: 'no-cache',
-              },
-            });
-            if (statusRes.ok) {
-              const status = await statusRes.json();
-              if (!status.syncing) break;
-            }
-          } catch {
-            /* bỏ qua lỗi status */
-          }
-        }
-        await fetchOrders({ silent: true, bustCache: true });
-      })();
+    if (alreadyRunning || startedBackground) {
+      setSyncWidgetActive(true);
       return;
+    }
+
+    if (data.warning && !data.accepted && response.status !== 202) {
+      // Cảnh báo cấu hình (thiếu token shop...) — vẫn không chặn bằng Error cứng nếu syncing.
+      if (data.syncing || data.isRunning) {
+        setSyncWidgetActive(true);
+        return;
+      }
+      throw new Error(String(data.warning));
     }
 
     const pulled = Number(data.pulled) || 0;
@@ -1463,9 +1448,17 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50/50 md:flex md:flex-row antialiased font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900">
+      <FloatingSyncStatus
+        active={syncWidgetActive}
+        onDismiss={() => setSyncWidgetActive(false)}
+        onFinished={() => {
+          setSyncWidgetActive(false);
+          void fetchOrders({ silent: true, bustCache: true });
+        }}
+      />
       {backgroundRefreshing && (
         <div
-          className="fixed top-3 right-3 z-[100] flex items-center gap-2 rounded-full bg-slate-900/90 text-white px-3 py-1.5 shadow-lg pointer-events-none"
+          className="fixed top-16 right-3 z-[100] flex items-center gap-2 rounded-full bg-slate-900/90 text-white px-3 py-1.5 shadow-lg pointer-events-none"
           role="status"
           aria-live="polite"
         >

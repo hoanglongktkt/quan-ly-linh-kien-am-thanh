@@ -2383,8 +2383,9 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
   return Array.from(orderSnSet);
 }
 
-// Paginate get_order_list without status filter — theo update_time.
-// mode=incremental (Quick Sync): 1 cửa sổ 24 giờ; mode=full: date-chunk 30 ngày gần nhất (≤3 chunk).
+// Paginate get_order_list without status filter.
+// mode=incremental ("Cập nhật đơn mới"): create_time 24h + update_time chia cửa sổ mới→cũ;
+// mode=full: date-chunk 30 ngày gần nhất (≤3 chunk).
 async function shopeeFetchAllOrderSns(
   shopId: string,
   accessToken: string,
@@ -2392,6 +2393,8 @@ async function shopeeFetchAllOrderSns(
 ): Promise<string[]> {
   const mode = opts?.mode === "full" ? "full" : "incremental";
   const orderSnSet = new Set<string>();
+  /** Giữ thứ tự ưu tiên: đơn mới (create_time) trước, rồi update_time mới→cũ. */
+  const orderSnOrdered: string[] = [];
   const now = Math.floor(Date.now() / 1000);
   const maxWindows =
     mode === "full"
@@ -2399,6 +2402,8 @@ async function shopeeFetchAllOrderSns(
       : 1;
   const windowSec = mode === "full" ? SHOPEE_FULL_SYNC_CHUNK_SEC : SHOPEE_ORDER_LIST_WINDOW_SEC;
   const epoch = mode === "full" ? now - SHOPEE_FULL_SYNC_LOOKBACK_SEC : 0;
+  /** Cửa sổ phụ 6h — quét update_time từ mới về cũ trong 24h (tránh Shopee trả cũ trước rồi bị cắt max 120). */
+  const INCREMENTAL_SUBWINDOW_SEC = 6 * 60 * 60;
 
   const fetchWindow = async (
     timeRangeField: "update_time" | "create_time",
@@ -2476,7 +2481,12 @@ async function shopeeFetchAllOrderSns(
       }
 
       for (const row of pageList) {
-        if (row?.order_sn) orderSnSet.add(String(row.order_sn));
+        const sn = row?.order_sn ? String(row.order_sn).trim() : "";
+        if (!sn) continue;
+        if (!orderSnSet.has(sn)) {
+          orderSnSet.add(sn);
+          orderSnOrdered.push(sn);
+        }
         if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
       }
       windowCount += pageList.length;
@@ -2494,44 +2504,55 @@ async function shopeeFetchAllOrderSns(
     }
   };
 
-  for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
-    let timeTo: number;
-    let timeFrom: number;
-    if (mode === "incremental") {
-      timeTo = now;
-      timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
-    } else {
-      timeTo = now - windowIdx * windowSec;
-      timeFrom = Math.max(epoch, timeTo - windowSec);
+  if (mode === "incremental") {
+    const subWindows = Math.ceil(SHOPEE_ORDER_LIST_INCREMENTAL_SEC / INCREMENTAL_SUBWINDOW_SEC);
+    // 1) Ưu tiên đơn MỚI phát sinh trong 24h — quét create_time theo cửa sổ 6h từ MỚI → CŨ.
+    for (let i = 0; i < subWindows; i++) {
+      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
+      const timeTo = now - i * INCREMENTAL_SUBWINDOW_SEC;
+      const timeFrom = Math.max(
+        now - SHOPEE_ORDER_LIST_INCREMENTAL_SEC,
+        timeTo - INCREMENTAL_SUBWINDOW_SEC,
+      );
+      if (timeFrom >= timeTo) break;
+      await fetchWindow("create_time", timeFrom, timeTo, i);
+      if (i < subWindows - 1) await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+    }
+    // 2) Bù update_time (đổi trạng thái) — cũng mới → cũ, không đè đơn create_time đã lấy.
+    for (let i = 0; i < subWindows; i++) {
+      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
+      const timeTo = now - i * INCREMENTAL_SUBWINDOW_SEC;
+      const timeFrom = Math.max(
+        now - SHOPEE_ORDER_LIST_INCREMENTAL_SEC,
+        timeTo - INCREMENTAL_SUBWINDOW_SEC,
+      );
+      if (timeFrom >= timeTo) break;
+      await fetchWindow("update_time", timeFrom, timeTo, subWindows + i);
+      if (i < subWindows - 1) await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+    }
+  } else {
+    for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+      const timeTo = now - windowIdx * windowSec;
+      const timeFrom = Math.max(epoch, timeTo - windowSec);
       if (timeFrom >= timeTo || timeTo <= epoch) {
         console.log(
           `[Orders Pull] shop_id=${shopId}: đã tới epoch ${new Date(epoch * 1000).toISOString()} — dừng date-chunk.`,
         );
         break;
       }
+      await fetchWindow("create_time", timeFrom, timeTo, windowIdx);
+      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
+      if (timeFrom <= epoch) break;
+      if (windowIdx < maxWindows - 1) {
+        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+      }
     }
-    await fetchWindow(mode === "full" ? "create_time" : "update_time", timeFrom, timeTo, windowIdx);
-    if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-    if (mode === "full" && timeFrom <= epoch) break;
-    if (windowIdx < maxWindows - 1) {
-      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
-    }
-  }
-
-  // FALLBACK: update_time rỗng → quét create_time cùng cửa sổ (đơn mới có thể chưa kịp update_time).
-  if (orderSnSet.size === 0 && mode === "incremental") {
-    console.warn(
-      `[Orders Pull] shop_id=${shopId}: update_time 24h TRẢ VỀ RỖNG [] — fallback create_time cùng cửa sổ.`,
-    );
-    const timeTo = now;
-    const timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
-    await fetchWindow("create_time", timeFrom, timeTo, 0);
   }
 
   console.log(
-    `[Orders Pull] shop_id=${shopId} mode=${mode}: TỔNG order_sn lấy được = ${orderSnSet.size}`,
+    `[Orders Pull] shop_id=${shopId} mode=${mode}: TỔNG order_sn lấy được = ${orderSnOrdered.length}`,
   );
-  return Array.from(orderSnSet);
+  return orderSnOrdered;
 }
 
 /**
@@ -2543,6 +2564,7 @@ async function syncShopeeFullOrderHistoryStreaming(
   orders: any[],
   shopId: string,
   accessToken: string,
+  opts?: { onProgress?: (shopPulled: number) => void },
 ): Promise<{ pulled: number; chunks: number; errors: any[] }> {
   const now = Math.floor(Date.now() / 1000);
   const epoch = now - SHOPEE_FULL_SYNC_LOOKBACK_SEC;
@@ -2552,6 +2574,7 @@ async function syncShopeeFullOrderHistoryStreaming(
   let pulled = 0;
   let chunkIdx = 0;
   let timeTo = now;
+  const onProgress = opts?.onProgress;
 
   console.log(
     `[Shopee Full Sync] shop=${shopId}: NOW=${new Date(now * 1000).toISOString()}` +
@@ -2654,6 +2677,13 @@ async function syncShopeeFullOrderHistoryStreaming(
             console.log(
               `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}p${page}: bulkWrite +${upsert.added}/~${upsert.updated} (totalPulled=${pulled})`,
             );
+            if (typeof onProgress === "function") {
+              try {
+                onProgress(pulled);
+              } catch {
+                /* ignore */
+              }
+            }
           }
         } catch (batchErr: any) {
           const msg = batchErr?.message || String(batchErr);
@@ -4702,14 +4732,79 @@ let ordersPullSyncMeta: {
   startedAt: number;
   finishedAt: number;
   pulled: number;
+  target: number | null;
+  message: string;
   error: string | null;
 } = {
   mode: "incremental",
   startedAt: 0,
   finishedAt: 0,
   pulled: 0,
+  target: null,
+  message: "",
   error: null,
 };
+
+function updateOrdersPullProgress(opts: {
+  pulled?: number;
+  target?: number | null;
+  message?: string;
+  mode?: "incremental" | "full";
+  error?: string | null;
+}): void {
+  if (opts.pulled != null && Number.isFinite(opts.pulled)) {
+    ordersPullSyncMeta.pulled = Math.max(0, Math.round(opts.pulled));
+  }
+  if (opts.target !== undefined) {
+    ordersPullSyncMeta.target =
+      opts.target == null || !Number.isFinite(opts.target)
+        ? null
+        : Math.max(0, Math.round(opts.target));
+  }
+  if (opts.message != null) ordersPullSyncMeta.message = String(opts.message);
+  if (opts.mode) ordersPullSyncMeta.mode = opts.mode;
+  if (opts.error !== undefined) ordersPullSyncMeta.error = opts.error;
+}
+
+function buildOrdersPullStatusPayload() {
+  const running = Boolean(isSyncing);
+  const pulled = Number(ordersPullSyncMeta.pulled) || 0;
+  const target =
+    ordersPullSyncMeta.target != null && Number.isFinite(ordersPullSyncMeta.target)
+      ? Number(ordersPullSyncMeta.target)
+      : null;
+  let progress = "";
+  if (target != null && target > 0) {
+    progress = `Đang kéo: ${pulled}/${target} đơn`;
+  } else if (pulled > 0) {
+    progress = running ? `Đang kéo: ${pulled} đơn` : `Đã kéo: ${pulled} đơn`;
+  } else if (running) {
+    progress = "Đang khởi tạo đồng bộ...";
+  }
+  const defaultMsg = running
+    ? ordersPullSyncMeta.mode === "full"
+      ? "Đang Full Sync ngầm..."
+      : "Đang đồng bộ đơn mới ngầm..."
+    : ordersPullSyncMeta.error
+      ? "Đồng bộ kết thúc có cảnh báo"
+      : ordersPullSyncMeta.finishedAt
+        ? "Đồng bộ thành công!"
+        : "";
+  return {
+    success: true,
+    isRunning: running,
+    syncing: running,
+    progress,
+    message: ordersPullSyncMeta.message || defaultMsg,
+    mode: ordersPullSyncMeta.mode,
+    startedAt: ordersPullSyncMeta.startedAt || null,
+    finishedAt: ordersPullSyncMeta.finishedAt || null,
+    pulled,
+    target,
+    error: ordersPullSyncMeta.error,
+    heavyJob: cpanelHeavyJobActive,
+  };
+}
 
 function tryAcquireHeavyJob(name: string): boolean {
   if (cpanelHeavyJobActive) {
@@ -17380,6 +17475,11 @@ async function startServer() {
           startedAt: Date.now(),
           finishedAt: 0,
           pulled: 0,
+          target: null,
+          message:
+            mode === "full"
+              ? "Đang Full Sync lịch sử 30 ngày..."
+              : "Đang cập nhật đơn mới (24 giờ)...",
           error: null,
         };
       }
@@ -17397,6 +17497,16 @@ async function startServer() {
       }
 
       console.log(`[Orders Pull] Bắt đầu đồng bộ ngầm mode=${mode}...`);
+      updateOrdersPullProgress({
+        mode,
+        pulled: 0,
+        target: null,
+        message:
+          mode === "full"
+            ? "Đang Full Sync lịch sử 30 ngày..."
+            : "Đang cập nhật đơn mới (24 giờ)...",
+        error: null,
+      });
       if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) {
         const errMsg =
           "Thiếu SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY (Live) trong file .env. Vui lòng cấu hình trước khi kéo đơn.";
@@ -17463,8 +17573,22 @@ async function startServer() {
 
           // FULL SYNC: streaming date-chunk từ NOW → 30 ngày trước — ghi DB từng trang, không gom RAM.
           if (mode === "full") {
-            const fullResult = await syncShopeeFullOrderHistoryStreaming(orders, shopId, accessToken);
+            updateOrdersPullProgress({
+              message: `Full Sync: đang kéo đơn shop ${shopId}...`,
+            });
+            const fullResult = await syncShopeeFullOrderHistoryStreaming(orders, shopId, accessToken, {
+              onProgress: (shopPulled) => {
+                updateOrdersPullProgress({
+                  pulled: pulledCount + shopPulled,
+                  message: `Full Sync shop ${shopId}: đã kéo ${pulledCount + shopPulled} đơn`,
+                });
+              },
+            });
             pulledCount += fullResult.pulled;
+            updateOrdersPullProgress({
+              pulled: pulledCount,
+              message: `Full Sync shop ${shopId}: xong (+${fullResult.pulled} đơn)`,
+            });
             errors.push(...fullResult.errors);
             console.log(
               `[Orders Pull] Shop ${shopId}: Full history xong chunks=${fullResult.chunks} pulled=${fullResult.pulled}`,
@@ -17501,9 +17625,12 @@ async function startServer() {
               }
             }
             if (inject.length > 0) {
-              orderSnList = [...inject, ...orderSnList];
+              // Ưu tiên đơn API (mới); chỉ inject đơn kẹt vào phần ngân sách còn trống.
+              const keptApi = orderSnList.slice(0, SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP);
+              const remaining = Math.max(0, SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP - keptApi.length);
+              orderSnList = [...keptApi, ...inject.slice(0, remaining)];
               console.log(
-                `[Orders Pull] Shop ${shopId}: inject ${inject.length} đơn kẹt local vào ĐẦU sync (heal tracking).`,
+                `[Orders Pull] Shop ${shopId}: giữ ${keptApi.length} đơn API + inject ${Math.min(inject.length, remaining)}/${inject.length} đơn kẹt.`,
               );
             }
           }
@@ -17514,6 +17641,14 @@ async function startServer() {
             orderSnList = orderSnList.slice(0, SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP);
           }
           console.log(`[Orders Pull] Shop ${shopId}: lấy được ${orderSnList.length} đơn từ Shopee.`);
+          updateOrdersPullProgress({
+            target: orderSnList.length,
+            pulled: pulledCount,
+            message:
+              orderSnList.length > 0
+                ? `Shop ${shopId}: đang kéo ${orderSnList.length} đơn...`
+                : `Shop ${shopId}: không có đơn mới trong cửa sổ`,
+          });
 
           if (orderSnList.length === 0) {
             console.warn(
@@ -17554,6 +17689,11 @@ async function startServer() {
                       accessToken,
                     });
                     pulledCount += upsert.added + upsert.updated;
+                    updateOrdersPullProgress({
+                      pulled: pulledCount,
+                      target: orderSnList.length,
+                      message: `Đang kéo: ${Math.min(i + chunkSns.length, orderSnList.length)}/${orderSnList.length} đơn (shop ${shopId})`,
+                    });
                     console.log(
                       `[Orders Pull] Shop ${shopId}: ĐÃ LƯU DB lô ${chunkNo} (+${upsert.added} mới, ~${upsert.updated} cập nhật). totalPulled=${pulledCount}`,
                     );
@@ -17678,6 +17818,13 @@ async function startServer() {
         console.warn("[Orders Pull] Post-heal batch failed:", postHealErr?.message || postHealErr);
       }
       ordersPullSyncMeta.pulled = pulledCount;
+      updateOrdersPullProgress({
+        pulled: pulledCount,
+        message:
+          errors.length > 0
+            ? `Đồng bộ xong ${pulledCount} đơn (có cảnh báo)`
+            : `Đồng bộ thành công — ${pulledCount} đơn`,
+      });
       if (pulledCount === 0 && errors.length === 0) {
         const emptyMsg =
           "Sync xong nhưng 0 đơn được ghi DB (Shopee list rỗng hoặc normalize thất bại). Xem log [Orders Pull].";
@@ -17743,15 +17890,20 @@ async function startServer() {
         });
       }
 
-      // Giữ mutex TRƯỚC khi trả 202 — tránh race poll status thấy syncing=false.
+      // Đã có tiến trình ngầm — không trả lỗi; UI hiện floating widget.
       if (isSyncing || cpanelHeavyJobActive) {
-        console.log("Sync skipped: Another instance is running");
+        console.log("Sync skipped: Another instance is running — soft ack for floating widget");
+        const status = buildOrdersPullStatusPayload();
         return res.status(200).json({
-          success: false,
+          ...status,
+          success: true,
           skipped: true,
+          alreadyRunning: true,
+          accepted: false,
           syncing: true,
-          mode,
-          message: "Đang có tiến trình đồng bộ chạy",
+          isRunning: true,
+          mode: ordersPullSyncMeta.mode || mode,
+          message: "Tiến trình đồng bộ đang chạy ngầm...",
         });
       }
 
@@ -17761,6 +17913,11 @@ async function startServer() {
         startedAt: Date.now(),
         finishedAt: 0,
         pulled: 0,
+        target: null,
+        message:
+          mode === "full"
+            ? "Đang Full Sync lịch sử 30 ngày..."
+            : "Đang cập nhật đơn mới (24 giờ)...",
         error: null,
       };
 
@@ -17810,15 +17967,16 @@ async function startServer() {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
-    return res.json({
-      syncing: isSyncing,
-      mode: ordersPullSyncMeta.mode,
-      startedAt: ordersPullSyncMeta.startedAt || null,
-      finishedAt: ordersPullSyncMeta.finishedAt || null,
-      pulled: ordersPullSyncMeta.pulled,
-      error: ordersPullSyncMeta.error,
-      heavyJob: cpanelHeavyJobActive,
-    });
+    return res.json(buildOrdersPullStatusPayload());
+  });
+
+  /** Alias rõ ràng cho floating sync widget — cùng payload với /api/orders/pull/status. */
+  app.get("/api/sync/status", authMiddleware, (_req, res) => {
+    clearStuckOrdersPullIfNeeded("GET /api/sync/status");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    return res.json(buildOrdersPullStatusPayload());
   });
 
   // GET /api/shopee/diagnostics?shop_id=4127421 — kiểm tra Partner ID/Key, token OAuth, ping Shopee API
