@@ -75,17 +75,19 @@ export default async function handler(req, res) {
     return res.status(404).json({ success: false, error: 'Not found' });
   }
 
-  // PDF vận đơn: /api?path=labels/xxx.pdf | prints/xxx.pdf hoặc /api/labels/...
+  // PDF vận đơn: /api?path=labels/xxx.pdf | prints/xxx.pdf | public/labels/xxx.pdf
   if (
     route === 'labels' ||
     route.startsWith('labels/') ||
     route === 'prints' ||
-    route.startsWith('prints/')
+    route.startsWith('prints/') ||
+    route === 'public/labels' ||
+    route.startsWith('public/labels/')
   ) {
     return handleLabelProxy(
       req,
       res,
-      route.replace(/^(?:labels|prints)\/?/, ''),
+      route.replace(/^(?:public\/)?(?:labels|prints)\/?/, ''),
     );
   }
 

@@ -41,6 +41,10 @@
       "destination": "/api?path=labels/:path*"
     },
     {
+      "source": "/api/public/labels/:path*",
+      "destination": "/api?path=labels/:path*"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api?path=$1"
     },

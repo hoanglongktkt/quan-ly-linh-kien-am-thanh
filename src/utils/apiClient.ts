@@ -58,52 +58,46 @@ export function getApiBaseUrl(): string {
 
 /**
  * URL mở file vận đơn PDF.
- * Chuẩn hệ thống: `/api/public/labels/...` (cùng path đang chạy ổn ở mục in lại).
+ * Chuẩn hệ thống: `https://api.../api/public/labels/...` (cùng backend lưu file).
+ * Tuyệt đối không dùng /prints/ (dễ dính file 0 bytes / SPA trắng).
  */
 export function resolveBackendFileUrl(path: string): string {
   return resolveLabelFetchUrl(path);
 }
 
-/** URL mở PDF vận đơn — bắt buộc dùng /api/public/labels/ (không dùng /prints/). */
+/** URL mở PDF vận đơn — luôn absolute tới /api/public/labels/ trên API backend. */
 export function resolveLabelFetchUrl(path: string): string {
   const raw = String(path || '').trim();
+  let filename = '';
+
   if (/^https?:\/\//i.test(raw)) {
-    // Đổi URL /prints/ cũ (nếu còn) sang cổng chuẩn.
     try {
-      const u = new URL(raw);
-      const fn = decodeURIComponent(u.pathname.split('/').pop() || '');
-      if (fn && /\.pdf$/i.test(fn) && !fn.includes('..')) {
-        return `${PRODUCTION_API_BASE}/api/public/labels/${encodeURIComponent(fn)}`;
-      }
+      filename = decodeURIComponent(new URL(raw).pathname.split('/').pop() || '');
     } catch {
-      /* keep */
+      return raw;
     }
-    return raw;
+  } else {
+    let pathname = raw.startsWith('/') ? raw : `/${raw}`;
+    const m = pathname.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
+    filename = decodeURIComponent(m?.[1] || pathname.split('/').filter(Boolean).pop() || '');
   }
 
-  let pathname = raw;
-  if (!pathname.startsWith('/')) {
-    pathname = `/${pathname}`;
-  }
-
-  const filename = decodeURIComponent(pathname.split('/').filter(Boolean).pop() || '');
   if (!filename || !/\.pdf$/i.test(filename) || filename.includes('..')) {
-    if (typeof window === 'undefined') return `${PRODUCTION_API_BASE}${pathname}`;
+    // Không phải PDF label — giữ hành vi cũ (relative trên cùng origin).
+    if (typeof window === 'undefined') return raw.startsWith('http') ? raw : `${PRODUCTION_API_BASE}${raw.startsWith('/') ? raw : `/${raw}`}`;
     const hostname = window.location.hostname;
-    if (isLocalDevHost(hostname) || isVercelHost(hostname) || isMainProductionHost(hostname)) {
-      return pathname.startsWith('/') ? pathname : `/${pathname}`;
+    if (isLocalDevHost(hostname)) {
+      return raw.startsWith('/') ? raw : `/${raw}`;
     }
-    return `${PRODUCTION_API_BASE}${pathname}`;
+    return raw.startsWith('http') ? raw : `${PRODUCTION_API_BASE}${raw.startsWith('/') ? raw : `/${raw}`}`;
   }
 
   const encoded = encodeURIComponent(filename);
-  if (typeof window === 'undefined') {
-    return `${PRODUCTION_API_BASE}/api/public/labels/${encoded}`;
+  // Local dev: cùng origin (proxy Vite → backend).
+  if (typeof window !== 'undefined' && isLocalDevHost(window.location.hostname)) {
+    return `/api/public/labels/${encoded}`;
   }
-  const hostname = window.location.hostname;
-  if (isLocalDevHost(hostname) || isVercelHost(hostname) || isMainProductionHost(hostname)) {
-    return `/api/labels/${encoded}`;
-  }
+  // Production / Vercel / quanly: mở thẳng API backend (nơi Node lưu PDF).
   return `${PRODUCTION_API_BASE}/api/public/labels/${encoded}`;
 }
 

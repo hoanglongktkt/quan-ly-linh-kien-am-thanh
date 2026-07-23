@@ -59,6 +59,10 @@ export async function handleLabelProxy(req, res, routeFile = '') {
     }
 
     const buf = Buffer.from(await upstream.arrayBuffer());
+    if (!buf.length) {
+      console.error('[Labels Proxy] Empty body (0 bytes)', { target });
+      return res.status(502).type('text/plain').send('File vận đơn rỗng từ backend (0 bytes).');
+    }
     if (!isPdfBuffer(buf)) {
       const preview = buf.subarray(0, 120).toString('utf8');
       console.error('[Labels Proxy] Not PDF', { target, size: buf.length, preview: preview.slice(0, 80) });
