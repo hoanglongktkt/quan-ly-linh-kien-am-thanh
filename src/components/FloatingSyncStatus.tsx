@@ -83,7 +83,7 @@ export default function FloatingSyncStatus({
       setStatus(data);
       setPhase(kind);
       onFinished?.(data);
-      scheduleHide(kind === 'success' ? 2500 : 4500);
+      scheduleHide(kind === 'success' ? 1200 : 4500);
     },
     [onFinished, scheduleHide],
   );

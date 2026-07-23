@@ -1625,10 +1625,22 @@ async function runShopeeConnectivityDiagnostics(shopIdInput?: string) {
   }
 }
 
-// v2.order.get_order_list — mặc định chỉ lấy đơn đổi trạng thái trong 24 giờ
+// v2.order.get_order_list — mặc định chỉ lấy đơn đổi trạng thái trong 2 giờ
 // (update_time). Shopee giới hạn mỗi request ≤ 15 ngày; full sync mới chia cửa sổ.
 // Supports optional order_status filter and cursor pagination (Shopee returns
 // at most page_size orders per call; more/next_cursor must be followed).
+
+/** Chuẩn hóa timestamp Shopee API = GIÂY (10 chữ số). Nếu lỡ truyền ms (13 số) → chia 1000. */
+function toShopeeUnixSeconds(raw: number | string | undefined | null, fallbackSec?: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    return fallbackSec != null ? fallbackSec : Math.floor(Date.now() / 1000);
+  }
+  // ms (≥ ~Sep 2001 in ms = 1e12) → seconds
+  if (n >= 1e12) return Math.floor(n / 1000);
+  return Math.floor(n);
+}
+
 async function shopeeGetOrderList(
   shopId: string,
   accessToken: string,
@@ -1644,9 +1656,12 @@ async function shopeeGetOrderList(
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
 
-  const timeTo = opts?.timeTo ?? timestamp;
-  // Mặc định 24 giờ theo update_time — tránh timeout serverless / rate limit.
-  const timeFrom = opts?.timeFrom ?? timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+  const timeTo = toShopeeUnixSeconds(opts?.timeTo, timestamp);
+  // Mặc định 2 giờ theo update_time — Quick Sync siêu tốc (1 trang).
+  const timeFrom = toShopeeUnixSeconds(
+    opts?.timeFrom,
+    timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC,
+  );
 
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
@@ -1754,10 +1769,10 @@ const SHOPEE_ORDER_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
 /** Quick / legacy full list helpers: tối đa 1 cửa sổ 15 ngày. Lịch sử đầy đủ dùng SHOPEE_FULL_SYNC_*. */
 const SHOPEE_ORDER_LIST_MAX_WINDOWS = 1;
 /**
- * Quick Sync / "Cập nhật đơn mới": chỉ lấy đơn CÓ update_time trong 24 giờ gần nhất.
- * (Shopee từ chối nếu time_from..time_to > 15 ngày/request.)
+ * Quick Sync / "Cập nhật đơn mới": chỉ lấy đơn CÓ update_time trong 2 giờ gần nhất.
+ * Cửa sổ hẹp → thường 1 trang, <1s (Shopee từ chối nếu time_from..time_to > 15 ngày/request).
  */
-const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
+const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 2 * 60 * 60;
 /** Full sync hủy/hoàn: tối đa 2 × 15 ngày (= 30 ngày) — giảm so với 120 ngày cũ. */
 const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
 /**
@@ -2021,7 +2036,7 @@ function formatShopeeApiError(json: any, httpStatus?: number): string {
   if (status === 504) {
     return (
       parts[0] ||
-      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với đồng bộ nhanh (24 giờ)."
+      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với đồng bộ nhanh (2 giờ)."
     );
   }
   if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
@@ -2261,7 +2276,7 @@ function buildShopeeUpdateStockEntry(
   return entry;
 }
 
-// Paginate get_order_list for one Shopee order_status — mặc định 24h update_time; full = 1×15 ngày.
+// Paginate get_order_list for one Shopee order_status — mặc định 2h update_time; full = 1×15 ngày.
 async function shopeeFetchAllOrderSnsByStatus(
   shopId: string,
   accessToken: string,
@@ -2279,6 +2294,7 @@ async function shopeeFetchAllOrderSnsByStatus(
     if (mode === "incremental") {
       timeTo = now;
       timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+      console.log("Sync 2 hours: ", timeFrom, " to ", timeTo);
     } else {
       timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
       timeFrom = timeTo - SHOPEE_ORDER_LIST_WINDOW_SEC;
@@ -2289,7 +2305,7 @@ async function shopeeFetchAllOrderSnsByStatus(
     let windowCount = 0;
 
     console.log(
-      `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 24 giờ" : ", ~15 ngày"})`,
+      `[Shopee Sync] shop_id=${shopId} status=${orderStatus}: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo} (update_time${mode === "incremental" ? ", 2 giờ" : ", ~15 ngày"})`,
     );
 
     while (safetyGuard < SHOPEE_ORDER_LIST_MAX_PAGES) {
@@ -2354,7 +2370,7 @@ async function shopeeFetchAllOrderSnsByStatus(
   return Array.from(orderSnSet);
 }
 
-/** Quét get_order_list theo create_time cho 1 status (UNPAID) — mặc định 24 giờ. */
+/** Quét get_order_list theo create_time cho 1 status (UNPAID) — mặc định 2 giờ. */
 async function shopeeFetchAllOrderSnsByStatusCreateTime(
   shopId: string,
   accessToken: string,
@@ -2372,6 +2388,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
     if (mode === "incremental") {
       timeTo = now;
       timeFrom = timeTo - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+      console.log("Sync 2 hours: ", timeFrom, " to ", timeTo);
     } else {
       timeTo = now - windowIdx * SHOPEE_ORDER_LIST_WINDOW_SEC;
       timeFrom = timeTo - SHOPEE_ORDER_LIST_WINDOW_SEC;
@@ -2381,7 +2398,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
     let windowCount = 0;
 
     console.log(
-      `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo}${mode === "incremental" ? " (24 giờ)" : ""}`,
+      `[Shopee Sync] shop_id=${shopId} status=${orderStatus} create_time: cửa sổ ${windowIdx + 1}/${maxWindows} time_from=${timeFrom} time_to=${timeTo}${mode === "incremental" ? " (2 giờ)" : ""}`,
     );
 
     while (safetyGuard < SHOPEE_ORDER_LIST_MAX_PAGES) {
@@ -2444,7 +2461,7 @@ async function shopeeFetchAllOrderSnsByStatusCreateTime(
 }
 
 // Paginate get_order_list without status filter.
-// mode=incremental ("Cập nhật đơn mới"): create_time 24h + update_time chia cửa sổ mới→cũ;
+// mode=incremental ("Cập nhật đơn mới"): 1 cửa sổ update_time 2 giờ (siêu tốc).
 // mode=full: date-chunk 30 ngày gần nhất (≤3 chunk).
 async function shopeeFetchAllOrderSns(
   shopId: string,
@@ -2453,7 +2470,7 @@ async function shopeeFetchAllOrderSns(
 ): Promise<string[]> {
   const mode = opts?.mode === "full" ? "full" : "incremental";
   const orderSnSet = new Set<string>();
-  /** Giữ thứ tự ưu tiên: đơn mới (create_time) trước, rồi update_time mới→cũ. */
+  /** Giữ thứ tự ưu tiên: đơn mới trước. */
   const orderSnOrdered: string[] = [];
   const now = Math.floor(Date.now() / 1000);
   const maxWindows =
@@ -2462,8 +2479,6 @@ async function shopeeFetchAllOrderSns(
       : 1;
   const windowSec = mode === "full" ? SHOPEE_FULL_SYNC_CHUNK_SEC : SHOPEE_ORDER_LIST_WINDOW_SEC;
   const epoch = mode === "full" ? now - SHOPEE_FULL_SYNC_LOOKBACK_SEC : 0;
-  /** Cửa sổ phụ 6h — quét update_time từ mới về cũ trong 24h (tránh Shopee trả cũ trước rồi bị cắt max 120). */
-  const INCREMENTAL_SUBWINDOW_SEC = 6 * 60 * 60;
 
   const fetchWindow = async (
     timeRangeField: "update_time" | "create_time",
@@ -2475,23 +2490,25 @@ async function shopeeFetchAllOrderSns(
     let cursor = "";
     let safetyGuard = 0;
     let windowCount = 0;
+    const safeFrom = toShopeeUnixSeconds(timeFrom, now - SHOPEE_ORDER_LIST_INCREMENTAL_SEC);
+    const safeTo = toShopeeUnixSeconds(timeTo, now);
 
     console.log(
       `[Orders Pull] shop_id=${shopId} mode=${mode} field=${timeRangeField}: cửa sổ ${windowIdx + 1}/${maxWindows}` +
-        ` time_from=${timeFrom} (${new Date(timeFrom * 1000).toISOString()})` +
-        ` time_to=${timeTo} (${new Date(timeTo * 1000).toISOString()})` +
+        ` time_from=${safeFrom} (${new Date(safeFrom * 1000).toISOString()})` +
+        ` time_to=${safeTo} (${new Date(safeTo * 1000).toISOString()})` +
         ` now=${now} (${new Date(now * 1000).toISOString()})`,
     );
 
-    if (timeFrom >= timeTo) {
+    if (safeFrom >= safeTo) {
       console.error(
-        `LỖI SYNC SHOPEE: time_from >= time_to (from=${timeFrom}, to=${timeTo}) — bỏ qua cửa sổ.`,
+        `LỖI SYNC SHOPEE: time_from >= time_to (from=${safeFrom}, to=${safeTo}) — bỏ qua cửa sổ.`,
       );
       return;
     }
-    if (timeFrom > now + 60) {
+    if (safeFrom > now + 60) {
       console.error(
-        `LỖI SYNC SHOPEE: time_from nằm trong TƯƠNG LAI (from=${timeFrom}, now=${now}) — đồng hồ server sai?`,
+        `LỖI SYNC SHOPEE: time_from nằm trong TƯƠNG LAI (from=${safeFrom}, now=${now}) — đồng hồ server sai?`,
       );
     }
 
@@ -2503,8 +2520,8 @@ async function shopeeFetchAllOrderSns(
         listResult = await shopeeGetOrderList(shopId, accessToken, {
           cursor,
           timeRangeField,
-          timeFrom,
-          timeTo,
+          timeFrom: safeFrom,
+          timeTo: safeTo,
         });
       } catch (error: any) {
         console.error(
@@ -2574,31 +2591,11 @@ async function shopeeFetchAllOrderSns(
   };
 
   if (mode === "incremental") {
-    const subWindows = Math.ceil(SHOPEE_ORDER_LIST_INCREMENTAL_SEC / INCREMENTAL_SUBWINDOW_SEC);
-    // 1) Ưu tiên đơn MỚI phát sinh trong 24h — quét create_time theo cửa sổ 6h từ MỚI → CŨ.
-    for (let i = 0; i < subWindows; i++) {
-      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-      const timeTo = now - i * INCREMENTAL_SUBWINDOW_SEC;
-      const timeFrom = Math.max(
-        now - SHOPEE_ORDER_LIST_INCREMENTAL_SEC,
-        timeTo - INCREMENTAL_SUBWINDOW_SEC,
-      );
-      if (timeFrom >= timeTo) break;
-      await fetchWindow("create_time", timeFrom, timeTo, i);
-      if (i < subWindows - 1) await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
-    }
-    // 2) Bù update_time (đổi trạng thái) — cũng mới → cũ, không đè đơn create_time đã lấy.
-    for (let i = 0; i < subWindows; i++) {
-      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
-      const timeTo = now - i * INCREMENTAL_SUBWINDOW_SEC;
-      const timeFrom = Math.max(
-        now - SHOPEE_ORDER_LIST_INCREMENTAL_SEC,
-        timeTo - INCREMENTAL_SUBWINDOW_SEC,
-      );
-      if (timeFrom >= timeTo) break;
-      await fetchWindow("update_time", timeFrom, timeTo, subWindows + i);
-      if (i < subWindows - 1) await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
-    }
+    // Quick Sync siêu tốc: CHỈ 1 lần gọi update_time trong 2 giờ gần nhất.
+    const timeTo = now;
+    const timeFrom = now - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+    console.log("Sync 2 hours: ", timeFrom, " to ", timeTo);
+    await fetchWindow("update_time", timeFrom, timeTo, 0);
   } else {
     for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
       const timeTo = now - windowIdx * windowSec;
@@ -10814,7 +10811,7 @@ async function syncShopeeOrdersFromApi(
         });
       }
 
-      // Quét không lọc trạng thái — cửa sổ 24h update_time (tránh timeout).
+      // Quét không lọc trạng thái — cửa sổ 2h update_time (Quick Sync).
       try {
         const unfilteredSns = await shopeeFetchAllOrderSns(apiShopId, accessToken, {
           mode: "incremental",
@@ -17695,7 +17692,7 @@ async function startServer() {
           message:
             mode === "full"
               ? "Đang Full Sync lịch sử 30 ngày..."
-              : "Đang cập nhật đơn mới (24 giờ)...",
+              : "Đang cập nhật đơn mới (2 giờ)...",
           error: null,
         };
       } else if (opts?.generation != null) {
@@ -17726,7 +17723,7 @@ async function startServer() {
         message:
           mode === "full"
             ? "Đang Full Sync lịch sử 30 ngày..."
-            : "Đang cập nhật đơn mới (24 giờ)...",
+            : "Đang cập nhật đơn mới (2 giờ)...",
         error: null,
       });
       if (!SHOPEE_PARTNER_ID || !SHOPEE_PARTNER_KEY) {
@@ -18157,7 +18154,7 @@ async function startServer() {
     }
   }
 
-  // Active "pull" — trả 202 ngay, chạy sync ngầm (incremental = 24h; ?type=full = lịch sử 30 ngày).
+  // Active "pull" — trả 202 ngay, chạy sync ngầm (incremental = 2h update_time; ?type=full = lịch sử 30 ngày).
   app.post("/api/orders/pull", authMiddleware, async (req, res) => {
     try {
       clearStuckOrdersPullIfNeeded("POST /api/orders/pull");
@@ -18213,7 +18210,7 @@ async function startServer() {
         message:
           mode === "full"
             ? "Đang Full Sync lịch sử 30 ngày..."
-            : "Đang cập nhật đơn mới (24 giờ)...",
+            : "Đang cập nhật đơn mới (2 giờ)...",
         error: null,
       };
 

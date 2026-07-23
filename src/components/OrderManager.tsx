@@ -2201,10 +2201,10 @@ export default function OrderManager({
       status: 'success',
       message: isFull
         ? 'Đã gửi Full Sync lịch sử đơn 30 ngày (ngầm) — UI không bị khóa.'
-        : 'Đã gửi đồng bộ đơn 24 giờ (ngầm) — UI không bị khóa.',
+        : 'Đã gửi đồng bộ đơn 2 giờ (ngầm) — UI không bị khóa.',
     });
 
-    showToast('Đã gửi yêu cầu đồng bộ ngầm...');
+    showToast(isFull ? 'Đã gửi Full Sync ngầm...' : 'Đang quét siêu tốc 2 giờ gần nhất...');
 
     try {
       // Fire-and-forget: backend trả 202 hoặc soft-ack nếu đang chạy — widget góc phải theo dõi.
@@ -3520,7 +3520,7 @@ export default function OrderManager({
             onClick={() => void handleSyncOrders('incremental')}
             disabled={isSyncing}
             className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/15 hover:shadow-blue-500/30 transition-all flex items-center gap-2 cursor-pointer"
-            title="Cập nhật đơn mới: quét đơn trong 24 giờ gần nhất (chạy ngầm)"
+            title="Cập nhật đơn mới: quét siêu tốc 2 giờ gần nhất (update_time)"
           >
             <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
             <span>Cập nhật đơn mới</span>
@@ -3547,18 +3547,18 @@ export default function OrderManager({
         </div>
       </div>
 
-      {/* Mobile: nút Cập nhật đơn mới 24 giờ (desktop dùng nút ở top bar) */}
+      {/* Mobile: nút Cập nhật đơn mới 2 giờ (desktop dùng nút ở top bar) */}
       <div className="hidden max-md:flex items-center justify-between gap-2 px-0.5">
         <p className="text-[11px] font-semibold text-slate-500 truncate">
-          {isSyncing ? 'Đã gửi đồng bộ ngầm...' : 'Đồng bộ đơn Shopee (24 giờ)'}
+          {isSyncing ? 'Đã gửi đồng bộ ngầm...' : 'Đồng bộ đơn Shopee (2 giờ)'}
         </p>
         <button
           type="button"
           onClick={() => void handleSyncOrders('incremental')}
           disabled={isSyncing}
           className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2.5 min-h-11 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer"
-          title="Cập nhật đơn mới — quét 24 giờ (ngầm)"
-          aria-label="Cập nhật đơn mới 24 giờ"
+          title="Cập nhật đơn mới — quét siêu tốc 2 giờ (ngầm)"
+          aria-label="Cập nhật đơn mới 2 giờ"
         >
           <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
           <span>Cập nhật đơn mới</span>
