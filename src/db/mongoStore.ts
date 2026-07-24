@@ -1194,20 +1194,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false",
     });
 
-    // Filter ghép (Compound Filter) BẮT BUỘC theo (orderSn, shopId) — multi-shop safe.
-    // Khi đã biết shopId: khớp đúng shop đó HOẶC record cũ chưa có shopId (backfill qua $set,
-    // không tạo bản ghi rác trùng orderSn). KHÔNG dùng $or lỏng lẻo dạng { shopId: null } đứng
-    // riêng — luôn bọc trong cùng orderSn/_id để không rò rỉ chéo giữa các đơn khác nhau.
-    const shopScope = shopIdStr
-      ? { $or: [{ shopId: shopIdStr }, { shopId: null }, { shopId: { $exists: false } }] }
-      : null;
-    const filter: Record<string, unknown> = orderSn
-      ? shopScope
-        ? { orderSn, ...shopScope }
-        : { orderSn }
-      : shopScope
-        ? { _id, ...shopScope }
-        : { _id };
+    // Dùng cùng compound filter với markOrderHandedOver — khớp orderSn/_id/data.orderSn
+    // + shopId string|number|null. Filter cũ `{ orderSn, $or:[shopIdStr...] }` dễ trượt
+    // khi document lưu shopId dạng Number → bulkWrite upsert fail (E11000) và status
+    // CANCELLED không bao giờ ghi đè bản pending_confirm cũ.
+    const filter = buildOrderCompoundFilter(orderSn || String(_id).replace(/^shopee-/i, ""), _id, shopIdStr || null);
 
     ops.push({
       updateOne: {
@@ -1235,9 +1226,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 /**
  * Filter ghép (Compound Filter) BẮT BUỘC cho mọi thao tác update/upsert đơn hàng:
  * luôn định danh theo orderSn/_id/data.orderSn VÀ, khi biết shopId, chỉ khớp đúng
- * shop đó hoặc record cũ chưa gán shopId (để `$set` backfill, không tạo bản ghi rác).
- * KHÔNG dùng `$or: [{ shopId: null }]` đứng riêng ở top-level — luôn bọc trong cùng
- * điều kiện orderSn/_id để tránh rò rỉ dữ liệu chéo giữa các shop.
+ * shop đó (string HOẶC number — document cũ có thể lưu Number) hoặc record cũ
+ * chưa gán shopId (để `$set` backfill, không tạo bản ghi rác).
  */
 function buildOrderCompoundFilter(
   sn: string,
@@ -1247,11 +1237,18 @@ function buildOrderCompoundFilter(
   const identity = { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] };
   const shopIdStr = shopId != null ? String(shopId).trim() : "";
   if (!shopIdStr) return identity;
+  const shopVariants: Record<string, unknown>[] = [
+    { shopId: shopIdStr },
+    { "data.shopId": shopIdStr },
+    { shopId: null },
+    { shopId: { $exists: false } },
+  ];
+  const asNum = Number(shopIdStr);
+  if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+    shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+  }
   return {
-    $and: [
-      identity,
-      { $or: [{ shopId: shopIdStr }, { shopId: null }, { shopId: { $exists: false } }] },
-    ],
+    $and: [identity, { $or: shopVariants }],
   };
 }
 

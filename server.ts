@@ -1787,6 +1787,31 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Chạy async tasks song song với giới hạn concurrency (tránh rate-limit Shopee
+ * khi Promise.all toàn bộ cùng lúc). Giữ thứ tự kết quả theo input.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const n = items.length;
+  if (n === 0) return [];
+  const limit = Math.max(1, Math.min(concurrency, n));
+  const results = new Array<R>(n);
+  let next = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= n) return;
+      results[i] = await worker(items[i], i);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 /** Nghỉ giữa các batch sync (mặc định 1s) — GC / chống spike process cPanel. */
 function delay(ms: number = ORDER_SYNC_SAVE_DELAY_MS): Promise<void> {
   return sleep(ms);
@@ -7352,6 +7377,13 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
     order.is_pending_shopee_check = false;
     return true;
   }
+  if (raw === "CANCELLED" || raw === "IN_CANCEL") {
+    order.status = "cancelled";
+    order.shopee_order_status = raw;
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    return true;
+  }
   return false;
 }
 
@@ -7918,7 +7950,7 @@ async function ensureTrackingBeforePrint(
   targetOrders: any[],
   opts?: { retries?: number },
 ): Promise<number> {
-  const retries = opts?.retries ?? 4;
+  const retries = opts?.retries ?? 2;
   let filled = 0;
   const groups: Record<string, any[]> = {};
   for (const o of targetOrders) {
@@ -7934,18 +7966,20 @@ async function ensureTrackingBeforePrint(
     groups[o.shopId].push(o);
   }
 
+  // Song song theo shop: mỗi shop lấy token 1 lần, rồi fetch tracking tối đa 4 đơn cùng lúc
+  // (tránh vòng for-await tuần tự + sleep 350ms/đơn — nguyên nhân chính PDF 5 đơn mất ~3 phút).
+  const PRINT_TRACKING_CONCURRENCY = 4;
   for (const [shopId, groupOrders] of Object.entries(groups)) {
     const accessToken = await getValidShopeeAccessToken(shopId);
     if (!accessToken) {
       console.error(`[Shopee Print Gate] Không có access_token shop_id=${shopId}`);
       continue;
     }
-    for (const o of groupOrders) {
+    await mapWithConcurrency(groupOrders, PRINT_TRACKING_CONCURRENCY, async (o) => {
       try {
         console.log(
           `[Shopee Print Gate] Đơn ${o.orderSn} thiếu tracking_no — gọi get_tracking_number (retries=${retries})...`,
         );
-        // light:false — cho phép fallback document/returns khi cần.
         await enrichShopeeOrderTrackingFromApi(shopId, accessToken, o, {
           retries,
           light: false,
@@ -7970,10 +8004,8 @@ async function ensureTrackingBeforePrint(
         }
       } catch (error) {
         console.error("Lỗi 1 đơn:", error);
-      } finally {
-        await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
       }
-    }
+    });
   }
   if (filled > 0) saveOrders(orders);
   return filled;
@@ -8080,7 +8112,7 @@ async function ensureOrderTrackingNoForPrint(
     }
     order.isPrepared = true;
 
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await new Promise((resolve) => setTimeout(resolve, 800));
 
     console.log(
       `[Shopee Print Gate] get_tracking_number order_sn=${order.orderSn} package=${order.packageNumber || "-"}`,
@@ -8090,7 +8122,7 @@ async function ensureOrderTrackingNoForPrint(
       accessToken,
       String(order.orderSn),
       order.packageNumber,
-      4,
+      2,
     );
     console.log(
       "=== KẾT QUẢ API TRACKING ===",
@@ -8638,6 +8670,13 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     merged.status = "completed";
     merged.shopee_order_status = "COMPLETED";
     merged.isPrepared = true;
+    merged.is_pending_shopee_check = false;
+  } else if (incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL") {
+    // Hủy trên Shopee PHẢI ghi đè tab local (kể cả đang pending_confirm) —
+    // thiếu nhánh này khiến merge rơi xuống logic heal/pending và kẹt "Chờ xác nhận".
+    merged.status = "cancelled";
+    merged.shopee_order_status = incomingRaw;
+    merged.isPrepared = false;
     merged.is_pending_shopee_check = false;
   } else if (
     // Incoming thấp hơn terminal đã có trên DB → KHÔNG kéo lùi.
@@ -11928,10 +11967,10 @@ function parseShopeePushEvent(body: any): {
     codeStr.includes("refund") ||
     action.includes("return") ||
     action.includes("refund") ||
-    status === "TO_RETURN" ||
-    status === "CANCELLED" ||
-    status === "IN_CANCEL"
+    status === "TO_RETURN"
   ) {
+    // Chỉ gắn return_refund khi có return_sn / TO_RETURN / keyword return|refund.
+    // CANCELLED/IN_CANCEL thuần là order status update — không phải return flow.
     eventKind = "return_refund";
   } else if (trackingNo && orderSn) {
     // Có tracking_no trong payload → ưu tiên Code 4 semantics (GHN/SPX).
@@ -12002,6 +12041,15 @@ function applyShopeePushFieldsToOrder(order: any, parsed: {
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
     enforceShopeeTerminalLocalStatus(order);
+    repairMisassignedTracking(order);
+    return;
+  }
+  if (pushStatus === "CANCELLED" || pushStatus === "IN_CANCEL") {
+    // Code 3 hủy đơn — ghi đè NGAY, không để nhánh tracking/heal kéo ngược về PROCESSED.
+    order.shopee_order_status = pushStatus;
+    order.status = "cancelled";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
     repairMisassignedTracking(order);
     return;
   }
@@ -12118,20 +12166,33 @@ async function applyWebhookReturnFallback(
     existing?.tracking_no,
   );
 
-  const patch: any = {
-    return_sn: String(detail.return_sn || returnSn),
-    return_status: returnStatus,
-    return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
-    shopee_cancel_return_kind: kind,
-    status:
-      existing?.status === "return_received" || existing?.local_status === "RETURN_RECEIVED"
-        ? "return_received"
-        : "return_pending",
-    shopee_order_status:
-      existing?.shopee_order_status === "CANCELLED" || existing?.shopee_order_status === "IN_CANCEL"
-        ? existing.shopee_order_status
-        : existing?.shopee_order_status || "TO_RETURN",
-  };
+  const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
+  const alreadyCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL"
+    || existing?.status === "cancelled";
+  // Đơn đã CANCELLED trên Shopee: chỉ bổ sung return_sn/tracking nếu có —
+  // KHÔNG ghi đè status → return_pending (bug cũ khiến hủy bị lệch tab / mất cancelled).
+  const patch: any = alreadyCancelled
+    ? {
+        return_sn: String(detail.return_sn || returnSn),
+        return_status: returnStatus,
+        return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
+        shopee_cancel_return_kind: kind,
+        status: "cancelled",
+        shopee_order_status: existingRaw === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED",
+        isPrepared: false,
+        is_pending_shopee_check: false,
+      }
+    : {
+        return_sn: String(detail.return_sn || returnSn),
+        return_status: returnStatus,
+        return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
+        shopee_cancel_return_kind: kind,
+        status:
+          existing?.status === "return_received" || existing?.local_status === "RETURN_RECEIVED"
+            ? "return_received"
+            : "return_pending",
+        shopee_order_status: existing?.shopee_order_status || "TO_RETURN",
+      };
   if (bestTn) {
     patch.trackingNumber = bestTn;
     patch.tracking_no = bestTn;
@@ -12388,13 +12449,16 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
     }
 
     const orderAfter = orders.find((o: any) => String(o.orderSn) === parsed.orderSn);
+    // Return fallback chỉ khi thật sự có return/hoàn — KHÔNG chạy cho CANCELLED thuần
+    // (buyer cancel không phải return; fallback cũ có thể ghi đè status hoặc lãng phí API).
     const needReturnFallback =
       parsed.eventKind === "return_refund" ||
       Boolean(parsed.returnSn) ||
-      parsed.status === "CANCELLED" ||
-      parsed.status === "IN_CANCEL" ||
       parsed.status === "TO_RETURN" ||
-      (orderAfter != null && isCancelOrReturnOrderStatus(orderAfter));
+      (orderAfter != null &&
+        String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN") ||
+      (orderAfter != null &&
+        (orderAfter.status === "return_pending" || orderAfter.status === "return_received"));
 
     if (needReturnFallback && shopId && accessToken) {
       await applyWebhookReturnFallback(
@@ -17211,11 +17275,10 @@ async function startServer() {
     );
 
     // Poll get_shipping_document_result until MỌI order_sn READY/FAILED.
-    // Check NGAY lần đầu (không sleep trước) — nhiều đơn đã READY tức thì, tránh
-    // lãng phí 2.5s cố định. Các lần sau nghỉ 1.2s (thay 2.5s) — tăng ATTEMPTS
-    // để tổng timeout vẫn đủ an toàn cho GHN chậm (~18s, trước đây ~30s).
-    const MAX_POLL_ATTEMPTS = 15;
-    const POLL_INTERVAL_MS = 1200;
+    // Check NGAY lần đầu (không sleep trước). Interval 600ms × 12 ≈ 7s max —
+    // đủ cho SPX/GHN sẵn sàng, tránh 15×1.2s ≈ 18s chết cứng trước đây.
+    const MAX_POLL_ATTEMPTS = 12;
+    const POLL_INTERVAL_MS = 600;
     let pendingList = [...cleanOrderList];
     let readyDownloadList: typeof cleanOrderList = [];
     let pollFailed: any[] = [];
@@ -17372,17 +17435,19 @@ async function startServer() {
 
     // BẮT BUỘC: await lấy mã vận đơn (retry) trước khi render PDF auto-print.
     console.log(`[Ship Order Bulk Auto-Print] Gate tracking cho ${candidates.length} đơn...`);
-    await ensureTrackingBeforePrint(allOrders, candidates, { retries: 4 });
+    await ensureTrackingBeforePrint(allOrders, candidates, { retries: 2 });
     saveOrders(allOrders);
 
-    // Shopee cần vài giây sau ship_order mới sẵn sàng create_shipping_document.
-    // Giảm 5s→2.5s: poll bên trong tryGenerateShopeeShippingDocumentOnce đã tự
-    // retry (check ngay + 15 lần x 1.2s) nên không cần chờ cứng lâu ở đây.
-    console.log(`[Ship Order Bulk Auto-Print] Chờ 2.5 giây để Shopee khởi tạo mã vận đơn cho ${candidates.length} đơn...`);
-    await new Promise((r) => setTimeout(r, 2500));
-    // Quét lại lần nữa sau khi chờ (Shopee đôi khi trả mã trễ).
-    await ensureTrackingBeforePrint(allOrders, candidates, { retries: 3 });
-    saveOrders(allOrders);
+    // Chỉ chờ ngắn nếu vẫn còn đơn thiếu mã — không chờ cứng 2.5s khi đã đủ tracking.
+    const stillNeedTn = candidates.some((o: any) => !orderHasPrintableTracking(o));
+    if (stillNeedTn) {
+      console.log(
+        `[Ship Order Bulk Auto-Print] Còn đơn thiếu mã — chờ 800ms rồi quét lại (${candidates.length} đơn)...`,
+      );
+      await new Promise((r) => setTimeout(r, 800));
+      await ensureTrackingBeforePrint(allOrders, candidates, { retries: 1 });
+      saveOrders(allOrders);
+    }
 
     const printedOrderSns: string[] = [];
     const skippedOrders: any[] = [];
@@ -17424,29 +17489,33 @@ async function startServer() {
         skippedOrders.push({ shopId, error: docResult.error, message: docResult.message });
       }
 
-      // Retry từng đơn còn thiếu (GHN thường chậm / bị sót khỏi batch PDF).
+      // Retry đơn còn thiếu — song song, không sleep 2s × N.
       const printedSet = new Set(printedOrderSns);
       const stillMissing = ready.filter((o: any) => !printedSet.has(o.orderSn));
-      for (const o of stillMissing) {
-        console.log(`[Ship Order Bulk Auto-Print] Retry in lẻ order_sn=${o.orderSn}...`);
-        await sleep(2000);
-        const one = await generateShopeeShippingDocument(shopId, [
-          {
-            order_sn: o.orderSn,
-            package_number: o.packageNumber,
-            tracking_number: trackingForShopeeShippingDoc(o),
-          },
-        ]);
-        if (one.success && one.filename) {
-          savedFilenames.push(one.filename);
-          if (one.buffer && isPdfBuffer(one.buffer)) pdfBuffers.push(one.buffer);
-          printedOrderSns.push(...(one.orderSns || [o.orderSn]));
-        } else {
-          skippedOrders.push({
-            orderSn: o.orderSn,
-            error: one.error || "print_retry_failed",
-            message: one.message || "In lại đơn thất bại",
-          });
+      if (stillMissing.length > 0) {
+        await sleep(800);
+        const retryResults = await mapWithConcurrency(stillMissing, 3, async (o) => {
+          console.log(`[Ship Order Bulk Auto-Print] Retry in lẻ order_sn=${o.orderSn}...`);
+          return generateShopeeShippingDocument(shopId, [
+            {
+              order_sn: o.orderSn,
+              package_number: o.packageNumber,
+              tracking_number: trackingForShopeeShippingDoc(o),
+            },
+          ]).then((one) => ({ o, one }));
+        });
+        for (const { o, one } of retryResults) {
+          if (one.success && one.filename) {
+            savedFilenames.push(one.filename);
+            if (one.buffer && isPdfBuffer(one.buffer)) pdfBuffers.push(one.buffer);
+            printedOrderSns.push(...(one.orderSns || [o.orderSn]));
+          } else {
+            skippedOrders.push({
+              orderSn: o.orderSn,
+              error: one.error || "print_retry_failed",
+              message: one.message || "In lại đơn thất bại",
+            });
+          }
         }
       }
     }
@@ -17637,7 +17706,7 @@ async function startServer() {
     }
 
     // Chờ Shopee tạo vận đơn sau ship_order (FE gửi waitMs khi auto-print sau xác nhận).
-    const waitMs = Math.min(8000, Math.max(0, Number(rawWaitMs) || 0));
+    const waitMs = Math.min(3000, Math.max(0, Number(rawWaitMs) || 0));
     if (waitMs > 0) {
       console.log(`[Shopee Print] Chờ ${waitMs}ms trước create_shipping_document...`);
       await new Promise((r) => setTimeout(r, waitMs));
@@ -17683,7 +17752,7 @@ async function startServer() {
 
     // BẮT BUỘC: trước khi render PDF — await check + fetch mã vận đơn (retry).
     console.log(`[Shopee Print] Gate: đảm bảo tracking_no cho ${shopeeCandidates.length} đơn trước khi tạo PDF...`);
-    await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 4 });
+    await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 2 });
     saveOrders(orders);
 
     // Refresh groups from mutated candidates
@@ -17705,8 +17774,9 @@ async function startServer() {
     for (const [shopId, groupOrders] of Object.entries(groups)) {
       // Không dùng cache từng đơn lẻ khi in hàng loạt — luôn tạo/gộp đủ order_list.
       // (Cache lẻ dễ khiến response chỉ trả PDF đơn đầu tiên.)
-      const readyToPrint: any[] = [];
-      for (const o of groupOrders) {
+      // Gate per-order SONG SONG (concurrency 4) — trước đây for-await tuần tự mỗi đơn
+      // (ship_order + 1.5s + get_tracking×4) khiến 5 đơn mất hàng phút.
+      const gateResults = await mapWithConcurrency(groupOrders, 4, async (o) => {
         try {
           // #region agent log
           agentDebugLogAc966f({
@@ -17725,7 +17795,6 @@ async function startServer() {
             },
           });
           // #endregion
-          // Thiếu mã → tự động ship_order + get_tracking trong ensureOrderTrackingNoForPrint.
           let tn = String(trackingForShopeeShippingDoc(o) || "").trim();
           if (!tn) {
             const ensured = await ensureOrderTrackingNoForPrint(o, orders);
@@ -17736,22 +17805,29 @@ async function startServer() {
           }
           o.trackingNumber = tn;
           o.tracking_no = tn;
-          readyToPrint.push(o);
+          return { ok: true as const, order: o };
         } catch (e: any) {
           console.error("Lỗi 1 đơn:", e);
           const msg = String(e?.message || e || "print_gate_failed");
-          missingTrackingOrders.push(o);
+          return { ok: false as const, order: o, msg };
+        }
+      });
+
+      const readyToPrint: any[] = [];
+      for (const r of gateResults) {
+        if (r.ok) {
+          readyToPrint.push(r.order);
+        } else {
+          missingTrackingOrders.push(r.order);
           documents.push({
             shopId,
-            orderSns: [o.orderSn],
+            orderSns: [r.order.orderSn],
             success: false,
-            error: msg.includes("chưa được chuẩn bị")
+            error: r.msg.includes("chưa được chuẩn bị")
               ? "order_not_prepared"
               : "tracking_number_missing",
-            // Trả nguyên văn Shopee / message Init ra frontend — không generic.
-            message: msg,
+            message: r.msg,
           });
-          continue;
         }
       }
 
@@ -17824,42 +17900,47 @@ async function startServer() {
           }
         }
 
-      // Retry in lẻ các đơn còn thiếu (GHN/J&T thường chậm hơn SPX).
+      // Retry in lẻ các đơn còn thiếu — song song (concurrency 3), không sleep 1.5s tuần tự.
       const printedSet = new Set(allPrintedSns);
       const stillMissing = readyToPrint.filter((o: any) => !printedSet.has(o.orderSn));
-      for (const o of stillMissing) {
-        console.log(`[Shopee Print] Retry in lẻ order_sn=${o.orderSn} (không lọc carrier)...`);
-        await sleep(1500);
-        const one = await generateShopeeShippingDocument(shopId, [
-          {
-            order_sn: o.orderSn,
-            package_number: o.packageNumber,
-            tracking_number: trackingForShopeeShippingDoc(o),
-          },
-        ]);
-        if (one.success && one.filename) {
-          savedFilenames.push(one.filename);
-          allPrintedSns.push(...(one.orderSns || [o.orderSn]));
-          if (one.buffer && isPdfBuffer(one.buffer)) mergeBuffers.push(one.buffer);
-          else {
-            const hit = getLabelMem(one.filename);
-            if (hit?.buf && isPdfBuffer(hit.buf)) mergeBuffers.push(hit.buf);
+      if (stillMissing.length > 0) {
+        // Một nhịp ngắn chung thay vì 1.5s × N đơn.
+        await sleep(800);
+        const retryResults = await mapWithConcurrency(stillMissing, 3, async (o) => {
+          console.log(`[Shopee Print] Retry in lẻ order_sn=${o.orderSn} (không lọc carrier)...`);
+          return generateShopeeShippingDocument(shopId, [
+            {
+              order_sn: o.orderSn,
+              package_number: o.packageNumber,
+              tracking_number: trackingForShopeeShippingDoc(o),
+            },
+          ]).then((one) => ({ o, one }));
+        });
+        for (const { o, one } of retryResults) {
+          if (one.success && one.filename) {
+            savedFilenames.push(one.filename);
+            allPrintedSns.push(...(one.orderSns || [o.orderSn]));
+            if (one.buffer && isPdfBuffer(one.buffer)) mergeBuffers.push(one.buffer);
+            else {
+              const hit = getLabelMem(one.filename);
+              if (hit?.buf && isPdfBuffer(hit.buf)) mergeBuffers.push(hit.buf);
+            }
+            documents.push({
+              shopId,
+              orderSns: one.orderSns || [o.orderSn],
+              url: one.url || labelUrl(one.filename),
+              contentType: one.contentType,
+              retried: true,
+            });
+          } else {
+            documents.push({
+              shopId,
+              orderSns: [o.orderSn],
+              success: false,
+              error: one.error || "print_retry_failed",
+              message: one.message || "In lại đơn thất bại",
+            });
           }
-          documents.push({
-            shopId,
-            orderSns: one.orderSns || [o.orderSn],
-            url: one.url || labelUrl(one.filename),
-            contentType: one.contentType,
-            retried: true,
-          });
-        } else {
-          documents.push({
-            shopId,
-            orderSns: [o.orderSn],
-            success: false,
-            error: one.error || "print_retry_failed",
-            message: one.message || "In lại đơn thất bại",
-          });
         }
       }
     }

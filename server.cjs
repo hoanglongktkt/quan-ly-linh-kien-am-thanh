@@ -205291,8 +205291,7 @@ async function bulkUpsertOrdersToStore(orders) {
       shipping_carrier: carrier || null,
       setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false"
     });
-    const shopScope = shopIdStr ? { $or: [{ shopId: shopIdStr }, { shopId: null }, { shopId: { $exists: false } }] } : null;
-    const filter2 = orderSn ? shopScope ? { orderSn, ...shopScope } : { orderSn } : shopScope ? { _id: _id2, ...shopScope } : { _id: _id2 };
+    const filter2 = buildOrderCompoundFilter(orderSn || String(_id2).replace(/^shopee-/i, ""), _id2, shopIdStr || null);
     ops.push({
       updateOne: {
         filter: filter2,
@@ -205318,11 +205317,18 @@ function buildOrderCompoundFilter(sn3, _id2, shopId) {
   const identity = { $or: [{ orderSn: sn3 }, { _id: _id2 }, { "data.orderSn": sn3 }] };
   const shopIdStr = shopId != null ? String(shopId).trim() : "";
   if (!shopIdStr) return identity;
+  const shopVariants = [
+    { shopId: shopIdStr },
+    { "data.shopId": shopIdStr },
+    { shopId: null },
+    { shopId: { $exists: false } }
+  ];
+  const asNum = Number(shopIdStr);
+  if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+    shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+  }
   return {
-    $and: [
-      identity,
-      { $or: [{ shopId: shopIdStr }, { shopId: null }, { shopId: { $exists: false } }] }
-    ]
+    $and: [identity, { $or: shopVariants }]
   };
 }
 async function markOrderHandedOverInStore(orderSn, meta) {
@@ -207114,6 +207120,22 @@ try {
 }
 function sleep2(ms2) {
   return new Promise((r5) => setTimeout(r5, ms2));
+}
+async function mapWithConcurrency(items, concurrency, worker) {
+  const n5 = items.length;
+  if (n5 === 0) return [];
+  const limit = Math.max(1, Math.min(concurrency, n5));
+  const results = new Array(n5);
+  let next = 0;
+  const runners = Array.from({ length: limit }, async () => {
+    while (true) {
+      const i6 = next++;
+      if (i6 >= n5) return;
+      results[i6] = await worker(items[i6], i6);
+    }
+  });
+  await Promise.all(runners);
+  return results;
 }
 function delay2(ms2 = ORDER_SYNC_SAVE_DELAY_MS) {
   return sleep2(ms2);
@@ -211068,6 +211090,13 @@ function enforceShopeeTerminalLocalStatus(order) {
     order.is_pending_shopee_check = false;
     return true;
   }
+  if (raw === "CANCELLED" || raw === "IN_CANCEL") {
+    order.status = "cancelled";
+    order.shopee_order_status = raw;
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    return true;
+  }
   return false;
 }
 function forceHealPickupOrderIfHasTracking(order) {
@@ -211425,7 +211454,7 @@ async function enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, opts
   return order;
 }
 async function ensureTrackingBeforePrint(orders, targetOrders, opts) {
-  const retries = opts?.retries ?? 4;
+  const retries = opts?.retries ?? 2;
   let filled = 0;
   const groups2 = {};
   for (const o6 of targetOrders) {
@@ -211439,13 +211468,14 @@ async function ensureTrackingBeforePrint(orders, targetOrders, opts) {
     groups2[o6.shopId] = groups2[o6.shopId] || [];
     groups2[o6.shopId].push(o6);
   }
+  const PRINT_TRACKING_CONCURRENCY = 4;
   for (const [shopId, groupOrders] of Object.entries(groups2)) {
     const accessToken = await getValidShopeeAccessToken(shopId);
     if (!accessToken) {
       console.error(`[Shopee Print Gate] Kh\xF4ng c\xF3 access_token shop_id=${shopId}`);
       continue;
     }
-    for (const o6 of groupOrders) {
+    await mapWithConcurrency(groupOrders, PRINT_TRACKING_CONCURRENCY, async (o6) => {
       try {
         console.log(
           `[Shopee Print Gate] \u0110\u01A1n ${o6.orderSn} thi\u1EBFu tracking_no \u2014 g\u1ECDi get_tracking_number (retries=${retries})...`
@@ -211474,10 +211504,8 @@ async function ensureTrackingBeforePrint(orders, targetOrders, opts) {
         }
       } catch (error3) {
         console.error("L\u1ED7i 1 \u0111\u01A1n:", error3);
-      } finally {
-        await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
       }
-    }
+    });
   }
   if (filled > 0) saveOrders(orders);
   return filled;
@@ -211547,7 +211575,7 @@ async function ensureOrderTrackingNoForPrint(order, ordersStore) {
       throw new Error("L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee: " + JSON.stringify(shipResult));
     }
     order.isPrepared = true;
-    await new Promise((resolve8) => setTimeout(resolve8, 1500));
+    await new Promise((resolve8) => setTimeout(resolve8, 800));
     console.log(
       `[Shopee Print Gate] get_tracking_number order_sn=${order.orderSn} package=${order.packageNumber || "-"}`
     );
@@ -211556,7 +211584,7 @@ async function ensureOrderTrackingNoForPrint(order, ordersStore) {
       accessToken,
       String(order.orderSn),
       order.packageNumber,
-      4
+      2
     );
     console.log(
       "=== K\u1EBET QU\u1EA2 API TRACKING ===",
@@ -211855,6 +211883,11 @@ function mergeShopeeOrderOnSync(existing, incoming) {
     merged.status = "completed";
     merged.shopee_order_status = "COMPLETED";
     merged.isPrepared = true;
+    merged.is_pending_shopee_check = false;
+  } else if (incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL") {
+    merged.status = "cancelled";
+    merged.shopee_order_status = incomingRaw;
+    merged.isPrepared = false;
     merged.is_pending_shopee_check = false;
   } else if (
     // Incoming thấp hơn terminal đã có trên DB → KHÔNG kéo lùi.
@@ -214062,7 +214095,7 @@ function parseShopeePushEvent(body) {
     eventKind = "tracking_no_update";
   } else if (codeNum === 15 || codeStr.includes("shipping_document") || action.includes("shipping_document")) {
     eventKind = "shipping_document";
-  } else if (returnSn || codeStr.includes("return") || codeStr.includes("refund") || action.includes("return") || action.includes("refund") || status2 === "TO_RETURN" || status2 === "CANCELLED" || status2 === "IN_CANCEL") {
+  } else if (returnSn || codeStr.includes("return") || codeStr.includes("refund") || action.includes("return") || action.includes("refund") || status2 === "TO_RETURN") {
     eventKind = "return_refund";
   } else if (trackingNo && orderSn) {
     eventKind = "tracking_no_update";
@@ -214117,6 +214150,14 @@ function applyShopeePushFieldsToOrder(order, parsed) {
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
     enforceShopeeTerminalLocalStatus(order);
+    repairMisassignedTracking(order);
+    return;
+  }
+  if (pushStatus === "CANCELLED" || pushStatus === "IN_CANCEL") {
+    order.shopee_order_status = pushStatus;
+    order.status = "cancelled";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
     repairMisassignedTracking(order);
     return;
   }
@@ -214211,13 +214252,24 @@ async function applyWebhookReturnFallback(shopId, accessToken, orderSn, orders, 
     existing?.trackingNumber,
     existing?.tracking_no
   );
-  const patch = {
+  const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
+  const alreadyCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL" || existing?.status === "cancelled";
+  const patch = alreadyCancelled ? {
+    return_sn: String(detail.return_sn || returnSn),
+    return_status: returnStatus,
+    return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
+    shopee_cancel_return_kind: kind,
+    status: "cancelled",
+    shopee_order_status: existingRaw === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED",
+    isPrepared: false,
+    is_pending_shopee_check: false
+  } : {
     return_sn: String(detail.return_sn || returnSn),
     return_status: returnStatus,
     return_refund_request_type: Number(detail.return_refund_request_type ?? 0),
     shopee_cancel_return_kind: kind,
     status: existing?.status === "return_received" || existing?.local_status === "RETURN_RECEIVED" ? "return_received" : "return_pending",
-    shopee_order_status: existing?.shopee_order_status === "CANCELLED" || existing?.shopee_order_status === "IN_CANCEL" ? existing.shopee_order_status : existing?.shopee_order_status || "TO_RETURN"
+    shopee_order_status: existing?.shopee_order_status || "TO_RETURN"
   };
   if (bestTn) {
     patch.trackingNumber = bestTn;
@@ -214434,7 +214486,7 @@ async function processShopeeWebhookPayload(body) {
       }
     }
     const orderAfter = orders.find((o6) => String(o6.orderSn) === parsed.orderSn);
-    const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "CANCELLED" || parsed.status === "IN_CANCEL" || parsed.status === "TO_RETURN" || orderAfter != null && isCancelOrReturnOrderStatus(orderAfter);
+    const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
     if (needReturnFallback && shopId && accessToken) {
       await applyWebhookReturnFallback(
         shopId,
@@ -218390,8 +218442,8 @@ async function startServer2() {
     console.log(
       `[Shopee Print] create_shipping_document OK ${cleanOrderList.length}/${enrichedOrderList.length} \u0111\u01A1n (m\u1ECDi \u0110VVC, kh\xF4ng l\u1ECDc SPX): ${cleanOrderList.map((o6) => o6.order_sn).join(", ")}`
     );
-    const MAX_POLL_ATTEMPTS = 15;
-    const POLL_INTERVAL_MS = 1200;
+    const MAX_POLL_ATTEMPTS = 12;
+    const POLL_INTERVAL_MS = 600;
     let pendingList = [...cleanOrderList];
     let readyDownloadList = [];
     let pollFailed = [];
@@ -218526,12 +218578,17 @@ async function startServer2() {
       groups2[o6.shopId].push(o6);
     }
     console.log(`[Ship Order Bulk Auto-Print] Gate tracking cho ${candidates.length} \u0111\u01A1n...`);
-    await ensureTrackingBeforePrint(allOrders, candidates, { retries: 4 });
+    await ensureTrackingBeforePrint(allOrders, candidates, { retries: 2 });
     saveOrders(allOrders);
-    console.log(`[Ship Order Bulk Auto-Print] Ch\u1EDD 2.5 gi\xE2y \u0111\u1EC3 Shopee kh\u1EDFi t\u1EA1o m\xE3 v\u1EADn \u0111\u01A1n cho ${candidates.length} \u0111\u01A1n...`);
-    await new Promise((r5) => setTimeout(r5, 2500));
-    await ensureTrackingBeforePrint(allOrders, candidates, { retries: 3 });
-    saveOrders(allOrders);
+    const stillNeedTn = candidates.some((o6) => !orderHasPrintableTracking(o6));
+    if (stillNeedTn) {
+      console.log(
+        `[Ship Order Bulk Auto-Print] C\xF2n \u0111\u01A1n thi\u1EBFu m\xE3 \u2014 ch\u1EDD 800ms r\u1ED3i qu\xE9t l\u1EA1i (${candidates.length} \u0111\u01A1n)...`
+      );
+      await new Promise((r5) => setTimeout(r5, 800));
+      await ensureTrackingBeforePrint(allOrders, candidates, { retries: 1 });
+      saveOrders(allOrders);
+    }
     const printedOrderSns = [];
     const skippedOrders = [];
     const savedFilenames = [];
@@ -218569,26 +218626,30 @@ async function startServer2() {
       }
       const printedSet = new Set(printedOrderSns);
       const stillMissing = ready.filter((o6) => !printedSet.has(o6.orderSn));
-      for (const o6 of stillMissing) {
-        console.log(`[Ship Order Bulk Auto-Print] Retry in l\u1EBB order_sn=${o6.orderSn}...`);
-        await sleep2(2e3);
-        const one = await generateShopeeShippingDocument(shopId, [
-          {
-            order_sn: o6.orderSn,
-            package_number: o6.packageNumber,
-            tracking_number: trackingForShopeeShippingDoc(o6)
+      if (stillMissing.length > 0) {
+        await sleep2(800);
+        const retryResults = await mapWithConcurrency(stillMissing, 3, async (o6) => {
+          console.log(`[Ship Order Bulk Auto-Print] Retry in l\u1EBB order_sn=${o6.orderSn}...`);
+          return generateShopeeShippingDocument(shopId, [
+            {
+              order_sn: o6.orderSn,
+              package_number: o6.packageNumber,
+              tracking_number: trackingForShopeeShippingDoc(o6)
+            }
+          ]).then((one) => ({ o: o6, one }));
+        });
+        for (const { o: o6, one } of retryResults) {
+          if (one.success && one.filename) {
+            savedFilenames.push(one.filename);
+            if (one.buffer && isPdfBuffer(one.buffer)) pdfBuffers.push(one.buffer);
+            printedOrderSns.push(...one.orderSns || [o6.orderSn]);
+          } else {
+            skippedOrders.push({
+              orderSn: o6.orderSn,
+              error: one.error || "print_retry_failed",
+              message: one.message || "In l\u1EA1i \u0111\u01A1n th\u1EA5t b\u1EA1i"
+            });
           }
-        ]);
-        if (one.success && one.filename) {
-          savedFilenames.push(one.filename);
-          if (one.buffer && isPdfBuffer(one.buffer)) pdfBuffers.push(one.buffer);
-          printedOrderSns.push(...one.orderSns || [o6.orderSn]);
-        } else {
-          skippedOrders.push({
-            orderSn: o6.orderSn,
-            error: one.error || "print_retry_failed",
-            message: one.message || "In l\u1EA1i \u0111\u01A1n th\u1EA5t b\u1EA1i"
-          });
         }
       }
     }
@@ -218743,7 +218804,7 @@ async function startServer2() {
       if (!Array.isArray(orderIds) || orderIds.length === 0) {
         return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds." });
       }
-      const waitMs = Math.min(8e3, Math.max(0, Number(rawWaitMs) || 0));
+      const waitMs = Math.min(3e3, Math.max(0, Number(rawWaitMs) || 0));
       if (waitMs > 0) {
         console.log(`[Shopee Print] Ch\u1EDD ${waitMs}ms tr\u01B0\u1EDBc create_shipping_document...`);
         await new Promise((r5) => setTimeout(r5, waitMs));
@@ -218769,7 +218830,7 @@ async function startServer2() {
         groups2[o6.shopId].push(o6);
       }
       console.log(`[Shopee Print] Gate: \u0111\u1EA3m b\u1EA3o tracking_no cho ${shopeeCandidates.length} \u0111\u01A1n tr\u01B0\u1EDBc khi t\u1EA1o PDF...`);
-      await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 4 });
+      await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 2 });
       saveOrders(orders);
       for (const key of Object.keys(groups2)) delete groups2[key];
       for (const o6 of shopeeCandidates) {
@@ -218784,8 +218845,7 @@ async function startServer2() {
       const missingTrackingOrders = [];
       const labelUrl = (filename) => absoluteLabelUrl(`/api/public/labels/${filename}`);
       for (const [shopId, groupOrders] of Object.entries(groups2)) {
-        const readyToPrint = [];
-        for (const o6 of groupOrders) {
+        const gateResults = await mapWithConcurrency(groupOrders, 4, async (o6) => {
           try {
             agentDebugLogAc966f({
               hypothesisId: "C",
@@ -218812,20 +218872,26 @@ async function startServer2() {
             }
             o6.trackingNumber = tn3;
             o6.tracking_no = tn3;
-            readyToPrint.push(o6);
+            return { ok: true, order: o6 };
           } catch (e6) {
             console.error("L\u1ED7i 1 \u0111\u01A1n:", e6);
             const msg = String(e6?.message || e6 || "print_gate_failed");
-            missingTrackingOrders.push(o6);
+            return { ok: false, order: o6, msg };
+          }
+        });
+        const readyToPrint = [];
+        for (const r5 of gateResults) {
+          if (r5.ok) {
+            readyToPrint.push(r5.order);
+          } else {
+            missingTrackingOrders.push(r5.order);
             documents.push({
               shopId,
-              orderSns: [o6.orderSn],
+              orderSns: [r5.order.orderSn],
               success: false,
-              error: msg.includes("ch\u01B0a \u0111\u01B0\u1EE3c chu\u1EA9n b\u1ECB") ? "order_not_prepared" : "tracking_number_missing",
-              // Trả nguyên văn Shopee / message Init ra frontend — không generic.
-              message: msg
+              error: r5.msg.includes("ch\u01B0a \u0111\u01B0\u1EE3c chu\u1EA9n b\u1ECB") ? "order_not_prepared" : "tracking_number_missing",
+              message: r5.msg
             });
-            continue;
           }
         }
         if (readyToPrint.length === 0) continue;
@@ -218895,39 +218961,43 @@ async function startServer2() {
         }
         const printedSet = new Set(allPrintedSns);
         const stillMissing = readyToPrint.filter((o6) => !printedSet.has(o6.orderSn));
-        for (const o6 of stillMissing) {
-          console.log(`[Shopee Print] Retry in l\u1EBB order_sn=${o6.orderSn} (kh\xF4ng l\u1ECDc carrier)...`);
-          await sleep2(1500);
-          const one = await generateShopeeShippingDocument(shopId, [
-            {
-              order_sn: o6.orderSn,
-              package_number: o6.packageNumber,
-              tracking_number: trackingForShopeeShippingDoc(o6)
+        if (stillMissing.length > 0) {
+          await sleep2(800);
+          const retryResults = await mapWithConcurrency(stillMissing, 3, async (o6) => {
+            console.log(`[Shopee Print] Retry in l\u1EBB order_sn=${o6.orderSn} (kh\xF4ng l\u1ECDc carrier)...`);
+            return generateShopeeShippingDocument(shopId, [
+              {
+                order_sn: o6.orderSn,
+                package_number: o6.packageNumber,
+                tracking_number: trackingForShopeeShippingDoc(o6)
+              }
+            ]).then((one) => ({ o: o6, one }));
+          });
+          for (const { o: o6, one } of retryResults) {
+            if (one.success && one.filename) {
+              savedFilenames.push(one.filename);
+              allPrintedSns.push(...one.orderSns || [o6.orderSn]);
+              if (one.buffer && isPdfBuffer(one.buffer)) mergeBuffers.push(one.buffer);
+              else {
+                const hit = getLabelMem(one.filename);
+                if (hit?.buf && isPdfBuffer(hit.buf)) mergeBuffers.push(hit.buf);
+              }
+              documents.push({
+                shopId,
+                orderSns: one.orderSns || [o6.orderSn],
+                url: one.url || labelUrl(one.filename),
+                contentType: one.contentType,
+                retried: true
+              });
+            } else {
+              documents.push({
+                shopId,
+                orderSns: [o6.orderSn],
+                success: false,
+                error: one.error || "print_retry_failed",
+                message: one.message || "In l\u1EA1i \u0111\u01A1n th\u1EA5t b\u1EA1i"
+              });
             }
-          ]);
-          if (one.success && one.filename) {
-            savedFilenames.push(one.filename);
-            allPrintedSns.push(...one.orderSns || [o6.orderSn]);
-            if (one.buffer && isPdfBuffer(one.buffer)) mergeBuffers.push(one.buffer);
-            else {
-              const hit = getLabelMem(one.filename);
-              if (hit?.buf && isPdfBuffer(hit.buf)) mergeBuffers.push(hit.buf);
-            }
-            documents.push({
-              shopId,
-              orderSns: one.orderSns || [o6.orderSn],
-              url: one.url || labelUrl(one.filename),
-              contentType: one.contentType,
-              retried: true
-            });
-          } else {
-            documents.push({
-              shopId,
-              orderSns: [o6.orderSn],
-              success: false,
-              error: one.error || "print_retry_failed",
-              message: one.message || "In l\u1EA1i \u0111\u01A1n th\u1EA5t b\u1EA1i"
-            });
           }
         }
       }
