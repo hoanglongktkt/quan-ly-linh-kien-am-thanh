@@ -11731,6 +11731,35 @@ function pruneOldShipOrderJobs(): void {
   }
 }
 
+// In vận đơn (create_shipping_document + poll + download Shopee) có thể mất
+// 30–120s khi Shopee chậm/GHN-J&T cần retry — chạy NGẦM thay vì giữ HTTP request
+// của FE treo suốt thời gian đó (nguyên nhân chính của "API ~2 phút").
+type PrintDocumentJobStatus = "pending" | "running" | "done" | "failed";
+
+type PrintDocumentJob = {
+  id: string;
+  status: PrintDocumentJobStatus;
+  httpStatus?: number;
+  result?: any;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+const printDocumentJobs = new Map<string, PrintDocumentJob>();
+const PRINT_JOB_TTL_MS = 30 * 60 * 1000;
+
+function createPrintDocumentJobId(): string {
+  return `print-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function pruneOldPrintDocumentJobs(): void {
+  const cutoff = Date.now() - PRINT_JOB_TTL_MS;
+  for (const [id, job] of printDocumentJobs) {
+    if (job.updatedAt < cutoff) printDocumentJobs.delete(id);
+  }
+}
+
 // Broken/mock orders (0đ total AND no items) or ghost webhook rows with no
 // real product snapshot — leftovers from older test/config attempts.
 // Đơn hủy/hoàn/return LUÔN giữ lại — kể cả stub từ Returns API (tránh lệch 163→60).
@@ -16847,8 +16876,11 @@ async function startServer() {
       return { success: false, error: "no_valid_access_token", message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId}.` };
     }
 
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY_MS = 3000;
+    // In vận đơn giờ chạy NGẦM (job async) nên không cần tối đa hoá số lần thử để
+    // "chịu treo" HTTP — giảm 3→2 lần thử lại / 3000→2000ms giữa các lần để job
+    // hoàn tất nhanh hơn, vẫn đủ dự phòng cho GHN/J&T chậm.
+    const MAX_RETRIES = 2;
+    const RETRY_DELAY_MS = 2000;
     let lastError: { error?: string; message?: string } = {};
 
     for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
@@ -17623,7 +17655,7 @@ async function startServer() {
   });
 
   // Single or bulk print: fetch the REAL Shopee AWB PDF for the given orders.
-  app.post("/api/shopee/print-document", authMiddleware, async (req, res) => {
+  async function printDocumentHandler(req: any, res: any) {
     try {
     const { orderIds, waitMs: rawWaitMs } = req.body;
     console.log(
@@ -17827,7 +17859,7 @@ async function startServer() {
       const stillMissing = readyToPrint.filter((o: any) => !printedSet.has(o.orderSn));
       for (const o of stillMissing) {
         console.log(`[Shopee Print] Retry in lẻ order_sn=${o.orderSn} (không lọc carrier)...`);
-        await sleep(2000);
+        await sleep(1500);
         const one = await generateShopeeShippingDocument(shopId, [
           {
             order_sn: o.orderSn,
@@ -18003,6 +18035,74 @@ async function startServer() {
         message: error?.message || "Tạo vận đơn Shopee thất bại",
       });
     }
+  }
+
+  app.post("/api/shopee/print-document", authMiddleware, printDocumentHandler);
+
+  // Non-blocking: trả jobId NGAY, in vận đơn (create/poll/download Shopee) chạy
+  // ngầm — FE poll job thay vì giữ 1 request HTTP treo tới ~2 phút.
+  app.post("/api/shopee/print-document/async", authMiddleware, async (req, res) => {
+    try {
+      const { orderIds } = req.body;
+      if (!Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({ error: "Thiếu danh sách orderIds." });
+      }
+      pruneOldPrintDocumentJobs();
+      const jobId = createPrintDocumentJobId();
+      printDocumentJobs.set(jobId, {
+        id: jobId,
+        status: "pending",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      const fakeReq = { body: req.body };
+      setImmediate(() => {
+        void (async () => {
+          const job = printDocumentJobs.get(jobId);
+          if (!job) return;
+          job.status = "running";
+          job.updatedAt = Date.now();
+          let capturedStatus = 200;
+          const fakeRes = {
+            status(code: number) {
+              capturedStatus = code;
+              return this;
+            },
+            json(body: any) {
+              job.httpStatus = capturedStatus;
+              job.result = body;
+              job.status = capturedStatus >= 200 && capturedStatus < 300 ? "done" : "failed";
+              job.updatedAt = Date.now();
+              return this;
+            },
+          };
+          try {
+            await printDocumentHandler(fakeReq, fakeRes);
+          } catch (err: any) {
+            job.status = "failed";
+            job.error = err?.message || String(err);
+            job.updatedAt = Date.now();
+          }
+        })();
+      });
+
+      return res.status(202).json({ accepted: true, jobId });
+    } catch (error: any) {
+      console.error("[Print Document Async] Lỗi nội bộ:", error?.stack || error);
+      return res.status(500).json({ success: false, message: "Lỗi nội bộ server: " + error.message });
+    }
+  });
+
+  app.get("/api/shopee/print-document/job/:jobId", authMiddleware, async (req, res) => {
+    const job = printDocumentJobs.get(String(req.params.jobId || ""));
+    if (!job) {
+      return res.status(404).json({
+        error: "job_not_found",
+        message: "Không tìm thấy tiến trình in vận đơn.",
+      });
+    }
+    return res.json(job);
   });
 
   let ai: GoogleGenAI | null = null;

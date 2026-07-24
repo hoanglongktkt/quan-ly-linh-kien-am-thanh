@@ -1802,7 +1802,7 @@ export default function OrderManager({
   const TRACKING_MISSING_TOAST =
     'Chưa đồng bộ được mã vận đơn từ Shopee, hệ thống đang tự động lấy lại, vui lòng thử lại sau!';
 
-  const fetchPrintDocumentApi = async (
+  const fetchPrintDocumentSync = async (
     orderIds: string[],
     opts?: { waitMs?: number }
   ): Promise<{
@@ -1820,6 +1820,69 @@ export default function OrderManager({
     });
     const data = await parseJsonResponse<PrintDocumentResponse>(res);
     return { ok: res.ok, status: res.status, data };
+  };
+
+  /**
+   * In vận đơn (create/poll/download Shopee) có thể mất tới ~2 phút khi Shopee
+   * chậm hoặc cần retry GHN/J&T. Dùng job chạy NGẦM ở backend + poll thay vì giữ
+   * 1 request HTTP treo suốt thời gian đó. Rớt về endpoint đồng bộ cũ nếu backend
+   * chưa có route job (cPanel chưa deploy bản mới) để không phá luồng in hiện tại.
+   */
+  const fetchPrintDocumentApi = async (
+    orderIds: string[],
+    opts?: { waitMs?: number }
+  ): Promise<{
+    ok: boolean;
+    status: number;
+    data: PrintDocumentResponse;
+  }> => {
+    try {
+      const startRes = await fetch('/api/shopee/print-document/async', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          orderIds,
+          ...(opts?.waitMs != null && opts.waitMs > 0 ? { waitMs: opts.waitMs } : {}),
+        }),
+      });
+      if (startRes.status === 404) {
+        return fetchPrintDocumentSync(orderIds, opts);
+      }
+      const startData = await parseJsonResponse<{ accepted?: boolean; jobId?: string }>(startRes);
+      if (!startRes.ok || !startData?.jobId) {
+        return fetchPrintDocumentSync(orderIds, opts);
+      }
+
+      const jobId = startData.jobId;
+      const deadline = Date.now() + 3 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 500));
+        const jobRes = await fetch(`/api/shopee/print-document/job/${jobId}`, {
+          headers: authHeaders(),
+        });
+        if (!jobRes.ok) break;
+        const job = await parseJsonResponse<{
+          status?: string;
+          httpStatus?: number;
+          result?: PrintDocumentResponse;
+          error?: string;
+        }>(jobRes);
+        if (job.status === 'done' || job.status === 'failed') {
+          if (job.result) {
+            const status = job.httpStatus || (job.status === 'done' ? 200 : 500);
+            return { ok: status >= 200 && status < 300, status, data: job.result };
+          }
+          return {
+            ok: false,
+            status: job.httpStatus || 500,
+            data: { error: job.error || 'print_job_failed', message: job.error },
+          };
+        }
+      }
+      return { ok: false, status: 504, data: { error: 'print_job_timeout', message: 'Quá thời gian chờ tạo vận đơn.' } };
+    } catch {
+      return fetchPrintDocumentSync(orderIds, opts);
+    }
   };
   const applyPrintDocumentResponse = async (
     data: PrintDocumentResponse,
