@@ -1364,6 +1364,8 @@ export default function OrderManager({
   /** Tab Chờ lấy hàng (Chưa xử lý): lọc theo ĐVVC — all | spx | ghn | instant | other */
   const [selectedShippingCarrier, setSelectedShippingCarrier] =
     useState<ShippingCarrierFilter>('all');
+  /** TEST-ONLY: nút kiểm chứng deploy, chưa gắn logic lọc dữ liệu thật. */
+  const [isTestCarrierButtonActive, setIsTestCarrierButtonActive] = useState(false);
 
   // Detail Modal & Bulk Print Modal
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -3910,7 +3912,8 @@ export default function OrderManager({
           activeSubTab === 'unprocessed' ||
           activeSubTab === 'processed' ||
           activeSubTab === 'cancel_returns' ||
-          activeSubTab === 'received_cancel_returns') && (
+          activeSubTab === 'received_cancel_returns' ||
+          activeSubTab === 'handed_over_carrier') && (
           <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="text-xs font-bold text-slate-600 shrink-0">Đơn vị vận chuyển</span>
             {(
@@ -3946,6 +3949,23 @@ export default function OrderManager({
                 </button>
               );
             })}
+            {/* TEST-ONLY: nút kiểm chứng deploy — chưa gắn logic lọc dữ liệu thật. */}
+            <button
+              type="button"
+              onClick={() => setIsTestCarrierButtonActive((prev) => !prev)}
+              title="Nút kiểm tra deploy — chưa lọc dữ liệu thật"
+              className={`text-[11px] px-3.5 py-1.5 rounded-full transition-all cursor-pointer whitespace-nowrap border-2 border-dashed font-black ${
+                activeSubTab === 'handed_over_carrier'
+                  ? isTestCarrierButtonActive
+                    ? 'border-fuchsia-600 text-fuchsia-700 bg-fuchsia-100 shadow-md ring-2 ring-fuchsia-400/40 animate-pulse'
+                    : 'border-fuchsia-500 text-fuchsia-600 bg-fuchsia-50 shadow-sm'
+                  : isTestCarrierButtonActive
+                    ? 'border-fuchsia-400 text-fuchsia-600 bg-fuchsia-50'
+                    : 'border-fuchsia-300 text-fuchsia-500 bg-white hover:bg-fuchsia-50'
+              }`}
+            >
+              Giao Hàng Tiết Kiệm (TEST)
+            </button>
           </div>
         )}
       </div>
