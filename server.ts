@@ -14370,6 +14370,36 @@ async function startServer() {
   });
 
   /**
+   * Gộp các request refresh cùng lúc (click, focus, polling hoặc nhiều tab trình duyệt)
+   * thành một lần đọc MongoDB. Cache rất ngắn chỉ để tránh truy vấn trùng khi response
+   * đang được truyền về client; webhook vẫn được phản ánh gần như ngay lập tức.
+   */
+  let ordersRefreshInFlight: Promise<any[]> | null = null;
+  let ordersRefreshCache: { expiresAt: number; orders: any[] } | null = null;
+
+  async function readOrdersForRefresh(): Promise<any[]> {
+    const now = Date.now();
+    if (ordersRefreshCache && ordersRefreshCache.expiresAt > now) {
+      return ordersRefreshCache.orders;
+    }
+    if (!ordersRefreshInFlight) {
+      ordersRefreshInFlight = loadOrdersFromStore()
+        .then((orders) => {
+          const validOrders = orders.filter(isValidOrder);
+          ordersRefreshCache = {
+            orders: validOrders,
+            expiresAt: Date.now() + 1_500,
+          };
+          return validOrders;
+        })
+        .finally(() => {
+          ordersRefreshInFlight = null;
+        });
+    }
+    return ordersRefreshInFlight;
+  }
+
+  /**
    * Refresh danh sách đơn: chỉ đọc MongoDB, không gọi Shopee và không chạy sync.
    * Luôn phản hồi JSON nhanh để frontend không bị kẹt trạng thái loading.
    */
@@ -14383,7 +14413,7 @@ async function startServer() {
           error: "mongodb_not_ready",
         });
       }
-      const orders = (await loadOrdersFromStore()).filter(isValidOrder);
+      const orders = await readOrdersForRefresh();
       console.log(`[FRONTEND FETCHED] GET /api/orders/refresh — trả về ${orders.length} đơn từ MongoDB.`);
       return res.status(200).json({ success: true, data: orders });
     } catch (error: any) {

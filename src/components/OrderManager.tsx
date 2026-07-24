@@ -2384,14 +2384,16 @@ export default function OrderManager({
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   /**
-   * Auto-refresh (polling) mỗi 15 giây — đọc lại DB nội bộ (silent, KHÔNG gọi Shopee).
+   * Auto-refresh mỗi 60 giây khi tab trình duyệt đang hiển thị — đọc lại DB nội bộ
+   * (silent, KHÔNG gọi Shopee).
    * `silent: true` → onFetchOrders (App.tsx) không set ordersLoading, không hiện overlay,
    * chỉ cập nhật mảng `orders` ở App — filter/lựa chọn cục bộ của OrderManager không bị reset.
    */
   useEffect(() => {
     const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') return;
       void onFetchOrders?.({ silent: true });
-    }, 15000);
+    }, 60000);
     return () => window.clearInterval(intervalId);
     // onFetchOrders không ổn định reference — chỉ setup 1 lần khi mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps

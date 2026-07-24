@@ -228,6 +228,9 @@ export default function App() {
    * chạy gần nhau: chỉ response của request MỚI NHẤT được ghi vào state, response của
    * request cũ hơn (dù trả về sau) sẽ bị bỏ qua thay vì ghi đè mất dữ liệu vừa cập nhật. */
   const fetchOrdersSeqRef = useRef(0);
+  /** Chỉ cho phép một lần đọc toàn bộ đơn hàng đang chạy để polling/focus/click không
+   * tạo nhiều truy vấn MongoDB nặng đồng thời. */
+  const fetchOrdersInFlightRef = useRef<Promise<void> | null>(null);
 
   const [logs, setLogs] = useState<SyncLog[]>(() =>
     safeGetJson('omni_logs', INITIAL_SYNC_LOGS),
@@ -358,6 +361,13 @@ export default function App() {
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
+    if (fetchOrdersInFlightRef.current) return fetchOrdersInFlightRef.current;
+
+    let finishInFlight: (() => void) | undefined;
+    const inFlight = new Promise<void>((resolve) => {
+      finishInFlight = resolve;
+    });
+    fetchOrdersInFlightRef.current = inFlight;
 
     const silent = Boolean(opts?.silent);
     const bustCache = opts?.bustCache !== false;
@@ -434,6 +444,10 @@ export default function App() {
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
       if (!silent) setOrdersLoading(false);
+      if (fetchOrdersInFlightRef.current === inFlight) {
+        fetchOrdersInFlightRef.current = null;
+      }
+      finishInFlight?.();
     }
   };
 
