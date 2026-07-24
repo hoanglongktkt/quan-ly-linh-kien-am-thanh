@@ -18099,24 +18099,36 @@ async function startServer() {
     return { success: true, url: primaryUrl, pdfFilename, printedOrderSns, skippedOrders };
   }
 
+  /** Patch Mongo-only cho các đơn đã đổi — không load/ghi full orders.json. */
+  async function persistShipJobOrderPatches(changedOrders: any[]): Promise<void> {
+    const list = (Array.isArray(changedOrders) ? changedOrders : []).filter(Boolean);
+    if (list.length === 0) return;
+    if (!isMongoReady()) {
+      console.warn("[Ship Order Job] Mongo chưa sẵn sàng — bỏ qua persist patch (FE optimistic).");
+      return;
+    }
+    try {
+      await bulkUpsertOrdersToStore(list);
+    } catch (err: any) {
+      console.warn("[Ship Order Job] bulkUpsert patch failed:", err?.message || err);
+    }
+  }
+
+  /**
+   * Background ship job (lean):
+   * - Scoped Mongo $in load only
+   * - Promise.allSettled concurrent Shopee confirm (skipRecover)
+   * - Mongo patch changed orders only — no full DB save / no recover / no PDF
+   */
   async function executeShipOrderBackgroundJob(
     jobId: string,
     shipMethod: ShipMethod,
     idList: string[],
-    snList: string[]
+    snList: string[],
   ): Promise<void> {
     pruneOldShipOrderJobs();
     const job = shipOrderJobs.get(jobId);
     if (!job) return;
-
-    if (!tryAcquireHeavyJob(`ship-order:${jobId}`)) {
-      job.status = "failed";
-      job.phase = "failed";
-      job.error = "heavy_job_busy";
-      job.message = "Hệ thống đang bận xử lý tác vụ khác — vui lòng thử lại.";
-      job.updatedAt = Date.now();
-      return;
-    }
 
     try {
       job.status = "running";
@@ -18124,7 +18136,6 @@ async function startServer() {
       job.message = "Đang tải đơn cần xác nhận...";
       job.updatedAt = Date.now();
 
-      // Scoped load — chỉ đơn trong idList/snList (JSON filter + Mongo $in).
       const orders = await loadOrdersForShipScoped(idList, snList);
       const toShip = resolveOrdersFromRequest(orders, idList, snList);
       job.total = toShip.length;
@@ -18138,23 +18149,6 @@ async function startServer() {
         return;
       }
 
-      // Optimistic update + persist (chuyển từ HTTP handler xuống đây — không chặn 202).
-      job.phase = "optimistic_persist";
-      job.message = "Đang cập nhật trạng thái đơn...";
-      job.updatedAt = Date.now();
-      const optimisticChanged: any[] = [];
-      for (const { index } of toShip) {
-        orders[index] = {
-          ...orders[index],
-          isPrepared: true,
-          status: "processed",
-          shopeeSyncPending: true,
-          shopeeSyncError: undefined,
-        };
-        optimisticChanged.push(orders[index]);
-      }
-      await persistChangedOrdersPatch(optimisticChanged);
-
       const shipPhase =
         shipMethod === "dropoff" ? "calling_shopee_dropoff" : "calling_shopee_pickup";
       job.phase = shipPhase;
@@ -18164,37 +18158,167 @@ async function startServer() {
           : "Đang gọi Shopee pickup / ship_order...";
       job.updatedAt = Date.now();
 
-      const batch = await processShipOrderBatch(orders, toShip, shipMethod, {
-        optimistic: true,
-        onProgress: (completed, total) => {
-          job.completed = completed;
-          job.total = total;
-          job.phase = shipPhase;
-          job.message =
-            completed > 0
-              ? `Đang xác nhận ${completed}/${total} đơn lên sàn (${shipMethod})...`
-              : shipMethod === "dropoff"
-                ? "Đang gọi Shopee ship_order (dropoff)..."
-                : "Đang gọi Shopee pickup / ship_order...";
-          job.updatedAt = Date.now();
-        },
-      });
+      let completedCount = 0;
+      const bumpProgress = () => {
+        completedCount += 1;
+        job.completed = completedCount;
+        job.total = toShip.length;
+        job.phase = shipPhase;
+        job.message = `Đang xác nhận ${completedCount}/${toShip.length} đơn lên sàn (${shipMethod})...`;
+        job.updatedAt = Date.now();
+      };
+
+      const settled = await Promise.allSettled(
+        toShip.map(async ({ index, order }) => {
+          const resolvedShopId = resolveOrderShopId(order);
+          if (resolvedShopId && !order.shopId) {
+            orders[index].shopId = resolvedShopId;
+            order.shopId = resolvedShopId;
+          }
+
+          let result: Awaited<ReturnType<typeof arrangeShipment>>;
+          try {
+            result = await withOperationTimeout(
+              (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+              SHIP_ORDER_OPERATION_TIMEOUT_MS,
+              `Ship order ${order.orderSn}`,
+            );
+          } catch (error: any) {
+            result = {
+              success: false,
+              error: /timeout/i.test(String(error?.message || "")) ? "timeout" : "internal_server_error",
+              message: "Lỗi nội bộ server: " + (error?.message || String(error)),
+            };
+          }
+
+          const treatedAsSuccess = result.success || isAlreadyShippedError(result);
+          const pendingTrap = !treatedAsSuccess && isShopeePendingVerificationError(result);
+          let patched: any = orders[index];
+
+          if (pendingTrap) {
+            patched = markOrderPendingShopeeCheck(
+              orders[index],
+              result.message || result.error || "Order is pending verification",
+            );
+            orders[index] = patched;
+          } else if (treatedAsSuccess) {
+            const tn = String(
+              order.trackingNumber ||
+                order.tracking_no ||
+                result.trackingNumber ||
+                orders[index].trackingNumber ||
+                "",
+            ).trim();
+            patched = {
+              ...orders[index],
+              ...order,
+              isPrepared: true,
+              status: "processed",
+              is_pending_shopee_check: false,
+              fulfillment_type: shipMethod,
+              ship_method: shipMethod,
+              trackingNumber: tn || orders[index].trackingNumber,
+              tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
+              shopId: orders[index].shopId || order.shopId || result.shopId || resolvedShopId,
+              shopee_order_status:
+                order.shopee_order_status === "READY_TO_SHIP" ||
+                order.shopee_order_status === "RETRY_SHIP" ||
+                !order.shopee_order_status
+                  ? "PROCESSED"
+                  : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
+              shopeeSyncPending: false,
+              shopeeSyncError: undefined,
+            };
+            forceHealPickupOrderIfHasTracking(patched);
+            orders[index] = patched;
+          } else {
+            patched = {
+              ...orders[index],
+              status: "unprocessed",
+              isPrepared: false,
+              shopeeSyncPending: false,
+              shopeeSyncError: result.message || result.error || "Không đồng bộ được Shopee",
+            };
+            orders[index] = patched;
+          }
+
+          bumpProgress();
+          return {
+            orderId: order.id,
+            orderSn: order.orderSn,
+            success: treatedAsSuccess,
+            pendingShopeeCheck: pendingTrap,
+            alreadyShipped: !result.success && isAlreadyShippedError(result),
+            patched,
+            error: result.error,
+            message: result.message,
+            mode: result.mode,
+            shopId: result.shopId,
+            trackingNumber: result.trackingNumber,
+            skipped: result.skipped,
+          };
+        }),
+      );
+
+      const results: any[] = [];
+      const failedOrders: { orderSn: string; orderId: string; error: string; message: string }[] = [];
+      const changedOrders: any[] = [];
+
+      for (let i = 0; i < settled.length; i++) {
+        const item = settled[i];
+        const fallback = toShip[i]?.order;
+        if (item.status === "fulfilled") {
+          const r = item.value;
+          results.push(r);
+          if (r.patched) changedOrders.push(r.patched);
+          if (!r.success) {
+            failedOrders.push({
+              orderSn: String(r.orderSn || fallback?.orderSn || ""),
+              orderId: String(r.orderId || fallback?.id || ""),
+              error: String(r.error || "ship_order_failed"),
+              message: String(r.message || "ship_order failed"),
+            });
+          }
+        } else {
+          const errMsg = String(item.reason?.message || item.reason || "unknown");
+          results.push({
+            orderId: fallback?.id,
+            orderSn: fallback?.orderSn,
+            success: false,
+            error: "internal_server_error",
+            message: errMsg,
+          });
+          failedOrders.push({
+            orderSn: String(fallback?.orderSn || ""),
+            orderId: String(fallback?.id || ""),
+            error: "internal_server_error",
+            message: errMsg,
+          });
+          if (toShip[i]) changedOrders.push(orders[toShip[i].index]);
+        }
+      }
 
       job.phase = "persisting";
       job.message = "Đang lưu kết quả xác nhận...";
       job.updatedAt = Date.now();
-      const changedOrders = toShip.map(({ index }) => orders[index]).filter(Boolean);
-      await persistChangedOrdersPatch(changedOrders);
-      job.results = batch.results;
-      job.successCount = batch.successCount;
-      job.orders = null; // FE dùng optimistic + refetch — không ghi đè full list
+      await persistShipJobOrderPatches(changedOrders);
 
-      const summary = buildShipConfirmSummaryPayload(toShip.length, batch);
+      const successCount = results.filter((r) => r.success).length;
+      const summary = buildShipConfirmSummaryPayload(toShip.length, {
+        successCount,
+        failedCount: failedOrders.length,
+        failedOrders,
+        results,
+      });
+      job.results = results;
+      job.successCount = summary.successCount;
       job.failedCount = summary.failCount;
       job.failCount = summary.failCount;
       job.failedOrders = summary.failedOrderDetails;
       job.failedOrderDetails = summary.failedOrderDetails;
       job.successfulOrderIds = summary.successfulOrderIds;
+      job.orders = null;
+      job.completed = toShip.length;
       {
         let message = `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn`;
         if (summary.failedOrderDetails.length > 0) {
@@ -18206,8 +18330,6 @@ async function startServer() {
         message += ".";
         job.message = message;
       }
-
-      // Confirm-only: KHÔNG tạo PDF. User in thủ công bằng nút "In đơn".
       job.phase = "done";
       job.status = "done";
     } catch (err: any) {
@@ -18217,55 +18339,56 @@ async function startServer() {
       console.error(`[Ship Order Job ${jobId}] Failed:`, err);
     } finally {
       job.updatedAt = Date.now();
-      releaseHeavyJob(`ship-order:${jobId}`);
     }
   }
 
-  // Non-blocking bulk ship: chỉ xác nhận lên sàn (ship_order). KHÔNG tạo PDF.
-  // Trả 202 ngay — không load/persist trước response (làm trong background job).
-  app.post("/api/shopee/ship-order/bulk-async", authMiddleware, async (req, res) => {
+  // Trả 202 ngay — validate + jobId only. Mọi I/O/Shopee chạy trong setImmediate.
+  app.post("/api/shopee/ship-order/bulk-async", authMiddleware, (req, res) => {
     try {
-    const { orderIds, orderSns, method } = req.body;
-    const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
-    const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
-    const snList = Array.isArray(orderSns) ? orderSns.map(String) : [];
-    if (idList.length === 0 && snList.length === 0) {
-      return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns." });
-    }
+      const { orderIds, orderSns, method } = req.body || {};
+      const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
+      const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
+      const snList = Array.isArray(orderSns) ? orderSns.map(String) : [];
+      if (idList.length === 0 && snList.length === 0) {
+        return res.status(400).json({ error: "Thiếu danh sách orderIds hoặc orderSns." });
+      }
 
-    const estimatedTotal = Math.max(
-      new Set([...idList, ...snList].map((s) => String(s || "").replace(/^shopee-/i, "").trim()).filter(Boolean)).size,
-      idList.length || snList.length,
-    );
+      const estimatedTotal = Math.max(
+        new Set(
+          [...idList, ...snList]
+            .map((s) => String(s || "").replace(/^shopee-/i, "").trim())
+            .filter(Boolean),
+        ).size,
+        idList.length || snList.length,
+      );
 
-    const jobId = createShipOrderJobId();
-    shipOrderJobs.set(jobId, {
-      id: jobId,
-      status: "pending",
-      phase: "pending",
-      message: "Đã tiếp nhận — đang xếp hàng xử lý...",
-      total: estimatedTotal,
-      completed: 0,
-      successCount: 0,
-      results: [],
-      printDocument: null,
-      orders: null,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    });
+      const jobId = createShipOrderJobId();
+      shipOrderJobs.set(jobId, {
+        id: jobId,
+        status: "pending",
+        phase: "pending",
+        message: "Đã tiếp nhận — đang xếp hàng xử lý...",
+        total: estimatedTotal,
+        completed: 0,
+        successCount: 0,
+        results: [],
+        printDocument: null,
+        orders: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
 
-    setImmediate(() => {
-      void executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
-    });
+      // 202 FIRST — background starts after response is queued.
+      res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
 
-    return res.status(202).json({
-      accepted: true,
-      jobId,
-      total: estimatedTotal,
-    });
+      setImmediate(() => {
+        void executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
+      });
     } catch (error: any) {
       console.error("[Ship Order Bulk Async] Lỗi nội bộ endpoint /api/shopee/ship-order/bulk-async:", error?.stack || error);
-      return res.status(500).json({ success: false, message: "Lỗi nội bộ server: " + error.message });
+      if (!res.headersSent) {
+        return res.status(500).json({ success: false, message: "Lỗi nội bộ server: " + error.message });
+      }
     }
   });
 
