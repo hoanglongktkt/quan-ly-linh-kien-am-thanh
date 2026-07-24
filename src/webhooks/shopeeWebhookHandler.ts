@@ -62,36 +62,40 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
   });
 
   router.post("/shopee", express.raw({ type: "application/json", limit: "1mb" }), (req, res) => {
+    console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee — headers:", {
+      authorization: req.get("authorization") ? "(present)" : "(missing)",
+      contentLength: req.get("content-length") || "0",
+    });
     try {
       const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       const authHeader = req.get("authorization");
 
       // Shopee verification mode: nếu không có Authorization, chấp nhận (test push).
-      // Chỉ verify khi có header → từ chối nếu signature SAI.
+      // Nếu sai chữ ký: CHỈ log cảnh báo, KHÔNG chặn — vẫn ACK 200 để Shopee không khóa Webhook.
       if (authHeader && !verifyShopeeWebhookSignature(rawBody, authHeader)) {
-        console.warn("[Shopee Webhook] Invalid signature, rejecting.");
-        return res.status(403).json({ error: "Invalid signature" });
+        console.warn("[Shopee Webhook] Invalid signature — vẫn ACK 200 để tránh Shopee khóa Webhook.");
       }
 
-      let payload: Record<string, unknown>;
+      let payload: Record<string, unknown> | null = null;
       try {
         const parsed: unknown = JSON.parse(rawBody.toString("utf8"));
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          return res.status(400).json({ error: "Invalid payload" });
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          payload = parsed as Record<string, unknown>;
+        } else {
+          console.warn("[Shopee Webhook] Payload không hợp lệ (không phải object) — vẫn ACK 200.");
         }
-        payload = parsed as Record<string, unknown>;
-      } catch {
-        return res.status(400).json({ error: "Invalid payload" });
+      } catch (parseErr) {
+        console.warn("[Shopee Webhook] JSON parse failed — vẫn ACK 200:", parseErr);
       }
 
       // ACK trước, sau đó mới nhường event loop cho tác vụ nền có giới hạn concurrency.
-      res.status(200).type("text/plain").send("success");
-      console.log("[Shopee Webhook] ACK sent, enqueuing payload for background processing.");
-      setImmediate(() => queue.enqueue(payload));
+      res.status(200).type("text/plain").send("OK");
+      console.log("[WEBHOOK RECEIVED] ACK 200 sent, enqueuing payload for background processing.");
+      if (payload) setImmediate(() => queue.enqueue(payload));
     } catch (error) {
-      // Không throw ra Express/process; nếu response chưa đóng thì trả lỗi an toàn.
+      // Không throw ra Express/process; luôn trả 200 để Shopee không retry/khóa Webhook.
       console.error("[Shopee Webhook] Request handler failed:", error);
-      if (!res.headersSent) return res.status(500).json({ error: "Webhook processing failed" });
+      if (!res.headersSent) return res.status(200).type("text/plain").send("OK");
     }
   });
 

@@ -9143,7 +9143,7 @@ async function persistShopeeOrderChunk(
     try {
       const mongoN = await bulkUpsertOrdersToStore(touched);
       console.log(
-        `[Orders Sync] Mongo bulkWrite OK — batch=${touched.length} written=${mongoN} (+${added}/~${updated})`,
+        `[DB UPDATED] Mongo bulkWrite OK — batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o) => o.orderSn).join(",")}`,
       );
     } catch (mongoErr: any) {
       console.error(
@@ -12229,7 +12229,7 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
   try {
     if (!body || typeof body !== "object") return;
 
-    console.log("WEBHOOK_PAYLOAD_DEBUG:", JSON.stringify(body));
+    console.log("[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:", JSON.stringify(body));
 
     // Webhook là kênh đồng bộ chính. Chỉ tắt khi vận hành chủ động đặt biến = 0.
     // Điều này tránh việc production im lặng bỏ qua mọi event vì thiếu biến môi trường.
@@ -12358,6 +12358,9 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
       if (isMongoReady()) {
         try {
           await bulkUpsertOrdersToStore([orders[idx]]);
+          console.log(
+            `[DB UPDATED] order_sn=${parsed.orderSn} shop_id=${shopId || orders[idx]?.shopId || "?"} status=${orders[idx]?.shopee_order_status || "?"} — upsert OK`,
+          );
         } catch (mongoErr: any) {
           console.warn(
             `[Shopee Webhook] Mongo upsert ${parsed.orderSn}:`,
@@ -12390,6 +12393,9 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
         if (row) {
           try {
             await bulkUpsertOrdersToStore([row]);
+            console.log(
+              `[DB UPDATED] (return/cancel) order_sn=${parsed.orderSn} shop_id=${row?.shopId || "?"} status=${row?.shopee_order_status || "?"} — upsert OK`,
+            );
           } catch (mongoErr: any) {
             console.warn(
               `[Shopee Webhook] Mongo upsert return ${parsed.orderSn}:`,
@@ -12494,7 +12500,7 @@ async function startServer() {
   const handleShopeeCallbackPostEarly = (req: any, res: any) => {
     try {
       console.log(
-        "[Shopee Callback POST]",
+        "[WEBHOOK RECEIVED]",
         JSON.stringify({
           method: req.method,
           url: req.originalUrl || req.url,
@@ -14408,6 +14414,7 @@ async function startServer() {
         });
       }
       const orders = (await loadOrdersFromStore()).filter(isValidOrder);
+      console.log(`[FRONTEND FETCHED] GET /api/orders/refresh — trả về ${orders.length} đơn từ MongoDB.`);
       return res.status(200).json({ success: true, data: orders });
     } catch (error: any) {
       console.error("[GET /api/orders/refresh] Mongo query failed:", error?.message || error);

@@ -403,6 +403,7 @@ export default function App() {
         }
         const sanitized = sanitizeOrders(data);
         setOrders(sanitized);
+        console.log('[FRONTEND FETCHED] /api/orders/refresh OK — số đơn:', sanitized.length);
         if (sanitized.length === 0) {
           void clearOrdersCache();
         } else {
@@ -412,7 +413,7 @@ export default function App() {
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG: (HTTP', response.status, ')');
       }
     } catch (err) {
-      console.error("Fetch orders error:", err);
+      console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
       if (!silent) setOrdersLoading(false);

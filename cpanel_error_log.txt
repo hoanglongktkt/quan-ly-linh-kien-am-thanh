@@ -1,13 +1,7 @@
-Exception: Error: EPIPE: broken pipe, write
-    at Socket._write (node:internal/net:75:18)
-    at writeOrBuffer (node:internal/streams/writable:570:12)
-    at _write (node:internal/streams/writable:499:10)
-    at Writable.write (node:internal/streams/writable:508:10)
-    at console.value (node:internal/console/constructor:313:16)
-    at console.error (node:internal/console/constructor:444:26)
-    at writeCpanelCrashLog (F:\web ban hang\web goc\server.cjs:205314:13)
-    at process.<anonymous> (F:\web ban hang\web goc\server.cjs:205319:3)
-    at process.emit (node:events:521:24)
-    at process._fatalException (node:internal/process/execution:159:25)
+Exception: Error: listen EADDRINUSE: address already in use 0.0.0.0:3000
+    at Server.setupListenHandle [as _listen2] (node:net:2009:16)
+    at listenInCluster (node:net:2066:12)
+    at node:net:2275:7
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
 ---
-2026-07-22T03:39:24.198Z
+2026-07-24T03:35:43.592Z

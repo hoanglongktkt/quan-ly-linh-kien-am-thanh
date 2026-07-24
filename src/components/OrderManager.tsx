@@ -69,6 +69,7 @@ import {
   Loader2,
   X,
   ImageOff,
+  RefreshCw,
 } from 'lucide-react';
 import { Order, ConnectedShop, SyncLog, Product, SystemFee } from '../types';
 import ManualOrderPage from './ManualOrderPage';
@@ -590,6 +591,22 @@ export default function OrderManager({
     return restored === 'pending_verification' ? 'pending_confirm' : restored;
   });
   const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>(() => readStoredCancelTab());
+
+  // Nút "Làm mới" thủ công — gọi GET /api/orders/refresh (chỉ đọc MongoDB, không gọi Shopee).
+  // isRefreshing PHẢI về false ở cả try (thành công) lẫn catch (lỗi) để tránh treo icon xoay.
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleRefreshOrders = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await onFetchOrders?.({ silent: false, bustCache: true });
+      console.log('[FRONTEND FETCHED] Làm mới đơn hàng thành công.');
+    } catch (err) {
+      console.error('[FRONTEND FETCHED] Làm mới đơn hàng thất bại:', err);
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     if (initialOrdersSubTab) {
@@ -3667,6 +3684,15 @@ export default function OrderManager({
 
         {/* Right action buttons */}
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleRefreshOrders}
+            disabled={isRefreshing || ordersLoading}
+            className="px-4 py-2 bg-white hover:bg-blue-50 border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing || ordersLoading ? 'animate-spin' : ''}`} />
+            <span>Làm mới</span>
+          </button>
           <button
             onClick={() => setShowCreateOrderPage(true)}
             className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-500/15 hover:shadow-emerald-500/30 transition-all flex items-center gap-2 cursor-pointer"

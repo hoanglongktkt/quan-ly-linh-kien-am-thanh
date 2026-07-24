@@ -1,6 +1,0 @@
-{
-  "name": "Shopee & TikTok Sales Hub",
-  "description": "Nền tảng quản lý bán hàng đa kênh (Shopee, TikTok Shop), tối ưu hóa doanh thu, chi phí, tồn kho, giá cả và đăng/sửa sản phẩm hàng loạt bằng công nghệ AI Gemini.",
-  "requestFramePermissions": ["camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

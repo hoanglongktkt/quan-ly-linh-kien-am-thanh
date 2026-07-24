@@ -1206,7 +1206,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
     await setMeta("orders_updated_at", new Date().toISOString());
     console.log(
-      `[MongoDB] bulkWrite orders — upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
+      `[DB UPDATED] bulkWrite orders — upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
     );
   });
   return ops.length;
