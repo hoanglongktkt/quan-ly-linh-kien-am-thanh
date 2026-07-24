@@ -2365,37 +2365,49 @@ export default function OrderManager({
 
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
-  const handleSyncOrders = async (type: 'incremental' | 'full' = 'incremental') => {
+  /**
+   * "Cập nhật đơn mới": hệ thống đã dùng Shopee Webhook để đồng bộ real-time
+   * vào Database, nên KHÔNG cần gọi lại API Shopee (onPullShopeeOrders) nữa —
+   * chỉ đọc lại dữ liệu DB nội bộ. Nhanh hơn nhiều và không phụ thuộc Shopee rate-limit.
+   * `type` giữ lại tham số cho tương thích chữ ký cũ (không còn phân biệt full/incremental).
+   */
+  const handleSyncOrders = async (_type: 'incremental' | 'full' = 'incremental') => {
     if (isSyncing) return;
     setIsSyncing(true);
-    const isFull = type === 'full';
-    onAddLog({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      channel: 'all',
-      type: 'stock_sync',
-      status: 'success',
-      message: isFull
-        ? 'Đã gửi Full Sync lịch sử đơn 30 ngày (ngầm) — UI không bị khóa.'
-        : 'Đã gửi đồng bộ đơn 2 giờ (ngầm) — UI không bị khóa.',
-    });
-
-    showToast(isFull ? 'Đã gửi Full Sync ngầm...' : 'Đang quét siêu tốc 2 giờ gần nhất...');
+    showToast('Đang tải lại danh sách đơn hàng mới nhất...');
 
     try {
-      // Fire-and-forget: backend trả 202 hoặc soft-ack nếu đang chạy — widget góc phải theo dõi.
-      await onPullShopeeOrders?.({ type });
+      await onFetchOrders?.({ silent: true, bustCache: true });
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: 'all',
+        type: 'stock_sync',
+        status: 'success',
+        message: 'Đã tải lại danh sách đơn hàng từ Database (Webhook đồng bộ real-time).',
+      });
+      showToast('Đã cập nhật danh sách đơn hàng mới nhất.');
     } catch (err: any) {
-      showToast(`Đồng bộ thất bại: ${err?.message || 'Vui lòng kiểm tra kết nối API và thử lại.'}`);
-      try {
-        void onFetchOrders?.({ silent: true });
-      } catch {
-        /* ignore */
-      }
+      showToast(`Không thể tải lại đơn hàng: ${err?.message || 'Vui lòng kiểm tra kết nối và thử lại.'}`);
     } finally {
+      // BẮT BUỘC: luôn clear loading dù thành công hay lỗi — tránh nút quay vô hạn.
       setIsSyncing(false);
     }
   };
+
+  /**
+   * Auto-refresh (polling) mỗi 15 giây — đọc lại DB nội bộ (silent, KHÔNG gọi Shopee).
+   * `silent: true` → onFetchOrders (App.tsx) không set ordersLoading, không hiện overlay,
+   * chỉ cập nhật mảng `orders` ở App — filter/lựa chọn cục bộ của OrderManager không bị reset.
+   */
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void onFetchOrders?.({ silent: true });
+    }, 15000);
+    return () => window.clearInterval(intervalId);
+    // onFetchOrders không ổn định reference — chỉ setup 1 lần khi mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Status Vietnamese styling and labeling helper matching mockup closely
   const getStatusBadge = (status: Order['status']) => {
