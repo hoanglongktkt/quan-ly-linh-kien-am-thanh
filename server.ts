@@ -7806,9 +7806,6 @@ async function enrichShopeeOrderTrackingFromApi(
 
     // Retry không kèm package_number — một số shop Shopee trả rỗng khi OFG package_number lệch.
     if (!hasUsableShopeeTrackingNumber(order) && pkgNum) {
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'post-fix',hypothesisId:'A',location:'server.ts:enrichShopeeOrderTrackingFromApi:retryNoPkg',message:'retry get_tracking_number without package_number',data:{orderSn:order?.orderSn,pkgNum,prevError:result?.error||null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       result = await shopeeGetTrackingNumberWithRetry(
         shopId,
         accessToken,
@@ -7818,13 +7815,6 @@ async function enrichShopeeOrderTrackingFromApi(
       );
       applyShopeeGetTrackingResponse(order, result);
     }
-    // #region agent log
-    {
-      const respTn = String(result?.response?.tracking_number || result?.tracking_number || "").trim();
-      const extracted = deepExtractShopeeTrackingCodes(result);
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'7b97f3'},body:JSON.stringify({sessionId:'7b97f3',runId:'post-fix',hypothesisId:'A,B',location:'server.ts:enrichShopeeOrderTrackingFromApi:afterGetTracking',message:'get_tracking_number result',data:{orderSn:order?.orderSn,apiError:result?.error||null,apiMessage:String(result?.message||'').slice(0,120),respTn:respTn||null,extractedCarrier:extracted.carrier||null,extractedInternal:extracted.internal||null,afterHasUsable:hasUsableShopeeTrackingNumber(order),afterTn:String(order.trackingNumber||order.tracking_no||'')||null,pkgUsed:pkgNum||null,light},timestamp:Date.now()})}).catch(()=>{});
-    }
-    // #endregion
 
     if (!hasUsableShopeeTrackingNumber(order)) {
       try {
@@ -9253,6 +9243,20 @@ function getOrderLookupIndex(orders: any[]): OrderLookupIndex {
     orderLookupIndex = rebuildOrderLookupIndex(orders);
   }
   return orderLookupIndex;
+}
+
+/**
+ * Local DB timeout guard — CHỈ dùng cho các route đọc MongoDB nội bộ
+ * (/api/dashboard, /api/products...). KHÔNG liên quan Shopee API.
+ * Mục đích: nếu Mongo bị chậm/mất kết nối, route vẫn trả JSON trong
+ * `timeoutMs` thay vì treo request → tránh 502 Bad Gateway trên cPanel.
+ */
+function withLocalDbTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}_timeout_${timeoutMs}ms`)), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
 }
 
 function loadOrders(): any[] {
@@ -13129,10 +13133,11 @@ async function startServer() {
   const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
   const PRODUCTS_PAGE_SIZE_MAX = 50;
 
+  // CHỈ đọc MongoDB nội bộ — TUYỆT ĐỐI không gọi Shopee API / fetch / axios ở đây.
   app.get("/api/products", authMiddleware, async (req, res) => {
     try {
-      await reloadCachesFromDb();
-      const all = await loadProducts();
+      await withLocalDbTimeout(reloadCachesFromDb(), 8000, "products_reload_cache");
+      const all = await withLocalDbTimeout(loadProducts(), 8000, "products_load");
       const rawPage = Number(req.query?.page);
       const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
       const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
@@ -14282,6 +14287,8 @@ async function startServer() {
   });
 
   // --- Dashboard API ---
+  // CHỈ đọc MongoDB/orders.json nội bộ — TUYỆT ĐỐI không gọi Shopee API / fetch / axios /
+  // hàm Tracking ở đây. Không chờ đồng bộ Shopee; luôn tính toán từ dữ liệu local hiện có.
   app.get("/api/dashboard", authMiddleware, async (req, res) => {
     try {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -14289,7 +14296,7 @@ async function startServer() {
       const range = getDashboardDateRange(dateRange);
       const allOrders = loadOrders();
       const orders = allOrders.filter(isDashboardOrder);
-      const products = await loadProducts();
+      const products = await withLocalDbTimeout(loadProducts(), 8000, "dashboard_load_products");
 
       const ordersInRange = orders.filter((o: any) =>
         isDateInRange(String(o.date || ""), range.start, range.end)
