@@ -7181,6 +7181,7 @@ const SHOPEE_ORDER_STATUS_MAP: Record<string, string> = {
   PENDING: "pending_confirm",
   IN_REVIEW: "pending_confirm",
   FRAUD_CHECK: "pending_confirm",
+  INVOICE_PENDING: "pending_confirm",
   READY_TO_SHIP: "unprocessed",
   PROCESSED: "processed",
   RETRY_SHIP: "unprocessed",
@@ -7214,7 +7215,13 @@ function mapShopeeStatusToLocal(
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
     return opts?.hasTracking ? "processed" : "unprocessed";
   }
-  if (raw === "UNPAID" || raw === "PENDING" || raw === "IN_REVIEW" || raw === "FRAUD_CHECK") {
+  if (
+    raw === "UNPAID" ||
+    raw === "PENDING" ||
+    raw === "IN_REVIEW" ||
+    raw === "FRAUD_CHECK" ||
+    raw === "INVOICE_PENDING"
+  ) {
     return "pending_confirm";
   }
   if (raw === "CANCELLED" || raw === "IN_CANCEL") return "cancelled";
