@@ -8064,6 +8064,7 @@ async function persistOrderTrackingToDb(order: any): Promise<void> {
         shopee_order_status:
           order.shopee_order_status != null ? String(order.shopee_order_status) : undefined,
         is_pending_shopee_check: order.is_pending_shopee_check === true,
+        shopId: order.shopId != null ? String(order.shopId) : undefined,
       });
     } catch (err: any) {
       console.warn(`[Shopee Tracking] Mongo findOneAndUpdate failed ${order.orderSn}:`, err?.message || err);
@@ -13583,12 +13584,17 @@ async function persistPendingShopeeCheckFlag(
   );
   if (isMongoReady() && orderSn) {
     try {
-      await updateOrderPendingShopeeCheckInStore(orderSn, true, {
-        status: "unprocessed",
-        isPrepared: false,
-        shopeeSyncPending: false,
-        shopeeSyncError: reason || "Đơn chưa sẵn sàng / lỗi Shopee khi ship_order",
-      });
+      await updateOrderPendingShopeeCheckInStore(
+        orderSn,
+        true,
+        {
+          status: "unprocessed",
+          isPrepared: false,
+          shopeeSyncPending: false,
+          shopeeSyncError: reason || "Đơn chưa sẵn sàng / lỗi Shopee khi ship_order",
+        },
+        orders[index].shopId != null ? String(orders[index].shopId) : undefined,
+      );
     } catch (err: any) {
       console.warn(`[Shopee Trap] Mongo updateOne failed order_sn=${orderSn}:`, err?.message || err);
     }
@@ -16366,15 +16372,21 @@ async function startServer() {
     ) {
       rawOrders = rawOrders.filter((o: any) => matchesReceivedCancelReturnTabOrder(o));
     } else if (
+      tab === "pending_confirm" ||
       tab === "pending_verification" ||
+      tab === "cho-xac-nhan" ||
       tab === "pending_shopee_check" ||
       tab === "dang_kiem_tra_shopee" ||
       tab === "shopee_check"
     ) {
+      // "Chờ xác nhận" = trạng thái Shopee chưa cho phép chuẩn bị hàng
+      // (UNPAID/PENDING/IN_REVIEW/FRAUD_CHECK/INVOICE_PENDING), lấy từ DB nội bộ
+      // (đã có Webhook lo sync) — KHÔNG gọi trực tiếp Shopee API.
       rawOrders = rawOrders.filter(
         (o: any) =>
           o.status === "pending_confirm" ||
-          ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK"].includes(
+          o.status === "pending_verification" ||
+          ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(
             String(o.shopee_order_status || "").toUpperCase(),
           ),
       );
@@ -16535,6 +16547,7 @@ async function startServer() {
           await markOrderHandedOverInStore(String(updated.orderSn || ""), {
             source,
             handedOverAt: String(updated.handedOverAt || ""),
+            shopId: updated.shopId != null ? String(updated.shopId) : undefined,
           });
         }
       } catch (err: any) {
@@ -16812,6 +16825,7 @@ async function startServer() {
         await markOrderHandedOverInStore(String(orders[index].orderSn || ""), {
           source: HANDED_OVER_SOURCE.MANUAL_BUTTON,
           handedOverAt: String(orders[index].handedOverAt || ""),
+          shopId: orders[index].shopId != null ? String(orders[index].shopId) : undefined,
         });
       } catch (err: any) {
         console.error("[Orders PATCH] markOrderHandedOver failed:", err?.message || err);

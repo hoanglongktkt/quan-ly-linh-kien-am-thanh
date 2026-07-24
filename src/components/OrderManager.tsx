@@ -138,7 +138,13 @@ function isPendingConfirmOrder(order: Order): boolean {
   if (matchesProcessedPickupTab(order) || matchesUnprocessedPickupTab(order)) return false;
 
   if (order.status === 'pending_confirm' || order.status === 'pending_verification') return true;
-  return raw === 'UNPAID' || raw === 'PENDING' || raw === 'IN_REVIEW' || raw === 'FRAUD_CHECK';
+  return (
+    raw === 'UNPAID' ||
+    raw === 'PENDING' ||
+    raw === 'IN_REVIEW' ||
+    raw === 'FRAUD_CHECK' ||
+    raw === 'INVOICE_PENDING'
+  );
 }
 
 function calculateDynamicFeeItems(itemAmount: number, systemFees: SystemFee[]) {

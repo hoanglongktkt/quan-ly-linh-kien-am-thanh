@@ -115,6 +115,11 @@ const OrderSchema = new Schema<OrderDoc>(
   { collection: "orders", versionKey: false }
 );
 
+// Compound index bắt buộc cho multi-shop: mọi query/upsert đơn hàng phải lọc
+// theo cặp (orderSn, shopId) để tránh đè chéo dữ liệu giữa các shop khác nhau
+// có cùng orderSn (về lý thuyết hiếm nhưng vẫn phải chặn ở tầng DB).
+OrderSchema.index({ orderSn: 1, shopId: 1 });
+
 let ProductModel: Model<ProductDoc>;
 let ChannelListingModel: Model<ListingDoc>;
 let MetaModel: Model<MetaDoc>;
@@ -290,6 +295,13 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
       console.log("[MongoDB] Product indexes synced (sku, data.sku, text title/sku, children.sku)");
     } catch (idxErr) {
       console.warn("[MongoDB] syncIndexes products:", idxErr);
+    }
+
+    try {
+      await OrderModel.syncIndexes();
+      console.log("[MongoDB] Order indexes synced (orderSn, shopId, orderSn+shopId compound)");
+    } catch (idxErr) {
+      console.warn("[MongoDB] syncIndexes orders:", idxErr);
     }
 
     // One-time migrate từ JSON local nếu Atlas trống
@@ -1162,9 +1174,20 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false",
     });
 
-    // Filter STRICT theo orderSn (Shopee orderSn globally unique).
-    // XÓA logic $or nguy hiểm — chỉ query theo orderSn thuần túy.
-    const filter: Record<string, unknown> = orderSn ? { orderSn } : { _id };
+    // Filter ghép (Compound Filter) BẮT BUỘC theo (orderSn, shopId) — multi-shop safe.
+    // Khi đã biết shopId: khớp đúng shop đó HOẶC record cũ chưa có shopId (backfill qua $set,
+    // không tạo bản ghi rác trùng orderSn). KHÔNG dùng $or lỏng lẻo dạng { shopId: null } đứng
+    // riêng — luôn bọc trong cùng orderSn/_id để không rò rỉ chéo giữa các đơn khác nhau.
+    const shopScope = shopIdStr
+      ? { $or: [{ shopId: shopIdStr }, { shopId: null }, { shopId: { $exists: false } }] }
+      : null;
+    const filter: Record<string, unknown> = orderSn
+      ? shopScope
+        ? { orderSn, ...shopScope }
+        : { orderSn }
+      : shopScope
+        ? { _id, ...shopScope }
+        : { _id };
 
     ops.push({
       updateOne: {
@@ -1190,14 +1213,40 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 }
 
 /**
+ * Filter ghép (Compound Filter) BẮT BUỘC cho mọi thao tác update/upsert đơn hàng:
+ * luôn định danh theo orderSn/_id/data.orderSn VÀ, khi biết shopId, chỉ khớp đúng
+ * shop đó hoặc record cũ chưa gán shopId (để `$set` backfill, không tạo bản ghi rác).
+ * KHÔNG dùng `$or: [{ shopId: null }]` đứng riêng ở top-level — luôn bọc trong cùng
+ * điều kiện orderSn/_id để tránh rò rỉ dữ liệu chéo giữa các shop.
+ */
+function buildOrderCompoundFilter(
+  sn: string,
+  _id: string,
+  shopId?: string | null,
+): Record<string, unknown> {
+  const identity = { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] };
+  const shopIdStr = shopId != null ? String(shopId).trim() : "";
+  if (!shopIdStr) return identity;
+  return {
+    $and: [
+      identity,
+      { $or: [{ shopId: shopIdStr }, { shopId: null }, { shopId: { $exists: false } }] },
+    ],
+  };
+}
+
+/**
  * API bàn giao / quét QR — CHỈ `$set: { is_handed_over: true }`.
  * Không gọi Shopee, không đụng field khác.
+ * `findOneAndUpdate` + upsert:true đảm bảo atomic — race condition webhook/quét QR
+ * đồng thời không thể lưu đè mất dữ liệu.
  */
 export async function markOrderHandedOverInStore(
   orderSn: string,
   meta?: {
     source?: string;
     handedOverAt?: string;
+    shopId?: string;
   },
 ): Promise<boolean> {
   if (!isMongoReady()) return false;
@@ -1207,6 +1256,7 @@ export async function markOrderHandedOverInStore(
   const _id = `shopee-${sn}`;
   const now = meta?.handedOverAt || new Date().toISOString();
   const source = meta?.source || "manual_button";
+  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
 
   const $set: Record<string, unknown> = {
     is_handed_over: true,
@@ -1224,15 +1274,27 @@ export async function markOrderHandedOverInStore(
     "data.localStatusAt": now,
     "data.local_status_updated_at": now,
   };
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
+  const $setOnInsert: Record<string, unknown> = {
+    _id,
+    orderSn: sn,
+    "data.id": _id,
+    "data.orderSn": sn,
+    "data.channel": "shopee",
+  };
 
-  const result = await OrderModel.updateOne(
-    { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] },
-    { $set },
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set, $setOnInsert },
+    { new: true, upsert: true },
   );
   console.log(
-    `[MongoDB] markOrderHandedOver is_handed_over=true order_sn=${sn} matched=${result.matchedCount} modified=${result.modifiedCount}`,
+    `[MongoDB] findOneAndUpdate markOrderHandedOver is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
-  return (result.matchedCount || 0) > 0 || (result.modifiedCount || 0) > 0;
+  return Boolean(result);
 }
 
 /** Cưỡng bức update flag is_pending_shopee_check theo order_sn (JSON sync caller + Mongo). */
@@ -1240,30 +1302,44 @@ export async function updateOrderPendingShopeeCheckInStore(
   orderSn: string,
   isPending: boolean,
   patch?: Record<string, unknown>,
+  shopId?: string,
 ): Promise<boolean> {
   if (!isMongoReady()) return false;
   requireMongo();
   const sn = String(orderSn || "").trim();
   if (!sn) return false;
   const _id = `shopee-${sn}`;
+  const shopIdStr = shopId != null ? String(shopId).trim() : "";
   const $set: Record<string, unknown> = {
     is_pending_shopee_check: isPending,
     "data.is_pending_shopee_check": isPending,
   };
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
   if (patch) {
     for (const [k, v] of Object.entries(patch)) {
       $set[k] = v;
       $set[`data.${k}`] = v;
     }
   }
-  const result = await OrderModel.updateOne(
-    { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] },
-    { $set },
+  const $setOnInsert: Record<string, unknown> = {
+    _id,
+    orderSn: sn,
+    "data.id": _id,
+    "data.orderSn": sn,
+    "data.channel": "shopee",
+  };
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set, $setOnInsert },
+    { new: true, upsert: true },
   );
   console.log(
-    `[MongoDB] updateOne is_pending_shopee_check=${isPending} order_sn=${sn} matched=${result.matchedCount} modified=${result.modifiedCount}`,
+    `[MongoDB] findOneAndUpdate is_pending_shopee_check=${isPending} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
-  return (result.matchedCount || 0) > 0 || (result.modifiedCount || 0) > 0;
+  return Boolean(result);
 }
 
 /** findOneAndUpdate tracking_no / trackingNumber (+ status heal) vào Mongo theo order_sn. */
@@ -1277,6 +1353,7 @@ export async function updateOrderTrackingInStore(
     isPrepared?: boolean;
     shopee_order_status?: string;
     is_pending_shopee_check?: boolean;
+    shopId?: string;
   },
 ): Promise<boolean> {
   if (!isMongoReady()) return false;
@@ -1285,11 +1362,16 @@ export async function updateOrderTrackingInStore(
   const tn = String(trackingNo || "").trim();
   if (!sn || !tn) return false;
   const _id = `shopee-${sn}`;
+  const shopIdStr = extra?.shopId != null ? String(extra.shopId).trim() : "";
   const $set: Record<string, unknown> = {
     tracking_no: tn,
     "data.tracking_no": tn,
     "data.trackingNumber": tn,
   };
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
   if (extra?.internalTrackingCode) {
     $set["data.internalTrackingCode"] = extra.internalTrackingCode;
   }
@@ -1310,13 +1392,20 @@ export async function updateOrderTrackingInStore(
     $set.is_pending_shopee_check = extra.is_pending_shopee_check;
     $set["data.is_pending_shopee_check"] = extra.is_pending_shopee_check;
   }
+  const $setOnInsert: Record<string, unknown> = {
+    _id,
+    orderSn: sn,
+    "data.id": _id,
+    "data.orderSn": sn,
+    "data.channel": "shopee",
+  };
   const result = await OrderModel.findOneAndUpdate(
-    { $or: [{ orderSn: sn }, { _id }, { "data.orderSn": sn }] },
-    { $set },
-    { new: true, upsert: false },
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set, $setOnInsert },
+    { new: true, upsert: true },
   );
   console.log(
-    `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} status=${extra?.status || "-"} ok=${Boolean(result)}`,
+    `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} shopId=${shopIdStr || "-"} status=${extra?.status || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
 }
