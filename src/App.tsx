@@ -220,6 +220,13 @@ export default function App() {
 
   const [orders, setOrders] = useState<Order[]>([]);
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
+  /** true chỉ sau khi ĐÃ có ít nhất 1 response thành công (success:true) từ
+   * /api/orders/refresh — dùng để phân biệt "chưa tải xong lần đầu" (phải hiện
+   * loading) với "đã tải xong và THẬT SỰ không có đơn nào" (mới hiện "0 đơn").
+   * Tránh tình trạng F5 xong màn hình chớp "0 đơn" trước khi request đầu tiên
+   * kịp chạy xong (silent fetch không set ordersLoading nên trước đây dễ lộ
+   * trạng thái rỗng giả trong lúc chờ token verify + bootstrap chạy). */
+  const [hasLoadedOrdersOnce, setHasLoadedOrdersOnce] = useState<boolean>(false);
   const [productsLoading, setProductsLoading] = useState<boolean>(false);
   /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
@@ -442,6 +449,7 @@ export default function App() {
         lastAppliedOrdersSeqRef.current = requestId;
         const sanitized = sanitizeOrders(data);
         setOrders(sanitized);
+        setHasLoadedOrdersOnce(true);
         console.log('[FRONTEND FETCHED] /api/orders/refresh OK — số đơn:', sanitized.length);
         if (sanitized.length === 0) {
           void clearOrdersCache();
@@ -453,6 +461,16 @@ export default function App() {
       }
     } catch (err) {
       console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
+      // QUAN TRỌNG: lỗi mạng/timeout (AbortError, fetch failed...) TRƯỚC ĐÂY không
+      // được retry — chỉ nhánh success:false ở trên mới retry. Đây chính là lý do
+      // sau F5 lúc server/Mongo vừa cold-start, request đầu tiên timeout xong là
+      // bỏ cuộc luôn, để trống danh sách cho tới khi người dùng tự bấm "Làm mới"
+      // 2-3 lần. Giờ retry luôn cả lỗi mạng/timeout, y hệt nhánh mongodb_not_ready.
+      if (retriesLeft > 0) {
+        window.setTimeout(() => {
+          void fetchOrders({ silent, bustCache, retriesLeft: retriesLeft - 1 });
+        }, 3000);
+      }
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
       if (!silent) setOrdersLoading(false);
@@ -1189,7 +1207,15 @@ export default function App() {
       purgeLegacyCatalogCache();
 
       // Không hydrate IndexedDB cũ trước API — tránh hiện đơn bóng ma sau purge.
+      // (thao tác IndexedDB cục bộ, rất nhanh — an toàn để await trước khi fetch).
       await clearOrdersCache();
+
+      // QUAN TRỌNG: bắn fetchOrders() NGAY sau khi dọn cache — KHÔNG chờ wipe-all
+      // (1 round-trip network, có thể mất vài trăm ms tới vài giây). Trước đây
+      // fetchOrders() chỉ chạy SAU wipe-all nên mỗi lần F5, request đơn hàng thật
+      // bị delay theo wipe-all — đúng lúc đó `orders` rỗng và `ordersLoading` cũng
+      // chưa bật (chỉ bật khi fetchOrders() thực sự bắt đầu) → UI lộ "0 đơn" giả.
+      fetchOrders();
 
       if (safeGetItem(CATALOG_PURGE_FLAG) !== '1') {
         try {
@@ -1206,7 +1232,6 @@ export default function App() {
         purgeLegacyCatalogCache();
       }
 
-      fetchOrders();
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });
       fetchSuppliers();
@@ -1761,7 +1786,7 @@ export default function App() {
               orders={orders}
               onUpdateOrders={handleUpdateOrders}
               onFetchOrders={fetchOrders}
-              ordersLoading={ordersLoading}
+              ordersLoading={ordersLoading || (!hasLoadedOrdersOnce && orders.length === 0)}
               shops={settings.shops || []}
               systemFees={settings.systemFees ?? []}
               onAddLog={handleAddLog}

@@ -209799,7 +209799,7 @@ function dedupeShopeeParentVariantRows(products) {
   return [...byItem.values(), ...others];
 }
 var SHOPEE_LOGISTICS_TIMEOUT_MS = 2e4;
-var SHIP_ORDER_OPERATION_TIMEOUT_MS = 45e3;
+var SHIP_ORDER_OPERATION_TIMEOUT_MS = 1e4;
 async function withOperationTimeout(promise2, ms2, label) {
   let timer;
   try {
@@ -218649,40 +218649,6 @@ async function startServer2() {
       job.failedCount = batch.failedCount;
       job.failedOrders = batch.failedOrders;
       job.message = `X\xE1c nh\u1EADn th\xE0nh c\xF4ng ${batch.successCount} \u0111\u01A1n. B\u1ECF qua ${batch.failedCount} \u0111\u01A1n b\u1ECB l\u1ED7i.`;
-      if (batch.successfulShopeeOrders.length > 0) {
-        job.status = "printing";
-        job.updatedAt = Date.now();
-        try {
-          const printDocument = await autoPrintLabelsForShopeeOrders(orders, batch.successfulShopeeOrders);
-          if (printDocument?.printedOrderSns?.length) {
-            const printedSet = new Set(printDocument.printedOrderSns.map(String));
-            const printedChanged = [];
-            for (let i6 = 0; i6 < orders.length; i6++) {
-              if (printedSet.has(String(orders[i6].orderSn))) {
-                const hasTn = hasUsableShopeeTrackingNumber(orders[i6]) || orderHasPrintableTracking(orders[i6]);
-                orders[i6] = {
-                  ...orders[i6],
-                  isPrinted: true,
-                  isPrepared: true,
-                  ...hasTn ? { status: "processed" } : {}
-                };
-                printedChanged.push(orders[i6]);
-              }
-            }
-            if (printedChanged.length) {
-              await persistOrdersToDatabase(orders, printedChanged);
-            }
-          }
-          job.printDocument = printDocument;
-          job.orders = orders.filter(isValidOrder);
-        } catch (printErr) {
-          console.error(`[Ship Order Job ${jobId}] Auto-print l\u1ED7i (b\u1ECF qua):`, printErr?.stack || printErr);
-          job.printDocument = {
-            url: null,
-            message: printErr?.message || "L\u1ED7i t\u1EF1 \u0111\u1ED9ng in v\u1EADn \u0111\u01A1n sau khi x\xE1c nh\u1EADn."
-          };
-        }
-      }
       job.status = "done";
     } catch (err2) {
       job.status = "failed";

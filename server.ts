@@ -5683,7 +5683,9 @@ function dedupeShopeeParentVariantRows(products: any[]): any[] {
 // drops the parcel at a branch) or "non_integrated" (3rd-party carrier, manual
 // tracking number), plus the concrete address/time-slot/branch options.
 const SHOPEE_LOGISTICS_TIMEOUT_MS = 20_000;
-const SHIP_ORDER_OPERATION_TIMEOUT_MS = 45_000;
+// Giảm từ 45s → 10s: mỗi đơn treo tối đa 10s rồi coi là lỗi (catch ở processShipOrderBatch
+// tự chuyển sang "thất bại" và tiếp tục đơn kế — không được để 1 đơn kẹt kéo cả job tới ~2 phút).
+const SHIP_ORDER_OPERATION_TIMEOUT_MS = 10_000;
 
 async function withOperationTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -17523,43 +17525,11 @@ async function startServer() {
       job.failedOrders = batch.failedOrders;
       job.message = `Xác nhận thành công ${batch.successCount} đơn. Bỏ qua ${batch.failedCount} đơn bị lỗi.`;
 
-      if (batch.successfulShopeeOrders.length > 0) {
-        job.status = "printing";
-        job.updatedAt = Date.now();
-        try {
-          const printDocument = await autoPrintLabelsForShopeeOrders(orders, batch.successfulShopeeOrders);
-          if (printDocument?.printedOrderSns?.length) {
-            const printedSet = new Set(printDocument.printedOrderSns.map(String));
-            const printedChanged: any[] = [];
-            for (let i = 0; i < orders.length; i++) {
-              if (printedSet.has(String(orders[i].orderSn))) {
-                const hasTn =
-                  hasUsableShopeeTrackingNumber(orders[i]) || orderHasPrintableTracking(orders[i]);
-                orders[i] = {
-                  ...orders[i],
-                  isPrinted: true,
-                  isPrepared: true,
-                  ...(hasTn ? { status: "processed" } : {}),
-                };
-                printedChanged.push(orders[i]);
-              }
-            }
-            if (printedChanged.length) {
-              await persistOrdersToDatabase(orders, printedChanged);
-            }
-          }
-          job.printDocument = printDocument;
-          job.orders = orders.filter(isValidOrder);
-        } catch (printErr: any) {
-          // In vận đơn lỗi không được làm fail toàn bộ job xác nhận.
-          console.error(`[Ship Order Job ${jobId}] Auto-print lỗi (bỏ qua):`, printErr?.stack || printErr);
-          job.printDocument = {
-            url: null,
-            message: printErr?.message || "Lỗi tự động in vận đơn sau khi xác nhận.",
-          };
-        }
-      }
-
+      // QUAN TRỌNG: KHÔNG tạo PDF ngay tại đây nữa — việc gọi Shopee create_shipping_document
+      // + retry GHN/J&T có thể mất tới ~2 phút, khiến FE polling job này bị "treo" chờ suốt
+      // thời gian đó dù đơn đã xác nhận xong từ lâu. Job xác nhận PHẢI trả "done" ngay khi
+      // ship_order xong; việc tạo PDF được FE gọi riêng qua job độc lập
+      // POST /api/shopee/print-document/async (đã có sẵn, cũng chạy nền + có poll riêng).
       job.status = "done";
     } catch (err: any) {
       job.status = "failed";
