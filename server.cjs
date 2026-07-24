@@ -204418,6 +204418,141 @@ function getHandOverIneligibleReason(order) {
   return "";
 }
 
+// src/services/redis.ts
+var import_ioredis = __toESM(require("ioredis"), 1);
+var REDIS_URL = String(process.env.REDIS_URL || process.env.REDIS_URI || "").trim();
+var ADDRESS_LIST_TTL_SEC = 24 * 60 * 60;
+var ADDRESS_LIST_KEY_PREFIX = "shopee:address_list:";
+var redis = null;
+var redisDisabled = false;
+var lastWarnAt = 0;
+function warnRedis(msg, err2) {
+  const now = Date.now();
+  if (now - lastWarnAt < 3e4) return;
+  lastWarnAt = now;
+  const detail = err2 instanceof Error ? err2.message : err2 ? String(err2) : "";
+  console.warn(`[Redis] ${msg}${detail ? `: ${detail}` : ""} \u2014 fallback (no cache).`);
+}
+function getRedis() {
+  if (redisDisabled) return null;
+  if (!REDIS_URL) {
+    redisDisabled = true;
+    return null;
+  }
+  if (redis) return redis;
+  try {
+    redis = new import_ioredis.default(REDIS_URL, {
+      maxRetriesPerRequest: 1,
+      enableReadyCheck: true,
+      lazyConnect: true,
+      connectTimeout: 3e3,
+      retryStrategy(times) {
+        if (times > 3) {
+          redisDisabled = true;
+          warnRedis("too many reconnect attempts \u2014 disabling for this process");
+          return null;
+        }
+        return Math.min(times * 200, 1e3);
+      }
+    });
+    redis.on("error", (err2) => {
+      warnRedis("client error", err2);
+    });
+    redis.on("end", () => {
+      warnRedis("connection ended");
+    });
+  } catch (err2) {
+    warnRedis("failed to create client", err2);
+    redisDisabled = true;
+    redis = null;
+  }
+  return redis;
+}
+async function ensureConnected(client) {
+  try {
+    if (client.status === "ready") return true;
+    if (client.status === "wait" || client.status === "close" || client.status === "end") {
+      await client.connect();
+    } else if (client.status === "connecting") {
+      await new Promise((resolve8, reject) => {
+        const onReady = () => {
+          cleanup();
+          resolve8();
+        };
+        const onError3 = (e6) => {
+          cleanup();
+          reject(e6);
+        };
+        const cleanup = () => {
+          client.off("ready", onReady);
+          client.off("error", onError3);
+        };
+        client.once("ready", onReady);
+        client.once("error", onError3);
+        setTimeout(() => {
+          cleanup();
+          reject(new Error("connect timeout"));
+        }, 3e3);
+      });
+    }
+    return client.status === "ready";
+  } catch (err2) {
+    warnRedis("connect failed", err2);
+    return false;
+  }
+}
+function shopeeAddressListCacheKey(shopId) {
+  return `${ADDRESS_LIST_KEY_PREFIX}${String(shopId || "").trim()}`;
+}
+async function redisGetJson(key) {
+  const client = getRedis();
+  if (!client) return null;
+  try {
+    if (!await ensureConnected(client)) return null;
+    const raw = await client.get(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (err2) {
+    warnRedis(`GET ${key} failed`, err2);
+    return null;
+  }
+}
+async function redisSetJson(key, value2, ttlSeconds = ADDRESS_LIST_TTL_SEC) {
+  const client = getRedis();
+  if (!client) return false;
+  try {
+    if (!await ensureConnected(client)) return false;
+    const payload = JSON.stringify(value2);
+    if (ttlSeconds > 0) {
+      await client.set(key, payload, "EX", ttlSeconds);
+    } else {
+      await client.set(key, payload);
+    }
+    return true;
+  } catch (err2) {
+    warnRedis(`SET ${key} failed`, err2);
+    return false;
+  }
+}
+async function getCachedShopeeAddressList(shopId) {
+  const sid = String(shopId || "").trim();
+  if (!sid) return null;
+  const cached = await redisGetJson(shopeeAddressListCacheKey(sid));
+  if (!cached || !cached.result) return null;
+  const list2 = Array.isArray(cached.list) ? cached.list : cached.result?.response?.address_list || cached.result?.address_list || [];
+  return { result: cached.result, list: list2, cachedAt: cached.cachedAt || Date.now() };
+}
+async function setCachedShopeeAddressList(shopId, result) {
+  const sid = String(shopId || "").trim();
+  if (!sid || !result || result.error) return false;
+  const list2 = result.response?.address_list || result.address_list || [];
+  return redisSetJson(shopeeAddressListCacheKey(sid), {
+    result,
+    list: list2,
+    cachedAt: Date.now()
+  }, ADDRESS_LIST_TTL_SEC);
+}
+
 // src/db/mongoStore.ts
 var import_mongoose = __toESM(require("mongoose"), 1);
 var import_fs2 = __toESM(require("fs"), 1);
@@ -205549,24 +205684,50 @@ async function mirrorTopLevelTrackingIntoData() {
   );
   return ops.length;
 }
-async function loadOrdersFromStore() {
+async function loadOrdersFromStore(opts) {
   if (!isMongoReady()) return [];
   requireMongo();
+  const limit = typeof opts?.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0 ? Math.min(Math.floor(opts.limit), 5e3) : void 0;
+  const snList = Array.isArray(opts?.orderSns) ? [
+    ...new Set(
+      opts.orderSns.map((s6) => String(s6 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+    )
+  ] : [];
+  const idList = Array.isArray(opts?.ids) ? [...new Set(opts.ids.map((s6) => String(s6 || "").trim()).filter(Boolean))] : [];
+  const filter2 = {};
+  if (snList.length > 0 || idList.length > 0) {
+    const or2 = [];
+    if (snList.length > 0) {
+      or2.push({ orderSn: { $in: snList } });
+      or2.push({ "data.orderSn": { $in: snList } });
+      or2.push({ _id: { $in: snList.map((sn3) => `shopee-${sn3}`) } });
+    }
+    if (idList.length > 0) {
+      or2.push({ _id: { $in: idList } });
+      or2.push({ "data.id": { $in: idList } });
+    }
+    filter2.$or = or2;
+  }
   let docs;
   try {
-    docs = await OrderModel.find({}).sort({ "data.date": -1, _id: -1 }).maxTimeMS(15e3).lean();
+    let q3 = OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).maxTimeMS(15e3);
+    if (limit) q3 = q3.limit(limit);
+    docs = await q3.lean();
   } catch (err2) {
     console.warn(
       "[MongoDB] loadOrdersFromStore sorted query failed, retry unsorted:",
       err2?.message || err2
     );
-    docs = await OrderModel.find({}).maxTimeMS(15e3).lean();
+    let q3 = OrderModel.find(filter2).maxTimeMS(15e3);
+    if (limit) q3 = q3.limit(limit);
+    docs = await q3.lean();
     docs.sort((a6, b2) => {
       const da = String(a6?.data?.date || "");
       const db = String(b2?.data?.date || "");
       if (da !== db) return da < db ? 1 : -1;
       return String(b2?._id || "").localeCompare(String(a6?._id || ""));
     });
+    if (limit) docs = docs.slice(0, limit);
   }
   const out = [];
   for (const d4 of docs) {
@@ -208911,17 +209072,6 @@ var shopeeSyncQueue = [];
 var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
 var shopeeSyncQueueRunning = false;
 var cpanelHeavyJobActive = null;
-function tryAcquireHeavyJob(name) {
-  if (cpanelHeavyJobActive) {
-    console.warn(`[Heavy Job] T\u1EEB ch\u1ED1i "${name}" \u2014 "${cpanelHeavyJobActive}" \u0111ang ch\u1EA1y`);
-    return false;
-  }
-  cpanelHeavyJobActive = name;
-  return true;
-}
-function releaseHeavyJob(name) {
-  if (cpanelHeavyJobActive === name) cpanelHeavyJobActive = null;
-}
 function detectStockPriceChanges(before, after) {
   const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
   const stockAfter = Math.max(0, Math.round(Number(after?.stock) || 0));
@@ -209902,26 +210052,51 @@ function dedupeShopeeParentVariantRows(products) {
   }
   return [...byItem.values(), ...others];
 }
-var SHOPEE_LOGISTICS_TIMEOUT_MS = 2e4;
-var SHIP_ORDER_OPERATION_TIMEOUT_MS = 1e4;
-var shopeeAddressListCache = /* @__PURE__ */ new Map();
-var SHOPEE_ADDRESS_LIST_CACHE_TTL_MS = 6e4;
-async function withOperationTimeout(promise2, ms2, label) {
+var SHOPEE_LOGISTICS_TIMEOUT_MS = 5e3;
+var SHIP_ORDER_OPERATION_TIMEOUT_MS = 8e3;
+var SHIP_ORDER_BATCH_CONCURRENCY = 20;
+var SHIP_ORDER_CHUNK_SIZE = 25;
+var SHIP_ORDER_CHUNK_PAUSE_MS = 50;
+async function getShopeeAddressListCached(shopId, accessToken, signal) {
+  const sid = String(shopId || "").trim();
+  const cached = await getCachedShopeeAddressList(sid);
+  if (cached?.result && !cached.result.error) {
+    return { result: cached.result, list: cached.list || [], fromCache: true };
+  }
+  const result = await shopeeGetAddressList(sid, accessToken, signal);
+  const list2 = result?.response?.address_list || result?.address_list || [];
+  if (result && !result.error) {
+    await setCachedShopeeAddressList(sid, result);
+  }
+  return { result, list: list2, fromCache: false };
+}
+async function withOperationTimeout(work, ms2, label) {
+  const controller = new AbortController();
   let timer;
+  const promise2 = typeof work === "function" ? work(controller.signal) : work;
   try {
     return await Promise.race([
       promise2,
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timeout sau ${ms2 / 1e3} gi\xE2y.`)), ms2);
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`${label} timeout sau ${ms2 / 1e3} gi\xE2y.`));
+        }, ms2);
       })
     ]);
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
-async function fetchShopeeLogisticsJson(url2, init2, context) {
+async function fetchShopeeLogisticsJson(url2, init2, context, opts) {
+  const timeoutMs = opts?.timeoutMs ?? SHOPEE_LOGISTICS_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SHOPEE_LOGISTICS_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onParentAbort = () => controller.abort();
+  if (opts?.signal) {
+    if (opts.signal.aborted) controller.abort();
+    else opts.signal.addEventListener("abort", onParentAbort, { once: true });
+  }
   try {
     const response = await fetch(url2, { ...init2, signal: controller.signal });
     const raw = await response.text();
@@ -209935,15 +210110,16 @@ async function fetchShopeeLogisticsJson(url2, init2, context) {
     }
     return { response, json: json2 };
   } catch (error3) {
-    if (error3?.name === "AbortError") {
-      throw new Error(`Shopee ${context} timeout sau ${SHOPEE_LOGISTICS_TIMEOUT_MS / 1e3} gi\xE2y.`);
+    if (error3?.name === "AbortError" || opts?.signal?.aborted) {
+      throw new Error(`Shopee ${context} timeout sau ${timeoutMs / 1e3} gi\xE2y.`);
     }
     throw error3;
   } finally {
     clearTimeout(timer);
+    opts?.signal?.removeEventListener("abort", onParentAbort);
   }
 }
-async function shopeeGetShippingParameter(shopId, accessToken, orderSn, packageNumber) {
+async function shopeeGetShippingParameter(shopId, accessToken, orderSn, packageNumber, signal) {
   const apiPath = "/api/v2/logistics/get_shipping_parameter";
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -209957,11 +210133,11 @@ async function shopeeGetShippingParameter(shopId, accessToken, orderSn, packageN
   });
   if (packageNumber) params.set("package_number", packageNumber);
   const url2 = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const { response, json: json2 } = await fetchShopeeLogisticsJson(url2, {}, "get_shipping_parameter");
+  const { response, json: json2 } = await fetchShopeeLogisticsJson(url2, {}, "get_shipping_parameter", { signal });
   console.log(`[Shopee API] GET ${apiPath} (order_sn=${orderSn}) -> HTTP ${response.status}:`, JSON.stringify(json2));
   return json2;
 }
-async function shopeeGetAddressList(shopId, accessToken) {
+async function shopeeGetAddressList(shopId, accessToken, signal) {
   const apiPath = "/api/v2/logistics/get_address_list";
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -209973,7 +210149,7 @@ async function shopeeGetAddressList(shopId, accessToken) {
     sign
   });
   const url2 = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const { response, json: json2 } = await fetchShopeeLogisticsJson(url2, {}, "get_address_list");
+  const { response, json: json2 } = await fetchShopeeLogisticsJson(url2, {}, "get_address_list", { signal });
   console.log(`[Shopee API] GET ${apiPath} (shop_id=${shopId}) -> HTTP ${response.status}:`, JSON.stringify(json2));
   return json2;
 }
@@ -210022,7 +210198,7 @@ function resolvePickupShipmentFromParams(paramPickup, shopAddressList) {
   }
   return null;
 }
-async function shopeeShipOrder(shopId, accessToken, orderSn, shipmentBody) {
+async function shopeeShipOrder(shopId, accessToken, orderSn, shipmentBody, signal) {
   const apiPath = "/api/v2/logistics/ship_order";
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -210033,12 +210209,17 @@ async function shopeeShipOrder(shopId, accessToken, orderSn, shipmentBody) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
-  }, "ship_order");
+  }, "ship_order", { signal });
   console.log(`[Shopee API] POST ${apiPath} (order_sn=${orderSn}) body=${JSON.stringify(body)} -> HTTP ${response.status}:`, JSON.stringify(json2));
   return json2;
 }
-async function shipShopeeOrderReal(order, method) {
+async function shipShopeeOrderReal(order, method, signal, opts) {
+  const skipRecover = opts?.skipRecover === true;
+  const throwIfAborted = () => {
+    if (signal?.aborted) throw new Error(`Ship order ${order?.orderSn || ""} aborted/timeout`);
+  };
   try {
+    throwIfAborted();
     const shopCheck = validateOrderShopForShipment(order);
     if (!shopCheck.ok) {
       return { success: false, error: shopCheck.error, message: shopCheck.message };
@@ -210060,11 +210241,31 @@ async function shipShopeeOrderReal(order, method) {
       }
       throw err2;
     }
-    let paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+    const failOrSkipAlreadyShipped = (apiResult, fallbackError, fallbackMessage) => {
+      if (isAlreadyShippedError(apiResult)) {
+        return {
+          success: true,
+          alreadyShipped: true,
+          skipped: true,
+          mode: method,
+          shopId,
+          trackingNumber: order.trackingNumber || order.tracking_no || void 0
+        };
+      }
+      return {
+        success: false,
+        error: String(apiResult?.error || fallbackError),
+        message: String(apiResult?.message || fallbackMessage),
+        mode: method,
+        shopId,
+        skipped: true
+      };
+    };
+    let paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn, void 0, signal);
     if (isShopeeInvalidTokenError(paramResult?.error, paramResult?.message)) {
       try {
         accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
-        paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+        paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn, void 0, signal);
       } catch (err2) {
         if (err2 instanceof ShopeeRefreshTokenExpiredError) {
           return { success: false, error: err2.code, message: err2.message };
@@ -210075,19 +210276,10 @@ async function shipShopeeOrderReal(order, method) {
     console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (get_shipping_parameter) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(paramResult));
     if (paramResult.error) {
       console.error(`[Shopee L\u1ED6I] get_shipping_parameter th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${paramResult.error}" message="${paramResult.message}"`);
-      if (isAlreadyShippedError(paramResult)) {
-        const recovered2 = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
-        if (recovered2.ok) {
-          return {
-            success: true,
-            alreadyShipped: true,
-            mode: method,
-            shopId,
-            trackingNumber: recovered2.trackingNumber || order.trackingNumber
-          };
-        }
+      if (skipRecover) {
+        return failOrSkipAlreadyShipped(paramResult, paramResult.error, paramResult.message);
       }
-      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
       if (recovered.ok) {
         return {
           success: true,
@@ -210104,7 +210296,14 @@ async function shipShopeeOrderReal(order, method) {
     if (method === "dropoff") {
       if (!Object.prototype.hasOwnProperty.call(infoNeeded, "dropoff")) {
         console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 dropoff. info_needed=${JSON.stringify(infoNeeded)}`);
-        const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+        if (skipRecover) {
+          return failOrSkipAlreadyShipped(
+            { error: "dropoff_not_supported", message: "dropoff_not_supported" },
+            "dropoff_not_supported",
+            '\u0110\u01A1n v\u1ECB v\u1EADn chuy\u1EC3n c\u1EE7a \u0111\u01A1n n\xE0y KH\xD4NG h\u1ED7 tr\u1EE3 h\xECnh th\u1EE9c "T\u1EF1 mang h\xE0ng ra b\u01B0u c\u1EE5c". Vui l\xF2ng ch\u1ECDn "L\u1EA5y h\xE0ng" (pickup) thay th\u1EBF.'
+          );
+        }
+        const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
         if (recovered.ok) {
           return {
             success: true,
@@ -210128,7 +210327,14 @@ async function shipShopeeOrderReal(order, method) {
     } else {
       if (!Object.prototype.hasOwnProperty.call(infoNeeded, "pickup")) {
         console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 pickup. info_needed=${JSON.stringify(infoNeeded)}`);
-        const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+        if (skipRecover) {
+          return failOrSkipAlreadyShipped(
+            { error: "pickup_not_supported", message: "pickup_not_supported" },
+            "pickup_not_supported",
+            '\u0110\u01A1n v\u1ECB v\u1EADn chuy\u1EC3n c\u1EE7a \u0111\u01A1n n\xE0y KH\xD4NG h\u1ED7 tr\u1EE3 h\xECnh th\u1EE9c "L\u1EA5y h\xE0ng". Vui l\xF2ng ch\u1ECDn "T\u1EF1 mang h\xE0ng ra b\u01B0u c\u1EE5c" (dropoff) thay th\u1EBF.'
+          );
+        }
+        const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
         if (recovered.ok) {
           return {
             success: true,
@@ -210140,33 +210346,41 @@ async function shipShopeeOrderReal(order, method) {
         }
         return { success: false, error: "pickup_not_supported", message: '\u0110\u01A1n v\u1ECB v\u1EADn chuy\u1EC3n c\u1EE7a \u0111\u01A1n n\xE0y KH\xD4NG h\u1ED7 tr\u1EE3 h\xECnh th\u1EE9c "L\u1EA5y h\xE0ng". Vui l\xF2ng ch\u1ECDn "T\u1EF1 mang h\xE0ng ra b\u01B0u c\u1EE5c" (dropoff) thay th\u1EBF.' };
       }
-      const addressCacheKey = String(shopId);
-      let addressListResult;
-      let shopAddressList;
-      const hit = shopeeAddressListCache.get(addressCacheKey);
-      if (hit && Date.now() - hit.at < SHOPEE_ADDRESS_LIST_CACHE_TTL_MS) {
-        addressListResult = hit.result;
-        shopAddressList = hit.list;
+      const pickupFromParamOnly = resolvePickupShipmentFromParams(
+        paramResult.response?.pickup,
+        []
+      );
+      let pickupChoice = pickupFromParamOnly;
+      if (!pickupChoice) {
+        const { result: addressListResult, list: shopAddressList, fromCache } = await getShopeeAddressListCached(shopId, accessToken, signal);
+        if (addressListResult?.error) {
+          console.warn(
+            `[Shopee Ship] get_address_list c\u1EA3nh b\xE1o \u0111\u01A1n ${order.orderSn}: ${addressListResult.error} \u2014 fallback get_shipping_parameter`
+          );
+        } else {
+          console.log(
+            `[Shopee Ship] get_address_list \u0111\u01A1n ${order.orderSn} via ${fromCache ? "Redis cache" : "API+cache"} (${shopAddressList.length} addr)`
+          );
+        }
+        pickupChoice = resolvePickupShipmentFromParams(paramResult.response?.pickup, shopAddressList);
       } else {
-        addressListResult = await shopeeGetAddressList(shopId, accessToken);
-        shopAddressList = addressListResult.response?.address_list || addressListResult.address_list || [];
-        shopeeAddressListCache.set(addressCacheKey, {
-          at: Date.now(),
-          result: addressListResult,
-          list: shopAddressList
-        });
-      }
-      if (addressListResult.error) {
-        console.warn(
-          `[Shopee Ship] get_address_list c\u1EA3nh b\xE1o \u0111\u01A1n ${order.orderSn}: ${addressListResult.error} \u2014 fallback get_shipping_parameter`
+        console.log(
+          `[Shopee Ship] \u0110\u01A1n ${order.orderSn} skip get_address_list \u2014 d\xF9ng address/slot t\u1EEB get_shipping_parameter`
         );
       }
-      const pickupChoice = resolvePickupShipmentFromParams(paramResult.response?.pickup, shopAddressList);
       if (!pickupChoice) {
         console.error(
-          `[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng c\xF3 address/time_slot pickup kh\u1EA3 d\u1EE5ng. pickup=${JSON.stringify(paramResult.response?.pickup)} shopAddresses=${JSON.stringify(shopAddressList)}`
+          `[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng c\xF3 address/time_slot pickup kh\u1EA3 d\u1EE5ng. pickup=${JSON.stringify(paramResult.response?.pickup)}`
         );
-        const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+        if (skipRecover) {
+          return {
+            success: false,
+            error: "no_pickup_slot_available",
+            message: "Shopee kh\xF4ng tr\u1EA3 v\u1EC1 \u0111\u1ECBa ch\u1EC9 kho/l\u1ECBch h\u1EB9n l\u1EA5y h\xE0ng (pickup) kh\u1EA3 d\u1EE5ng. Vui l\xF2ng c\u1EADp nh\u1EADt \u0111\u1ECBa ch\u1EC9 l\u1EA5y h\xE0ng tr\xEAn Shopee Seller Centre r\u1ED3i th\u1EED l\u1EA1i.",
+            skipped: true
+          };
+        }
+        const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
         if (recovered.ok) {
           return {
             success: true,
@@ -210192,11 +210406,12 @@ async function shipShopeeOrderReal(order, method) {
         `[Shopee Ship] \u0110\u01A1n ${order.orderSn} pickup address_id=${pickupChoice.address_id} pickup_time_id=${pickupChoice.pickup_time_id}`
       );
     }
-    let shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+    throwIfAborted();
+    let shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody, signal);
     if (isShopeeInvalidTokenError(shipResult?.error, shipResult?.message)) {
       try {
         accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
-        shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+        shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody, signal);
       } catch (err2) {
         if (err2 instanceof ShopeeRefreshTokenExpiredError) {
           return { success: false, error: err2.code, message: err2.message };
@@ -210207,19 +210422,10 @@ async function shipShopeeOrderReal(order, method) {
     console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (ship_order) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(shipResult));
     if (shipResult.error) {
       console.error(`[Shopee L\u1ED6I] ship_order th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${shipResult.error}" message="${shipResult.message}" request_id="${shipResult.request_id || ""}"`);
-      if (isAlreadyShippedError(shipResult)) {
-        const recovered2 = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
-        if (recovered2.ok) {
-          return {
-            success: true,
-            alreadyShipped: true,
-            mode: method,
-            shopId,
-            trackingNumber: recovered2.trackingNumber || order.trackingNumber
-          };
-        }
+      if (skipRecover) {
+        return failOrSkipAlreadyShipped(shipResult, shipResult.error, shipResult.message);
       }
-      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
       if (recovered.ok) {
         return {
           success: true,
@@ -210241,6 +210447,14 @@ async function shipShopeeOrderReal(order, method) {
     if (error3 instanceof ShopeeRefreshTokenExpiredError) {
       return { success: false, error: error3.code, message: error3.message };
     }
+    if (signal?.aborted || /timeout|aborted/i.test(String(error3?.message || ""))) {
+      return {
+        success: false,
+        error: "timeout",
+        message: error3?.message || `Ship order ${order?.orderSn || ""} timeout`,
+        skipped: true
+      };
+    }
     console.error(`[Shopee L\u1ED6I] shipShopeeOrderReal exception \u0111\u01A1n ${order?.orderSn}:`, error3?.stack || error3);
     return {
       success: false,
@@ -210254,9 +210468,9 @@ function arrangeShipmentLocal(order, method) {
   const trackingNumber = order.trackingNumber || `${prefix}-${method === "dropoff" ? "DROPOFF" : "PICKUP"}-${Math.floor(1e7 + Math.random() * 9e7)}`;
   return { success: true, mode: method, trackingNumber };
 }
-async function arrangeShipment(order, method) {
+async function arrangeShipment(order, method, signal, opts) {
   if (order.channel === "shopee") {
-    return shipShopeeOrderReal(order, method);
+    return shipShopeeOrderReal(order, method, signal, opts);
   }
   return arrangeShipmentLocal(order, method);
 }
@@ -212531,6 +212745,91 @@ async function loadOrdersForApi(opts) {
     handoverMongoSync: readOnly ? [] : handoverMongoSync
   };
 }
+async function loadOrdersForShipScoped(orderIds, orderSns) {
+  const idSet = new Set(
+    (orderIds || []).map((s6) => String(s6 || "").trim()).filter(Boolean)
+  );
+  const snSet = new Set(
+    (orderSns || []).map((s6) => String(s6 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+  );
+  for (const id3 of idSet) {
+    const stripped = id3.replace(/^shopee-/i, "").trim();
+    if (stripped) snSet.add(stripped);
+  }
+  if (idSet.size === 0 && snSet.size === 0) return [];
+  const matchKey = (o6) => {
+    if (!o6 || typeof o6 !== "object") return false;
+    const id3 = String(o6.id || o6._id || "").trim();
+    const sn3 = String(o6.orderSn || o6.order_sn || "").replace(/^shopee-/i, "").trim();
+    if (id3 && idSet.has(id3)) return true;
+    if (sn3 && (snSet.has(sn3) || idSet.has(sn3) || idSet.has(`shopee-${sn3}`))) return true;
+    if (id3 && snSet.has(id3.replace(/^shopee-/i, "").trim())) return true;
+    return false;
+  };
+  const jsonOrders = loadOrders().filter(isValidOrder).filter(matchKey).map(repairMisassignedTracking);
+  const bySn = /* @__PURE__ */ new Map();
+  const byId = /* @__PURE__ */ new Map();
+  for (const o6 of jsonOrders) {
+    const sn3 = String(o6.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (sn3) bySn.set(sn3, o6);
+    const id3 = String(o6.id || "").trim();
+    if (id3) byId.set(id3, o6);
+  }
+  if (isMongoReady()) {
+    try {
+      const mongoOrders = (await loadOrdersFromStore({
+        orderSns: [...snSet],
+        ids: [...idSet]
+      })).map(repairMisassignedTracking);
+      for (const m6 of mongoOrders) {
+        if (!isValidOrder(m6) || !matchKey(m6)) continue;
+        const sn3 = String(m6.orderSn || "").replace(/^shopee-/i, "").trim();
+        const existing = sn3 && bySn.get(sn3) || byId.get(String(m6.id || "").trim());
+        if (!existing) {
+          repairFalseProcessedReadyToShip(m6);
+          if (sn3) bySn.set(sn3, m6);
+          const id3 = String(m6.id || "").trim();
+          if (id3) byId.set(id3, m6);
+          continue;
+        }
+        const mTn = String(m6.trackingNumber || m6.tracking_no || "").trim();
+        if (mTn && !isShopeeInternalTrackingCode2(mTn)) {
+          const eTn = String(existing.trackingNumber || existing.tracking_no || "").trim();
+          if (!eTn || isShopeeInternalTrackingCode2(eTn)) {
+            existing.trackingNumber = mTn;
+            existing.tracking_no = mTn;
+          }
+        }
+        const mRaw = String(m6.shopee_order_status || "").trim().toUpperCase();
+        if (mRaw) existing.shopee_order_status = mRaw;
+        if (m6.status) existing.status = m6.status;
+        if (m6.isPrepared != null) existing.isPrepared = Boolean(m6.isPrepared);
+        if (m6.isPrinted != null) existing.isPrinted = Boolean(m6.isPrinted);
+        if (m6.fulfillment_type) existing.fulfillment_type = m6.fulfillment_type;
+        if (m6.ship_method) existing.ship_method = m6.ship_method;
+        if (m6.shopId && !existing.shopId) existing.shopId = m6.shopId;
+        repairFalseProcessedReadyToShip(existing);
+      }
+    } catch (err2) {
+      console.warn("[Orders] loadOrdersForShipScoped mongo skip:", err2?.message || err2);
+    }
+  }
+  const out = [];
+  const seen2 = /* @__PURE__ */ new Set();
+  for (const o6 of bySn.values()) {
+    const k2 = String(o6.orderSn || o6.id || "");
+    if (k2 && seen2.has(k2)) continue;
+    if (k2) seen2.add(k2);
+    out.push(o6);
+  }
+  for (const o6 of byId.values()) {
+    const k2 = String(o6.orderSn || o6.id || "");
+    if (k2 && seen2.has(k2)) continue;
+    if (k2) seen2.add(k2);
+    out.push(o6);
+  }
+  return out;
+}
 async function hydrateTrackingFromMongoToJson() {
   let mirrored = 0;
   try {
@@ -214038,8 +214337,9 @@ function isAlreadyShippedError(result) {
   }
   return blob.includes("already") || blob.includes("has been shipped") || blob.includes("has been arranged") || blob.includes("already arranged") || blob.includes("already been processed") || blob.includes("logistics order is completed") || blob.includes("order status does not support") || blob.includes("order_status does not support") || blob.includes("kh\xF4ng th\u1EC3 giao") || blob.includes("da duoc xu ly") || blob.includes("\u0111\xE3 \u0111\u01B0\u1EE3c x\u1EED l\xFD") || blob.includes("\u0111\xE3 chu\u1EA9n b\u1ECB") || blob.includes("da chuan bi") || blob.includes("\u0111\xE3 s\u1EAFp x\u1EBFp") || blob.includes("da sap xep");
 }
-async function tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order) {
+async function tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal) {
   try {
+    if (signal?.aborted) return { ok: false };
     const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [String(order.orderSn)]);
     const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
     const detail = Array.isArray(detailList) ? detailList[0] : null;
@@ -214050,19 +214350,37 @@ async function tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order) {
       const pkg = Array.isArray(detail.package_list) ? detail.package_list[0] : null;
       if (pkg?.package_number) order.packageNumber = String(pkg.package_number);
     }
-    await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, { retries: 4 });
-    repairMisassignedTracking(order);
-    const tn3 = String(order.trackingNumber || order.tracking_no || "").trim();
-    const rawStatus = String(order.shopee_order_status || "").toUpperCase();
-    const alreadyOnShopee = Boolean(tn3 && !isShopeeInternalTrackingCode2(tn3)) || rawStatus === "PROCESSED" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE" || rawStatus === "COMPLETED";
-    if (alreadyOnShopee) {
+    const decide = () => {
+      repairMisassignedTracking(order);
+      const tn3 = String(order.trackingNumber || order.tracking_no || "").trim();
+      const rawStatus = String(order.shopee_order_status || "").toUpperCase();
+      const alreadyOnShopee = Boolean(tn3 && !isShopeeInternalTrackingCode2(tn3)) || rawStatus === "PROCESSED" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE" || rawStatus === "COMPLETED";
+      if (alreadyOnShopee) {
+        return { ok: true, trackingNumber: tn3 || void 0, shopeeStatus: rawStatus || void 0 };
+      }
+      return { ok: false, trackingNumber: tn3 || void 0, shopeeStatus: rawStatus || void 0 };
+    };
+    let verdict = decide();
+    if (verdict.ok) {
       console.log(
-        `[Shopee Ship Recover] order_sn=${order.orderSn} OK status=${rawStatus || "?"} tn=${tn3 || "\u2014"} (GHN/SPX/J&T \u0111\u1EC1u ch\u1EA5p nh\u1EADn)`
+        `[Shopee Ship Recover] order_sn=${order.orderSn} OK(fast) status=${verdict.shopeeStatus || "?"} tn=${verdict.trackingNumber || "\u2014"}`
       );
-      return { ok: true, trackingNumber: tn3 || void 0, shopeeStatus: rawStatus || void 0 };
+      return verdict;
+    }
+    if (!signal?.aborted) {
+      const pkgNum = String(order.packageNumber || "").trim() || void 0;
+      const track = await shopeeGetTrackingNumber(shopId, accessToken, order.orderSn, pkgNum);
+      applyShopeeGetTrackingResponse(order, track);
+      verdict = decide();
+    }
+    if (verdict.ok) {
+      console.log(
+        `[Shopee Ship Recover] order_sn=${order.orderSn} OK status=${verdict.shopeeStatus || "?"} tn=${verdict.trackingNumber || "\u2014"}`
+      );
+      return { ok: true, trackingNumber: verdict.trackingNumber, shopeeStatus: verdict.shopeeStatus };
     }
     console.warn(
-      `[Shopee Ship Recover] order_sn=${order.orderSn} ch\u01B0a recover \u0111\u01B0\u1EE3c (status=${rawStatus || "?"} tn=${tn3 || "\u2014"})`
+      `[Shopee Ship Recover] order_sn=${order.orderSn} ch\u01B0a recover \u0111\u01B0\u1EE3c (status=${verdict.shopeeStatus || "?"} tn=${verdict.trackingNumber || "\u2014"})`
     );
     return { ok: false };
   } catch (err2) {
@@ -216365,10 +216683,14 @@ async function startServer2() {
   });
   let ordersRefreshInFlight = null;
   let ordersRefreshCache = null;
-  async function readOrdersForRefresh() {
+  async function readOrdersForRefresh(limit) {
     const now = Date.now();
     if (ordersRefreshCache && ordersRefreshCache.expiresAt > now) {
-      return ordersRefreshCache.orders;
+      return limit && limit > 0 ? ordersRefreshCache.orders.slice(0, limit) : ordersRefreshCache.orders;
+    }
+    if (limit && limit > 0) {
+      const orders = await loadOrdersFromStore({ limit });
+      return orders.filter((order) => Boolean(order?.orderSn || order?.id));
     }
     if (!ordersRefreshInFlight) {
       ordersRefreshInFlight = loadOrdersFromStore().then((orders) => {
@@ -216384,7 +216706,7 @@ async function startServer2() {
     }
     return ordersRefreshInFlight;
   }
-  app.get("/api/orders/refresh", authMiddleware, async (_req, res) => {
+  app.get("/api/orders/refresh", authMiddleware, async (req2, res) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     try {
       if (!isMongoReady()) {
@@ -216395,8 +216717,12 @@ async function startServer2() {
           error: "mongodb_not_ready"
         });
       }
-      const orders = await readOrdersForRefresh();
-      console.log(`[FRONTEND FETCHED] GET /api/orders/refresh \u2014 tr\u1EA3 v\u1EC1 ${orders.length} \u0111\u01A1n t\u1EEB MongoDB.`);
+      const rawLimit = Number(req2.query.limit);
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : void 0;
+      const orders = await readOrdersForRefresh(limit);
+      console.log(
+        `[FRONTEND FETCHED] GET /api/orders/refresh${limit ? `?limit=${limit}` : ""} \u2014 tr\u1EA3 v\u1EC1 ${orders.length} \u0111\u01A1n t\u1EEB MongoDB.`
+      );
       return res.status(200).json({ success: true, data: orders, total: orders.length });
     } catch (error3) {
       console.error(
@@ -216457,6 +216783,10 @@ async function startServer2() {
           String(o6.shopee_order_status || "").toUpperCase()
         )
       );
+    }
+    const rawLimit = Number(req2.query.limit);
+    if (Number.isFinite(rawLimit) && rawLimit > 0) {
+      rawOrders = rawOrders.slice(0, Math.min(Math.floor(rawLimit), 5e3));
     }
     const products = await loadProductsForOrders(rawOrders);
     const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
@@ -217846,16 +218176,36 @@ async function startServer2() {
       return sendApiErrorJson(res, err2, 500);
     }
   });
-  const SHIP_ORDER_BATCH_CONCURRENCY = 5;
+  async function prewarmShopeeAddressCacheForShip(toShip, shipMethod) {
+    if (shipMethod !== "pickup") return;
+    const shopIds = [
+      ...new Set(
+        toShip.map(({ order }) => String(resolveOrderShopId(order) || order.shopId || "").trim()).filter(Boolean)
+      )
+    ];
+    if (shopIds.length === 0) return;
+    await mapWithConcurrency(shopIds, 3, async (shopId) => {
+      try {
+        const hit = await getCachedShopeeAddressList(shopId);
+        if (hit?.result && !hit.result.error) return;
+        const accessToken = await getValidShopeeAccessToken(shopId) || "";
+        if (!accessToken) return;
+        await getShopeeAddressListCached(shopId, accessToken);
+      } catch (err2) {
+        console.warn(`[Ship Order Bulk] prewarm address_list shop=${shopId}:`, err2?.message || err2);
+      }
+    });
+  }
   async function processShipOrderBatch(orders, toShip, shipMethod, opts) {
     const results = new Array(toShip.length);
     const successfulShopeeOrders = [];
     const failedOrders = [];
     let completedCount = 0;
     console.log(
-      `[Ship Order Bulk] B\u1EAFt \u0111\u1EA7u x\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n \u2014 concurrency=${SHIP_ORDER_BATCH_CONCURRENCY} (kh\xF4ng ch\u1EDD PDF/tracking).`
+      `[Ship Order Bulk] B\u1EAFt \u0111\u1EA7u x\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n \u2014 concurrency=${SHIP_ORDER_BATCH_CONCURRENCY} chunk=${SHIP_ORDER_CHUNK_SIZE} timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms skipRecover=true (kh\xF4ng enrich/tracking/retry).`
     );
-    await mapWithConcurrency(toShip, SHIP_ORDER_BATCH_CONCURRENCY, async (item, i6) => {
+    await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
+    const processOne = async (item, i6) => {
       const { index: index4, order } = item;
       const resolvedShopId = resolveOrderShopId(order);
       if (resolvedShopId && !order.shopId) {
@@ -217866,7 +218216,7 @@ async function startServer2() {
       let result;
       try {
         result = await withOperationTimeout(
-          arrangeShipment(order, shipMethod),
+          (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
           SHIP_ORDER_OPERATION_TIMEOUT_MS,
           `Ship order ${order.orderSn}`
         );
@@ -217877,7 +218227,7 @@ async function startServer2() {
         );
         result = {
           success: false,
-          error: "internal_server_error",
+          error: /timeout/i.test(String(error3?.message || "")) ? "timeout" : "internal_server_error",
           message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + (error3?.message || String(error3)) + (error3?.stack ? ` | ${String(error3.stack).slice(0, 240)}` : "")
         };
       }
@@ -217970,7 +218320,16 @@ async function startServer2() {
       }
       completedCount += 1;
       if (opts?.onProgress) opts.onProgress(completedCount, toShip.length);
-    });
+    };
+    for (let chunkStart = 0; chunkStart < toShip.length; chunkStart += SHIP_ORDER_CHUNK_SIZE) {
+      const chunk = toShip.slice(chunkStart, chunkStart + SHIP_ORDER_CHUNK_SIZE);
+      await mapWithConcurrency(chunk, SHIP_ORDER_BATCH_CONCURRENCY, async (item, localIdx) => {
+        await processOne(item, chunkStart + localIdx);
+      });
+      if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length && SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
+        await sleep2(SHIP_ORDER_CHUNK_PAUSE_MS);
+      }
+    }
     const compactResults = results.filter(Boolean);
     const successCount = compactResults.filter((r5) => r5.success).length;
     console.log(
@@ -217998,7 +218357,7 @@ async function startServer2() {
       const order = orders[index4];
       console.log(`[Ship Order] Y\xEAu c\u1EA7u chu\u1EA9n b\u1EB1 h\xE0ng (${shipMethod}) cho \u0111\u01A1n ${order.orderSn} (channel=${order.channel})...`);
       const result = await withOperationTimeout(
-        arrangeShipment(order, shipMethod),
+        (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
         SHIP_ORDER_OPERATION_TIMEOUT_MS,
         `Ship order ${order.orderSn}`
       );
@@ -218811,42 +219170,186 @@ async function startServer2() {
     }
     return { success: true, url: primaryUrl, pdfFilename, printedOrderSns, skippedOrders };
   }
+  async function persistShipJobOrderPatches(changedOrders) {
+    const list2 = (Array.isArray(changedOrders) ? changedOrders : []).filter(Boolean);
+    if (list2.length === 0) return;
+    if (!isMongoReady()) {
+      console.warn("[Ship Order Job] Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua persist patch (FE optimistic).");
+      return;
+    }
+    try {
+      await bulkUpsertOrdersToStore(list2);
+    } catch (err2) {
+      console.warn("[Ship Order Job] bulkUpsert patch failed:", err2?.message || err2);
+    }
+  }
   async function executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList) {
     pruneOldShipOrderJobs();
     const job = shipOrderJobs.get(jobId);
     if (!job) return;
-    if (!tryAcquireHeavyJob(`ship-order:${jobId}`)) {
-      job.status = "failed";
-      job.error = "heavy_job_busy";
-      job.updatedAt = Date.now();
-      return;
-    }
     try {
       job.status = "running";
+      job.phase = "loading";
+      job.message = "\u0110ang t\u1EA3i \u0111\u01A1n c\u1EA7n x\xE1c nh\u1EADn...";
       job.updatedAt = Date.now();
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
+      const orders = await loadOrdersForShipScoped(idList, snList);
       const toShip = resolveOrdersFromRequest(orders, idList, snList);
       job.total = toShip.length;
-      const batch = await processShipOrderBatch(orders, toShip, shipMethod, {
-        optimistic: true,
-        onProgress: (completed, total) => {
-          job.completed = completed;
-          job.total = total;
-          job.updatedAt = Date.now();
+      if (toShip.length === 0) {
+        job.status = "failed";
+        job.phase = "failed";
+        job.error = "orders_not_found";
+        job.message = "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database kh\u1EDBp v\u1EDBi danh s\xE1ch g\u1EEDi l\xEAn.";
+        job.updatedAt = Date.now();
+        return;
+      }
+      const shipPhase = shipMethod === "dropoff" ? "calling_shopee_dropoff" : "calling_shopee_pickup";
+      job.phase = shipPhase;
+      job.message = shipMethod === "dropoff" ? "\u0110ang g\u1ECDi Shopee ship_order (dropoff)..." : "\u0110ang g\u1ECDi Shopee pickup / ship_order...";
+      job.updatedAt = Date.now();
+      let completedCount = 0;
+      const bumpProgress = () => {
+        completedCount += 1;
+        job.completed = completedCount;
+        job.total = toShip.length;
+        job.phase = shipPhase;
+        job.message = `\u0110ang x\xE1c nh\u1EADn ${completedCount}/${toShip.length} \u0111\u01A1n l\xEAn s\xE0n (${shipMethod})...`;
+        job.updatedAt = Date.now();
+      };
+      const settled = await Promise.allSettled(
+        toShip.map(async ({ index: index4, order }) => {
+          const resolvedShopId = resolveOrderShopId(order);
+          if (resolvedShopId && !order.shopId) {
+            orders[index4].shopId = resolvedShopId;
+            order.shopId = resolvedShopId;
+          }
+          let result;
+          try {
+            result = await withOperationTimeout(
+              (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+              SHIP_ORDER_OPERATION_TIMEOUT_MS,
+              `Ship order ${order.orderSn}`
+            );
+          } catch (error3) {
+            result = {
+              success: false,
+              error: /timeout/i.test(String(error3?.message || "")) ? "timeout" : "internal_server_error",
+              message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + (error3?.message || String(error3))
+            };
+          }
+          const treatedAsSuccess = result.success || isAlreadyShippedError(result);
+          const pendingTrap = !treatedAsSuccess && isShopeePendingVerificationError(result);
+          let patched = orders[index4];
+          if (pendingTrap) {
+            patched = markOrderPendingShopeeCheck(
+              orders[index4],
+              result.message || result.error || "Order is pending verification"
+            );
+            orders[index4] = patched;
+          } else if (treatedAsSuccess) {
+            const tn3 = String(
+              order.trackingNumber || order.tracking_no || result.trackingNumber || orders[index4].trackingNumber || ""
+            ).trim();
+            patched = {
+              ...orders[index4],
+              ...order,
+              isPrepared: true,
+              status: "processed",
+              is_pending_shopee_check: false,
+              fulfillment_type: shipMethod,
+              ship_method: shipMethod,
+              trackingNumber: tn3 || orders[index4].trackingNumber,
+              tracking_no: tn3 || orders[index4].tracking_no || orders[index4].trackingNumber,
+              shopId: orders[index4].shopId || order.shopId || result.shopId || resolvedShopId,
+              shopee_order_status: order.shopee_order_status === "READY_TO_SHIP" || order.shopee_order_status === "RETRY_SHIP" || !order.shopee_order_status ? "PROCESSED" : order.shopee_order_status || orders[index4].shopee_order_status || "PROCESSED",
+              shopeeSyncPending: false,
+              shopeeSyncError: void 0
+            };
+            forceHealPickupOrderIfHasTracking(patched);
+            orders[index4] = patched;
+          } else {
+            patched = {
+              ...orders[index4],
+              status: "unprocessed",
+              isPrepared: false,
+              shopeeSyncPending: false,
+              shopeeSyncError: result.message || result.error || "Kh\xF4ng \u0111\u1ED3ng b\u1ED9 \u0111\u01B0\u1EE3c Shopee"
+            };
+            orders[index4] = patched;
+          }
+          bumpProgress();
+          return {
+            orderId: order.id,
+            orderSn: order.orderSn,
+            success: treatedAsSuccess,
+            pendingShopeeCheck: pendingTrap,
+            alreadyShipped: !result.success && isAlreadyShippedError(result),
+            patched,
+            error: result.error,
+            message: result.message,
+            mode: result.mode,
+            shopId: result.shopId,
+            trackingNumber: result.trackingNumber,
+            skipped: result.skipped
+          };
+        })
+      );
+      const results = [];
+      const failedOrders = [];
+      const changedOrders = [];
+      for (let i6 = 0; i6 < settled.length; i6++) {
+        const item = settled[i6];
+        const fallback = toShip[i6]?.order;
+        if (item.status === "fulfilled") {
+          const r5 = item.value;
+          results.push(r5);
+          if (r5.patched) changedOrders.push(r5.patched);
+          if (!r5.success) {
+            failedOrders.push({
+              orderSn: String(r5.orderSn || fallback?.orderSn || ""),
+              orderId: String(r5.orderId || fallback?.id || ""),
+              error: String(r5.error || "ship_order_failed"),
+              message: String(r5.message || "ship_order failed")
+            });
+          }
+        } else {
+          const errMsg = String(item.reason?.message || item.reason || "unknown");
+          results.push({
+            orderId: fallback?.id,
+            orderSn: fallback?.orderSn,
+            success: false,
+            error: "internal_server_error",
+            message: errMsg
+          });
+          failedOrders.push({
+            orderSn: String(fallback?.orderSn || ""),
+            orderId: String(fallback?.id || ""),
+            error: "internal_server_error",
+            message: errMsg
+          });
+          if (toShip[i6]) changedOrders.push(orders[toShip[i6].index]);
         }
+      }
+      job.phase = "persisting";
+      job.message = "\u0110ang l\u01B0u k\u1EBFt qu\u1EA3 x\xE1c nh\u1EADn...";
+      job.updatedAt = Date.now();
+      await persistShipJobOrderPatches(changedOrders);
+      const successCount = results.filter((r5) => r5.success).length;
+      const summary = buildShipConfirmSummaryPayload(toShip.length, {
+        successCount,
+        failedCount: failedOrders.length,
+        failedOrders,
+        results
       });
-      const changedOrders = toShip.map(({ index: index4 }) => orders[index4]).filter(Boolean);
-      await persistOrdersToDatabase(orders, changedOrders);
-      job.results = batch.results;
-      job.successCount = batch.successCount;
-      job.orders = orders.filter(isValidOrder);
-      const summary = buildShipConfirmSummaryPayload(toShip.length, batch);
+      job.results = results;
+      job.successCount = summary.successCount;
       job.failedCount = summary.failCount;
       job.failCount = summary.failCount;
       job.failedOrders = summary.failedOrderDetails;
       job.failedOrderDetails = summary.failedOrderDetails;
       job.successfulOrderIds = summary.successfulOrderIds;
+      job.orders = null;
+      job.completed = toShip.length;
       {
         let message = `Th\xE0nh c\xF4ng: ${summary.successCount} \u0111\u01A1n. Th\u1EA5t b\u1EA1i: ${summary.failCount} \u0111\u01A1n`;
         if (summary.failedOrderDetails.length > 0) {
@@ -218856,78 +219359,56 @@ async function startServer2() {
         message += ".";
         job.message = message;
       }
+      job.phase = "done";
       job.status = "done";
     } catch (err2) {
       job.status = "failed";
+      job.phase = "failed";
       job.error = err2?.message || String(err2);
       console.error(`[Ship Order Job ${jobId}] Failed:`, err2);
     } finally {
       job.updatedAt = Date.now();
-      releaseHeavyJob(`ship-order:${jobId}`);
     }
   }
-  app.post("/api/shopee/ship-order/bulk-async", authMiddleware, async (req2, res) => {
+  app.post("/api/shopee/ship-order/bulk-async", authMiddleware, (req2, res) => {
     try {
-      const { orderIds, orderSns, method } = req2.body;
+      const { orderIds, orderSns, method } = req2.body || {};
       const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
       const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
       const snList = Array.isArray(orderSns) ? orderSns.map(String) : [];
       if (idList.length === 0 && snList.length === 0) {
         return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns." });
       }
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const toShip = resolveOrdersFromRequest(orders, idList, snList);
-      if (toShip.length === 0) {
-        console.error(
-          `[Ship Order Bulk Async] orders_not_found ids=${JSON.stringify(idList)} sns=${JSON.stringify(snList)} pool=${orders.length}`
-        );
-        return res.status(404).json({
-          error: "orders_not_found",
-          message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n n\xE0o trong database kh\u1EDBp v\u1EDBi danh s\xE1ch g\u1EEDi l\xEAn.",
-          successCount: 0,
-          total: 0,
-          results: [],
-          orders: orders.filter(isValidOrder)
-        });
-      }
-      const optimisticChanged = [];
-      for (const { index: index4 } of toShip) {
-        orders[index4] = {
-          ...orders[index4],
-          isPrepared: true,
-          status: "processed",
-          shopeeSyncPending: true,
-          shopeeSyncError: void 0
-        };
-        optimisticChanged.push(orders[index4]);
-      }
-      await persistOrdersToDatabase(orders, optimisticChanged);
+      const estimatedTotal = Math.max(
+        new Set(
+          [...idList, ...snList].map((s6) => String(s6 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+        ).size,
+        idList.length || snList.length
+      );
       const jobId = createShipOrderJobId();
       shipOrderJobs.set(jobId, {
         id: jobId,
         status: "pending",
-        total: toShip.length,
+        phase: "pending",
+        message: "\u0110\xE3 ti\u1EBFp nh\u1EADn \u2014 \u0111ang x\u1EBFp h\xE0ng x\u1EED l\xFD...",
+        total: estimatedTotal,
         completed: 0,
         successCount: 0,
         results: [],
         printDocument: null,
-        orders: orders.filter(isValidOrder),
+        orders: null,
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
+      res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
       setImmediate(() => {
         void executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
       });
-      return res.status(202).json({
-        accepted: true,
-        jobId,
-        total: toShip.length,
-        orders: orders.filter(isValidOrder)
-      });
     } catch (error3) {
       console.error("[Ship Order Bulk Async] L\u1ED7i n\u1ED9i b\u1ED9 endpoint /api/shopee/ship-order/bulk-async:", error3?.stack || error3);
-      return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error3.message });
+      if (!res.headersSent) {
+        return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error3.message });
+      }
     }
   });
   app.get("/api/shopee/ship-order/job/:jobId", authMiddleware, async (req2, res) => {
