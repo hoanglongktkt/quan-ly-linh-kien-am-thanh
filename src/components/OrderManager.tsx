@@ -2678,16 +2678,6 @@ export default function OrderManager({
         })
       : filteredOrdersBase;
 
-  useEffect(() => {
-    const statusCounts = orders.reduce<Record<string, number>>((counts, order) => {
-      const status = String(order.status || order.shopee_order_status || 'missing');
-      counts[status] = (counts[status] || 0) + 1;
-      return counts;
-    }, {});
-    // #region agent log
-    fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bb6e18'},body:JSON.stringify({sessionId:'bb6e18',runId:'initial',hypothesisId:'H2',location:'src/components/OrderManager.tsx:2616',message:'Order list visibility after filters',data:{totalOrders:orders.length,activeSubTab,visibleOrders:filteredOrders.length,preCarrierOrders:ordersPoolBeforeCarrier.length,platform:selectedPlatform,shopFilter:selectedShopId==='all'?'all':'selected',carrier:selectedShippingCarrier,searchActive:Boolean(searchQuery.trim()),unprintedOnly:filterUnprinted,statusCounts},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-  }, [activeSubTab, filterUnprinted, filteredOrders.length, orders, ordersPoolBeforeCarrier.length, searchQuery, selectedPlatform, selectedShippingCarrier, selectedShopId]);
 
   // Resolve checkbox selections to full Order rows — CHỈ lấy đơn đang hiển thị
   // (đã lọc ĐVVC), để In/Xác nhận hàng loạt không đụng đơn bị ẩn.
@@ -4219,7 +4209,15 @@ export default function OrderManager({
         </div>
       ) : (
       <div className="bg-white rounded-3xl border border-gray-100 shadow-xs overflow-hidden">
-        {filteredOrders.length === 0 ? (
+        {ordersLoading && filteredOrders.length === 0 ? (
+          // Đang tải lần đầu (VD: Ctrl+F5, Mongo vừa khởi động) — KHÔNG hiện "trống"
+          // (dễ khiến người dùng tưởng lỗi và bấm "Làm mới" nhiều lần trong khi request
+          // đầu vẫn đang chạy/tự retry ngầm).
+          <div className="py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-3">
+            <RefreshCw className="w-10 h-10 text-slate-300 animate-spin" />
+            <span className="font-semibold text-slate-600">Đang tải danh sách đơn hàng...</span>
+          </div>
+        ) : filteredOrders.length === 0 ? (
           <div className="py-20 text-center text-gray-400 text-xs flex flex-col items-center gap-3">
             <ShoppingBag className="w-12 h-12 text-slate-200" />
             <span className="font-semibold text-slate-600">Không tìm thấy đơn hàng nào khớp với điều kiện lọc</span>

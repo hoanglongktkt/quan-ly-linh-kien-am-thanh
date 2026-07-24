@@ -228,6 +228,13 @@ export default function App() {
    * chạy gần nhau: chỉ response của request MỚI NHẤT được ghi vào state, response của
    * request cũ hơn (dù trả về sau) sẽ bị bỏ qua thay vì ghi đè mất dữ liệu vừa cập nhật. */
   const fetchOrdersSeqRef = useRef(0);
+  /** Seq của lần APPLY (setOrders) thành công gần nhất — KHÔNG dùng fetchOrdersSeqRef
+   * (seq của lần "phát" request mới nhất) để so sánh: nếu không, một request cũ hơn
+   * đang chờ Mongo sẵn sàng (retry mongodb_not_ready) mà cuối cùng LẤY ĐƯỢC dữ liệu
+   * thật sẽ luôn bị coi là "cũ" và bị vứt bỏ chỉ vì có request mới hơn đã được PHÁT ra
+   * (kể cả khi request mới đó chưa xong hoặc cũng thất bại) — đây chính là nguyên nhân
+   * phải bấm "Làm mới" 2-3 lần mới thấy dữ liệu sau khi Ctrl+F5. */
+  const lastAppliedOrdersSeqRef = useRef(0);
   /** Chỉ cho phép một lần đọc toàn bộ đơn hàng đang chạy để polling/focus/click không
    * tạo nhiều truy vấn MongoDB nặng đồng thời. */
   const fetchOrdersInFlightRef = useRef<Promise<void> | null>(null);
@@ -378,7 +385,6 @@ export default function App() {
     const requestId = ++fetchOrdersSeqRef.current;
     if (!silent) setOrdersLoading(true);
     let requestTimeoutId: number | undefined;
-    const refreshStartedAt = Date.now();
     try {
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
       const path = bustCache ? `/api/orders/refresh?t=${Date.now()}` : '/api/orders/refresh';
@@ -406,14 +412,8 @@ export default function App() {
           Pragma: 'no-cache',
         },
       });
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bb6e18'},body:JSON.stringify({sessionId:'bb6e18',runId:'initial',hypothesisId:'H1',location:'src/App.tsx:408',message:'Order refresh HTTP response',data:{requestId,silent,bustCache,status:response.status,durationMs:Date.now()-refreshStartedAt},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       if (response.ok) {
         const payload: { success?: boolean; data?: Order[]; error?: string } = await response.json();
-        // #region agent log
-        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bb6e18'},body:JSON.stringify({sessionId:'bb6e18',runId:'initial',hypothesisId:'H1',location:'src/App.tsx:414',message:'Order refresh payload received',data:{requestId,success:payload.success!==false,error:payload.error||null,count:Array.isArray(payload.data)?payload.data.length:0,durationMs:Date.now()-refreshStartedAt,statuses:Array.isArray(payload.data)?payload.data.reduce((counts:Record<string,number>,order)=>{const status=String(order.status||order.shopee_order_status||'missing');counts[status]=(counts[status]||0)+1;return counts;},{}):{}},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         if (payload.success === false) {
           if (
             (payload.error === 'mongodb_not_ready' || payload.error === 'orders_refresh_failed') &&
@@ -432,12 +432,14 @@ export default function App() {
         }
         const data = Array.isArray(payload.data) ? payload.data : [];
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
-        // Bỏ qua nếu đã có request mới hơn (polling/click khác) hoàn tất trước —
-        // tránh response CŨ trả về TRỄ ghi đè mất dữ liệu MỚI vừa hiển thị.
-        if (requestId !== fetchOrdersSeqRef.current) {
-          console.warn('[Fetch Orders] Bỏ qua response cũ (đã có request mới hơn).');
+        // Chỉ bỏ qua nếu đã có response MỚI HƠN ĐƯỢC ÁP DỤNG rồi (không phải chỉ "đã
+        // phát request mới hơn") — request mới hơn có thể vẫn đang chạy hoặc cũng lỗi,
+        // không được phép vứt bỏ dữ liệu thật của request cũ hơn vừa lấy thành công.
+        if (requestId <= lastAppliedOrdersSeqRef.current) {
+          console.warn('[Fetch Orders] Bỏ qua response cũ (đã áp dụng response mới hơn).');
           return;
         }
+        lastAppliedOrdersSeqRef.current = requestId;
         const sanitized = sanitizeOrders(data);
         setOrders(sanitized);
         console.log('[FRONTEND FETCHED] /api/orders/refresh OK — số đơn:', sanitized.length);
@@ -451,9 +453,6 @@ export default function App() {
       }
     } catch (err) {
       console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
-      // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bb6e18'},body:JSON.stringify({sessionId:'bb6e18',runId:'initial',hypothesisId:'H1',location:'src/App.tsx:452',message:'Order refresh request failed',data:{requestId,durationMs:Date.now()-refreshStartedAt,error:err instanceof Error?err.name:'unknown'},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
       if (!silent) setOrdersLoading(false);
