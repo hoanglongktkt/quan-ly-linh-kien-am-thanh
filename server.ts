@@ -14428,18 +14428,26 @@ async function startServer() {
         return res.status(200).json({
           success: false,
           data: [],
+          total: 0,
           error: "mongodb_not_ready",
         });
       }
       const orders = await readOrdersForRefresh();
       console.log(`[FRONTEND FETCHED] GET /api/orders/refresh — trả về ${orders.length} đơn từ MongoDB.`);
-      return res.status(200).json({ success: true, data: orders });
+      // `total` + shape { data, total } giữ tương thích chuẩn REST cho FE mới, song song
+      // với `success`/`data` cũ để KHÔNG phá vỡ client hiện tại đang đọc payload.data.
+      return res.status(200).json({ success: true, data: orders, total: orders.length });
     } catch (error: any) {
-      console.error("[GET /api/orders/refresh] Mongo query failed:", error?.message || error);
+      console.error(
+        "[GET /api/orders/refresh] Mongo query failed:",
+        error?.stack || error?.message || error,
+      );
       return res.status(200).json({
         success: false,
         data: [],
+        total: 0,
         error: "orders_refresh_failed",
+        message: error?.message || "Không thể tải danh sách đơn hàng từ MongoDB.",
       });
     }
   });
