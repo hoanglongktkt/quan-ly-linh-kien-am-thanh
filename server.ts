@@ -5856,6 +5856,13 @@ const SHOPEE_LOGISTICS_TIMEOUT_MS = 20_000;
 // tự chuyển sang "thất bại" và tiếp tục đơn kế — không được để 1 đơn kẹt kéo cả job tới ~2 phút).
 const SHIP_ORDER_OPERATION_TIMEOUT_MS = 10_000;
 
+/** Cache get_address_list theo shop — tránh N round-trip khi xác nhận hàng loạt song song. */
+const shopeeAddressListCache = new Map<
+  string,
+  { at: number; result: any; list: any[] }
+>();
+const SHOPEE_ADDRESS_LIST_CACHE_TTL_MS = 60_000;
+
 async function withOperationTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -6151,12 +6158,26 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
       }
       return { success: false, error: "pickup_not_supported", message: "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Lấy hàng\". Vui lòng chọn \"Tự mang hàng ra bưu cục\" (dropoff) thay thế." };
     }
-    // Lấy danh sách địa chỉ kho mới nhất + khớp với get_shipping_parameter (tránh address_id cũ).
-    const addressListResult = await shopeeGetAddressList(shopId, accessToken);
-    const shopAddressList =
-      addressListResult.response?.address_list ||
-      addressListResult.address_list ||
-      [];
+    // Lấy danh sách địa chỉ kho (cache 60s/shop — tránh N lần get_address_list khi xác nhận hàng loạt song song).
+    const addressCacheKey = String(shopId);
+    let addressListResult: any;
+    let shopAddressList: any[];
+    const hit = shopeeAddressListCache.get(addressCacheKey);
+    if (hit && Date.now() - hit.at < SHOPEE_ADDRESS_LIST_CACHE_TTL_MS) {
+      addressListResult = hit.result;
+      shopAddressList = hit.list;
+    } else {
+      addressListResult = await shopeeGetAddressList(shopId, accessToken);
+      shopAddressList =
+        addressListResult.response?.address_list ||
+        addressListResult.address_list ||
+        [];
+      shopeeAddressListCache.set(addressCacheKey, {
+        at: Date.now(),
+        result: addressListResult,
+        list: shopAddressList,
+      });
+    }
     if (addressListResult.error) {
       console.warn(
         `[Shopee Ship] get_address_list cảnh báo đơn ${order.orderSn}: ${addressListResult.error} — fallback get_shipping_parameter`,
@@ -6235,14 +6256,12 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
     return { success: false, error: shipResult.error, message: shipResult.message, mode: method, shopId };
   }
 
-  // Sau ship thành công: lấy mã vận đơn nhanh (1 lần) — không chờ PDF.
-  await sleep(500);
-  await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, { retries: 1 });
+  // Sau ship thành công: trả về ngay — không sleep / không chờ tracking (PDF & mã vận đơn lo sau).
   return {
     success: true,
     mode: method,
     shopId,
-    trackingNumber: order.trackingNumber || order.tracking_no || undefined,
+    trackingNumber: order.trackingNumber || order.tracking_no || shipResult?.trackingNumber || undefined,
   };
   } catch (error: any) {
     if (error instanceof ShopeeRefreshTokenExpiredError) {
@@ -16509,6 +16528,9 @@ async function startServer() {
 
   // --- Shopee logistics: "Chuẩn bị hàng" (ship_order) ------------------------
 
+  /** Số đơn ship song song / batch — tránh rate-limit Shopee khi xác nhận hàng loạt. */
+  const SHIP_ORDER_BATCH_CONCURRENCY = 5;
+
   async function processShipOrderBatch(
     orders: any[],
     toShip: { index: number; order: any }[],
@@ -16524,12 +16546,17 @@ async function startServer() {
     failedCount: number;
     failedOrders: { orderSn: string; orderId: string; error: string; message: string }[];
   }> {
-    const results: any[] = [];
+    const results: any[] = new Array(toShip.length);
     const successfulShopeeOrders: any[] = [];
     const failedOrders: { orderSn: string; orderId: string; error: string; message: string }[] = [];
+    let completedCount = 0;
 
-    for (let i = 0; i < toShip.length; i++) {
-      const { index, order } = toShip[i];
+    console.log(
+      `[Ship Order Bulk] Bắt đầu xác nhận ${toShip.length} đơn — concurrency=${SHIP_ORDER_BATCH_CONCURRENCY} (không chờ PDF/tracking).`,
+    );
+
+    await mapWithConcurrency(toShip, SHIP_ORDER_BATCH_CONCURRENCY, async (item, i) => {
+      const { index, order } = item;
       const resolvedShopId = resolveOrderShopId(order);
       if (resolvedShopId && !order.shopId) {
         orders[index].shopId = resolvedShopId;
@@ -16545,7 +16572,6 @@ async function startServer() {
           `Ship order ${order.orderSn}`,
         );
       } catch (error: any) {
-        // Bắt lỗi từng đơn — continue sang đơn tiếp theo, tuyệt đối không gãy vòng lặp.
         console.error(
           `[Ship Order Bulk] Exception khi chuẩn bị đơn ${order.orderSn} (id=${order.id}, method=${shipMethod}):`,
           error?.stack || error,
@@ -16568,9 +16594,9 @@ async function startServer() {
           console.warn(
             `[Ship Order Bulk] Bỏ qua đơn lỗi Shopee ${order.orderSn}: ${result.message || result.error || ""}`,
           );
-          await persistPendingShopeeCheckFlag(
-            orders,
-            index,
+          // Chỉ cập nhật RAM — persist 1 lần sau cả batch (tránh race saveOrders khi song song).
+          orders[index] = markOrderPendingShopeeCheck(
+            orders[index],
             result.message || result.error || "Order is pending verification",
           );
           failedOrders.push({
@@ -16599,7 +16625,6 @@ async function startServer() {
             };
           }
         } else {
-          // success hoặc already-shipped (kèm tracking GHN/SPX đã recover trên object order).
           const tn = String(
             order.trackingNumber ||
               order.tracking_no ||
@@ -16628,36 +16653,20 @@ async function startServer() {
             shopeeSyncError: undefined,
           };
           forceHealPickupOrderIfHasTracking(orders[index]);
-          // Fetch tracking nhanh 1 lần — không retry dài (PDF/in đơn lo sau).
-          if (!hasUsableShopeeTrackingNumber(orders[index]) && resolvedShopId) {
-            try {
-              const token = await getValidShopeeAccessToken(resolvedShopId);
-              if (token) {
-                await enrichShopeeOrderTrackingFromApi(resolvedShopId, token, orders[index], {
-                  retries: 1,
-                });
-              }
-            } catch (trackErr: any) {
-              console.warn(
-                `[Ship Order Bulk] Fetch tracking sau ship thất bại ${order.orderSn}:`,
-                trackErr?.message || trackErr,
-              );
-            }
-          }
-          forceHealPickupOrderIfHasTracking(orders[index]);
+          // KHÔNG gọi get_tracking_number tại đây — xác nhận xong là xong; in PDF/tracking lo sau.
           if (orders[index].channel === "shopee") {
             successfulShopeeOrders.push(orders[index]);
           }
         }
 
-        results.push({
+        results[i] = {
           orderId: order.id,
           orderSn: order.orderSn,
           success: treatedAsSuccess,
           pendingShopeeCheck: pendingTrap,
           alreadyShipped: !result.success && isAlreadyShippedError(result),
           ...result,
-        });
+        };
       } catch (postErr: any) {
         console.error(
           `[Ship Order Bulk] Lỗi hậu xử lý đơn ${order.orderSn} — continue:`,
@@ -16669,29 +16678,27 @@ async function startServer() {
           error: "post_process_error",
           message: String(postErr?.message || postErr),
         });
-        results.push({
+        results[i] = {
           orderId: order.id,
           orderSn: order.orderSn,
           success: false,
           error: "post_process_error",
           message: String(postErr?.message || postErr),
-        });
+        };
       }
 
-      if (opts?.onProgress) opts.onProgress(i + 1, toShip.length);
+      completedCount += 1;
+      if (opts?.onProgress) opts.onProgress(completedCount, toShip.length);
+    });
 
-      if (i < toShip.length - 1) {
-        await new Promise((r) => setTimeout(r, 400));
-      }
-    }
-
-    const successCount = results.filter((r) => r.success).length;
+    const compactResults = results.filter(Boolean);
+    const successCount = compactResults.filter((r) => r.success).length;
     console.log(
       `[Ship Order Bulk] Xác nhận thành công ${successCount} đơn. Bỏ qua ${failedOrders.length} đơn bị lỗi.`,
     );
 
     return {
-      results,
+      results: compactResults,
       successfulShopeeOrders,
       successCount,
       failedCount: failedOrders.length,
@@ -16753,25 +16760,7 @@ async function startServer() {
               : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
         };
         forceHealPickupOrderIfHasTracking(orders[index]);
-        if (!hasUsableShopeeTrackingNumber(orders[index]) && orders[index].shopId) {
-          try {
-            const token = await getValidShopeeAccessToken(String(orders[index].shopId));
-            if (token) {
-              await enrichShopeeOrderTrackingFromApi(
-                String(orders[index].shopId),
-                token,
-                orders[index],
-                { retries: 4 },
-              );
-            }
-          } catch (trackErr: any) {
-            console.warn(
-              `[Ship Order] Fetch tracking sau ship thất bại ${order.orderSn}:`,
-              trackErr?.message || trackErr,
-            );
-          }
-        }
-        forceHealPickupOrderIfHasTracking(orders[index]);
+        // Không chờ get_tracking_number — xác nhận xong trả về ngay.
         await persistOrdersToDatabase(orders, [orders[index]]);
         return res.json({ success: true, mode: result.mode, order: orders[index] });
       }
