@@ -32,6 +32,10 @@ import {
   hasOrderTrackingNo as hasOrderTrackingNoShared,
 } from "./src/utils/orderHandover.ts";
 import {
+  getCachedShopeeAddressList,
+  setCachedShopeeAddressList,
+} from "./src/services/redis.ts";
+import {
   initMongo,
   loadProductsFromStore,
   loadProductByIdFromStore,
@@ -5861,12 +5865,27 @@ const SHIP_ORDER_BATCH_CONCURRENCY = 20;
 const SHIP_ORDER_CHUNK_SIZE = 25;
 const SHIP_ORDER_CHUNK_PAUSE_MS = 50;
 
-/** Cache get_address_list theo shop — tránh N round-trip khi xác nhận hàng loạt song song. */
-const shopeeAddressListCache = new Map<
-  string,
-  { at: number; result: any; list: any[] }
->();
-const SHOPEE_ADDRESS_LIST_CACHE_TTL_MS = 60_000;
+/**
+ * get_address_list qua Redis (key shopee:address_list:{shopId}, TTL 24h).
+ * Redis down / miss → gọi API; chỉ cache response thành công.
+ */
+async function getShopeeAddressListCached(
+  shopId: string,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<{ result: any; list: any[]; fromCache: boolean }> {
+  const sid = String(shopId || "").trim();
+  const cached = await getCachedShopeeAddressList(sid);
+  if (cached?.result && !cached.result.error) {
+    return { result: cached.result, list: cached.list || [], fromCache: true };
+  }
+  const result = await shopeeGetAddressList(sid, accessToken, signal);
+  const list = result?.response?.address_list || result?.address_list || [];
+  if (result && !result.error) {
+    await setCachedShopeeAddressList(sid, result);
+  }
+  return { result, list, fromCache: false };
+}
 
 async function withOperationTimeout<T>(
   work: Promise<T> | ((signal: AbortSignal) => Promise<T>),
@@ -6235,29 +6254,16 @@ async function shipShopeeOrderReal(
     );
     let pickupChoice = pickupFromParamOnly;
     if (!pickupChoice) {
-      // Fallback: lấy danh sách địa chỉ kho (cache 60s/shop).
-      const addressCacheKey = String(shopId);
-      let addressListResult: any;
-      let shopAddressList: any[];
-      const hit = shopeeAddressListCache.get(addressCacheKey);
-      if (hit && Date.now() - hit.at < SHOPEE_ADDRESS_LIST_CACHE_TTL_MS) {
-        addressListResult = hit.result;
-        shopAddressList = hit.list;
-      } else {
-        addressListResult = await shopeeGetAddressList(shopId, accessToken, signal);
-        shopAddressList =
-          addressListResult.response?.address_list ||
-          addressListResult.address_list ||
-          [];
-        shopeeAddressListCache.set(addressCacheKey, {
-          at: Date.now(),
-          result: addressListResult,
-          list: shopAddressList,
-        });
-      }
-      if (addressListResult.error) {
+      // Fallback: Redis cache 24h (shopee:address_list:{shopId}) → API nếu miss / Redis down.
+      const { result: addressListResult, list: shopAddressList, fromCache } =
+        await getShopeeAddressListCached(shopId, accessToken, signal);
+      if (addressListResult?.error) {
         console.warn(
           `[Shopee Ship] get_address_list cảnh báo đơn ${order.orderSn}: ${addressListResult.error} — fallback get_shipping_parameter`,
+        );
+      } else {
+        console.log(
+          `[Shopee Ship] get_address_list đơn ${order.orderSn} via ${fromCache ? "Redis cache" : "API+cache"} (${shopAddressList.length} addr)`,
         );
       }
       pickupChoice = resolvePickupShipmentFromParams(paramResult.response?.pickup, shopAddressList);
@@ -12200,7 +12206,7 @@ type ShipOrderJobStatus = "pending" | "running" | "printing" | "done" | "failed"
 type ShipOrderJob = {
   id: string;
   status: ShipOrderJobStatus;
-  /** pending | loading | optimistic_persist | calling_shopee | persisting | done | failed */
+  /** pending | loading | optimistic_persist | calling_shopee_pickup | calling_shopee_dropoff | persisting | done | failed */
   phase?: string;
   total: number;
   completed: number;
@@ -16871,19 +16877,12 @@ async function startServer() {
     ];
     if (shopIds.length === 0) return;
     await mapWithConcurrency(shopIds, 3, async (shopId) => {
-      const hit = shopeeAddressListCache.get(shopId);
-      if (hit && Date.now() - hit.at < SHOPEE_ADDRESS_LIST_CACHE_TTL_MS) return;
       try {
+        const hit = await getCachedShopeeAddressList(shopId);
+        if (hit?.result && !hit.result.error) return;
         const accessToken = (await getValidShopeeAccessToken(shopId)) || "";
         if (!accessToken) return;
-        const addressListResult = await shopeeGetAddressList(shopId, accessToken);
-        const list =
-          addressListResult.response?.address_list || addressListResult.address_list || [];
-        shopeeAddressListCache.set(shopId, {
-          at: Date.now(),
-          result: addressListResult,
-          list,
-        });
+        await getShopeeAddressListCached(shopId, accessToken);
       } catch (err: any) {
         console.warn(`[Ship Order Bulk] prewarm address_list shop=${shopId}:`, err?.message || err);
       }
@@ -18156,8 +18155,13 @@ async function startServer() {
       }
       await persistChangedOrdersPatch(optimisticChanged);
 
-      job.phase = "calling_shopee";
-      job.message = "Đang gọi API Shopee...";
+      const shipPhase =
+        shipMethod === "dropoff" ? "calling_shopee_dropoff" : "calling_shopee_pickup";
+      job.phase = shipPhase;
+      job.message =
+        shipMethod === "dropoff"
+          ? "Đang gọi Shopee ship_order (dropoff)..."
+          : "Đang gọi Shopee pickup / ship_order...";
       job.updatedAt = Date.now();
 
       const batch = await processShipOrderBatch(orders, toShip, shipMethod, {
@@ -18165,11 +18169,13 @@ async function startServer() {
         onProgress: (completed, total) => {
           job.completed = completed;
           job.total = total;
-          job.phase = "calling_shopee";
+          job.phase = shipPhase;
           job.message =
             completed > 0
-              ? `Đang xác nhận ${completed}/${total} đơn lên sàn...`
-              : "Đang gọi API Shopee...";
+              ? `Đang xác nhận ${completed}/${total} đơn lên sàn (${shipMethod})...`
+              : shipMethod === "dropoff"
+                ? "Đang gọi Shopee ship_order (dropoff)..."
+                : "Đang gọi Shopee pickup / ship_order...";
           job.updatedAt = Date.now();
         },
       });

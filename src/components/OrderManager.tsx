@@ -2145,11 +2145,15 @@ export default function OrderManager({
         const done = Number(job.completed) || 0;
         const tot = Number(job.total) || total;
         if (job.status === 'running' || job.status === 'pending') {
-          if (done === 0) {
+          if (typeof job.message === 'string' && job.message.trim()) {
+            setProgressMessage(job.message);
+          } else if (done === 0) {
             setProgressMessage(
-              typeof job.message === 'string' && job.message.trim()
-                ? job.message
-                : 'Đang gọi API Shopee...',
+              job.phase === 'calling_shopee_pickup'
+                ? 'Đang gọi Shopee pickup / ship_order...'
+                : job.phase === 'calling_shopee_dropoff'
+                  ? 'Đang gọi Shopee ship_order (dropoff)...'
+                  : 'Đang gọi API Shopee...',
             );
           } else {
             setProgressMessage(`Đang xác nhận ${done}/${tot} đơn lên sàn...`);
