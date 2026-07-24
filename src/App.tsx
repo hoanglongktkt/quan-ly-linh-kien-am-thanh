@@ -227,6 +227,10 @@ export default function App() {
   /** Floating widget tiến trình đồng bộ đơn ngầm (góc trên phải). */
   const [syncWidgetActive, setSyncWidgetActive] = useState(false);
   const lastFocusRefreshAtRef = useRef(0);
+  /** Sequence guard — tránh race-condition khi polling 15s + click thủ công/focus refresh
+   * chạy gần nhau: chỉ response của request MỚI NHẤT được ghi vào state, response của
+   * request cũ hơn (dù trả về sau) sẽ bị bỏ qua thay vì ghi đè mất dữ liệu vừa cập nhật. */
+  const fetchOrdersSeqRef = useRef(0);
 
   const [logs, setLogs] = useState<SyncLog[]>(() =>
     safeGetJson('omni_logs', INITIAL_SYNC_LOGS),
@@ -356,6 +360,7 @@ export default function App() {
 
     const silent = Boolean(opts?.silent);
     const bustCache = opts?.bustCache !== false;
+    const requestId = ++fetchOrdersSeqRef.current;
     if (!silent) setOrdersLoading(true);
     try {
       // Cache bust: timestamp + cache:no-store — tránh trình duyệt trả danh sách cũ (GHN kẹt tab).
@@ -384,6 +389,12 @@ export default function App() {
       if (response.ok) {
         const data: Order[] = await response.json();
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', Array.isArray(data) ? data.length : 0);
+        // Bỏ qua nếu đã có request mới hơn (polling/click khác) hoàn tất trước —
+        // tránh response CŨ trả về TRỄ ghi đè mất dữ liệu MỚI vừa hiển thị.
+        if (requestId !== fetchOrdersSeqRef.current) {
+          console.warn('[Fetch Orders] Bỏ qua response cũ (đã có request mới hơn).');
+          return;
+        }
         const sanitized = sanitizeOrders(data);
         setOrders(sanitized);
         if (sanitized.length === 0) {
