@@ -1692,7 +1692,7 @@ export default function App() {
               <Dashboard
                 orders={orders}
                 products={products}
-                onTabChange={setActiveTab}
+                onTabChange={(tab, options) => navigateTab(tab, options)}
                 onEditProductShortcut={handleEditProductShortcut}
                 onUpdateProduct={handleUpdateProduct}
                 onNavigateToImport={handleNavigateToImport}

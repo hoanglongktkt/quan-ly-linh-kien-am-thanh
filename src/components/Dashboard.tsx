@@ -112,7 +112,17 @@ function normalizeDashboardPayload(raw: Partial<DashboardData> | null | undefine
 interface DashboardProps {
   orders: Order[];
   products: Product[];
-  onTabChange?: (tab: string) => void;
+  onTabChange?: (
+    tab: string,
+    options?: {
+      ordersSubTab?:
+        | 'pending_confirm'
+        | 'unprocessed'
+        | 'processed'
+        | 'shipping'
+        | 'cancel_returns';
+    },
+  ) => void;
   onEditProductShortcut?: (productId: string) => void;
   onUpdateProduct?: (updated: Product, opts?: { save?: boolean }) => Promise<void>;
   onNavigateToImport?: (productId: string) => void;
@@ -347,6 +357,14 @@ export default function Dashboard({
         { key: 'returnPending', title: 'Hủy giao — chờ nhận', count: data.pendingOrders.returnPending, icon: Undo2, color: 'text-purple-600', bg: 'bg-purple-50' },
       ]
     : [];
+  const pendingCardTargetTab: Record<string, 'pending_confirm' | 'unprocessed' | 'processed' | 'shipping' | 'cancel_returns'> = {
+    pendingApproval: 'pending_confirm',
+    pendingPayment: 'pending_confirm',
+    pendingPack: 'unprocessed',
+    pendingPickup: 'processed',
+    shipping: 'shipping',
+    returnPending: 'cancel_returns',
+  };
 
   const maxChart = Math.max(...(data?.chart.map((c) => c.amount) || [1]), 1);
 
@@ -432,7 +450,11 @@ export default function Dashboard({
                   <button
                     key={card.key}
                     type="button"
-                    onClick={() => onTabChange?.('orders')}
+                    onClick={() =>
+                      onTabChange?.('orders', {
+                        ordersSubTab: pendingCardTargetTab[card.key],
+                      })
+                    }
                     className="p-4 min-h-[72px] rounded-xl border border-gray-100 bg-gray-50/50 hover:bg-white hover:border-gray-200 hover:shadow-xs transition-all text-left"
                   >
                     <div className={`w-9 h-9 rounded-lg ${card.bg} ${card.color} flex items-center justify-center mb-3`}>

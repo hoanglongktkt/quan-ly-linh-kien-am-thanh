@@ -11756,8 +11756,7 @@ function isValidOrder(order: any): boolean {
   // status để lần refresh kế tiếp không làm đơn mới biến mất khỏi giao diện.
   if (
     String(order?.channel || "").toLowerCase() === "shopee" &&
-    Boolean(order?.orderSn || order?.id) &&
-    Boolean(raw)
+    Boolean(order?.orderSn || order?.id)
   ) {
     return true;
   }
