@@ -206836,6 +206836,98 @@ async function refreshShopeeToken(shopId, refreshToken) {
     return { error: "refresh_failed", message: error3?.message || String(error3) };
   }
 }
+var SHOPEE_REAUTH_REQUIRED_MESSAGE = "Vui l\xF2ng v\xE0o m\u1EE5c C\u1EA5u h\xECnh \u0111\u1EC3 li\xEAn k\u1EBFt l\u1EA1i gian h\xE0ng Shopee (Token \u0111\xE3 h\u1EBFt h\u1EA1n ho\xE0n to\xE0n)";
+var ShopeeRefreshTokenExpiredError = class extends Error {
+  constructor(shopId) {
+    super(SHOPEE_REAUTH_REQUIRED_MESSAGE);
+    this.code = "shopee_reauth_required";
+    this.name = "ShopeeRefreshTokenExpiredError";
+    this.shopId = shopId;
+  }
+};
+function isShopeeInvalidTokenError(error3, message) {
+  const text = `${error3 || ""} ${message || ""}`.toLowerCase();
+  return /invalid_acceess_token|invalid_access_token|error_auth|invalid_token|access_token.*expire|token.*expire|token.*invalid|unauthorized|hết hạn|không hợp lệ/.test(
+    text
+  );
+}
+function isShopeeRefreshPermanentlyFailed(error3, message) {
+  const text = `${error3 || ""} ${message || ""}`.toLowerCase();
+  return /invalid_refresh_token|refresh_token.*expire|refresh.*invalid|error_auth|invalid_token|error_param/.test(
+    text
+  );
+}
+var shopeeTokenRefreshLocks = /* @__PURE__ */ new Map();
+function readShopeeAccessTokenIfFresh(shopId) {
+  const tokens = loadShopeeTokens();
+  const key = normalizeShopIdKey(shopId);
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record?.access_token) return null;
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  if (obtainedAt > 0 && now - obtainedAt >= expireIn - 60) return null;
+  return String(record.access_token);
+}
+async function refreshShopeeAccessTokenLocked(shopId, opts) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) throw new ShopeeRefreshTokenExpiredError(String(shopId || "?"));
+  const inflight = shopeeTokenRefreshLocks.get(key);
+  if (inflight) {
+    console.log(`[Shopee Token] Mutex: ch\u1EDD refresh \u0111ang ch\u1EA1y shop_id=${key}`);
+    return inflight;
+  }
+  const run = (async () => {
+    const tokens = loadShopeeTokens();
+    const record = getShopeeTokenRecord(tokens, key);
+    if (!record) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+    if (!record.refresh_token) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+    if (!opts?.force) {
+      const fresh2 = readShopeeAccessTokenIfFresh(key);
+      if (fresh2) return fresh2;
+    } else {
+      const now = Math.floor(Date.now() / 1e3);
+      const obtainedAt = Number(record.obtained_at) || 0;
+      if (obtainedAt > 0 && now - obtainedAt < 15 && record.access_token) {
+        console.log(`[Shopee Token] B\u1ECF qua force refresh \u2014 token v\u1EEBa m\u1EDBi (${now - obtainedAt}s) shop_id=${key}`);
+        return String(record.access_token);
+      }
+    }
+    console.log(
+      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)}...`
+    );
+    const apiShopId = resolveShopeeApiShopId(record, key);
+    const refreshed = await refreshShopeeToken(apiShopId, String(record.refresh_token));
+    if (refreshed.access_token) {
+      if (key !== apiShopId) {
+        saveShopeeTokenForShop(key, {
+          access_token: refreshed.access_token,
+          refresh_token: refreshed.refresh_token,
+          expire_in: refreshed.expire_in,
+          obtained_at: Math.floor(Date.now() / 1e3)
+        });
+      }
+      console.log(`[Shopee Token] Refresh OK shop_id=${key} (api=${apiShopId})`);
+      return String(refreshed.access_token);
+    }
+    console.error(
+      `[Shopee Token] Refresh TH\u1EA4T B\u1EA0I shop_id=${key}:`,
+      refreshed.error || refreshed.message
+    );
+    if (isShopeeRefreshPermanentlyFailed(refreshed.error, refreshed.message) || isShopeeInvalidTokenError(refreshed.error, refreshed.message) || !refreshed.access_token) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+    throw new ShopeeRefreshTokenExpiredError(key);
+  })().finally(() => {
+    shopeeTokenRefreshLocks.delete(key);
+  });
+  shopeeTokenRefreshLocks.set(key, run);
+  return run;
+}
 async function getShopeeAccessTokenForApi(shopKey, opts) {
   const fileKey = normalizeShopIdKey(shopKey);
   if (!fileKey) return null;
@@ -206843,25 +206935,21 @@ async function getShopeeAccessTokenForApi(shopKey, opts) {
   const record = getShopeeTokenRecord(tokens, fileKey);
   if (!record?.refresh_token && !record?.access_token) return null;
   const apiShopId = resolveShopeeApiShopId(record, fileKey);
-  if (opts?.forceRefresh && record.refresh_token) {
-    console.log(`[Shopee API] Force refresh token shop_id=${apiShopId} (key=${fileKey})`);
-    const refreshed = await refreshShopeeToken(apiShopId, record.refresh_token);
-    if (refreshed.access_token) {
-      if (fileKey !== apiShopId) {
-        saveShopeeTokenForShop(fileKey, {
-          access_token: refreshed.access_token,
-          refresh_token: refreshed.refresh_token,
-          expire_in: refreshed.expire_in,
-          obtained_at: Math.floor(Date.now() / 1e3)
-        });
-      }
-      return { token: refreshed.access_token, apiShopId, fileKey };
+  try {
+    if (opts?.forceRefresh) {
+      const token2 = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+      return { token: token2, apiShopId, fileKey };
     }
-    return null;
+    const token = await getValidShopeeAccessToken(fileKey);
+    if (!token) return null;
+    return { token, apiShopId, fileKey };
+  } catch (err2) {
+    if (err2 instanceof ShopeeRefreshTokenExpiredError) {
+      console.error(`[Shopee Token] ${err2.message} shop_id=${err2.shopId}`);
+      return null;
+    }
+    throw err2;
   }
-  const token = await getValidShopeeAccessToken(fileKey);
-  if (!token) return null;
-  return { token, apiShopId, fileKey };
 }
 async function verifyShopeeShopToken(shopId, accessToken) {
   const key = normalizeShopIdKey(shopId);
@@ -206894,8 +206982,9 @@ function resolveShopeeApiShopId(record, configuredShopId) {
   return recordKey || configured;
 }
 async function getValidShopeeAccessToken(shopId) {
-  const tokens = loadShopeeTokens();
   const key = normalizeShopIdKey(shopId);
+  if (!key) return null;
+  const tokens = loadShopeeTokens();
   const record = getShopeeTokenRecord(tokens, key);
   if (!record) {
     const available = listShopeeOAuthShopIds();
@@ -206904,30 +206993,23 @@ async function getValidShopeeAccessToken(shopId) {
     );
     return null;
   }
-  const now = Math.floor(Date.now() / 1e3);
-  const obtainedAt = Number(record.obtained_at) || 0;
-  const expireIn = Number(record.expire_in) || 14400;
-  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
-  if (!isExpired) return record.access_token;
-  console.log(`[Shopee API] access_token c\u1EE7a shop_id=${key} \u0111\xE3 h\u1EBFt h\u1EA1n, \u0111ang refresh...`);
-  const apiShopId = resolveShopeeApiShopId(record, key);
-  const refreshed = await refreshShopeeToken(apiShopId, record.refresh_token);
-  if (refreshed.access_token) {
-    if (key !== apiShopId) {
-      saveShopeeTokenForShop(key, {
-        access_token: refreshed.access_token,
-        refresh_token: refreshed.refresh_token,
-        expire_in: refreshed.expire_in,
-        obtained_at: Math.floor(Date.now() / 1e3)
-      });
-    }
-    return refreshed.access_token;
+  const fresh2 = readShopeeAccessTokenIfFresh(key);
+  if (fresh2) return fresh2;
+  if (!record.refresh_token) {
+    console.error(`[Shopee API] Shop ${key} thi\u1EBFu refresh_token \u2014 c\u1EA7n OAuth l\u1EA1i.`);
+    return null;
   }
-  console.error(
-    `[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key} (api=${apiShopId}):`,
-    refreshed.error || refreshed.message
-  );
-  return null;
+  try {
+    console.log(`[Shopee API] access_token c\u1EE7a shop_id=${key} \u0111\xE3 h\u1EBFt h\u1EA1n, \u0111ang refresh (mutex)...`);
+    return await refreshShopeeAccessTokenLocked(key, { force: false });
+  } catch (err2) {
+    if (err2 instanceof ShopeeRefreshTokenExpiredError) {
+      console.error(`[Shopee API] ${err2.message}`);
+      return null;
+    }
+    console.error(`[Shopee API] Refresh token th\u1EA5t b\u1EA1i shop_id=${key}:`, err2);
+    return null;
+  }
 }
 async function runShopeeConnectivityDiagnostics(shopIdInput) {
   const steps = [];
@@ -207203,7 +207285,7 @@ function formatShopeeApiError(json2, httpStatus) {
   const parts = [json2?.message, json2?.error, json2?.msg].map((v) => String(v ?? "").trim()).filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
   const status2 = typeof httpStatus === "number" && httpStatus > 0 ? httpStatus : typeof json2?.httpStatus === "number" && json2.httpStatus > 0 ? json2.httpStatus : void 0;
   if (status2 === 401) {
-    return parts[0] || "L\u1ED7i \u1EE7y quy\u1EC1n Shopee (HTTP 401) \u2014 access_token h\u1EBFt h\u1EA1n ho\u1EB7c kh\xF4ng h\u1EE3p l\u1EC7. V\xE0o C\xE0i \u0111\u1EB7t \u2192 OAuth l\u1EA1i shop.";
+    return parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
   }
   if (status2 === 429) {
     return parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
@@ -207251,14 +207333,14 @@ function describeShopeeTokenFailure(shopKey) {
   const record = getShopeeTokenRecord(tokens, key);
   if (!record) {
     return {
-      error: "missing_oauth",
-      message: `Shop ${key} ch\u01B0a c\xF3 token OAuth \u2014 v\xE0o C\xE0i \u0111\u1EB7t \u2192 Li\xEAn k\u1EBFt Shopee \u0111\u1EC3 \u1EE7y quy\u1EC1n l\u1EA1i.`
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
     };
   }
   if (!record.refresh_token) {
     return {
-      error: "missing_refresh_token",
-      message: `Shop ${key} thi\u1EBFu refresh_token \u2014 OAuth l\u1EA1i shop tr\xEAn C\xE0i \u0111\u1EB7t.`
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
     };
   }
   const now = Math.floor(Date.now() / 1e3);
@@ -207267,13 +207349,13 @@ function describeShopeeTokenFailure(shopKey) {
   const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
   if (isExpired) {
     return {
-      error: "refresh_token_expired",
-      message: `Access token shop ${key} \u0111\xE3 h\u1EBFt h\u1EA1n v\xE0 refresh th\u1EA5t b\u1EA1i \u2014 OAuth l\u1EA1i shop tr\xEAn C\xE0i \u0111\u1EB7t.`
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
     };
   }
   return {
-    error: "no_valid_access_token",
-    message: `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token h\u1EE3p l\u1EC7 cho shop ${key}.`
+    error: "shopee_reauth_required",
+    message: SHOPEE_REAUTH_REQUIRED_MESSAGE
   };
 }
 async function shopeeFetchJsonWithRetry(url2, context, opts) {
@@ -209963,11 +210045,31 @@ async function shipShopeeOrderReal(order, method) {
     if (!shopId) {
       return { success: false, error: "missing_shop_id", message: "\u0110\u01A1n h\xE0ng thi\u1EBFu shop_id, kh\xF4ng x\xE1c \u0111\u1ECBnh \u0111\u01B0\u1EE3c shop Shopee \u0111\u1EC3 g\u1ECDi API." };
     }
-    const accessToken = await getValidShopeeAccessToken(shopId);
-    if (!accessToken) {
-      return { success: false, error: "no_valid_access_token", message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId}. C\u1EA7n \u1EE7y quy\u1EC1n l\u1EA1i qua /api/shopee/callback.` };
+    let accessToken;
+    try {
+      accessToken = await getValidShopeeAccessToken(shopId) || "";
+      if (!accessToken) {
+        const fail2 = describeShopeeTokenFailure(shopId);
+        return { success: false, error: fail2.error, message: fail2.message };
+      }
+    } catch (err2) {
+      if (err2 instanceof ShopeeRefreshTokenExpiredError) {
+        return { success: false, error: err2.code, message: err2.message };
+      }
+      throw err2;
     }
-    const paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+    let paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+    if (isShopeeInvalidTokenError(paramResult?.error, paramResult?.message)) {
+      try {
+        accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+        paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+      } catch (err2) {
+        if (err2 instanceof ShopeeRefreshTokenExpiredError) {
+          return { success: false, error: err2.code, message: err2.message };
+        }
+        throw err2;
+      }
+    }
     console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (get_shipping_parameter) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(paramResult));
     if (paramResult.error) {
       console.error(`[Shopee L\u1ED6I] get_shipping_parameter th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${paramResult.error}" message="${paramResult.message}"`);
@@ -210074,7 +210176,18 @@ async function shipShopeeOrderReal(order, method) {
         `[Shopee Ship] \u0110\u01A1n ${order.orderSn} pickup address_id=${pickupChoice.address_id} pickup_time_id=${pickupChoice.pickup_time_id}`
       );
     }
-    const shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+    let shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+    if (isShopeeInvalidTokenError(shipResult?.error, shipResult?.message)) {
+      try {
+        accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+        shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+      } catch (err2) {
+        if (err2 instanceof ShopeeRefreshTokenExpiredError) {
+          return { success: false, error: err2.code, message: err2.message };
+        }
+        throw err2;
+      }
+    }
     console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (ship_order) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(shipResult));
     if (shipResult.error) {
       console.error(`[Shopee L\u1ED6I] ship_order th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${shipResult.error}" message="${shipResult.message}" request_id="${shipResult.request_id || ""}"`);
@@ -210111,6 +210224,9 @@ async function shipShopeeOrderReal(order, method) {
       trackingNumber: order.trackingNumber || order.tracking_no || void 0
     };
   } catch (error3) {
+    if (error3 instanceof ShopeeRefreshTokenExpiredError) {
+      return { success: false, error: error3.code, message: error3.message };
+    }
     console.error(`[Shopee L\u1ED6I] shipShopeeOrderReal exception \u0111\u01A1n ${order?.orderSn}:`, error3?.stack || error3);
     return {
       success: false,
@@ -214529,7 +214645,11 @@ var authMiddleware = (req2, res, next) => {
     req2.user = decoded;
     next();
   } catch (error3) {
-    return res.status(401).json({ success: false, error: "Token kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c \u0111\xE3 h\u1EBFt h\u1EA1n.", message: "Token kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c \u0111\xE3 h\u1EBFt h\u1EA1n." });
+    return res.status(401).json({
+      success: false,
+      error: "Phi\xEAn \u0111\u0103ng nh\u1EADp admin \u0111\xE3 h\u1EBFt h\u1EA1n \u2014 vui l\xF2ng \u0111\u0103ng nh\u1EADp l\u1EA1i.",
+      message: "Phi\xEAn \u0111\u0103ng nh\u1EADp admin \u0111\xE3 h\u1EBFt h\u1EA1n \u2014 vui l\xF2ng \u0111\u0103ng nh\u1EADp l\u1EA1i."
+    });
   }
 };
 async function startServer2() {
@@ -218175,18 +218295,31 @@ async function startServer2() {
     return `/api/public/labels/${mergedName}`;
   }
   async function generateShopeeShippingDocument(shopId, orderList) {
-    const accessToken = await getValidShopeeAccessToken(shopId);
-    if (!accessToken) {
-      return { success: false, error: "no_valid_access_token", message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId}.` };
+    let accessToken;
+    try {
+      accessToken = await getValidShopeeAccessToken(shopId) || "";
+      if (!accessToken) {
+        const fail2 = describeShopeeTokenFailure(shopId);
+        return { success: false, error: fail2.error, message: fail2.message };
+      }
+    } catch (err2) {
+      if (err2 instanceof ShopeeRefreshTokenExpiredError) {
+        return { success: false, error: err2.code, message: err2.message };
+      }
+      throw err2;
     }
     const MAX_RETRIES = 2;
     const RETRY_DELAY_MS = 2e3;
     let lastError = {};
+    let didForceRefresh = false;
     for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
       let result;
       try {
         result = await tryGenerateShopeeShippingDocumentOnce(shopId, accessToken, orderList);
       } catch (error3) {
+        if (error3 instanceof ShopeeRefreshTokenExpiredError) {
+          return { success: false, error: error3.code, message: error3.message, permanent: true };
+        }
         const msg = String(error3?.message || error3 || "Shopee API Error");
         console.error(`[Shopee Print] Exception t\u1EA1o v\u1EADn (l\u1EA7n ${attempt}):`, msg);
         return {
@@ -218197,6 +218330,19 @@ async function startServer2() {
         };
       }
       if (result.success) return result;
+      if (!didForceRefresh && isShopeeInvalidTokenError(result.error, result.message)) {
+        didForceRefresh = true;
+        try {
+          console.warn(`[Shopee Print] Token h\u1EBFt h\u1EA1n khi t\u1EA1o PDF shop_id=${shopId} \u2014 force refresh + retry`);
+          accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+          continue;
+        } catch (err2) {
+          if (err2 instanceof ShopeeRefreshTokenExpiredError) {
+            return { success: false, error: err2.code, message: err2.message, permanent: true };
+          }
+          throw err2;
+        }
+      }
       lastError = { error: result.error, message: result.message };
       console.error(`[Shopee Print] L\u1EA5y v\u1EAD n \u0111\u01A1n TH\u1EA4T B\u1EA0I (l\u1EA7n ${attempt}/${MAX_RETRIES + 1}) cho shop_id=${shopId}: error="${result.error}" message="${result.message}"`);
       if (result.permanent) {

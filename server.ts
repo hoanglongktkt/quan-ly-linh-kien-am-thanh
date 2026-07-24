@@ -1399,9 +1399,132 @@ async function refreshShopeeToken(shopId: string, refreshToken: string) {
   }
 }
 
+/** Thông báo cố định khi refresh_token Shopee hết hạn vĩnh viễn — FE hiện cho user. */
+const SHOPEE_REAUTH_REQUIRED_MESSAGE =
+  "Vui lòng vào mục Cấu hình để liên kết lại gian hàng Shopee (Token đã hết hạn hoàn toàn)";
+
+class ShopeeRefreshTokenExpiredError extends Error {
+  readonly shopId: string;
+  readonly code = "shopee_reauth_required";
+  constructor(shopId: string) {
+    super(SHOPEE_REAUTH_REQUIRED_MESSAGE);
+    this.name = "ShopeeRefreshTokenExpiredError";
+    this.shopId = shopId;
+  }
+}
+
 function isShopeeInvalidTokenError(error?: unknown, message?: unknown): boolean {
   const text = `${error || ""} ${message || ""}`.toLowerCase();
-  return /invalid.*access_token|invalid_acceess_token|error_auth|invalid_token|token expired/.test(text);
+  return /invalid_acceess_token|invalid_access_token|error_auth|invalid_token|access_token.*expire|token.*expire|token.*invalid|unauthorized|hết hạn|không hợp lệ/.test(
+    text,
+  );
+}
+
+function isShopeeRefreshPermanentlyFailed(error?: unknown, message?: unknown): boolean {
+  const text = `${error || ""} ${message || ""}`.toLowerCase();
+  return /invalid_refresh_token|refresh_token.*expire|refresh.*invalid|error_auth|invalid_token|error_param/.test(
+    text,
+  );
+}
+
+/**
+ * Mutex / pending-promise theo shop_id:
+ * Nhiều request song song (in PDF song song) cùng thấy token hết hạn → CHỈ 1 lần
+ * gọi refresh_token API; các request còn lại await cùng promise rồi dùng token mới.
+ */
+const shopeeTokenRefreshLocks = new Map<string, Promise<string>>();
+
+function readShopeeAccessTokenIfFresh(shopId: string): string | null {
+  const tokens = loadShopeeTokens();
+  const key = normalizeShopIdKey(shopId);
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record?.access_token) return null;
+  const now = Math.floor(Date.now() / 1000);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  // obtained_at=0 → coi như không chắc hạn dùng, vẫn trả token (caller có thể force refresh khi API 401).
+  if (obtainedAt > 0 && now - obtainedAt >= expireIn - 60) return null;
+  return String(record.access_token);
+}
+
+/**
+ * Refresh access_token có khóa theo shop. `force=true` luôn gọi Shopee (sau 401).
+ * Ném ShopeeRefreshTokenExpiredError khi refresh_token chết hẳn.
+ */
+async function refreshShopeeAccessTokenLocked(
+  shopId: string,
+  opts?: { force?: boolean },
+): Promise<string> {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) throw new ShopeeRefreshTokenExpiredError(String(shopId || "?"));
+
+  const inflight = shopeeTokenRefreshLocks.get(key);
+  if (inflight) {
+    console.log(`[Shopee Token] Mutex: chờ refresh đang chạy shop_id=${key}`);
+    return inflight;
+  }
+
+  const run = (async (): Promise<string> => {
+    const tokens = loadShopeeTokens();
+    const record = getShopeeTokenRecord(tokens, key);
+    if (!record) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+    if (!record.refresh_token) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+
+    // Không force: nếu waiter khác vừa refresh xong (token còn hạn) → dùng luôn.
+    if (!opts?.force) {
+      const fresh = readShopeeAccessTokenIfFresh(key);
+      if (fresh) return fresh;
+    } else {
+      // Force nhưng token vừa được refresh < 15s (waiter khác vừa xong trước khi ta lấy lock)
+      // → tránh refresh 2 lần liên tiếp làm mất refresh_token mới.
+      const now = Math.floor(Date.now() / 1000);
+      const obtainedAt = Number(record.obtained_at) || 0;
+      if (obtainedAt > 0 && now - obtainedAt < 15 && record.access_token) {
+        console.log(`[Shopee Token] Bỏ qua force refresh — token vừa mới (${now - obtainedAt}s) shop_id=${key}`);
+        return String(record.access_token);
+      }
+    }
+
+    console.log(
+      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)}...`,
+    );
+    const apiShopId = resolveShopeeApiShopId(record, key);
+    const refreshed = await refreshShopeeToken(apiShopId, String(record.refresh_token));
+    if (refreshed.access_token) {
+      if (key !== apiShopId) {
+        saveShopeeTokenForShop(key, {
+          access_token: refreshed.access_token,
+          refresh_token: refreshed.refresh_token,
+          expire_in: refreshed.expire_in,
+          obtained_at: Math.floor(Date.now() / 1000),
+        });
+      }
+      console.log(`[Shopee Token] Refresh OK shop_id=${key} (api=${apiShopId})`);
+      return String(refreshed.access_token);
+    }
+
+    console.error(
+      `[Shopee Token] Refresh THẤT BẠI shop_id=${key}:`,
+      refreshed.error || refreshed.message,
+    );
+    if (
+      isShopeeRefreshPermanentlyFailed(refreshed.error, refreshed.message) ||
+      isShopeeInvalidTokenError(refreshed.error, refreshed.message) ||
+      !refreshed.access_token
+    ) {
+      throw new ShopeeRefreshTokenExpiredError(key);
+    }
+    throw new ShopeeRefreshTokenExpiredError(key);
+  })().finally(() => {
+    shopeeTokenRefreshLocks.delete(key);
+  });
+
+  shopeeTokenRefreshLocks.set(key, run);
+  return run;
 }
 
 /** Lấy access_token + shop_id thực tế dùng khi gọi Shopee API. */
@@ -1418,26 +1541,21 @@ async function getShopeeAccessTokenForApi(
 
   const apiShopId = resolveShopeeApiShopId(record, fileKey);
 
-  if (opts?.forceRefresh && record.refresh_token) {
-    console.log(`[Shopee API] Force refresh token shop_id=${apiShopId} (key=${fileKey})`);
-    const refreshed = await refreshShopeeToken(apiShopId, record.refresh_token);
-    if (refreshed.access_token) {
-      if (fileKey !== apiShopId) {
-        saveShopeeTokenForShop(fileKey, {
-          access_token: refreshed.access_token,
-          refresh_token: refreshed.refresh_token,
-          expire_in: refreshed.expire_in,
-          obtained_at: Math.floor(Date.now() / 1000),
-        });
-      }
-      return { token: refreshed.access_token, apiShopId, fileKey };
+  try {
+    if (opts?.forceRefresh) {
+      const token = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+      return { token, apiShopId, fileKey };
     }
-    return null;
+    const token = await getValidShopeeAccessToken(fileKey);
+    if (!token) return null;
+    return { token, apiShopId, fileKey };
+  } catch (err) {
+    if (err instanceof ShopeeRefreshTokenExpiredError) {
+      console.error(`[Shopee Token] ${err.message} shop_id=${err.shopId}`);
+      return null;
+    }
+    throw err;
   }
-
-  const token = await getValidShopeeAccessToken(fileKey);
-  if (!token) return null;
-  return { token, apiShopId, fileKey };
 }
 
 /** Gọi Shopee get_shop_info để xác minh token thực sự dùng được cho shop_id. */
@@ -1478,9 +1596,12 @@ function resolveShopeeApiShopId(record: any, configuredShopId: string): string {
 }
 
 // Returns a valid (non-expired) access_token for the shop, refreshing it first if needed.
+// Dùng mutex — an toàn khi in PDF / ship song song (Promise.all).
 async function getValidShopeeAccessToken(shopId: string): Promise<string | null> {
-  const tokens = loadShopeeTokens();
   const key = normalizeShopIdKey(shopId);
+  if (!key) return null;
+
+  const tokens = loadShopeeTokens();
   const record = getShopeeTokenRecord(tokens, key);
   if (!record) {
     const available = listShopeeOAuthShopIds();
@@ -1490,31 +1611,54 @@ async function getValidShopeeAccessToken(shopId: string): Promise<string | null>
     return null;
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  const obtainedAt = Number(record.obtained_at) || 0;
-  const expireIn = Number(record.expire_in) || 14400;
-  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
-  if (!isExpired) return record.access_token;
+  const fresh = readShopeeAccessTokenIfFresh(key);
+  if (fresh) return fresh;
 
-  console.log(`[Shopee API] access_token c\u1EE7a shop_id=${key} \u0111\xE3 h\u1EBFt h\u1EA1n, \u0111ang refresh...`);
-  const apiShopId = resolveShopeeApiShopId(record, key);
-  const refreshed = await refreshShopeeToken(apiShopId, record.refresh_token);
-  if (refreshed.access_token) {
-    if (key !== apiShopId) {
-      saveShopeeTokenForShop(key, {
-        access_token: refreshed.access_token,
-        refresh_token: refreshed.refresh_token,
-        expire_in: refreshed.expire_in,
-        obtained_at: Math.floor(Date.now() / 1000),
-      });
-    }
-    return refreshed.access_token;
+  if (!record.refresh_token) {
+    console.error(`[Shopee API] Shop ${key} thiếu refresh_token — cần OAuth lại.`);
+    return null;
   }
-  console.error(
-    `[Shopee API] Refresh token thất bại shop_id=${key} (api=${apiShopId}):`,
-    refreshed.error || refreshed.message,
-  );
-  return null;
+
+  try {
+    console.log(`[Shopee API] access_token của shop_id=${key} đã hết hạn, đang refresh (mutex)...`);
+    return await refreshShopeeAccessTokenLocked(key, { force: false });
+  } catch (err) {
+    if (err instanceof ShopeeRefreshTokenExpiredError) {
+      console.error(`[Shopee API] ${err.message}`);
+      return null;
+    }
+    console.error(`[Shopee API] Refresh token thất bại shop_id=${key}:`, err);
+    return null;
+  }
+}
+
+/**
+ * Chạy API Shopee với access_token; nếu Shopee trả lỗi token hết hạn thì
+ * force-refresh (mutex) đúng 1 lần rồi retry. Dùng cho ship/print/logistics.
+ */
+async function withShopeeAccessTokenRetry<T>(
+  shopId: string,
+  runner: (accessToken: string) => Promise<T>,
+  isAuthFailure?: (result: T) => boolean,
+): Promise<T> {
+  const key = normalizeShopIdKey(shopId);
+  let token = await getValidShopeeAccessToken(key);
+  if (!token) {
+    throw new ShopeeRefreshTokenExpiredError(key || String(shopId || "?"));
+  }
+
+  let result = await runner(token);
+  const failed =
+    (isAuthFailure && isAuthFailure(result)) ||
+    (result &&
+      typeof result === "object" &&
+      isShopeeInvalidTokenError((result as any).error, (result as any).message));
+
+  if (!failed) return result;
+
+  console.warn(`[Shopee Token] API báo token hết hạn shop_id=${key} — force refresh + retry 1 lần`);
+  token = await refreshShopeeAccessTokenLocked(key, { force: true });
+  return runner(token);
 }
 
 type ShopeeDiagCode =
@@ -1941,7 +2085,7 @@ function formatShopeeApiError(json: any, httpStatus?: number): string {
   if (status === 401) {
     return (
       parts[0] ||
-      "Lỗi ủy quyền Shopee (HTTP 401) — access_token hết hạn hoặc không hợp lệ. Vào Cài đặt → OAuth lại shop."
+      SHOPEE_REAUTH_REQUIRED_MESSAGE
     );
   }
   if (status === 429) {
@@ -2017,14 +2161,14 @@ function describeShopeeTokenFailure(shopKey: string): { error: string; message: 
   const record = getShopeeTokenRecord(tokens, key);
   if (!record) {
     return {
-      error: "missing_oauth",
-      message: `Shop ${key} chưa có token OAuth — vào Cài đặt → Liên kết Shopee để ủy quyền lại.`,
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE,
     };
   }
   if (!record.refresh_token) {
     return {
-      error: "missing_refresh_token",
-      message: `Shop ${key} thiếu refresh_token — OAuth lại shop trên Cài đặt.`,
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE,
     };
   }
   const now = Math.floor(Date.now() / 1000);
@@ -2033,13 +2177,13 @@ function describeShopeeTokenFailure(shopKey: string): { error: string; message: 
   const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
   if (isExpired) {
     return {
-      error: "refresh_token_expired",
-      message: `Access token shop ${key} đã hết hạn và refresh thất bại — OAuth lại shop trên Cài đặt.`,
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE,
     };
   }
   return {
-    error: "no_valid_access_token",
-    message: `Không lấy được access_token hợp lệ cho shop ${key}.`,
+    error: "shopee_reauth_required",
+    message: SHOPEE_REAUTH_REQUIRED_MESSAGE,
   };
 }
 
@@ -5907,13 +6051,33 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
     return { success: false, error: "missing_shop_id", message: "Đơn hàng thiếu shop_id, không xác định được shop Shopee để gọi API." };
   }
 
-  const accessToken = await getValidShopeeAccessToken(shopId);
-  if (!accessToken) {
-    return { success: false, error: "no_valid_access_token", message: `Chưa có access_token hợp lệ cho shop_id=${shopId}. Cần ủy quyền lại qua /api/shopee/callback.` };
+  let accessToken: string;
+  try {
+    accessToken = (await getValidShopeeAccessToken(shopId)) || "";
+    if (!accessToken) {
+      const fail = describeShopeeTokenFailure(shopId);
+      return { success: false, error: fail.error, message: fail.message };
+    }
+  } catch (err) {
+    if (err instanceof ShopeeRefreshTokenExpiredError) {
+      return { success: false, error: err.code, message: err.message };
+    }
+    throw err;
   }
 
   // Deliberately called WITHOUT package_number — see shopeeShipOrder's comment.
-  const paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+  let paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+  if (isShopeeInvalidTokenError(paramResult?.error, paramResult?.message)) {
+    try {
+      accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+      paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+    } catch (err) {
+      if (err instanceof ShopeeRefreshTokenExpiredError) {
+        return { success: false, error: err.code, message: err.message };
+      }
+      throw err;
+    }
+  }
   console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (get_shipping_parameter) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(paramResult));
   if (paramResult.error) {
     console.error(`[Shopee L\u1ED6I] get_shipping_parameter th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${paramResult.error}" message="${paramResult.message}"`);
@@ -6031,7 +6195,18 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
     );
   }
 
-  const shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+  let shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+  if (isShopeeInvalidTokenError(shipResult?.error, shipResult?.message)) {
+    try {
+      accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+      shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+    } catch (err) {
+      if (err instanceof ShopeeRefreshTokenExpiredError) {
+        return { success: false, error: err.code, message: err.message };
+      }
+      throw err;
+    }
+  }
   console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (ship_order) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(shipResult));
   if (shipResult.error) {
     console.error(`[Shopee L\u1ED6I] ship_order th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${shipResult.error}" message="${shipResult.message}" request_id="${shipResult.request_id || ""}"`);
@@ -6070,6 +6245,9 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
     trackingNumber: order.trackingNumber || order.tracking_no || undefined,
   };
   } catch (error: any) {
+    if (error instanceof ShopeeRefreshTokenExpiredError) {
+      return { success: false, error: error.code, message: error.message };
+    }
     console.error(`[Shopee LỖI] shipShopeeOrderReal exception đơn ${order?.orderSn}:`, error?.stack || error);
     return {
       success: false,
@@ -12504,7 +12682,11 @@ const authMiddleware = (req: any, res: any, next: any) => {
     req.user = decoded;
     next();
   } catch (error) {
-    return res.status(401).json({ success: false, error: "Token không hợp lệ hoặc đã hết hạn.", message: "Token không hợp lệ hoặc đã hết hạn." });
+    return res.status(401).json({
+      success: false,
+      error: "Phiên đăng nhập admin đã hết hạn — vui lòng đăng nhập lại.",
+      message: "Phiên đăng nhập admin đã hết hạn — vui lòng đăng nhập lại.",
+    });
   }
 };
 
@@ -16937,9 +17119,18 @@ async function startServer() {
   // status yet (transient "All failed, please check result_list for detail"),
   // so up to 3 retries (4 attempts total), 3s apart, before finally giving up.
   async function generateShopeeShippingDocument(shopId: string, orderList: { order_sn: string; package_number?: string; tracking_number?: string }[]) {
-    const accessToken = await getValidShopeeAccessToken(shopId);
-    if (!accessToken) {
-      return { success: false, error: "no_valid_access_token", message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId}.` };
+    let accessToken: string;
+    try {
+      accessToken = (await getValidShopeeAccessToken(shopId)) || "";
+      if (!accessToken) {
+        const fail = describeShopeeTokenFailure(shopId);
+        return { success: false, error: fail.error, message: fail.message };
+      }
+    } catch (err) {
+      if (err instanceof ShopeeRefreshTokenExpiredError) {
+        return { success: false, error: err.code, message: err.message };
+      }
+      throw err;
     }
 
     // In vận đơn giờ chạy NGẦM (job async) nên không cần tối đa hoá số lần thử để
@@ -16948,15 +17139,18 @@ async function startServer() {
     const MAX_RETRIES = 2;
     const RETRY_DELAY_MS = 2000;
     let lastError: { error?: string; message?: string } = {};
+    let didForceRefresh = false;
 
     for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
       let result: any;
       try {
         result = await tryGenerateShopeeShippingDocumentOnce(shopId, accessToken, orderList);
       } catch (error: any) {
+        if (error instanceof ShopeeRefreshTokenExpiredError) {
+          return { success: false, error: error.code, message: error.message, permanent: true };
+        }
         const msg = String(error?.message || error || "Shopee API Error");
         console.error(`[Shopee Print] Exception tạo vận (lần ${attempt}):`, msg);
-        // Đẩy nguyên văn ra ngoài — không nuốt bằng message generic.
         return {
           success: false,
           error: "shopee_api_error",
@@ -16965,6 +17159,24 @@ async function startServer() {
         };
       }
       if (result.success) return result;
+
+      // Token hết hạn giữa chừng (song song PDF) → force refresh 1 lần rồi retry ngay.
+      if (
+        !didForceRefresh &&
+        isShopeeInvalidTokenError(result.error, result.message)
+      ) {
+        didForceRefresh = true;
+        try {
+          console.warn(`[Shopee Print] Token hết hạn khi tạo PDF shop_id=${shopId} — force refresh + retry`);
+          accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+          continue;
+        } catch (err) {
+          if (err instanceof ShopeeRefreshTokenExpiredError) {
+            return { success: false, error: err.code, message: err.message, permanent: true };
+          }
+          throw err;
+        }
+      }
 
       lastError = { error: result.error, message: result.message };
       console.error(`[Shopee Print] L\u1EA5y v\u1EAD n \u0111\u01A1n TH\u1EA4T B\u1EA0I (l\u1EA7n ${attempt}/${MAX_RETRIES + 1}) cho shop_id=${shopId}: error="${result.error}" message="${result.message}"`);
