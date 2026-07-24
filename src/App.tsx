@@ -378,6 +378,7 @@ export default function App() {
     const requestId = ++fetchOrdersSeqRef.current;
     if (!silent) setOrdersLoading(true);
     let requestTimeoutId: number | undefined;
+    const refreshStartedAt = Date.now();
     try {
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
       const path = bustCache ? `/api/orders/refresh?t=${Date.now()}` : '/api/orders/refresh';
@@ -405,8 +406,14 @@ export default function App() {
           Pragma: 'no-cache',
         },
       });
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bb6e18'},body:JSON.stringify({sessionId:'bb6e18',runId:'initial',hypothesisId:'H1',location:'src/App.tsx:408',message:'Order refresh HTTP response',data:{requestId,silent,bustCache,status:response.status,durationMs:Date.now()-refreshStartedAt},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       if (response.ok) {
         const payload: { success?: boolean; data?: Order[]; error?: string } = await response.json();
+        // #region agent log
+        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bb6e18'},body:JSON.stringify({sessionId:'bb6e18',runId:'initial',hypothesisId:'H1',location:'src/App.tsx:414',message:'Order refresh payload received',data:{requestId,success:payload.success!==false,error:payload.error||null,count:Array.isArray(payload.data)?payload.data.length:0,durationMs:Date.now()-refreshStartedAt,statuses:Array.isArray(payload.data)?payload.data.reduce((counts:Record<string,number>,order)=>{const status=String(order.status||order.shopee_order_status||'missing');counts[status]=(counts[status]||0)+1;return counts;},{}):{}},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         if (payload.success === false) {
           if (payload.error === 'mongodb_not_ready' && retriesLeft > 0) {
             console.warn(
@@ -441,6 +448,9 @@ export default function App() {
       }
     } catch (err) {
       console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bb6e18'},body:JSON.stringify({sessionId:'bb6e18',runId:'initial',hypothesisId:'H1',location:'src/App.tsx:452',message:'Order refresh request failed',data:{requestId,durationMs:Date.now()-refreshStartedAt,error:err instanceof Error?err.name:'unknown'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
       if (!silent) setOrdersLoading(false);
