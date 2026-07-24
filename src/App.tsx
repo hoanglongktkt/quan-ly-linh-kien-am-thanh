@@ -359,9 +359,10 @@ export default function App() {
     const bustCache = opts?.bustCache !== false;
     const requestId = ++fetchOrdersSeqRef.current;
     if (!silent) setOrdersLoading(true);
+    let requestTimeoutId: number | undefined;
     try {
-      // Cache bust: timestamp + cache:no-store — tránh trình duyệt trả danh sách cũ (GHN kẹt tab).
-      const path = bustCache ? `/api/orders?t=${Date.now()}` : '/api/orders';
+      // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
+      const path = bustCache ? `/api/orders/refresh?t=${Date.now()}` : '/api/orders/refresh';
       const requestUrl =
         path.startsWith('http://') || path.startsWith('https://')
           ? path
@@ -371,12 +372,15 @@ export default function App() {
         /quanly\.linhkienamthanh\.net|linhkienamthanh\.net|vercel\.app/i.test(window.location.hostname)
       ) {
         console.warn(
-          '⚠️ Đang mở PRODUCTION/REMOTE — /api/orders sẽ lấy data server thật, không phải DB local đã xóa. Dùng http://localhost:3000 để test purge local.',
+          '⚠️ Đang mở PRODUCTION/REMOTE — refresh đang lấy dữ liệu MongoDB trên server thật.',
         );
       }
+      const controller = new AbortController();
+      requestTimeoutId = window.setTimeout(() => controller.abort(), 12_000);
       const response = await fetch(path, {
         method: 'GET',
         cache: 'no-store',
+        signal: controller.signal,
         headers: {
           Authorization: `Bearer ${token}`,
           'Cache-Control': 'no-cache',
@@ -384,8 +388,13 @@ export default function App() {
         },
       });
       if (response.ok) {
-        const data: Order[] = await response.json();
-        console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', Array.isArray(data) ? data.length : 0);
+        const payload: { success?: boolean; data?: Order[] } = await response.json();
+        if (payload.success === false) {
+          console.warn('[Fetch Orders] Refresh failed; giữ nguyên danh sách hiện tại.');
+          return;
+        }
+        const data = Array.isArray(payload.data) ? payload.data : [];
+        console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
         // Bỏ qua nếu đã có request mới hơn (polling/click khác) hoàn tất trước —
         // tránh response CŨ trả về TRỄ ghi đè mất dữ liệu MỚI vừa hiển thị.
         if (requestId !== fetchOrdersSeqRef.current) {
@@ -405,6 +414,7 @@ export default function App() {
     } catch (err) {
       console.error("Fetch orders error:", err);
     } finally {
+      if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
       if (!silent) setOrdersLoading(false);
     }
   };

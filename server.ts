@@ -14393,6 +14393,32 @@ async function startServer() {
     }
   });
 
+  /**
+   * Refresh danh sách đơn: chỉ đọc MongoDB, không gọi Shopee và không chạy sync.
+   * Luôn phản hồi JSON nhanh để frontend không bị kẹt trạng thái loading.
+   */
+  app.get("/api/orders/refresh", authMiddleware, async (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    try {
+      if (!isMongoReady()) {
+        return res.status(200).json({
+          success: false,
+          data: [],
+          error: "mongodb_not_ready",
+        });
+      }
+      const orders = (await loadOrdersFromStore()).filter(isValidOrder);
+      return res.status(200).json({ success: true, data: orders });
+    } catch (error: any) {
+      console.error("[GET /api/orders/refresh] Mongo query failed:", error?.message || error);
+      return res.status(200).json({
+        success: false,
+        data: [],
+        error: "orders_refresh_failed",
+      });
+    }
+  });
+
   app.get("/api/orders", authMiddleware, async (req, res) => {
     // GET = READ ONLY — DB/JSON có gì trả nấy; rỗng → []. CẤM sync/pull/fetch ngoài.
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");

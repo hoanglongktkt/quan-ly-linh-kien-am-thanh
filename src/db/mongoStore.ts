@@ -1553,7 +1553,10 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
 export async function loadOrdersFromStore(): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
-  const docs = await OrderModel.find({}).lean();
+  const docs = await OrderModel.find({})
+    .sort({ "data.date": -1, _id: -1 })
+    .maxTimeMS(5_000)
+    .lean();
   const out: any[] = [];
   for (const d of docs as any[]) {
     const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
