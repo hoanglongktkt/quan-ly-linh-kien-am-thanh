@@ -1567,17 +1567,48 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
 }
 
 /** Đọc đơn từ Mongo — ưu tiên top-level shopee_order_status / tracking / carrier.
- *  `limit` (vd: 50) = shallow fetch nhanh cho FE cache merge; bỏ limit = full dump. */
-export async function loadOrdersFromStore(opts?: { limit?: number }): Promise<any[]> {
+ *  `limit` (vd: 50) = shallow fetch nhanh cho FE cache merge; bỏ limit = full dump.
+ *  `orderSns` / `ids` = chỉ lấy đơn cần thiết (ship-order scoped load). */
+export async function loadOrdersFromStore(opts?: {
+  limit?: number;
+  orderSns?: string[];
+  ids?: string[];
+}): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
   const limit =
     typeof opts?.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0
       ? Math.min(Math.floor(opts.limit), 5000)
       : undefined;
+  const snList = Array.isArray(opts?.orderSns)
+    ? [
+        ...new Set(
+          opts!.orderSns
+            .map((s) => String(s || "").replace(/^shopee-/i, "").trim())
+            .filter(Boolean),
+        ),
+      ]
+    : [];
+  const idList = Array.isArray(opts?.ids)
+    ? [...new Set(opts!.ids.map((s) => String(s || "").trim()).filter(Boolean))]
+    : [];
+  const filter: Record<string, unknown> = {};
+  if (snList.length > 0 || idList.length > 0) {
+    const or: Record<string, unknown>[] = [];
+    if (snList.length > 0) {
+      or.push({ orderSn: { $in: snList } });
+      or.push({ "data.orderSn": { $in: snList } });
+      or.push({ _id: { $in: snList.map((sn) => `shopee-${sn}`) } });
+    }
+    if (idList.length > 0) {
+      or.push({ _id: { $in: idList } });
+      or.push({ "data.id": { $in: idList } });
+    }
+    filter.$or = or;
+  }
   let docs: any[];
   try {
-    let q = OrderModel.find({}).sort({ "data.date": -1, _id: -1 }).maxTimeMS(15_000);
+    let q = OrderModel.find(filter).sort({ "data.date": -1, _id: -1 }).maxTimeMS(15_000);
     if (limit) q = q.limit(limit);
     docs = await q.lean();
   } catch (err: any) {
@@ -1589,7 +1620,7 @@ export async function loadOrdersFromStore(opts?: { limit?: number }): Promise<an
       "[MongoDB] loadOrdersFromStore sorted query failed, retry unsorted:",
       err?.message || err,
     );
-    let q = OrderModel.find({}).maxTimeMS(15_000);
+    let q = OrderModel.find(filter).maxTimeMS(15_000);
     if (limit) q = q.limit(limit);
     docs = await q.lean();
     docs.sort((a: any, b: any) => {

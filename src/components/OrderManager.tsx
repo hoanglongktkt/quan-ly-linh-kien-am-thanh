@@ -2145,7 +2145,15 @@ export default function OrderManager({
         const done = Number(job.completed) || 0;
         const tot = Number(job.total) || total;
         if (job.status === 'running' || job.status === 'pending') {
-          setProgressMessage(`Đang xác nhận ${done}/${tot} đơn lên sàn...`);
+          if (done === 0) {
+            setProgressMessage(
+              typeof job.message === 'string' && job.message.trim()
+                ? job.message
+                : 'Đang gọi API Shopee...',
+            );
+          } else {
+            setProgressMessage(`Đang xác nhận ${done}/${tot} đơn lên sàn...`);
+          }
         }
 
         // Chỉ chờ ship xong — KHÔNG chờ printing/PDF.
@@ -2326,6 +2334,16 @@ export default function OrderManager({
 
       setProgressMessage(`Đang xác nhận 0/${total} đơn lên sàn...`);
       const finalJob = await pollShipJobUntilDone(jobId, total);
+      if (finalJob?.status === 'failed') {
+        showToast(
+          finalJob.message ||
+            finalJob.error ||
+            'Xác nhận đơn thất bại. Vui lòng thử lại.',
+        );
+        if (finalJob.error === 'orders_not_found' || finalJob.error === 'heavy_job_busy') {
+          return;
+        }
+      }
       await finishShipJobResult(finalJob, total);
       keepSummaryModal = true;
     } catch (err) {
