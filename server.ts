@@ -1818,12 +1818,8 @@ const SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
 const SHOPEE_FULL_SYNC_LOOKBACK_SEC = 30 * 24 * 60 * 60;
 const SHOPEE_FULL_SYNC_CHUNK_SEC = 15 * 24 * 60 * 60;
 const SHOPEE_FULL_SYNC_MAX_CHUNKS = 3;
-/**
- * Phân trang get_order_list — HARD CAP 10 trang/cửa sổ.
- * loopCount > 10 → BẮT BUỘC break (chống vòng lặp vô hạn / zombie process cPanel).
- */
+/** Quick Sync dùng hard cap để phản hồi nhanh; Full Sync dừng theo Shopee `more=false`/cursor không tiến. */
 const SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 10;
-const SHOPEE_FULL_SYNC_MAX_PAGES_PER_CHUNK = SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 const SHOPEE_ORDER_LIST_MAX_PAGES = SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
 const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 120;
@@ -2723,18 +2719,13 @@ async function syncShopeeFullOrderHistoryStreaming(
         ` create_time ${new Date(timeFrom * 1000).toISOString()} → ${new Date(timeTo * 1000).toISOString()}`,
     );
 
-    // Shopee v2: cursor="" lần đầu; thoát khi !response.more (không dùng page++).
+    // Full Sync không giới hạn số trang hay số đơn: tiếp tục tới khi Shopee trả
+    // more=false hoặc cursor không tiến (được kiểm tra bên dưới).
     let cursor = "";
     let loopCount = 0;
 
     while (true) {
       loopCount += 1;
-      if (loopCount > SHOPEE_ORDER_LIST_LOOP_HARD_CAP) {
-        console.warn(
-          `[Shopee Full Sync] shop=${shopId} chunk=${chunkIdx}: loopCount>${SHOPEE_ORDER_LIST_LOOP_HARD_CAP} — BREAK chống treo.`,
-        );
-        break;
-      }
       // Rate limit — bắt buộc 1s trước mỗi get_order_list.
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
