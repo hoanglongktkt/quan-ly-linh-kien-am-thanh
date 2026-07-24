@@ -5851,16 +5851,15 @@ function dedupeShopeeParentVariantRows(products: any[]): any[] {
 // "pickup" (Shopee courier picks up from seller's address), "dropoff" (seller
 // drops the parcel at a branch) or "non_integrated" (3rd-party carrier, manual
 // tracking number), plus the concrete address/time-slot/branch options.
-// Timeout từng HTTP logistics — ngắn để 1 request treo không giữ slot concurrency.
-const SHOPEE_LOGISTICS_TIMEOUT_MS = 8_000;
-// Mỗi đơn xác nhận tối đa 12s (get_shipping_parameter + ship_order + light recover).
-// Timeout abort signal → hủy fetch đang treo; processShipOrderBatch tiếp tục đơn khác.
-const SHIP_ORDER_OPERATION_TIMEOUT_MS = 12_000;
-/** Số đơn ship song song — 10–20 tối ưu (tránh Promise.all hàng trăm request → rate-limit). */
-const SHIP_ORDER_BATCH_CONCURRENCY = 15;
-/** Chia lô + nghỉ ngắn giữa các chunk để Shopee không chặn burst. */
-const SHIP_ORDER_CHUNK_SIZE = 20;
-const SHIP_ORDER_CHUNK_PAUSE_MS = 150;
+// Timeout từng HTTP logistics (fail-fast) — request treo abort ngay.
+const SHOPEE_LOGISTICS_TIMEOUT_MS = 5_000;
+// Mỗi đơn xác nhận tối đa 8s (chỉ get_shipping_parameter + ship_order, KHÔNG recover/enrich).
+const SHIP_ORDER_OPERATION_TIMEOUT_MS = 8_000;
+/** Concurrency trong mỗi chunk — song song nhưng không burst hàng trăm request. */
+const SHIP_ORDER_BATCH_CONCURRENCY = 20;
+/** Chia lô 25 đơn/chunk. */
+const SHIP_ORDER_CHUNK_SIZE = 25;
+const SHIP_ORDER_CHUNK_PAUSE_MS = 50;
 
 /** Cache get_address_list theo shop — tránh N round-trip khi xác nhận hàng loạt song song. */
 const shopeeAddressListCache = new Map<
@@ -6078,6 +6077,7 @@ async function shipShopeeOrderReal(
   order: any,
   method: ShipMethod,
   signal?: AbortSignal,
+  opts?: { skipRecover?: boolean },
 ): Promise<{
   success: boolean;
   error?: string;
@@ -6086,7 +6086,9 @@ async function shipShopeeOrderReal(
   shopId?: string;
   trackingNumber?: string;
   alreadyShipped?: boolean;
+  skipped?: boolean;
 }> {
+  const skipRecover = opts?.skipRecover === true;
   const throwIfAborted = () => {
     if (signal?.aborted) throw new Error(`Ship order ${order?.orderSn || ""} aborted/timeout`);
   };
@@ -6116,18 +6118,26 @@ async function shipShopeeOrderReal(
     throw err;
   }
 
-  const asAlreadyShippedSuccess = (recovered: { trackingNumber?: string }) => ({
-    success: true as const,
-    alreadyShipped: true as const,
-    mode: method,
-    shopId,
-    trackingNumber: recovered.trackingNumber || order.trackingNumber,
-  });
-
-  /** Recover nhẹ 1 lần — không gọi enrich tracking retry (tránh chậm hàng loạt). */
-  const recoverOnce = async () => {
-    throwIfAborted();
-    return tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
+  /** Batch confirm: đã ship / lỗi → skip ngay, KHÔNG get_order_detail / tracking / sleep. */
+  const failOrSkipAlreadyShipped = (apiResult: any, fallbackError: string, fallbackMessage: string) => {
+    if (isAlreadyShippedError(apiResult)) {
+      return {
+        success: true as const,
+        alreadyShipped: true as const,
+        skipped: true as const,
+        mode: method,
+        shopId,
+        trackingNumber: order.trackingNumber || order.tracking_no || undefined,
+      };
+    }
+    return {
+      success: false as const,
+      error: String(apiResult?.error || fallbackError),
+      message: String(apiResult?.message || fallbackMessage),
+      mode: method,
+      shopId,
+      skipped: true as const,
+    };
   };
 
   // Deliberately called WITHOUT package_number — see shopeeShipOrder's comment.
@@ -6146,9 +6156,19 @@ async function shipShopeeOrderReal(
   console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (get_shipping_parameter) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(paramResult));
   if (paramResult.error) {
     console.error(`[Shopee L\u1ED6I] get_shipping_parameter th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${paramResult.error}" message="${paramResult.message}"`);
-    // Probe nhẹ 1 lần (đơn GHN/SPX đã PROCESSED) — KHÔNG double-recover / KHÔNG retry tracking.
-    const recovered = await recoverOnce();
-    if (recovered.ok) return asAlreadyShippedSuccess(recovered);
+    if (skipRecover) {
+      return failOrSkipAlreadyShipped(paramResult, paramResult.error, paramResult.message);
+    }
+    const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
+    if (recovered.ok) {
+      return {
+        success: true,
+        alreadyShipped: true,
+        mode: method,
+        shopId,
+        trackingNumber: recovered.trackingNumber || order.trackingNumber,
+      };
+    }
     return { success: false, error: paramResult.error, message: paramResult.message };
   }
 
@@ -6158,8 +6178,23 @@ async function shipShopeeOrderReal(
   if (method === "dropoff") {
     if (!Object.prototype.hasOwnProperty.call(infoNeeded, "dropoff")) {
       console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 dropoff. info_needed=${JSON.stringify(infoNeeded)}`);
-      const recovered = await recoverOnce();
-      if (recovered.ok) return asAlreadyShippedSuccess(recovered);
+      if (skipRecover) {
+        return failOrSkipAlreadyShipped(
+          { error: "dropoff_not_supported", message: "dropoff_not_supported" },
+          "dropoff_not_supported",
+          "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Tự mang hàng ra bưu cục\". Vui lòng chọn \"Lấy hàng\" (pickup) thay thế.",
+        );
+      }
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
+      if (recovered.ok) {
+        return {
+          success: true,
+          alreadyShipped: true,
+          mode: method,
+          shopId,
+          trackingNumber: recovered.trackingNumber || order.trackingNumber,
+        };
+      }
       return { success: false, error: "dropoff_not_supported", message: "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Tự mang hàng ra bưu cục\". Vui lòng chọn \"Lấy hàng\" (pickup) thay thế." };
     }
     const dropoffRequirements = Array.isArray(infoNeeded.dropoff) ? infoNeeded.dropoff : [];
@@ -6174,8 +6209,23 @@ async function shipShopeeOrderReal(
   } else {
     if (!Object.prototype.hasOwnProperty.call(infoNeeded, "pickup")) {
       console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 pickup. info_needed=${JSON.stringify(infoNeeded)}`);
-      const recovered = await recoverOnce();
-      if (recovered.ok) return asAlreadyShippedSuccess(recovered);
+      if (skipRecover) {
+        return failOrSkipAlreadyShipped(
+          { error: "pickup_not_supported", message: "pickup_not_supported" },
+          "pickup_not_supported",
+          "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Lấy hàng\". Vui lòng chọn \"Tự mang hàng ra bưu cục\" (dropoff) thay thế.",
+        );
+      }
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
+      if (recovered.ok) {
+        return {
+          success: true,
+          alreadyShipped: true,
+          mode: method,
+          shopId,
+          trackingNumber: recovered.trackingNumber || order.trackingNumber,
+        };
+      }
       return { success: false, error: "pickup_not_supported", message: "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Lấy hàng\". Vui lòng chọn \"Tự mang hàng ra bưu cục\" (dropoff) thay thế." };
     }
     // Lấy danh sách địa chỉ kho (cache 60s/shop — tránh N lần get_address_list khi xác nhận hàng loạt song song).
@@ -6209,8 +6259,24 @@ async function shipShopeeOrderReal(
       console.error(
         `[Shopee LỖI] Đơn ${order.orderSn} không có address/time_slot pickup khả dụng. pickup=${JSON.stringify(paramResult.response?.pickup)} shopAddresses=${JSON.stringify(shopAddressList)}`,
       );
-      const recovered = await recoverOnce();
-      if (recovered.ok) return asAlreadyShippedSuccess(recovered);
+      if (skipRecover) {
+        return {
+          success: false,
+          error: "no_pickup_slot_available",
+          message: "Shopee không trả về địa chỉ kho/lịch hẹn lấy hàng (pickup) khả dụng. Vui lòng cập nhật địa chỉ lấy hàng trên Shopee Seller Centre rồi thử lại.",
+          skipped: true,
+        };
+      }
+      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
+      if (recovered.ok) {
+        return {
+          success: true,
+          alreadyShipped: true,
+          mode: method,
+          shopId,
+          trackingNumber: recovered.trackingNumber || order.trackingNumber,
+        };
+      }
       return {
         success: false,
         error: "no_pickup_slot_available",
@@ -6244,9 +6310,19 @@ async function shipShopeeOrderReal(
   console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (ship_order) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(shipResult));
   if (shipResult.error) {
     console.error(`[Shopee L\u1ED6I] ship_order th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${shipResult.error}" message="${shipResult.message}" request_id="${shipResult.request_id || ""}"`);
-    // Một lần recover nhẹ thôi (đã từng gọi 2 lần + enrich retry → rất chậm).
-    const recovered = await recoverOnce();
-    if (recovered.ok) return asAlreadyShippedSuccess(recovered);
+    if (skipRecover) {
+      return failOrSkipAlreadyShipped(shipResult, shipResult.error, shipResult.message);
+    }
+    const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
+    if (recovered.ok) {
+      return {
+        success: true,
+        alreadyShipped: true,
+        mode: method,
+        shopId,
+        trackingNumber: recovered.trackingNumber || order.trackingNumber,
+      };
+    }
     return { success: false, error: shipResult.error, message: shipResult.message, mode: method, shopId };
   }
 
@@ -6266,6 +6342,7 @@ async function shipShopeeOrderReal(
         success: false,
         error: "timeout",
         message: error?.message || `Ship order ${order?.orderSn || ""} timeout`,
+        skipped: true,
       };
     }
     console.error(`[Shopee LỖI] shipShopeeOrderReal exception đơn ${order?.orderSn}:`, error?.stack || error);
@@ -6292,9 +6369,19 @@ async function arrangeShipment(
   order: any,
   method: ShipMethod,
   signal?: AbortSignal,
-): Promise<{ success: boolean; error?: string; message?: string; mode?: string; trackingNumber?: string; shopId?: string }> {
+  opts?: { skipRecover?: boolean },
+): Promise<{
+  success: boolean;
+  error?: string;
+  message?: string;
+  mode?: string;
+  trackingNumber?: string;
+  shopId?: string;
+  alreadyShipped?: boolean;
+  skipped?: boolean;
+}> {
   if (order.channel === "shopee") {
-    return shipShopeeOrderReal(order, method, signal);
+    return shipShopeeOrderReal(order, method, signal, opts);
   }
   return arrangeShipmentLocal(order, method);
 }
@@ -16679,7 +16766,7 @@ async function startServer() {
     let completedCount = 0;
 
     console.log(
-      `[Ship Order Bulk] Bắt đầu xác nhận ${toShip.length} đơn — concurrency=${SHIP_ORDER_BATCH_CONCURRENCY} chunk=${SHIP_ORDER_CHUNK_SIZE} timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms (không chờ PDF/tracking).`,
+      `[Ship Order Bulk] Bắt đầu xác nhận ${toShip.length} đơn — concurrency=${SHIP_ORDER_BATCH_CONCURRENCY} chunk=${SHIP_ORDER_CHUNK_SIZE} timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms skipRecover=true (không enrich/tracking/retry).`,
     );
 
     await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
@@ -16696,7 +16783,7 @@ async function startServer() {
       let result: Awaited<ReturnType<typeof arrangeShipment>>;
       try {
         result = await withOperationTimeout(
-          (signal) => arrangeShipment(order, shipMethod, signal),
+          (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
           SHIP_ORDER_OPERATION_TIMEOUT_MS,
           `Ship order ${order.orderSn}`,
         );
@@ -16820,13 +16907,13 @@ async function startServer() {
       if (opts?.onProgress) opts.onProgress(completedCount, toShip.length);
     };
 
-    // Chunk 20 + concurrency 15 — tránh Promise.all toàn bộ + tránh rate-limit burst.
+    // Chunk 25 + concurrency 20 — song song có giới hạn, fail-fast từng đơn.
     for (let chunkStart = 0; chunkStart < toShip.length; chunkStart += SHIP_ORDER_CHUNK_SIZE) {
       const chunk = toShip.slice(chunkStart, chunkStart + SHIP_ORDER_CHUNK_SIZE);
       await mapWithConcurrency(chunk, SHIP_ORDER_BATCH_CONCURRENCY, async (item, localIdx) => {
         await processOne(item, chunkStart + localIdx);
       });
-      if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length) {
+      if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length && SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
         await sleep(SHIP_ORDER_CHUNK_PAUSE_MS);
       }
     }
