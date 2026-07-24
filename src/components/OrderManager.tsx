@@ -463,7 +463,12 @@ interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[], opts?: { persist?: boolean }) => void;
   /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
-  onFetchOrders?: (opts?: { silent?: boolean; bustCache?: boolean }) => Promise<void> | void;
+  onFetchOrders?: (opts?: {
+    silent?: boolean;
+    bustCache?: boolean;
+    limit?: number;
+    merge?: boolean;
+  }) => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
   systemFees?: SystemFee[];

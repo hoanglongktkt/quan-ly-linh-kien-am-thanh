@@ -22,7 +22,7 @@ import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStor
 import { sanitizeOrders } from './utils/sanitizeOrder';
 import { safeGetItem, safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
-import { clearLegacyOrdersLocalStorage, clearOrdersCache, saveOrdersCache } from './utils/orderCache';
+import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
 import { 
   LayoutDashboard, 
   Package, 
@@ -46,6 +46,29 @@ import {
   PackageCheck,
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
+
+/** Gộp shallow fetch (50 đơn mới) vào cache: cập nhật đơn cũ, prepend đơn mới. */
+function mergeShallowOrders(cached: Order[], fresh: Order[]): Order[] {
+  const keyOf = (o: Order) => String(o.id || o.orderSn || '').trim();
+  const freshByKey = new Map<string, Order>();
+  const newOrders: Order[] = [];
+  const cachedKeys = new Set(cached.map((o) => keyOf(o)).filter(Boolean));
+
+  for (const o of fresh) {
+    const k = keyOf(o);
+    if (!k) continue;
+    freshByKey.set(k, o);
+    if (!cachedKeys.has(k)) newOrders.push(o);
+  }
+
+  const updatedCached = cached.map((o) => {
+    const k = keyOf(o);
+    const f = k ? freshByKey.get(k) : undefined;
+    return f ? { ...o, ...f } : o;
+  });
+
+  return sanitizeOrders([...newOrders, ...updatedCached]);
+}
 
 const MAIN_NAV_TABS = new Set([
   'dashboard',
@@ -242,9 +265,11 @@ export default function App() {
    * (kể cả khi request mới đó chưa xong hoặc cũng thất bại) — đây chính là nguyên nhân
    * phải bấm "Làm mới" 2-3 lần mới thấy dữ liệu sau khi Ctrl+F5. */
   const lastAppliedOrdersSeqRef = useRef(0);
-  /** Chỉ cho phép một lần đọc toàn bộ đơn hàng đang chạy để polling/focus/click không
+  /** Chỉ cho phép một lần đọc cùng mode (full / shallow) đang chạy để polling/focus/click không
    * tạo nhiều truy vấn MongoDB nặng đồng thời. */
-  const fetchOrdersInFlightRef = useRef<Promise<void> | null>(null);
+  const fetchOrdersInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  /** Snapshot cache hydrate — tránh merge shallow đè mất cache khi setState chưa flush. */
+  const ordersHydrateRef = useRef<Order[]>([]);
 
   const [logs, setLogs] = useState<SyncLog[]>(() =>
     safeGetJson('omni_logs', INITIAL_SYNC_LOGS),
@@ -367,24 +392,39 @@ export default function App() {
     verifyToken();
   }, []);
 
-  // Fetch the real, backend-synced order list (Shopee webhook data) once authenticated.
+  // Fetch orders: silent → shallow limit=50 + merge cache; manual → full replace.
   const fetchOrders = async (opts?: {
     silent?: boolean;
     bustCache?: boolean;
     retriesLeft?: number;
+    limit?: number;
+    merge?: boolean;
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
-    if (fetchOrdersInFlightRef.current) return fetchOrdersInFlightRef.current;
+
+    const silent = Boolean(opts?.silent);
+    const bustCache = opts?.bustCache !== false;
+    // Silent/background mặc định shallow 50 đơn; nút "Làm mới" (silent:false) = full list.
+    const limit =
+      typeof opts?.limit === 'number' && opts.limit > 0
+        ? opts.limit
+        : silent
+          ? 50
+          : undefined;
+    const merge = opts?.merge ?? Boolean(limit);
+    const flightKey = limit ? `limit:${limit}` : 'full';
+
+    if (fetchOrdersInFlightRef.current?.key === flightKey) {
+      return fetchOrdersInFlightRef.current.promise;
+    }
 
     let finishInFlight: (() => void) | undefined;
     const inFlight = new Promise<void>((resolve) => {
       finishInFlight = resolve;
     });
-    fetchOrdersInFlightRef.current = inFlight;
+    fetchOrdersInFlightRef.current = { key: flightKey, promise: inFlight };
 
-    const silent = Boolean(opts?.silent);
-    const bustCache = opts?.bustCache !== false;
     // MongoDB kết nối NGẦM sau khi Node app khởi động (không block listen) — ngay sau
     // restart, vài giây đầu isMongoReady() có thể còn false. Tự retry thay vì để
     // danh sách đơn hàng trống vĩnh viễn cho tới khi người dùng bấm "Làm mới".
@@ -394,7 +434,11 @@ export default function App() {
     let requestTimeoutId: number | undefined;
     try {
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
-      const path = bustCache ? `/api/orders/refresh?t=${Date.now()}` : '/api/orders/refresh';
+      const params = new URLSearchParams();
+      if (bustCache) params.set('t', String(Date.now()));
+      if (limit) params.set('limit', String(limit));
+      const qs = params.toString();
+      const path = `/api/orders/refresh${qs ? `?${qs}` : ''}`;
       const requestUrl =
         path.startsWith('http://') || path.startsWith('https://')
           ? path
@@ -408,7 +452,8 @@ export default function App() {
         );
       }
       const controller = new AbortController();
-      requestTimeoutId = window.setTimeout(() => controller.abort(), 12_000);
+      // Shallow nhanh hơn — timeout ngắn hơn; full list giữ 12s.
+      requestTimeoutId = window.setTimeout(() => controller.abort(), limit ? 8_000 : 12_000);
       const response = await fetch(path, {
         method: 'GET',
         cache: 'no-store',
@@ -430,7 +475,7 @@ export default function App() {
               `[Fetch Orders] Refresh lỗi tạm thời (${payload.error}) — thử lại sau 3s (còn ${retriesLeft} lần).`,
             );
             window.setTimeout(() => {
-              void fetchOrders({ silent, bustCache, retriesLeft: retriesLeft - 1 });
+              void fetchOrders({ silent, bustCache, limit, merge, retriesLeft: retriesLeft - 1 });
             }, 3000);
             return;
           }
@@ -448,14 +493,28 @@ export default function App() {
         }
         lastAppliedOrdersSeqRef.current = requestId;
         const sanitized = sanitizeOrders(data);
-        setOrders(sanitized);
-        setHasLoadedOrdersOnce(true);
-        console.log('[FRONTEND FETCHED] /api/orders/refresh OK — số đơn:', sanitized.length);
-        if (sanitized.length === 0) {
-          void clearOrdersCache();
+        if (merge) {
+          setOrders((prev) => {
+            const base = prev.length > 0 ? prev : ordersHydrateRef.current;
+            const merged = mergeShallowOrders(base, sanitized);
+            ordersHydrateRef.current = merged;
+            void saveOrdersCache(merged);
+            return merged;
+          });
         } else {
-          void saveOrdersCache(sanitized);
+          setOrders(sanitized);
+          ordersHydrateRef.current = sanitized;
+          if (sanitized.length === 0) {
+            void saveOrdersCache([]);
+          } else {
+            void saveOrdersCache(sanitized);
+          }
         }
+        setHasLoadedOrdersOnce(true);
+        console.log(
+          `[FRONTEND FETCHED] /api/orders/refresh OK — số đơn: ${sanitized.length}` +
+            `${merge ? ' (shallow merge)' : ' (full replace)'}`,
+        );
       } else {
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG: (HTTP', response.status, ')');
       }
@@ -468,13 +527,13 @@ export default function App() {
       // 2-3 lần. Giờ retry luôn cả lỗi mạng/timeout, y hệt nhánh mongodb_not_ready.
       if (retriesLeft > 0) {
         window.setTimeout(() => {
-          void fetchOrders({ silent, bustCache, retriesLeft: retriesLeft - 1 });
+          void fetchOrders({ silent, bustCache, limit, merge, retriesLeft: retriesLeft - 1 });
         }, 3000);
       }
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
       if (!silent) setOrdersLoading(false);
-      if (fetchOrdersInFlightRef.current === inFlight) {
+      if (fetchOrdersInFlightRef.current?.promise === inFlight) {
         fetchOrdersInFlightRef.current = null;
       }
       finishInFlight?.();
@@ -701,6 +760,7 @@ export default function App() {
     const sanitized = sanitizeOrders(updatedOrders);
     const previousById = new Map(orders.map(o => [o.id, o]));
     setOrders(sanitized);
+    ordersHydrateRef.current = sanitized;
     void saveOrdersCache(sanitized);
 
     // Handover/API đã persist JSON+Mongo — chỉ cập nhật state, tránh PATCH full order ghi đè lệch.
@@ -1206,16 +1266,14 @@ export default function App() {
     const bootstrapCatalog = async () => {
       purgeLegacyCatalogCache();
 
-      // Không hydrate IndexedDB cũ trước API — tránh hiện đơn bóng ma sau purge.
-      // (thao tác IndexedDB cục bộ, rất nhanh — an toàn để await trước khi fetch).
-      await clearOrdersCache();
-
-      // QUAN TRỌNG: bắn fetchOrders() NGAY sau khi dọn cache — KHÔNG chờ wipe-all
-      // (1 round-trip network, có thể mất vài trăm ms tới vài giây). Trước đây
-      // fetchOrders() chỉ chạy SAU wipe-all nên mỗi lần F5, request đơn hàng thật
-      // bị delay theo wipe-all — đúng lúc đó `orders` rỗng và `ordersLoading` cũng
-      // chưa bật (chỉ bật khi fetchOrders() thực sự bắt đầu) → UI lộ "0 đơn" giả.
-      fetchOrders();
+      // F5: hydrate IndexedDB ngay → UI có đơn tức thì; sau đó shallow fetch nền (limit=50).
+      const cached = await loadOrdersCache();
+      ordersHydrateRef.current = cached;
+      if (cached.length > 0) {
+        setOrders(cached);
+        setHasLoadedOrdersOnce(true);
+      }
+      void fetchOrders({ silent: true, limit: 50, merge: true });
 
       if (safeGetItem(CATALOG_PURGE_FLAG) !== '1') {
         try {

@@ -1566,16 +1566,20 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
   return ops.length;
 }
 
-/** Đọc toàn bộ đơn từ Mongo — ưu tiên top-level shopee_order_status / tracking / carrier. */
-export async function loadOrdersFromStore(): Promise<any[]> {
+/** Đọc đơn từ Mongo — ưu tiên top-level shopee_order_status / tracking / carrier.
+ *  `limit` (vd: 50) = shallow fetch nhanh cho FE cache merge; bỏ limit = full dump. */
+export async function loadOrdersFromStore(opts?: { limit?: number }): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
+  const limit =
+    typeof opts?.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0
+      ? Math.min(Math.floor(opts.limit), 5000)
+      : undefined;
   let docs: any[];
   try {
-    docs = await OrderModel.find({})
-      .sort({ "data.date": -1, _id: -1 })
-      .maxTimeMS(15_000)
-      .lean();
+    let q = OrderModel.find({}).sort({ "data.date": -1, _id: -1 }).maxTimeMS(15_000);
+    if (limit) q = q.limit(limit);
+    docs = await q.lean();
   } catch (err: any) {
     // Webhook 100% có thể đẩy khối lượng ghi lớn hơn trước, khiến query có sort
     // đôi khi vượt maxTimeMS/giới hạn bộ nhớ sort. KHÔNG để cả trang Quản lý đơn
@@ -1585,13 +1589,16 @@ export async function loadOrdersFromStore(): Promise<any[]> {
       "[MongoDB] loadOrdersFromStore sorted query failed, retry unsorted:",
       err?.message || err,
     );
-    docs = await OrderModel.find({}).maxTimeMS(15_000).lean();
+    let q = OrderModel.find({}).maxTimeMS(15_000);
+    if (limit) q = q.limit(limit);
+    docs = await q.lean();
     docs.sort((a: any, b: any) => {
       const da = String(a?.data?.date || "");
       const db = String(b?.data?.date || "");
       if (da !== db) return da < db ? 1 : -1;
       return String(b?._id || "").localeCompare(String(a?._id || ""));
     });
+    if (limit) docs = docs.slice(0, limit);
   }
   const out: any[] = [];
   for (const d of docs as any[]) {

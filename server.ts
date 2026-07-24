@@ -14736,10 +14736,17 @@ async function startServer() {
   let ordersRefreshInFlight: Promise<any[]> | null = null;
   let ordersRefreshCache: { expiresAt: number; orders: any[] } | null = null;
 
-  async function readOrdersForRefresh(): Promise<any[]> {
+  async function readOrdersForRefresh(limit?: number): Promise<any[]> {
     const now = Date.now();
     if (ordersRefreshCache && ordersRefreshCache.expiresAt > now) {
-      return ordersRefreshCache.orders;
+      return limit && limit > 0
+        ? ordersRefreshCache.orders.slice(0, limit)
+        : ordersRefreshCache.orders;
+    }
+    // Shallow fetch: query Mongo có .limit — không ghi vào full-list cache / không chung in-flight.
+    if (limit && limit > 0) {
+      const orders = await loadOrdersFromStore({ limit });
+      return orders.filter((order) => Boolean(order?.orderSn || order?.id));
     }
     if (!ordersRefreshInFlight) {
       ordersRefreshInFlight = loadOrdersFromStore()
@@ -14764,8 +14771,9 @@ async function startServer() {
   /**
    * Refresh danh sách đơn: chỉ đọc MongoDB, không gọi Shopee và không chạy sync.
    * Luôn phản hồi JSON nhanh để frontend không bị kẹt trạng thái loading.
+   * Query `?limit=50` = shallow fetch (50 đơn mới nhất) cho FE cache merge.
    */
-  app.get("/api/orders/refresh", authMiddleware, async (_req, res) => {
+  app.get("/api/orders/refresh", authMiddleware, async (req, res) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     try {
       if (!isMongoReady()) {
@@ -14776,8 +14784,14 @@ async function startServer() {
           error: "mongodb_not_ready",
         });
       }
-      const orders = await readOrdersForRefresh();
-      console.log(`[FRONTEND FETCHED] GET /api/orders/refresh — trả về ${orders.length} đơn từ MongoDB.`);
+      const rawLimit = Number(req.query.limit);
+      const limit =
+        Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5000) : undefined;
+      const orders = await readOrdersForRefresh(limit);
+      console.log(
+        `[FRONTEND FETCHED] GET /api/orders/refresh` +
+          `${limit ? `?limit=${limit}` : ""} — trả về ${orders.length} đơn từ MongoDB.`,
+      );
       // `total` + shape { data, total } giữ tương thích chuẩn REST cho FE mới, song song
       // với `success`/`data` cũ để KHÔNG phá vỡ client hiện tại đang đọc payload.data.
       return res.status(200).json({ success: true, data: orders, total: orders.length });
@@ -14874,6 +14888,11 @@ async function startServer() {
             String(o.shopee_order_status || "").toUpperCase(),
           ),
       );
+    }
+
+    const rawLimit = Number(req.query.limit);
+    if (Number.isFinite(rawLimit) && rawLimit > 0) {
+      rawOrders = rawOrders.slice(0, Math.min(Math.floor(rawLimit), 5000));
     }
 
     const products = await loadProductsForOrders(rawOrders);
