@@ -119,6 +119,9 @@ const OrderSchema = new Schema<OrderDoc>(
 // theo cặp (orderSn, shopId) để tránh đè chéo dữ liệu giữa các shop khác nhau
 // có cùng orderSn (về lý thuyết hiếm nhưng vẫn phải chặn ở tầng DB).
 OrderSchema.index({ orderSn: 1, shopId: 1 });
+// Hỗ trợ Dashboard aggregation lọc theo ngày / doanh thu mà không quét toàn bộ collection.
+OrderSchema.index({ "data.date": 1 });
+OrderSchema.index({ status: 1, "data.date": 1 });
 
 let ProductModel: Model<ProductDoc>;
 let ChannelListingModel: Model<ListingDoc>;
@@ -1611,6 +1614,244 @@ export async function loadOrdersFromStore(): Promise<any[]> {
     });
   }
   return out;
+}
+
+export type DashboardLiteProduct = {
+  id: string;
+  title: string;
+  sku: string;
+  stock: number;
+  image: string | null;
+};
+
+/**
+ * Sản phẩm rút gọn CHỈ dùng cho Dashboard (tồn kho thấp + top bán chạy) — projection
+ * loại bỏ mô tả HTML / biến thể nặng để giảm payload, thay vì tải nguyên `loadProducts()`.
+ */
+export async function loadProductsLiteForDashboardFromStore(): Promise<DashboardLiteProduct[]> {
+  requireMongo();
+  const docs = await ProductModel.find(
+    {},
+    {
+      sku: 1,
+      "data.id": 1,
+      "data.title": 1,
+      "data.name": 1,
+      "data.sku": 1,
+      "data.stock": 1,
+      "data.avatarUrl": 1,
+      "data.imageUrl": 1,
+    },
+  )
+    .lean();
+  return (docs as any[]).map((d) => ({
+    id: String(d?.data?.id || d?._id || ""),
+    title: String(d?.data?.title || d?.data?.name || d?.data?.id || ""),
+    sku: String(d?.data?.sku || d?.sku || ""),
+    stock: Number(d?.data?.stock) || 0,
+    image: d?.data?.avatarUrl || d?.data?.imageUrl || null,
+  }));
+}
+
+export type DashboardStatsResult = {
+  totalOrdersInDb: number;
+  dashboardOrdersCount: number;
+  ordersInRangeCount: number;
+  revenue: number;
+  newOrders: number;
+  returns: number;
+  cancelled: number;
+  pendingOrders: {
+    pendingApproval: number;
+    pendingPayment: number;
+    pendingPack: number;
+    pendingPickup: number;
+    shipping: number;
+    returnPending: number;
+  };
+  dailyRevenue: Array<{ date: string; amount: number }>;
+  topProducts: Array<{ productId: string; quantitySold: number; title: string | null; image: string | null }>;
+};
+
+/**
+ * Số liệu Dashboard tính TOÀN BỘ bằng MongoDB Aggregation ($facet, 1 round-trip) —
+ * KHÔNG kéo hết đơn hàng về Node rồi for/map thủ công như trước.
+ * Đọc thẳng collection `orders` — CHÍNH collection mà Webhook Shopee ghi vào
+ * (bulkUpsertOrdersToStore/updateOrderTrackingInStore) — không còn qua orders.json
+ * cũ nên dữ liệu luôn khớp thực tế và không bị treo do file JSON phình to.
+ */
+export async function getDashboardStatsFromStore(
+  rangeStartKey: string,
+  rangeEndKey: string,
+): Promise<DashboardStatsResult> {
+  requireMongo();
+
+  // Tương đương isDashboardOrder(order) phía Node cũ: loại đơn test rỗng có
+  // orderSn bắt đầu "260709" và không có tiền/không có items.
+  const isDashboardOrderMatch = {
+    $expr: {
+      $not: {
+        $and: [
+          { $lte: [{ $ifNull: ["$data.totalAmount", 0] }, 0] },
+          { $eq: [{ $size: { $ifNull: ["$data.items", []] } }, 0] },
+          { $regexMatch: { input: { $ifNull: ["$orderSn", ""] }, regex: "^260709" } },
+        ],
+      },
+    },
+  };
+
+  const [totalOrdersInDb, facetResult] = await Promise.all([
+    OrderModel.estimatedDocumentCount(),
+    OrderModel.aggregate([
+      { $match: isDashboardOrderMatch },
+      {
+        $addFields: {
+          // So khớp theo NGÀY (10 ký tự đầu ISO) — đúng hành vi isDateInRange cũ.
+          _dateKey: { $substrCP: [{ $ifNull: ["$data.date", ""] }, 0, 10] },
+          // Ưu tiên data.isPrepared (được cập nhật khi gán tracking) hơn cờ top-level
+          // (top-level chỉ set 1 lần lúc insert nên luôn "false" — không phản ánh trạng thái mới).
+          _isPrepared: {
+            $ifNull: ["$data.isPrepared", { $ifNull: ["$isPrepared", false] }],
+          },
+        },
+      },
+      {
+        // LƯU Ý: MongoDB CẤM lồng $facet trong $facet — nên mỗi nhánh range-dependent
+        // (kpi/dailyRevenue/topProducts) tự $match theo _dateKey ở đầu nhánh của nó,
+        // thay vì dùng $facet lồng bên trong nhánh "inRange".
+        $facet: {
+          dashboardOrdersCount: [{ $count: "count" }],
+          pendingOrders: [
+            {
+              $group: {
+                _id: null,
+                pendingApproval: { $sum: { $cond: [{ $eq: ["$status", "pending_confirm"] }, 1, 0] } },
+                pendingPayment: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $eq: ["$status", "pending_confirm"] }, { $eq: ["$data.channel", "manual"] }] },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                pendingPack: {
+                  $sum: {
+                    $cond: [
+                      { $and: [{ $eq: ["$status", "unprocessed"] }, { $ne: ["$_isPrepared", true] }] },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                pendingPickup: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $or: [
+                          { $and: [{ $eq: ["$status", "unprocessed"] }, { $eq: ["$_isPrepared", true] }] },
+                          { $eq: ["$status", "processed"] },
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+                shipping: { $sum: { $cond: [{ $eq: ["$status", "shipping"] }, 1, 0] } },
+                returnPending: { $sum: { $cond: [{ $eq: ["$status", "return_pending"] }, 1, 0] } },
+              },
+            },
+          ],
+          kpi: [
+            { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
+            {
+              $group: {
+                _id: null,
+                ordersInRangeCount: { $sum: 1 },
+                revenue: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $ne: ["$status", "cancelled"] },
+                          { $gt: [{ $ifNull: ["$data.totalAmount", 0] }, 0] },
+                        ],
+                      },
+                      "$data.totalAmount",
+                      0,
+                    ],
+                  },
+                },
+                newOrders: {
+                  $sum: { $cond: [{ $in: ["$status", ["pending_confirm", "unprocessed"]] }, 1, 0] },
+                },
+                returns: {
+                  $sum: { $cond: [{ $in: ["$status", ["return_pending", "return_received"]] }, 1, 0] },
+                },
+                cancelled: { $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] } },
+              },
+            },
+          ],
+          dailyRevenue: [
+            { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
+            { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
+            { $group: { _id: "$_dateKey", amount: { $sum: "$data.totalAmount" } } },
+            { $project: { _id: 0, date: "$_id", amount: 1 } },
+          ],
+          topProducts: [
+            { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
+            { $match: { status: { $ne: "cancelled" }, "data.totalAmount": { $gt: 0 } } },
+            { $unwind: "$data.items" },
+            {
+              $group: {
+                _id: "$data.items.productId",
+                quantitySold: { $sum: { $ifNull: ["$data.items.quantity", 0] } },
+                title: { $first: "$data.items.productTitle" },
+                image: { $first: "$data.items.productImage" },
+              },
+            },
+            { $match: { _id: { $nin: [null, ""] } } },
+            { $sort: { quantitySold: -1 } },
+            { $limit: 5 },
+          ],
+        },
+      },
+    ])
+      .option({ maxTimeMS: 8000 })
+      .exec(),
+  ]);
+
+  const facet = facetResult?.[0] || {};
+  const pending = facet.pendingOrders?.[0] || {};
+  const kpi = facet.kpi?.[0] || {};
+
+  return {
+    totalOrdersInDb,
+    dashboardOrdersCount: facet.dashboardOrdersCount?.[0]?.count || 0,
+    ordersInRangeCount: kpi.ordersInRangeCount || 0,
+    revenue: kpi.revenue || 0,
+    newOrders: kpi.newOrders || 0,
+    returns: kpi.returns || 0,
+    cancelled: kpi.cancelled || 0,
+    pendingOrders: {
+      pendingApproval: pending.pendingApproval || 0,
+      pendingPayment: pending.pendingPayment || 0,
+      pendingPack: pending.pendingPack || 0,
+      pendingPickup: pending.pendingPickup || 0,
+      shipping: pending.shipping || 0,
+      returnPending: pending.returnPending || 0,
+    },
+    dailyRevenue: Array.isArray(facet.dailyRevenue) ? facet.dailyRevenue : [],
+    topProducts: Array.isArray(facet.topProducts)
+      ? facet.topProducts.map((row: any) => ({
+          productId: String(row._id || ""),
+          quantitySold: Number(row.quantitySold) || 0,
+          title: row.title ? String(row.title) : null,
+          image: row.image ? String(row.image) : null,
+        }))
+      : [],
+  };
 }
 
 export async function flushDbWrites(): Promise<void> {

@@ -60,6 +60,8 @@ import {
   deleteHandedOverOrdersFromStore,
   loadOrdersFromStore,
   mirrorTopLevelTrackingIntoData,
+  getDashboardStatsFromStore,
+  loadProductsLiteForDashboardFromStore,
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
 
@@ -9568,24 +9570,6 @@ function toDateKey(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function parseDashboardOrderDate(dateStr: string): Date {
-  const raw = String(dateStr || "").trim();
-  if (!raw) return new Date(NaN);
-  const datePart = raw.split("T")[0];
-  const [y, m, d] = datePart.split("-").map(Number);
-  if (!y || !m || !d) return new Date(NaN);
-  return new Date(y, m - 1, d);
-}
-
-function isDashboardOrder(order: any): boolean {
-  const sn = String(order?.orderSn || order?.id || "");
-  if (!sn) return false;
-  const hasAmount = Number(order?.totalAmount) > 0;
-  const hasItems = Array.isArray(order?.items) && order.items.length > 0;
-  if (!hasAmount && !hasItems && sn.startsWith("260709")) return false;
-  return true;
-}
-
 function getDashboardDateRange(rangeKey: string) {
   const now = new Date();
   const y = now.getFullYear();
@@ -9624,31 +9608,15 @@ function getDashboardDateRange(rangeKey: string) {
   }
 }
 
-function isDateInRange(dateStr: string, start: Date, end: Date): boolean {
-  const d = parseDashboardOrderDate(dateStr);
-  if (Number.isNaN(d.getTime())) return false;
-  const s = new Date(start);
-  s.setHours(0, 0, 0, 0);
-  const e = new Date(end);
-  e.setHours(23, 59, 59, 999);
-  return d >= s && d <= e;
-}
-
-function findOrderItemMeta(orders: any[], productId: string): { title: string | null; image: string | null } {
-  for (const order of orders) {
-    const items = Array.isArray(order?.items) ? order.items : [];
-    const hit = items.find((i: any) => String(i.productId) === productId);
-    if (hit) {
-      return {
-        title: hit.productTitle ? String(hit.productTitle) : null,
-        image: hit.productImage ? String(hit.productImage) : null,
-      };
-    }
-  }
-  return { title: null, image: null };
-}
-
-function buildDashboardChart(orders: any[], range: { start: Date; end: Date; key: string }) {
+/**
+ * Dựng khung ngày/tháng rỗng (label hiển thị) rồi đổ số liệu doanh thu ĐÃ ĐƯỢC
+ * MongoDB tính tổng sẵn theo ngày (`dailyRevenue`) vào — KHÔNG lặp qua từng đơn hàng
+ * trong Node nữa (dữ liệu đầu vào chỉ còn tối đa ~366 dòng thay vì toàn bộ đơn).
+ */
+function buildDashboardChart(
+  dailyRevenue: Array<{ date: string; amount: number }>,
+  range: { start: Date; end: Date; key: string },
+) {
   const buckets = new Map<string, { key: string; label: string; amount: number }>();
 
   if (range.key === "this_year" || range.key === "this_quarter") {
@@ -9679,16 +9647,15 @@ function buildDashboardChart(orders: any[], range: { start: Date; end: Date; key
     }
   }
 
-  for (const order of orders) {
-    const dateStr = String(order.date || "").split("T")[0];
+  for (const row of dailyRevenue) {
+    const dateStr = String(row?.date || "");
     let bucketKey = dateStr;
     if (range.key === "this_year" || range.key === "this_quarter") {
-      const d = parseDashboardOrderDate(dateStr);
-      bucketKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      bucketKey = dateStr.slice(0, 7);
     }
     const bucket = buckets.get(bucketKey);
     if (bucket) {
-      bucket.amount += Number(order.totalAmount) || 0;
+      bucket.amount += Number(row?.amount) || 0;
     }
   }
 
@@ -14287,109 +14254,84 @@ async function startServer() {
   });
 
   // --- Dashboard API ---
-  // CHỈ đọc MongoDB/orders.json nội bộ — TUYỆT ĐỐI không gọi Shopee API / fetch / axios /
-  // hàm Tracking ở đây. Không chờ đồng bộ Shopee; luôn tính toán từ dữ liệu local hiện có.
+  // CHỈ đọc MongoDB — TUYỆT ĐỐI không gọi Shopee API / fetch / axios / hàm Tracking ở đây,
+  // và KHÔNG còn đọc orders.json (nguồn cũ, không được Webhook cập nhật đầy đủ).
+  // Toàn bộ số liệu (doanh thu, đếm đơn, top sản phẩm, chart) tính bằng MongoDB
+  // Aggregation ($facet, 1 round-trip) trong getDashboardStatsFromStore — collection
+  // `orders` CHÍNH LÀ nơi Webhook Shopee ghi (bulkUpsertOrdersToStore/updateOrderTrackingInStore).
   app.get("/api/dashboard", authMiddleware, async (req, res) => {
     try {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       const dateRange = String(req.query.date_range || "last_7_days");
       const range = getDashboardDateRange(dateRange);
-      const allOrders = loadOrders();
-      const orders = allOrders.filter(isDashboardOrder);
-      const products = await withLocalDbTimeout(loadProducts(), 8000, "dashboard_load_products");
+      const startKey = toDateKey(range.start);
+      const endKey = toDateKey(range.end);
 
-      const ordersInRange = orders.filter((o: any) =>
-        isDateInRange(String(o.date || ""), range.start, range.end)
-      );
-
-      const revenueOrders = ordersInRange.filter(
-        (o: any) => o.status !== "cancelled" && Number(o.totalAmount) > 0
-      );
-      const totalRevenue = revenueOrders.reduce(
-        (sum: number, o: any) => sum + (Number(o.totalAmount) || 0),
-        0
-      );
-      const newOrderCount = ordersInRange.filter(
-        (o: any) => o.status === "pending_confirm" || o.status === "unprocessed"
-      ).length;
-      const returnOrderCount = ordersInRange.filter(
-        (o: any) => o.status === "return_pending" || o.status === "return_received"
-      ).length;
-      const cancelledOrderCount = ordersInRange.filter((o: any) => o.status === "cancelled").length;
-
-      const pendingOrders = {
-        pendingApproval: orders.filter((o: any) => o.status === "pending_confirm").length,
-        pendingPayment: orders.filter(
-          (o: any) => o.status === "pending_confirm" && o.channel === "manual"
-        ).length,
-        pendingPack: orders.filter(
-          (o: any) => o.status === "unprocessed" && !o.isPrepared
-        ).length,
-        pendingPickup: orders.filter(
-          (o: any) => (o.status === "unprocessed" && o.isPrepared) || o.status === "processed"
-        ).length,
-        shipping: orders.filter((o: any) => o.status === "shipping").length,
-        returnPending: orders.filter((o: any) => o.status === "return_pending").length,
-      };
-
-      const productSales = new Map<string, { productId: string; quantitySold: number }>();
-      for (const order of revenueOrders) {
-        const items = Array.isArray(order.items) ? order.items : [];
-        for (const item of items) {
-          const pid = String(item.productId || "");
-          if (!pid) continue;
-          const prev = productSales.get(pid) || { productId: pid, quantitySold: 0 };
-          prev.quantitySold += Math.max(0, Number(item.quantity) || 0);
-          productSales.set(pid, prev);
-        }
+      if (!isMongoReady()) {
+        return res.status(200).json({
+          dateRange: range.key,
+          dateRangeLabel: range.label,
+          startDate: startKey,
+          endDate: endKey,
+          meta: { totalOrdersInDb: 0, dashboardOrders: 0, ordersInRange: 0 },
+          kpi: { revenue: 0, newOrders: 0, returns: 0, cancelled: 0 },
+          pendingOrders: {
+            pendingApproval: 0,
+            pendingPayment: 0,
+            pendingPack: 0,
+            pendingPickup: 0,
+            shipping: 0,
+            returnPending: 0,
+          },
+          chart: [],
+          topProducts: [],
+          inventory: { lowStockThreshold: 5, lowStockProducts: [] },
+          message: "mongodb_not_ready",
+        });
       }
 
-      const topProducts = Array.from(productSales.values())
-        .sort((a, b) => b.quantitySold - a.quantitySold)
-        .slice(0, 5)
-        .map((entry, idx) => {
-          const prod = products.find((p: any) => p.id === entry.productId);
-          const itemMeta = findOrderItemMeta(revenueOrders, entry.productId);
-          return {
-            rank: idx + 1,
-            productId: entry.productId,
-            title: prod?.title || itemMeta.title || entry.productId,
-            sku: prod?.sku || "—",
-            imageUrl: prod?.avatarUrl || prod?.imageUrl || itemMeta.image || null,
-            quantitySold: entry.quantitySold,
-          };
-        });
+      const [stats, products] = await Promise.all([
+        withLocalDbTimeout(getDashboardStatsFromStore(startKey, endKey), 8000, "dashboard_stats"),
+        withLocalDbTimeout(loadProductsLiteForDashboardFromStore(), 8000, "dashboard_products_lite"),
+      ]);
+
+      const topProducts = stats.topProducts.map((entry, idx) => {
+        const prod = products.find((p) => p.id === entry.productId);
+        return {
+          rank: idx + 1,
+          productId: entry.productId,
+          title: prod?.title || entry.title || entry.productId,
+          sku: prod?.sku || "—",
+          imageUrl: prod?.image || entry.image || null,
+          quantitySold: entry.quantitySold,
+        };
+      });
 
       const LOW_STOCK_THRESHOLD = 5;
       const lowStockProducts = products
-        .filter((p: any) => (Number(p.stock) || 0) < LOW_STOCK_THRESHOLD)
-        .map((p: any) => ({
-          id: String(p.id),
-          title: String(p.title || p.sku || p.id),
-          sku: String(p.sku || ""),
-          stock: Number(p.stock) || 0,
-        }))
-        .sort((a: any, b: any) => a.stock - b.stock);
+        .filter((p) => p.stock < LOW_STOCK_THRESHOLD)
+        .map((p) => ({ id: p.id, title: p.title || p.sku || p.id, sku: p.sku, stock: p.stock }))
+        .sort((a, b) => a.stock - b.stock);
 
-      const chart = buildDashboardChart(revenueOrders, range);
+      const chart = buildDashboardChart(stats.dailyRevenue, range);
 
       return res.json({
         dateRange: range.key,
         dateRangeLabel: range.label,
-        startDate: toDateKey(range.start),
-        endDate: toDateKey(range.end),
+        startDate: startKey,
+        endDate: endKey,
         meta: {
-          totalOrdersInDb: allOrders.length,
-          dashboardOrders: orders.length,
-          ordersInRange: ordersInRange.length,
+          totalOrdersInDb: stats.totalOrdersInDb,
+          dashboardOrders: stats.dashboardOrdersCount,
+          ordersInRange: stats.ordersInRangeCount,
         },
         kpi: {
-          revenue: totalRevenue,
-          newOrders: newOrderCount,
-          returns: returnOrderCount,
-          cancelled: cancelledOrderCount,
+          revenue: stats.revenue,
+          newOrders: stats.newOrders,
+          returns: stats.returns,
+          cancelled: stats.cancelled,
         },
-        pendingOrders,
+        pendingOrders: stats.pendingOrders,
         chart,
         topProducts,
         inventory: {
