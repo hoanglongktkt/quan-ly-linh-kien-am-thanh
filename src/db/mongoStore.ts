@@ -1573,10 +1573,29 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
 export async function loadOrdersFromStore(): Promise<any[]> {
   if (!isMongoReady()) return [];
   requireMongo();
-  const docs = await OrderModel.find({})
-    .sort({ "data.date": -1, _id: -1 })
-    .maxTimeMS(5_000)
-    .lean();
+  let docs: any[];
+  try {
+    docs = await OrderModel.find({})
+      .sort({ "data.date": -1, _id: -1 })
+      .maxTimeMS(15_000)
+      .lean();
+  } catch (err: any) {
+    // Webhook 100% có thể đẩy khối lượng ghi lớn hơn trước, khiến query có sort
+    // đôi khi vượt maxTimeMS/giới hạn bộ nhớ sort. KHÔNG để cả trang Quản lý đơn
+    // hàng trắng trơn — thử lại KHÔNG sort (Mongo trả theo _id insertion order),
+    // sort lại phía Node cho phần dữ liệu vẫn lấy được.
+    console.warn(
+      "[MongoDB] loadOrdersFromStore sorted query failed, retry unsorted:",
+      err?.message || err,
+    );
+    docs = await OrderModel.find({}).maxTimeMS(15_000).lean();
+    docs.sort((a: any, b: any) => {
+      const da = String(a?.data?.date || "");
+      const db = String(b?.data?.date || "");
+      if (da !== db) return da < db ? 1 : -1;
+      return String(b?._id || "").localeCompare(String(a?._id || ""));
+    });
+  }
   const out: any[] = [];
   for (const d of docs as any[]) {
     const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};

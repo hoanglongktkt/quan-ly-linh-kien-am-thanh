@@ -415,9 +415,12 @@ export default function App() {
         fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'bb6e18'},body:JSON.stringify({sessionId:'bb6e18',runId:'initial',hypothesisId:'H1',location:'src/App.tsx:414',message:'Order refresh payload received',data:{requestId,success:payload.success!==false,error:payload.error||null,count:Array.isArray(payload.data)?payload.data.length:0,durationMs:Date.now()-refreshStartedAt,statuses:Array.isArray(payload.data)?payload.data.reduce((counts:Record<string,number>,order)=>{const status=String(order.status||order.shopee_order_status||'missing');counts[status]=(counts[status]||0)+1;return counts;},{}):{}},timestamp:Date.now()})}).catch(()=>{});
         // #endregion
         if (payload.success === false) {
-          if (payload.error === 'mongodb_not_ready' && retriesLeft > 0) {
+          if (
+            (payload.error === 'mongodb_not_ready' || payload.error === 'orders_refresh_failed') &&
+            retriesLeft > 0
+          ) {
             console.warn(
-              `[Fetch Orders] MongoDB chưa sẵn sàng (mới restart?) — thử lại sau 3s (còn ${retriesLeft} lần).`,
+              `[Fetch Orders] Refresh lỗi tạm thời (${payload.error}) — thử lại sau 3s (còn ${retriesLeft} lần).`,
             );
             window.setTimeout(() => {
               void fetchOrders({ silent, bustCache, retriesLeft: retriesLeft - 1 });
