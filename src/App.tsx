@@ -351,12 +351,20 @@ export default function App() {
   }, []);
 
   // Fetch the real, backend-synced order list (Shopee webhook data) once authenticated.
-  const fetchOrders = async (opts?: { silent?: boolean; bustCache?: boolean }) => {
+  const fetchOrders = async (opts?: {
+    silent?: boolean;
+    bustCache?: boolean;
+    retriesLeft?: number;
+  }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
 
     const silent = Boolean(opts?.silent);
     const bustCache = opts?.bustCache !== false;
+    // MongoDB kết nối NGẦM sau khi Node app khởi động (không block listen) — ngay sau
+    // restart, vài giây đầu isMongoReady() có thể còn false. Tự retry thay vì để
+    // danh sách đơn hàng trống vĩnh viễn cho tới khi người dùng bấm "Làm mới".
+    const retriesLeft = opts?.retriesLeft ?? 4;
     const requestId = ++fetchOrdersSeqRef.current;
     if (!silent) setOrdersLoading(true);
     let requestTimeoutId: number | undefined;
@@ -388,8 +396,17 @@ export default function App() {
         },
       });
       if (response.ok) {
-        const payload: { success?: boolean; data?: Order[] } = await response.json();
+        const payload: { success?: boolean; data?: Order[]; error?: string } = await response.json();
         if (payload.success === false) {
+          if (payload.error === 'mongodb_not_ready' && retriesLeft > 0) {
+            console.warn(
+              `[Fetch Orders] MongoDB chưa sẵn sàng (mới restart?) — thử lại sau 3s (còn ${retriesLeft} lần).`,
+            );
+            window.setTimeout(() => {
+              void fetchOrders({ silent, bustCache, retriesLeft: retriesLeft - 1 });
+            }, 3000);
+            return;
+          }
           console.warn('[Fetch Orders] Refresh failed; giữ nguyên danh sách hiện tại.');
           return;
         }
