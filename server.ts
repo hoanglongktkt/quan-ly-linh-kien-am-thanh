@@ -14401,7 +14401,10 @@ async function startServer() {
     if (!ordersRefreshInFlight) {
       ordersRefreshInFlight = loadOrdersFromStore()
         .then((orders) => {
-          const validOrders = orders.filter(isValidOrder);
+          // MongoDB là nguồn webhook trực tiếp. `isValidOrder` từng loại các payload
+          // mới nhận nhưng chưa hydrate đủ items/totalAmount, khiến Dashboard có số
+          // liệu còn trang Quản lý đơn hàng lại không thấy đơn.
+          const validOrders = orders.filter((order) => Boolean(order?.orderSn || order?.id));
           ordersRefreshCache = {
             orders: validOrders,
             expiresAt: Date.now() + 1_500,
