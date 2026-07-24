@@ -56,7 +56,6 @@ import {
   Barcode, 
   ArrowRight, 
   AlertCircle, 
-  RefreshCw,
   ChevronDown,
   ChevronRight,
   CheckSquare,
@@ -462,8 +461,6 @@ function syncOrdersTabToUrl(subTab: OrderTab, cancelTab: CancelReturnTab) {
 interface OrderManagerProps {
   orders: Order[];
   onUpdateOrders: (orders: Order[], opts?: { persist?: boolean }) => void;
-  /** CHỈ gắn nút Đồng bộ — kéo Shopee. CẤM gọi khi refresh/scan/DB rỗng. */
-  onPullShopeeOrders?: (opts?: { type?: 'incremental' | 'full' }) => Promise<void> | void;
   /** Chỉ đọc lại orders từ DB local — dùng sau xác nhận/in đơn để không ghi đè trạng thái */
   onFetchOrders?: (opts?: { silent?: boolean; bustCache?: boolean }) => Promise<void> | void;
   ordersLoading?: boolean;
@@ -570,7 +567,6 @@ function VariationNameBadge({ variationName }: { variationName?: string }) {
 export default function OrderManager({ 
   orders, 
   onUpdateOrders, 
-  onPullShopeeOrders,
   onFetchOrders,
   ordersLoading = false,
   shops, 
@@ -1360,7 +1356,6 @@ export default function OrderManager({
     setExpandedOrderId((prev) => (prev === orderId ? null : orderId));
   };
   const [bulkPrintOrders, setBulkPrintOrders] = useState<Order[] | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
 
   // Real Shopee/TikTok logistics API call state (ship_order / shipping document)
   const [printingOrderId, setPrintingOrderId] = useState<string | null>(null);
@@ -2372,38 +2367,6 @@ export default function OrderManager({
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   /**
-   * Đồng bộ được thực hiện qua backend rồi UI chỉ đọc lại Database nội bộ.
-   * `full` quét lịch sử để sửa các đơn bị bỏ sót ngoài cửa sổ incremental.
-   */
-  const handleSyncOrders = async (type: 'incremental' | 'full' = 'incremental') => {
-    if (isSyncing) return;
-    setIsSyncing(true);
-    showToast(type === 'full' ? 'Đang đồng bộ toàn bộ đơn từ Shopee...' : 'Đang đồng bộ đơn mới từ Shopee...');
-
-    try {
-      await onPullShopeeOrders?.({ type });
-      await onFetchOrders?.({ silent: true, bustCache: true });
-      onAddLog({
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        channel: 'all',
-        type: 'stock_sync',
-        status: 'success',
-        message:
-          type === 'full'
-            ? 'Đã yêu cầu Full Sync từ Shopee, danh sách sẽ tự cập nhật khi tiến trình hoàn tất.'
-            : 'Đã yêu cầu đồng bộ đơn mới từ Shopee, danh sách sẽ tự cập nhật khi tiến trình hoàn tất.',
-      });
-      showToast('Đã gửi yêu cầu đồng bộ. Danh sách sẽ tự cập nhật khi tiến trình hoàn tất.');
-    } catch (err: any) {
-      showToast(`Không thể tải lại đơn hàng: ${err?.message || 'Vui lòng kiểm tra kết nối và thử lại.'}`);
-    } finally {
-      // BẮT BUỘC: luôn clear loading dù thành công hay lỗi — tránh nút quay vô hạn.
-      setIsSyncing(false);
-    }
-  };
-
-  /**
    * Auto-refresh (polling) mỗi 15 giây — đọc lại DB nội bộ (silent, KHÔNG gọi Shopee).
    * `silent: true` → onFetchOrders (App.tsx) không set ordersLoading, không hiện overlay,
    * chỉ cập nhật mảng `orders` ở App — filter/lựa chọn cục bộ của OrderManager không bị reset.
@@ -3148,7 +3111,7 @@ export default function OrderManager({
       setIsFlushingQueue(false);
 
       try {
-        // Chỉ đọc DB nội bộ (silent) — CẤM gọi onPullShopeeOrders (đó là pull Shopee).
+        // Chỉ đọc DB nội bộ sau khi xử lý quét.
         if (onFetchOrders) void onFetchOrders({ silent: true });
       } catch (refreshErr) {
         console.error('Refresh orders after scan failed:', refreshErr);
@@ -3711,54 +3674,7 @@ export default function OrderManager({
             <Plus className="w-4 h-4" />
             <span>Tạo đơn hàng ngoài sàn</span>
           </button>
-
-          <button
-            onClick={() => void handleSyncOrders('incremental')}
-            disabled={isSyncing}
-            className="om-orders-mobile-hide-primary-actions px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/15 hover:shadow-blue-500/30 transition-all flex items-center gap-2 cursor-pointer"
-            title="Cập nhật đơn mới: quét siêu tốc 2 giờ gần nhất (update_time)"
-          >
-            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>Cập nhật đơn mới</span>
-          </button>
-
-          <button
-            onClick={() => {
-              if (
-                !window.confirm(
-                  'Full Sync sẽ kéo lịch sử đơn trong 30 ngày qua (chạy ngầm, không khóa UI). Tiếp tục?',
-                )
-              ) {
-                return;
-              }
-              void handleSyncOrders('full');
-            }}
-            disabled={isSyncing}
-            className="om-orders-mobile-hide-primary-actions px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-75 text-slate-700 font-extrabold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-2 cursor-pointer"
-            title="Full Sync: kéo lịch sử đơn trong 30 ngày qua — chạy ngầm"
-          >
-            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>Full Sync</span>
-          </button>
         </div>
-      </div>
-
-      {/* Mobile: nút Cập nhật đơn mới 2 giờ (desktop dùng nút ở top bar) */}
-      <div className="hidden max-md:flex items-center justify-between gap-2 px-0.5">
-        <p className="text-[11px] font-semibold text-slate-500 truncate">
-          {isSyncing ? 'Đã gửi đồng bộ ngầm...' : 'Đồng bộ đơn Shopee (2 giờ)'}
-        </p>
-        <button
-          type="button"
-          onClick={() => void handleSyncOrders('incremental')}
-          disabled={isSyncing}
-          className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2.5 min-h-11 bg-blue-600 hover:bg-blue-700 disabled:opacity-75 text-white font-extrabold text-xs rounded-xl shadow-md shadow-blue-500/20 transition-all cursor-pointer"
-          title="Cập nhật đơn mới — quét siêu tốc 2 giờ (ngầm)"
-          aria-label="Cập nhật đơn mới 2 giờ"
-        >
-          <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-          <span>Cập nhật đơn mới</span>
-        </button>
       </div>
 
       {/* 2. SUB-TABS: Horizontal scrollable subtabs with counts — orders[] từ App.fetchOrders → GET /api/orders (cùng origin). Không import mock JSON. */}

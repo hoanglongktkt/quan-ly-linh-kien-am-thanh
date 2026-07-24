@@ -16,7 +16,6 @@ import OrderPicking from './components/OrderPicking';
 import PublishManager from './components/PublishManager';
 import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
-import FloatingSyncStatus from './components/FloatingSyncStatus';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import { APP_TITLE } from './config/brand';
 import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
@@ -224,8 +223,6 @@ export default function App() {
   const [productsLoading, setProductsLoading] = useState<boolean>(false);
   /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
-  /** Floating widget tiến trình đồng bộ đơn ngầm (góc trên phải). */
-  const [syncWidgetActive, setSyncWidgetActive] = useState(false);
   const lastFocusRefreshAtRef = useRef(0);
   /** Sequence guard — tránh race-condition khi polling 15s + click thủ công/focus refresh
    * chạy gần nhau: chỉ response của request MỚI NHẤT được ghi vào state, response của
@@ -615,98 +612,6 @@ export default function App() {
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       console.error('Fetch channel settings error:', err);
-    }
-  };
-
-  const formatPullErrors = (errors: any[]): string =>
-    errors
-      .map((e) => {
-        const shop = e.shopId ? `Shop ${e.shopId}` : 'Hệ thống';
-        const code = e.error ? ` [${e.error}]` : '';
-        const msg = e.message || e.error || 'Lỗi không xác định';
-        return `${shop}${code}: ${msg}`;
-      })
-      .join('; ');
-
-  // Incremental / full sync — fire-and-forget: POST trả 202 ngay, KHÔNG chặn UI.
-  // Poll + fetchOrders chạy ngầm (silent), user vẫn thao tác / đổi tab bình thường.
-  const pullOrders = async (opts?: { type?: 'incremental' | 'full' }) => {
-    const token = localStorage.getItem('admin_token');
-    if (!token) return;
-
-    const syncType = opts?.type === 'full' ? 'full' : 'incremental';
-    const invalidServerResponseMessage =
-      'Máy chủ đang bận hoặc phản hồi không hợp lệ. Vui lòng thử lại sau.';
-    const readOrderSyncJson = async (response: Response): Promise<Record<string, any>> => {
-      const contentType = response.headers.get('content-type') || '';
-      const okHttp = response.ok || response.status === 202;
-      if (!okHttp || !contentType.includes('application/json')) {
-        try {
-          const responsePreview = (await response.text()).slice(0, 200);
-          console.error('[Orders Sync] Invalid server response:', {
-            status: response.status,
-            contentType,
-            responsePreview,
-          });
-        } catch (readError) {
-          console.error('[Orders Sync] Cannot read invalid server response:', readError);
-        }
-        throw new Error(invalidServerResponseMessage);
-      }
-
-      try {
-        return await response.json();
-      } catch (parseError) {
-        console.error('[Orders Sync] Invalid JSON response:', parseError);
-        throw new Error(invalidServerResponseMessage);
-      }
-    };
-
-    const response = await fetch(`/api/orders/pull?type=${syncType}&t=${Date.now()}`, {
-      method: 'POST',
-      cache: 'no-store',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache',
-      },
-      body: JSON.stringify({ type: syncType }),
-    });
-    const data = await readOrderSyncJson(response);
-
-    // Tiến trình đang chạy / vừa accept — không ném lỗi; bật floating widget.
-    const alreadyRunning =
-      data.alreadyRunning === true ||
-      data.skipped === true ||
-      (data.syncing === true && response.status !== 202 && !data.accepted);
-    const startedBackground =
-      response.status === 202 ||
-      data.accepted === true ||
-      /sync started in background|đồng bộ ngầm/i.test(String(data.message || ''));
-
-    if (alreadyRunning || startedBackground) {
-      setSyncWidgetActive(true);
-      return;
-    }
-
-    if (data.warning && !data.accepted && response.status !== 202) {
-      // Cảnh báo cấu hình (thiếu token shop...) — vẫn không chặn bằng Error cứng nếu syncing.
-      if (data.syncing || data.isRunning) {
-        setSyncWidgetActive(true);
-        return;
-      }
-      throw new Error(String(data.warning));
-    }
-
-    const pulled = Number(data.pulled) || 0;
-    const pullErrors = Array.isArray(data.errors) ? data.errors : [];
-    if (pullErrors.length > 0 && pulled === 0) {
-      throw new Error(formatPullErrors(pullErrors));
-    }
-    void fetchOrders({ silent: true, bustCache: true });
-    if (pullErrors.length > 0) {
-      console.warn('[Orders Pull] partial errors:', formatPullErrors(pullErrors));
     }
   };
 
@@ -1459,14 +1364,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50/50 md:flex md:flex-row antialiased font-sans text-gray-900 selection:bg-blue-100 selection:text-blue-900">
-      <FloatingSyncStatus
-        active={syncWidgetActive}
-        onDismiss={() => setSyncWidgetActive(false)}
-        onFinished={() => {
-          setSyncWidgetActive(false);
-          void fetchOrders({ silent: true, bustCache: true });
-        }}
-      />
       {backgroundRefreshing && (
         <div
           className="fixed top-16 right-3 z-[100] flex items-center gap-2 rounded-full bg-slate-900/90 text-white px-3 py-1.5 shadow-lg pointer-events-none"
@@ -1800,7 +1697,6 @@ export default function App() {
               <OrderManager 
               orders={orders}
               onUpdateOrders={handleUpdateOrders}
-              onPullShopeeOrders={pullOrders}
               onFetchOrders={fetchOrders}
               ordersLoading={ordersLoading}
               shops={settings.shops || []}

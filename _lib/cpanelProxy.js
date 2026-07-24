@@ -13,21 +13,14 @@ const HOP_HEADERS = new Set([
   'upgrade',
 ]);
 
-/** API đồng bộ Shopee / bulk — thường > 20s. */
+/** API tác vụ nặng — thường > 20s. */
 const LONG_RUNNING_PREFIXES = [
-  'shopee/orders/sync',
-  'shopee/orders/sync/job',
-  'orders/pull',
-  'orders/pull/status',
-  'sync/status',
-  'sync/force-stop',
   'shopee/products/sync',
   'shopee/channel-products/fetch',
   'shopee/channel-products/auto-link',
   'mapping-products/bulk-auto-link',
   'mapping/bulk-update',
   'mapping-products/batch-auto-link',
-  'shopee/force-sync',
   'shopee/debug/return-by-order',
   'shopee/products/sync-item-variants',
   'products/bulk-save',
