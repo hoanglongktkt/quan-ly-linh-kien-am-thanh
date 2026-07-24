@@ -83,11 +83,13 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     status,
     date: String(raw.date || new Date().toISOString()),
     items: Array.isArray(raw.items) ? raw.items : [],
-    trackingNumber: raw.trackingNumber || raw.tracking_no || raw.return_tracking_no
-      ? String(raw.trackingNumber || raw.tracking_no || raw.return_tracking_no)
+    // Mã hoàn trả không phải vận đơn giao đi. Dùng nó ở đây sẽ làm đơn hoàn bị
+    // phân loại nhầm là đã xử lý/đang giao.
+    trackingNumber: raw.trackingNumber || raw.tracking_no
+      ? String(raw.trackingNumber || raw.tracking_no)
       : undefined,
-    tracking_no: raw.tracking_no || raw.trackingNumber || raw.return_tracking_no
-      ? String(raw.tracking_no || raw.trackingNumber || raw.return_tracking_no)
+    tracking_no: raw.tracking_no || raw.trackingNumber
+      ? String(raw.tracking_no || raw.trackingNumber)
       : undefined,
     fulfillment_type: (() => {
       const v = String(

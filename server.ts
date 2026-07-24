@@ -11752,6 +11752,15 @@ function isValidOrder(order: any): boolean {
   ) {
     return Boolean(order?.orderSn || order?.id);
   }
+  // Webhook có thể đến trước get_order_detail. Giữ stub Shopee có orderSn + raw
+  // status để lần refresh kế tiếp không làm đơn mới biến mất khỏi giao diện.
+  if (
+    String(order?.channel || "").toLowerCase() === "shopee" &&
+    Boolean(order?.orderSn || order?.id) &&
+    Boolean(raw)
+  ) {
+    return true;
+  }
   const hasAmount = Number(order?.totalAmount) > 0;
   const hasItems = Array.isArray(order?.items) && order.items.length > 0;
   if (!hasAmount && !hasItems) return false;
@@ -11906,6 +11915,10 @@ function parseShopeePushEvent(body: any): {
 
 const SHOPEE_WEBHOOK_ORDER_STATUSES = new Set([
   "UNPAID",
+  "PENDING",
+  "IN_REVIEW",
+  "FRAUD_CHECK",
+  "INVOICE_PENDING",
   "READY_TO_SHIP",
   "PROCESSED",
   "RETRY_SHIP",
@@ -12232,6 +12245,9 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
       return;
     }
     const shouldPersist =
+      // Code 3 có order_sn là thông báo trạng thái hợp lệ, kể cả khi Shopee phát
+      // thêm trạng thái mới hoặc status tạm thời rỗng. Không được bỏ qua đơn mới.
+      parsed.eventKind === "order_status_update" ||
       parsed.eventKind === "tracking_no_update" ||
       parsed.eventKind === "shipping_document" ||
       parsed.eventKind === "return_refund" ||

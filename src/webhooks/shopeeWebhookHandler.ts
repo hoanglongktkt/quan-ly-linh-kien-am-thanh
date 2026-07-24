@@ -3,8 +3,10 @@ import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
 
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 
-const MAX_PENDING_JOBS = 100;
-const MAX_CONCURRENT_JOBS = 2;
+const MAX_PENDING_JOBS = 500;
+// `processShopeeWebhookPayload` cập nhật cùng một orders.json trước khi upsert MongoDB.
+// Xử lý tuần tự tránh hai event cùng lúc ghi đè mất đơn vừa nhận.
+const MAX_CONCURRENT_JOBS = 1;
 
 /**
  * Hàng đợi in-process có giới hạn để một đợt retry bất thường không giữ vô hạn
@@ -36,13 +38,14 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
   };
 
   return {
-    enqueue(payload: Record<string, unknown>): void {
+    enqueue(payload: Record<string, unknown>): boolean {
       if (pending.length >= MAX_PENDING_JOBS) {
-        console.error("[Shopee Webhook] Queue full; payload dropped after ACK.");
-        return;
+        console.error("[Shopee Webhook] Queue full; request must be retried by Shopee.");
+        return false;
       }
       pending.push(payload);
       scheduleDrain();
+      return true;
     },
   };
 }
@@ -61,7 +64,7 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
     res.status(200).type("text/plain").send("success");
   });
 
-  router.post("/shopee", express.raw({ type: "application/json", limit: "1mb" }), (req, res) => {
+  router.post("/shopee", express.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
     console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee — headers:", {
       authorization: req.get("authorization") ? "(present)" : "(missing)",
       contentLength: req.get("content-length") || "0",
@@ -88,10 +91,16 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
         console.warn("[Shopee Webhook] JSON parse failed — vẫn ACK 200:", parseErr);
       }
 
-      // ACK trước, sau đó mới nhường event loop cho tác vụ nền có giới hạn concurrency.
+      if (!payload) {
+        return res.status(400).type("text/plain").send("Invalid JSON payload");
+      }
+      // Chỉ ACK sau khi payload đã được nhận vào queue. Nếu queue đầy, Shopee sẽ retry
+      // thay vì đơn bị mất vĩnh viễn sau HTTP 200.
+      if (!queue.enqueue(payload)) {
+        return res.status(503).type("text/plain").send("Webhook queue busy");
+      }
       res.status(200).type("text/plain").send("OK");
-      console.log("[WEBHOOK RECEIVED] ACK 200 sent, enqueuing payload for background processing.");
-      if (payload) setImmediate(() => queue.enqueue(payload));
+      console.log("[WEBHOOK RECEIVED] ACK 200 sent; payload queued for background processing.");
     } catch (error) {
       // Không throw ra Express/process; luôn trả 200 để Shopee không retry/khóa Webhook.
       console.error("[Shopee Webhook] Request handler failed:", error);

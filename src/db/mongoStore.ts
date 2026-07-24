@@ -1142,11 +1142,13 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     if (order.packageNumber != null && String(order.packageNumber).trim()) {
       $set["data.packageNumber"] = String(order.packageNumber);
     }
-    if (Array.isArray(order.items)) {
+    // Push fallback có thể chỉ chứa orderSn/status. Không để `items: []` hoặc
+    // `totalAmount: 0` ghi đè snapshot chi tiết đã lấy trước đó.
+    if (Array.isArray(order.items) && order.items.length > 0) {
       $set["data.items"] = order.items;
     }
     if (order.date != null) $set["data.date"] = order.date;
-    if (order.totalAmount != null) $set["data.totalAmount"] = order.totalAmount;
+    if (Number(order.totalAmount) > 0) $set["data.totalAmount"] = order.totalAmount;
     if (order.fulfillment_type != null) {
       $set["data.fulfillment_type"] = order.fulfillment_type;
     }
@@ -1160,6 +1162,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       if (key === "id" || key === "_id") continue;
       if (INTERNAL_FLAG_KEYS.has(key)) continue;
       if (value === undefined) continue;
+      if (key === "items" && Array.isArray(value) && value.length === 0) continue;
+      if (key === "totalAmount" && Number(value) <= 0) continue;
       $set[`data.${key}`] = value;
     }
 
