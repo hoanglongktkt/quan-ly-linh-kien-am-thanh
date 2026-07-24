@@ -5851,10 +5851,16 @@ function dedupeShopeeParentVariantRows(products: any[]): any[] {
 // "pickup" (Shopee courier picks up from seller's address), "dropoff" (seller
 // drops the parcel at a branch) or "non_integrated" (3rd-party carrier, manual
 // tracking number), plus the concrete address/time-slot/branch options.
-const SHOPEE_LOGISTICS_TIMEOUT_MS = 20_000;
-// Giảm từ 45s → 10s: mỗi đơn treo tối đa 10s rồi coi là lỗi (catch ở processShipOrderBatch
-// tự chuyển sang "thất bại" và tiếp tục đơn kế — không được để 1 đơn kẹt kéo cả job tới ~2 phút).
-const SHIP_ORDER_OPERATION_TIMEOUT_MS = 10_000;
+// Timeout từng HTTP logistics — ngắn để 1 request treo không giữ slot concurrency.
+const SHOPEE_LOGISTICS_TIMEOUT_MS = 8_000;
+// Mỗi đơn xác nhận tối đa 12s (get_shipping_parameter + ship_order + light recover).
+// Timeout abort signal → hủy fetch đang treo; processShipOrderBatch tiếp tục đơn khác.
+const SHIP_ORDER_OPERATION_TIMEOUT_MS = 12_000;
+/** Số đơn ship song song — 10–20 tối ưu (tránh Promise.all hàng trăm request → rate-limit). */
+const SHIP_ORDER_BATCH_CONCURRENCY = 15;
+/** Chia lô + nghỉ ngắn giữa các chunk để Shopee không chặn burst. */
+const SHIP_ORDER_CHUNK_SIZE = 20;
+const SHIP_ORDER_CHUNK_PAUSE_MS = 150;
 
 /** Cache get_address_list theo shop — tránh N round-trip khi xác nhận hàng loạt song song. */
 const shopeeAddressListCache = new Map<
@@ -5863,13 +5869,22 @@ const shopeeAddressListCache = new Map<
 >();
 const SHOPEE_ADDRESS_LIST_CACHE_TTL_MS = 60_000;
 
-async function withOperationTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+async function withOperationTimeout<T>(
+  work: Promise<T> | ((signal: AbortSignal) => Promise<T>),
+  ms: number,
+  label: string,
+): Promise<T> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const promise = typeof work === "function" ? work(controller.signal) : work;
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timeout sau ${ms / 1000} giây.`)), ms);
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error(`${label} timeout sau ${ms / 1000} giây.`));
+        }, ms);
       }),
     ]);
   } finally {
@@ -5881,9 +5896,16 @@ async function fetchShopeeLogisticsJson(
   url: string,
   init: RequestInit,
   context: string,
+  opts?: { timeoutMs?: number; signal?: AbortSignal },
 ): Promise<{ response: Response; json: any }> {
+  const timeoutMs = opts?.timeoutMs ?? SHOPEE_LOGISTICS_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SHOPEE_LOGISTICS_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const onParentAbort = () => controller.abort();
+  if (opts?.signal) {
+    if (opts.signal.aborted) controller.abort();
+    else opts.signal.addEventListener("abort", onParentAbort, { once: true });
+  }
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
     const raw = await response.text();
@@ -5897,16 +5919,23 @@ async function fetchShopeeLogisticsJson(
     }
     return { response, json };
   } catch (error: any) {
-    if (error?.name === "AbortError") {
-      throw new Error(`Shopee ${context} timeout sau ${SHOPEE_LOGISTICS_TIMEOUT_MS / 1000} giây.`);
+    if (error?.name === "AbortError" || opts?.signal?.aborted) {
+      throw new Error(`Shopee ${context} timeout sau ${timeoutMs / 1000} giây.`);
     }
     throw error;
   } finally {
     clearTimeout(timer);
+    opts?.signal?.removeEventListener("abort", onParentAbort);
   }
 }
 
-async function shopeeGetShippingParameter(shopId: string, accessToken: string, orderSn: string, packageNumber?: string) {
+async function shopeeGetShippingParameter(
+  shopId: string,
+  accessToken: string,
+  orderSn: string,
+  packageNumber?: string,
+  signal?: AbortSignal,
+) {
   const apiPath = "/api/v2/logistics/get_shipping_parameter";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -5922,13 +5951,13 @@ async function shopeeGetShippingParameter(shopId: string, accessToken: string, o
   if (packageNumber) params.set("package_number", packageNumber);
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const { response, json } = await fetchShopeeLogisticsJson(url, {}, "get_shipping_parameter");
+  const { response, json } = await fetchShopeeLogisticsJson(url, {}, "get_shipping_parameter", { signal });
   console.log(`[Shopee API] GET ${apiPath} (order_sn=${orderSn}) -> HTTP ${response.status}:`, JSON.stringify(json));
   return json;
 }
 
 // v2.logistics.get_address_list — danh sách địa chỉ kho/lấy hàng mới nhất của shop.
-async function shopeeGetAddressList(shopId: string, accessToken: string) {
+async function shopeeGetAddressList(shopId: string, accessToken: string, signal?: AbortSignal) {
   const apiPath = "/api/v2/logistics/get_address_list";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -5940,7 +5969,7 @@ async function shopeeGetAddressList(shopId: string, accessToken: string) {
     sign,
   });
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const { response, json } = await fetchShopeeLogisticsJson(url, {}, "get_address_list");
+  const { response, json } = await fetchShopeeLogisticsJson(url, {}, "get_address_list", { signal });
   console.log(`[Shopee API] GET ${apiPath} (shop_id=${shopId}) -> HTTP ${response.status}:`, JSON.stringify(json));
   return json;
 }
@@ -6014,7 +6043,13 @@ function resolvePickupShipmentFromParams(
 // (unsplit) orders, and there is no reliable local heuristic to prove an
 // order is genuinely split. Per explicit product decision, this project only
 // ships normal/unsplit orders — package_number must NEVER appear in this body.
-async function shopeeShipOrder(shopId: string, accessToken: string, orderSn: string, shipmentBody: Record<string, any>) {
+async function shopeeShipOrder(
+  shopId: string,
+  accessToken: string,
+  orderSn: string,
+  shipmentBody: Record<string, any>,
+  signal?: AbortSignal,
+) {
   const apiPath = "/api/v2/logistics/ship_order";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -6027,7 +6062,7 @@ async function shopeeShipOrder(shopId: string, accessToken: string, orderSn: str
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  }, "ship_order");
+  }, "ship_order", { signal });
   console.log(`[Shopee API] POST ${apiPath} (order_sn=${orderSn}) body=${JSON.stringify(body)} -> HTTP ${response.status}:`, JSON.stringify(json));
   return json;
 }
@@ -6039,7 +6074,11 @@ type ShipMethod = "pickup" | "dropoff";
 // honor the method the seller explicitly picked in the "Xác nhận đơn hàng" modal,
 // then call ship_order. Fails clearly if Shopee doesn't support the chosen method
 // for this specific order's logistics channel (info_needed doesn't list it).
-async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
+async function shipShopeeOrderReal(
+  order: any,
+  method: ShipMethod,
+  signal?: AbortSignal,
+): Promise<{
   success: boolean;
   error?: string;
   message?: string;
@@ -6048,7 +6087,12 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
   trackingNumber?: string;
   alreadyShipped?: boolean;
 }> {
+  const throwIfAborted = () => {
+    if (signal?.aborted) throw new Error(`Ship order ${order?.orderSn || ""} aborted/timeout`);
+  };
+
   try {
+  throwIfAborted();
   const shopCheck = validateOrderShopForShipment(order);
   if (!shopCheck.ok) {
     return { success: false, error: shopCheck.error, message: shopCheck.message };
@@ -6072,12 +6116,26 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
     throw err;
   }
 
+  const asAlreadyShippedSuccess = (recovered: { trackingNumber?: string }) => ({
+    success: true as const,
+    alreadyShipped: true as const,
+    mode: method,
+    shopId,
+    trackingNumber: recovered.trackingNumber || order.trackingNumber,
+  });
+
+  /** Recover nhẹ 1 lần — không gọi enrich tracking retry (tránh chậm hàng loạt). */
+  const recoverOnce = async () => {
+    throwIfAborted();
+    return tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order, signal);
+  };
+
   // Deliberately called WITHOUT package_number — see shopeeShipOrder's comment.
-  let paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+  let paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn, undefined, signal);
   if (isShopeeInvalidTokenError(paramResult?.error, paramResult?.message)) {
     try {
       accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
-      paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn);
+      paramResult = await shopeeGetShippingParameter(shopId, accessToken, order.orderSn, undefined, signal);
     } catch (err) {
       if (err instanceof ShopeeRefreshTokenExpiredError) {
         return { success: false, error: err.code, message: err.message };
@@ -6088,30 +6146,9 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
   console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (get_shipping_parameter) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(paramResult));
   if (paramResult.error) {
     console.error(`[Shopee L\u1ED6I] get_shipping_parameter th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${paramResult.error}" message="${paramResult.message}"`);
-    // Đơn GHN/SPX đã PROCESSED thường fail parameter — thử recover tracking thay vì báo lỗi.
-    if (isAlreadyShippedError(paramResult)) {
-      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
-      if (recovered.ok) {
-        return {
-          success: true,
-          alreadyShipped: true,
-          mode: method,
-          shopId,
-          trackingNumber: recovered.trackingNumber || order.trackingNumber,
-        };
-      }
-    }
-    // Fallback: dù không khớp pattern, vẫn probe 1 lần (tránh kẹt GHN có mã nhưng lỗi lạ).
-    const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
-    if (recovered.ok) {
-      return {
-        success: true,
-        alreadyShipped: true,
-        mode: method,
-        shopId,
-        trackingNumber: recovered.trackingNumber || order.trackingNumber,
-      };
-    }
+    // Probe nhẹ 1 lần (đơn GHN/SPX đã PROCESSED) — KHÔNG double-recover / KHÔNG retry tracking.
+    const recovered = await recoverOnce();
+    if (recovered.ok) return asAlreadyShippedSuccess(recovered);
     return { success: false, error: paramResult.error, message: paramResult.message };
   }
 
@@ -6121,17 +6158,8 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
   if (method === "dropoff") {
     if (!Object.prototype.hasOwnProperty.call(infoNeeded, "dropoff")) {
       console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 dropoff. info_needed=${JSON.stringify(infoNeeded)}`);
-      // Có thể đơn đã arrange — recover trước khi trả lỗi method.
-      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
-      if (recovered.ok) {
-        return {
-          success: true,
-          alreadyShipped: true,
-          mode: method,
-          shopId,
-          trackingNumber: recovered.trackingNumber || order.trackingNumber,
-        };
-      }
+      const recovered = await recoverOnce();
+      if (recovered.ok) return asAlreadyShippedSuccess(recovered);
       return { success: false, error: "dropoff_not_supported", message: "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Tự mang hàng ra bưu cục\". Vui lòng chọn \"Lấy hàng\" (pickup) thay thế." };
     }
     const dropoffRequirements = Array.isArray(infoNeeded.dropoff) ? infoNeeded.dropoff : [];
@@ -6146,16 +6174,8 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
   } else {
     if (!Object.prototype.hasOwnProperty.call(infoNeeded, "pickup")) {
       console.error(`[Shopee L\u1ED6I] \u0110\u01A1n ${order.orderSn} kh\xF4ng h\u1ED7 tr\u1EE3 pickup. info_needed=${JSON.stringify(infoNeeded)}`);
-      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
-      if (recovered.ok) {
-        return {
-          success: true,
-          alreadyShipped: true,
-          mode: method,
-          shopId,
-          trackingNumber: recovered.trackingNumber || order.trackingNumber,
-        };
-      }
+      const recovered = await recoverOnce();
+      if (recovered.ok) return asAlreadyShippedSuccess(recovered);
       return { success: false, error: "pickup_not_supported", message: "Đơn vị vận chuyển của đơn này KHÔNG hỗ trợ hình thức \"Lấy hàng\". Vui lòng chọn \"Tự mang hàng ra bưu cục\" (dropoff) thay thế." };
     }
     // Lấy danh sách địa chỉ kho (cache 60s/shop — tránh N lần get_address_list khi xác nhận hàng loạt song song).
@@ -6167,7 +6187,7 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
       addressListResult = hit.result;
       shopAddressList = hit.list;
     } else {
-      addressListResult = await shopeeGetAddressList(shopId, accessToken);
+      addressListResult = await shopeeGetAddressList(shopId, accessToken, signal);
       shopAddressList =
         addressListResult.response?.address_list ||
         addressListResult.address_list ||
@@ -6189,16 +6209,8 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
       console.error(
         `[Shopee LỖI] Đơn ${order.orderSn} không có address/time_slot pickup khả dụng. pickup=${JSON.stringify(paramResult.response?.pickup)} shopAddresses=${JSON.stringify(shopAddressList)}`,
       );
-      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
-      if (recovered.ok) {
-        return {
-          success: true,
-          alreadyShipped: true,
-          mode: method,
-          shopId,
-          trackingNumber: recovered.trackingNumber || order.trackingNumber,
-        };
-      }
+      const recovered = await recoverOnce();
+      if (recovered.ok) return asAlreadyShippedSuccess(recovered);
       return {
         success: false,
         error: "no_pickup_slot_available",
@@ -6216,11 +6228,12 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
     );
   }
 
-  let shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+  throwIfAborted();
+  let shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody, signal);
   if (isShopeeInvalidTokenError(shipResult?.error, shipResult?.message)) {
     try {
       accessToken = await refreshShopeeAccessTokenLocked(shopId, { force: true });
-      shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody);
+      shipResult = await shopeeShipOrder(shopId, accessToken, order.orderSn, shipmentBody, signal);
     } catch (err) {
       if (err instanceof ShopeeRefreshTokenExpiredError) {
         return { success: false, error: err.code, message: err.message };
@@ -6231,28 +6244,9 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
   console.log(`D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (ship_order) - \u0111\u01A1n ${order.orderSn}:`, JSON.stringify(shipResult));
   if (shipResult.error) {
     console.error(`[Shopee L\u1ED6I] ship_order th\u1EA5t b\u1EA1i cho \u0111\u01A1n ${order.orderSn} -> error="${shipResult.error}" message="${shipResult.message}" request_id="${shipResult.request_id || ""}"`);
-    if (isAlreadyShippedError(shipResult)) {
-      const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
-      if (recovered.ok) {
-        return {
-          success: true,
-          alreadyShipped: true,
-          mode: method,
-          shopId,
-          trackingNumber: recovered.trackingNumber || order.trackingNumber,
-        };
-      }
-    }
-    const recovered = await tryRecoverAlreadyShippedShopeeOrder(shopId, accessToken, order);
-    if (recovered.ok) {
-      return {
-        success: true,
-        alreadyShipped: true,
-        mode: method,
-        shopId,
-        trackingNumber: recovered.trackingNumber || order.trackingNumber,
-      };
-    }
+    // Một lần recover nhẹ thôi (đã từng gọi 2 lần + enrich retry → rất chậm).
+    const recovered = await recoverOnce();
+    if (recovered.ok) return asAlreadyShippedSuccess(recovered);
     return { success: false, error: shipResult.error, message: shipResult.message, mode: method, shopId };
   }
 
@@ -6266,6 +6260,13 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
   } catch (error: any) {
     if (error instanceof ShopeeRefreshTokenExpiredError) {
       return { success: false, error: error.code, message: error.message };
+    }
+    if (signal?.aborted || /timeout|aborted/i.test(String(error?.message || ""))) {
+      return {
+        success: false,
+        error: "timeout",
+        message: error?.message || `Ship order ${order?.orderSn || ""} timeout`,
+      };
     }
     console.error(`[Shopee LỖI] shipShopeeOrderReal exception đơn ${order?.orderSn}:`, error?.stack || error);
     return {
@@ -6287,9 +6288,13 @@ function arrangeShipmentLocal(order: any, method: ShipMethod): { success: boolea
 }
 
 // Single entry point used by both the single-order and bulk ship routes.
-async function arrangeShipment(order: any, method: ShipMethod): Promise<{ success: boolean; error?: string; message?: string; mode?: string; trackingNumber?: string; shopId?: string }> {
+async function arrangeShipment(
+  order: any,
+  method: ShipMethod,
+  signal?: AbortSignal,
+): Promise<{ success: boolean; error?: string; message?: string; mode?: string; trackingNumber?: string; shopId?: string }> {
   if (order.channel === "shopee") {
-    return shipShopeeOrderReal(order, method);
+    return shipShopeeOrderReal(order, method, signal);
   }
   return arrangeShipmentLocal(order, method);
 }
@@ -11806,14 +11811,18 @@ function isAlreadyShippedError(result: any): boolean {
 
 /**
  * Khi ship_order / get_shipping_parameter fail vì đơn ĐÃ chuẩn bị trên Shopee:
- * lấy lại order detail + tracking (GHN: GYA9LYP6, SPX: SPXVN...) và coi là thành công.
+ * kiểm tra nhanh order detail (+ 1 lần get_tracking_number, KHÔNG retry/escrow).
+ * Confirm hàng loạt không được chờ enrich tracking nặng.
  */
 async function tryRecoverAlreadyShippedShopeeOrder(
   shopId: string,
   accessToken: string,
   order: any,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; trackingNumber?: string; shopeeStatus?: string }> {
   try {
+    if (signal?.aborted) return { ok: false };
+
     const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [String(order.orderSn)]);
     const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
     const detail = Array.isArray(detailList) ? detailList[0] : null;
@@ -11825,26 +11834,47 @@ async function tryRecoverAlreadyShippedShopeeOrder(
       if (pkg?.package_number) order.packageNumber = String(pkg.package_number);
     }
 
-    await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, { retries: 4 });
-    repairMisassignedTracking(order);
+    const decide = (): { ok: boolean; trackingNumber?: string; shopeeStatus?: string } => {
+      repairMisassignedTracking(order);
+      const tn = String(order.trackingNumber || order.tracking_no || "").trim();
+      const rawStatus = String(order.shopee_order_status || "").toUpperCase();
+      const alreadyOnShopee =
+        Boolean(tn && !isShopeeInternalTrackingCode(tn)) ||
+        rawStatus === "PROCESSED" ||
+        rawStatus === "SHIPPED" ||
+        rawStatus === "TO_CONFIRM_RECEIVE" ||
+        rawStatus === "COMPLETED";
+      if (alreadyOnShopee) {
+        return { ok: true, trackingNumber: tn || undefined, shopeeStatus: rawStatus || undefined };
+      }
+      return { ok: false, trackingNumber: tn || undefined, shopeeStatus: rawStatus || undefined };
+    };
 
-    const tn = String(order.trackingNumber || order.tracking_no || "").trim();
-    const rawStatus = String(order.shopee_order_status || "").toUpperCase();
-    const alreadyOnShopee =
-      Boolean(tn && !isShopeeInternalTrackingCode(tn)) ||
-      rawStatus === "PROCESSED" ||
-      rawStatus === "SHIPPED" ||
-      rawStatus === "TO_CONFIRM_RECEIVE" ||
-      rawStatus === "COMPLETED";
-
-    if (alreadyOnShopee) {
+    let verdict = decide();
+    if (verdict.ok) {
       console.log(
-        `[Shopee Ship Recover] order_sn=${order.orderSn} OK status=${rawStatus || "?"} tn=${tn || "—"} (GHN/SPX/J&T đều chấp nhận)`,
+        `[Shopee Ship Recover] order_sn=${order.orderSn} OK(fast) status=${verdict.shopeeStatus || "?"} tn=${verdict.trackingNumber || "—"}`,
       );
-      return { ok: true, trackingNumber: tn || undefined, shopeeStatus: rawStatus || undefined };
+      return verdict;
     }
+
+    // Một shot get_tracking_number — không sleep/retry/escrow (tracking đầy đủ lo lúc in đơn).
+    if (!signal?.aborted) {
+      const pkgNum = String(order.packageNumber || "").trim() || undefined;
+      const track = await shopeeGetTrackingNumber(shopId, accessToken, order.orderSn, pkgNum);
+      applyShopeeGetTrackingResponse(order, track);
+      verdict = decide();
+    }
+
+    if (verdict.ok) {
+      console.log(
+        `[Shopee Ship Recover] order_sn=${order.orderSn} OK status=${verdict.shopeeStatus || "?"} tn=${verdict.trackingNumber || "—"}`,
+      );
+      return { ok: true, trackingNumber: verdict.trackingNumber, shopeeStatus: verdict.shopeeStatus };
+    }
+
     console.warn(
-      `[Shopee Ship Recover] order_sn=${order.orderSn} chưa recover được (status=${rawStatus || "?"} tn=${tn || "—"})`,
+      `[Shopee Ship Recover] order_sn=${order.orderSn} chưa recover được (status=${verdict.shopeeStatus || "?"} tn=${verdict.trackingNumber || "—"})`,
     );
     return { ok: false };
   } catch (err: any) {
@@ -16595,8 +16625,38 @@ async function startServer() {
 
   // --- Shopee logistics: "Chuẩn bị hàng" (ship_order) ------------------------
 
-  /** Số đơn ship song song / batch — tránh rate-limit Shopee khi xác nhận hàng loạt. */
-  const SHIP_ORDER_BATCH_CONCURRENCY = 5;
+  async function prewarmShopeeAddressCacheForShip(
+    toShip: { index: number; order: any }[],
+    shipMethod: ShipMethod,
+  ): Promise<void> {
+    if (shipMethod !== "pickup") return;
+    const shopIds = [
+      ...new Set(
+        toShip
+          .map(({ order }) => String(resolveOrderShopId(order) || order.shopId || "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    if (shopIds.length === 0) return;
+    await mapWithConcurrency(shopIds, 3, async (shopId) => {
+      const hit = shopeeAddressListCache.get(shopId);
+      if (hit && Date.now() - hit.at < SHOPEE_ADDRESS_LIST_CACHE_TTL_MS) return;
+      try {
+        const accessToken = (await getValidShopeeAccessToken(shopId)) || "";
+        if (!accessToken) return;
+        const addressListResult = await shopeeGetAddressList(shopId, accessToken);
+        const list =
+          addressListResult.response?.address_list || addressListResult.address_list || [];
+        shopeeAddressListCache.set(shopId, {
+          at: Date.now(),
+          result: addressListResult,
+          list,
+        });
+      } catch (err: any) {
+        console.warn(`[Ship Order Bulk] prewarm address_list shop=${shopId}:`, err?.message || err);
+      }
+    });
+  }
 
   async function processShipOrderBatch(
     orders: any[],
@@ -16619,10 +16679,12 @@ async function startServer() {
     let completedCount = 0;
 
     console.log(
-      `[Ship Order Bulk] Bắt đầu xác nhận ${toShip.length} đơn — concurrency=${SHIP_ORDER_BATCH_CONCURRENCY} (không chờ PDF/tracking).`,
+      `[Ship Order Bulk] Bắt đầu xác nhận ${toShip.length} đơn — concurrency=${SHIP_ORDER_BATCH_CONCURRENCY} chunk=${SHIP_ORDER_CHUNK_SIZE} timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms (không chờ PDF/tracking).`,
     );
 
-    await mapWithConcurrency(toShip, SHIP_ORDER_BATCH_CONCURRENCY, async (item, i) => {
+    await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
+
+    const processOne = async (item: { index: number; order: any }, i: number) => {
       const { index, order } = item;
       const resolvedShopId = resolveOrderShopId(order);
       if (resolvedShopId && !order.shopId) {
@@ -16634,7 +16696,7 @@ async function startServer() {
       let result: Awaited<ReturnType<typeof arrangeShipment>>;
       try {
         result = await withOperationTimeout(
-          arrangeShipment(order, shipMethod),
+          (signal) => arrangeShipment(order, shipMethod, signal),
           SHIP_ORDER_OPERATION_TIMEOUT_MS,
           `Ship order ${order.orderSn}`,
         );
@@ -16645,7 +16707,7 @@ async function startServer() {
         );
         result = {
           success: false,
-          error: "internal_server_error",
+          error: /timeout/i.test(String(error?.message || "")) ? "timeout" : "internal_server_error",
           message:
             "Lỗi nội bộ server: " +
             (error?.message || String(error)) +
@@ -16756,7 +16818,18 @@ async function startServer() {
 
       completedCount += 1;
       if (opts?.onProgress) opts.onProgress(completedCount, toShip.length);
-    });
+    };
+
+    // Chunk 20 + concurrency 15 — tránh Promise.all toàn bộ + tránh rate-limit burst.
+    for (let chunkStart = 0; chunkStart < toShip.length; chunkStart += SHIP_ORDER_CHUNK_SIZE) {
+      const chunk = toShip.slice(chunkStart, chunkStart + SHIP_ORDER_CHUNK_SIZE);
+      await mapWithConcurrency(chunk, SHIP_ORDER_BATCH_CONCURRENCY, async (item, localIdx) => {
+        await processOne(item, chunkStart + localIdx);
+      });
+      if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length) {
+        await sleep(SHIP_ORDER_CHUNK_PAUSE_MS);
+      }
+    }
 
     const compactResults = results.filter(Boolean);
     const successCount = compactResults.filter((r) => r.success).length;
@@ -16790,7 +16863,7 @@ async function startServer() {
 
       console.log(`[Ship Order] Y\xEAu c\u1EA7u chu\u1EA9n b\u1EB1 h\xE0ng (${shipMethod}) cho \u0111\u01A1n ${order.orderSn} (channel=${order.channel})...`);
       const result = await withOperationTimeout(
-        arrangeShipment(order, shipMethod),
+        (signal) => arrangeShipment(order, shipMethod, signal),
         SHIP_ORDER_OPERATION_TIMEOUT_MS,
         `Ship order ${order.orderSn}`,
       );
