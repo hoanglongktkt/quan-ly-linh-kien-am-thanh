@@ -534,6 +534,15 @@ export default function App() {
     };
   }, [isAuthenticated, activeTab]);
 
+  // Mở tab "Quản lý đơn hàng" mà danh sách vẫn rỗng (VD: lần fetch đầu tiên lúc mount
+  // rơi đúng lúc MongoDB chưa kết nối xong sau restart, hết lượt retry) — tự fetch lại
+  // thay vì để trống vĩnh viễn cho tới khi người dùng tự bấm "Làm mới".
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== 'orders' || orders.length > 0 || ordersLoading) return;
+    void fetchOrders({ silent: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ cần chạy lại khi đổi tab
+  }, [isAuthenticated, activeTab]);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const linked = params.get('shopee_linked');

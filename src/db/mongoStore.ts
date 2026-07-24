@@ -73,6 +73,8 @@ ProductSchema.index({ "data.sku": 1 });
 ProductSchema.index({ "data.title": 1 });
 ProductSchema.index({ "data.children.sku": 1 });
 ProductSchema.index({ "data.children_models.sku": 1 });
+// Hỗ trợ Dashboard: query tồn kho thấp có $lt + sort — tránh COLLSCAN khi catalog lớn.
+ProductSchema.index({ "data.stock": 1 });
 
 const ChannelListingSchema = new Schema<ListingDoc>(
   {
@@ -262,10 +264,16 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     if (mongoose.connection.readyState === 0) {
       await mongoose.connect(uri, {
         serverSelectionTimeoutMS: 10000,
-        // Tăng nhẹ 3→5: giảm chờ connection khi nhiều query cùng lúc (ship-order/webhook).
-        // Không tạo process con — an toàn với giới hạn NPROC hosting nhỏ.
-        maxPoolSize: 5,
+        // Tăng 5→15: pool 5 quá nhỏ khi Dashboard/Products/Orders + Webhook cùng chạy
+        // song song — hết pool khiến query MỚI phải XẾP HÀNG chờ connection (không lỗi
+        // ngay) và có thể "treo" tới khi client-side timeout bắn, dù bản thân query rất
+        // nhẹ. Đây là driver Node (I/O bất đồng bộ, dùng chung 1 process) — KHÔNG tạo
+        // thêm OS process nên an toàn với giới hạn NPROC hosting nhỏ.
+        maxPoolSize: 15,
         minPoolSize: 1,
+        // Nếu pool vẫn hết, THẤT BẠI NHANH thay vì chờ vô thời hạn — trả lỗi rõ ràng
+        // để route trả response ngay (tránh cộng dồn request treo → cPanel tăng process).
+        waitQueueTimeoutMS: 8000,
         maxIdleTimeMS: 30000,
       });
       fs.writeFileSync(
@@ -432,7 +440,9 @@ export async function loadProductsByIdsFromStore(
     orClauses.push({ _id: { $in: parentIds } });
   }
 
-  const docs = await ProductModel.find(orClauses.length === 1 ? orClauses[0] : { $or: orClauses }).lean();
+  const docs = await ProductModel.find(orClauses.length === 1 ? orClauses[0] : { $or: orClauses })
+    .maxTimeMS(6000)
+    .lean();
   return docsToProducts(docs);
 }
 
@@ -1625,13 +1635,19 @@ export type DashboardLiteProduct = {
 };
 
 /**
- * Sản phẩm rút gọn CHỈ dùng cho Dashboard (tồn kho thấp + top bán chạy) — projection
- * loại bỏ mô tả HTML / biến thể nặng để giảm payload, thay vì tải nguyên `loadProducts()`.
+ * Tồn kho thấp CHỈ dùng cho Dashboard — query CÓ ĐIỀU KIỆN + LIMIT + SORT ngay trong
+ * MongoDB (KHÔNG còn `find({})` quét toàn bộ collection rồi lọc/sort thủ công trong
+ * Node). Cần index `{ "data.stock": 1 }` (đã khai báo ở ProductSchema) để tránh COLLSCAN
+ * khi catalog lớn dần. `.maxTimeMS()` đảm bảo Mongo tự huỷ query treo, KHÔNG giữ
+ * connection trong pool vô thời hạn (nguyên nhân gây dồn ứ tiến trình khi pool cạn).
  */
-export async function loadProductsLiteForDashboardFromStore(): Promise<DashboardLiteProduct[]> {
+export async function getLowStockProductsFromStore(
+  threshold: number,
+  limit = 50,
+): Promise<DashboardLiteProduct[]> {
   requireMongo();
   const docs = await ProductModel.find(
-    {},
+    { "data.stock": { $lt: threshold, $gte: 0 } },
     {
       sku: 1,
       "data.id": 1,
@@ -1639,17 +1655,18 @@ export async function loadProductsLiteForDashboardFromStore(): Promise<Dashboard
       "data.name": 1,
       "data.sku": 1,
       "data.stock": 1,
-      "data.avatarUrl": 1,
-      "data.imageUrl": 1,
     },
   )
+    .sort({ "data.stock": 1 })
+    .limit(Math.max(1, Math.min(200, limit)))
+    .maxTimeMS(6000)
     .lean();
   return (docs as any[]).map((d) => ({
     id: String(d?.data?.id || d?._id || ""),
     title: String(d?.data?.title || d?.data?.name || d?.data?.id || ""),
     sku: String(d?.data?.sku || d?.sku || ""),
     stock: Number(d?.data?.stock) || 0,
-    image: d?.data?.avatarUrl || d?.data?.imageUrl || null,
+    image: null,
   }));
 }
 
@@ -1701,7 +1718,7 @@ export async function getDashboardStatsFromStore(
   };
 
   const [totalOrdersInDb, facetResult] = await Promise.all([
-    OrderModel.estimatedDocumentCount(),
+    OrderModel.estimatedDocumentCount().maxTimeMS(3000),
     OrderModel.aggregate([
       { $match: isDashboardOrderMatch },
       {
@@ -1818,7 +1835,10 @@ export async function getDashboardStatsFromStore(
         },
       },
     ])
-      .option({ maxTimeMS: 8000 })
+      // maxTimeMS THẤP HƠN timeout phía Node (8000ms ở server.ts) — đảm bảo MongoDB
+      // tự huỷ operation TRƯỚC, giải phóng connection về pool thay vì query vẫn chạy
+      // ngầm sau khi Node đã "bỏ cuộc" (nguyên nhân chính gây dồn ứ connection/process).
+      .option({ maxTimeMS: 6000 })
       .exec(),
   ]);
 

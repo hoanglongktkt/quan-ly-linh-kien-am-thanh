@@ -61,7 +61,7 @@ import {
   loadOrdersFromStore,
   mirrorTopLevelTrackingIntoData,
   getDashboardStatsFromStore,
-  loadProductsLiteForDashboardFromStore,
+  getLowStockProductsFromStore,
   type LocalInventoryCache,
 } from "./src/db/mongoStore.ts";
 
@@ -14290,28 +14290,49 @@ async function startServer() {
         });
       }
 
-      const [stats, products] = await Promise.all([
+      const LOW_STOCK_THRESHOLD = 5;
+
+      // Query Mongo ĐỘC LẬP, mỗi cái tự bounded bởi maxTimeMS ở tầng DB + timeout riêng
+      // ở tầng Node — dashboard_stats bị chậm (VD: collection đơn hàng lớn) sẽ KHÔNG kéo
+      // theo timeout của query sản phẩm (và ngược lại). Không còn `find({})` quét toàn
+      // bộ catalog — chỉ lấy đúng SP tồn thấp (LIMIT 50, chạy song song với stats) và
+      // đúng top-5 SP bán chạy (query theo id, phụ thuộc kết quả stats nên chạy sau).
+      const [stats, lowStockRows] = await Promise.all([
         withLocalDbTimeout(getDashboardStatsFromStore(startKey, endKey), 8000, "dashboard_stats"),
-        withLocalDbTimeout(loadProductsLiteForDashboardFromStore(), 8000, "dashboard_products_lite"),
+        withLocalDbTimeout(
+          getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
+          8000,
+          "dashboard_low_stock",
+        ),
       ]);
 
+      const wantedProductIds = stats.topProducts.map((p) => p.productId).filter(Boolean);
+      const topProductDocs = wantedProductIds.length
+        ? await withLocalDbTimeout(
+            loadProductsByIdsFromStore(wantedProductIds, []),
+            8000,
+            "dashboard_top_products",
+          )
+        : ([] as any[]);
+
       const topProducts = stats.topProducts.map((entry, idx) => {
-        const prod = products.find((p) => p.id === entry.productId);
+        const prod = topProductDocs.find((p: any) => p.id === entry.productId);
         return {
           rank: idx + 1,
           productId: entry.productId,
           title: prod?.title || entry.title || entry.productId,
           sku: prod?.sku || "—",
-          imageUrl: prod?.image || entry.image || null,
+          imageUrl: prod?.avatarUrl || prod?.imageUrl || entry.image || null,
           quantitySold: entry.quantitySold,
         };
       });
 
-      const LOW_STOCK_THRESHOLD = 5;
-      const lowStockProducts = products
-        .filter((p) => p.stock < LOW_STOCK_THRESHOLD)
-        .map((p) => ({ id: p.id, title: p.title || p.sku || p.id, sku: p.sku, stock: p.stock }))
-        .sort((a, b) => a.stock - b.stock);
+      const lowStockProducts = lowStockRows.map((p) => ({
+        id: p.id,
+        title: p.title || p.sku || p.id,
+        sku: p.sku,
+        stock: p.stock,
+      }));
 
       const chart = buildDashboardChart(stats.dailyRevenue, range);
 
