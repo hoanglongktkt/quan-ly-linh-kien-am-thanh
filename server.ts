@@ -6235,9 +6235,9 @@ async function shipShopeeOrderReal(order: any, method: ShipMethod): Promise<{
     return { success: false, error: shipResult.error, message: shipResult.message, mode: method, shopId };
   }
 
-  // Sau ship thành công: chờ + lấy mã vận đơn (GHN thường có ngay như GYA9LYP6).
-  await sleep(1500);
-  await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, { retries: 4 });
+  // Sau ship thành công: lấy mã vận đơn nhanh (1 lần) — không chờ PDF.
+  await sleep(500);
+  await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, { retries: 1 });
   return {
     success: true,
     mode: method,
@@ -16628,13 +16628,13 @@ async function startServer() {
             shopeeSyncError: undefined,
           };
           forceHealPickupOrderIfHasTracking(orders[index]);
-          // Nếu vẫn thiếu mã — fetch thêm 1 lần (GHN đôi khi trễ vài giây).
+          // Fetch tracking nhanh 1 lần — không retry dài (PDF/in đơn lo sau).
           if (!hasUsableShopeeTrackingNumber(orders[index]) && resolvedShopId) {
             try {
               const token = await getValidShopeeAccessToken(resolvedShopId);
               if (token) {
                 await enrichShopeeOrderTrackingFromApi(resolvedShopId, token, orders[index], {
-                  retries: 4,
+                  retries: 1,
                 });
               }
             } catch (trackErr: any) {
@@ -16800,11 +16800,8 @@ async function startServer() {
     }
   });
 
-  // Bulk: arrange shipment for multiple orders at once ("Xác nhận Chuẩn bị hàng loạt"),
-  // all using the single method (pickup/dropoff) the seller picked in the modal.
-  // Accepts both orderIds and orderSns so the frontend can send whichever it has.
-  // After all ship_order calls finish, automatically creates + downloads one merged
-  // NORMAL_AIR_WAYBILL PDF for every successfully prepared Shopee order.
+  // Bulk: arrange shipment ONLY ("Xác nhận Chuẩn bị hàng loạt").
+  // KHÔNG tạo/fetch PDF tại đây — user in thủ công bằng nút "In đơn" sau.
   app.post("/api/shopee/ship-order/bulk", authMiddleware, async (req, res) => {
     try {
     const { orderIds, orderSns, method } = req.body;
@@ -16834,16 +16831,14 @@ async function startServer() {
     }
 
     const results: any[] = [];
-    const successfulShopeeOrders: any[] = [];
 
     const batch = await processShipOrderBatch(orders, toShip, shipMethod);
     results.push(...batch.results);
-    successfulShopeeOrders.push(...batch.successfulShopeeOrders);
 
     const changedOrders = toShip.map(({ index }) => orders[index]).filter(Boolean);
     await persistOrdersToDatabase(orders, changedOrders);
     const successCount = batch.successCount;
-    console.log(`[Ship Order Bulk] Ho\xE0n t\u1EA5t: ${successCount}/${toShip.length} \u0111\u01A1n chu\u1EA9n b\u1EB1 h\xE0ng th\xE0nh c\xF4ng.`);
+    console.log(`[Ship Order Bulk] Ho\xE0n t\u1EA5t: ${successCount}/${toShip.length} \u0111\u01A1n chu\u1EA9n b\u1EB1 h\xE0ng th\xE0nh c\xF4ng (không tạo PDF).`);
 
     console.log("D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0 (ship-order/bulk response g\u1EEDi cho Frontend):", JSON.stringify({ successCount, total: toShip.length, results }));
     const failedResults = results.filter(r => !r.success);
@@ -16854,35 +16849,16 @@ async function startServer() {
       }
     }
 
-    // Closed-loop bulk print: chờ Shopee tạo vận đơn rồi fetch PDF gộp (/api/public/labels/).
-    let printDocument: any = null;
-    if (successfulShopeeOrders.length > 0) {
-      console.log(`[Ship Order Bulk] T\u1EF1 \u0111\u1ED9ng l\u1EA5y v\u1EAD n g\u1ED9p cho ${successfulShopeeOrders.length} \u0111\u01A1n Shopee v\u1EEBa chu\u1EA9n b\u1EB1...`);
-      printDocument = await autoPrintLabelsForShopeeOrders(orders, successfulShopeeOrders);
-      if (printDocument?.printedOrderSns?.length) {
-        const printedSet = new Set(printDocument.printedOrderSns.map(String));
-        const printedChanged: any[] = [];
-        for (let i = 0; i < orders.length; i++) {
-          if (printedSet.has(String(orders[i].orderSn))) {
-            // Đánh dấu Đã in cho MỌI đơn đã có trong PDF (SPX/GHN/J&T/...).
-            const hasTn =
-              hasUsableShopeeTrackingNumber(orders[i]) || orderHasPrintableTracking(orders[i]);
-            orders[i] = {
-              ...orders[i],
-              isPrinted: true,
-              isPrepared: true,
-              ...(hasTn ? { status: "processed" } : {}),
-            };
-            printedChanged.push(orders[i]);
-          }
-        }
-        if (printedChanged.length) {
-          await persistOrdersToDatabase(orders, printedChanged);
-        }
-      }
-    }
-
     const failedCount = batch.failedCount || results.filter((r) => !r.success).length;
+    const failedIds = [
+      ...(batch.failedOrders || []).map((f: any) => String(f.orderSn || f.orderId || "").trim()),
+      ...failedResults.map((f) => String(f.orderSn || f.orderId || "").trim()),
+    ].filter(Boolean);
+    const uniqueFailed = [...new Set(failedIds)];
+    let message = `Thành công: ${successCount} đơn. Thất bại: ${failedCount} đơn`;
+    if (uniqueFailed.length > 0) message += ` — Mã: ${uniqueFailed.join(", ")}`;
+    message += ".";
+
     return res.json({
       successCount,
       failedCount,
@@ -16890,8 +16866,8 @@ async function startServer() {
       total: toShip.length,
       results,
       orders: orders.filter(isValidOrder),
-      printDocument,
-      message: `Xác nhận thành công ${successCount} đơn. Bỏ qua ${failedCount} đơn bị lỗi.`,
+      printDocument: null,
+      message,
     });
     } catch (error: any) {
       console.error("[Ship Order Bulk] Lỗi nội bộ endpoint /api/shopee/ship-order/bulk:", error?.stack || error);
@@ -17804,13 +17780,21 @@ async function startServer() {
 
       job.failedCount = batch.failedCount;
       job.failedOrders = batch.failedOrders;
-      job.message = `Xác nhận thành công ${batch.successCount} đơn. Bỏ qua ${batch.failedCount} đơn bị lỗi.`;
+      {
+        const failedIds = [
+          ...(batch.failedOrders || []).map((f: any) => String(f.orderSn || f.orderId || "").trim()),
+          ...(batch.results || [])
+            .filter((r: any) => !r?.success)
+            .map((r: any) => String(r.orderSn || r.orderId || "").trim()),
+        ].filter(Boolean);
+        const uniqueFailed = [...new Set(failedIds)];
+        let message = `Thành công: ${batch.successCount} đơn. Thất bại: ${batch.failedCount} đơn`;
+        if (uniqueFailed.length > 0) message += ` — Mã: ${uniqueFailed.join(", ")}`;
+        message += ".";
+        job.message = message;
+      }
 
-      // QUAN TRỌNG: KHÔNG tạo PDF ngay tại đây nữa — việc gọi Shopee create_shipping_document
-      // + retry GHN/J&T có thể mất tới ~2 phút, khiến FE polling job này bị "treo" chờ suốt
-      // thời gian đó dù đơn đã xác nhận xong từ lâu. Job xác nhận PHẢI trả "done" ngay khi
-      // ship_order xong; việc tạo PDF được FE gọi riêng qua job độc lập
-      // POST /api/shopee/print-document/async (đã có sẵn, cũng chạy nền + có poll riêng).
+      // Confirm-only: KHÔNG tạo PDF. User in thủ công bằng nút "In đơn".
       job.status = "done";
     } catch (err: any) {
       job.status = "failed";
@@ -17822,7 +17806,7 @@ async function startServer() {
     }
   }
 
-  // Non-blocking bulk ship: ghi nhận ngay trạng thái processed, Shopee + in vận đơn chạy ngầm.
+  // Non-blocking bulk ship: chỉ xác nhận lên sàn (ship_order). KHÔNG tạo PDF.
   app.post("/api/shopee/ship-order/bulk-async", authMiddleware, async (req, res) => {
     try {
     const { orderIds, orderSns, method } = req.body;
