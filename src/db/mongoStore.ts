@@ -124,6 +124,9 @@ OrderSchema.index({ orderSn: 1, shopId: 1 });
 // Hỗ trợ Dashboard aggregation lọc theo ngày / doanh thu mà không quét toàn bộ collection.
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
+// Khớp trực tiếp với truy vấn danh sách đơn mới nhất, tránh MongoDB phải sort lại
+// toàn bộ collection sau mỗi lần làm mới.
+OrderSchema.index({ "data.date": -1, _id: -1 });
 
 let ProductModel: Model<ProductDoc>;
 let ChannelListingModel: Model<ListingDoc>;

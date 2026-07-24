@@ -621,13 +621,12 @@ export default function OrderManager({
     }
   }, [activeSubTab]);
 
-  // Đổi tab: chỉ đọc DB nội bộ (silent) — CẤM overlay + CẤM kích hoạt pull Shopee.
+  // Đổi tab chỉ đổi bộ lọc cục bộ của `orders`; không đọc lại toàn bộ MongoDB.
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
     syncOrdersTabToUrl(activeSubTab, cancelReturnTab);
     onOrdersSubTabChange?.(activeSubTab);
-    void onFetchOrders?.({ silent: true });
-    // onFetchOrders / onOrdersSubTabChange không ổn định reference — chỉ phụ thuộc tab
+    // onOrdersSubTabChange không ổn định reference — chỉ phụ thuộc tab
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubTab, cancelReturnTab]);
   
