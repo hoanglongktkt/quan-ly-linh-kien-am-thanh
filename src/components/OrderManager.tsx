@@ -1401,6 +1401,14 @@ export default function OrderManager({
   const [progressCompleted, setProgressCompleted] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
   const [progressDone, setProgressDone] = useState(false);
+  const [shipConfirmSummary, setShipConfirmSummary] = useState<{
+    total: number;
+    successCount: number;
+    failCount: number;
+    successfulOrderIds: string[];
+    failedOrderDetails: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string }>;
+  } | null>(null);
+  const [isPrintingFromSummary, setIsPrintingFromSummary] = useState(false);
   const progressCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Khóa click In đơn — chặn double-fire / bubbling / 2 view cùng lúc (≥1440px). */
   const isPrintingRef = React.useRef(false);
@@ -1986,6 +1994,8 @@ export default function OrderManager({
     setProgressCompleted(0);
     setProgressTotal(0);
     setProgressDone(false);
+    setShipConfirmSummary(null);
+    setIsPrintingFromSummary(false);
   };
 
   const scheduleCloseProgressOverlay = (delayMs = 1800) => {
@@ -1995,11 +2005,13 @@ export default function OrderManager({
     }, delayMs);
   };
 
-  const markProgressComplete = (message?: string) => {
+  const markProgressComplete = (message?: string, options?: { autoClose?: boolean }) => {
     setProgressDone(true);
     if (message) setProgressMessage(message);
     if (progressTotal > 0) setProgressCompleted(progressTotal);
-    scheduleCloseProgressOverlay(1800);
+    if (options?.autoClose !== false) {
+      scheduleCloseProgressOverlay(1800);
+    }
   };
 
   const buildQueuedOrderKeys = (queued: Order[]) => {
@@ -2054,35 +2066,52 @@ export default function OrderManager({
   };
 
   /**
-   * Báo cáo xác nhận rõ ràng: Thành công / Thất bại + mã đơn lỗi.
-   * KHÔNG liên quan PDF — in đơn là thao tác thủ công riêng.
+   * Payload tóm tắt sau xác nhận hàng loạt — dùng cho Result Summary modal.
+   * KHÔNG liên quan PDF — in đơn là thao tác thủ công qua nút "In đơn".
    */
-  const buildShipConfirmReport = (payload: {
-    successCount?: number;
-    failedCount?: number;
-    failedOrders?: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string }>;
-    results?: Array<{ success?: boolean; orderSn?: string; orderId?: string }>;
-    message?: string;
-  }): string => {
+  const buildShipConfirmSummary = (
+    payload: {
+      total?: number;
+      successCount?: number;
+      failCount?: number;
+      failedCount?: number;
+      successfulOrderIds?: Array<string | number>;
+      failedOrderDetails?: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string }>;
+      failedOrders?: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string }>;
+      results?: Array<{ success?: boolean; orderSn?: string; orderId?: string; error?: string; message?: string }>;
+      message?: string;
+    },
+    fallbackTotal = 0,
+  ) => {
     const results = Array.isArray(payload.results) ? payload.results : [];
-    const failedFromResults = results.filter((r) => !r?.success);
-    const failedOrders = Array.isArray(payload.failedOrders) ? payload.failedOrders : [];
-    const successCount =
-      Number(payload.successCount) ||
-      results.filter((r) => r?.success).length;
-    const failedIds = [
-      ...failedOrders.map((f) => String(f.orderSn || f.orderId || "").trim()),
-      ...failedFromResults.map((f) => String(f.orderSn || f.orderId || "").trim()),
-    ].filter(Boolean);
-    const uniqueFailed = [...new Set(failedIds)];
-    const failedCount = Number(payload.failedCount) || uniqueFailed.length || failedFromResults.length;
-
-    let msg = `Thành công: ${successCount} đơn. Thất bại: ${failedCount} đơn`;
-    if (uniqueFailed.length > 0) {
-      msg += ` — Mã: ${uniqueFailed.join(", ")}`;
-    }
-    msg += ".";
-    return msg;
+    const successfulOrderIds = Array.isArray(payload.successfulOrderIds)
+      ? payload.successfulOrderIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : results
+          .filter((r) => r?.success)
+          .map((r) => String(r?.orderId || r?.orderSn || '').trim())
+          .filter(Boolean);
+    const failedOrderDetails = Array.isArray(payload.failedOrderDetails)
+      ? payload.failedOrderDetails
+      : Array.isArray(payload.failedOrders)
+        ? payload.failedOrders
+        : results
+            .filter((r) => !r?.success)
+            .map((r) => ({
+              orderSn: String(r?.orderSn || ''),
+              orderId: String(r?.orderId || ''),
+              error: String(r?.error || 'ship_failed'),
+              message: String(r?.message || r?.error || 'Xác nhận thất bại'),
+            }));
+    const successCount = Number(payload.successCount) || successfulOrderIds.length;
+    const failCount =
+      Number(payload.failCount ?? payload.failedCount) || failedOrderDetails.length;
+    return {
+      total: Number(payload.total) || fallbackTotal || successCount + failCount,
+      successCount,
+      failCount,
+      successfulOrderIds: [...new Set(successfulOrderIds)],
+      failedOrderDetails,
+    };
   };
 
   const pollShipJobUntilDone = async (
@@ -2126,21 +2155,18 @@ export default function OrderManager({
     return finalJob;
   };
 
-  /** Kết thúc xác nhận hàng loạt: báo cáo + cập nhật UI. KHÔNG tạo/mở PDF. */
+  /** Kết thúc xác nhận hàng loạt → Result Summary modal. KHÔNG toast, KHÔNG auto-close, KHÔNG PDF. */
   const finishShipJobResult = async (finalJob: any | null, total: number) => {
     const results = finalJob?.results || [];
-    const successCount =
-      Number(finalJob?.successCount) || results.filter((r: any) => r?.success).length;
-    const failedCount =
-      Number(finalJob?.failedCount) || results.filter((r: any) => !r?.success).length;
-    const report = buildShipConfirmReport(finalJob || {});
+    const summary = buildShipConfirmSummary(finalJob || {}, total);
+    const report = `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn.`;
 
     onAddLog({
       id: `log-${Date.now() + 2}`,
       timestamp: new Date().toISOString(),
       channel: 'all',
       type: 'stock_sync',
-      status: successCount > 0 ? 'success' : 'failed',
+      status: summary.successCount > 0 ? 'success' : 'failed',
       message: `${report} (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'})`,
     });
 
@@ -2149,17 +2175,13 @@ export default function OrderManager({
       ordersRef.current = finalJob.orders;
     }
 
-    setProgressCompleted(successCount);
-    setProgressTotal(Math.max(total, successCount + failedCount));
-    setProgressMessage(report);
+    setProgressCompleted(summary.successCount);
+    setProgressTotal(Math.max(total, summary.total, summary.successCount + summary.failCount));
+    setProgressDone(true);
+    setProgressMessage('Kết quả xác nhận hàng loạt');
+    setShipConfirmSummary(summary);
 
-    if (finalJob?.status === 'failed' && successCount === 0) {
-      showToast(finalJob.error || report || 'Đồng bộ Shopee gặp lỗi. Vui lòng kiểm tra lại danh sách đơn.');
-    } else {
-      showToast(report);
-    }
-
-    // Optimistic: đánh dấu đã chuẩn bị (chưa in) — user bấm "In đơn" sau.
+    // Optimistic: đánh dấu đã chuẩn bị (chưa in) — user bấm "In đơn" trên summary.
     const confirmed = results.filter((r: any) => r?.success);
     if (confirmed.length > 0) {
       const queuedKeys = new Set<string>();
@@ -2179,6 +2201,8 @@ export default function OrderManager({
       ordersRef.current = patched;
       onUpdateOrders(patched);
     }
+
+    return summary;
   };
 
   const confirmShipOrders = async () => {
@@ -2202,6 +2226,7 @@ export default function OrderManager({
 
     setShipConfirmOrders(null);
     setIsShipping(true);
+    setShipConfirmSummary(null);
     setProgressCompleted(0);
     setProgressTotal(totalQueued);
     setProgressDone(false);
@@ -2216,6 +2241,7 @@ export default function OrderManager({
       message: `[LOGISTICS API] Xác nhận ship_order (${shipMethod === 'pickup' ? 'pickup' : 'dropoff'}) cho ${orderSns.length} đơn: ${orderSns.join(', ')} — không tạo PDF.`,
     });
 
+    let keepSummaryModal = false;
     try {
       let res = await fetch('/api/shopee/ship-order/bulk-async', {
         method: 'POST',
@@ -2248,11 +2274,13 @@ export default function OrderManager({
         setSelectedOrderIds([]);
         setActiveSubTab('processed');
 
-        const report = buildShipConfirmReport(syncData);
-        const successCount = Number(syncData.successCount) || 0;
-        setProgressCompleted(successCount);
-        setProgressMessage(report);
-        showToast(report);
+        const summary = buildShipConfirmSummary(syncData, totalQueued);
+        setProgressCompleted(summary.successCount);
+        setProgressTotal(Math.max(totalQueued, summary.total));
+        setProgressDone(true);
+        setProgressMessage('Kết quả xác nhận hàng loạt');
+        setShipConfirmSummary(summary);
+        keepSummaryModal = true;
 
         const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
           markPrinted: false,
@@ -2282,25 +2310,74 @@ export default function OrderManager({
       setProgressTotal(total);
 
       if (!jobId) {
-        setProgressCompleted(totalQueued);
-        showToast(`Đã ghi nhận ${totalQueued} đơn.`);
+        const summary = buildShipConfirmSummary(data, totalQueued);
+        setProgressCompleted(summary.successCount || totalQueued);
+        setProgressDone(true);
+        setProgressMessage('Kết quả xác nhận hàng loạt');
+        setShipConfirmSummary(summary);
+        keepSummaryModal = true;
         return;
       }
 
       setProgressMessage(`Đang xác nhận 0/${total} đơn lên sàn...`);
       const finalJob = await pollShipJobUntilDone(jobId, total);
       await finishShipJobResult(finalJob, total);
+      keepSummaryModal = true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
     } finally {
-      clearShipProgressOverlay();
+      setIsShipping(false);
+      if (!keepSummaryModal) {
+        clearShipProgressOverlay();
+      }
       setSelectedOrderIds([]);
       try {
         if (onFetchOrders) await onFetchOrders();
       } catch {
         /* ignore refetch errors */
       }
+    }
+  };
+
+  const handlePrintFromShipSummary = async () => {
+    const ids = (shipConfirmSummary?.successfulOrderIds || [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean);
+    if (!ids.length || isPrintingFromSummary) return;
+
+    setIsPrintingFromSummary(true);
+    setShipConfirmSummary(null);
+    setProgressDone(false);
+    setProgressCompleted(0);
+    setProgressTotal(ids.length);
+    setProgressMessage(`Đang tải vận đơn: 0/${ids.length} đơn...`);
+
+    try {
+      const result = await printShopeeDocuments(ids, {
+        onProgress: (completed, total) => {
+          setProgressCompleted(completed);
+          setProgressTotal(total);
+          setProgressMessage(
+            completed >= total
+              ? 'Hoàn tất — đang mở PDF vận đơn...'
+              : `Đang tải vận đơn từ Shopee: ${completed}/${total} đơn...`
+          );
+        },
+      });
+      if (!result.success) {
+        showToast(`In vận đơn Shopee thất bại: ${result.message}`);
+        clearShipProgressOverlay();
+      } else {
+        if (result.message) showToast(result.message);
+        markProgressComplete('In vận đơn thành công!');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
+      showToast(`In vận đơn Shopee thất bại: ${msg}`);
+      clearShipProgressOverlay();
+    } finally {
+      setIsPrintingFromSummary(false);
     }
   };
 
@@ -4605,90 +4682,146 @@ export default function OrderManager({
       {progressMessage && (
         <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center p-4 z-100 animate-in fade-in duration-300">
           <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl flex flex-col items-center gap-5 text-center relative overflow-hidden">
-            {/* Background gradient animation */}
             <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-blue-50 opacity-50 animate-pulse"></div>
-            
+
             <div className="relative z-10 flex flex-col items-center gap-5 w-full">
-              {/* Icon with pulse animation */}
-              <div className="relative">
-                {progressDone ? (
+              {shipConfirmSummary ? (
+                <>
                   <div className="relative">
                     <CheckCircle2 className="w-16 h-16 text-emerald-600 animate-in zoom-in duration-500" />
-                    <div className="absolute inset-0 rounded-full border-4 border-emerald-200 animate-ping"></div>
                   </div>
-                ) : (
-                  <div className="relative">
-                    <div className="absolute inset-0 rounded-full border-4 border-blue-200 animate-pulse"></div>
-                    <Loader2 className="w-16 h-16 text-blue-600 animate-spin relative z-10" />
-                  </div>
-                )}
-              </div>
-
-              {/* Progress counter with enhanced styling */}
-              {progressTotal > 0 && (
-                <div className="flex flex-col items-center gap-2 w-full">
-                  <div className={`text-4xl font-black tabular-nums ${progressDone ? 'text-emerald-700' : 'text-blue-700'} transition-all duration-300`}>
-                    {progressCompleted}<span className="text-2xl text-gray-400 mx-1">/</span>{progressTotal}
-                  </div>
-                  {/* Visual progress bar */}
-                  <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full transition-all duration-500 ease-out ${progressDone ? 'bg-emerald-600' : 'bg-gradient-to-r from-blue-500 to-blue-600'}`}
-                      style={{ width: `${Math.min(100, (progressCompleted / Math.max(1, progressTotal)) * 100)}%` }}
-                    >
-                      {!progressDone && (
-                        <div className="h-full w-full bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-[shimmer_1.5s_infinite]"></div>
+                  <h3 className="text-lg font-black text-gray-900">Kết quả xác nhận</h3>
+                  <div className="w-full space-y-3 text-left">
+                    <div className="rounded-2xl bg-emerald-50 border border-emerald-100 px-4 py-3">
+                      <p className="text-base font-bold text-emerald-700">
+                        Thành công: {shipConfirmSummary.successCount} đơn
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-rose-50 border border-rose-100 px-4 py-3">
+                      <p className="text-base font-bold text-rose-700">
+                        Thất bại: {shipConfirmSummary.failCount} đơn
+                      </p>
+                      {shipConfirmSummary.failedOrderDetails.length > 0 && (
+                        <ul className="mt-2 space-y-1 max-h-28 overflow-y-auto">
+                          {shipConfirmSummary.failedOrderDetails.slice(0, 8).map((f, idx) => (
+                            <li key={`${f.orderSn || f.orderId || idx}-${idx}`} className="text-[11px] text-rose-600 font-medium leading-snug">
+                              {f.orderSn || f.orderId || '—'}
+                              {f.message ? `: ${f.message}` : f.error ? `: ${f.error}` : ''}
+                            </li>
+                          ))}
+                          {shipConfirmSummary.failedOrderDetails.length > 8 && (
+                            <li className="text-[11px] text-rose-500">
+                              …và {shipConfirmSummary.failedOrderDetails.length - 8} đơn khác
+                            </li>
+                          )}
+                        </ul>
                       )}
                     </div>
                   </div>
-                </div>
-              )}
-
-              {/* Main status message */}
-              <div className="flex flex-col gap-2 w-full">
-                <p className="text-base font-bold text-gray-800 leading-relaxed">
-                  {progressMessage}
-                </p>
-                
-                {/* Countdown animation indicator when waiting for Shopee */}
-                {!progressDone && progressMessage.includes('chờ') && (
-                  <div className="flex items-center justify-center gap-2 mt-2">
-                    <div className="flex gap-1">
-                      {[0, 1, 2].map((i) => (
-                        <div
-                          key={i}
-                          className="w-2 h-2 rounded-full bg-blue-500 animate-bounce"
-                          style={{ animationDelay: `${i * 0.15}s` }}
-                        ></div>
-                      ))}
-                    </div>
+                  <div className="flex w-full gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => clearShipProgressOverlay()}
+                      className="flex-1 py-3 rounded-2xl border border-gray-200 bg-white text-gray-700 text-sm font-bold hover:bg-gray-50 transition-colors"
+                    >
+                      Đóng
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handlePrintFromShipSummary()}
+                      disabled={
+                        isPrintingFromSummary ||
+                        !shipConfirmSummary.successfulOrderIds.length
+                      }
+                      className="flex-1 py-3 rounded-2xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2"
+                    >
+                      {isPrintingFromSummary ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Printer className="w-4 h-4" />
+                      )}
+                      In đơn
+                    </button>
                   </div>
-                )}
-              </div>
+                </>
+              ) : (
+                <>
+                  <div className="relative">
+                    {progressDone ? (
+                      <div className="relative">
+                        <CheckCircle2 className="w-16 h-16 text-emerald-600 animate-in zoom-in duration-500" />
+                        <div className="absolute inset-0 rounded-full border-4 border-emerald-200 animate-ping"></div>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <div className="absolute inset-0 rounded-full border-4 border-blue-200 animate-pulse"></div>
+                        <Loader2 className="w-16 h-16 text-blue-600 animate-spin relative z-10" />
+                      </div>
+                    )}
+                  </div>
 
-              {/* Footer hint with icon */}
-              <div className={`flex items-center gap-2 text-xs ${progressDone ? 'text-emerald-600' : 'text-gray-500'} font-semibold px-4 py-2 rounded-full ${progressDone ? 'bg-emerald-50' : 'bg-gray-50'} transition-all duration-300`}>
-                {progressDone ? (
-                  <>
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Modal sẽ tự đóng sau vài giây</span>
-                  </>
-                ) : progressMessage.includes('PDF') || progressMessage.includes('vận đơn') ? (
-                  <>
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <span>PDF sẽ tự mở khi sẵn sàng — vui lòng không đóng tab</span>
-                  </>
-                ) : (
-                  <>
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span>Vui lòng không bấm liên tục — hệ thống đang xử lý</span>
-                  </>
-                )}
-              </div>
+                  {progressTotal > 0 && (
+                    <div className="flex flex-col items-center gap-2 w-full">
+                      <div className={`text-4xl font-black tabular-nums ${progressDone ? 'text-emerald-700' : 'text-blue-700'} transition-all duration-300`}>
+                        {progressCompleted}<span className="text-2xl text-gray-400 mx-1">/</span>{progressTotal}
+                      </div>
+                      <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full transition-all duration-500 ease-out ${progressDone ? 'bg-emerald-600' : 'bg-gradient-to-r from-blue-500 to-blue-600'}`}
+                          style={{ width: `${Math.min(100, (progressCompleted / Math.max(1, progressTotal)) * 100)}%` }}
+                        >
+                          {!progressDone && (
+                            <div className="h-full w-full bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-[shimmer_1.5s_infinite]"></div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-2 w-full">
+                    <p className="text-base font-bold text-gray-800 leading-relaxed">
+                      {progressMessage}
+                    </p>
+
+                    {!progressDone && progressMessage.includes('chờ') && (
+                      <div className="flex items-center justify-center gap-2 mt-2">
+                        <div className="flex gap-1">
+                          {[0, 1, 2].map((i) => (
+                            <div
+                              key={i}
+                              className="w-2 h-2 rounded-full bg-blue-500 animate-bounce"
+                              style={{ animationDelay: `${i * 0.15}s` }}
+                            ></div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={`flex items-center gap-2 text-xs ${progressDone ? 'text-emerald-600' : 'text-gray-500'} font-semibold px-4 py-2 rounded-full ${progressDone ? 'bg-emerald-50' : 'bg-gray-50'} transition-all duration-300`}>
+                    {progressDone ? (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Modal sẽ tự đóng sau vài giây</span>
+                      </>
+                    ) : progressMessage.includes('PDF') || progressMessage.includes('vận đơn') ? (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        <span>PDF sẽ tự mở khi sẵn sàng — vui lòng không đóng tab</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>Vui lòng không bấm liên tục — hệ thống đang xử lý</span>
+                      </>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

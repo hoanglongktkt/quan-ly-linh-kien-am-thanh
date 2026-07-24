@@ -214117,6 +214117,27 @@ async function persistPendingShopeeCheckFlag(orders, index4, reason) {
   }
   return orders[index4];
 }
+function buildShipConfirmSummaryPayload(total, batch) {
+  const results = Array.isArray(batch.results) ? batch.results : [];
+  const successfulOrderIds = [
+    ...new Set(
+      results.filter((r5) => r5?.success).map((r5) => String(r5.orderId || r5.orderSn || "").trim()).filter(Boolean)
+    )
+  ];
+  const failedOrderDetails = Array.isArray(batch.failedOrders) && batch.failedOrders.length > 0 ? batch.failedOrders : results.filter((r5) => !r5?.success).map((r5) => ({
+    orderSn: String(r5.orderSn || ""),
+    orderId: String(r5.orderId || ""),
+    error: String(r5.error || "ship_failed"),
+    message: String(r5.message || r5.error || "X\xE1c nh\u1EADn th\u1EA5t b\u1EA1i")
+  }));
+  return {
+    total,
+    successCount: Number(batch.successCount) || successfulOrderIds.length,
+    failCount: Number(batch.failedCount) || failedOrderDetails.length,
+    successfulOrderIds,
+    failedOrderDetails
+  };
+}
 var shipOrderJobs = /* @__PURE__ */ new Map();
 var SHIP_JOB_TTL_MS = 30 * 60 * 1e3;
 function createShipOrderJobId() {
@@ -218068,19 +218089,22 @@ async function startServer2() {
         }
       }
       const failedCount = batch.failedCount || results.filter((r5) => !r5.success).length;
-      const failedIds = [
-        ...(batch.failedOrders || []).map((f5) => String(f5.orderSn || f5.orderId || "").trim()),
-        ...failedResults.map((f5) => String(f5.orderSn || f5.orderId || "").trim())
-      ].filter(Boolean);
-      const uniqueFailed = [...new Set(failedIds)];
-      let message = `Th\xE0nh c\xF4ng: ${successCount} \u0111\u01A1n. Th\u1EA5t b\u1EA1i: ${failedCount} \u0111\u01A1n`;
-      if (uniqueFailed.length > 0) message += ` \u2014 M\xE3: ${uniqueFailed.join(", ")}`;
-      message += ".";
-      return res.json({
+      const summary = buildShipConfirmSummaryPayload(toShip.length, {
         successCount,
         failedCount,
         failedOrders: batch.failedOrders || [],
-        total: toShip.length,
+        results
+      });
+      let message = `Th\xE0nh c\xF4ng: ${summary.successCount} \u0111\u01A1n. Th\u1EA5t b\u1EA1i: ${summary.failCount} \u0111\u01A1n`;
+      if (summary.failedOrderDetails.length > 0) {
+        const ids = summary.failedOrderDetails.map((f5) => f5.orderSn || f5.orderId).filter(Boolean);
+        if (ids.length) message += ` \u2014 M\xE3: ${ids.join(", ")}`;
+      }
+      message += ".";
+      return res.json({
+        ...summary,
+        failedCount: summary.failCount,
+        failedOrders: summary.failedOrderDetails,
         results,
         orders: orders.filter(isValidOrder),
         printDocument: null,
@@ -218817,16 +218841,18 @@ async function startServer2() {
       job.results = batch.results;
       job.successCount = batch.successCount;
       job.orders = orders.filter(isValidOrder);
-      job.failedCount = batch.failedCount;
-      job.failedOrders = batch.failedOrders;
+      const summary = buildShipConfirmSummaryPayload(toShip.length, batch);
+      job.failedCount = summary.failCount;
+      job.failCount = summary.failCount;
+      job.failedOrders = summary.failedOrderDetails;
+      job.failedOrderDetails = summary.failedOrderDetails;
+      job.successfulOrderIds = summary.successfulOrderIds;
       {
-        const failedIds = [
-          ...(batch.failedOrders || []).map((f5) => String(f5.orderSn || f5.orderId || "").trim()),
-          ...(batch.results || []).filter((r5) => !r5?.success).map((r5) => String(r5.orderSn || r5.orderId || "").trim())
-        ].filter(Boolean);
-        const uniqueFailed = [...new Set(failedIds)];
-        let message = `Th\xE0nh c\xF4ng: ${batch.successCount} \u0111\u01A1n. Th\u1EA5t b\u1EA1i: ${batch.failedCount} \u0111\u01A1n`;
-        if (uniqueFailed.length > 0) message += ` \u2014 M\xE3: ${uniqueFailed.join(", ")}`;
+        let message = `Th\xE0nh c\xF4ng: ${summary.successCount} \u0111\u01A1n. Th\u1EA5t b\u1EA1i: ${summary.failCount} \u0111\u01A1n`;
+        if (summary.failedOrderDetails.length > 0) {
+          const ids = summary.failedOrderDetails.map((f5) => f5.orderSn || f5.orderId).filter(Boolean);
+          if (ids.length) message += ` \u2014 M\xE3: ${ids.join(", ")}`;
+        }
         message += ".";
         job.message = message;
       }

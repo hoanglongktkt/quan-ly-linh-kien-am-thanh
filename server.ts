@@ -11944,7 +11944,10 @@ type ShipOrderJob = {
   total: number;
   completed: number;
   successCount: number;
+  failCount?: number;
   failedCount?: number;
+  successfulOrderIds?: string[];
+  failedOrderDetails?: { orderSn: string; orderId: string; error: string; message: string }[];
   failedOrders?: { orderSn: string; orderId: string; error: string; message: string }[];
   message?: string;
   results: any[];
@@ -11954,6 +11957,51 @@ type ShipOrderJob = {
   createdAt: number;
   updatedAt: number;
 };
+
+/** Chuẩn hóa payload tóm tắt sau xác nhận hàng loạt (FE modal summary). */
+function buildShipConfirmSummaryPayload(
+  total: number,
+  batch: {
+    successCount: number;
+    failedCount: number;
+    failedOrders?: { orderSn: string; orderId: string; error: string; message: string }[];
+    results?: any[];
+  },
+): {
+  total: number;
+  successCount: number;
+  failCount: number;
+  successfulOrderIds: string[];
+  failedOrderDetails: { orderSn: string; orderId: string; error: string; message: string }[];
+} {
+  const results = Array.isArray(batch.results) ? batch.results : [];
+  const successfulOrderIds = [
+    ...new Set(
+      results
+        .filter((r) => r?.success)
+        .map((r) => String(r.orderId || r.orderSn || "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  const failedOrderDetails =
+    Array.isArray(batch.failedOrders) && batch.failedOrders.length > 0
+      ? batch.failedOrders
+      : results
+          .filter((r) => !r?.success)
+          .map((r) => ({
+            orderSn: String(r.orderSn || ""),
+            orderId: String(r.orderId || ""),
+            error: String(r.error || "ship_failed"),
+            message: String(r.message || r.error || "Xác nhận thất bại"),
+          }));
+  return {
+    total,
+    successCount: Number(batch.successCount) || successfulOrderIds.length,
+    failCount: Number(batch.failedCount) || failedOrderDetails.length,
+    successfulOrderIds,
+    failedOrderDetails,
+  };
+}
 
 const shipOrderJobs = new Map<string, ShipOrderJob>();
 const SHIP_JOB_TTL_MS = 30 * 60 * 1000;
@@ -16839,20 +16887,23 @@ async function startServer() {
     }
 
     const failedCount = batch.failedCount || results.filter((r) => !r.success).length;
-    const failedIds = [
-      ...(batch.failedOrders || []).map((f: any) => String(f.orderSn || f.orderId || "").trim()),
-      ...failedResults.map((f) => String(f.orderSn || f.orderId || "").trim()),
-    ].filter(Boolean);
-    const uniqueFailed = [...new Set(failedIds)];
-    let message = `Thành công: ${successCount} đơn. Thất bại: ${failedCount} đơn`;
-    if (uniqueFailed.length > 0) message += ` — Mã: ${uniqueFailed.join(", ")}`;
-    message += ".";
-
-    return res.json({
+    const summary = buildShipConfirmSummaryPayload(toShip.length, {
       successCount,
       failedCount,
       failedOrders: batch.failedOrders || [],
-      total: toShip.length,
+      results,
+    });
+    let message = `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn`;
+    if (summary.failedOrderDetails.length > 0) {
+      const ids = summary.failedOrderDetails.map((f) => f.orderSn || f.orderId).filter(Boolean);
+      if (ids.length) message += ` — Mã: ${ids.join(", ")}`;
+    }
+    message += ".";
+
+    return res.json({
+      ...summary,
+      failedCount: summary.failCount,
+      failedOrders: summary.failedOrderDetails,
       results,
       orders: orders.filter(isValidOrder),
       printDocument: null,
@@ -17767,18 +17818,20 @@ async function startServer() {
       job.successCount = batch.successCount;
       job.orders = orders.filter(isValidOrder);
 
-      job.failedCount = batch.failedCount;
-      job.failedOrders = batch.failedOrders;
+      const summary = buildShipConfirmSummaryPayload(toShip.length, batch);
+      job.failedCount = summary.failCount;
+      job.failCount = summary.failCount;
+      job.failedOrders = summary.failedOrderDetails;
+      job.failedOrderDetails = summary.failedOrderDetails;
+      job.successfulOrderIds = summary.successfulOrderIds;
       {
-        const failedIds = [
-          ...(batch.failedOrders || []).map((f: any) => String(f.orderSn || f.orderId || "").trim()),
-          ...(batch.results || [])
-            .filter((r: any) => !r?.success)
-            .map((r: any) => String(r.orderSn || r.orderId || "").trim()),
-        ].filter(Boolean);
-        const uniqueFailed = [...new Set(failedIds)];
-        let message = `Thành công: ${batch.successCount} đơn. Thất bại: ${batch.failedCount} đơn`;
-        if (uniqueFailed.length > 0) message += ` — Mã: ${uniqueFailed.join(", ")}`;
+        let message = `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn`;
+        if (summary.failedOrderDetails.length > 0) {
+          const ids = summary.failedOrderDetails
+            .map((f) => f.orderSn || f.orderId)
+            .filter(Boolean);
+          if (ids.length) message += ` — Mã: ${ids.join(", ")}`;
+        }
         message += ".";
         job.message = message;
       }
