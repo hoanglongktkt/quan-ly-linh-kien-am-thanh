@@ -2372,17 +2372,16 @@ export default function OrderManager({
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   /**
-   * "Cập nhật đơn mới": hệ thống đã dùng Shopee Webhook để đồng bộ real-time
-   * vào Database, nên KHÔNG cần gọi lại API Shopee (onPullShopeeOrders) nữa —
-   * chỉ đọc lại dữ liệu DB nội bộ. Nhanh hơn nhiều và không phụ thuộc Shopee rate-limit.
-   * `type` giữ lại tham số cho tương thích chữ ký cũ (không còn phân biệt full/incremental).
+   * Đồng bộ được thực hiện qua backend rồi UI chỉ đọc lại Database nội bộ.
+   * `full` quét lịch sử để sửa các đơn bị bỏ sót ngoài cửa sổ incremental.
    */
-  const handleSyncOrders = async (_type: 'incremental' | 'full' = 'incremental') => {
+  const handleSyncOrders = async (type: 'incremental' | 'full' = 'incremental') => {
     if (isSyncing) return;
     setIsSyncing(true);
-    showToast('Đang tải lại danh sách đơn hàng mới nhất...');
+    showToast(type === 'full' ? 'Đang đồng bộ toàn bộ đơn từ Shopee...' : 'Đang đồng bộ đơn mới từ Shopee...');
 
     try {
+      await onPullShopeeOrders?.({ type });
       await onFetchOrders?.({ silent: true, bustCache: true });
       onAddLog({
         id: `log-${Date.now()}`,
@@ -2390,9 +2389,12 @@ export default function OrderManager({
         channel: 'all',
         type: 'stock_sync',
         status: 'success',
-        message: 'Đã tải lại danh sách đơn hàng từ Database (Webhook đồng bộ real-time).',
+        message:
+          type === 'full'
+            ? 'Đã yêu cầu Full Sync từ Shopee, danh sách sẽ tự cập nhật khi tiến trình hoàn tất.'
+            : 'Đã yêu cầu đồng bộ đơn mới từ Shopee, danh sách sẽ tự cập nhật khi tiến trình hoàn tất.',
       });
-      showToast('Đã cập nhật danh sách đơn hàng mới nhất.');
+      showToast('Đã gửi yêu cầu đồng bộ. Danh sách sẽ tự cập nhật khi tiến trình hoàn tất.');
     } catch (err: any) {
       showToast(`Không thể tải lại đơn hàng: ${err?.message || 'Vui lòng kiểm tra kết nối và thử lại.'}`);
     } finally {

@@ -1224,6 +1224,26 @@ function listShopeeOAuthShopIds(): string[] {
     .sort();
 }
 
+/**
+ * Một access token Main Account có thể được cấp cho nhiều shop trong `shop_id_list`.
+ * Phải đưa cả các shop liên kết vào vòng sync; chỉ dùng Object.keys(tokens) sẽ bỏ
+ * toàn bộ shop con chưa được ghi thành key riêng trong file token.
+ */
+function listShopeeSyncShopIds(): string[] {
+  const ids = new Set<string>();
+  for (const [rawKey, record] of Object.entries(loadShopeeTokens())) {
+    const key = normalizeShopIdKey(rawKey);
+    if (key) ids.add(key);
+    const recordShopId = normalizeShopIdKey(record?.shop_id);
+    if (recordShopId) ids.add(recordShopId);
+    for (const rawLinkedShopId of Array.isArray(record?.shop_id_list) ? record.shop_id_list : []) {
+      const linkedShopId = normalizeShopIdKey(rawLinkedShopId);
+      if (linkedShopId) ids.add(linkedShopId);
+    }
+  }
+  return [...ids].sort();
+}
+
 // Signature per Shopee v2 spec: HMAC-SHA256(partner_key, partner_id + path + timestamp [+ access_token + shop_id])
 function shopeeSign(apiPath: string, timestamp: number, accessToken?: string, shopId?: string | number): string {
   const baseString = accessToken && shopId
@@ -1444,6 +1464,12 @@ function resolveShopeeApiShopId(record: any, configuredShopId: string): string {
   const configured = normalizeShopIdKey(configuredShopId);
   const recordKey = normalizeShopIdKey(record?.shop_id);
   if (recordKey === configured) return configured;
+  const linkedShopIds = Array.isArray(record?.shop_id_list)
+    ? record.shop_id_list.map(normalizeShopIdKey).filter(Boolean)
+    : [];
+  // Token Main Account được Shopee cấp quyền cho shop con trong shop_id_list.
+  // Khi sync/webhook thuộc shop con, chữ ký và API bắt buộc dùng chính shop_id đó.
+  if (configured && linkedShopIds.includes(configured)) return configured;
   const oauth = normalizeShopIdKey(record?.oauth_shop_id);
   if (oauth) return oauth;
   return recordKey || configured;
@@ -4369,12 +4395,11 @@ async function resolveShopeeShopForItemId(
   itemId: number,
   preferredShopId?: string
 ): Promise<{ shopId: string; accessToken: string } | null> {
-  const tokens = loadShopeeTokens();
-  const shopIds = Object.keys(tokens);
+  const shopIds = listShopeeSyncShopIds();
   if (!shopIds.length) return null;
 
   const preferred = String(preferredShopId || "").trim();
-  const tryOrder = preferred && tokens[preferred]
+  const tryOrder = preferred && shopIds.includes(preferred)
     ? [preferred, ...shopIds.filter((id) => id !== preferred)]
     : shopIds;
 
@@ -10755,8 +10780,7 @@ async function syncShopeeOrdersFromApi(
   opts?: { onProgress?: (completed: number, total: number, message?: string) => void },
 ) {
   const onProgress = opts?.onProgress;
-  const tokens = loadShopeeTokens();
-  const shopIds = Object.keys(tokens);
+  const shopIds = listShopeeSyncShopIds();
   let orders = loadOrders();
   let syncedCount = 0;
   let addedCount = 0;
@@ -14150,12 +14174,12 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
 
     console.log("WEBHOOK_PAYLOAD_DEBUG:", JSON.stringify(body));
 
-    // IRON FIST: tắt lazy sync qua webhook — không fetch Shopee / không ghi orders.
-    // Bật lại: set SHOPEE_WEBHOOK_ORDERS_ENABLED=1 trong .env
-    if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "").trim() !== "1") {
+    // Webhook là kênh đồng bộ chính. Chỉ tắt khi vận hành chủ động đặt biến = 0.
+    // Điều này tránh việc production im lặng bỏ qua mọi event vì thiếu biến môi trường.
+    if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
       const peek = parseShopeePushEvent(body);
       console.log(
-        `[Shopee Webhook] IGNORED (iron-fist) order_sn=${peek.orderSn || "?"} code=${peek.code} — chỉ sync qua POST /api/orders/pull`,
+        `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`,
       );
       return;
     }
@@ -17841,8 +17865,7 @@ async function startServer() {
         return { success: false, pulled: 0, warning: errMsg };
       }
 
-      const tokens = loadShopeeTokens();
-      const shopIds = Object.keys(tokens);
+      const shopIds = listShopeeSyncShopIds();
       if (shopIds.length === 0) {
         console.warn("[Orders Pull] Không có shop_id nào đã liên kết OAuth.");
         updateOrdersPullProgress({
@@ -21811,7 +21834,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       console.log("[Local Return Archive] TẠM TẮT (iron-fist purge).");
       console.log(
         `[Shopee Webhook] orders write ${
-          String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "").trim() === "1" ? "ON" : "OFF (iron-fist)"
+          String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"
         }`,
       );
     };
