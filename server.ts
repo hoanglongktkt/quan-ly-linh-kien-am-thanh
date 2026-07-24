@@ -14142,6 +14142,8 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
   try {
     if (!body || typeof body !== "object") return;
 
+    console.log("WEBHOOK_PAYLOAD_DEBUG:", JSON.stringify(body));
+
     // IRON FIST: tắt lazy sync qua webhook — không fetch Shopee / không ghi orders.
     // Bật lại: set SHOPEE_WEBHOOK_ORDERS_ENABLED=1 trong .env
     if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "").trim() !== "1") {

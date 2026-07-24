@@ -1061,9 +1061,8 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || "",
     ).trim();
 
-    // shop_id — TUYỆT ĐỐI không ghi null khi thiếu: nhiều luồng update (webhook Code 4,
-    // tracking-only patch...) không mang theo shopId trong object order; nếu luôn set
-    // null sẽ XÓA MẤT shopId đã lưu từ lần sync trước đó → đơn "rơi khỏi" đúng shop.
+    // shop_id — BẮT BUỘC phải có để multi-shop hoạt động đúng.
+    // Auto-patch: Luôn force set shopId khi có trong payload để vá các document cũ bị null.
     const shopIdStr = order.shopId != null ? String(order.shopId).trim() : "";
 
     // ——— $set: CHỈ field Shopee / vận chuyển — CẤM cờ nội bộ ———
@@ -1077,8 +1076,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.order_sn": orderSn || null,
       "data.is_pending_shopee_check": pendingFlag,
     };
-    // Chỉ set shopId khi có giá trị thật — giữ nguyên giá trị cũ trong DB nếu payload thiếu.
-    if (shopIdStr) $set.shopId = shopIdStr;
+    // BẮT BUỘC: Luôn force set shopId khi có để patch old documents với shopId null/thiếu.
+    if (shopIdStr) {
+      $set.shopId = shopIdStr;
+      $set["data.shopId"] = shopIdStr;
+    }
 
     // BẮT BUỘC lưu raw Shopee ở ROOT (READY_TO_SHIP / SHIPPED / PROCESSED / ...)
     if (rawStatus) {
@@ -1092,7 +1094,6 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.status"] = String(order.status);
     }
 
-    if (order.shopId != null) $set["data.shopId"] = String(order.shopId);
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
 
     // BẢO TOÀN tracking_no + shipping_carrier thật từ Shopee
@@ -1161,19 +1162,9 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false",
     });
 
-    // Filter theo order_sn (chuẩn) — fallback _id khi thiếu orderSn.
-    // Ghép thêm shop_id khi có: đảm bảo update đúng đơn của đúng shop (order_sn của
-    // Shopee unique toàn hệ thống, nhưng vẫn ghép shop_id để phòng dữ liệu lỗi/trùng).
-    // $or với shopId null/thiếu để không tạo document trùng lặp với các bản ghi cũ
-    // (trước khi field shopId tồn tại) hoặc các bản ghi bị mất shopId do bug cũ.
-    const filter: Record<string, unknown> = orderSn
-      ? shopIdStr
-        ? {
-            orderSn,
-            $or: [{ shopId: shopIdStr }, { shopId: null }, { shopId: { $exists: false } }],
-          }
-        : { orderSn }
-      : { _id };
+    // Filter STRICT theo orderSn (Shopee orderSn globally unique).
+    // XÓA logic $or nguy hiểm — chỉ query theo orderSn thuần túy.
+    const filter: Record<string, unknown> = orderSn ? { orderSn } : { _id };
 
     ops.push({
       updateOne: {
