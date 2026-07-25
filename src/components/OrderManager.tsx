@@ -735,6 +735,19 @@ export default function OrderManager({
   const [searchQuery, setSearchQuery] = useState('');
   const [filterUnprinted, setFilterUnprinted] = useState(false);
 
+  const matchesSelectedShop = (order: Order): boolean => {
+    if (selectedShopId === 'all') return true;
+
+    const orderShopId = String(order.shopId || '').trim();
+    if (orderShopId === selectedShopId) return true;
+
+    // Đơn cũ có thể lưu ID nội bộ, còn đơn mới lưu shop_id thật từ sàn.
+    const selectedShop = shops.find(
+      (shop) => String(shop.shopId) === selectedShopId || shop.id === selectedShopId,
+    );
+    return Boolean(selectedShop && (orderShopId === selectedShop.shopId || orderShopId === selectedShop.id));
+  };
+
   const openHandedOverCarrierTab = React.useCallback(() => {
     setFilterUnprinted(false);
     setSearchQuery('');
@@ -2538,7 +2551,7 @@ export default function OrderManager({
     }
 
     // 3. Shop Filter
-    if (selectedShopId !== 'all' && order.shopId !== selectedShopId) return false;
+    if (!matchesSelectedShop(order)) return false;
 
     // 4. Search query
     if (searchQuery.trim()) {
@@ -3574,7 +3587,7 @@ export default function OrderManager({
                     key={shop.id}
                     onClick={() => {
                       setSelectedPlatform('shopee');
-                      setSelectedShopId(shop.id);
+                      setSelectedShopId(String(shop.shopId));
                       setShowShopeeDropdown(false);
                     }}
                     className="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center justify-between font-medium"
@@ -3626,7 +3639,7 @@ export default function OrderManager({
                       key={shop.id}
                       onClick={() => {
                         setSelectedPlatform('woocommerce');
-                        setSelectedShopId(shop.id);
+                        setSelectedShopId(String(shop.shopId));
                         setShowWooDropdown(false);
                       }}
                       className="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center justify-between font-medium"
@@ -3685,7 +3698,7 @@ export default function OrderManager({
                     key={shop.id}
                     onClick={() => {
                       setSelectedPlatform('tiktok');
-                      setSelectedShopId(shop.id);
+                      setSelectedShopId(String(shop.shopId));
                       setShowTikTokDropdown(false);
                     }}
                     className="w-full text-left px-4 py-2 text-xs text-gray-700 hover:bg-gray-50 flex items-center justify-between font-medium"
