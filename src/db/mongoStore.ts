@@ -309,6 +309,17 @@ function enqueueWrite(task: () => Promise<void>): Promise<void> {
   return next;
 }
 
+/** Không để một bulkWrite treo khóa tiến trình ship/print vô hạn trên cPanel. */
+function withWriteTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 10_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}_timeout_${timeoutMs}ms`)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 export function isMongoReady(): boolean {
   return mongoReady && mongoose.connection.readyState === 1;
 }
@@ -1459,12 +1470,18 @@ export async function bulkUpdateShippedOrdersBySn(
     };
   });
 
-  await enqueueWrite(async () => {
-    const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
-    console.log(
-      `[Ship Persist] bulkWrite ONE shot — ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
-    );
-  });
+  await withWriteTimeout(
+    enqueueWrite(async () => {
+      const result = await OrderModel.bulkWrite(ops as any, {
+        ordered: false,
+        maxTimeMS: 8_000,
+      });
+      console.log(
+        `[Ship Persist] bulkWrite ONE shot — ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
+      );
+    }),
+    "ship_persist",
+  );
   return ops.length;
 }
 

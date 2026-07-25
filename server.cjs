@@ -204907,6 +204907,15 @@ function enqueueWrite(task) {
   });
   return next;
 }
+function withWriteTimeout(promise2, label, timeoutMs = 1e4) {
+  let timer;
+  const timeout2 = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}_timeout_${timeoutMs}ms`)), timeoutMs);
+  });
+  return Promise.race([promise2, timeout2]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
 function isMongoReady() {
   return mongoReady && import_mongoose.default.connection.readyState === 1;
 }
@@ -205793,12 +205802,18 @@ async function bulkUpdateShippedOrdersBySn(patches) {
       }
     };
   });
-  await enqueueWrite(async () => {
-    const result = await OrderModel.bulkWrite(ops, { ordered: false });
-    console.log(
-      `[Ship Persist] bulkWrite ONE shot \u2014 ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`
-    );
-  });
+  await withWriteTimeout(
+    enqueueWrite(async () => {
+      const result = await OrderModel.bulkWrite(ops, {
+        ordered: false,
+        maxTimeMS: 8e3
+      });
+      console.log(
+        `[Ship Persist] bulkWrite ONE shot \u2014 ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`
+      );
+    }),
+    "ship_persist"
+  );
   return ops.length;
 }
 function buildOrderCompoundFilter(sn3, _id2, shopId) {
