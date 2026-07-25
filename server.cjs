@@ -208290,6 +208290,95 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   syncDiag("Order list pagination done", `shop=${shopId} pages=${page} uniqueSn=${orderSnSet.size}`);
   return [...orderSnSet];
 }
+var SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP = 150;
+async function reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt) {
+  const result = { pulled: 0, added: 0, updated: 0, errors: [] };
+  if (!isMongoReady()) {
+    result.errors.push({ error: "mongodb_not_ready", message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u0111\u1EC3 \u0111\u1ED1i so\xE1t \u0111\u01A1n c\u0169." });
+    return result;
+  }
+  let mongoOrders;
+  try {
+    mongoOrders = await loadOrdersFromStore();
+  } catch (error3) {
+    result.errors.push({
+      error: "active_orders_read_failed",
+      message: error3?.message || String(error3)
+    });
+    return result;
+  }
+  const allowedShops = new Set(shopIds.map((id3) => String(id3).trim()).filter(Boolean));
+  const byShop = /* @__PURE__ */ new Map();
+  for (const order of mongoOrders) {
+    if (String(order?.channel || "") !== "shopee") continue;
+    const shopId = String(order?.shopId || "").trim();
+    const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+    const raw = String(order?.shopee_order_status || "").toUpperCase();
+    const local = String(order?.status || "").toLowerCase();
+    const requiresReconcile = raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || local === "unprocessed" || local === "processed";
+    if (!requiresReconcile || !shopId || !orderSn || !allowedShops.has(shopId)) continue;
+    const sns = byShop.get(shopId) || [];
+    if (sns.length < SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP && !sns.includes(orderSn)) {
+      sns.push(orderSn);
+      byShop.set(shopId, sns);
+    }
+  }
+  for (const [shopId, orderSns] of byShop) {
+    assertOrdersPullDeadline(deadlineAt, `active reconcile shop=${shopId}`);
+    const auth = await getShopeeAccessTokenForApi(shopId);
+    if (!auth?.token) {
+      result.errors.push({
+        shopId,
+        error: "no_valid_access_token",
+        message: `Shop ${shopId}: kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token \u0111\u1EC3 \u0111\u1ED1i so\xE1t \u0111\u01A1n c\u0169.`
+      });
+      continue;
+    }
+    syncDiag("Active status reconcile START", `shop=${shopId} candidates=${orderSns.length}`);
+    for (let i6 = 0; i6 < orderSns.length; i6 += SHOPEE_SYNC_CHUNK_SIZE) {
+      assertOrdersPullDeadline(deadlineAt, `active reconcile chunk shop=${shopId} offset=${i6}`);
+      const chunk = orderSns.slice(i6, i6 + SHOPEE_SYNC_CHUNK_SIZE);
+      try {
+        const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+          auth.apiShopId,
+          auth.token,
+          auth.fileKey || shopId,
+          chunk,
+          { enrichTracking: false, skipEscrow: true }
+        );
+        if (errors.length) result.errors.push(...errors);
+        if (normalized.length === 0) continue;
+        const persisted = await persistShopeeOrderChunk(orders, normalized, {
+          apiShopId: auth.apiShopId,
+          accessToken: auth.token,
+          skipTracking: true
+        });
+        result.pulled += normalized.length;
+        result.added += persisted.added;
+        result.updated += persisted.updated;
+        syncDiag(
+          "Active status reconcile SAVED",
+          `shop=${shopId} chunk=${Math.floor(i6 / SHOPEE_SYNC_CHUNK_SIZE) + 1} pulled=${normalized.length} +${persisted.added}/~${persisted.updated}`
+        );
+      } catch (error3) {
+        result.errors.push({
+          shopId,
+          error: "active_reconcile_chunk_failed",
+          message: error3?.message || String(error3),
+          orderSns: chunk
+        });
+        console.error(
+          `[Shopee Reconcile] active orders failed shop=${shopId}:`,
+          error3?.stack || error3?.message || error3
+        );
+      }
+      if (i6 + SHOPEE_SYNC_CHUNK_SIZE < orderSns.length) {
+        await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+      }
+    }
+  }
+  return result;
+}
 async function pullIncrementalOrdersFromShopee(opts) {
   if (ordersPullInFlight) {
     syncDiag("Pull SKIPPED \u2014 already in flight", "mutex busy");
@@ -208432,6 +208521,17 @@ async function pullIncrementalOrdersFromShopee(opts) {
           message: shopErr?.message || String(shopErr)
         });
       }
+    }
+    if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
+      const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
+      pulled += reconciled.pulled;
+      added += reconciled.added;
+      updated += reconciled.updated;
+      errors.push(...reconciled.errors);
+      syncDiag(
+        "Active status reconcile DONE",
+        `pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} errors=${reconciled.errors.length}`
+      );
     }
     const elapsedMs = Date.now() - startedAt;
     const message = pulled > 0 ? `\u0110\xE3 k\xE9o/c\u1EADp nh\u1EADt ${pulled} \u0111\u01A1n (+${added} m\u1EDBi, ~${updated} c\u1EADp nh\u1EADt) trong ${elapsedMs}ms` : errors.length > 0 ? `Pull 0 \u0111\u01A1n \u2014 c\xF3 l\u1ED7i: ${errors[0]?.message || errors[0]?.error}` : "Shopee tr\u1EA3 0 order_sn trong c\u1EEDa s\u1ED5 th\u1EDDi gian (ho\u1EB7c token l\u1ED7i).";
@@ -217388,7 +217488,10 @@ async function startServer2() {
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
       const lookbackSec = Math.floor(hours * 60 * 60);
       console.log(`[Orders Pull] POST /api/orders/pull lookback_hours=${hours}`);
-      const result = await pullIncrementalOrdersFromShopee({ lookbackSec });
+      const result = await pullIncrementalOrdersFromShopee({
+        lookbackSec,
+        reconcileActive: true
+      });
       ordersRefreshCache = null;
       return res.status(200).json({
         success: result.success,
@@ -217413,7 +217516,10 @@ async function startServer2() {
     try {
       const hoursRaw = Number(req2.body?.lookback_hours ?? req2.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
-      const result = await pullIncrementalOrdersFromShopee({ lookbackSec: Math.floor(hours * 60 * 60) });
+      const result = await pullIncrementalOrdersFromShopee({
+        lookbackSec: Math.floor(hours * 60 * 60),
+        reconcileActive: true
+      });
       ordersRefreshCache = null;
       return res.status(200).json({
         success: result.success,

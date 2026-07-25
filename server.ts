@@ -2984,6 +2984,117 @@ async function collectShopeeOrderSnsIncremental(
   return [...orderSnSet];
 }
 
+const SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP = 150;
+
+/**
+ * get_order_list chỉ trả về cửa sổ update_time gần đây và bị hard-cap để không
+ * treo cPanel. Vì vậy một đơn đã quét ĐVVC từ trước có thể còn PROCESSED mãi
+ * trong Mongo dù Shopee thực tế đã SHIPPED. Khi người dùng đồng bộ thủ công,
+ * lấy trực tiếp get_order_detail cho pool đơn đang chờ/đã xử lý trong Mongo.
+ */
+async function reconcileActiveShopeeOrdersFromStore(
+  orders: any[],
+  shopIds: string[],
+  deadlineAt: number,
+): Promise<{ pulled: number; added: number; updated: number; errors: any[] }> {
+  const result = { pulled: 0, added: 0, updated: 0, errors: [] as any[] };
+  if (!isMongoReady()) {
+    result.errors.push({ error: "mongodb_not_ready", message: "MongoDB chưa sẵn sàng để đối soát đơn cũ." });
+    return result;
+  }
+
+  let mongoOrders: any[];
+  try {
+    mongoOrders = await loadOrdersFromStore();
+  } catch (error: any) {
+    result.errors.push({
+      error: "active_orders_read_failed",
+      message: error?.message || String(error),
+    });
+    return result;
+  }
+
+  const allowedShops = new Set(shopIds.map((id) => String(id).trim()).filter(Boolean));
+  const byShop = new Map<string, string[]>();
+  for (const order of mongoOrders) {
+    if (String(order?.channel || "") !== "shopee") continue;
+    const shopId = String(order?.shopId || "").trim();
+    const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+    const raw = String(order?.shopee_order_status || "").toUpperCase();
+    const local = String(order?.status || "").toLowerCase();
+    const requiresReconcile =
+      raw === "READY_TO_SHIP" ||
+      raw === "RETRY_SHIP" ||
+      raw === "PROCESSED" ||
+      local === "unprocessed" ||
+      local === "processed";
+    if (!requiresReconcile || !shopId || !orderSn || !allowedShops.has(shopId)) continue;
+    const sns = byShop.get(shopId) || [];
+    if (sns.length < SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP && !sns.includes(orderSn)) {
+      sns.push(orderSn);
+      byShop.set(shopId, sns);
+    }
+  }
+
+  for (const [shopId, orderSns] of byShop) {
+    assertOrdersPullDeadline(deadlineAt, `active reconcile shop=${shopId}`);
+    const auth = await getShopeeAccessTokenForApi(shopId);
+    if (!auth?.token) {
+      result.errors.push({
+        shopId,
+        error: "no_valid_access_token",
+        message: `Shop ${shopId}: không lấy được access_token để đối soát đơn cũ.`,
+      });
+      continue;
+    }
+
+    syncDiag("Active status reconcile START", `shop=${shopId} candidates=${orderSns.length}`);
+    for (let i = 0; i < orderSns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+      assertOrdersPullDeadline(deadlineAt, `active reconcile chunk shop=${shopId} offset=${i}`);
+      const chunk = orderSns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+      try {
+        const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+          auth.apiShopId,
+          auth.token,
+          auth.fileKey || shopId,
+          chunk,
+          { enrichTracking: false, skipEscrow: true },
+        );
+        if (errors.length) result.errors.push(...errors);
+        if (normalized.length === 0) continue;
+        const persisted = await persistShopeeOrderChunk(orders, normalized, {
+          apiShopId: auth.apiShopId,
+          accessToken: auth.token,
+          skipTracking: true,
+        });
+        result.pulled += normalized.length;
+        result.added += persisted.added;
+        result.updated += persisted.updated;
+        syncDiag(
+          "Active status reconcile SAVED",
+          `shop=${shopId} chunk=${Math.floor(i / SHOPEE_SYNC_CHUNK_SIZE) + 1} ` +
+            `pulled=${normalized.length} +${persisted.added}/~${persisted.updated}`,
+        );
+      } catch (error: any) {
+        result.errors.push({
+          shopId,
+          error: "active_reconcile_chunk_failed",
+          message: error?.message || String(error),
+          orderSns: chunk,
+        });
+        console.error(
+          `[Shopee Reconcile] active orders failed shop=${shopId}:`,
+          error?.stack || error?.message || error,
+        );
+      }
+      if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSns.length) {
+        await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+      }
+    }
+  }
+  return result;
+}
+
 /**
  * Kéo đơn mới từ Shopee (get_order_list → get_order_detail → Mongo upsert).
  * Fast path mặc định: BỎ qua get_tracking_number + escrow tuần tự (đây là chỗ từng
@@ -2994,6 +3105,12 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   shopIds?: string[];
   /** true = gọi tracking tuần tự (CHẬM). Mặc định false để tránh treo. */
   enrichTracking?: boolean;
+  /**
+   * Đối soát các đơn cũ còn ở READY_TO_SHIP/PROCESSED bằng get_order_detail.
+   * Chỉ bật khi người dùng bấm đồng bộ thủ công; get_order_list theo update_time
+   * không trả lại các đơn cũ bị kẹt trạng thái.
+   */
+  reconcileActive?: boolean;
 }): Promise<{
   success: boolean;
   pulled: number;
@@ -3157,6 +3274,20 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           message: shopErr?.message || String(shopErr),
         });
       }
+    }
+
+    // Nút "Làm mới" phải đối soát cả các đơn cũ đang PROCESSED/READY_TO_SHIP.
+    // Không phụ thuộc get_order_list update_time, vì API đó chỉ quét cửa sổ gần đây.
+    if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
+      const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
+      pulled += reconciled.pulled;
+      added += reconciled.added;
+      updated += reconciled.updated;
+      errors.push(...reconciled.errors);
+      syncDiag(
+        "Active status reconcile DONE",
+        `pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} errors=${reconciled.errors.length}`,
+      );
     }
 
     const elapsedMs = Date.now() - startedAt;
@@ -15668,7 +15799,10 @@ async function startServer() {
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
       const lookbackSec = Math.floor(hours * 60 * 60);
       console.log(`[Orders Pull] POST /api/orders/pull lookback_hours=${hours}`);
-      const result = await pullIncrementalOrdersFromShopee({ lookbackSec });
+      const result = await pullIncrementalOrdersFromShopee({
+        lookbackSec,
+        reconcileActive: true,
+      });
       // Invalidate cache refresh để FE thấy đơn mới ngay.
       ordersRefreshCache = null;
       return res.status(200).json({
@@ -15694,7 +15828,10 @@ async function startServer() {
     try {
       const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
-      const result = await pullIncrementalOrdersFromShopee({ lookbackSec: Math.floor(hours * 60 * 60) });
+      const result = await pullIncrementalOrdersFromShopee({
+        lookbackSec: Math.floor(hours * 60 * 60),
+        reconcileActive: true,
+      });
       ordersRefreshCache = null;
       return res.status(200).json({
         success: result.success,
