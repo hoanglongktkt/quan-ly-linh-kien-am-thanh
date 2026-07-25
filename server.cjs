@@ -203990,14 +203990,16 @@ function createShopeeWebhookRouter(processPayload) {
     res.status(200).type("text/plain").send("success");
   });
   router.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req2, res) => {
+    const rawBody = Buffer.isBuffer(req2.body) ? req2.body : Buffer.alloc(0);
+    const bodyPreview = rawBody.toString("utf8").slice(0, 4e3);
     console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee \u2014 headers:", {
       authorization: req2.get("authorization") ? "(present)" : "(missing)",
       contentLength: req2.get("content-length") || "0",
       host: req2.get("host") || "",
       xfProto: req2.get("x-forwarded-proto") || ""
     });
+    console.log("[WEBHOOK RECEIVED] incoming payload (raw):", bodyPreview);
     try {
-      const rawBody = Buffer.isBuffer(req2.body) ? req2.body : Buffer.alloc(0);
       const authHeader = req2.get("authorization");
       const configured = String(process.env.SHOPEE_WEBHOOK_URL || process.env.APP_URL || process.env.API_BASE_URL || "").trim().replace(/\/$/, "");
       const forwardedProto = String(req2.get("x-forwarded-proto") || "").split(",")[0].trim();
@@ -204014,7 +204016,9 @@ function createShopeeWebhookRouter(processPayload) {
         "https://api.linhkienamthanh.net/api/webhook/shopee"
       ].filter(Boolean);
       if (!verifyShopeeWebhookSignature(rawBody, authHeader, urlCandidates)) {
-        console.warn("[Shopee Webhook] Missing or invalid signature; request rejected.");
+        console.error(
+          `[Shopee Webhook] REJECTED \u2014 HMAC failure (invalid/missing Authorization). authPresent=${Boolean(authHeader)} bodyBytes=${rawBody.length} payloadPreview=${bodyPreview.slice(0, 500)}`
+        );
         return res.status(401).type("text/plain").send("Unauthorized");
       }
       let payload = null;
@@ -204023,19 +204027,27 @@ function createShopeeWebhookRouter(processPayload) {
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           payload = parsed;
         } else {
-          console.warn("[Shopee Webhook] Payload kh\xF4ng h\u1EE3p l\u1EC7 (kh\xF4ng ph\u1EA3i object) \u2014 v\u1EABn ACK 200.");
+          console.error("[Shopee Webhook] REJECTED \u2014 payload kh\xF4ng ph\u1EA3i object:", typeof parsed);
         }
       } catch (parseErr) {
-        console.warn("[Shopee Webhook] JSON parse failed \u2014 v\u1EABn ACK 200:", parseErr);
+        console.error("[Shopee Webhook] REJECTED \u2014 JSON parse failed:", parseErr);
       }
       if (!payload) {
         return res.status(400).type("text/plain").send("Invalid JSON payload");
       }
       if (!queue.enqueue(payload)) {
+        console.error("[Shopee Webhook] REJECTED \u2014 queue full (503), Shopee will retry.");
         return res.status(503).type("text/plain").send("Webhook queue busy");
       }
       res.status(200).type("text/plain").send("OK");
-      console.log("[WEBHOOK RECEIVED] ACK 200 sent; payload queued for background processing.");
+      console.log(
+        "[WEBHOOK RECEIVED] ACK 200 sent; payload queued:",
+        JSON.stringify({
+          code: payload.code ?? null,
+          shop_id: payload.shop_id ?? null,
+          data: payload.data ?? null
+        })
+      );
     } catch (error3) {
       console.error("[Shopee Webhook] Request handler failed:", error3);
       if (!res.headersSent) return res.status(500).type("text/plain").send("Internal Server Error");
@@ -204386,6 +204398,11 @@ function hasLeftHandedOverCarrierTab(order) {
   if (order.status === "cancelled" || order.status === "return_pending" || order.status === "return_received") {
     return true;
   }
+  const logistics = String(order.logistics_status || "").toUpperCase();
+  if (logistics && !logistics.includes("FAILED") && !logistics.includes("CANCEL") && (logistics.includes("PICKUP_DONE") || logistics.includes("LOGISTICS_SHIPPED") || logistics.includes("IN_TRANSIT") || logistics.includes("TRANSPORTING") || logistics.includes("DELIVERY_DONE"))) {
+    return true;
+  }
+  if (order.status === "shipping") return true;
   return false;
 }
 function isOrderHandedOverToCarrier(order) {
@@ -204492,9 +204509,17 @@ function isProcessedCondition(order) {
   }
   return false;
 }
+function isLogisticsHandedToCarrierStatus(order) {
+  const s6 = String(order.logistics_status || "").toUpperCase();
+  if (!s6) return false;
+  if (s6.includes("FAILED") || s6.includes("CANCEL") || s6.includes("RETURN")) return false;
+  return s6.includes("PICKUP_DONE") || s6.includes("LOGISTICS_SHIPPED") || s6.includes("LOGISTICS_DELIVERY_DONE") || s6.includes("DELIVERY_DONE") || s6.includes("IN_TRANSIT") || s6.includes("TRANSPORTING");
+}
 function isShopeeShippingStatus(order) {
   const raw = getShopeeOrderRawStatus(order);
-  return raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE";
+  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return true;
+  if (order.status === "shipping" && isLogisticsHandedToCarrierStatus(order)) return true;
+  return isLogisticsHandedToCarrierStatus(order);
 }
 function isShopeeCompletedStatus(order) {
   return getShopeeOrderRawStatus(order) === "COMPLETED";
@@ -211283,11 +211308,45 @@ var SHOPEE_ORDER_STATUS_MAP = {
   TO_RETURN: "return_pending",
   COMPLETED: "completed"
 };
+function isLogisticsHandedToCarrier(logisticsStatus) {
+  const s6 = String(logisticsStatus || "").toUpperCase();
+  if (!s6) return false;
+  if (s6.includes("FAILED") || s6.includes("CANCEL") || s6.includes("RETURN")) return false;
+  return s6.includes("PICKUP_DONE") || s6.includes("LOGISTICS_SHIPPED") || s6 === "LOGISTICS_SHIPPED" || s6.includes("LOGISTICS_DELIVERY_DONE") || s6.includes("DELIVERY_DONE") || s6.includes("IN_TRANSIT") || s6.includes("TRANSPORTING") || s6.includes("LOGISTICS_PICKUP_DONE");
+}
+function promoteRawStatusFromLogistics(order, logisticsStatus) {
+  if (!order || !isLogisticsHandedToCarrier(logisticsStatus ?? order.logistics_status)) {
+    return false;
+  }
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  if (raw === "COMPLETED" || raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
+    if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
+      order.status = "shipping";
+      order.isPrepared = true;
+      order.is_pending_shopee_check = false;
+    }
+    return raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE";
+  }
+  if (!raw || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || raw === "UNPAID" || raw === "PENDING") {
+    const prev = raw || "(empty)";
+    order.shopee_order_status = "SHIPPED";
+    order.status = "shipping";
+    order.isPrepared = true;
+    order.is_pending_shopee_check = false;
+    console.log(
+      `[StateMachine] logistics\u2192SHIPPED order_sn=${order.orderSn || "?"} prev_raw=${prev} logistics=${String(logisticsStatus || order.logistics_status || "")}`
+    );
+    return true;
+  }
+  return false;
+}
 function mapShopeeStatusToLocal(rawStatus, opts) {
   const raw = String(rawStatus || "").toUpperCase();
-  void opts?.logisticsStatus;
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return "shipping";
   if (raw === "COMPLETED") return "completed";
+  if (isLogisticsHandedToCarrier(opts?.logisticsStatus) && (raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || !raw)) {
+    return "shipping";
+  }
   if (raw === "PROCESSED") return "processed";
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
     return opts?.hasTracking ? "processed" : "unprocessed";
@@ -212037,7 +212096,9 @@ function mergeShopeeTrackingFields(merged, existing, incoming) {
 function shopeeLifecycleRank(rawOrLocal) {
   const s6 = String(rawOrLocal || "").toUpperCase();
   if (s6 === "COMPLETED" || s6 === "completed") return 100;
-  if (s6 === "SHIPPED" || s6 === "TO_CONFIRM_RECEIVE" || s6 === "shipping") return 90;
+  if (s6 === "SHIPPED" || s6 === "TO_CONFIRM_RECEIVE" || s6 === "shipping" || s6.includes("LOGISTICS_SHIPPED") || s6.includes("LOGISTICS_PICKUP_DONE") || s6.includes("PICKUP_DONE") || s6.includes("LOGISTICS_DELIVERY_DONE") || s6.includes("IN_TRANSIT") || s6.includes("TRANSPORTING")) {
+    return 90;
+  }
   if (s6 === "TO_RETURN" || s6 === "return_pending" || s6 === "return_received" || s6 === "CANCELLED" || s6 === "IN_CANCEL" || s6 === "cancelled") {
     return 80;
   }
@@ -212144,9 +212205,15 @@ function applyShopeeGetTrackingResponse(order, trackResult) {
 }
 function promoteOrderStatusWhenTrackingReady(order) {
   if (!order) return false;
-  const raw = String(order.shopee_order_status || "").toUpperCase();
   const status2 = String(order.status || "");
-  if (status2 === "shipping" || status2 === "completed" || status2 === "cancelled" || status2 === "return_pending" || status2 === "return_received") {
+  if (status2 === "completed" || status2 === "cancelled" || status2 === "return_pending" || status2 === "return_received") {
+    return false;
+  }
+  if (promoteRawStatusFromLogistics(order)) {
+    return true;
+  }
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  if (status2 === "shipping") {
     return false;
   }
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
@@ -212195,12 +212262,8 @@ function applyShopeePackageListTracking(order, shopeeOrder) {
       if (order.status === "cancelled" || order.status === "shipping" || order.status === "processed") {
         order.status = "return_pending";
       }
-    } else if ((logisticsStatus.includes("PICKUP_DONE") || logisticsStatus.includes("DELIVERY_DONE") || logisticsStatus.includes("IN_TRANSIT") || logisticsStatus.includes("TRANSPORTING")) && !logisticsStatus.includes("FAILED") && !logisticsStatus.includes("CANCEL")) {
-      const raw = String(order.shopee_order_status || "").toUpperCase();
-      if (raw === "SHIPPED" || raw === "PROCESSED" || raw === "TO_CONFIRM_RECEIVE" || raw === "READY_TO_SHIP") {
-        order.status = "shipping";
-        order.isPrepared = true;
-      }
+    } else if (isLogisticsHandedToCarrier(logisticsStatus)) {
+      promoteRawStatusFromLogistics(order, logisticsStatus);
     }
   }
   repairMisassignedTracking(order);
@@ -212689,6 +212752,7 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
     applyShopeePartialCancelMeta(order, item, mappedItems);
     applyShopeeEstimatedFinance(order, item);
     applyShopeePackageListTracking(order, item);
+    promoteRawStatusFromLogistics(order, logisticsStatus);
     const finalRaw = String(order.shopee_order_status || rawStatus).toUpperCase();
     if (finalRaw === "CANCELLED" || finalRaw === "IN_CANCEL") {
       order.status = "cancelled";
@@ -212875,28 +212939,47 @@ function mergeShopeeOrderOnSync(existing, incoming) {
   if (incoming?.ship_method) merged.ship_method = incoming.ship_method;
   const incomingRaw = String(incoming.shopee_order_status || "").toUpperCase();
   const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
+  const incomingLogistics = String(
+    incoming.logistics_status || merged.logistics_status || ""
+  ).toUpperCase();
+  const existingLogistics = String(existing?.logistics_status || "").toUpperCase();
   const incomingIsCancellation = incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL";
   const existingIsCancellation = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL";
   const existingStatusRank = Math.max(
     shopeeLifecycleRank(existingRaw),
-    shopeeLifecycleRank(String(existing?.status || ""))
+    shopeeLifecycleRank(String(existing?.status || "")),
+    shopeeLifecycleRank(existingLogistics)
   );
-  const incomingStatusRank = shopeeLifecycleRank(incomingRaw);
+  const incomingStatusRank = Math.max(
+    shopeeLifecycleRank(incomingRaw),
+    shopeeLifecycleRank(String(incoming?.status || "")),
+    shopeeLifecycleRank(incomingLogistics)
+  );
   if (incomingIsCancellation) {
     merged.status = "cancelled";
     merged.shopee_order_status = incomingRaw;
     merged.isPrepared = false;
     merged.is_pending_shopee_check = false;
   } else if (existingIsCancellation || incomingStatusRank < existingStatusRank) {
+    console.error(
+      `[StateMachine] REJECTED ${existingIsCancellation ? "after_CANCELLED" : "downgrade"} order_sn=${merged.orderSn || "?"} incoming=${incomingRaw || "(empty)"}/${incomingLogistics || "-"}(rank=${incomingStatusRank}) < existing=${existingRaw || "(empty)"}/${existingLogistics || "-"}(rank=${existingStatusRank}) \u2014 gi\u1EEF status=${existing.status} raw=${existing.shopee_order_status}`
+    );
     merged.status = existing.status;
     merged.shopee_order_status = existing.shopee_order_status;
     merged.isPrepared = Boolean(existing.isPrepared);
     merged.is_pending_shopee_check = Boolean(existing.is_pending_shopee_check);
-  } else if (incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE") {
+    if (existingLogistics && !merged.logistics_status) {
+      merged.logistics_status = existingLogistics;
+    }
+  } else if (incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE" || isLogisticsHandedToCarrier(incomingLogistics)) {
     merged.status = "shipping";
-    merged.shopee_order_status = incomingRaw;
+    merged.shopee_order_status = incomingRaw === "TO_CONFIRM_RECEIVE" ? "TO_CONFIRM_RECEIVE" : "SHIPPED";
+    if (incomingLogistics) merged.logistics_status = incomingLogistics;
     merged.isPrepared = true;
     merged.is_pending_shopee_check = false;
+    console.log(
+      `[StateMachine] ACCEPT SHIPPED order_sn=${merged.orderSn || "?"} raw=${merged.shopee_order_status} logistics=${incomingLogistics || "-"} (prev=${existingRaw || "(empty)"})`
+    );
   } else if (incomingRaw === "COMPLETED") {
     merged.status = "completed";
     merged.shopee_order_status = "COMPLETED";
@@ -212943,6 +213026,7 @@ function mergeShopeeOrderOnSync(existing, incoming) {
   }
   forceHealPickupOrderIfHasTracking(merged);
   repairFalseProcessedReadyToShip(merged);
+  promoteRawStatusFromLogistics(merged);
   const mergedCustomCosts = getGlobalPackagingCostPerOrder();
   merged.custom_costs = mergedCustomCosts;
   delete merged.custom_cost_items;
@@ -215112,6 +215196,10 @@ function parseShopeePushEvent(body) {
     data.third_party_tracking_number
   );
   const packageNumber = String(data.package_number || data.packageNumber || "").trim();
+  const pkg0 = Array.isArray(data.package_list) ? data.package_list[0] : void 0;
+  const logisticsStatus = String(
+    data.logistics_status || data.logisticsStatus || pkg0?.logistics_status || ""
+  ).trim().toUpperCase();
   let eventKind = "other";
   if (codeNum === 3 || codeStr.includes("order_status") || action.includes("order_status")) {
     eventKind = "order_status_update";
@@ -215126,7 +215214,17 @@ function parseShopeePushEvent(body) {
   } else if (orderSn) {
     eventKind = "order_status_update";
   }
-  return { shopId, orderSn, eventKind, status: status2, trackingNo, packageNumber, returnSn, code };
+  return {
+    shopId,
+    orderSn,
+    eventKind,
+    status: status2,
+    trackingNo,
+    packageNumber,
+    returnSn,
+    code,
+    logisticsStatus
+  };
 }
 var SHOPEE_WEBHOOK_ORDER_STATUSES = /* @__PURE__ */ new Set([
   "UNPAID",
@@ -215152,6 +215250,9 @@ function applyShopeePushFieldsToOrder(order, parsed) {
     order.trackingNumber = String(parsed.trackingNo).trim();
     order.tracking_no = order.trackingNumber;
   }
+  if (parsed.logisticsStatus) {
+    order.logistics_status = String(parsed.logisticsStatus).toUpperCase();
+  }
   if (parsed.status) {
     order.shopee_order_status = String(parsed.status).toUpperCase();
   }
@@ -215164,7 +215265,17 @@ function applyShopeePushFieldsToOrder(order, parsed) {
     order.status = "shipping";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
+    console.log(
+      `[StateMachine] Webhook ACCEPT SHIPPED order_sn=${order.orderSn || "?"} push=${pushStatus}`
+    );
     enforceShopeeTerminalLocalStatus(order);
+    repairMisassignedTracking(order);
+    return;
+  }
+  if (promoteRawStatusFromLogistics(order)) {
+    console.log(
+      `[StateMachine] Webhook ACCEPT logistics\u2192SHIPPED order_sn=${order.orderSn || "?"} logistics=${order.logistics_status || "-"}`
+    );
     repairMisassignedTracking(order);
     return;
   }
@@ -215411,23 +215522,26 @@ async function processShopeeWebhookPayload(body) {
         shopId: parsed.shopId || null,
         orderSn: parsed.orderSn || null,
         status: parsed.status || null,
+        logisticsStatus: parsed.logisticsStatus || null,
         trackingNo: parsed.trackingNo || null,
         packageNumber: parsed.packageNumber || null,
         returnSn: parsed.returnSn || null
       })
     );
     if (!parsed.orderSn) {
-      console.log(`[Shopee Webhook] B\u1ECF qua \u2014 thi\u1EBFu order_sn (code=${parsed.code})`);
+      console.error(
+        `[Shopee Webhook] REJECTED \u2014 thi\u1EBFu order_sn (code=${parsed.code}) payload=${JSON.stringify(body).slice(0, 800)}`
+      );
       return;
     }
     const shouldPersist = (
       // Code 3 có order_sn là thông báo trạng thái hợp lệ, kể cả khi Shopee phát
       // thêm trạng thái mới hoặc status tạm thời rỗng. Không được bỏ qua đơn mới.
-      parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund" || SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status)
+      parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund" || SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) || isLogisticsHandedToCarrier(parsed.logisticsStatus)
     );
     if (!shouldPersist) {
-      console.log(
-        `[Shopee Webhook] B\u1ECF qua status kh\xF4ng c\u1EA7n thi\u1EBFt order_sn=${parsed.orderSn} status=${parsed.status || "empty"} code=${parsed.code}`
+      console.error(
+        `[StateMachine] Webhook REJECTED \u2014 status/event kh\xF4ng c\u1EA7n persist order_sn=${parsed.orderSn} status=${parsed.status || "empty"} logistics=${parsed.logisticsStatus || "-"} code=${parsed.code} kind=${parsed.eventKind}`
       );
       return;
     }
