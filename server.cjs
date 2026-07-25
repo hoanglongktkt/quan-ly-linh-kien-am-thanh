@@ -94029,13 +94029,51 @@ async function saveProductsToStoreAsync(products) {
   const list = Array.isArray(products) ? products.filter((p) => p != null && typeof p === "object") : [];
   const docs = toProductDocs(list);
   await enqueueWrite(async () => {
-    await ProductModel.deleteMany({});
-    if (docs.length > 0) {
-      await ProductModel.insertMany(docs, { ordered: false });
+    const session = await import_mongoose.default.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await ProductModel.deleteMany({}, { session });
+        if (docs.length > 0) {
+          await ProductModel.insertMany(docs, { ordered: false, session });
+        }
+        await setMeta("products_updated_at", (/* @__PURE__ */ new Date()).toISOString());
+      });
+    } finally {
+      await session.endSession();
     }
-    await setMeta("products_updated_at", (/* @__PURE__ */ new Date()).toISOString());
     console.log(`[MongoDB] insertMany products \u2014 ${docs.length} d\xF2ng`);
   });
+}
+async function upsertProductsToStoreAsync(products) {
+  requireMongo();
+  const docs = toProductDocs(Array.isArray(products) ? products : []);
+  if (docs.length === 0) return 0;
+  await enqueueWrite(async () => {
+    await ProductModel.bulkWrite(
+      docs.map((doc) => ({
+        updateOne: {
+          filter: { _id: doc._id },
+          update: { $set: { sku: doc.sku ?? null, data: doc.data } },
+          upsert: true
+        }
+      })),
+      { ordered: false }
+    );
+    await setMeta("products_updated_at", (/* @__PURE__ */ new Date()).toISOString());
+  });
+  return docs.length;
+}
+async function deleteProductsByIdsFromStore(ids) {
+  requireMongo();
+  const safeIds = [...new Set(ids.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (safeIds.length === 0) return 0;
+  let deleted = 0;
+  await enqueueWrite(async () => {
+    const result = await ProductModel.deleteMany({ _id: { $in: safeIds } });
+    deleted = Number(result.deletedCount || 0);
+    await setMeta("products_updated_at", (/* @__PURE__ */ new Date()).toISOString());
+  });
+  return deleted;
 }
 async function saveChannelListingsToStoreAsync(rows) {
   requireMongo();
@@ -99451,25 +99489,10 @@ async function mergeWarehouseProductsBatch(batchRows) {
       }
     }
     console.log("D\u1EEF li\u1EC7u sau khi map (tr\u01B0\u1EDBc khi l\u01B0u):", upserted);
-    await saveProducts([...byId.values()]);
+    await upsertProductsToStoreAsync([...byId.values()]);
     return upserted;
   } catch (error) {
     console.error("L\u1ED7i khi l\u01B0u DB chunk:", error);
-    throw error instanceof Error ? error : new Error(String(error));
-  }
-}
-async function clearExistingShopeeWarehouseProducts() {
-  try {
-    const existing = await loadProducts();
-    const kept = existing.filter(
-      (p) => !p.shopeeItemId && !(Array.isArray(p.channels) && p.channels.includes("shopee"))
-    );
-    await saveProducts(kept);
-    console.log(
-      `[Shopee Warehouse Sync] Reset: gi\u1EEF ${kept.length} SP kh\xF4ng-Shopee, x\xF3a t\u1EA1m SP Shopee c\u0169 tr\u01B0\u1EDBc khi pull`
-    );
-  } catch (error) {
-    console.error("[Shopee Warehouse Sync] Reset failed:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
@@ -102941,6 +102964,37 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
+var INVENTORY_AUDIT_PATH = import_path2.default.join(APP_ROOT, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path2.default.join(APP_ROOT, "data", "inventory_backups");
+function writeInventoryAudit(event, details = {}) {
+  try {
+    ensureDataDirs();
+    let existing = [];
+    if (import_fs3.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs3.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+      if (Array.isArray(parsed)) existing = parsed;
+    }
+    const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
+    import_fs3.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    console.warn(`[Inventory Audit] ${event}`, details);
+  } catch (error) {
+    console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
+  }
+}
+async function backupInventoryBeforeDestructiveAction(reason) {
+  ensureDataDirs();
+  import_fs3.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
+  const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+  const fileName = `inventory-${reason}-${stamp}.json`;
+  import_fs3.default.writeFileSync(
+    import_path2.default.join(INVENTORY_BACKUP_DIR, fileName),
+    JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
+    "utf-8"
+  );
+  writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
+  return fileName;
+}
 var CHANNEL_LISTINGS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "channel_listings.json");
 var SHOPEE_SYNC_ERRORS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
@@ -105422,21 +105476,11 @@ async function startServer() {
       });
     } catch (err) {
       console.error("[Products API] GET /api/products failed:", err);
-      try {
-        return res.status(200).json({
-          success: true,
-          products: [],
-          page: 1,
-          pageSize: PRODUCTS_PAGE_SIZE_DEFAULT,
-          total: 0,
-          totalPages: 1,
-          hasMore: false,
-          grouped: false,
-          message: err instanceof Error ? err.message : "products_read_error"
-        });
-      } catch {
-        return res.status(503).json({ success: false, error: "products_unavailable" });
-      }
+      return res.status(503).json({
+        success: false,
+        error: "products_unavailable",
+        message: err instanceof Error ? err.message : "products_read_error"
+      });
     }
   });
   app.get("/api/products/search", authMiddleware, async (req, res) => {
@@ -105607,7 +105651,6 @@ async function startServer() {
     if (!body.title || !body.sku) {
       return res.status(400).json({ error: "title_and_sku_required" });
     }
-    const products = await loadProducts();
     const product = {
       id: body.id || `prod-${Date.now()}`,
       title: String(body.title),
@@ -105629,8 +105672,7 @@ async function startServer() {
       wooId: body.wooId,
       lastSynced: (/* @__PURE__ */ new Date()).toISOString()
     };
-    products.unshift(product);
-    await saveProducts(products);
+    await upsertProductsToStoreAsync([product]);
     const cache = await loadLocalInventoryCache();
     return res.status(201).json({
       ...product,
@@ -105693,7 +105735,7 @@ async function startServer() {
         const before = products[topIndex];
         const merged = mergeProductPatch(before, patch);
         products[topIndex] = merged;
-        await saveProducts(products);
+        await upsertProductsToStoreAsync([merged]);
         const changes = detectStockPriceChanges(before, merged);
         const shopee = await pushProductStockPriceToShopeeImmediate(merged, {
           syncStock: changes.stock,
@@ -105725,7 +105767,7 @@ async function startServer() {
         nextChildren[childIdx] = mergedChild;
         const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
         products[i2] = { ...products[i2], children: nextChildren, stock: totalStock };
-        await saveProducts(products);
+        await upsertProductsToStoreAsync([products[i2]]);
         const changes = detectStockPriceChanges(beforeChild, mergedChild);
         const shopee = await pushProductStockPriceToShopeeImmediate(mergedChild, {
           syncStock: changes.stock,
@@ -105799,7 +105841,7 @@ async function startServer() {
       const updatedProducts = flattenProductsForStockSync(next).filter(
         (p) => skuStockMap.has(String(p.sku || "").trim())
       );
-      await saveProducts(next);
+      await upsertProductsToStoreAsync(next.filter((product, index) => product !== products[index]));
       console.log(`[Inventory Balance] C\u1EADp nh\u1EADt kho g\u1ED1c ${updatedCount} SKU`);
       const queued = await enqueueShopeeStockPriceSync(updatedProducts, {
         syncStock: true,
@@ -105924,7 +105966,7 @@ async function startServer() {
       );
       return { ...p, children: nextChildren, stock: totalStock };
     });
-    await saveProducts(next);
+    await upsertProductsToStoreAsync(next.filter((product, index) => product !== products[index]));
     if (changedRows.length > 0) {
       const anyStock = changedRows.some((row) => {
         const before = beforeFlat.find((b) => String(b.id) === String(row.id));
@@ -105968,7 +106010,13 @@ async function startServer() {
       if (!found) {
         return res.status(404).json({ error: "product_not_found" });
       }
-      await saveProducts(next);
+      const nextIds = new Set(next.map((product) => String(product.id)));
+      await deleteProductsByIdsFromStore(
+        products.filter((product) => !nextIds.has(String(product.id))).map((product) => String(product.id))
+      );
+      await upsertProductsToStoreAsync(
+        next.filter((product) => products.find((before) => before.id === product.id) !== product)
+      );
       return res.json({ deleted: id, success: true });
     } catch (err) {
       console.error("[Products] DELETE failed:", err);
@@ -105978,12 +106026,25 @@ async function startServer() {
       });
     }
   });
-  app.post("/api/products/clear-all", authMiddleware, async (_req, res) => {
+  app.post("/api/products/clear-all", authMiddleware, async (req, res) => {
+    if (req.body?.confirmation !== "CLEAR_INVENTORY") {
+      return res.status(400).json({ success: false, error: "explicit_confirmation_required" });
+    }
+    const backupFile = await backupInventoryBeforeDestructiveAction("products-clear");
     await saveProducts([]);
-    return res.json({ success: true, cleared: true, products: [] });
+    writeInventoryAudit("products_cleared", { requestedBy: req.user?.username || null, backupFile });
+    return res.json({ success: true, cleared: true, backupFile, products: [] });
   });
-  const handleInventoryClearAll = async (_req, res) => {
+  const handleInventoryClearAll = async (req, res) => {
     try {
+      if (req.body?.confirmation !== "CLEAR_INVENTORY") {
+        return res.status(400).json({
+          success: false,
+          error: "explicit_confirmation_required",
+          message: "X\xF3a kho y\xEAu c\u1EA7u confirmation: CLEAR_INVENTORY."
+        });
+      }
+      const backupFile = await backupInventoryBeforeDestructiveAction("inventory-clear");
       await saveProducts([]);
       await writeChannelListingsDb([]);
       try {
@@ -105991,10 +106052,12 @@ async function startServer() {
       } catch {
       }
       await refreshCache();
+      writeInventoryAudit("inventory_cleared", { requestedBy: req.user?.username || null, backupFile });
       console.log("[Inventory] \u0110\xE3 x\xF3a s\u1EA1ch Kho g\u1ED1c (products) + Mapping (channel_listings).");
       return res.status(200).json({
         success: true,
         message: "\u0110\xE3 x\xF3a to\xE0n b\u1ED9 Kho g\u1ED1c v\xE0 d\u1EEF li\u1EC7u Li\xEAn k\u1EBFt (Mapping).",
+        backupFile,
         cleared: true,
         products: [],
         channelListings: []
@@ -108063,7 +108126,11 @@ async function startServer() {
       const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
       const reset = req.body?.reset === true || offset === 0;
       if (reset) {
-        await clearExistingShopeeWarehouseProducts();
+        writeInventoryAudit("shopee_sync_reset_ignored", {
+          shopId,
+          requestedBy: req.user?.username || null,
+          reason: "safe_upsert_preserves_existing_inventory"
+        });
       }
       console.log(
         `[Shopee Product Sync] B\u1EAFt \u0111\u1EA7u \u0111\u1ED3ng b\u1ED9 1 trang shop_id=${shopId}, offset=${offset}, page_size=${SHOPEE_ITEM_LIST_PAGE_SIZE}`
@@ -108073,6 +108140,15 @@ async function startServer() {
       console.log(
         `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} \u2014 productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}`
       );
+      if (!result.hasMore) {
+        writeInventoryAudit("shopee_sync_completed", {
+          shopId,
+          requestedBy: req.user?.username || null,
+          productCount: initialized,
+          pageCount: result.pageIndex + 1,
+          skippedCount: result.pageStats.skippedCount
+        });
+      }
       return res.status(200).json({
         success: true,
         shopId,
@@ -110461,20 +110537,35 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     writeProductListingsDb([]);
     return res.json({ success: true, cleared: true, groups: [] });
   });
-  app.post("/api/catalog/wipe-all", authMiddleware, async (_req, res) => {
-    await saveProducts([]);
-    saveImports([]);
-    writeListingsDb([]);
-    writeProductListingsDb([]);
-    console.log("[Catalog] \u0110\xE3 x\xF3a s\u1EA1ch products, imports, multi_channel_listings, product_listings.");
-    return res.json({
-      success: true,
-      cleared: true,
-      products: [],
-      imports: [],
-      listings: [],
-      productListings: []
-    });
+  app.post("/api/catalog/wipe-all", authMiddleware, async (req, res) => {
+    if (req.body?.confirmation !== "WIPE_CATALOG") {
+      return res.status(400).json({
+        success: false,
+        error: "explicit_confirmation_required",
+        message: "Thao t\xE1c x\xF3a catalog y\xEAu c\u1EA7u confirmation: WIPE_CATALOG."
+      });
+    }
+    try {
+      const backupFile = await backupInventoryBeforeDestructiveAction("catalog-wipe");
+      await saveProducts([]);
+      saveImports([]);
+      writeListingsDb([]);
+      writeProductListingsDb([]);
+      writeInventoryAudit("catalog_wiped", { requestedBy: req.user?.username || null, backupFile });
+      console.warn("[Catalog] \u0110\xE3 x\xF3a s\u1EA1ch products, imports, multi_channel_listings, product_listings.");
+      return res.json({
+        success: true,
+        cleared: true,
+        backupFile,
+        products: [],
+        imports: [],
+        listings: [],
+        productListings: []
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, error: "catalog_wipe_failed", message });
+    }
   });
   app.get("/api/shopee/category-attributes", authMiddleware, async (req, res) => {
     try {

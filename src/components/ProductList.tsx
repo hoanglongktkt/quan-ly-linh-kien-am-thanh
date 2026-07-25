@@ -486,6 +486,7 @@ export default function ProductList({
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        body: JSON.stringify({ confirmation: 'CLEAR_INVENTORY' }),
       });
       const data = await parseJsonResponse<{ success?: boolean; message?: string; error?: string }>(res);
       if (!res.ok || data.success === false) {
@@ -542,7 +543,8 @@ export default function ProductList({
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ shopId: shop.shopId, offset, reset: pageIndex === 0 }),
+          // Đồng bộ là upsert an toàn: không xóa Kho gốc trước khi sàn trả đủ dữ liệu.
+          body: JSON.stringify({ shopId: shop.shopId, offset, reset: false }),
         });
         const data = await parseJsonResponse<{
           success?: boolean;

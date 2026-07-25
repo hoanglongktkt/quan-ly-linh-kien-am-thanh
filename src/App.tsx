@@ -18,9 +18,9 @@ import LoginPage from './components/LoginPage';
 import ErrorBoundary from './components/ErrorBoundary';
 import BrandLogo, { BrandHeader } from './components/BrandLogo';
 import { APP_TITLE } from './config/brand';
-import { CATALOG_PURGE_FLAG, purgeLegacyCatalogCache } from './utils/catalogStorage';
+import { purgeLegacyCatalogCache } from './utils/catalogStorage';
 import { sanitizeOrders } from './utils/sanitizeOrder';
-import { safeGetItem, safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
+import { safeGetJson, safeRemoveItem, safeSetItem } from './utils/safeStorage';
 import { parseJsonResponse } from './utils/apiClient';
 import { clearLegacyOrdersLocalStorage, loadOrdersCache, saveOrdersCache } from './utils/orderCache';
 import { 
@@ -587,8 +587,8 @@ export default function App() {
       });
     } catch (err) {
       console.error('Fetch products error:', err);
-      setProducts([]);
-      setProductsMeta({ page: 1, pageSize, total: 0, totalPages: 1, hasMore: false });
+      // Lỗi mạng/Mongo không đồng nghĩa kho thật rỗng. Giữ danh sách hiện có để
+      // không biến sự cố tạm thời thành trạng thái "mất dữ liệu" trên giao diện.
     } finally {
       if (!silent) setProductsLoading(false);
     }
@@ -1275,21 +1275,6 @@ export default function App() {
         setHasLoadedOrdersOnce(true);
       }
       void fetchOrders({ silent: true, limit: 50, merge: false });
-
-      if (safeGetItem(CATALOG_PURGE_FLAG) !== '1') {
-        try {
-          const res = await fetch('/api/catalog/wipe-all', {
-            method: 'POST',
-            headers: apiAuthHeaders(),
-          });
-          if (res.ok) {
-            safeSetItem(CATALOG_PURGE_FLAG, '1');
-          }
-        } catch (err) {
-          console.warn('[Catalog] wipe-all skipped:', err);
-        }
-        purgeLegacyCatalogCache();
-      }
 
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });

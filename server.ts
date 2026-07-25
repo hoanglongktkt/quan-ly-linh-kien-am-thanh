@@ -49,6 +49,8 @@ import {
   applyImportStockAndPriceToStore,
   applyImportStockAndPriceToMainWarehouse,
   saveProductsToStoreAsync,
+  upsertProductsToStoreAsync,
+  deleteProductsByIdsFromStore,
   loadChannelListingsFromStore,
   saveChannelListingsToStoreAsync,
   upsertChannelListingToStore,
@@ -5959,7 +5961,7 @@ async function mergeWarehouseProductsBatch(batchRows: any[]): number {
     }
 
     console.log("Dữ liệu sau khi map (trước khi lưu):", upserted);
-    await saveProducts([...byId.values()]);
+    await upsertProductsToStoreAsync([...byId.values()]);
     return upserted;
   } catch (error: unknown) {
     console.error("Lỗi khi lưu DB chunk:", error);
@@ -5985,19 +5987,9 @@ async function pullShopeeWarehouseAllPages(
   skippedItems: { itemId: string; reason: string }[];
 }> {
   const startedAt = Date.now();
-  try {
-    const existing = await loadProducts();
-    const kept = existing.filter(
-      (p: any) => !p.shopeeItemId && !(Array.isArray(p.channels) && p.channels.includes("shopee"))
-    );
-    await saveProducts(kept);
-    console.log(
-      `[Shopee Warehouse Sync] Khởi tạo: giữ ${kept.length} SP không-Shopee, xóa tạm SP Shopee cũ trước khi pull`
-    );
-  } catch (error: unknown) {
-    console.error("Lỗi khi lưu DB chunk:", error);
-    throw error instanceof Error ? error : new Error(String(error));
-  }
+  // Không được xóa dữ liệu Shopee cũ trước khi pull hoàn tất. Mọi trang đều upsert
+  // theo item_id; lỗi hoặc timeout sẽ giữ nguyên kho đang dùng.
+  writeInventoryAudit("shopee_sync_started", { shopId, mode: "safe_upsert" });
 
   let offset = 0;
   let hasMore = true;
@@ -6143,22 +6135,6 @@ async function pullShopeeWarehouseAllPages(
     },
     skippedItems,
   };
-}
-
-async function clearExistingShopeeWarehouseProducts(): Promise<void> {
-  try {
-    const existing = await loadProducts();
-    const kept = existing.filter(
-      (p: any) => !p.shopeeItemId && !(Array.isArray(p.channels) && p.channels.includes("shopee"))
-    );
-    await saveProducts(kept);
-    console.log(
-      `[Shopee Warehouse Sync] Reset: giữ ${kept.length} SP không-Shopee, xóa tạm SP Shopee cũ trước khi pull`
-    );
-  } catch (error: unknown) {
-    console.error("[Shopee Warehouse Sync] Reset failed:", error);
-    throw error instanceof Error ? error : new Error(String(error));
-  }
 }
 
 async function syncShopeeWarehouseSinglePage(
@@ -11256,6 +11232,40 @@ async function saveProductsAsync(products: any[]): Promise<void> {
   await saveProducts(products);
 }
 
+const INVENTORY_AUDIT_PATH = path.join(APP_ROOT, "data", "inventory_audit.json");
+const INVENTORY_BACKUP_DIR = path.join(APP_ROOT, "data", "inventory_backups");
+
+function writeInventoryAudit(event: string, details: Record<string, unknown> = {}): void {
+  try {
+    ensureDataDirs();
+    let existing: any[] = [];
+    if (fs.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(fs.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+      if (Array.isArray(parsed)) existing = parsed;
+    }
+    const entry = { id: `inventory-audit-${Date.now()}`, event, at: new Date().toISOString(), ...details };
+    fs.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    console.warn(`[Inventory Audit] ${event}`, details);
+  } catch (error) {
+    console.error("[Inventory Audit] Không thể ghi audit:", error);
+  }
+}
+
+async function backupInventoryBeforeDestructiveAction(reason: string): Promise<string> {
+  ensureDataDirs();
+  fs.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const fileName = `inventory-${reason}-${stamp}.json`;
+  fs.writeFileSync(
+    path.join(INVENTORY_BACKUP_DIR, fileName),
+    JSON.stringify({ createdAt: new Date().toISOString(), reason, products, listings }, null, 2),
+    "utf-8",
+  );
+  writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
+  return fileName;
+}
+
 /** Alias nhẹ — giữ tương thích chỗ gọi cũ (không còn regroup). */
 function groupProductsByItemId(products: any[]): any[] {
   return Array.isArray(products) ? products : [];
@@ -14756,22 +14766,11 @@ async function startServer() {
       });
     } catch (err: unknown) {
       console.error("[Products API] GET /api/products failed:", err);
-      try {
-        // Fallback tối thiểu — tránh 502
-        return res.status(200).json({
-          success: true,
-          products: [],
-          page: 1,
-          pageSize: PRODUCTS_PAGE_SIZE_DEFAULT,
-          total: 0,
-          totalPages: 1,
-          hasMore: false,
-          grouped: false,
-          message: err instanceof Error ? err.message : "products_read_error",
-        });
-      } catch {
-        return res.status(503).json({ success: false, error: "products_unavailable" });
-      }
+      return res.status(503).json({
+        success: false,
+        error: "products_unavailable",
+        message: err instanceof Error ? err.message : "products_read_error",
+      });
     }
   });
 
@@ -14969,7 +14968,6 @@ async function startServer() {
     if (!body.title || !body.sku) {
       return res.status(400).json({ error: "title_and_sku_required" });
     }
-    const products = await loadProducts();
     const product = {
       id: body.id || `prod-${Date.now()}`,
       title: String(body.title),
@@ -14991,9 +14989,8 @@ async function startServer() {
       wooId: body.wooId,
       lastSynced: new Date().toISOString(),
     };
-    products.unshift(product);
-    // a) Lưu DB → saveProducts tự gọi await refreshCache()
-    await saveProducts(products);
+    // Thêm một dòng bằng upsert, không đọc-rồi-ghi đè toàn bộ Kho gốc.
+    await upsertProductsToStoreAsync([product]);
     const cache = await loadLocalInventoryCache();
     // b+c) Trả product + inventory từ Local Cache để UI hiển thị ngay, không reload trang tổng.
     return res.status(201).json({
@@ -15061,7 +15058,7 @@ async function startServer() {
         const before = products[topIndex];
         const merged = mergeProductPatch(before, patch);
         products[topIndex] = merged;
-        await saveProducts(products);
+        await upsertProductsToStoreAsync([merged]);
         const changes = detectStockPriceChanges(before, merged);
         const shopee = await pushProductStockPriceToShopeeImmediate(merged, {
           syncStock: changes.stock,
@@ -15095,7 +15092,7 @@ async function startServer() {
         nextChildren[childIdx] = mergedChild;
         const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
         products[i] = { ...products[i], children: nextChildren, stock: totalStock };
-        await saveProducts(products);
+        await upsertProductsToStoreAsync([products[i]]);
         const changes = detectStockPriceChanges(beforeChild, mergedChild);
         const shopee = await pushProductStockPriceToShopeeImmediate(mergedChild, {
           syncStock: changes.stock,
@@ -15177,7 +15174,7 @@ async function startServer() {
         skuStockMap.has(String(p.sku || "").trim())
       );
 
-      await saveProducts(next);
+      await upsertProductsToStoreAsync(next.filter((product: any, index: number) => product !== products[index]));
       console.log(`[Inventory Balance] Cập nhật kho gốc ${updatedCount} SKU`);
 
       // Đồng bộ Shopee qua hàng đợi (rate-limit) — chỉ SKU đã Mapping / có item_id.
@@ -15320,7 +15317,7 @@ async function startServer() {
       );
       return { ...p, children: nextChildren, stock: totalStock };
     });
-    await saveProducts(next);
+    await upsertProductsToStoreAsync(next.filter((product: any, index: number) => product !== products[index]));
     if (changedRows.length > 0) {
       const anyStock = changedRows.some((row) => {
         const before = beforeFlat.find((b: any) => String(b.id) === String(row.id));
@@ -15367,7 +15364,15 @@ async function startServer() {
       if (!found) {
         return res.status(404).json({ error: "product_not_found" });
       }
-      await saveProducts(next);
+      const nextIds = new Set(next.map((product: any) => String(product.id)));
+      await deleteProductsByIdsFromStore(
+        products
+          .filter((product: any) => !nextIds.has(String(product.id)))
+          .map((product: any) => String(product.id)),
+      );
+      await upsertProductsToStoreAsync(
+        next.filter((product: any) => products.find((before: any) => before.id === product.id) !== product),
+      );
       return res.json({ deleted: id, success: true });
     } catch (err: unknown) {
       console.error("[Products] DELETE failed:", err);
@@ -15378,14 +15383,27 @@ async function startServer() {
     }
   });
 
-  app.post("/api/products/clear-all", authMiddleware, async (_req, res) => {
+  app.post("/api/products/clear-all", authMiddleware, async (req: any, res) => {
+    if (req.body?.confirmation !== "CLEAR_INVENTORY") {
+      return res.status(400).json({ success: false, error: "explicit_confirmation_required" });
+    }
+    const backupFile = await backupInventoryBeforeDestructiveAction("products-clear");
     await saveProducts([]);
-    return res.json({ success: true, cleared: true, products: [] });
+    writeInventoryAudit("products_cleared", { requestedBy: req.user?.username || null, backupFile });
+    return res.json({ success: true, cleared: true, backupFile, products: [] });
   });
 
   /** Xóa sạch Kho gốc + Mapping (để test sync sạch). */
-  const handleInventoryClearAll = async (_req: any, res: any) => {
+  const handleInventoryClearAll = async (req: any, res: any) => {
     try {
+      if (req.body?.confirmation !== "CLEAR_INVENTORY") {
+        return res.status(400).json({
+          success: false,
+          error: "explicit_confirmation_required",
+          message: "Xóa kho yêu cầu confirmation: CLEAR_INVENTORY.",
+        });
+      }
+      const backupFile = await backupInventoryBeforeDestructiveAction("inventory-clear");
       await saveProducts([]);
       await writeChannelListingsDb([]);
       try {
@@ -15395,10 +15413,12 @@ async function startServer() {
       }
       // await saveProducts([]) refresh cache trước khi mapping bị xóa; refresh lại để cache đồng bộ cả hai DB.
       await refreshCache();
+      writeInventoryAudit("inventory_cleared", { requestedBy: req.user?.username || null, backupFile });
       console.log("[Inventory] Đã xóa sạch Kho gốc (products) + Mapping (channel_listings).");
       return res.status(200).json({
         success: true,
         message: "Đã xóa toàn bộ Kho gốc và dữ liệu Liên kết (Mapping).",
+        backupFile,
         cleared: true,
         products: [],
         channelListings: [],
@@ -17937,7 +17957,12 @@ async function startServer() {
       const reset = req.body?.reset === true || offset === 0;
 
       if (reset) {
-        await clearExistingShopeeWarehouseProducts();
+        // Tương thích client cũ: reset không còn là thao tác xóa trước khi đồng bộ.
+        writeInventoryAudit("shopee_sync_reset_ignored", {
+          shopId,
+          requestedBy: (req as any).user?.username || null,
+          reason: "safe_upsert_preserves_existing_inventory",
+        });
       }
 
       console.log(
@@ -17948,6 +17973,15 @@ async function startServer() {
       console.log(
         `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} — productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}`
       );
+      if (!result.hasMore) {
+        writeInventoryAudit("shopee_sync_completed", {
+          shopId,
+          requestedBy: (req as any).user?.username || null,
+          productCount: initialized,
+          pageCount: result.pageIndex + 1,
+          skippedCount: result.pageStats.skippedCount,
+        });
+      }
 
       return res.status(200).json({
         success: true,
@@ -20789,20 +20823,35 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     return res.json({ success: true, cleared: true, groups: [] });
   });
 
-  app.post("/api/catalog/wipe-all", authMiddleware, async (_req, res) => {
-    await saveProducts([]);
-    saveImports([]);
-    writeListingsDb([]);
-    writeProductListingsDb([]);
-    console.log("[Catalog] Đã xóa sạch products, imports, multi_channel_listings, product_listings.");
-    return res.json({
-      success: true,
-      cleared: true,
-      products: [],
-      imports: [],
-      listings: [],
-      productListings: [],
-    });
+  app.post("/api/catalog/wipe-all", authMiddleware, async (req: any, res) => {
+    if (req.body?.confirmation !== "WIPE_CATALOG") {
+      return res.status(400).json({
+        success: false,
+        error: "explicit_confirmation_required",
+        message: "Thao tác xóa catalog yêu cầu confirmation: WIPE_CATALOG.",
+      });
+    }
+    try {
+      const backupFile = await backupInventoryBeforeDestructiveAction("catalog-wipe");
+      await saveProducts([]);
+      saveImports([]);
+      writeListingsDb([]);
+      writeProductListingsDb([]);
+      writeInventoryAudit("catalog_wiped", { requestedBy: req.user?.username || null, backupFile });
+      console.warn("[Catalog] Đã xóa sạch products, imports, multi_channel_listings, product_listings.");
+      return res.json({
+        success: true,
+        cleared: true,
+        backupFile,
+        products: [],
+        imports: [],
+        listings: [],
+        productListings: [],
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, error: "catalog_wipe_failed", message });
+    }
   });
 
   /** Lấy thuộc tính bắt buộc theo category (FE form đăng bán). */

@@ -1033,7 +1033,7 @@ async function setMeta(key: string, value: string): Promise<void> {
   await MetaModel.findByIdAndUpdate(key, { value }, { upsert: true });
 }
 
-/** Ghi đè toàn bộ products — deleteMany + insertMany (await). */
+/** Ghi đè toàn bộ products chỉ cho thao tác quản trị/migration đã xác nhận. */
 export async function saveProductsToStoreAsync(products: any[]): Promise<void> {
   requireMongo();
   const list = Array.isArray(products)
@@ -1042,13 +1042,55 @@ export async function saveProductsToStoreAsync(products: any[]): Promise<void> {
   const docs = toProductDocs(list);
 
   await enqueueWrite(async () => {
-    await ProductModel.deleteMany({});
-    if (docs.length > 0) {
-      await ProductModel.insertMany(docs, { ordered: false });
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await ProductModel.deleteMany({}, { session });
+        if (docs.length > 0) {
+          await ProductModel.insertMany(docs, { ordered: false, session });
+        }
+        await setMeta("products_updated_at", new Date().toISOString());
+      });
+    } finally {
+      await session.endSession();
     }
-    await setMeta("products_updated_at", new Date().toISOString());
     console.log(`[MongoDB] insertMany products — ${docs.length} dòng`);
   });
+}
+
+/** Upsert theo id — dùng cho thêm/sửa/sync để không tạo khoảng trống toàn collection. */
+export async function upsertProductsToStoreAsync(products: any[]): Promise<number> {
+  requireMongo();
+  const docs = toProductDocs(Array.isArray(products) ? products : []);
+  if (docs.length === 0) return 0;
+  await enqueueWrite(async () => {
+    await ProductModel.bulkWrite(
+      docs.map((doc) => ({
+        updateOne: {
+          filter: { _id: doc._id },
+          update: { $set: { sku: doc.sku ?? null, data: doc.data } },
+          upsert: true,
+        },
+      })),
+      { ordered: false },
+    );
+    await setMeta("products_updated_at", new Date().toISOString());
+  });
+  return docs.length;
+}
+
+/** Xóa có chủ đích theo id, không dùng để reset kho trong luồng đồng bộ. */
+export async function deleteProductsByIdsFromStore(ids: string[]): Promise<number> {
+  requireMongo();
+  const safeIds = [...new Set(ids.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (safeIds.length === 0) return 0;
+  let deleted = 0;
+  await enqueueWrite(async () => {
+    const result = await ProductModel.deleteMany({ _id: { $in: safeIds } });
+    deleted = Number(result.deletedCount || 0);
+    await setMeta("products_updated_at", new Date().toISOString());
+  });
+  return deleted;
 }
 
 /** Ghi đè toàn bộ channel_listings — deleteMany + insertMany (await). */
