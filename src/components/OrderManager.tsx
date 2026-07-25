@@ -598,13 +598,32 @@ export default function OrderManager({
   });
   const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>(() => readStoredCancelTab());
 
-  // Nút "Làm mới" thủ công — gọi GET /api/orders/refresh (chỉ đọc MongoDB, không gọi Shopee).
-  // isRefreshing PHẢI về false ở cả try (thành công) lẫn catch (lỗi) để tránh treo icon xoay.
+  // Nút "Làm mới": 1) kéo đơn từ Shopee (get_order_list → detail → Mongo)
+  // 2) đọc lại Mongo qua /api/orders/refresh. Trước đây chỉ bước 2 → bấm không có tác dụng.
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefreshOrders = async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
     try {
+      const token = localStorage.getItem('admin_token') || '';
+      console.log('[Orders Sync] Làm mới → POST /api/orders/pull (Shopee → Mongo)...');
+      const pullRes = await fetch('/api/orders/pull', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        // 7 ngày — đủ bắt đơn đã quét ĐVVC trên App mà webhook/local chưa kịp cập nhật.
+        body: JSON.stringify({ lookback_hours: 168 }),
+      });
+      const pullJson = await pullRes.json().catch(() => ({}));
+      if (!pullRes.ok || pullJson?.success === false) {
+        console.warn('[Orders Sync] Pull Shopee không thành công:', pullJson);
+      } else {
+        console.log(
+          `[Orders Sync] Pull OK — pulled=${pullJson.pulled ?? 0} added=${pullJson.added ?? 0} updated=${pullJson.updated ?? 0}`,
+        );
+      }
       await onFetchOrders?.({ silent: false, bustCache: true });
       console.log('[FRONTEND FETCHED] Làm mới đơn hàng thành công.');
     } catch (err) {
@@ -3706,7 +3725,7 @@ export default function OrderManager({
             className="px-4 py-2 bg-white hover:bg-blue-50 border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing || ordersLoading ? 'animate-spin' : ''}`} />
-            <span>Làm mới</span>
+            <span>{isRefreshing || ordersLoading ? 'Đang đồng bộ...' : 'Làm mới'}</span>
           </button>
           <button
             onClick={() => setShowCreateOrderPage(true)}
