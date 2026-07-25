@@ -7688,7 +7688,13 @@ function shopeeLifecycleRank(rawOrLocal: string): number {
 
 function isShopeeTerminalRawStatus(raw: string): boolean {
   const r = String(raw || "").toUpperCase();
-  return r === "SHIPPED" || r === "TO_CONFIRM_RECEIVE" || r === "COMPLETED";
+  return (
+    r === "SHIPPED" ||
+    r === "TO_CONFIRM_RECEIVE" ||
+    r === "COMPLETED" ||
+    r === "CANCELLED" ||
+    r === "IN_CANCEL"
+  );
 }
 
 /**
@@ -8735,9 +8741,14 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     applyShopeePartialCancelMeta(order, item, mappedItems);
     applyShopeeEstimatedFinance(order, item);
     applyShopeePackageListTracking(order, item);
-    // Cưỡng bức lại sau package_list: SHIPPED/COMPLETED luôn thắng PROCESSED.
+    // Cưỡng bức lại sau package_list: trạng thái terminal từ Shopee luôn thắng.
     const finalRaw = String(order.shopee_order_status || rawStatus).toUpperCase();
-    if (finalRaw === "COMPLETED") {
+    if (finalRaw === "CANCELLED" || finalRaw === "IN_CANCEL") {
+      order.status = "cancelled";
+      order.shopee_order_status = finalRaw;
+      order.isPrepared = false;
+      order.is_pending_shopee_check = false;
+    } else if (finalRaw === "COMPLETED") {
       order.status = "completed";
       order.shopee_order_status = "COMPLETED";
       order.isPrepared = true;
@@ -9671,6 +9682,71 @@ function mirrorTrackingFieldsForRead(order: any): any {
   return order;
 }
 
+let lastMongoOrderReconcileAt = 0;
+const MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1000;
+const MONGO_ORDER_RECONCILE_LIMIT = 50;
+
+/**
+ * Mongo-only orders and records stuck at pending_confirm are refreshed from Shopee
+ * before a write-capable API flow proceeds. Shopee's detail response is authoritative
+ * and persistShopeeOrderChunk writes the healed state to both JSON and Mongo.
+ */
+async function reconcileMongoOrdersWithShopee(jsonOrders: any[], mongoOrders: any[]): Promise<number> {
+  if (Date.now() - lastMongoOrderReconcileAt < MONGO_ORDER_RECONCILE_COOLDOWN_MS) return 0;
+
+  const jsonSns = new Set(
+    jsonOrders
+      .map((order) => String(order?.orderSn || "").replace(/^shopee-/i, "").trim())
+      .filter(Boolean),
+  );
+  const candidates = mongoOrders
+    .filter((order) => {
+      const sn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+      const shopId = String(order?.shopId || "").trim();
+      const status = String(order?.status || "").trim();
+      return (
+        String(order?.channel || "") === "shopee" &&
+        Boolean(sn && shopId) &&
+        (!jsonSns.has(sn) || status === "pending_confirm" || status === "pending_verification")
+      );
+    })
+    .slice(0, MONGO_ORDER_RECONCILE_LIMIT);
+  if (candidates.length === 0) return 0;
+
+  lastMongoOrderReconcileAt = Date.now();
+  const byShop = new Map<string, string[]>();
+  for (const order of candidates) {
+    const shopId = String(order.shopId).trim();
+    const sn = String(order.orderSn).replace(/^shopee-/i, "").trim();
+    const sns = byShop.get(shopId) || [];
+    sns.push(sn);
+    byShop.set(shopId, sns);
+  }
+
+  let reconciled = 0;
+  for (const [shopId, orderSns] of byShop) {
+    const auth = await getShopeeAccessTokenForApi(shopId);
+    if (!auth?.token) continue;
+    const { normalized } = await fetchNormalizeShopeeOrderChunk(
+      auth.apiShopId,
+      auth.token,
+      auth.fileKey || shopId,
+      orderSns,
+    );
+    if (normalized.length === 0) continue;
+    const result = await persistShopeeOrderChunk(jsonOrders, normalized, {
+      apiShopId: auth.apiShopId,
+      accessToken: auth.token,
+    });
+    reconciled += result.added + result.updated;
+  }
+
+  if (reconciled > 0) {
+    console.log(`[Shopee Reconcile] Mongo-only/stuck orders healed=${reconciled}`);
+  }
+  return reconciled;
+}
+
 async function loadOrdersForApi(opts?: {
   readOnly?: boolean;
 }): Promise<{
@@ -9691,6 +9767,9 @@ async function loadOrdersForApi(opts?: {
     return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
   }
   if (mongoOrders.length === 0) return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
+  if (!readOnly) {
+    await reconcileMongoOrdersWithShopee(jsonOrders, mongoOrders);
+  }
 
   const bySn = new Map<string, any>();
   for (const o of jsonOrders) {
@@ -9732,6 +9811,31 @@ async function loadOrdersForApi(opts?: {
       }
     }
 
+    const jsonRaw = String(existing.shopee_order_status || "").trim().toUpperCase();
+    const jsonStatus = String(existing.status || "").trim();
+    const jsonCancelled =
+      jsonRaw === "CANCELLED" || jsonRaw === "IN_CANCEL" || jsonStatus === "cancelled";
+    const mongoCancelled =
+      String(m.shopee_order_status || "").trim().toUpperCase() === "CANCELLED" ||
+      String(m.shopee_order_status || "").trim().toUpperCase() === "IN_CANCEL" ||
+      String(m.status || "").trim() === "cancelled";
+
+    // Hủy là terminal: JSON đã hủy không thể bị Mongo cũ kéo lùi, còn Mongo đã hủy
+    // phải luôn sửa JSON cũ. Chỉ các trạng thái không terminal mới ưu tiên Mongo.
+    if (jsonCancelled || mongoCancelled) {
+      const cancelledRaw = jsonCancelled
+        ? jsonRaw === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED"
+        : String(m.shopee_order_status || "").trim().toUpperCase() === "IN_CANCEL"
+          ? "IN_CANCEL"
+          : "CANCELLED";
+      existing.shopee_order_status = cancelledRaw;
+      existing.status = "cancelled";
+      existing.isPrepared = false;
+      existing.is_pending_shopee_check = false;
+      if (!readOnly) dirty = true;
+      continue;
+    }
+
     // Mongo = SSOT cho raw Shopee + status local (tránh JSON cũ làm trống tab Chưa xử lý).
     const mRaw = String(m.shopee_order_status || "").trim().toUpperCase();
     if (mRaw) {
@@ -9746,15 +9850,21 @@ async function loadOrdersForApi(opts?: {
       const jsonTerminal =
         eStatus === "shipping" ||
         eStatus === "completed" ||
+        eStatus === "cancelled" ||
         eRaw === "SHIPPED" ||
         eRaw === "TO_CONFIRM_RECEIVE" ||
-        eRaw === "COMPLETED";
+        eRaw === "COMPLETED" ||
+        eRaw === "CANCELLED" ||
+        eRaw === "IN_CANCEL";
       const mongoTerminal =
         mStatus === "shipping" ||
         mStatus === "completed" ||
+        mStatus === "cancelled" ||
         mRaw === "SHIPPED" ||
         mRaw === "TO_CONFIRM_RECEIVE" ||
-        mRaw === "COMPLETED";
+        mRaw === "COMPLETED" ||
+        mRaw === "CANCELLED" ||
+        mRaw === "IN_CANCEL";
       if (mongoTerminal || !jsonTerminal) {
         existing.status = mStatus;
       }
@@ -15169,12 +15279,17 @@ async function startServer() {
       // (UNPAID/PENDING/IN_REVIEW/FRAUD_CHECK/INVOICE_PENDING), lấy từ DB nội bộ
       // (đã có Webhook lo sync) — KHÔNG gọi trực tiếp Shopee API.
       rawOrders = rawOrders.filter(
-        (o: any) =>
-          o.status === "pending_confirm" ||
-          o.status === "pending_verification" ||
-          ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(
-            String(o.shopee_order_status || "").toUpperCase(),
-          ),
+        (o: any) => {
+          const raw = String(o.shopee_order_status || "").toUpperCase();
+          if (raw === "CANCELLED" || raw === "IN_CANCEL" || o.status === "cancelled") {
+            return false;
+          }
+          return (
+            o.status === "pending_confirm" ||
+            o.status === "pending_verification" ||
+            ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw)
+          );
+        },
       );
     }
 

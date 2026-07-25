@@ -24,12 +24,14 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
   const inferredCarrier = shippingCarrierRaw || inferShippingCarrierLabel(draftForInfer) || '';
   const rawShopeeStatus = String(raw.shopee_order_status || '').toUpperCase();
   let status = (raw.status as Order['status']) || 'unprocessed';
-  // Heal: status local stale pending_* nhưng Shopee đã RTS/PROCESSED/có mã VĐ → đưa về đúng tab.
+  // Heal: status local stale pending_* nhưng Shopee đã đổi trạng thái → đưa về đúng tab.
   if (status === 'pending_confirm' || status === 'pending_verification') {
     const hasTracking = Boolean(
       String(raw.trackingNumber || raw.tracking_no || '').trim(),
     );
-    if (rawShopeeStatus === 'PROCESSED' || (hasTracking && (rawShopeeStatus === 'READY_TO_SHIP' || rawShopeeStatus === 'RETRY_SHIP'))) {
+    if (rawShopeeStatus === 'CANCELLED' || rawShopeeStatus === 'IN_CANCEL') {
+      status = 'cancelled';
+    } else if (rawShopeeStatus === 'PROCESSED' || (hasTracking && (rawShopeeStatus === 'READY_TO_SHIP' || rawShopeeStatus === 'RETRY_SHIP'))) {
       status = 'processed';
     } else if (rawShopeeStatus === 'READY_TO_SHIP' || rawShopeeStatus === 'RETRY_SHIP') {
       status = 'unprocessed';

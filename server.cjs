@@ -211497,7 +211497,7 @@ function shopeeLifecycleRank(rawOrLocal) {
 }
 function isShopeeTerminalRawStatus(raw) {
   const r5 = String(raw || "").toUpperCase();
-  return r5 === "SHIPPED" || r5 === "TO_CONFIRM_RECEIVE" || r5 === "COMPLETED";
+  return r5 === "SHIPPED" || r5 === "TO_CONFIRM_RECEIVE" || r5 === "COMPLETED" || r5 === "CANCELLED" || r5 === "IN_CANCEL";
 }
 function enforceShopeeTerminalLocalStatus(order) {
   if (!order || String(order.channel || "") !== "shopee") return false;
@@ -212137,7 +212137,12 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
     applyShopeeEstimatedFinance(order, item);
     applyShopeePackageListTracking(order, item);
     const finalRaw = String(order.shopee_order_status || rawStatus).toUpperCase();
-    if (finalRaw === "COMPLETED") {
+    if (finalRaw === "CANCELLED" || finalRaw === "IN_CANCEL") {
+      order.status = "cancelled";
+      order.shopee_order_status = finalRaw;
+      order.isPrepared = false;
+      order.is_pending_shopee_check = false;
+    } else if (finalRaw === "COMPLETED") {
       order.status = "completed";
       order.shopee_order_status = "COMPLETED";
       order.isPrepared = true;
@@ -212733,6 +212738,52 @@ function mirrorTrackingFieldsForRead(order) {
   if (order.trackingNumber && !order.tracking_no) order.tracking_no = order.trackingNumber;
   return order;
 }
+var lastMongoOrderReconcileAt = 0;
+var MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1e3;
+var MONGO_ORDER_RECONCILE_LIMIT = 50;
+async function reconcileMongoOrdersWithShopee(jsonOrders, mongoOrders) {
+  if (Date.now() - lastMongoOrderReconcileAt < MONGO_ORDER_RECONCILE_COOLDOWN_MS) return 0;
+  const jsonSns = new Set(
+    jsonOrders.map((order) => String(order?.orderSn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+  );
+  const candidates = mongoOrders.filter((order) => {
+    const sn3 = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+    const shopId = String(order?.shopId || "").trim();
+    const status2 = String(order?.status || "").trim();
+    return String(order?.channel || "") === "shopee" && Boolean(sn3 && shopId) && (!jsonSns.has(sn3) || status2 === "pending_confirm" || status2 === "pending_verification");
+  }).slice(0, MONGO_ORDER_RECONCILE_LIMIT);
+  if (candidates.length === 0) return 0;
+  lastMongoOrderReconcileAt = Date.now();
+  const byShop = /* @__PURE__ */ new Map();
+  for (const order of candidates) {
+    const shopId = String(order.shopId).trim();
+    const sn3 = String(order.orderSn).replace(/^shopee-/i, "").trim();
+    const sns = byShop.get(shopId) || [];
+    sns.push(sn3);
+    byShop.set(shopId, sns);
+  }
+  let reconciled = 0;
+  for (const [shopId, orderSns] of byShop) {
+    const auth = await getShopeeAccessTokenForApi(shopId);
+    if (!auth?.token) continue;
+    const { normalized } = await fetchNormalizeShopeeOrderChunk(
+      auth.apiShopId,
+      auth.token,
+      auth.fileKey || shopId,
+      orderSns
+    );
+    if (normalized.length === 0) continue;
+    const result = await persistShopeeOrderChunk(jsonOrders, normalized, {
+      apiShopId: auth.apiShopId,
+      accessToken: auth.token
+    });
+    reconciled += result.added + result.updated;
+  }
+  if (reconciled > 0) {
+    console.log(`[Shopee Reconcile] Mongo-only/stuck orders healed=${reconciled}`);
+  }
+  return reconciled;
+}
 async function loadOrdersForApi(opts) {
   const readOnly = Boolean(opts?.readOnly);
   const normalize4 = readOnly ? mirrorTrackingFieldsForRead : repairMisassignedTracking;
@@ -212746,6 +212797,9 @@ async function loadOrdersForApi(opts) {
     return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
   }
   if (mongoOrders.length === 0) return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
+  if (!readOnly) {
+    await reconcileMongoOrdersWithShopee(jsonOrders, mongoOrders);
+  }
   const bySn = /* @__PURE__ */ new Map();
   for (const o6 of jsonOrders) {
     const sn3 = String(o6.orderSn || "").replace(/^shopee-/i, "").trim();
@@ -212781,6 +212835,19 @@ async function loadOrdersForApi(opts) {
         }
       }
     }
+    const jsonRaw = String(existing.shopee_order_status || "").trim().toUpperCase();
+    const jsonStatus = String(existing.status || "").trim();
+    const jsonCancelled = jsonRaw === "CANCELLED" || jsonRaw === "IN_CANCEL" || jsonStatus === "cancelled";
+    const mongoCancelled = String(m6.shopee_order_status || "").trim().toUpperCase() === "CANCELLED" || String(m6.shopee_order_status || "").trim().toUpperCase() === "IN_CANCEL" || String(m6.status || "").trim() === "cancelled";
+    if (jsonCancelled || mongoCancelled) {
+      const cancelledRaw = jsonCancelled ? jsonRaw === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED" : String(m6.shopee_order_status || "").trim().toUpperCase() === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED";
+      existing.shopee_order_status = cancelledRaw;
+      existing.status = "cancelled";
+      existing.isPrepared = false;
+      existing.is_pending_shopee_check = false;
+      if (!readOnly) dirty = true;
+      continue;
+    }
     const mRaw = String(m6.shopee_order_status || "").trim().toUpperCase();
     if (mRaw) {
       existing.shopee_order_status = mRaw;
@@ -212789,8 +212856,8 @@ async function loadOrdersForApi(opts) {
     if (mStatus) {
       const eRaw = String(existing.shopee_order_status || "").trim().toUpperCase();
       const eStatus = String(existing.status || "").trim();
-      const jsonTerminal = eStatus === "shipping" || eStatus === "completed" || eRaw === "SHIPPED" || eRaw === "TO_CONFIRM_RECEIVE" || eRaw === "COMPLETED";
-      const mongoTerminal = mStatus === "shipping" || mStatus === "completed" || mRaw === "SHIPPED" || mRaw === "TO_CONFIRM_RECEIVE" || mRaw === "COMPLETED";
+      const jsonTerminal = eStatus === "shipping" || eStatus === "completed" || eStatus === "cancelled" || eRaw === "SHIPPED" || eRaw === "TO_CONFIRM_RECEIVE" || eRaw === "COMPLETED" || eRaw === "CANCELLED" || eRaw === "IN_CANCEL";
+      const mongoTerminal = mStatus === "shipping" || mStatus === "completed" || mStatus === "cancelled" || mRaw === "SHIPPED" || mRaw === "TO_CONFIRM_RECEIVE" || mRaw === "COMPLETED" || mRaw === "CANCELLED" || mRaw === "IN_CANCEL";
       if (mongoTerminal || !jsonTerminal) {
         existing.status = mStatus;
       }
@@ -216847,9 +216914,13 @@ async function startServer2() {
       rawOrders = rawOrders.filter((o6) => matchesReceivedCancelReturnTabOrder(o6));
     } else if (tab2 === "pending_confirm" || tab2 === "pending_verification" || tab2 === "cho-xac-nhan" || tab2 === "pending_shopee_check" || tab2 === "dang_kiem_tra_shopee" || tab2 === "shopee_check") {
       rawOrders = rawOrders.filter(
-        (o6) => o6.status === "pending_confirm" || o6.status === "pending_verification" || ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(
-          String(o6.shopee_order_status || "").toUpperCase()
-        )
+        (o6) => {
+          const raw = String(o6.shopee_order_status || "").toUpperCase();
+          if (raw === "CANCELLED" || raw === "IN_CANCEL" || o6.status === "cancelled") {
+            return false;
+          }
+          return o6.status === "pending_confirm" || o6.status === "pending_verification" || ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw);
+        }
       );
     }
     const rawLimit = Number(req2.query.limit);
