@@ -79,7 +79,11 @@ export function buildCpanelTarget(backendUrl, pathPart, queryWithoutPath) {
 
 export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
   const backend = resolveCpanelBackend();
-  const timeoutMs = opts.timeoutMs ?? resolveProxyTimeoutMs(pathPart);
+  const normalizedPath = String(pathPart || '').replace(/^\/+/, '');
+  // Bulk async is an acknowledgement endpoint, never a long-running proxy call.
+  // Fail fast rather than applying the general 240s Shopee retry policy.
+  const isBulkShipAsync = normalizedPath === 'shopee/ship-order/bulk-async';
+  const timeoutMs = opts.timeoutMs ?? (isBulkShipAsync ? 5_000 : resolveProxyTimeoutMs(pathPart));
 
   if (!backend.ok) {
     console.error('[API Proxy]', backend.error);
@@ -116,7 +120,7 @@ export async function proxyRequestToCpanel(req, res, pathPart, opts = {}) {
     method: req.method,
     headers,
     body,
-  }, timeoutMs);
+  }, timeoutMs, isBulkShipAsync ? 1 : 3);
 
   if (result.ok) {
     const upstream = result.upstream;

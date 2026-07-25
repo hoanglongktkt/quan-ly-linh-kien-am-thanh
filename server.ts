@@ -18417,12 +18417,14 @@ async function startServer() {
         updatedAt: Date.now(),
       });
 
-      // 202 FIRST — background starts after response is queued.
-      res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
-
-      setImmediate(() => {
-        void executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
+      // Do not start even the Mongo read until the 202 response has physically
+      // finished flushing to the proxy/client.
+      res.once("finish", () => {
+        setImmediate(() => {
+          void executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
+        });
       });
+      return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
     } catch (error: any) {
       console.error("[Ship Order Bulk Async] Lỗi nội bộ endpoint /api/shopee/ship-order/bulk-async:", error?.stack || error);
       if (!res.headersSent) {

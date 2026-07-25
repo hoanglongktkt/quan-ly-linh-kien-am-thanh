@@ -219447,10 +219447,12 @@ async function startServer2() {
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
-      res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
-      setImmediate(() => {
-        void executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
+      res.once("finish", () => {
+        setImmediate(() => {
+          void executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
+        });
       });
+      return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
     } catch (error3) {
       console.error("[Ship Order Bulk Async] L\u1ED7i n\u1ED9i b\u1ED9 endpoint /api/shopee/ship-order/bulk-async:", error3?.stack || error3);
       if (!res.headersSent) {
