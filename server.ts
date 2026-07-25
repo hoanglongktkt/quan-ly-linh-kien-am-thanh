@@ -7118,10 +7118,78 @@ const SHOPEE_ORDER_STATUS_MAP: Record<string, string> = {
 };
 
 /**
+ * logistics_status Shopee = ĐVVC đã lấy hàng / đang vận chuyển.
+ * App Shopee quét "Giao cho đơn vị vận chuyển" thường cập nhật logistics TRƯỚC order_status.
+ */
+function isLogisticsHandedToCarrier(logisticsStatus?: string | null): boolean {
+  const s = String(logisticsStatus || "").toUpperCase();
+  if (!s) return false;
+  if (s.includes("FAILED") || s.includes("CANCEL") || s.includes("RETURN")) return false;
+  return (
+    s.includes("PICKUP_DONE") ||
+    s.includes("LOGISTICS_SHIPPED") ||
+    s === "LOGISTICS_SHIPPED" ||
+    s.includes("LOGISTICS_DELIVERY_DONE") ||
+    s.includes("DELIVERY_DONE") ||
+    s.includes("IN_TRANSIT") ||
+    s.includes("TRANSPORTING") ||
+    s.includes("LOGISTICS_PICKUP_DONE")
+  );
+}
+
+/**
+ * Khi logistics đã PICKUP_DONE/SHIPPED mà order_status còn PROCESSED/RTS —
+ * promote raw → SHIPPED để tab Đang giao (SSOT UI) nhận đơn.
+ */
+function promoteRawStatusFromLogistics(
+  order: any,
+  logisticsStatus?: string | null,
+): boolean {
+  if (!order || !isLogisticsHandedToCarrier(logisticsStatus ?? order.logistics_status)) {
+    return false;
+  }
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  if (
+    raw === "COMPLETED" ||
+    raw === "CANCELLED" ||
+    raw === "IN_CANCEL" ||
+    raw === "TO_RETURN" ||
+    raw === "SHIPPED" ||
+    raw === "TO_CONFIRM_RECEIVE"
+  ) {
+    if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
+      order.status = "shipping";
+      order.isPrepared = true;
+      order.is_pending_shopee_check = false;
+    }
+    return raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE";
+  }
+  if (
+    !raw ||
+    raw === "READY_TO_SHIP" ||
+    raw === "RETRY_SHIP" ||
+    raw === "PROCESSED" ||
+    raw === "UNPAID" ||
+    raw === "PENDING"
+  ) {
+    const prev = raw || "(empty)";
+    order.shopee_order_status = "SHIPPED";
+    order.status = "shipping";
+    order.isPrepared = true;
+    order.is_pending_shopee_check = false;
+    console.log(
+      `[StateMachine] logistics→SHIPPED order_sn=${order.orderSn || "?"} prev_raw=${prev} logistics=${String(logisticsStatus || order.logistics_status || "")}`,
+    );
+    return true;
+  }
+  return false;
+}
+
+/**
  * Ánh xạ trạng thái Shopee API v2.2.9 → tab quản lý nội bộ.
  * - UNPAID/PENDING → Chờ xác nhận
  * - READY_TO_SHIP → Chưa xử lý / Đã xử lý (theo tracking)
- * - SHIPPED / TO_CONFIRM_RECEIVE → Đang giao (bắt buộc)
+ * - SHIPPED / TO_CONFIRM_RECEIVE / logistics PICKUP_DONE → Đang giao
  * - COMPLETED → Thành công
  */
 function mapShopeeStatusToLocal(
@@ -7129,12 +7197,19 @@ function mapShopeeStatusToLocal(
   opts?: { hasTracking?: boolean; logisticsStatus?: string },
 ): string {
   const raw = String(rawStatus || "").toUpperCase();
-  // State Machine: Đang giao CHỈ khi Shopee raw = SHIPPED / TO_CONFIRM_RECEIVE.
-  // Không promote từ logistics / GHN khi raw còn READY_TO_SHIP|PROCESSED.
-  void opts?.logisticsStatus;
 
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return "shipping";
   if (raw === "COMPLETED") return "completed";
+  // Carrier scan: logistics đã lấy hàng dù order_status còn PROCESSED/RTS.
+  if (
+    isLogisticsHandedToCarrier(opts?.logisticsStatus) &&
+    (raw === "PROCESSED" ||
+      raw === "READY_TO_SHIP" ||
+      raw === "RETRY_SHIP" ||
+      !raw)
+  ) {
+    return "shipping";
+  }
   if (raw === "PROCESSED") return "processed";
   if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
     return opts?.hasTracking ? "processed" : "unprocessed";
@@ -8117,12 +8192,27 @@ function mergeShopeeTrackingFields(merged: any, existing: any, incoming: any) {
 
 /**
  * Thứ bậc trạng thái Shopee — số cao hơn = mới hơn.
- * Dùng để CHẶN kéo lùi SHIPPED/COMPLETED về PROCESSED/READY_TO_SHIP.
+ * BẮT BUỘC: UNPAID < READY_TO_SHIP < PROCESSED < SHIPPED < COMPLETED.
+ * SHIPPED phải > PROCESSED — nếu không webhook/sync SHIPPED bị state machine nuốt im lặng.
  */
 function shopeeLifecycleRank(rawOrLocal: string): number {
   const s = String(rawOrLocal || "").toUpperCase();
+  // COMPLETED
   if (s === "COMPLETED" || s === "completed") return 100;
-  if (s === "SHIPPED" || s === "TO_CONFIRM_RECEIVE" || s === "shipping") return 90;
+  // SHIPPED / logistics đã lấy hàng (rank cao hơn PROCESSED)
+  if (
+    s === "SHIPPED" ||
+    s === "TO_CONFIRM_RECEIVE" ||
+    s === "shipping" ||
+    s.includes("LOGISTICS_SHIPPED") ||
+    s.includes("LOGISTICS_PICKUP_DONE") ||
+    s.includes("PICKUP_DONE") ||
+    s.includes("LOGISTICS_DELIVERY_DONE") ||
+    s.includes("IN_TRANSIT") ||
+    s.includes("TRANSPORTING")
+  ) {
+    return 90;
+  }
   if (
     s === "TO_RETURN" ||
     s === "return_pending" ||
@@ -8133,6 +8223,7 @@ function shopeeLifecycleRank(rawOrLocal: string): number {
   ) {
     return 80;
   }
+  // PROCESSED < SHIPPED (50 < 90)
   if (s === "PROCESSED" || s === "processed") return 50;
   if (s === "READY_TO_SHIP" || s === "RETRY_SHIP" || s === "unprocessed") return 40;
   if (
@@ -8340,15 +8431,13 @@ function applyShopeeGetTrackingResponse(order: any, trackResult: any): void {
 }
 
 /**
- * Chỉ đồng bộ local status khi Shopee raw đã SHIPPED / COMPLETED.
- * KHÔNG promote từ GHN/dropoff/logistics khi raw còn READY_TO_SHIP|PROCESSED.
+ * Đồng bộ local status khi Shopee raw SHIPPED/COMPLETED
+ * HOẶC logistics_status = PICKUP_DONE / LOGISTICS_SHIPPED (App quét ĐVVC).
  */
 function promoteOrderStatusWhenTrackingReady(order: any): boolean {
   if (!order) return false;
-  const raw = String(order.shopee_order_status || "").toUpperCase();
   const status = String(order.status || "");
   if (
-    status === "shipping" ||
     status === "completed" ||
     status === "cancelled" ||
     status === "return_pending" ||
@@ -8356,11 +8445,18 @@ function promoteOrderStatusWhenTrackingReady(order: any): boolean {
   ) {
     return false;
   }
+  // logistics PICKUP_DONE / SHIPPED → promote raw + local (trước check status shipping).
+  if (promoteRawStatusFromLogistics(order)) {
+    return true;
+  }
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  if (status === "shipping") {
+    return false;
+  }
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") {
     order.status = "shipping";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
-    // Không clear is_handed_over — sync/promote không đụng cờ nội bộ.
     return true;
   }
   if (raw === "COMPLETED") {
@@ -8414,20 +8510,9 @@ function applyShopeePackageListTracking(order: any, shopeeOrder: any): void {
       if (order.status === "cancelled" || order.status === "shipping" || order.status === "processed") {
         order.status = "return_pending";
       }
-    } else if (
-      (logisticsStatus.includes("PICKUP_DONE") ||
-        logisticsStatus.includes("DELIVERY_DONE") ||
-        logisticsStatus.includes("IN_TRANSIT") ||
-        logisticsStatus.includes("TRANSPORTING")) &&
-      !logisticsStatus.includes("FAILED") &&
-      !logisticsStatus.includes("CANCEL")
-    ) {
-      // "Đơn hàng chuẩn bị giao tới người mua" / đã lấy hàng → Đang giao
-      const raw = String(order.shopee_order_status || "").toUpperCase();
-      if (raw === "SHIPPED" || raw === "PROCESSED" || raw === "TO_CONFIRM_RECEIVE" || raw === "READY_TO_SHIP") {
-        order.status = "shipping";
-        order.isPrepared = true;
-      }
+    } else if (isLogisticsHandedToCarrier(logisticsStatus)) {
+      // App quét ĐVVC: LOGISTICS_PICKUP_DONE / LOGISTICS_SHIPPED → SHIPPED + Đang giao
+      promoteRawStatusFromLogistics(order, logisticsStatus);
     }
   }
   repairMisassignedTracking(order);
@@ -9203,6 +9288,8 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
     applyShopeePartialCancelMeta(order, item, mappedItems);
     applyShopeeEstimatedFinance(order, item);
     applyShopeePackageListTracking(order, item);
+    // logistics PICKUP_DONE/SHIPPED (App quét) → promote raw SHIPPED trước khi ép tab.
+    promoteRawStatusFromLogistics(order, logisticsStatus);
     // Cưỡng bức lại sau package_list: trạng thái terminal từ Shopee luôn thắng.
     const finalRaw = String(order.shopee_order_status || rawStatus).toUpperCase();
     if (finalRaw === "CANCELLED" || finalRaw === "IN_CANCEL") {
@@ -9498,31 +9585,63 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
 
   const incomingRaw = String(incoming.shopee_order_status || "").toUpperCase();
   const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
+  const incomingLogistics = String(
+    incoming.logistics_status || merged.logistics_status || "",
+  ).toUpperCase();
+  const existingLogistics = String(existing?.logistics_status || "").toUpperCase();
   const incomingIsCancellation = incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL";
   const existingIsCancellation = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL";
+  // Rank gồm raw + local status + logistics (PICKUP_DONE ≡ SHIPPED).
   const existingStatusRank = Math.max(
     shopeeLifecycleRank(existingRaw),
     shopeeLifecycleRank(String(existing?.status || "")),
+    shopeeLifecycleRank(existingLogistics),
   );
-  const incomingStatusRank = shopeeLifecycleRank(incomingRaw);
+  const incomingStatusRank = Math.max(
+    shopeeLifecycleRank(incomingRaw),
+    shopeeLifecycleRank(String(incoming?.status || "")),
+    shopeeLifecycleRank(incomingLogistics),
+  );
 
   // State machine một chiều: trạng thái chỉ tiến về phía trước. CANCELLED/IN_CANCEL
   // là ngoại lệ duy nhất, luôn ghi đè và sau đó không được event cũ hồi sinh.
+  // UNPAID < READY_TO_SHIP < PROCESSED < SHIPPED < COMPLETED — SHIPPED luôn thắng PROCESSED.
   if (incomingIsCancellation) {
     merged.status = "cancelled";
     merged.shopee_order_status = incomingRaw;
     merged.isPrepared = false;
     merged.is_pending_shopee_check = false;
   } else if (existingIsCancellation || incomingStatusRank < existingStatusRank) {
+    console.error(
+      `[StateMachine] REJECTED ${existingIsCancellation ? "after_CANCELLED" : "downgrade"} ` +
+        `order_sn=${merged.orderSn || "?"} ` +
+        `incoming=${incomingRaw || "(empty)"}/${incomingLogistics || "-"}(rank=${incomingStatusRank}) ` +
+        `< existing=${existingRaw || "(empty)"}/${existingLogistics || "-"}(rank=${existingStatusRank}) ` +
+        `— giữ status=${existing.status} raw=${existing.shopee_order_status}`,
+    );
     merged.status = existing.status;
     merged.shopee_order_status = existing.shopee_order_status;
     merged.isPrepared = Boolean(existing.isPrepared);
     merged.is_pending_shopee_check = Boolean(existing.is_pending_shopee_check);
-  } else if (incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE") {
+    if (existingLogistics && !merged.logistics_status) {
+      merged.logistics_status = existingLogistics;
+    }
+  } else if (
+    incomingRaw === "SHIPPED" ||
+    incomingRaw === "TO_CONFIRM_RECEIVE" ||
+    isLogisticsHandedToCarrier(incomingLogistics)
+  ) {
     merged.status = "shipping";
-    merged.shopee_order_status = incomingRaw;
+    merged.shopee_order_status =
+      incomingRaw === "TO_CONFIRM_RECEIVE" ? "TO_CONFIRM_RECEIVE" : "SHIPPED";
+    if (incomingLogistics) merged.logistics_status = incomingLogistics;
     merged.isPrepared = true;
     merged.is_pending_shopee_check = false;
+    console.log(
+      `[StateMachine] ACCEPT SHIPPED order_sn=${merged.orderSn || "?"} ` +
+        `raw=${merged.shopee_order_status} logistics=${incomingLogistics || "-"} ` +
+        `(prev=${existingRaw || "(empty)"})`,
+    );
   } else if (incomingRaw === "COMPLETED") {
     merged.status = "completed";
     merged.shopee_order_status = "COMPLETED";
@@ -9607,6 +9726,8 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   // CƯỠNG CHẾ heal: tracking_no | PROCESSED | dropoff — không downgrade terminal.
   forceHealPickupOrderIfHasTracking(merged);
   repairFalseProcessedReadyToShip(merged);
+  // logistics PICKUP_DONE sau merge — luôn promote SHIPPED (không bị nhánh PROCESSED kéo lùi).
+  promoteRawStatusFromLogistics(merged);
 
   const mergedCustomCosts = getGlobalPackagingCostPerOrder();
   merged.custom_costs = mergedCustomCosts;
@@ -12881,6 +13002,7 @@ function parseShopeePushEvent(body: any): {
   packageNumber: string;
   returnSn: string;
   code: string | number;
+  logisticsStatus: string;
 } {
   const data = body?.data || body || {};
   const code = body?.code ?? body?.msg_id ?? data?.code ?? "";
@@ -12898,6 +13020,12 @@ function parseShopeePushEvent(body: any): {
     data.third_party_tracking_number,
   );
   const packageNumber = String(data.package_number || data.packageNumber || "").trim();
+  const pkg0 = Array.isArray(data.package_list) ? data.package_list[0] : undefined;
+  const logisticsStatus = String(
+    data.logistics_status || data.logisticsStatus || pkg0?.logistics_status || "",
+  )
+    .trim()
+    .toUpperCase();
 
   let eventKind:
     | "order_status_update"
@@ -12941,7 +13069,17 @@ function parseShopeePushEvent(body: any): {
     eventKind = "order_status_update";
   }
 
-  return { shopId, orderSn, eventKind, status, trackingNo, packageNumber, returnSn, code };
+  return {
+    shopId,
+    orderSn,
+    eventKind,
+    status,
+    trackingNo,
+    packageNumber,
+    returnSn,
+    code,
+    logisticsStatus,
+  };
 }
 
 const SHOPEE_WEBHOOK_ORDER_STATUSES = new Set([
@@ -12970,6 +13108,7 @@ function applyShopeePushFieldsToOrder(order: any, parsed: {
   trackingNo?: string;
   packageNumber?: string;
   eventKind?: string;
+  logisticsStatus?: string;
 }): void {
   if (!order) return;
   if (parsed.packageNumber) order.packageNumber = parsed.packageNumber;
@@ -12977,6 +13116,9 @@ function applyShopeePushFieldsToOrder(order: any, parsed: {
     applyShopeeTrackingCode(order, parsed.trackingNo);
     order.trackingNumber = String(parsed.trackingNo).trim();
     order.tracking_no = order.trackingNumber;
+  }
+  if (parsed.logisticsStatus) {
+    order.logistics_status = String(parsed.logisticsStatus).toUpperCase();
   }
   if (parsed.status) {
     order.shopee_order_status = String(parsed.status).toUpperCase();
@@ -12993,7 +13135,18 @@ function applyShopeePushFieldsToOrder(order: any, parsed: {
     order.status = "shipping";
     order.isPrepared = true;
     order.is_pending_shopee_check = false;
+    console.log(
+      `[StateMachine] Webhook ACCEPT SHIPPED order_sn=${order.orderSn || "?"} push=${pushStatus}`,
+    );
     enforceShopeeTerminalLocalStatus(order);
+    repairMisassignedTracking(order);
+    return;
+  }
+  // Push có thể mang logistics_status (hoặc order đã có từ get_order_detail).
+  if (promoteRawStatusFromLogistics(order)) {
+    console.log(
+      `[StateMachine] Webhook ACCEPT logistics→SHIPPED order_sn=${order.orderSn || "?"} logistics=${order.logistics_status || "-"}`,
+    );
     repairMisassignedTracking(order);
     return;
   }
@@ -13287,6 +13440,7 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
         shopId: parsed.shopId || null,
         orderSn: parsed.orderSn || null,
         status: parsed.status || null,
+        logisticsStatus: parsed.logisticsStatus || null,
         trackingNo: parsed.trackingNo || null,
         packageNumber: parsed.packageNumber || null,
         returnSn: parsed.returnSn || null,
@@ -13294,7 +13448,9 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
     );
 
     if (!parsed.orderSn) {
-      console.log(`[Shopee Webhook] Bỏ qua — thiếu order_sn (code=${parsed.code})`);
+      console.error(
+        `[Shopee Webhook] REJECTED — thiếu order_sn (code=${parsed.code}) payload=${JSON.stringify(body).slice(0, 800)}`,
+      );
       return;
     }
     const shouldPersist =
@@ -13304,10 +13460,13 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
       parsed.eventKind === "tracking_no_update" ||
       parsed.eventKind === "shipping_document" ||
       parsed.eventKind === "return_refund" ||
-      SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status);
+      SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) ||
+      isLogisticsHandedToCarrier(parsed.logisticsStatus);
     if (!shouldPersist) {
-      console.log(
-        `[Shopee Webhook] Bỏ qua status không cần thiết order_sn=${parsed.orderSn} status=${parsed.status || "empty"} code=${parsed.code}`,
+      console.error(
+        `[StateMachine] Webhook REJECTED — status/event không cần persist ` +
+          `order_sn=${parsed.orderSn} status=${parsed.status || "empty"} ` +
+          `logistics=${parsed.logisticsStatus || "-"} code=${parsed.code} kind=${parsed.eventKind}`,
       );
       return;
     }

@@ -97,14 +97,16 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
   });
 
   router.post("/shopee", express.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const bodyPreview = rawBody.toString("utf8").slice(0, 4000);
     console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee — headers:", {
       authorization: req.get("authorization") ? "(present)" : "(missing)",
       contentLength: req.get("content-length") || "0",
       host: req.get("host") || "",
       xfProto: req.get("x-forwarded-proto") || "",
     });
+    console.log("[WEBHOOK RECEIVED] incoming payload (raw):", bodyPreview);
     try {
-      const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       const authHeader = req.get("authorization");
 
       // Shopee HMAC = URL + "|" + rawBody. URL phải khớp Push URL đã đăng ký trên Console.
@@ -131,7 +133,11 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
       ].filter(Boolean);
 
       if (!verifyShopeeWebhookSignature(rawBody, authHeader, urlCandidates)) {
-        console.warn("[Shopee Webhook] Missing or invalid signature; request rejected.");
+        console.error(
+          "[Shopee Webhook] REJECTED — HMAC failure (invalid/missing Authorization). " +
+            `authPresent=${Boolean(authHeader)} bodyBytes=${rawBody.length} ` +
+            `payloadPreview=${bodyPreview.slice(0, 500)}`,
+        );
         return res.status(401).type("text/plain").send("Unauthorized");
       }
 
@@ -141,10 +147,10 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           payload = parsed as Record<string, unknown>;
         } else {
-          console.warn("[Shopee Webhook] Payload không hợp lệ (không phải object) — vẫn ACK 200.");
+          console.error("[Shopee Webhook] REJECTED — payload không phải object:", typeof parsed);
         }
       } catch (parseErr) {
-        console.warn("[Shopee Webhook] JSON parse failed — vẫn ACK 200:", parseErr);
+        console.error("[Shopee Webhook] REJECTED — JSON parse failed:", parseErr);
       }
 
       if (!payload) {
@@ -153,10 +159,18 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
       // Chỉ ACK sau khi payload đã được nhận vào queue. Nếu queue đầy, Shopee sẽ retry
       // thay vì đơn bị mất vĩnh viễn sau HTTP 200.
       if (!queue.enqueue(payload)) {
+        console.error("[Shopee Webhook] REJECTED — queue full (503), Shopee will retry.");
         return res.status(503).type("text/plain").send("Webhook queue busy");
       }
       res.status(200).type("text/plain").send("OK");
-      console.log("[WEBHOOK RECEIVED] ACK 200 sent; payload queued for background processing.");
+      console.log(
+        "[WEBHOOK RECEIVED] ACK 200 sent; payload queued:",
+        JSON.stringify({
+          code: payload.code ?? null,
+          shop_id: payload.shop_id ?? null,
+          data: payload.data ?? null,
+        }),
+      );
     } catch (error) {
       console.error("[Shopee Webhook] Request handler failed:", error);
       if (!res.headersSent) return res.status(500).type("text/plain").send("Internal Server Error");

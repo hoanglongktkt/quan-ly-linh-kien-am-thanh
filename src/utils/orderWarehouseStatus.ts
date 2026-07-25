@@ -71,6 +71,21 @@ export function hasLeftHandedOverCarrierTab(
   ) {
     return true;
   }
+  // App quét ĐVVC: logistics PICKUP_DONE/SHIPPED dù order_status còn PROCESSED.
+  const logistics = String(order.logistics_status || '').toUpperCase();
+  if (
+    logistics &&
+    !logistics.includes('FAILED') &&
+    !logistics.includes('CANCEL') &&
+    (logistics.includes('PICKUP_DONE') ||
+      logistics.includes('LOGISTICS_SHIPPED') ||
+      logistics.includes('IN_TRANSIT') ||
+      logistics.includes('TRANSPORTING') ||
+      logistics.includes('DELIVERY_DONE'))
+  ) {
+    return true;
+  }
+  if (order.status === 'shipping') return true;
   return false;
 }
 

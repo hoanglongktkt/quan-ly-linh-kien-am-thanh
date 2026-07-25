@@ -100,12 +100,31 @@ export function isProcessedCondition(
   return false;
 }
 
-/** Terminal / thoát pool chờ lấy hàng — ưu tiên raw Shopee. */
+/** logistics_status = ĐVVC đã lấy hàng (App quét) dù order_status còn PROCESSED. */
+function isLogisticsHandedToCarrierStatus(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  const s = String(order.logistics_status || '').toUpperCase();
+  if (!s) return false;
+  if (s.includes('FAILED') || s.includes('CANCEL') || s.includes('RETURN')) return false;
+  return (
+    s.includes('PICKUP_DONE') ||
+    s.includes('LOGISTICS_SHIPPED') ||
+    s.includes('LOGISTICS_DELIVERY_DONE') ||
+    s.includes('DELIVERY_DONE') ||
+    s.includes('IN_TRANSIT') ||
+    s.includes('TRANSPORTING')
+  );
+}
+
+/** Terminal / thoát pool chờ lấy hàng — raw SHIPPED hoặc logistics đã lấy hàng. */
 export function isShopeeShippingStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   const raw = getShopeeOrderRawStatus(order);
-  return raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE';
+  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return true;
+  if (order.status === 'shipping' && isLogisticsHandedToCarrierStatus(order)) return true;
+  return isLogisticsHandedToCarrierStatus(order);
 }
 
 export function isShopeeCompletedStatus(
