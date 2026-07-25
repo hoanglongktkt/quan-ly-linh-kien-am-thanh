@@ -214406,10 +214406,9 @@ function markOrderPendingShopeeCheck(order, reason) {
 async function persistPendingShopeeCheckFlag(orders, index4, reason) {
   if (index4 < 0 || index4 >= orders.length) return null;
   orders[index4] = markOrderPendingShopeeCheck(orders[index4], reason);
-  saveOrders(orders);
   const orderSn = String(orders[index4].orderSn || "");
   console.log(
-    `[Shopee Trap] DB updateOne DONE | order_sn=${orderSn} | is_pending_shopee_check=${orders[index4].is_pending_shopee_check} | saved_to=orders.json`
+    `[Shopee Trap] Mongo updateOne | order_sn=${orderSn} | is_pending_shopee_check=${orders[index4].is_pending_shopee_check}`
   );
   if (isMongoReady() && orderSn) {
     try {
@@ -219303,8 +219302,7 @@ async function startServer2() {
             };
             orders[index4] = patched;
           }
-          bumpProgress();
-          return {
+          const jobResult = {
             orderId: order.id,
             orderSn: order.orderSn,
             success: treatedAsSuccess,
@@ -219318,6 +219316,9 @@ async function startServer2() {
             trackingNumber: result.trackingNumber,
             skipped: result.skipped
           };
+          job.results = [...job.results, jobResult];
+          bumpProgress();
+          return jobResult;
         })
       );
       const results = [];

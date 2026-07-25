@@ -1406,6 +1406,7 @@ export default function OrderManager({
   const [progressCompleted, setProgressCompleted] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
   const [progressDone, setProgressDone] = useState(false);
+  const [shipJobResults, setShipJobResults] = useState<any[]>([]);
   const [shipConfirmSummary, setShipConfirmSummary] = useState<{
     total: number;
     successCount: number;
@@ -2187,6 +2188,31 @@ export default function OrderManager({
     };
   };
 
+  const pollShipJobUntilDone = async (jobId: string, total: number): Promise<any | null> => {
+    const deadline = Date.now() + 5 * 60 * 1000;
+    let finalJob: any | null = null;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      try {
+        const response = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
+        if (!response.ok) throw new Error('Không thể đọc tiến độ xác nhận.');
+        const job = await parseJsonResponse<any>(response);
+        finalJob = job;
+        setProgressCompleted(Number(job.completed) || 0);
+        setProgressTotal(Number(job.total) || total);
+        setShipJobResults(Array.isArray(job.results) ? job.results : []);
+        if (job.status === 'done' || job.status === 'failed') return job;
+        setProgressMessage(
+          job.message || `Đang xác nhận ${Number(job.completed) || 0}/${Number(job.total) || total} đơn...`,
+        );
+      } catch (error) {
+        setProgressMessage(error instanceof Error ? error.message : 'Không thể đọc tiến độ xác nhận.');
+        return finalJob;
+      }
+    }
+    return finalJob;
+  };
+
   /** Kết thúc xác nhận — Result Summary modal (theo dõi tiến độ thật). */
   const finishShipJobResult = async (finalJob: any | null, total: number) => {
     const results = finalJob?.results || [];
@@ -2259,6 +2285,12 @@ export default function OrderManager({
 
     setShipConfirmOrders(null);
     setShipConfirmSummary(null);
+    setShipJobResults([]);
+    setIsShipping(true);
+    setProgressCompleted(0);
+    setProgressTotal(totalQueued);
+    setProgressDone(false);
+    setProgressMessage(`Đang gửi yêu cầu xác nhận 0/${totalQueued} đơn...`);
     showToast('Đang gửi yêu cầu...');
 
     onAddLog({
@@ -2277,9 +2309,6 @@ export default function OrderManager({
         body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
       });
 
-      // This is intentionally before parsing the response: no modal can remain
-      // mounted while awaiting body consumption or subsequent job polling.
-      if (res.status === 202) clearShipProgressOverlay();
       const data = await readResponseJson<any>(res);
       if (!res.ok && res.status !== 202) {
         showToast(data.message || data.error || data.detail || 'Không thể bắt đầu xác nhận đơn hàng.');
@@ -2294,12 +2323,18 @@ export default function OrderManager({
         return;
       }
 
-      // Fire-and-forget: never poll or surface Shopee execution progress here.
-      showToast('Đã đưa vào hàng đợi xử lý ngầm.', 2000);
+      setProgressMessage('Đã tiếp nhận, đang xác nhận đơn trên Shopee...');
+      const total = Number(data.total) || totalQueued;
+      const finalJob = await pollShipJobUntilDone(String(data.jobId), total);
+      await finishShipJobResult(finalJob, total);
       return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
+      setProgressDone(true);
+      setProgressMessage(`Xác nhận thất bại: ${msg}`);
+    } finally {
+      setIsShipping(false);
     }
   };
 
@@ -4694,6 +4729,20 @@ export default function OrderManager({
                       )}
                     </div>
                   </div>
+                  {shipJobResults.length > 0 && (
+                    <ul className="w-full max-h-36 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 text-left divide-y divide-slate-100">
+                      {shipJobResults.map((result, index) => (
+                        <li key={`${result.orderSn || result.orderId || index}-${index}`} className="px-3 py-2 text-xs">
+                          <span className={result.success ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+                            {result.orderSn || result.orderId || '—'}: {result.success ? 'Thành công' : 'Thất bại'}
+                          </span>
+                          {!result.success && (result.message || result.error) && (
+                            <span className="text-rose-600"> — {result.message || result.error}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <div className="flex w-full gap-3 pt-1">
                     <button
                       type="button"
@@ -4773,6 +4822,21 @@ export default function OrderManager({
                       </div>
                     )}
                   </div>
+
+                  {shipJobResults.length > 0 && (
+                    <ul className="w-full max-h-32 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 text-left divide-y divide-slate-100">
+                      {shipJobResults.map((result, index) => (
+                        <li key={`${result.orderSn || result.orderId || index}-${index}`} className="px-3 py-2 text-xs">
+                          <span className={result.success ? 'font-bold text-emerald-700' : 'font-bold text-rose-700'}>
+                            {result.orderSn || result.orderId || '—'}: {result.success ? 'Thành công' : 'Thất bại'}
+                          </span>
+                          {!result.success && (result.message || result.error) && (
+                            <span className="text-rose-600"> — {result.message || result.error}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
 
                   <div className={`flex items-center gap-2 text-xs ${progressDone ? 'text-emerald-600' : 'text-gray-500'} font-semibold px-4 py-2 rounded-full ${progressDone ? 'bg-emerald-50' : 'bg-gray-50'} transition-all duration-300`}>
                     {progressDone ? (

@@ -12134,7 +12134,7 @@ function markOrderPendingShopeeCheck(order: any, reason?: string): any {
   return next;
 }
 
-/** Persist flag trap ngay xuống orders.json + Mongo (nếu có). */
+/** Persist pending flag to Mongo only; orders.json is not part of order state. */
 async function persistPendingShopeeCheckFlag(
   orders: any[],
   index: number,
@@ -12142,10 +12142,9 @@ async function persistPendingShopeeCheckFlag(
 ): Promise<any> {
   if (index < 0 || index >= orders.length) return null;
   orders[index] = markOrderPendingShopeeCheck(orders[index], reason);
-  saveOrders(orders);
   const orderSn = String(orders[index].orderSn || "");
   console.log(
-    `[Shopee Trap] DB updateOne DONE | order_sn=${orderSn} | is_pending_shopee_check=${orders[index].is_pending_shopee_check} | saved_to=orders.json`,
+    `[Shopee Trap] Mongo updateOne | order_sn=${orderSn} | is_pending_shopee_check=${orders[index].is_pending_shopee_check}`,
   );
   if (isMongoReady() && orderSn) {
     try {
@@ -18248,8 +18247,7 @@ async function startServer() {
             orders[index] = patched;
           }
 
-          bumpProgress();
-          return {
+          const jobResult = {
             orderId: order.id,
             orderSn: order.orderSn,
             success: treatedAsSuccess,
@@ -18263,6 +18261,11 @@ async function startServer() {
             trackingNumber: result.trackingNumber,
             skipped: result.skipped,
           };
+          // Expose each completed order immediately for the polling modal; the
+          // final bulkWrite still remains one atomic Mongo operation.
+          job.results = [...job.results, jobResult];
+          bumpProgress();
+          return jobResult;
         }),
       );
 
