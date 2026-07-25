@@ -27,6 +27,7 @@
     "src/**/*",
     "api/**/*",
     "server.ts",
+    "devServer.ts",
     "vite.config.ts",
     "scripts/**/*"
   ],

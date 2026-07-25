@@ -138,6 +138,20 @@ function resolveAppRoot(): string {
 }
 
 const APP_ROOT = resolveAppRoot();
+const isCpanelPassengerRuntime = Boolean(
+  String(
+    process.env.PASSENGER_APP_ROOT ||
+      process.env.PASSENGER_APP_ENV ||
+      process.env.CPANEL_APP_NAME ||
+      process.env.CPANEL_RUNTIME ||
+      "",
+  ).trim(),
+);
+const isDevelopmentRuntime = process.env.NODE_ENV !== "production" && !isCpanelPassengerRuntime;
+
+if (isCpanelPassengerRuntime) {
+  console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
+}
 
 // Load .env — ưu tiên APP_ROOT (cPanel/Passenger), rồi cwd, rồi mặc định dotenv.
 const dotenvCandidates = [
@@ -9001,6 +9015,224 @@ async function enrichShopeeOrderTrackingFromApi(
   return order;
 }
 
+const SHOPEE_TRACKING_ENRICH_INTERVAL_MS = 10 * 60 * 1000;
+const SHOPEE_TRACKING_ENRICH_LOOKBACK_MS = 14 * 24 * 60 * 60 * 1000;
+const SHOPEE_TRACKING_ENRICH_BATCH_LIMIT = 40;
+const SHOPEE_TRACKING_ENRICH_BATCH_SIZE = 10;
+let shopeeTrackingEnrichInFlight = false;
+let shopeeTrackingEnrichTimer: ReturnType<typeof setInterval> | undefined;
+
+function getShopeeTrackingCandidateTime(order: any): number {
+  const raw =
+    order?.last_shopee_update_at ||
+    order?.lastSynced ||
+    order?.last_synced_at ||
+    order?.updatedAt ||
+    order?.date;
+  const value = raw instanceof Date ? raw.getTime() : new Date(String(raw || "")).getTime();
+  return Number.isFinite(value) ? value : 0;
+}
+
+function hasUsableOutboundShopeeTracking(order: any): boolean {
+  const tracking = String(
+    order?.trackingNumber || order?.tracking_no || order?.shopee_tracking_number || "",
+  ).trim();
+  return Boolean(tracking && !isShopeeInternalTrackingCode(tracking));
+}
+
+function needsBackgroundShopeeTrackingEnrichment(order: any, cutoffMs: number): boolean {
+  if (!order || String(order.channel || "") !== "shopee") return false;
+  if (getShopeeTrackingCandidateTime(order) < cutoffMs) return false;
+
+  const isReturn = Boolean(order.return_sn) || isCancelOrReturnOrderStatus(order);
+  const missingOutbound = !hasUsableOutboundShopeeTracking(order);
+  const missingReturn = !String(order.return_tracking_no || "").trim();
+  if (isReturn) return missingOutbound || missingReturn;
+  return missingOutbound && orderMayHaveShopeeTrackingNumber(order);
+}
+
+/**
+ * Bù mã vận đơn bị webhook/pull nhanh bỏ lỡ. Chạy tuần tự theo shop để giữ
+ * rate-limit Shopee ổn định; mutex riêng không ảnh hưởng luồng pull đơn.
+ */
+async function enrichMissingShopeeTracking(): Promise<{
+  skipped?: boolean;
+  candidates: number;
+  filled: number;
+  returnFilled: number;
+  errors: number;
+}> {
+  if (shopeeTrackingEnrichInFlight) {
+    console.log("[Shopee Tracking Enrich] SKIPPED — job đang chạy (mutex busy).");
+    return { skipped: true, candidates: 0, filled: 0, returnFilled: 0, errors: 0 };
+  }
+  if (!isMongoReady()) {
+    console.warn("[Shopee Tracking Enrich] SKIPPED — Mongo chưa sẵn sàng.");
+    return { skipped: true, candidates: 0, filled: 0, returnFilled: 0, errors: 0 };
+  }
+
+  shopeeTrackingEnrichInFlight = true;
+  const retryBefore = snapshotShopeeRetryTelemetry();
+  let jobId = "";
+  let filled = 0;
+  let returnFilled = 0;
+  let errors = 0;
+  let candidatesCount = 0;
+  try {
+    const cutoffMs = Date.now() - SHOPEE_TRACKING_ENRICH_LOOKBACK_MS;
+    const orders = await loadOrdersFromStore();
+    const candidates = orders
+      .filter((order: any) => needsBackgroundShopeeTrackingEnrichment(order, cutoffMs))
+      .sort((a: any, b: any) => getShopeeTrackingCandidateTime(b) - getShopeeTrackingCandidateTime(a))
+      .slice(0, SHOPEE_TRACKING_ENRICH_BATCH_LIMIT);
+    candidatesCount = candidates.length;
+    if (candidates.length === 0) {
+      console.log("[Shopee Tracking Enrich] Không có đơn thiếu mã trong 14 ngày.");
+      return { candidates: 0, filled: 0, returnFilled: 0, errors: 0 };
+    }
+
+    const job = await createSyncJob("shopee_tracking_enrich", "scheduler");
+    jobId = job.id;
+    const byShop = new Map<string, any[]>();
+    for (const order of candidates) {
+      const shopId = resolveOrderShopId(order);
+      if (!shopId) {
+        errors += 1;
+        console.warn(`[Shopee Tracking Enrich] Skip order_sn=${order.orderSn} — thiếu shop_id.`);
+        continue;
+      }
+      const group = byShop.get(shopId) || [];
+      group.push(order);
+      byShop.set(shopId, group);
+    }
+
+    for (const [shopId, shopOrders] of byShop) {
+      try {
+        const accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) {
+          errors += shopOrders.length;
+          console.warn(`[Shopee Tracking Enrich] Shop ${shopId}: không lấy được access_token.`);
+          continue;
+        }
+
+        let shopFilled = 0;
+        let shopReturnFilled = 0;
+        await runInShopeeBatches(
+          shopOrders,
+          async (order) => {
+            const outboundBefore = String(order.trackingNumber || order.tracking_no || "").trim();
+            const returnBefore = String(order.return_tracking_no || "").trim();
+            try {
+              // Full enrich cho đơn hoàn để chạy cả returns API; khôi phục outbound
+              // sau đó vì mã chiều về luôn phải nằm riêng trong return_tracking_no.
+              await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, {
+                light: false,
+                retries: 2,
+              });
+              if (outboundBefore) {
+                order.trackingNumber = outboundBefore;
+                order.tracking_no = outboundBefore;
+              }
+
+              const returnSn = String(order.return_sn || "").trim();
+              if (returnSn && !String(order.return_tracking_no || "").trim()) {
+                const detail = await shopeeGetReturnDetail(shopId, accessToken, returnSn);
+                if (!detail?.error) {
+                  const returnTracking = await fetchReturnShippingTrackingNumber(
+                    shopId,
+                    accessToken,
+                    returnSn,
+                    detail,
+                  );
+                  if (returnTracking.tracking) order.return_tracking_no = returnTracking.tracking;
+                }
+              }
+
+              const outboundAfter = hasUsableOutboundShopeeTracking(order);
+              const returnAfter = String(order.return_tracking_no || "").trim();
+              if (outboundAfter && !outboundBefore) {
+                filled += 1;
+                shopFilled += 1;
+              }
+              if (returnAfter && !returnBefore) {
+                returnFilled += 1;
+                shopReturnFilled += 1;
+              }
+              // return_tracking_no không thuộc updateOrderTrackingInStore, nên upsert
+              // toàn bộ snapshot để Mongo giữ mã chiều về mà không thay outbound hợp lệ.
+              if (outboundAfter || returnAfter) await bulkUpsertOrdersToStore([order]);
+            } catch (error: any) {
+              errors += 1;
+              console.warn(
+                `[Shopee Tracking Enrich] order_sn=${order.orderSn} shop=${shopId} failed:`,
+                error?.message || error,
+              );
+            }
+          },
+          {
+            batchSize: SHOPEE_TRACKING_ENRICH_BATCH_SIZE,
+            itemDelayMs: SHOPEE_TRACKING_FETCH_DELAY_MS,
+            batchPauseMs: SHOPEE_SYNC_CHUNK_DELAY_MS,
+          },
+        );
+        console.log(
+          `[Shopee Tracking Enrich] shop=${shopId} candidates=${shopOrders.length} ` +
+            `outbound_filled=${shopFilled} return_filled=${shopReturnFilled}`,
+        );
+      } catch (shopError: any) {
+        errors += shopOrders.length;
+        console.warn(
+          `[Shopee Tracking Enrich] Shop ${shopId} failed; tiếp tục shop khác:`,
+          shopError?.message || shopError,
+        );
+      }
+    }
+
+    await finishSyncJob(jobId, "succeeded", {
+      candidates: candidatesCount,
+      filled,
+      return_filled: returnFilled,
+      errors,
+      retry: diffShopeeRetryTelemetry(retryBefore),
+    });
+    console.log(
+      `[Shopee Tracking Enrich] DONE candidates=${candidatesCount} filled=${filled} ` +
+        `return_filled=${returnFilled} errors=${errors}`,
+    );
+    return { candidates: candidatesCount, filled, returnFilled, errors };
+  } catch (error: any) {
+    console.error("[Shopee Tracking Enrich] FAILED:", error?.stack || error?.message || error);
+    if (jobId) {
+      await finishSyncJob(
+        jobId,
+        "failed",
+        {
+          candidates: candidatesCount,
+          filled,
+          return_filled: returnFilled,
+          errors,
+          retry: diffShopeeRetryTelemetry(retryBefore),
+        },
+        error?.message || String(error),
+      );
+    }
+    return { candidates: candidatesCount, filled, returnFilled, errors: errors + 1 };
+  } finally {
+    shopeeTrackingEnrichInFlight = false;
+  }
+}
+
+function scheduleMissingShopeeTrackingEnrichment(): void {
+  if (shopeeTrackingEnrichTimer) return;
+  shopeeTrackingEnrichTimer = setInterval(() => {
+    void enrichMissingShopeeTracking();
+  }, SHOPEE_TRACKING_ENRICH_INTERVAL_MS);
+  if (typeof (shopeeTrackingEnrichTimer as any).unref === "function") {
+    (shopeeTrackingEnrichTimer as any).unref();
+  }
+  console.log("[Shopee Tracking Enrich] Scheduler ON — mỗi 10 phút, tối đa 40 đơn / lượt.");
+}
+
 /**
  * Scanner chuyên trị mã vận đơn:
  * Query mọi đơn READY_TO_SHIP / SHIPPING / CANCELLED / TO_RETURN (và PROCESSED…) thiếu tracking_no,
@@ -10383,6 +10615,7 @@ type OrderLookupIndex = {
   byId: Map<string, number>;
   byOrderSn: Map<string, number>;
   byTracking: Map<string, number>;
+  byReturnTracking: Map<string, number>;
   byInternal: Map<string, number>;
   byPackage: Map<string, number>;
 };
@@ -10400,6 +10633,7 @@ function rebuildOrderLookupIndex(orders: any[]): OrderLookupIndex {
   const byId = new Map<string, number>();
   const byOrderSn = new Map<string, number>();
   const byTracking = new Map<string, number>();
+  const byReturnTracking = new Map<string, number>();
   const byInternal = new Map<string, number>();
   const byPackage = new Map<string, number>();
 
@@ -10417,11 +10651,12 @@ function rebuildOrderLookupIndex(orders: any[]): OrderLookupIndex {
     put(byOrderSn, order.order_sn);
     put(byTracking, order.trackingNumber);
     put(byTracking, order.tracking_no);
+    put(byReturnTracking, order.return_tracking_no);
     put(byInternal, order.internalTrackingCode);
     put(byPackage, order.packageNumber);
   });
 
-  return { byId, byOrderSn, byTracking, byInternal, byPackage };
+  return { byId, byOrderSn, byTracking, byReturnTracking, byInternal, byPackage };
 }
 
 function getOrderLookupIndex(orders: any[]): OrderLookupIndex {
@@ -16321,14 +16556,21 @@ async function startServer() {
     return false;
   }
 
-  /** Flexible OR: orderSn OR trackingNumber OR packageNumber — index O(1) first, suffix fallback. */
+  /** Flexible OR: orderSn OR outbound/return tracking OR packageNumber — index O(1) first, suffix fallback. */
   async function findOrderByScanLookup(orders: any[], raw: string): any | null {
     const scanKeys = await buildScanLookupKeys(raw);
     if (!scanKeys.length) return null;
 
     const idx = getOrderLookupIndex(orders);
     for (const sk of scanKeys) {
-      for (const map of [idx.byTracking, idx.byInternal, idx.byOrderSn, idx.byPackage, idx.byId]) {
+      for (const map of [
+        idx.byTracking,
+        idx.byReturnTracking,
+        idx.byInternal,
+        idx.byOrderSn,
+        idx.byPackage,
+        idx.byId,
+      ]) {
         const hit = map.get(sk);
         if (hit !== undefined) return orders[hit];
       }
@@ -16341,8 +16583,12 @@ async function startServer() {
     if (trackingLike) {
       for (const order of orders) {
         const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
+        const returnTrackingKey = order.return_tracking_no
+          ? normalizeScanLookupKey(order.return_tracking_no)
+          : "";
         const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
         if (trackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, trackingKey))) return order;
+        if (returnTrackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, returnTrackingKey))) return order;
         if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey))) return order;
       }
     }
@@ -16358,6 +16604,9 @@ async function startServer() {
     for (const order of orders) {
       const orderSnKey = normalizeScanLookupKey(order.orderSn);
       const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
+      const returnTrackingKey = order.return_tracking_no
+        ? normalizeScanLookupKey(order.return_tracking_no)
+        : "";
       const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
       const packageKey = order.packageNumber ? normalizeScanLookupKey(order.packageNumber) : "";
       const idKey = normalizeScanLookupKey(String(order.id || "").replace(/^shopee-/i, ""));
@@ -16366,6 +16615,7 @@ async function startServer() {
         (sk) =>
           flexibleScanCodeMatch(sk, orderSnKey) ||
           flexibleScanCodeMatch(sk, trackingKey) ||
+          flexibleScanCodeMatch(sk, returnTrackingKey) ||
           flexibleScanCodeMatch(sk, internalKey) ||
           flexibleScanCodeMatch(sk, packageKey) ||
           flexibleScanCodeMatch(sk, idKey)
@@ -16375,7 +16625,7 @@ async function startServer() {
     return null;
   }
 
-  // Lookup order by scanned QR/barcode — matches orderSn OR trackingNumber OR internalTrackingCode OR packageNumber.
+  // Lookup order by scanned QR/barcode — matches orderSn, outbound/return tracking, internalTrackingCode, or packageNumber.
   app.get("/api/orders/lookup", authMiddleware, async (req, res) => {
     const code = String(req.query.code || req.query.q || "").trim();
     if (!code) {
@@ -20878,17 +21128,15 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     return sendApiErrorJson(res, err, 500);
   });
 
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    vite.watcher.on("error", (err: Error) => {
-      console.warn("[Vite] Watcher error (bỏ qua, server vẫn chạy):", err.message);
-    });
-    app.use(vite.middlewares);
+  if (isDevelopmentRuntime) {
+    // The computed import keeps all development tooling out of server.cjs.
+    const developmentModulePath = ["./", "dev", "Server.ts"].join("");
+    const { setupDevelopmentMiddleware } = await import(developmentModulePath);
+    await setupDevelopmentMiddleware(app);
   } else {
+    if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
+      console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
+    }
     const distPath = path.join(APP_ROOT, "dist");
     app.use(express.static(distPath, {
       setHeaders(res, filePath) {
@@ -20927,6 +21175,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       const ok = await initMongo(APP_ROOT);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
+        scheduleMissingShopeeTrackingEnrichment();
       }
       // KHÔNG tự xóa đơn ĐVVC khi boot — chỉ qua POST /api/orders/cleanup-handed-over.
       console.log(`[MongoDB] connectDB xong — ready=${isMongoReady()} uri=${getMongoUriMasked()}`);

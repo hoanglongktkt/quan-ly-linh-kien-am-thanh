@@ -30,4 +30,4 @@ git commit -m "build: update precompiled cPanel server"
 git push
 ```
 
-cPanel/Passenger must use `server.cjs` as its startup file and run `npm start` only. Do not run `npm run build`, `tsx`, Vite, or any compile command on cPanel. `npm run build:cpanel` only verifies that the prebuilt `server.cjs` exists.
+cPanel/Passenger must use `server.cjs` as its startup file, set `NODE_ENV=production`, and run one Application instance only. Do not run `npm run dev`, `tsx server.ts`, Vite, or any compile command on cPanel. `npm run build:cpanel` only verifies that the prebuilt `server.cjs` exists.
