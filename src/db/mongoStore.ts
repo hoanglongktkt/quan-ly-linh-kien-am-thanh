@@ -117,9 +117,18 @@ const OrderSchema = new Schema<OrderDoc>(
   { collection: "orders", versionKey: false }
 );
 
-// Compound index bắt buộc cho multi-shop: mọi query/upsert đơn hàng phải lọc
-// theo cặp (orderSn, shopId) để tránh đè chéo dữ liệu giữa các shop khác nhau
-// có cùng orderSn (về lý thuyết hiếm nhưng vẫn phải chặn ở tầng DB).
+// `order_sn` của Shopee là định danh toàn cục. Enforce uniqueness ở database để
+// bulk upsert/lookup là O(log n) và webhook trùng không tạo thêm document. Partial
+// filter giữ các record legacy chưa có orderSn ngoài unique constraint.
+OrderSchema.index(
+  { orderSn: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { orderSn: { $type: "string" } },
+    name: "orderSn_unique",
+  },
+);
+// Giữ compound index cho các truy vấn theo shop trong luồng reconciliation.
 OrderSchema.index({ orderSn: 1, shopId: 1 });
 // Hỗ trợ Dashboard aggregation lọc theo ngày / doanh thu mà không quét toàn bộ collection.
 OrderSchema.index({ "data.date": 1 });

@@ -2241,8 +2241,52 @@ export default function OrderManager({
     return finalJob;
   };
 
+  const pollShipJobInBackground = (jobId: string, total: number) => {
+    const pollToken = ++shipBgPollAbortRef.current;
+    void (async () => {
+      const deadline = Date.now() + 5 * 60 * 1000;
+      let finalJob: any | null = null;
+      while (Date.now() < deadline && pollToken === shipBgPollAbortRef.current) {
+        await new Promise((r) => setTimeout(r, 500));
+        try {
+          const response = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
+          if (!response.ok) throw new Error('Không thể đọc tiến độ xác nhận.');
+          const job = await parseJsonResponse<any>(response);
+          finalJob = job;
+          const completed = Number(job.completed) || 0;
+          const jobTotal = Number(job.total) || total;
+          if (job.status === 'done' || job.status === 'failed') break;
+          setBackgroundShipNotice({
+            status: 'running',
+            completed,
+            total: jobTotal,
+            successCount: Number(job.successCount) || 0,
+            failCount: Number(job.failCount ?? job.failedCount) || 0,
+            successfulOrderIds: [],
+            message: job.message || 'Đang xác nhận đơn trên Shopee...',
+          });
+        } catch (error) {
+          setBackgroundShipNotice((notice) =>
+            notice
+              ? { ...notice, status: 'done', message: 'Không thể theo dõi tiến độ. Hãy tải lại danh sách đơn.' }
+              : notice,
+          );
+          return;
+        }
+      }
+      if (pollToken !== shipBgPollAbortRef.current) return;
+      await finishShipJobResult(finalJob, total, true);
+      showToast(finalJob?.status === 'failed' ? 'Xác nhận có lỗi, hãy xem thông báo.' : 'Đã xác nhận đơn hàng.');
+      try {
+        await onFetchOrders?.({ silent: true });
+      } catch {
+        /* background refresh is best-effort */
+      }
+    })();
+  };
+
   /** Kết thúc xác nhận — Result Summary modal (theo dõi tiến độ thật). */
-  const finishShipJobResult = async (finalJob: any | null, total: number) => {
+  const finishShipJobResult = async (finalJob: any | null, total: number, background = false) => {
     const results = finalJob?.results || [];
     const summary = buildShipConfirmSummary(finalJob || {}, total);
     const report = `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn.`;
@@ -2256,12 +2300,24 @@ export default function OrderManager({
       message: `${report} (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'})`,
     });
 
-    setProgressCompleted(summary.successCount);
-    setProgressTotal(Math.max(total, summary.total, summary.successCount + summary.failCount));
-    setProgressDone(true);
-    setProgressMessage('Kết quả xác nhận hàng loạt');
-    setShipConfirmSummary(summary);
-    setBackgroundShipNotice(null);
+    if (background) {
+      setBackgroundShipNotice({
+        status: 'done',
+        completed: summary.total,
+        total: Math.max(total, summary.total),
+        successCount: summary.successCount,
+        failCount: summary.failCount,
+        successfulOrderIds: summary.successfulOrderIds,
+        message: report,
+      });
+    } else {
+      setProgressCompleted(summary.successCount);
+      setProgressTotal(Math.max(total, summary.total, summary.successCount + summary.failCount));
+      setProgressDone(true);
+      setProgressMessage('Kết quả xác nhận hàng loạt');
+      setShipConfirmSummary(summary);
+      setBackgroundShipNotice(null);
+    }
 
     const confirmed = results.filter((r: any) => r?.success);
     if (confirmed.length > 0) {
@@ -2382,13 +2438,19 @@ export default function OrderManager({
         return;
       }
 
-      setProgressMessage('Đang gọi API Shopee...');
-      const finalJob = await pollShipJobUntilDone(jobId, total);
-      if (finalJob?.status === 'failed' && !(finalJob?.successCount > 0)) {
-        showToast(finalJob.message || finalJob.error || 'Xác nhận đơn thất bại. Vui lòng thử lại.');
-      }
-      await finishShipJobResult(finalJob, total);
-      keepSummaryModal = true;
+      clearShipProgressOverlay();
+      setBackgroundShipNotice({
+        status: 'running',
+        completed: 0,
+        total,
+        successCount: 0,
+        failCount: 0,
+        successfulOrderIds: [],
+        message: 'Đã tiếp nhận yêu cầu, đang xác nhận đơn trên Shopee.',
+      });
+      showToast(`Đang xác nhận ${total} đơn trong nền.`);
+      pollShipJobInBackground(jobId, total);
+      return;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);

@@ -204608,6 +204608,14 @@ var OrderSchema = new import_mongoose.Schema(
   },
   { collection: "orders", versionKey: false }
 );
+OrderSchema.index(
+  { orderSn: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { orderSn: { $type: "string" } },
+    name: "orderSn_unique"
+  }
+);
 OrderSchema.index({ orderSn: 1, shopId: 1 });
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
@@ -209133,6 +209141,17 @@ var shopeeSyncQueue = [];
 var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
 var shopeeSyncQueueRunning = false;
 var cpanelHeavyJobActive = null;
+function tryAcquireHeavyJob(name) {
+  if (cpanelHeavyJobActive) {
+    console.warn(`[Heavy Job] T\u1EEB ch\u1ED1i "${name}" \u2014 "${cpanelHeavyJobActive}" \u0111ang ch\u1EA1y`);
+    return false;
+  }
+  cpanelHeavyJobActive = name;
+  return true;
+}
+function releaseHeavyJob(name) {
+  if (cpanelHeavyJobActive === name) cpanelHeavyJobActive = null;
+}
 function detectStockPriceChanges(before, after) {
   const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
   const stockAfter = Math.max(0, Math.round(Number(after?.stock) || 0));
@@ -212238,21 +212257,36 @@ function getScanProcessedReason(order) {
   if (local === "RETURN_RECEIVED") return "\u0110\u01A1n \u0111\xE3 nh\u1EADn h\xE0ng ho\xE0n tr\u01B0\u1EDBc \u0111\xF3";
   return "\u0110\u01A1n \u0111\xE3 \u0111\u01B0\u1EE3c x\u1EED l\xFD tr\u01B0\u1EDBc \u0111\xF3";
 }
+var ordersJsonMirrorQueued = false;
+var ordersJsonMirrorSnapshot = null;
+function queueOrdersJsonMirror(orders) {
+  ordersJsonMirrorSnapshot = Array.isArray(orders) ? orders : [];
+  if (ordersJsonMirrorQueued) return;
+  ordersJsonMirrorQueued = true;
+  setImmediate(() => {
+    const snapshot = ordersJsonMirrorSnapshot;
+    ordersJsonMirrorSnapshot = null;
+    ordersJsonMirrorQueued = false;
+    if (!snapshot) return;
+    try {
+      saveOrders(snapshot);
+    } catch (err2) {
+      console.warn("[Orders JSON Mirror] skipped:", err2?.message || err2);
+    }
+    if (ordersJsonMirrorSnapshot) queueOrdersJsonMirror(ordersJsonMirrorSnapshot);
+  });
+}
 async function persistOrdersToDatabase(orders, changedOrders) {
-  saveOrders(orders);
-  if (!isMongoReady() || !changedOrders.length) {
-    console.log(
-      `[Orders Persist] JSON OK \u2014 changed=${changedOrders.length} mongoReady=${isMongoReady()}`
-    );
-    return changedOrders.length;
-  }
+  if (!changedOrders.length) return 0;
+  if (!isMongoReady()) throw new Error("mongodb_not_ready");
   try {
     const n5 = await bulkUpsertOrdersToStore(changedOrders);
+    queueOrdersJsonMirror(orders);
     console.log(`[Orders Persist] Mongo bulkWrite OK \u2014 upsertedDocs=${n5}`);
     return n5;
   } catch (err2) {
     console.error("[Orders Persist] Mongo bulkWrite failed:", err2?.message || err2);
-    return changedOrders.length;
+    throw err2;
   }
 }
 function mergeShopeeOrderOnSync(existing, incoming) {
@@ -212325,8 +212359,9 @@ function mergeShopeeOrderOnSync(existing, incoming) {
     isShopeeTerminalRawStatus(existingRaw) && shopeeLifecycleRank(incomingRaw) < shopeeLifecycleRank(existingRaw)
   ) {
     merged.shopee_order_status = existingRaw;
-    merged.status = existingRaw === "COMPLETED" ? "completed" : "shipping";
-    merged.isPrepared = true;
+    const existingCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL";
+    merged.status = existingCancelled ? "cancelled" : existingRaw === "COMPLETED" ? "completed" : "shipping";
+    merged.isPrepared = !existingCancelled;
     merged.is_pending_shopee_check = false;
   } else if (incomingRaw === "PROCESSED") {
     if (merged.status !== "shipping" && merged.status !== "completed") {
@@ -212614,32 +212649,12 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       continue;
     }
   }
-  const jsonOk = saveOrders(orders);
-  if (!jsonOk) {
-    console.error(
-      `L\u1ED6I SYNC SHOPEE: saveOrders th\u1EA5t b\u1EA1i sau merge batch (+${added}/~${updated}) \u2014 d\u1EEF li\u1EC7u c\xF3 th\u1EC3 ch\u01B0a l\xEAn \u0111\u0129a.`
-    );
-    throw new Error("save_orders_json_failed");
-  }
-  console.log(
-    `[Orders Sync] JSON saved \u2014 totalOrders=${orders.length} batchTouched=${touched.length} (+${added}/~${updated})`
-  );
-  if (touched.length > 0 && isMongoReady()) {
-    try {
-      const mongoN = await bulkUpsertOrdersToStore(touched);
-      console.log(
-        `[DB UPDATED] Mongo bulkWrite OK \u2014 batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o6) => o6.orderSn).join(",")}`
-      );
-    } catch (mongoErr) {
-      console.error(
-        "L\u1ED6I SYNC SHOPEE: Mongo bulkWrite l\xF4 th\u1EA5t b\u1EA1i:",
-        mongoErr?.message || mongoErr,
-        mongoErr?.stack || ""
-      );
-    }
-  } else if (touched.length > 0 && !isMongoReady()) {
-    console.warn(
-      `[Orders Sync] Mongo CH\u01AFA READY \u2014 ch\u1EC9 ghi JSON (+${added}/~${updated}). Ki\u1EC3m tra MONGODB_URI.`
+  if (touched.length > 0) {
+    if (!isMongoReady()) throw new Error("mongodb_not_ready");
+    const mongoN = await bulkUpsertOrdersToStore(touched);
+    queueOrdersJsonMirror(orders);
+    console.log(
+      `[DB UPDATED] Mongo bulkWrite OK \u2014 batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o6) => o6.orderSn).join(",")}`
     );
   }
   if (syncCtx) {
@@ -212668,7 +212683,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
           await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
         }
       }
-      saveOrders(orders);
+      queueOrdersJsonMirror(orders);
     }
   }
   return { added, updated };
@@ -212738,161 +212753,19 @@ function mirrorTrackingFieldsForRead(order) {
   if (order.trackingNumber && !order.tracking_no) order.tracking_no = order.trackingNumber;
   return order;
 }
-var lastMongoOrderReconcileAt = 0;
 var MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1e3;
-var MONGO_ORDER_RECONCILE_LIMIT = 50;
-async function reconcileMongoOrdersWithShopee(jsonOrders, mongoOrders) {
-  if (Date.now() - lastMongoOrderReconcileAt < MONGO_ORDER_RECONCILE_COOLDOWN_MS) return 0;
-  const jsonSns = new Set(
-    jsonOrders.map((order) => String(order?.orderSn || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-  );
-  const candidates = mongoOrders.filter((order) => {
-    const sn3 = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
-    const shopId = String(order?.shopId || "").trim();
-    const status2 = String(order?.status || "").trim();
-    return String(order?.channel || "") === "shopee" && Boolean(sn3 && shopId) && (!jsonSns.has(sn3) || status2 === "pending_confirm" || status2 === "pending_verification");
-  }).slice(0, MONGO_ORDER_RECONCILE_LIMIT);
-  if (candidates.length === 0) return 0;
-  lastMongoOrderReconcileAt = Date.now();
-  const byShop = /* @__PURE__ */ new Map();
-  for (const order of candidates) {
-    const shopId = String(order.shopId).trim();
-    const sn3 = String(order.orderSn).replace(/^shopee-/i, "").trim();
-    const sns = byShop.get(shopId) || [];
-    sns.push(sn3);
-    byShop.set(shopId, sns);
-  }
-  let reconciled = 0;
-  for (const [shopId, orderSns] of byShop) {
-    const auth = await getShopeeAccessTokenForApi(shopId);
-    if (!auth?.token) continue;
-    const { normalized } = await fetchNormalizeShopeeOrderChunk(
-      auth.apiShopId,
-      auth.token,
-      auth.fileKey || shopId,
-      orderSns
-    );
-    if (normalized.length === 0) continue;
-    const result = await persistShopeeOrderChunk(jsonOrders, normalized, {
-      apiShopId: auth.apiShopId,
-      accessToken: auth.token
-    });
-    reconciled += result.added + result.updated;
-  }
-  if (reconciled > 0) {
-    console.log(`[Shopee Reconcile] Mongo-only/stuck orders healed=${reconciled}`);
-  }
-  return reconciled;
-}
 async function loadOrdersForApi(opts) {
-  const readOnly = Boolean(opts?.readOnly);
-  const normalize4 = readOnly ? mirrorTrackingFieldsForRead : repairMisassignedTracking;
-  const jsonOrders = loadOrders().filter(isValidOrder).map(normalize4);
-  if (!isMongoReady()) return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
-  let mongoOrders = [];
+  const normalize4 = opts?.readOnly ? mirrorTrackingFieldsForRead : repairMisassignedTracking;
+  if (!isMongoReady()) {
+    throw new Error("mongodb_not_ready");
+  }
   try {
-    mongoOrders = (await loadOrdersFromStore()).map(normalize4);
+    const orders = (await loadOrdersFromStore()).filter(isValidOrder).map(normalize4);
+    return { orders, dirty: false, handoverMongoSync: [] };
   } catch (err2) {
-    console.warn("[Orders] loadOrdersFromStore skip:", err2?.message || err2);
-    return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
+    console.warn("[Orders] Mongo read failed:", err2?.message || err2);
+    throw err2;
   }
-  if (mongoOrders.length === 0) return { orders: jsonOrders, dirty: false, handoverMongoSync: [] };
-  if (!readOnly) {
-    await reconcileMongoOrdersWithShopee(jsonOrders, mongoOrders);
-  }
-  const bySn = /* @__PURE__ */ new Map();
-  for (const o6 of jsonOrders) {
-    const sn3 = String(o6.orderSn || "").replace(/^shopee-/i, "").trim();
-    if (sn3) bySn.set(sn3, o6);
-  }
-  let dirty = false;
-  let added = 0;
-  let trackingFilled = 0;
-  const handoverMongoSync = [];
-  for (const m6 of mongoOrders) {
-    if (!isValidOrder(m6)) continue;
-    const sn3 = String(m6.orderSn || "").replace(/^shopee-/i, "").trim();
-    if (!sn3) continue;
-    const existing = bySn.get(sn3);
-    const mTn = String(m6.trackingNumber || m6.tracking_no || "").trim();
-    if (!existing) {
-      repairFalseProcessedReadyToShip(m6);
-      bySn.set(sn3, m6);
-      if (!readOnly) {
-        added++;
-        dirty = true;
-      }
-      continue;
-    }
-    if (mTn && !isShopeeInternalTrackingCode2(mTn)) {
-      const eTn = String(existing.trackingNumber || existing.tracking_no || "").trim();
-      if (!eTn || isShopeeInternalTrackingCode2(eTn)) {
-        existing.trackingNumber = mTn;
-        existing.tracking_no = mTn;
-        if (!readOnly) {
-          trackingFilled++;
-          dirty = true;
-        }
-      }
-    }
-    const jsonRaw = String(existing.shopee_order_status || "").trim().toUpperCase();
-    const jsonStatus = String(existing.status || "").trim();
-    const jsonCancelled = jsonRaw === "CANCELLED" || jsonRaw === "IN_CANCEL" || jsonStatus === "cancelled";
-    const mongoCancelled = String(m6.shopee_order_status || "").trim().toUpperCase() === "CANCELLED" || String(m6.shopee_order_status || "").trim().toUpperCase() === "IN_CANCEL" || String(m6.status || "").trim() === "cancelled";
-    if (jsonCancelled || mongoCancelled) {
-      const cancelledRaw = jsonCancelled ? jsonRaw === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED" : String(m6.shopee_order_status || "").trim().toUpperCase() === "IN_CANCEL" ? "IN_CANCEL" : "CANCELLED";
-      existing.shopee_order_status = cancelledRaw;
-      existing.status = "cancelled";
-      existing.isPrepared = false;
-      existing.is_pending_shopee_check = false;
-      if (!readOnly) dirty = true;
-      continue;
-    }
-    const mRaw = String(m6.shopee_order_status || "").trim().toUpperCase();
-    if (mRaw) {
-      existing.shopee_order_status = mRaw;
-    }
-    const mStatus = String(m6.status || "").trim();
-    if (mStatus) {
-      const eRaw = String(existing.shopee_order_status || "").trim().toUpperCase();
-      const eStatus = String(existing.status || "").trim();
-      const jsonTerminal = eStatus === "shipping" || eStatus === "completed" || eStatus === "cancelled" || eRaw === "SHIPPED" || eRaw === "TO_CONFIRM_RECEIVE" || eRaw === "COMPLETED" || eRaw === "CANCELLED" || eRaw === "IN_CANCEL";
-      const mongoTerminal = mStatus === "shipping" || mStatus === "completed" || mStatus === "cancelled" || mRaw === "SHIPPED" || mRaw === "TO_CONFIRM_RECEIVE" || mRaw === "COMPLETED" || mRaw === "CANCELLED" || mRaw === "IN_CANCEL";
-      if (mongoTerminal || !jsonTerminal) {
-        existing.status = mStatus;
-      }
-    }
-    if (m6.isPrepared != null) existing.isPrepared = Boolean(m6.isPrepared);
-    if (m6.isPrinted != null) existing.isPrinted = Boolean(m6.isPrinted);
-    if (m6.fulfillment_type) existing.fulfillment_type = m6.fulfillment_type;
-    if (m6.ship_method) existing.ship_method = m6.ship_method;
-    repairFalseProcessedReadyToShip(existing);
-    const mongoHanded = resolveOrderHandoverFlag(m6);
-    const jsonHanded = resolveOrderHandoverFlag(existing);
-    if (mongoHanded && !jsonHanded) {
-      Object.assign(existing, buildHandedOverWritePatch(
-        String(m6.handedOverAt || m6.local_status_updated_at || "") || void 0,
-        m6.handed_over_source || m6.handedOverSource || HANDED_OVER_SOURCE.MANUAL_BUTTON
-      ));
-      if (m6.handedOverAt) existing.handedOverAt = m6.handedOverAt;
-    } else if (!readOnly && jsonHanded && !mongoHanded) {
-      handoverMongoSync.push(existing);
-      dirty = true;
-    }
-  }
-  if (!readOnly && (added > 0 || trackingFilled > 0 || handoverMongoSync.length > 0)) {
-    console.log(
-      `[Orders] loadOrdersForApi: json=${jsonOrders.length} mongo=${mongoOrders.length} +added=${added} +tracking=${trackingFilled} +handoverMongoSync=${handoverMongoSync.length}`
-    );
-  }
-  for (const o6 of bySn.values()) {
-    if (repairFalseProcessedReadyToShip(o6) && !readOnly) dirty = true;
-  }
-  return {
-    orders: Array.from(bySn.values()),
-    dirty: readOnly ? false : dirty,
-    handoverMongoSync: readOnly ? [] : handoverMongoSync
-  };
 }
 async function loadOrdersForShipScoped(orderIds, orderSns) {
   const idSet = new Set(
@@ -212934,19 +212807,6 @@ async function loadOrdersForShipScoped(orderIds, orderSns) {
       for (const m6 of mongoOrders) put2(m6);
     } catch (err2) {
       console.warn("[Orders] loadOrdersForShipScoped mongo skip:", err2?.message || err2);
-    }
-  }
-  const needed = Math.max(snSet.size, idSet.size);
-  const have = bySn.size || byId.size;
-  if (have < needed || have === 0) {
-    try {
-      for (const o6 of loadOrders().filter(isValidOrder).filter(matchKey).map(repairMisassignedTracking)) {
-        const sn3 = String(o6.orderSn || "").replace(/^shopee-/i, "").trim();
-        if (sn3 && bySn.has(sn3)) continue;
-        put2(o6);
-      }
-    } catch (err2) {
-      console.warn("[Orders] loadOrdersForShipScoped json fallback:", err2?.message || err2);
     }
   }
   const out = [];
@@ -219546,6 +219406,7 @@ async function startServer2() {
       console.error(`[Ship Order Job ${jobId}] Failed:`, err2);
     } finally {
       job.updatedAt = Date.now();
+      releaseHeavyJob(`ship-order:${jobId}`);
     }
   }
   app.post("/api/shopee/ship-order/bulk-async", authMiddleware, (req2, res) => {
@@ -219564,6 +219425,12 @@ async function startServer2() {
         idList.length || snList.length
       );
       const jobId = createShipOrderJobId();
+      if (!tryAcquireHeavyJob(`ship-order:${jobId}`)) {
+        return res.status(503).json({
+          error: "heavy_job_busy",
+          message: "M\u1ED9t t\xE1c v\u1EE5 Shopee kh\xE1c \u0111ang ch\u1EA1y, vui l\xF2ng th\u1EED l\u1EA1i sau."
+        });
+      }
       shipOrderJobs.set(jobId, {
         id: jobId,
         status: "pending",
