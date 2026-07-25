@@ -1909,7 +1909,8 @@ export default function OrderManager({
   const applyPrintDocumentResponse = async (
     data: PrintDocumentResponse,
     openPdf: boolean,
-    reservedWindow?: Window | null
+    reservedWindow?: Window | null,
+    orderIdsForCache?: string[],
   ): Promise<{ success: boolean; message?: string; mergedUrl?: string | null }> => {
     const failedDocs = (data.documents || []).filter((d) => !d.url);
     const printUrl = data.url || data.mergedUrl || (data.documents || []).find((d) => d.url)?.url;
@@ -1918,6 +1919,25 @@ export default function OrderManager({
 
     if (Array.isArray(data.orders)) {
       onUpdateOrders(data.orders);
+      ordersRef.current = data.orders;
+    }
+
+    // Cache label URL lên order state — lần in sau window.open ngay, không fetch lại.
+    if (printUrl && orderIdsForCache?.length) {
+      const idSet = new Set(orderIdsForCache.map(String));
+      const patched = ordersRef.current.map((o) => {
+        if (!idSet.has(String(o.id)) && !idSet.has(String(o.orderSn)) && !idSet.has(`shopee-${o.orderSn}`)) {
+          return o;
+        }
+        return {
+          ...o,
+          labelUrl: printUrl,
+          pdfUrl: printUrl,
+          pdfFilename: data.pdfFilename || o.pdfFilename,
+        };
+      });
+      ordersRef.current = patched;
+      onUpdateOrders(patched);
     }
 
     if (openPdf && printUrl) {
@@ -1955,6 +1975,45 @@ export default function OrderManager({
 
   // Shopee batch print: 1 request duy nhất với toàn bộ orderIds → BE merge 1 PDF → mở/in 1 lần.
   // TUYỆT ĐỐI không loop window.open / fetch từng đơn trên FE (popup blocker).
+  /** Nếu mọi đơn đã có labelUrl/pdfFilename trong state → window.open ngay, không gọi API. */
+  const tryOpenCachedLabelUrls = (
+    orderIds: string[],
+    reservedWindow?: Window | null,
+  ): { opened: boolean; url?: string } => {
+    const uniqueIds = [...new Set(orderIds.map(String).filter(Boolean))];
+    if (uniqueIds.length === 0) return { opened: false };
+    const urls: string[] = [];
+    for (const id of uniqueIds) {
+      const o = ordersRef.current.find(
+        (x) =>
+          String(x.id) === id ||
+          String(x.orderSn) === id ||
+          `shopee-${x.orderSn}` === id,
+      );
+      const raw =
+        String(o?.labelUrl || o?.pdfUrl || '').trim() ||
+        (o?.pdfFilename ? `/api/public/labels/${encodeURIComponent(String(o.pdfFilename))}` : '');
+      if (!raw) return { opened: false };
+      urls.push(resolveLabelFetchUrl(raw));
+    }
+    // Cùng 1 PDF merged hoặc 1 đơn — mở luôn.
+    const uniqueUrls = [...new Set(urls)];
+    if (uniqueUrls.length === 1) {
+      const url = uniqueUrls[0];
+      if (reservedWindow && !reservedWindow.closed) {
+        try {
+          reservedWindow.location.href = url;
+          return { opened: true, url };
+        } catch {
+          /* fall through */
+        }
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return { opened: true, url };
+    }
+    return { opened: false };
+  };
+
   const printShopeeDocuments = async (
     orderIds: string[],
     options: {
@@ -1975,6 +2034,15 @@ export default function OrderManager({
 
     try {
       if (onProgress) onProgress(0, total);
+
+      if (openPdf) {
+        const cached = tryOpenCachedLabelUrls(uniqueIds, reservedWindow);
+        if (cached.opened) {
+          if (onProgress) onProgress(total, total);
+          return { success: true, mergedUrl: cached.url, message: 'Đã mở vận đơn từ bộ nhớ đệm.' };
+        }
+      }
+
       // Một request duy nhất — backend gộp PDF toàn bộ orderIds (+ chờ Shopee nếu waitMs).
       const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds, { waitMs });
       if (!ok) {
@@ -1990,7 +2058,7 @@ export default function OrderManager({
       }
 
       if (onProgress) onProgress(total, total);
-      return applyPrintDocumentResponse(data, openPdf, reservedWindow);
+      return applyPrintDocumentResponse(data, openPdf, reservedWindow, uniqueIds);
     } catch (err) {
       closeReservedPrintWindow(reservedWindow);
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định khi in vận đơn.';
@@ -2130,18 +2198,15 @@ export default function OrderManager({
     };
   };
 
-  const pollShipJobQuietly = async (
+  const pollShipJobUntilDone = async (
     jobId: string,
     total: number,
-    pollToken: number,
   ): Promise<any | null> => {
     const deadline = Date.now() + 5 * 60 * 1000;
     let finalJob: any = null;
 
     while (Date.now() < deadline) {
-      if (shipBgPollAbortRef.current !== pollToken) return finalJob;
-      await new Promise((r) => setTimeout(r, 800));
-      if (shipBgPollAbortRef.current !== pollToken) return finalJob;
+      await new Promise((r) => setTimeout(r, 250));
       try {
         const jobRes = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
         if (!jobRes.ok) break;
@@ -2150,22 +2215,19 @@ export default function OrderManager({
 
         const done = Number(job.completed) || 0;
         const tot = Number(job.total) || total;
+        setProgressCompleted(done);
+        setProgressTotal(tot);
+
         if (job.status === 'running' || job.status === 'pending') {
-          const runningMsg =
-            done === 0
-              ? (typeof job.message === 'string' && job.message.trim()
-                  ? job.message
-                  : 'Đang gọi API Shopee...')
-              : `Đang xác nhận ${done}/${tot} đơn lên sàn...`;
-          setBackgroundShipNotice({
-            message: runningMsg,
-            successCount: 0,
-            failCount: 0,
-            successfulOrderIds: [],
-            status: 'running',
-            completed: done,
-            total: tot,
-          });
+          if (done === 0) {
+            setProgressMessage(
+              typeof job.message === 'string' && job.message.trim()
+                ? job.message
+                : 'Đang gọi API Shopee...',
+            );
+          } else {
+            setProgressMessage(`Đang xác nhận ${done}/${tot} đơn lên sàn...`);
+          }
         }
 
         if (job.status === 'done' || job.status === 'failed' || job.status === 'printing') {
@@ -2179,12 +2241,8 @@ export default function OrderManager({
     return finalJob;
   };
 
-  /** Sau job nền: toast + banner In (không mở blocking modal). */
-  const finishShipJobInBackground = async (
-    finalJob: any | null,
-    total: number,
-    method: 'pickup' | 'dropoff',
-  ) => {
+  /** Kết thúc xác nhận — Result Summary modal (theo dõi tiến độ thật). */
+  const finishShipJobResult = async (finalJob: any | null, total: number) => {
     const results = finalJob?.results || [];
     const summary = buildShipConfirmSummary(finalJob || {}, total);
     const report = `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn.`;
@@ -2195,8 +2253,15 @@ export default function OrderManager({
       channel: 'all',
       type: 'stock_sync',
       status: summary.successCount > 0 ? 'success' : 'failed',
-      message: `${report} (${method === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'})`,
+      message: `${report} (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'})`,
     });
+
+    setProgressCompleted(summary.successCount);
+    setProgressTotal(Math.max(total, summary.total, summary.successCount + summary.failCount));
+    setProgressDone(true);
+    setProgressMessage('Kết quả xác nhận hàng loạt');
+    setShipConfirmSummary(summary);
+    setBackgroundShipNotice(null);
 
     const confirmed = results.filter((r: any) => r?.success);
     if (confirmed.length > 0) {
@@ -2219,38 +2284,12 @@ export default function OrderManager({
       }
       const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
         markPrinted: false,
-        shipMethod: method,
+        shipMethod,
       });
       ordersRef.current = patched;
       onUpdateOrders(patched);
     }
 
-    try {
-      if (onFetchOrders) await onFetchOrders();
-    } catch {
-      /* ignore */
-    }
-
-    if (finalJob?.status === 'failed' && summary.successCount === 0) {
-      showToast(
-        finalJob.message ||
-          finalJob.error ||
-          'Xác nhận đơn thất bại. Vui lòng thử lại.',
-      );
-      setBackgroundShipNotice(null);
-      return summary;
-    }
-
-    showToast(report);
-    setBackgroundShipNotice({
-      message: report,
-      successCount: summary.successCount,
-      failCount: summary.failCount,
-      successfulOrderIds: summary.successfulOrderIds,
-      status: 'done',
-      completed: summary.successCount + summary.failCount,
-      total: summary.total,
-    });
     return summary;
   };
 
@@ -2260,7 +2299,6 @@ export default function OrderManager({
     const orderSns = [...new Set(queuedOrders.map(o => o.orderSn).filter(sn => Boolean(sn && String(sn).trim())))];
     const orderIds = [...new Set(queuedOrders.map(o => o.id).filter(id => Boolean(id && String(id).trim())))];
     const totalQueued = queuedOrders.length;
-    const methodSnapshot = shipMethod;
 
     if (orderSns.length === 0 && orderIds.length === 0) {
       showToast('Không có mã đơn hàng hợp lệ trong danh sách đã chọn. Vui lòng chọn lại.');
@@ -2269,19 +2307,19 @@ export default function OrderManager({
 
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
     const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
-      shipMethod: methodSnapshot,
+      shipMethod,
     });
     onUpdateOrders(optimisticOrders);
     ordersRef.current = optimisticOrders;
 
-    // Đóng modal xác nhận ngay — không giữ isShipping / progress overlay.
     setShipConfirmOrders(null);
-    setIsShipping(false);
+    setIsShipping(true);
     setShipConfirmSummary(null);
-    clearShipProgressOverlay();
-    setSelectedOrderIds([]);
-    setActiveSubTab('processed');
     setBackgroundShipNotice(null);
+    setProgressCompleted(0);
+    setProgressTotal(totalQueued);
+    setProgressDone(false);
+    setProgressMessage(`Đang gọi API Shopee... (0/${totalQueued})`);
 
     onAddLog({
       id: `log-${Date.now()}`,
@@ -2289,14 +2327,15 @@ export default function OrderManager({
       channel: 'all',
       type: 'stock_sync',
       status: 'success',
-      message: `[LOGISTICS API] Xác nhận ship_order (${methodSnapshot === 'pickup' ? 'pickup' : 'dropoff'}) cho ${orderSns.length} đơn: ${orderSns.join(', ')} — không tạo PDF.`,
+      message: `[LOGISTICS API] Xác nhận ship_order (${shipMethod === 'pickup' ? 'pickup' : 'dropoff'}) cho ${orderSns.length} đơn: ${orderSns.join(', ')} — concurrent, PDF nền.`,
     });
 
+    let keepSummaryModal = false;
     try {
       let res = await fetch('/api/shopee/ship-order/bulk-async', {
         method: 'POST',
         headers: authHeaders(),
-        body: JSON.stringify({ orderIds, orderSns, method: methodSnapshot }),
+        body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
       });
 
       const shouldFallbackSync =
@@ -2306,22 +2345,21 @@ export default function OrderManager({
         (res.status >= 500 && res.status !== 202);
 
       if (shouldFallbackSync) {
-        showToast(`Đang xác nhận ${totalQueued} đơn (đồng bộ)...`);
+        setProgressMessage(`Đang xác nhận 0/${totalQueued} đơn (đồng bộ)...`);
         res = await fetch('/api/shopee/ship-order/bulk', {
           method: 'POST',
           headers: authHeaders(),
-          body: JSON.stringify({ orderIds, orderSns, method: methodSnapshot }),
+          body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
         });
         const syncData = await readResponseJson<any>(res);
         if (!res.ok) {
           showToast(syncData.message || syncData.error || `Không xác nhận được đơn (HTTP ${res.status}).`);
           return;
         }
-        if (Array.isArray(syncData.orders)) {
-          onUpdateOrders(syncData.orders);
-          ordersRef.current = syncData.orders;
-        }
-        await finishShipJobInBackground(syncData, totalQueued, methodSnapshot);
+        setSelectedOrderIds([]);
+        setActiveSubTab('processed');
+        await finishShipJobResult(syncData, totalQueued);
+        keepSummaryModal = true;
         return;
       }
 
@@ -2331,34 +2369,40 @@ export default function OrderManager({
         return;
       }
 
+      setSelectedOrderIds([]);
+      setActiveSubTab('processed');
+
       const jobId = data.jobId as string | undefined;
       const total = Number(data.total) || totalQueued;
+      setProgressTotal(total);
 
       if (!jobId) {
-        await finishShipJobInBackground(data, totalQueued, methodSnapshot);
+        await finishShipJobResult(data, totalQueued);
+        keepSummaryModal = true;
         return;
       }
 
-      // 202 Accepted — UI đã free; poll nền + banner "Đang gọi API Shopee..." khi 0/N.
-      showToast(`Đã tiếp nhận ${total} đơn — đang xác nhận nền, bạn có thể tiếp tục làm việc.`);
-      setBackgroundShipNotice({
-        message: 'Đang gọi API Shopee...',
-        successCount: 0,
-        failCount: 0,
-        successfulOrderIds: [],
-        status: 'running',
-        completed: 0,
-        total,
-      });
-      const pollToken = ++shipBgPollAbortRef.current;
-      void (async () => {
-        const finalJob = await pollShipJobQuietly(jobId, total, pollToken);
-        if (shipBgPollAbortRef.current !== pollToken) return;
-        await finishShipJobInBackground(finalJob, total, methodSnapshot);
-      })();
+      setProgressMessage('Đang gọi API Shopee...');
+      const finalJob = await pollShipJobUntilDone(jobId, total);
+      if (finalJob?.status === 'failed' && !(finalJob?.successCount > 0)) {
+        showToast(finalJob.message || finalJob.error || 'Xác nhận đơn thất bại. Vui lòng thử lại.');
+      }
+      await finishShipJobResult(finalJob, total);
+      keepSummaryModal = true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
+    } finally {
+      setIsShipping(false);
+      if (!keepSummaryModal) {
+        clearShipProgressOverlay();
+      }
+      setSelectedOrderIds([]);
+      try {
+        if (onFetchOrders) await onFetchOrders();
+      } catch {
+        /* ignore */
+      }
     }
   };
 
@@ -2372,12 +2416,23 @@ export default function OrderManager({
       .filter(Boolean);
     if (!ids.length || isPrintingFromSummary) return;
 
+    // Fast path: PDF đã có trên order state → window.open ngay.
+    const cached = tryOpenCachedLabelUrls(ids);
+    if (cached.opened) {
+      showToast('Đã mở vận đơn từ bộ nhớ đệm.');
+      setShipConfirmSummary(null);
+      setBackgroundShipNotice(null);
+      markProgressComplete('In vận đơn thành công!');
+      return;
+    }
+
     setIsPrintingFromSummary(true);
     setShipConfirmSummary(null);
     setBackgroundShipNotice(null);
     setProgressDone(false);
     setProgressCompleted(0);
     setProgressTotal(ids.length);
+    setIsShipping(true);
     setProgressMessage(`Đang tải vận đơn: 0/${ids.length} đơn...`);
 
     try {
@@ -2405,6 +2460,7 @@ export default function OrderManager({
       clearShipProgressOverlay();
     } finally {
       setIsPrintingFromSummary(false);
+      setIsShipping(false);
     }
   };
 

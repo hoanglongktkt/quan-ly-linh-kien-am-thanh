@@ -1224,6 +1224,89 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
 }
 
 /**
+ * Sau ship_order: ĐÚNG 1 lệnh bulkWrite, chỉ update các order_sn bị ảnh hưởng.
+ * Không find({}) toàn bảng, không sync Shopee.
+ */
+export async function bulkUpdateShippedOrdersBySn(
+  patches: Array<{
+    orderSn: string;
+    shopId?: string;
+    status?: string;
+    shopee_order_status?: string;
+    ship_method?: string;
+    fulfillment_type?: string;
+    tracking_no?: string;
+    isPrepared?: boolean;
+    shopeeSyncPending?: boolean;
+    shopeeSyncError?: string | null;
+    labelUrl?: string;
+    pdfFilename?: string;
+  }>,
+): Promise<number> {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const list = Array.isArray(patches) ? patches.filter((p) => p && String(p.orderSn || "").trim()) : [];
+  if (list.length === 0) return 0;
+
+  const ops = list.map((p) => {
+    const sn = String(p.orderSn || "").replace(/^shopee-/i, "").trim();
+    const _id = `shopee-${sn}`;
+    const shopIdStr = p.shopId != null ? String(p.shopId).trim() : "";
+    const $set: Record<string, unknown> = {
+      orderSn: sn,
+      "data.orderSn": sn,
+      "data.order_sn": sn,
+    };
+    if (p.status != null) {
+      $set.status = String(p.status);
+      $set["data.status"] = String(p.status);
+    }
+    if (p.shopee_order_status) {
+      const raw = String(p.shopee_order_status).trim().toUpperCase();
+      $set.shopee_order_status = raw;
+      $set["data.shopee_order_status"] = raw;
+    }
+    if (p.ship_method != null) $set["data.ship_method"] = p.ship_method;
+    if (p.fulfillment_type != null) $set["data.fulfillment_type"] = p.fulfillment_type;
+    if (p.isPrepared != null) {
+      $set.isPrepared = Boolean(p.isPrepared);
+      $set["data.isPrepared"] = Boolean(p.isPrepared);
+    }
+    if (p.shopeeSyncPending != null) $set["data.shopeeSyncPending"] = Boolean(p.shopeeSyncPending);
+    if (p.shopeeSyncError !== undefined) {
+      $set["data.shopeeSyncError"] = p.shopeeSyncError || null;
+    }
+    const tn = String(p.tracking_no || "").trim();
+    if (tn && !/^0FG/i.test(tn)) {
+      $set.tracking_no = tn;
+      $set["data.tracking_no"] = tn;
+      $set["data.trackingNumber"] = tn;
+    }
+    if (p.labelUrl) $set["data.labelUrl"] = String(p.labelUrl);
+    if (p.pdfFilename) $set["data.pdfFilename"] = String(p.pdfFilename);
+    if (shopIdStr) {
+      $set.shopId = shopIdStr;
+      $set["data.shopId"] = shopIdStr;
+    }
+    return {
+      updateOne: {
+        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+        update: { $set },
+        upsert: false,
+      },
+    };
+  });
+
+  await enqueueWrite(async () => {
+    const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
+    console.log(
+      `[Ship Persist] bulkWrite ONE shot — ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
+    );
+  });
+  return ops.length;
+}
+
+/**
  * Filter ghép (Compound Filter) BẮT BUỘC cho mọi thao tác update/upsert đơn hàng:
  * luôn định danh theo orderSn/_id/data.orderSn VÀ, khi biết shopId, chỉ khớp đúng
  * shop đó (string HOẶC number — document cũ có thể lưu Number) hoặc record cũ

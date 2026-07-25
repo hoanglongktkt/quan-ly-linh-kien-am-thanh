@@ -57,6 +57,7 @@ import {
   isMongoReady,
   getMongoUriMasked,
   bulkUpsertOrdersToStore,
+  bulkUpdateShippedOrdersBySn,
   markOrderHandedOverInStore,
   updateOrderPendingShopeeCheckInStore,
   updateOrderTrackingInStore,
@@ -5865,9 +5866,20 @@ const SHIP_ORDER_BATCH_CONCURRENCY = 20;
 const SHIP_ORDER_CHUNK_SIZE = 25;
 const SHIP_ORDER_CHUNK_PAUSE_MS = 50;
 
+/** In-memory cache get_address_list — tránh gọi lại API trong cùng bulk ship. */
+const shopeeAddressListMemCache = new Map<
+  string,
+  { at: number; result: any; list: any[] }
+>();
+const shopeeAddressListInflight = new Map<
+  string,
+  Promise<{ result: any; list: any[]; fromCache: boolean }>
+>();
+const SHOPEE_ADDRESS_LIST_MEM_TTL_MS = 10 * 60 * 1000;
+
 /**
- * get_address_list qua Redis (key shopee:address_list:{shopId}, TTL 24h).
- * Redis down / miss → gọi API; chỉ cache response thành công.
+ * get_address_list: In-Memory → Redis (TTL 24h) → API (coalesce inflight theo shop).
+ * Chỉ cache response thành công. Bulk ship không gọi API thừa.
  */
 async function getShopeeAddressListCached(
   shopId: string,
@@ -5875,16 +5887,35 @@ async function getShopeeAddressListCached(
   signal?: AbortSignal,
 ): Promise<{ result: any; list: any[]; fromCache: boolean }> {
   const sid = String(shopId || "").trim();
+  const mem = shopeeAddressListMemCache.get(sid);
+  if (mem && Date.now() - mem.at < SHOPEE_ADDRESS_LIST_MEM_TTL_MS && mem.result && !mem.result.error) {
+    return { result: mem.result, list: mem.list || [], fromCache: true };
+  }
   const cached = await getCachedShopeeAddressList(sid);
   if (cached?.result && !cached.result.error) {
+    shopeeAddressListMemCache.set(sid, {
+      at: Date.now(),
+      result: cached.result,
+      list: cached.list || [],
+    });
     return { result: cached.result, list: cached.list || [], fromCache: true };
   }
-  const result = await shopeeGetAddressList(sid, accessToken, signal);
-  const list = result?.response?.address_list || result?.address_list || [];
-  if (result && !result.error) {
-    await setCachedShopeeAddressList(sid, result);
-  }
-  return { result, list, fromCache: false };
+  const inflight = shopeeAddressListInflight.get(sid);
+  if (inflight) return inflight;
+
+  const run = (async () => {
+    const result = await shopeeGetAddressList(sid, accessToken, signal);
+    const list = result?.response?.address_list || result?.address_list || [];
+    if (result && !result.error) {
+      shopeeAddressListMemCache.set(sid, { at: Date.now(), result, list });
+      await setCachedShopeeAddressList(sid, result);
+    }
+    return { result, list, fromCache: false };
+  })().finally(() => {
+    shopeeAddressListInflight.delete(sid);
+  });
+  shopeeAddressListInflight.set(sid, run);
+  return run;
 }
 
 async function withOperationTimeout<T>(
@@ -9768,8 +9799,8 @@ async function loadOrdersForApi(opts?: {
 }
 
 /**
- * Load CHỈ các đơn cần ship (JSON filter + Mongo $in) — không find({}) toàn bộ.
- * Dùng cho background ship-order job để giảm I/O.
+ * Load CHỈ các đơn cần ship — ưu tiên Mongo $in (không find({}) / không đọc full JSON).
+ * Fallback JSON chỉ khi Mongo thiếu đơn.
  */
 async function loadOrdersForShipScoped(
   orderIds: string[],
@@ -9799,16 +9830,18 @@ async function loadOrdersForShipScoped(
     return false;
   };
 
-  const jsonOrders = loadOrders().filter(isValidOrder).filter(matchKey).map(repairMisassignedTracking);
   const bySn = new Map<string, any>();
   const byId = new Map<string, any>();
-  for (const o of jsonOrders) {
+  const put = (o: any) => {
+    if (!isValidOrder(o) || !matchKey(o)) return;
+    repairFalseProcessedReadyToShip(o);
     const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim();
-    if (sn) bySn.set(sn, o);
     const id = String(o.id || "").trim();
+    if (sn) bySn.set(sn, o);
     if (id) byId.set(id, o);
-  }
+  };
 
+  // 1) Mongo $in only — đường nhanh cho bulk ship.
   if (isMongoReady()) {
     try {
       const mongoOrders = (
@@ -9817,37 +9850,24 @@ async function loadOrdersForShipScoped(
           ids: [...idSet],
         })
       ).map(repairMisassignedTracking);
-      for (const m of mongoOrders) {
-        if (!isValidOrder(m) || !matchKey(m)) continue;
-        const sn = String(m.orderSn || "").replace(/^shopee-/i, "").trim();
-        const existing = (sn && bySn.get(sn)) || byId.get(String(m.id || "").trim());
-        if (!existing) {
-          repairFalseProcessedReadyToShip(m);
-          if (sn) bySn.set(sn, m);
-          const id = String(m.id || "").trim();
-          if (id) byId.set(id, m);
-          continue;
-        }
-        const mTn = String(m.trackingNumber || m.tracking_no || "").trim();
-        if (mTn && !isShopeeInternalTrackingCode(mTn)) {
-          const eTn = String(existing.trackingNumber || existing.tracking_no || "").trim();
-          if (!eTn || isShopeeInternalTrackingCode(eTn)) {
-            existing.trackingNumber = mTn;
-            existing.tracking_no = mTn;
-          }
-        }
-        const mRaw = String(m.shopee_order_status || "").trim().toUpperCase();
-        if (mRaw) existing.shopee_order_status = mRaw;
-        if (m.status) existing.status = m.status;
-        if (m.isPrepared != null) existing.isPrepared = Boolean(m.isPrepared);
-        if (m.isPrinted != null) existing.isPrinted = Boolean(m.isPrinted);
-        if (m.fulfillment_type) existing.fulfillment_type = m.fulfillment_type;
-        if (m.ship_method) existing.ship_method = m.ship_method;
-        if (m.shopId && !existing.shopId) existing.shopId = m.shopId;
-        repairFalseProcessedReadyToShip(existing);
-      }
+      for (const m of mongoOrders) put(m);
     } catch (err: any) {
       console.warn("[Orders] loadOrdersForShipScoped mongo skip:", err?.message || err);
+    }
+  }
+
+  const needed = Math.max(snSet.size, idSet.size);
+  const have = bySn.size || byId.size;
+  // 2) Fallback JSON filter chỉ khi Mongo thiếu đơn.
+  if (have < needed || have === 0) {
+    try {
+      for (const o of loadOrders().filter(isValidOrder).filter(matchKey).map(repairMisassignedTracking)) {
+        const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (sn && bySn.has(sn)) continue;
+        put(o);
+      }
+    } catch (err: any) {
+      console.warn("[Orders] loadOrdersForShipScoped json fallback:", err?.message || err);
     }
   }
 
@@ -18099,26 +18119,45 @@ async function startServer() {
     return { success: true, url: primaryUrl, pdfFilename, printedOrderSns, skippedOrders };
   }
 
-  /** Patch Mongo-only cho các đơn đã đổi — không load/ghi full orders.json. */
-  async function persistShipJobOrderPatches(changedOrders: any[]): Promise<void> {
-    const list = (Array.isArray(changedOrders) ? changedOrders : []).filter(Boolean);
-    if (list.length === 0) return;
-    if (!isMongoReady()) {
-      console.warn("[Ship Order Job] Mongo chưa sẵn sàng — bỏ qua persist patch (FE optimistic).");
-      return;
-    }
-    try {
-      await bulkUpsertOrdersToStore(list);
-    } catch (err: any) {
-      console.warn("[Ship Order Job] bulkUpsert patch failed:", err?.message || err);
-    }
+  /** Fire-and-forget create_shipping_document — không chặn kết quả xác nhận. */
+  function fireCreateShippingDocumentInBackground(
+    shopId: string,
+    orderSn: string,
+    opts?: { packageNumber?: string; trackingNumber?: string },
+  ): void {
+    const sid = String(shopId || "").trim();
+    const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!sid || !sn) return;
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const token = (await getValidShopeeAccessToken(sid)) || "";
+          if (!token) return;
+          const entry: { order_sn: string; package_number?: string; tracking_number?: string } = {
+            order_sn: sn,
+          };
+          const pkg = String(opts?.packageNumber || "").trim();
+          const tn = String(opts?.trackingNumber || "").trim();
+          if (pkg) entry.package_number = pkg;
+          if (tn && !/^0FG/i.test(tn)) entry.tracking_number = tn;
+          await shopeeCreateShippingDocument(sid, token, [entry]);
+          console.log(`[Ship Order Job] BG create_shipping_document OK order_sn=${sn}`);
+        } catch (err: any) {
+          console.warn(
+            `[Ship Order Job] BG create_shipping_document skip order_sn=${sn}:`,
+            err?.message || err,
+          );
+        }
+      })();
+    });
   }
 
   /**
-   * Background ship job (lean):
-   * - Scoped Mongo $in load only
-   * - Promise.allSettled concurrent Shopee confirm (skipRecover)
-   * - Mongo patch changed orders only — no full DB save / no recover / no PDF
+   * Background ship job (fast path <3s / 2 đơn khi Shopee ổn):
+   * - Mongo $in scoped load
+   * - Promise.allSettled concurrent ship_order (skipRecover)
+   * - create_shipping_document nền (không await)
+   * - ĐÚNG 1 bulkWrite Mongo theo order_sn — không full sync / không full table
    */
   async function executeShipOrderBackgroundJob(
     jobId: string,
@@ -18129,11 +18168,12 @@ async function startServer() {
     pruneOldShipOrderJobs();
     const job = shipOrderJobs.get(jobId);
     if (!job) return;
+    const t0 = Date.now();
 
     try {
       job.status = "running";
       job.phase = "loading";
-      job.message = "Đang tải đơn cần xác nhận...";
+      job.message = "Đang gọi API Shopee...";
       job.updatedAt = Date.now();
 
       const orders = await loadOrdersForShipScoped(idList, snList);
@@ -18148,23 +18188,6 @@ async function startServer() {
         job.updatedAt = Date.now();
         return;
       }
-
-      // Optimistic persist đầu job (sau 202) — không chặn HTTP handler.
-      job.phase = "optimistic_persist";
-      job.message = "Đang cập nhật trạng thái đơn...";
-      job.updatedAt = Date.now();
-      const optimisticChanged: any[] = [];
-      for (const { index } of toShip) {
-        orders[index] = {
-          ...orders[index],
-          isPrepared: true,
-          status: "processed",
-          shopeeSyncPending: true,
-          shopeeSyncError: undefined,
-        };
-        optimisticChanged.push(orders[index]);
-      }
-      await persistShipJobOrderPatches(optimisticChanged);
 
       const shipPhase = "calling_shopee";
       job.phase = shipPhase;
@@ -18247,6 +18270,12 @@ async function startServer() {
             };
             forceHealPickupOrderIfHasTracking(patched);
             orders[index] = patched;
+
+            // PDF nền — không chờ, không chặn job.
+            fireCreateShippingDocumentInBackground(String(patched.shopId || resolvedShopId || ""), String(patched.orderSn || ""), {
+              packageNumber: String(patched.packageNumber || "").trim() || undefined,
+              trackingNumber: tn || undefined,
+            });
           } else {
             patched = {
               ...orders[index],
@@ -18278,7 +18307,18 @@ async function startServer() {
 
       const results: any[] = [];
       const failedOrders: { orderSn: string; orderId: string; error: string; message: string }[] = [];
-      const changedOrders: any[] = [];
+      const mongoPatches: Array<{
+        orderSn: string;
+        shopId?: string;
+        status?: string;
+        shopee_order_status?: string;
+        ship_method?: string;
+        fulfillment_type?: string;
+        tracking_no?: string;
+        isPrepared?: boolean;
+        shopeeSyncPending?: boolean;
+        shopeeSyncError?: string | null;
+      }> = [];
 
       for (let i = 0; i < settled.length; i++) {
         const item = settled[i];
@@ -18286,7 +18326,21 @@ async function startServer() {
         if (item.status === "fulfilled") {
           const r = item.value;
           results.push(r);
-          if (r.patched) changedOrders.push(r.patched);
+          const p = r.patched;
+          if (p) {
+            mongoPatches.push({
+              orderSn: String(p.orderSn || r.orderSn || ""),
+              shopId: p.shopId ? String(p.shopId) : undefined,
+              status: p.status,
+              shopee_order_status: p.shopee_order_status,
+              ship_method: p.ship_method || shipMethod,
+              fulfillment_type: p.fulfillment_type || shipMethod,
+              tracking_no: String(p.tracking_no || p.trackingNumber || "").trim() || undefined,
+              isPrepared: Boolean(p.isPrepared),
+              shopeeSyncPending: Boolean(p.shopeeSyncPending),
+              shopeeSyncError: p.shopeeSyncError != null ? String(p.shopeeSyncError) : null,
+            });
+          }
           if (!r.success) {
             failedOrders.push({
               orderSn: String(r.orderSn || fallback?.orderSn || ""),
@@ -18310,14 +18364,18 @@ async function startServer() {
             error: "internal_server_error",
             message: errMsg,
           });
-          if (toShip[i]) changedOrders.push(orders[toShip[i].index]);
         }
       }
 
+      // ĐÚNG 1 bulk UPDATE — chỉ order_sn bị ảnh hưởng.
       job.phase = "persisting";
       job.message = "Đang lưu kết quả xác nhận...";
       job.updatedAt = Date.now();
-      await persistShipJobOrderPatches(changedOrders);
+      try {
+        await bulkUpdateShippedOrdersBySn(mongoPatches.filter((p) => p.orderSn));
+      } catch (err: any) {
+        console.warn("[Ship Order Job] bulkUpdateShippedOrdersBySn failed:", err?.message || err);
+      }
 
       const successCount = results.filter((r) => r.success).length;
       const summary = buildShipConfirmSummaryPayload(toShip.length, {
@@ -18343,11 +18401,14 @@ async function startServer() {
             .filter(Boolean);
           if (ids.length) message += ` — Mã: ${ids.join(", ")}`;
         }
-        message += ".";
+        message += ` (${Date.now() - t0}ms).`;
         job.message = message;
       }
       job.phase = "done";
       job.status = "done";
+      console.log(
+        `[Ship Order Job ${jobId}] done ${successCount}/${toShip.length} in ${Date.now() - t0}ms (concurrent allSettled)`,
+      );
     } catch (err: any) {
       job.status = "failed";
       job.phase = "failed";

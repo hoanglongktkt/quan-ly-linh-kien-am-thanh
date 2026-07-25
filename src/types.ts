@@ -207,6 +207,10 @@ export interface Order {
   is_pending_shopee_check?: boolean;
   isPrepared?: boolean;
   isPrinted?: boolean;
+  /** URL PDF vận đơn đã tạo (in nhanh qua window.open, không gọi lại API). */
+  labelUrl?: string;
+  pdfUrl?: string;
+  pdfFilename?: string;
   /**
    * Canonical cờ nội bộ: đã bàn giao ĐVVC (QR / nút Bàn giao).
    * default false — sync Shopee không được ghi đè.

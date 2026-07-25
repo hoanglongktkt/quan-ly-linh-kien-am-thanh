@@ -205448,6 +205448,67 @@ async function bulkUpsertOrdersToStore(orders) {
   });
   return ops.length;
 }
+async function bulkUpdateShippedOrdersBySn(patches) {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const list2 = Array.isArray(patches) ? patches.filter((p5) => p5 && String(p5.orderSn || "").trim()) : [];
+  if (list2.length === 0) return 0;
+  const ops = list2.map((p5) => {
+    const sn3 = String(p5.orderSn || "").replace(/^shopee-/i, "").trim();
+    const _id2 = `shopee-${sn3}`;
+    const shopIdStr = p5.shopId != null ? String(p5.shopId).trim() : "";
+    const $set = {
+      orderSn: sn3,
+      "data.orderSn": sn3,
+      "data.order_sn": sn3
+    };
+    if (p5.status != null) {
+      $set.status = String(p5.status);
+      $set["data.status"] = String(p5.status);
+    }
+    if (p5.shopee_order_status) {
+      const raw = String(p5.shopee_order_status).trim().toUpperCase();
+      $set.shopee_order_status = raw;
+      $set["data.shopee_order_status"] = raw;
+    }
+    if (p5.ship_method != null) $set["data.ship_method"] = p5.ship_method;
+    if (p5.fulfillment_type != null) $set["data.fulfillment_type"] = p5.fulfillment_type;
+    if (p5.isPrepared != null) {
+      $set.isPrepared = Boolean(p5.isPrepared);
+      $set["data.isPrepared"] = Boolean(p5.isPrepared);
+    }
+    if (p5.shopeeSyncPending != null) $set["data.shopeeSyncPending"] = Boolean(p5.shopeeSyncPending);
+    if (p5.shopeeSyncError !== void 0) {
+      $set["data.shopeeSyncError"] = p5.shopeeSyncError || null;
+    }
+    const tn3 = String(p5.tracking_no || "").trim();
+    if (tn3 && !/^0FG/i.test(tn3)) {
+      $set.tracking_no = tn3;
+      $set["data.tracking_no"] = tn3;
+      $set["data.trackingNumber"] = tn3;
+    }
+    if (p5.labelUrl) $set["data.labelUrl"] = String(p5.labelUrl);
+    if (p5.pdfFilename) $set["data.pdfFilename"] = String(p5.pdfFilename);
+    if (shopIdStr) {
+      $set.shopId = shopIdStr;
+      $set["data.shopId"] = shopIdStr;
+    }
+    return {
+      updateOne: {
+        filter: buildOrderCompoundFilter(sn3, _id2, shopIdStr || null),
+        update: { $set },
+        upsert: false
+      }
+    };
+  });
+  await enqueueWrite(async () => {
+    const result = await OrderModel.bulkWrite(ops, { ordered: false });
+    console.log(
+      `[Ship Persist] bulkWrite ONE shot \u2014 ops=${ops.length} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`
+    );
+  });
+  return ops.length;
+}
 function buildOrderCompoundFilter(sn3, _id2, shopId) {
   const identity = { $or: [{ orderSn: sn3 }, { _id: _id2 }, { "data.orderSn": sn3 }] };
   const shopIdStr = shopId != null ? String(shopId).trim() : "";
@@ -210057,18 +210118,39 @@ var SHIP_ORDER_OPERATION_TIMEOUT_MS = 8e3;
 var SHIP_ORDER_BATCH_CONCURRENCY = 20;
 var SHIP_ORDER_CHUNK_SIZE = 25;
 var SHIP_ORDER_CHUNK_PAUSE_MS = 50;
+var shopeeAddressListMemCache = /* @__PURE__ */ new Map();
+var shopeeAddressListInflight = /* @__PURE__ */ new Map();
+var SHOPEE_ADDRESS_LIST_MEM_TTL_MS = 10 * 60 * 1e3;
 async function getShopeeAddressListCached(shopId, accessToken, signal) {
   const sid = String(shopId || "").trim();
+  const mem = shopeeAddressListMemCache.get(sid);
+  if (mem && Date.now() - mem.at < SHOPEE_ADDRESS_LIST_MEM_TTL_MS && mem.result && !mem.result.error) {
+    return { result: mem.result, list: mem.list || [], fromCache: true };
+  }
   const cached = await getCachedShopeeAddressList(sid);
   if (cached?.result && !cached.result.error) {
+    shopeeAddressListMemCache.set(sid, {
+      at: Date.now(),
+      result: cached.result,
+      list: cached.list || []
+    });
     return { result: cached.result, list: cached.list || [], fromCache: true };
   }
-  const result = await shopeeGetAddressList(sid, accessToken, signal);
-  const list2 = result?.response?.address_list || result?.address_list || [];
-  if (result && !result.error) {
-    await setCachedShopeeAddressList(sid, result);
-  }
-  return { result, list: list2, fromCache: false };
+  const inflight = shopeeAddressListInflight.get(sid);
+  if (inflight) return inflight;
+  const run = (async () => {
+    const result = await shopeeGetAddressList(sid, accessToken, signal);
+    const list2 = result?.response?.address_list || result?.address_list || [];
+    if (result && !result.error) {
+      shopeeAddressListMemCache.set(sid, { at: Date.now(), result, list: list2 });
+      await setCachedShopeeAddressList(sid, result);
+    }
+    return { result, list: list2, fromCache: false };
+  })().finally(() => {
+    shopeeAddressListInflight.delete(sid);
+  });
+  shopeeAddressListInflight.set(sid, run);
+  return run;
 }
 async function withOperationTimeout(work, ms2, label) {
   const controller = new AbortController();
@@ -212766,52 +212848,38 @@ async function loadOrdersForShipScoped(orderIds, orderSns) {
     if (id3 && snSet.has(id3.replace(/^shopee-/i, "").trim())) return true;
     return false;
   };
-  const jsonOrders = loadOrders().filter(isValidOrder).filter(matchKey).map(repairMisassignedTracking);
   const bySn = /* @__PURE__ */ new Map();
   const byId = /* @__PURE__ */ new Map();
-  for (const o6 of jsonOrders) {
+  const put2 = (o6) => {
+    if (!isValidOrder(o6) || !matchKey(o6)) return;
+    repairFalseProcessedReadyToShip(o6);
     const sn3 = String(o6.orderSn || "").replace(/^shopee-/i, "").trim();
-    if (sn3) bySn.set(sn3, o6);
     const id3 = String(o6.id || "").trim();
+    if (sn3) bySn.set(sn3, o6);
     if (id3) byId.set(id3, o6);
-  }
+  };
   if (isMongoReady()) {
     try {
       const mongoOrders = (await loadOrdersFromStore({
         orderSns: [...snSet],
         ids: [...idSet]
       })).map(repairMisassignedTracking);
-      for (const m6 of mongoOrders) {
-        if (!isValidOrder(m6) || !matchKey(m6)) continue;
-        const sn3 = String(m6.orderSn || "").replace(/^shopee-/i, "").trim();
-        const existing = sn3 && bySn.get(sn3) || byId.get(String(m6.id || "").trim());
-        if (!existing) {
-          repairFalseProcessedReadyToShip(m6);
-          if (sn3) bySn.set(sn3, m6);
-          const id3 = String(m6.id || "").trim();
-          if (id3) byId.set(id3, m6);
-          continue;
-        }
-        const mTn = String(m6.trackingNumber || m6.tracking_no || "").trim();
-        if (mTn && !isShopeeInternalTrackingCode2(mTn)) {
-          const eTn = String(existing.trackingNumber || existing.tracking_no || "").trim();
-          if (!eTn || isShopeeInternalTrackingCode2(eTn)) {
-            existing.trackingNumber = mTn;
-            existing.tracking_no = mTn;
-          }
-        }
-        const mRaw = String(m6.shopee_order_status || "").trim().toUpperCase();
-        if (mRaw) existing.shopee_order_status = mRaw;
-        if (m6.status) existing.status = m6.status;
-        if (m6.isPrepared != null) existing.isPrepared = Boolean(m6.isPrepared);
-        if (m6.isPrinted != null) existing.isPrinted = Boolean(m6.isPrinted);
-        if (m6.fulfillment_type) existing.fulfillment_type = m6.fulfillment_type;
-        if (m6.ship_method) existing.ship_method = m6.ship_method;
-        if (m6.shopId && !existing.shopId) existing.shopId = m6.shopId;
-        repairFalseProcessedReadyToShip(existing);
-      }
+      for (const m6 of mongoOrders) put2(m6);
     } catch (err2) {
       console.warn("[Orders] loadOrdersForShipScoped mongo skip:", err2?.message || err2);
+    }
+  }
+  const needed = Math.max(snSet.size, idSet.size);
+  const have = bySn.size || byId.size;
+  if (have < needed || have === 0) {
+    try {
+      for (const o6 of loadOrders().filter(isValidOrder).filter(matchKey).map(repairMisassignedTracking)) {
+        const sn3 = String(o6.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (sn3 && bySn.has(sn3)) continue;
+        put2(o6);
+      }
+    } catch (err2) {
+      console.warn("[Orders] loadOrdersForShipScoped json fallback:", err2?.message || err2);
     }
   }
   const out = [];
@@ -219170,27 +219238,42 @@ async function startServer2() {
     }
     return { success: true, url: primaryUrl, pdfFilename, printedOrderSns, skippedOrders };
   }
-  async function persistShipJobOrderPatches(changedOrders) {
-    const list2 = (Array.isArray(changedOrders) ? changedOrders : []).filter(Boolean);
-    if (list2.length === 0) return;
-    if (!isMongoReady()) {
-      console.warn("[Ship Order Job] Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua persist patch (FE optimistic).");
-      return;
-    }
-    try {
-      await bulkUpsertOrdersToStore(list2);
-    } catch (err2) {
-      console.warn("[Ship Order Job] bulkUpsert patch failed:", err2?.message || err2);
-    }
+  function fireCreateShippingDocumentInBackground(shopId, orderSn, opts) {
+    const sid = String(shopId || "").trim();
+    const sn3 = String(orderSn || "").replace(/^shopee-/i, "").trim();
+    if (!sid || !sn3) return;
+    setImmediate(() => {
+      void (async () => {
+        try {
+          const token = await getValidShopeeAccessToken(sid) || "";
+          if (!token) return;
+          const entry = {
+            order_sn: sn3
+          };
+          const pkg = String(opts?.packageNumber || "").trim();
+          const tn3 = String(opts?.trackingNumber || "").trim();
+          if (pkg) entry.package_number = pkg;
+          if (tn3 && !/^0FG/i.test(tn3)) entry.tracking_number = tn3;
+          await shopeeCreateShippingDocument(sid, token, [entry]);
+          console.log(`[Ship Order Job] BG create_shipping_document OK order_sn=${sn3}`);
+        } catch (err2) {
+          console.warn(
+            `[Ship Order Job] BG create_shipping_document skip order_sn=${sn3}:`,
+            err2?.message || err2
+          );
+        }
+      })();
+    });
   }
   async function executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList) {
     pruneOldShipOrderJobs();
     const job = shipOrderJobs.get(jobId);
     if (!job) return;
+    const t0 = Date.now();
     try {
       job.status = "running";
       job.phase = "loading";
-      job.message = "\u0110ang t\u1EA3i \u0111\u01A1n c\u1EA7n x\xE1c nh\u1EADn...";
+      job.message = "\u0110ang g\u1ECDi API Shopee...";
       job.updatedAt = Date.now();
       const orders = await loadOrdersForShipScoped(idList, snList);
       const toShip = resolveOrdersFromRequest(orders, idList, snList);
@@ -219203,21 +219286,6 @@ async function startServer2() {
         job.updatedAt = Date.now();
         return;
       }
-      job.phase = "optimistic_persist";
-      job.message = "\u0110ang c\u1EADp nh\u1EADt tr\u1EA1ng th\xE1i \u0111\u01A1n...";
-      job.updatedAt = Date.now();
-      const optimisticChanged = [];
-      for (const { index: index4 } of toShip) {
-        orders[index4] = {
-          ...orders[index4],
-          isPrepared: true,
-          status: "processed",
-          shopeeSyncPending: true,
-          shopeeSyncError: void 0
-        };
-        optimisticChanged.push(orders[index4]);
-      }
-      await persistShipJobOrderPatches(optimisticChanged);
       const shipPhase = "calling_shopee";
       job.phase = shipPhase;
       job.message = "\u0110ang g\u1ECDi API Shopee...";
@@ -219282,6 +219350,10 @@ async function startServer2() {
             };
             forceHealPickupOrderIfHasTracking(patched);
             orders[index4] = patched;
+            fireCreateShippingDocumentInBackground(String(patched.shopId || resolvedShopId || ""), String(patched.orderSn || ""), {
+              packageNumber: String(patched.packageNumber || "").trim() || void 0,
+              trackingNumber: tn3 || void 0
+            });
           } else {
             patched = {
               ...orders[index4],
@@ -219311,14 +219383,28 @@ async function startServer2() {
       );
       const results = [];
       const failedOrders = [];
-      const changedOrders = [];
+      const mongoPatches = [];
       for (let i6 = 0; i6 < settled.length; i6++) {
         const item = settled[i6];
         const fallback = toShip[i6]?.order;
         if (item.status === "fulfilled") {
           const r5 = item.value;
           results.push(r5);
-          if (r5.patched) changedOrders.push(r5.patched);
+          const p5 = r5.patched;
+          if (p5) {
+            mongoPatches.push({
+              orderSn: String(p5.orderSn || r5.orderSn || ""),
+              shopId: p5.shopId ? String(p5.shopId) : void 0,
+              status: p5.status,
+              shopee_order_status: p5.shopee_order_status,
+              ship_method: p5.ship_method || shipMethod,
+              fulfillment_type: p5.fulfillment_type || shipMethod,
+              tracking_no: String(p5.tracking_no || p5.trackingNumber || "").trim() || void 0,
+              isPrepared: Boolean(p5.isPrepared),
+              shopeeSyncPending: Boolean(p5.shopeeSyncPending),
+              shopeeSyncError: p5.shopeeSyncError != null ? String(p5.shopeeSyncError) : null
+            });
+          }
           if (!r5.success) {
             failedOrders.push({
               orderSn: String(r5.orderSn || fallback?.orderSn || ""),
@@ -219342,13 +219428,16 @@ async function startServer2() {
             error: "internal_server_error",
             message: errMsg
           });
-          if (toShip[i6]) changedOrders.push(orders[toShip[i6].index]);
         }
       }
       job.phase = "persisting";
       job.message = "\u0110ang l\u01B0u k\u1EBFt qu\u1EA3 x\xE1c nh\u1EADn...";
       job.updatedAt = Date.now();
-      await persistShipJobOrderPatches(changedOrders);
+      try {
+        await bulkUpdateShippedOrdersBySn(mongoPatches.filter((p5) => p5.orderSn));
+      } catch (err2) {
+        console.warn("[Ship Order Job] bulkUpdateShippedOrdersBySn failed:", err2?.message || err2);
+      }
       const successCount = results.filter((r5) => r5.success).length;
       const summary = buildShipConfirmSummaryPayload(toShip.length, {
         successCount,
@@ -219371,11 +219460,14 @@ async function startServer2() {
           const ids = summary.failedOrderDetails.map((f5) => f5.orderSn || f5.orderId).filter(Boolean);
           if (ids.length) message += ` \u2014 M\xE3: ${ids.join(", ")}`;
         }
-        message += ".";
+        message += ` (${Date.now() - t0}ms).`;
         job.message = message;
       }
       job.phase = "done";
       job.status = "done";
+      console.log(
+        `[Ship Order Job ${jobId}] done ${successCount}/${toShip.length} in ${Date.now() - t0}ms (concurrent allSettled)`
+      );
     } catch (err2) {
       job.status = "failed";
       job.phase = "failed";
