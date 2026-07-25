@@ -2369,13 +2369,17 @@ export default function OrderManager({
     ordersRef.current = optimisticOrders;
 
     setShipConfirmOrders(null);
-    setIsShipping(true);
     setShipConfirmSummary(null);
-    setBackgroundShipNotice(null);
-    setProgressCompleted(0);
-    setProgressTotal(totalQueued);
-    setProgressDone(false);
-    setProgressMessage(`Đang gọi API Shopee... (0/${totalQueued})`);
+    setBackgroundShipNotice({
+      status: 'running',
+      completed: 0,
+      total: totalQueued,
+      successCount: 0,
+      failCount: 0,
+      successfulOrderIds: [],
+      message: 'Đang gửi yêu cầu xác nhận lên máy chủ...',
+    });
+    showToast(`Đang xác nhận ${totalQueued} đơn trong nền.`);
 
     onAddLog({
       id: `log-${Date.now()}`,
@@ -2386,45 +2390,28 @@ export default function OrderManager({
       message: `[LOGISTICS API] Xác nhận ship_order (${shipMethod === 'pickup' ? 'pickup' : 'dropoff'}) cho ${orderSns.length} đơn: ${orderSns.join(', ')} — concurrent, PDF nền.`,
     });
 
-    let keepSummaryModal = false;
     try {
-      let res = await fetch('/api/shopee/ship-order/bulk-async', {
+      const res = await fetch('/api/shopee/ship-order/bulk-async', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
       });
 
-      const shouldFallbackSync =
-        res.status === 404 ||
-        res.status === 502 ||
-        res.status === 503 ||
-        (res.status >= 500 && res.status !== 202);
-
-      if (shouldFallbackSync) {
-        setProgressMessage(`Đang xác nhận 0/${totalQueued} đơn (đồng bộ)...`);
-        res = await fetch('/api/shopee/ship-order/bulk', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
-        });
-        const syncData = await readResponseJson<any>(res);
-        if (!res.ok) {
-          showToast(syncData.message || syncData.error || `Không xác nhận được đơn (HTTP ${res.status}).`);
-          return;
-        }
-        setSelectedOrderIds([]);
-        setActiveSubTab('processed');
-        await finishShipJobResult(syncData, totalQueued);
-        keepSummaryModal = true;
-        return;
-      }
-
-      // HTTP 202 means the server accepted the job; remove the blocking overlay
-      // before parsing/polling its payload so the UI is immediately interactive.
+      // This is intentionally before parsing the response: no modal can remain
+      // mounted while awaiting body consumption or subsequent job polling.
       if (res.status === 202) clearShipProgressOverlay();
       const data = await readResponseJson<any>(res);
       if (!res.ok && res.status !== 202) {
         showToast(data.message || data.error || data.detail || 'Không thể bắt đầu xác nhận đơn hàng.');
+        setBackgroundShipNotice({
+          status: 'done',
+          completed: 0,
+          total: totalQueued,
+          successCount: 0,
+          failCount: totalQueued,
+          successfulOrderIds: [],
+          message: data.message || data.error || `Không thể bắt đầu xác nhận đơn (HTTP ${res.status}).`,
+        });
         return;
       }
 
@@ -2436,8 +2423,15 @@ export default function OrderManager({
       setProgressTotal(total);
 
       if (!jobId) {
-        await finishShipJobResult(data, totalQueued);
-        keepSummaryModal = true;
+        setBackgroundShipNotice({
+          status: 'done',
+          completed: totalQueued,
+          total: totalQueued,
+          successCount: 0,
+          failCount: totalQueued,
+          successfulOrderIds: [],
+          message: 'Máy chủ không trả về mã tiến trình xác nhận.',
+        });
         return;
       }
 
@@ -2457,17 +2451,15 @@ export default function OrderManager({
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
-    } finally {
-      setIsShipping(false);
-      if (!keepSummaryModal) {
-        clearShipProgressOverlay();
-      }
-      setSelectedOrderIds([]);
-      try {
-        if (onFetchOrders) await onFetchOrders();
-      } catch {
-        /* ignore */
-      }
+      setBackgroundShipNotice({
+        status: 'done',
+        completed: 0,
+        total: totalQueued,
+        successCount: 0,
+        failCount: totalQueued,
+        successfulOrderIds: [],
+        message: `Không thể kết nối API: ${msg}`,
+      });
     }
   };
 
