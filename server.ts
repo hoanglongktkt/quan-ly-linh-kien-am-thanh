@@ -4857,19 +4857,32 @@ const shopeeSyncQueue: ShopeeSyncQueueJob[] = [];
 const shopeeSyncQueueKeys = new Set<string>();
 let shopeeSyncQueueRunning = false;
 /** Chỉ 1 tác vụ nặng (ship-order, in vận đơn) chạy cùng lúc — tránh NPROC 100% trên cPanel. */
-let cpanelHeavyJobActive: string | null = null;
+const HEAVY_JOB_LOCK_MAX_MS = 120_000;
+let cpanelHeavyJobActive: { name: string; startedAt: number } | null = null;
 
 function tryAcquireHeavyJob(name: string): boolean {
   if (cpanelHeavyJobActive) {
-    console.warn(`[Heavy Job] Từ chối "${name}" — "${cpanelHeavyJobActive}" đang chạy`);
-    return false;
+    const elapsedMs = Date.now() - cpanelHeavyJobActive.startedAt;
+    // ship_order là fast path; lock quá 2 phút nghĩa là process/job trước đã treo.
+    // Không chặn vĩnh viễn các đơn tiếp theo chỉ vì một Promise không bao giờ resolve.
+    if (elapsedMs > HEAVY_JOB_LOCK_MAX_MS) {
+      console.error(
+        `[Heavy Job] Watchdog giải phóng lock kẹt "${cpanelHeavyJobActive.name}" sau ${elapsedMs}ms`,
+      );
+      cpanelHeavyJobActive = null;
+    } else {
+      console.warn(
+        `[Heavy Job] Từ chối "${name}" — "${cpanelHeavyJobActive.name}" đang chạy (${elapsedMs}ms)`,
+      );
+      return false;
+    }
   }
-  cpanelHeavyJobActive = name;
+  cpanelHeavyJobActive = { name, startedAt: Date.now() };
   return true;
 }
 
 function releaseHeavyJob(name: string): void {
-  if (cpanelHeavyJobActive === name) cpanelHeavyJobActive = null;
+  if (cpanelHeavyJobActive?.name === name) cpanelHeavyJobActive = null;
 }
 
 function detectStockPriceChanges(
@@ -14450,7 +14463,9 @@ async function startServer() {
   // CHỈ đọc MongoDB nội bộ — TUYỆT ĐỐI không gọi Shopee API / fetch / axios ở đây.
   app.get("/api/products", authMiddleware, async (req, res) => {
     try {
-      await withLocalDbTimeout(reloadCachesFromDb(), 8000, "products_reload_cache");
+      // Không rebuild toàn bộ products + 900+ channel_listings cho MỖI request.
+      // Kết quả cache này không được route dùng, nhưng đã gây products_reload_cache_timeout
+      // và làm nghẽn Mongo khi đang chạy ship/print.
       const all = await withLocalDbTimeout(loadProducts(), 8000, "products_load");
       const rawPage = Number(req.query?.page);
       const rawSize = Number(req.query?.pageSize ?? req.query?.limit);

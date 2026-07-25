@@ -209972,17 +209972,28 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
 var shopeeSyncQueue = [];
 var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
 var shopeeSyncQueueRunning = false;
+var HEAVY_JOB_LOCK_MAX_MS = 12e4;
 var cpanelHeavyJobActive = null;
 function tryAcquireHeavyJob(name) {
   if (cpanelHeavyJobActive) {
-    console.warn(`[Heavy Job] T\u1EEB ch\u1ED1i "${name}" \u2014 "${cpanelHeavyJobActive}" \u0111ang ch\u1EA1y`);
-    return false;
+    const elapsedMs = Date.now() - cpanelHeavyJobActive.startedAt;
+    if (elapsedMs > HEAVY_JOB_LOCK_MAX_MS) {
+      console.error(
+        `[Heavy Job] Watchdog gi\u1EA3i ph\xF3ng lock k\u1EB9t "${cpanelHeavyJobActive.name}" sau ${elapsedMs}ms`
+      );
+      cpanelHeavyJobActive = null;
+    } else {
+      console.warn(
+        `[Heavy Job] T\u1EEB ch\u1ED1i "${name}" \u2014 "${cpanelHeavyJobActive.name}" \u0111ang ch\u1EA1y (${elapsedMs}ms)`
+      );
+      return false;
+    }
   }
-  cpanelHeavyJobActive = name;
+  cpanelHeavyJobActive = { name, startedAt: Date.now() };
   return true;
 }
 function releaseHeavyJob(name) {
-  if (cpanelHeavyJobActive === name) cpanelHeavyJobActive = null;
+  if (cpanelHeavyJobActive?.name === name) cpanelHeavyJobActive = null;
 }
 function detectStockPriceChanges(before, after) {
   const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
@@ -216510,7 +216521,6 @@ async function startServer2() {
   const PRODUCTS_PAGE_SIZE_MAX = 50;
   app.get("/api/products", authMiddleware, async (req2, res) => {
     try {
-      await withLocalDbTimeout(reloadCachesFromDb(), 8e3, "products_reload_cache");
       const all = await withLocalDbTimeout(loadProducts(), 8e3, "products_load");
       const rawPage = Number(req2.query?.page);
       const rawSize = Number(req2.query?.pageSize ?? req2.query?.limit);
