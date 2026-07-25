@@ -219203,9 +219203,24 @@ async function startServer2() {
         job.updatedAt = Date.now();
         return;
       }
-      const shipPhase = shipMethod === "dropoff" ? "calling_shopee_dropoff" : "calling_shopee_pickup";
+      job.phase = "optimistic_persist";
+      job.message = "\u0110ang c\u1EADp nh\u1EADt tr\u1EA1ng th\xE1i \u0111\u01A1n...";
+      job.updatedAt = Date.now();
+      const optimisticChanged = [];
+      for (const { index: index4 } of toShip) {
+        orders[index4] = {
+          ...orders[index4],
+          isPrepared: true,
+          status: "processed",
+          shopeeSyncPending: true,
+          shopeeSyncError: void 0
+        };
+        optimisticChanged.push(orders[index4]);
+      }
+      await persistShipJobOrderPatches(optimisticChanged);
+      const shipPhase = "calling_shopee";
       job.phase = shipPhase;
-      job.message = shipMethod === "dropoff" ? "\u0110ang g\u1ECDi Shopee ship_order (dropoff)..." : "\u0110ang g\u1ECDi Shopee pickup / ship_order...";
+      job.message = "\u0110ang g\u1ECDi API Shopee...";
       job.updatedAt = Date.now();
       let completedCount = 0;
       const bumpProgress = () => {
@@ -219213,7 +219228,7 @@ async function startServer2() {
         job.completed = completedCount;
         job.total = toShip.length;
         job.phase = shipPhase;
-        job.message = `\u0110ang x\xE1c nh\u1EADn ${completedCount}/${toShip.length} \u0111\u01A1n l\xEAn s\xE0n (${shipMethod})...`;
+        job.message = completedCount > 0 ? `\u0110ang x\xE1c nh\u1EADn ${completedCount}/${toShip.length} \u0111\u01A1n l\xEAn s\xE0n...` : "\u0110ang g\u1ECDi API Shopee...";
         job.updatedAt = Date.now();
       };
       const settled = await Promise.allSettled(

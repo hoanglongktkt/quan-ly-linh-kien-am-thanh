@@ -18149,13 +18149,26 @@ async function startServer() {
         return;
       }
 
-      const shipPhase =
-        shipMethod === "dropoff" ? "calling_shopee_dropoff" : "calling_shopee_pickup";
+      // Optimistic persist đầu job (sau 202) — không chặn HTTP handler.
+      job.phase = "optimistic_persist";
+      job.message = "Đang cập nhật trạng thái đơn...";
+      job.updatedAt = Date.now();
+      const optimisticChanged: any[] = [];
+      for (const { index } of toShip) {
+        orders[index] = {
+          ...orders[index],
+          isPrepared: true,
+          status: "processed",
+          shopeeSyncPending: true,
+          shopeeSyncError: undefined,
+        };
+        optimisticChanged.push(orders[index]);
+      }
+      await persistShipJobOrderPatches(optimisticChanged);
+
+      const shipPhase = "calling_shopee";
       job.phase = shipPhase;
-      job.message =
-        shipMethod === "dropoff"
-          ? "Đang gọi Shopee ship_order (dropoff)..."
-          : "Đang gọi Shopee pickup / ship_order...";
+      job.message = "Đang gọi API Shopee...";
       job.updatedAt = Date.now();
 
       let completedCount = 0;
@@ -18164,7 +18177,10 @@ async function startServer() {
         job.completed = completedCount;
         job.total = toShip.length;
         job.phase = shipPhase;
-        job.message = `Đang xác nhận ${completedCount}/${toShip.length} đơn lên sàn (${shipMethod})...`;
+        job.message =
+          completedCount > 0
+            ? `Đang xác nhận ${completedCount}/${toShip.length} đơn lên sàn...`
+            : "Đang gọi API Shopee...";
         job.updatedAt = Date.now();
       };
 

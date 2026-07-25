@@ -1413,12 +1413,15 @@ export default function OrderManager({
     successfulOrderIds: string[];
     failedOrderDetails: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string }>;
   } | null>(null);
-  /** Banner không chặn UI sau bulk-async 202 — toast + nút In khi job xong. */
+  /** Banner không chặn UI sau bulk-async 202 — chạy nền + nút In khi job xong. */
   const [backgroundShipNotice, setBackgroundShipNotice] = useState<{
     message: string;
     successCount: number;
     failCount: number;
     successfulOrderIds: string[];
+    status?: 'running' | 'done';
+    completed?: number;
+    total?: number;
   } | null>(null);
   const [isPrintingFromSummary, setIsPrintingFromSummary] = useState(false);
   const progressCloseTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2144,6 +2147,27 @@ export default function OrderManager({
         if (!jobRes.ok) break;
         const job = await parseJsonResponse<any>(jobRes);
         finalJob = job;
+
+        const done = Number(job.completed) || 0;
+        const tot = Number(job.total) || total;
+        if (job.status === 'running' || job.status === 'pending') {
+          const runningMsg =
+            done === 0
+              ? (typeof job.message === 'string' && job.message.trim()
+                  ? job.message
+                  : 'Đang gọi API Shopee...')
+              : `Đang xác nhận ${done}/${tot} đơn lên sàn...`;
+          setBackgroundShipNotice({
+            message: runningMsg,
+            successCount: 0,
+            failCount: 0,
+            successfulOrderIds: [],
+            status: 'running',
+            completed: done,
+            total: tot,
+          });
+        }
+
         if (job.status === 'done' || job.status === 'failed' || job.status === 'printing') {
           break;
         }
@@ -2223,6 +2247,9 @@ export default function OrderManager({
       successCount: summary.successCount,
       failCount: summary.failCount,
       successfulOrderIds: summary.successfulOrderIds,
+      status: 'done',
+      completed: summary.successCount + summary.failCount,
+      total: summary.total,
     });
     return summary;
   };
@@ -2312,8 +2339,17 @@ export default function OrderManager({
         return;
       }
 
-      // 202 Accepted — UI đã free; poll nền im lặng.
+      // 202 Accepted — UI đã free; poll nền + banner "Đang gọi API Shopee..." khi 0/N.
       showToast(`Đã tiếp nhận ${total} đơn — đang xác nhận nền, bạn có thể tiếp tục làm việc.`);
+      setBackgroundShipNotice({
+        message: 'Đang gọi API Shopee...',
+        successCount: 0,
+        failCount: 0,
+        successfulOrderIds: [],
+        status: 'running',
+        completed: 0,
+        total,
+      });
       const pollToken = ++shipBgPollAbortRef.current;
       void (async () => {
         const finalJob = await pollShipJobQuietly(jobId, total, pollToken);
@@ -3438,12 +3474,23 @@ export default function OrderManager({
       {backgroundShipNotice && (
         <div className="fixed bottom-5 right-5 z-110 max-w-sm w-[calc(100%-2rem)] bg-white border border-slate-200 shadow-2xl rounded-2xl p-4 animate-in fade-in slide-in-from-bottom-2">
           <div className="flex items-start gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            {backgroundShipNotice.status === 'running' ? (
+              <Loader2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5 animate-spin" />
+            ) : (
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            )}
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-slate-900">Xác nhận hàng loạt xong</p>
+              <p className="text-sm font-bold text-slate-900">
+                {backgroundShipNotice.status === 'running'
+                  ? (Number(backgroundShipNotice.completed) || 0) === 0
+                    ? 'Đang gọi API Shopee...'
+                    : `Đang xác nhận ${backgroundShipNotice.completed}/${backgroundShipNotice.total || 0}`
+                  : 'Xác nhận hàng loạt xong'}
+              </p>
               <p className="text-xs text-slate-600 mt-1 leading-relaxed">{backgroundShipNotice.message}</p>
               <div className="flex gap-2 mt-3">
-                {backgroundShipNotice.successfulOrderIds.length > 0 && (
+                {backgroundShipNotice.status !== 'running' &&
+                  backgroundShipNotice.successfulOrderIds.length > 0 && (
                   <button
                     type="button"
                     onClick={() => void handlePrintFromShipSummary()}
@@ -3463,7 +3510,7 @@ export default function OrderManager({
                   onClick={() => setBackgroundShipNotice(null)}
                   className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-slate-50"
                 >
-                  Đóng
+                  {backgroundShipNotice.status === 'running' ? 'Ẩn' : 'Đóng'}
                 </button>
               </div>
             </div>
