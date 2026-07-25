@@ -601,6 +601,7 @@ export default function OrderManager({
   // Nút "Làm mới": 1) kéo đơn từ Shopee (get_order_list → detail → Mongo)
   // 2) đọc lại Mongo qua /api/orders/refresh. Trước đây chỉ bước 2 → bấm không có tác dụng.
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
   const handleRefreshOrders = async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
@@ -619,7 +620,11 @@ export default function OrderManager({
       const pullJson = await pullRes.json().catch(() => ({}));
       if (!pullRes.ok || pullJson?.success === false) {
         console.warn('[Orders Sync] Pull Shopee không thành công:', pullJson);
+        setLastSyncSummary(`Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`);
       } else {
+        setLastSyncSummary(
+          `Đồng bộ xong: kiểm tra ${pullJson.pulled ?? 0}, cập nhật ${pullJson.updated ?? 0}, mới ${pullJson.added ?? 0}`,
+        );
         console.log(
           `[Orders Sync] Pull OK — pulled=${pullJson.pulled ?? 0} added=${pullJson.added ?? 0} updated=${pullJson.updated ?? 0}`,
         );
@@ -628,6 +633,7 @@ export default function OrderManager({
       console.log('[FRONTEND FETCHED] Làm mới đơn hàng thành công.');
     } catch (err) {
       console.error('[FRONTEND FETCHED] Làm mới đơn hàng thất bại:', err);
+      setLastSyncSummary('Đồng bộ thất bại: lỗi kết nối máy chủ.');
     } finally {
       setIsRefreshing(false);
     }
@@ -3465,6 +3471,11 @@ export default function OrderManager({
 
   return (
     <div className="space-y-6 max-md:space-y-4 om-orders-page">
+      {lastSyncSummary && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-800">
+          {lastSyncSummary}
+        </div>
+      )}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-110 bg-slate-900 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 animate-in fade-in flex items-center gap-2 max-w-sm">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />

@@ -56,7 +56,36 @@ type OrderDoc = {
   is_handed_over?: boolean;
   isPrinted?: boolean;
   isPrepared?: boolean;
+  /** Thời điểm bản trạng thái Shopee cuối cùng được xác minh. */
+  last_synced_at?: Date | null;
+  last_shopee_update_at?: Date | null;
+  sync_state?: string | null;
   data: any;
+};
+
+type OrderEventDoc = {
+  _id: string;
+  orderSn: string;
+  shopId?: string | null;
+  source: string;
+  previous_status?: string | null;
+  next_status?: string | null;
+  previous_shopee_status?: string | null;
+  next_shopee_status?: string | null;
+  logistics_status?: string | null;
+  occurred_at: Date;
+  payload?: any;
+};
+
+type SyncJobDoc = {
+  _id: string;
+  type: string;
+  state: "queued" | "running" | "succeeded" | "failed";
+  started_at?: Date | null;
+  finished_at?: Date | null;
+  metrics?: any;
+  error?: string | null;
+  requested_by?: string | null;
 };
 
 const ProductSchema = new Schema<ProductDoc>(
@@ -112,6 +141,9 @@ const OrderSchema = new Schema<OrderDoc>(
     is_handed_over: { type: Boolean, default: false, index: true },
     isPrinted: { type: Boolean, default: false },
     isPrepared: { type: Boolean, default: false },
+    last_synced_at: { type: Date, default: null, index: true },
+    last_shopee_update_at: { type: Date, default: null },
+    sync_state: { type: String, default: "verified", index: true },
     data: { type: Schema.Types.Mixed, required: true },
   },
   { collection: "orders", versionKey: false }
@@ -133,14 +165,50 @@ OrderSchema.index({ orderSn: 1, shopId: 1 });
 // Hỗ trợ Dashboard aggregation lọc theo ngày / doanh thu mà không quét toàn bộ collection.
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
+OrderSchema.index({ shopId: 1, shopee_order_status: 1, last_synced_at: 1 });
 // Khớp trực tiếp với truy vấn danh sách đơn mới nhất, tránh MongoDB phải sort lại
 // toàn bộ collection sau mỗi lần làm mới.
 OrderSchema.index({ "data.date": -1, _id: -1 });
+
+const OrderEventSchema = new Schema<OrderEventDoc>(
+  {
+    _id: { type: String, required: true },
+    orderSn: { type: String, required: true, index: true },
+    shopId: { type: String, default: null, index: true },
+    source: { type: String, required: true, index: true },
+    previous_status: { type: String, default: null },
+    next_status: { type: String, default: null },
+    previous_shopee_status: { type: String, default: null },
+    next_shopee_status: { type: String, default: null },
+    logistics_status: { type: String, default: null },
+    occurred_at: { type: Date, required: true, index: true },
+    payload: { type: Schema.Types.Mixed, default: null },
+  },
+  { collection: "order_events", versionKey: false }
+);
+OrderEventSchema.index({ orderSn: 1, occurred_at: -1 });
+
+const SyncJobSchema = new Schema<SyncJobDoc>(
+  {
+    _id: { type: String, required: true },
+    type: { type: String, required: true, index: true },
+    state: { type: String, required: true, index: true },
+    started_at: { type: Date, default: null },
+    finished_at: { type: Date, default: null },
+    metrics: { type: Schema.Types.Mixed, default: {} },
+    error: { type: String, default: null },
+    requested_by: { type: String, default: null },
+  },
+  { collection: "sync_jobs", versionKey: false }
+);
+SyncJobSchema.index({ type: 1, started_at: -1 });
 
 let ProductModel: Model<ProductDoc>;
 let ChannelListingModel: Model<ListingDoc>;
 let MetaModel: Model<MetaDoc>;
 let OrderModel: Model<OrderDoc>;
+let OrderEventModel: Model<OrderEventDoc>;
+let SyncJobModel: Model<SyncJobDoc>;
 
 let mongoReady = false;
 let appRootResolved = "";
@@ -164,6 +232,12 @@ function ensureModels(): void {
   OrderModel =
     (mongoose.models.Order as Model<OrderDoc>) ||
     mongoose.model<OrderDoc>("Order", OrderSchema);
+  OrderEventModel =
+    (mongoose.models.OrderEvent as Model<OrderEventDoc>) ||
+    mongoose.model<OrderEventDoc>("OrderEvent", OrderEventSchema);
+  SyncJobModel =
+    (mongoose.models.SyncJob as Model<SyncJobDoc>) ||
+    mongoose.model<SyncJobDoc>("SyncJob", SyncJobSchema);
 }
 
 function requireMongo(): void {
@@ -1075,6 +1149,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
   if (list.length === 0) return 0;
 
   const ops = [];
+  const events: OrderEventDoc[] = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
     const orderSn = String(order.orderSn || order.order_sn || "").trim();
@@ -1107,12 +1182,23 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     const $set: Record<string, unknown> = {
       orderSn: orderSn || null,
       is_pending_shopee_check: pendingFlag,
+      last_synced_at: new Date(),
+      sync_state: String(order.sync_state || "verified"),
       "data.id": _id,
       "data.channel": order.channel != null ? String(order.channel) : "shopee",
       "data.orderSn": orderSn || null,
       "data.order_sn": orderSn || null,
       "data.is_pending_shopee_check": pendingFlag,
+      "data.last_synced_at": new Date().toISOString(),
+      "data.sync_state": String(order.sync_state || "verified"),
     };
+    if (order.last_shopee_update_at != null) {
+      const updateAt = new Date(String(order.last_shopee_update_at));
+      if (!Number.isNaN(updateAt.getTime())) {
+        $set.last_shopee_update_at = updateAt;
+        $set["data.last_shopee_update_at"] = updateAt.toISOString();
+      }
+    }
     // BẮT BUỘC: Luôn force set shopId khi có để patch old documents với shopId null/thiếu.
     if (shopIdStr) {
       $set.shopId = shopIdStr;
@@ -1219,6 +1305,23 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
         upsert: true,
       },
     });
+    if (orderSn) {
+      events.push({
+        _id: `order-event-${orderSn}-${Date.now()}-${events.length}`,
+        orderSn,
+        shopId: shopIdStr || null,
+        source: String(order.sync_source || "shopee_sync"),
+        next_status: order.status != null ? String(order.status) : null,
+        next_shopee_status: rawStatus || null,
+        logistics_status:
+          order.logistics_status != null ? String(order.logistics_status) : null,
+        occurred_at: new Date(),
+        payload: {
+          tracking_no: usableTn,
+          package_number: order.packageNumber || null,
+        },
+      });
+    }
   }
   if (ops.length === 0) return 0;
 
@@ -1227,6 +1330,9 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       try {
         const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
         await setMeta("orders_updated_at", new Date().toISOString());
+        if (events.length > 0) {
+          await OrderEventModel.insertMany(events, { ordered: false });
+        }
         console.log(
           `[DB UPDATED] bulkWrite orders — upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}` +
             ` writeErrors=${(result as any).hasWriteErrors?.() ? (result as any).getWriteErrors?.()?.length || "?" : 0}`,
@@ -1824,6 +1930,157 @@ export async function loadOrdersFromStore(opts?: {
     });
   }
   return out;
+}
+
+export type OrdersPageQuery = {
+  page?: number;
+  pageSize?: number;
+  tab?: string;
+  shopId?: string;
+  carrier?: string;
+  query?: string;
+};
+
+function orderTabFilter(tab?: string): Record<string, unknown> {
+  switch (String(tab || "").trim()) {
+    case "shipping":
+      return {
+        $or: [
+          { status: "shipping" },
+          { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
+        ],
+      };
+    case "completed":
+      return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
+    case "cancelled":
+      return { $or: [{ status: "cancelled" }, { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }] };
+    case "processed":
+      return { status: "processed", shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+    case "unprocessed":
+      return { status: "unprocessed", shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+    case "pending_confirm":
+      return { status: { $in: ["pending_confirm", "pending_verification"] } };
+    case "handed_over_carrier":
+      return { is_handed_over: true, shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+    case "stale":
+      return {
+        "data.channel": "shopee",
+        shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] },
+        last_synced_at: { $lt: new Date(Date.now() - 15 * 60 * 1000) },
+      };
+    default:
+      return {};
+  }
+}
+
+/** Danh sách đơn phân trang từ MongoDB; frontend không cần tải toàn bộ collection để lọc. */
+export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<{
+  rows: any[];
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  counts: Record<string, number>;
+}> {
+  requireMongo();
+  const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
+  const pageSize = Math.max(10, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
+  const and: Record<string, unknown>[] = [];
+  const tabFilter = orderTabFilter(opts?.tab);
+  if (Object.keys(tabFilter).length) and.push(tabFilter);
+  if (opts?.shopId && opts.shopId !== "all") and.push({ shopId: String(opts.shopId) });
+  if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
+  const search = String(opts?.query || "").trim();
+  if (search) {
+    const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    and.push({
+      $or: [
+        { orderSn: regex },
+        { tracking_no: regex },
+        { "data.shopName": regex },
+        { "data.shipping_carrier": regex },
+        { "data.items.productTitle": regex },
+      ],
+    });
+  }
+  const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
+  const [total, docs, grouped] = await Promise.all([
+    OrderModel.countDocuments(filter).maxTimeMS(8000),
+    OrderModel.find(filter)
+      .sort({ "data.date": -1, _id: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .select({ _id: 1 })
+      .maxTimeMS(8000)
+      .lean(),
+    OrderModel.aggregate([
+      { $group: { _id: "$status", count: { $sum: 1 } } },
+    ]).option({ maxTimeMS: 8000 }),
+  ]);
+  const ids = docs.map((doc: any) => String(doc._id));
+  const hydrated = await loadOrdersFromStore({ ids });
+  const rowById = new Map(hydrated.map((row: any) => [String(row.id || ""), row]));
+  const rows = ids.map((id) => rowById.get(id)).filter(Boolean);
+  const counts: Record<string, number> = { all: 0 };
+  for (const row of grouped as any[]) {
+    const key = String(row?._id || "");
+    if (key) counts[key] = Number(row?.count || 0);
+    counts.all += Number(row?.count || 0);
+  }
+  return { rows, total, page, pageSize, hasMore: page * pageSize < total, counts };
+}
+
+export async function createSyncJob(
+  type: string,
+  requestedBy?: string,
+): Promise<{ id: string; state: SyncJobDoc["state"] }> {
+  requireMongo();
+  const id = `sync-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  await SyncJobModel.create({
+    _id: id,
+    type,
+    state: "running",
+    started_at: new Date(),
+    metrics: {},
+    requested_by: requestedBy || null,
+  });
+  return { id, state: "running" };
+}
+
+export async function finishSyncJob(
+  id: string,
+  state: "succeeded" | "failed",
+  metrics?: Record<string, unknown>,
+  error?: string,
+): Promise<void> {
+  if (!id || !isMongoReady()) return;
+  requireMongo();
+  await SyncJobModel.updateOne(
+    { _id: id },
+    {
+      $set: {
+        state,
+        finished_at: new Date(),
+        metrics: metrics || {},
+        error: error || null,
+      },
+    },
+  );
+}
+
+export async function getSyncJob(id: string): Promise<any | null> {
+  if (!id || !isMongoReady()) return null;
+  requireMongo();
+  return SyncJobModel.findById(id).lean();
+}
+
+export async function loadOrderEvents(orderSn: string, limit = 50): Promise<any[]> {
+  if (!orderSn || !isMongoReady()) return [];
+  requireMongo();
+  return OrderEventModel.find({ orderSn: String(orderSn).trim() })
+    .sort({ occurred_at: -1 })
+    .limit(Math.max(1, Math.min(200, limit)))
+    .lean();
 }
 
 export type DashboardLiteProduct = {

@@ -69,6 +69,11 @@ import {
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
   loadOrdersFromStore,
+  queryOrdersPageFromStore,
+  createSyncJob,
+  finishSyncJob,
+  getSyncJob,
+  loadOrderEvents,
   mirrorTopLevelTrackingIntoData,
   getDashboardStatsFromStore,
   getLowStockProductsFromStore,
@@ -3161,7 +3166,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       };
     }
 
-    const orders = loadOrders();
+    // MongoDB là SSOT: pull/merge không được lấy orders.json cũ làm base.
+    const orders = isMongoReady() ? await loadOrdersFromStore() : [];
     syncDiag(
       "Pull START",
       `shops=${shopIds.length} lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s` +
@@ -10638,9 +10644,16 @@ async function hydrateTrackingFromMongoToJson(): Promise<{
 
 function saveOrders(orders: any[]): boolean {
   try {
-    // Không dùng file lock / exclusive lock — deleteMany Mongo & ghi JSON luôn được phép.
-    fs.mkdirSync(path.dirname(ORDERS_DB_PATH), { recursive: true });
+    // MongoDB là SSOT. JSON chỉ là mirror tương thích cho các route legacy còn chưa
+    // được gỡ; mọi lần ghi legacy được đẩy sang Mongo trước khi file mirror được dùng lại.
     const sanitized = orders.map(repairMisassignedTracking);
+    if (isMongoReady() && sanitized.length > 0) {
+      void bulkUpsertOrdersToStore(sanitized).catch((err: any) =>
+        console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err),
+      );
+    }
+    // Không dùng file lock / exclusive lock — mirror legacy không được dùng để phục vụ UI.
+    fs.mkdirSync(path.dirname(ORDERS_DB_PATH), { recursive: true });
     fs.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
@@ -15789,12 +15802,65 @@ async function startServer() {
     }
   });
 
+  /** Danh sách đơn phân trang + badge counts do Mongo tính, không lọc toàn bộ ở client. */
+  app.get("/api/orders/query", authMiddleware, async (req, res) => {
+    try {
+      if (!isMongoReady()) {
+        return res.status(503).json({ success: false, error: "mongodb_not_ready", data: [] });
+      }
+      const page = await queryOrdersPageFromStore({
+        page: Number(req.query.page),
+        pageSize: Number(req.query.page_size ?? req.query.pageSize),
+        tab: String(req.query.tab || ""),
+        shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
+        carrier: String(req.query.carrier || ""),
+        query: String(req.query.q ?? req.query.query ?? ""),
+      });
+      const products = await loadProductsForOrders(page.rows);
+      const rows = enrichOrdersWithShopNames(enrichOrdersFromCatalog(page.rows, products));
+      return res.json({
+        success: true,
+        data: rows,
+        total: page.total,
+        page: page.page,
+        page_size: page.pageSize,
+        has_more: page.hasMore,
+        counts: page.counts,
+      });
+    } catch (error: any) {
+      console.error("[Orders Query] failed:", error?.stack || error?.message || error);
+      return res.status(500).json({
+        success: false,
+        error: "orders_query_failed",
+        message: error?.message || "Không thể truy vấn đơn hàng.",
+      });
+    }
+  });
+
+  app.get("/api/orders/:orderSn/events", authMiddleware, async (req, res) => {
+    try {
+      const events = await loadOrderEvents(String(req.params.orderSn || ""), Number(req.query.limit) || 50);
+      return res.json({ success: true, data: events });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, error: "order_events_failed", message: error?.message });
+    }
+  });
+
+  app.get("/api/sync-jobs/:jobId", authMiddleware, async (req, res) => {
+    const job = await getSyncJob(String(req.params.jobId || ""));
+    if (!job) return res.status(404).json({ success: false, error: "sync_job_not_found" });
+    return res.json({ success: true, data: job });
+  });
+
   /**
    * Kéo đơn mới từ Shopee (get_order_list → get_order_detail → Mongo).
    * Body: { lookback_hours?: number, hours?: number } — mặc định 24h, max 15 ngày.
    */
   app.post("/api/orders/pull", authMiddleware, async (req, res) => {
+    let jobId = "";
     try {
+      const job = await createSyncJob("shopee_orders_pull", String((req as any).user?.username || ""));
+      jobId = job.id;
       const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
       const lookbackSec = Math.floor(hours * 60 * 60);
@@ -15805,8 +15871,16 @@ async function startServer() {
       });
       // Invalidate cache refresh để FE thấy đơn mới ngay.
       ordersRefreshCache = null;
+      await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
+        pulled: result.pulled,
+        added: result.added,
+        updated: result.updated,
+        shops: result.shops,
+        errors: result.errors.length,
+      }, result.success ? undefined : result.message);
       return res.status(200).json({
         success: result.success,
+        job_id: jobId,
         pulled: result.pulled,
         added: result.added,
         updated: result.updated,
@@ -15816,6 +15890,7 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);
+      if (jobId) await finishSyncJob(jobId, "failed", {}, error?.message || String(error));
       return res.status(500).json({
         success: false,
         pulled: 0,
@@ -15825,7 +15900,10 @@ async function startServer() {
     }
   });
   app.post("/api/shopee/orders/sync", authMiddleware, async (req, res) => {
+    let jobId = "";
     try {
+      const job = await createSyncJob("shopee_orders_sync", String((req as any).user?.username || ""));
+      jobId = job.id;
       const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
       const result = await pullIncrementalOrdersFromShopee({
@@ -15833,8 +15911,16 @@ async function startServer() {
         reconcileActive: true,
       });
       ordersRefreshCache = null;
+      await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
+        pulled: result.pulled,
+        added: result.added,
+        updated: result.updated,
+        shops: result.shops,
+        errors: result.errors.length,
+      }, result.success ? undefined : result.message);
       return res.status(200).json({
         success: result.success,
+        job_id: jobId,
         pulled: result.pulled,
         added: result.added,
         updated: result.updated,
@@ -15844,6 +15930,7 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("[Orders Pull] /api/shopee/orders/sync exception:", error?.stack || error?.message || error);
+      if (jobId) await finishSyncJob(jobId, "failed", {}, error?.message || String(error));
       return res.status(500).json({
         success: false,
         pulled: 0,

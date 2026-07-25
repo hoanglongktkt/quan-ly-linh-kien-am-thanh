@@ -204773,6 +204773,9 @@ var OrderSchema = new import_mongoose.Schema(
     is_handed_over: { type: Boolean, default: false, index: true },
     isPrinted: { type: Boolean, default: false },
     isPrepared: { type: Boolean, default: false },
+    last_synced_at: { type: Date, default: null, index: true },
+    last_shopee_update_at: { type: Date, default: null },
+    sync_state: { type: String, default: "verified", index: true },
     data: { type: import_mongoose.Schema.Types.Mixed, required: true }
   },
   { collection: "orders", versionKey: false }
@@ -204788,11 +204791,45 @@ OrderSchema.index(
 OrderSchema.index({ orderSn: 1, shopId: 1 });
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
+OrderSchema.index({ shopId: 1, shopee_order_status: 1, last_synced_at: 1 });
 OrderSchema.index({ "data.date": -1, _id: -1 });
+var OrderEventSchema = new import_mongoose.Schema(
+  {
+    _id: { type: String, required: true },
+    orderSn: { type: String, required: true, index: true },
+    shopId: { type: String, default: null, index: true },
+    source: { type: String, required: true, index: true },
+    previous_status: { type: String, default: null },
+    next_status: { type: String, default: null },
+    previous_shopee_status: { type: String, default: null },
+    next_shopee_status: { type: String, default: null },
+    logistics_status: { type: String, default: null },
+    occurred_at: { type: Date, required: true, index: true },
+    payload: { type: import_mongoose.Schema.Types.Mixed, default: null }
+  },
+  { collection: "order_events", versionKey: false }
+);
+OrderEventSchema.index({ orderSn: 1, occurred_at: -1 });
+var SyncJobSchema = new import_mongoose.Schema(
+  {
+    _id: { type: String, required: true },
+    type: { type: String, required: true, index: true },
+    state: { type: String, required: true, index: true },
+    started_at: { type: Date, default: null },
+    finished_at: { type: Date, default: null },
+    metrics: { type: import_mongoose.Schema.Types.Mixed, default: {} },
+    error: { type: String, default: null },
+    requested_by: { type: String, default: null }
+  },
+  { collection: "sync_jobs", versionKey: false }
+);
+SyncJobSchema.index({ type: 1, started_at: -1 });
 var ProductModel;
 var ChannelListingModel;
 var MetaModel;
 var OrderModel;
+var OrderEventModel;
+var SyncJobModel;
 var mongoReady = false;
 var appRootResolved = "";
 var writeChain = Promise.resolve();
@@ -204804,6 +204841,8 @@ function ensureModels() {
   ChannelListingModel = import_mongoose.default.models.ChannelListing || import_mongoose.default.model("ChannelListing", ChannelListingSchema);
   MetaModel = import_mongoose.default.models.AppMeta || import_mongoose.default.model("AppMeta", MetaSchema);
   OrderModel = import_mongoose.default.models.Order || import_mongoose.default.model("Order", OrderSchema);
+  OrderEventModel = import_mongoose.default.models.OrderEvent || import_mongoose.default.model("OrderEvent", OrderEventSchema);
+  SyncJobModel = import_mongoose.default.models.SyncJob || import_mongoose.default.model("SyncJob", SyncJobSchema);
 }
 function requireMongo() {
   if (!isMongoReady()) {
@@ -205502,6 +205541,7 @@ async function bulkUpsertOrdersToStore(orders) {
   const list2 = Array.isArray(orders) ? orders.filter((o6) => o6 != null && typeof o6 === "object") : [];
   if (list2.length === 0) return 0;
   const ops = [];
+  const events2 = [];
   for (const order of list2) {
     const id3 = String(order.id || "").trim();
     const orderSn = String(order.orderSn || order.order_sn || "").trim();
@@ -205525,12 +205565,23 @@ async function bulkUpsertOrdersToStore(orders) {
     const $set = {
       orderSn: orderSn || null,
       is_pending_shopee_check: pendingFlag,
+      last_synced_at: /* @__PURE__ */ new Date(),
+      sync_state: String(order.sync_state || "verified"),
       "data.id": _id2,
       "data.channel": order.channel != null ? String(order.channel) : "shopee",
       "data.orderSn": orderSn || null,
       "data.order_sn": orderSn || null,
-      "data.is_pending_shopee_check": pendingFlag
+      "data.is_pending_shopee_check": pendingFlag,
+      "data.last_synced_at": (/* @__PURE__ */ new Date()).toISOString(),
+      "data.sync_state": String(order.sync_state || "verified")
     };
+    if (order.last_shopee_update_at != null) {
+      const updateAt = new Date(String(order.last_shopee_update_at));
+      if (!Number.isNaN(updateAt.getTime())) {
+        $set.last_shopee_update_at = updateAt;
+        $set["data.last_shopee_update_at"] = updateAt.toISOString();
+      }
+    }
     if (shopIdStr) {
       $set.shopId = shopIdStr;
       $set["data.shopId"] = shopIdStr;
@@ -205614,6 +205665,22 @@ async function bulkUpsertOrdersToStore(orders) {
         upsert: true
       }
     });
+    if (orderSn) {
+      events2.push({
+        _id: `order-event-${orderSn}-${Date.now()}-${events2.length}`,
+        orderSn,
+        shopId: shopIdStr || null,
+        source: String(order.sync_source || "shopee_sync"),
+        next_status: order.status != null ? String(order.status) : null,
+        next_shopee_status: rawStatus || null,
+        logistics_status: order.logistics_status != null ? String(order.logistics_status) : null,
+        occurred_at: /* @__PURE__ */ new Date(),
+        payload: {
+          tracking_no: usableTn,
+          package_number: order.packageNumber || null
+        }
+      });
+    }
   }
   if (ops.length === 0) return 0;
   try {
@@ -205621,6 +205688,9 @@ async function bulkUpsertOrdersToStore(orders) {
       try {
         const result = await OrderModel.bulkWrite(ops, { ordered: false });
         await setMeta("orders_updated_at", (/* @__PURE__ */ new Date()).toISOString());
+        if (events2.length > 0) {
+          await OrderEventModel.insertMany(events2, { ordered: false });
+        }
         console.log(
           `[DB UPDATED] bulkWrite orders \u2014 upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0} writeErrors=${result.hasWriteErrors?.() ? result.getWriteErrors?.()?.length || "?" : 0}`
         );
@@ -206052,6 +206122,117 @@ async function loadOrdersFromStore(opts) {
     });
   }
   return out;
+}
+function orderTabFilter(tab2) {
+  switch (String(tab2 || "").trim()) {
+    case "shipping":
+      return {
+        $or: [
+          { status: "shipping" },
+          { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } }
+        ]
+      };
+    case "completed":
+      return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
+    case "cancelled":
+      return { $or: [{ status: "cancelled" }, { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }] };
+    case "processed":
+      return { status: "processed", shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+    case "unprocessed":
+      return { status: "unprocessed", shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+    case "pending_confirm":
+      return { status: { $in: ["pending_confirm", "pending_verification"] } };
+    case "handed_over_carrier":
+      return { is_handed_over: true, shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+    case "stale":
+      return {
+        "data.channel": "shopee",
+        shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] },
+        last_synced_at: { $lt: new Date(Date.now() - 15 * 60 * 1e3) }
+      };
+    default:
+      return {};
+  }
+}
+async function queryOrdersPageFromStore(opts) {
+  requireMongo();
+  const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
+  const pageSize = Math.max(10, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
+  const and = [];
+  const tabFilter = orderTabFilter(opts?.tab);
+  if (Object.keys(tabFilter).length) and.push(tabFilter);
+  if (opts?.shopId && opts.shopId !== "all") and.push({ shopId: String(opts.shopId) });
+  if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
+  const search = String(opts?.query || "").trim();
+  if (search) {
+    const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    and.push({
+      $or: [
+        { orderSn: regex },
+        { tracking_no: regex },
+        { "data.shopName": regex },
+        { "data.shipping_carrier": regex },
+        { "data.items.productTitle": regex }
+      ]
+    });
+  }
+  const filter2 = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
+  const [total, docs, grouped] = await Promise.all([
+    OrderModel.countDocuments(filter2).maxTimeMS(8e3),
+    OrderModel.find(filter2).sort({ "data.date": -1, _id: -1 }).skip((page - 1) * pageSize).limit(pageSize).select({ _id: 1 }).maxTimeMS(8e3).lean(),
+    OrderModel.aggregate([
+      { $group: { _id: "$status", count: { $sum: 1 } } }
+    ]).option({ maxTimeMS: 8e3 })
+  ]);
+  const ids = docs.map((doc) => String(doc._id));
+  const hydrated = await loadOrdersFromStore({ ids });
+  const rowById = new Map(hydrated.map((row) => [String(row.id || ""), row]));
+  const rows = ids.map((id3) => rowById.get(id3)).filter(Boolean);
+  const counts = { all: 0 };
+  for (const row of grouped) {
+    const key = String(row?._id || "");
+    if (key) counts[key] = Number(row?.count || 0);
+    counts.all += Number(row?.count || 0);
+  }
+  return { rows, total, page, pageSize, hasMore: page * pageSize < total, counts };
+}
+async function createSyncJob(type, requestedBy) {
+  requireMongo();
+  const id3 = `sync-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  await SyncJobModel.create({
+    _id: id3,
+    type,
+    state: "running",
+    started_at: /* @__PURE__ */ new Date(),
+    metrics: {},
+    requested_by: requestedBy || null
+  });
+  return { id: id3, state: "running" };
+}
+async function finishSyncJob(id3, state, metrics, error3) {
+  if (!id3 || !isMongoReady()) return;
+  requireMongo();
+  await SyncJobModel.updateOne(
+    { _id: id3 },
+    {
+      $set: {
+        state,
+        finished_at: /* @__PURE__ */ new Date(),
+        metrics: metrics || {},
+        error: error3 || null
+      }
+    }
+  );
+}
+async function getSyncJob(id3) {
+  if (!id3 || !isMongoReady()) return null;
+  requireMongo();
+  return SyncJobModel.findById(id3).lean();
+}
+async function loadOrderEvents(orderSn, limit = 50) {
+  if (!orderSn || !isMongoReady()) return [];
+  requireMongo();
+  return OrderEventModel.find({ orderSn: String(orderSn).trim() }).sort({ occurred_at: -1 }).limit(Math.max(1, Math.min(200, limit))).lean();
 }
 async function getLowStockProductsFromStore(threshold, limit = 50) {
   requireMongo();
@@ -208416,7 +208597,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
         elapsedMs: Date.now() - startedAt
       };
     }
-    const orders = loadOrders();
+    const orders = isMongoReady() ? await loadOrdersFromStore() : [];
     syncDiag(
       "Pull START",
       `shops=${shopIds.length} lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s deadline=${ORDERS_PULL_HARD_DEADLINE_MS}ms enrichTracking=${enrichTracking}`
@@ -213602,8 +213783,13 @@ async function hydrateTrackingFromMongoToJson() {
 }
 function saveOrders(orders) {
   try {
-    import_fs8.default.mkdirSync(import_path10.default.dirname(ORDERS_DB_PATH), { recursive: true });
     const sanitized = orders.map(repairMisassignedTracking);
+    if (isMongoReady() && sanitized.length > 0) {
+      void bulkUpsertOrdersToStore(sanitized).catch(
+        (err2) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err2?.message || err2)
+      );
+    }
+    import_fs8.default.mkdirSync(import_path10.default.dirname(ORDERS_DB_PATH), { recursive: true });
     import_fs8.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
@@ -217482,8 +217668,57 @@ async function startServer2() {
       });
     }
   });
-  app.post("/api/orders/pull", authMiddleware, async (req2, res) => {
+  app.get("/api/orders/query", authMiddleware, async (req2, res) => {
     try {
+      if (!isMongoReady()) {
+        return res.status(503).json({ success: false, error: "mongodb_not_ready", data: [] });
+      }
+      const page = await queryOrdersPageFromStore({
+        page: Number(req2.query.page),
+        pageSize: Number(req2.query.page_size ?? req2.query.pageSize),
+        tab: String(req2.query.tab || ""),
+        shopId: String(req2.query.shop_id ?? req2.query.shopId ?? ""),
+        carrier: String(req2.query.carrier || ""),
+        query: String(req2.query.q ?? req2.query.query ?? "")
+      });
+      const products = await loadProductsForOrders(page.rows);
+      const rows = enrichOrdersWithShopNames(enrichOrdersFromCatalog(page.rows, products));
+      return res.json({
+        success: true,
+        data: rows,
+        total: page.total,
+        page: page.page,
+        page_size: page.pageSize,
+        has_more: page.hasMore,
+        counts: page.counts
+      });
+    } catch (error3) {
+      console.error("[Orders Query] failed:", error3?.stack || error3?.message || error3);
+      return res.status(500).json({
+        success: false,
+        error: "orders_query_failed",
+        message: error3?.message || "Kh\xF4ng th\u1EC3 truy v\u1EA5n \u0111\u01A1n h\xE0ng."
+      });
+    }
+  });
+  app.get("/api/orders/:orderSn/events", authMiddleware, async (req2, res) => {
+    try {
+      const events2 = await loadOrderEvents(String(req2.params.orderSn || ""), Number(req2.query.limit) || 50);
+      return res.json({ success: true, data: events2 });
+    } catch (error3) {
+      return res.status(500).json({ success: false, error: "order_events_failed", message: error3?.message });
+    }
+  });
+  app.get("/api/sync-jobs/:jobId", authMiddleware, async (req2, res) => {
+    const job = await getSyncJob(String(req2.params.jobId || ""));
+    if (!job) return res.status(404).json({ success: false, error: "sync_job_not_found" });
+    return res.json({ success: true, data: job });
+  });
+  app.post("/api/orders/pull", authMiddleware, async (req2, res) => {
+    let jobId = "";
+    try {
+      const job = await createSyncJob("shopee_orders_pull", String(req2.user?.username || ""));
+      jobId = job.id;
       const hoursRaw = Number(req2.body?.lookback_hours ?? req2.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
       const lookbackSec = Math.floor(hours * 60 * 60);
@@ -217493,8 +217728,16 @@ async function startServer2() {
         reconcileActive: true
       });
       ordersRefreshCache = null;
+      await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
+        pulled: result.pulled,
+        added: result.added,
+        updated: result.updated,
+        shops: result.shops,
+        errors: result.errors.length
+      }, result.success ? void 0 : result.message);
       return res.status(200).json({
         success: result.success,
+        job_id: jobId,
         pulled: result.pulled,
         added: result.added,
         updated: result.updated,
@@ -217504,6 +217747,7 @@ async function startServer2() {
       });
     } catch (error3) {
       console.error("[Orders Pull] /api/orders/pull exception:", error3?.stack || error3?.message || error3);
+      if (jobId) await finishSyncJob(jobId, "failed", {}, error3?.message || String(error3));
       return res.status(500).json({
         success: false,
         pulled: 0,
@@ -217513,7 +217757,10 @@ async function startServer2() {
     }
   });
   app.post("/api/shopee/orders/sync", authMiddleware, async (req2, res) => {
+    let jobId = "";
     try {
+      const job = await createSyncJob("shopee_orders_sync", String(req2.user?.username || ""));
+      jobId = job.id;
       const hoursRaw = Number(req2.body?.lookback_hours ?? req2.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
       const result = await pullIncrementalOrdersFromShopee({
@@ -217521,8 +217768,16 @@ async function startServer2() {
         reconcileActive: true
       });
       ordersRefreshCache = null;
+      await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
+        pulled: result.pulled,
+        added: result.added,
+        updated: result.updated,
+        shops: result.shops,
+        errors: result.errors.length
+      }, result.success ? void 0 : result.message);
       return res.status(200).json({
         success: result.success,
+        job_id: jobId,
         pulled: result.pulled,
         added: result.added,
         updated: result.updated,
@@ -217532,6 +217787,7 @@ async function startServer2() {
       });
     } catch (error3) {
       console.error("[Orders Pull] /api/shopee/orders/sync exception:", error3?.stack || error3?.message || error3);
+      if (jobId) await finishSyncJob(jobId, "failed", {}, error3?.message || String(error3));
       return res.status(500).json({
         success: false,
         pulled: 0,
