@@ -6646,6 +6646,15 @@ function extractShopeeOrderModelSku(it: any): string | undefined {
   return undefined;
 }
 
+function extractShopeeOrderTierIndex(it: any): number[] | undefined {
+  const raw = it?.tier_index ?? it?.tierIndex;
+  if (!Array.isArray(raw)) return undefined;
+  const tierIndex = raw
+    .map((value: unknown) => Number(value))
+    .filter((value: number) => Number.isInteger(value) && value >= 0);
+  return tierIndex.length > 0 ? tierIndex : undefined;
+}
+
 /** Map thô Shopee order_status → tab nội bộ (API v2.2.9). */
 const SHOPEE_ORDER_STATUS_MAP: Record<string, string> = {
   UNPAID: "pending_confirm",
@@ -7214,6 +7223,7 @@ function mapShopeeOrderLineItem(it: any) {
     const modelId = extractShopeeOrderModelId(it);
     const modelSku = extractShopeeOrderModelSku(it);
     const modelName = extractShopeeOrderModelName(it);
+    const tierIndex = extractShopeeOrderTierIndex(it);
     const itemName = String(it?.item_name || "S\u1EA3n ph\u1EA9m Shopee").trim();
     const productTitle = modelName ? `${itemName} - ${modelName}` : itemName;
     const productImage =
@@ -7239,6 +7249,7 @@ function mapShopeeOrderLineItem(it: any) {
       modelId: modelId === "0" ? undefined : modelId,
       modelSku,
       modelName,
+      tierIndex,
     };
   } catch (err) {
     console.warn("[Shopee Sync] mapShopeeOrderLineItem failed:", err);
@@ -8811,7 +8822,9 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
 // Upsert one Shopee order from get_order_detail — trust Shopee status for tab
 // placement while preserving local print flags and non-empty item snapshots.
 function orderItemsHaveVariationData(items: any[] | undefined): boolean {
-  return Array.isArray(items) && items.some((i) => i?.modelId || i?.modelName || i?.modelSku);
+  return Array.isArray(items) && items.some(
+    (i) => i?.modelId || i?.modelName || i?.modelSku || (Array.isArray(i?.tierIndex) && i.tierIndex.length > 0),
+  );
 }
 
 /** Cờ trạng thái nội bộ kho — SSOT: src/utils/orderWarehouseStatus.ts */
@@ -14989,7 +15002,11 @@ async function startServer() {
       const rawLimit = Number(req.query.limit);
       const limit =
         Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5000) : undefined;
-      const orders = await readOrdersForRefresh(limit);
+      const rawOrders = await readOrdersForRefresh(limit);
+      // Webhook cũ hoặc payload detail thiếu model_name vẫn được khôi phục từ catalog
+      // trước khi trả về UI; không ghi ngược vào Mongo trong route read-only này.
+      const products = await loadProductsForOrders(rawOrders);
+      const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
       console.log(
         `[FRONTEND FETCHED] GET /api/orders/refresh` +
           `${limit ? `?limit=${limit}` : ""} — trả về ${orders.length} đơn từ MongoDB.`,

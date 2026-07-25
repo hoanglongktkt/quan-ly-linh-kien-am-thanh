@@ -330,6 +330,7 @@ function OrderDetailAccordionPanel({
                 )}
                 <div className="min-w-0">
                   <p className="font-bold text-gray-800 line-clamp-2">{item.productTitle}</p>
+                  <VariationNameBadge variationName={item.modelName} />
                   <p className="text-gray-400 text-[10px] mt-0.5">Giá bán lẻ niêm yết: {item.price.toLocaleString('vi-VN')}đ</p>
                 </div>
               </div>

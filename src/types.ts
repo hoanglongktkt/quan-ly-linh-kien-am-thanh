@@ -250,6 +250,8 @@ export interface Order {
     modelId?: string;
     modelSku?: string;
     modelName?: string;
+    /** Chỉ số lựa chọn tier Shopee, dùng khi GetOrderDetail trả về tier_index. */
+    tierIndex?: number[];
   }[];
 }
 
