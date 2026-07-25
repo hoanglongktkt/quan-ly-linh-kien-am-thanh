@@ -16486,22 +16486,33 @@ async function startServer() {
         o.id === `shopee-${key}` ||
         String(o.orderSn || "") === key.replace(/^shopee-/i, ""),
     );
-    if (index === -1) {
-      return res.status(404).json({ success: false, error: "Không tìm thấy đơn hàng." });
-    }
-    const removed = orders[index];
-    const sn = String(removed.orderSn || removed.id || "").trim();
-    const id = String(removed.id || "").trim();
-    orders.splice(index, 1);
-    saveOrders(orders);
+    // MongoDB là SSOT; JSON legacy có thể đã lệch/thiếu bản ghi. Xóa Mongo trước
+    // để DELETE không trả 404 giả và để đơn không quay lại sau refresh.
+    const normalizedKey = key.replace(/^shopee-/i, "");
     let mongoDeleted = 0;
     if (isMongoReady()) {
       try {
-        mongoDeleted = await deleteOrdersFromStore([id, sn].filter(Boolean));
+        mongoDeleted = await deleteOrdersFromStore([key, normalizedKey]);
       } catch (err: any) {
         console.warn("[Orders DELETE] Mongo:", err?.message || err);
       }
     }
+    if (index === -1) {
+      if (mongoDeleted > 0) {
+        console.log(`Deleted count: ${mongoDeleted} (Mongo-only orderSn=${normalizedKey})`);
+        return res.json({
+          success: true,
+          removed: mongoDeleted,
+          orderSn: normalizedKey,
+          mongoDeleted,
+        });
+      }
+      return res.status(404).json({ success: false, error: "Không tìm thấy đơn hàng." });
+    }
+    const removed = orders[index];
+    const sn = String(removed.orderSn || removed.id || "").trim();
+    orders.splice(index, 1);
+    saveOrders(orders);
     console.log(`Deleted count: 1 (orderSn=${sn}, mongoDeleted=${mongoDeleted})`);
     return res.json({
       success: true,

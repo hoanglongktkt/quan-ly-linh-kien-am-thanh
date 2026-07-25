@@ -218207,22 +218207,31 @@ async function startServer2() {
     const index4 = orders.findIndex(
       (o6) => o6.id === key || o6.orderSn === key || o6.id === `shopee-${key}` || String(o6.orderSn || "") === key.replace(/^shopee-/i, "")
     );
-    if (index4 === -1) {
-      return res.status(404).json({ success: false, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
-    }
-    const removed = orders[index4];
-    const sn3 = String(removed.orderSn || removed.id || "").trim();
-    const id3 = String(removed.id || "").trim();
-    orders.splice(index4, 1);
-    saveOrders(orders);
+    const normalizedKey = key.replace(/^shopee-/i, "");
     let mongoDeleted = 0;
     if (isMongoReady()) {
       try {
-        mongoDeleted = await deleteOrdersFromStore([id3, sn3].filter(Boolean));
+        mongoDeleted = await deleteOrdersFromStore([key, normalizedKey]);
       } catch (err2) {
         console.warn("[Orders DELETE] Mongo:", err2?.message || err2);
       }
     }
+    if (index4 === -1) {
+      if (mongoDeleted > 0) {
+        console.log(`Deleted count: ${mongoDeleted} (Mongo-only orderSn=${normalizedKey})`);
+        return res.json({
+          success: true,
+          removed: mongoDeleted,
+          orderSn: normalizedKey,
+          mongoDeleted
+        });
+      }
+      return res.status(404).json({ success: false, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
+    }
+    const removed = orders[index4];
+    const sn3 = String(removed.orderSn || removed.id || "").trim();
+    orders.splice(index4, 1);
+    saveOrders(orders);
     console.log(`Deleted count: 1 (orderSn=${sn3}, mongoDeleted=${mongoDeleted})`);
     return res.json({
       success: true,
