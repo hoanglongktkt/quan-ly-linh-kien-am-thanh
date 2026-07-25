@@ -85,37 +85,9 @@ export async function handleShopeeCallback(req, res) {
   }
 
   if (req.method === 'POST') {
-    // Push webhook từ Shopee — luôn 200 JSON để Console không báo lỗi.
-    try {
-      if (!res.headersSent) {
-        res.status(200).json({ success: true });
-      }
-    } catch {
-      try {
-        res.status(200).type('text/plain; charset=utf-8').send('success');
-      } catch {
-        /* ignore */
-      }
-    }
-
-    setImmediate(() => {
-      const qs = new URLSearchParams();
-      for (const [k, v] of Object.entries(req.query || {})) {
-        if (Array.isArray(v)) v.forEach((x) => qs.append(k, String(x)));
-        else if (v != null) qs.append(k, String(v));
-      }
-      const q = qs.toString();
-      const suffix = q ? `?${q}` : '';
-      forwardToCpanel(LOG, `/api/auth/shopee/callback${suffix}`, req)
-        .then((r) => {
-          if (r?.ok && r.upstream && r.upstream.status < 500) return r;
-          return forwardToCpanel(LOG, `/api/shopee/webhook${suffix}`, req);
-        })
-        .catch(() => {
-          forwardToCpanel(LOG, `/api/shopee/webhook${suffix}`, req).catch(() => {});
-        });
-    });
-    return;
+    return res.status(405).type('text/plain; charset=utf-8').send(
+      'Shopee OAuth callback accepts GET only.',
+    );
   }
 
   if (req.method === 'GET') {

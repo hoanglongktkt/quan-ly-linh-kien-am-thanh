@@ -1,4 +1,4 @@
-import { logShopeeRequest, respondShopeeOk, forwardToCpanel } from '../shopeeCallbackUtil.js';
+import { logShopeeRequest, respondShopeeOk } from '../shopeeCallbackUtil.js';
 
 const LOG = '[Shopee Webhook]';
 
@@ -9,14 +9,15 @@ export async function handleShopeeWebhook(req, res) {
     return respondShopeeOk(res);
   }
 
-  if (req.method === 'POST' || req.method === 'GET') {
+  if (req.method === 'GET') {
     respondShopeeOk(res);
-    if (req.method === 'POST') {
-      setImmediate(() => {
-        forwardToCpanel(LOG, '/api/shopee/webhook', req).catch(() => {});
-      });
-    }
     return;
+  }
+
+  if (req.method === 'POST') {
+    return res.status(410).type('text/plain; charset=utf-8').send(
+      'Webhook moved to /api/webhook/shopee on the backend.',
+    );
   }
 
   res.status(405).end();

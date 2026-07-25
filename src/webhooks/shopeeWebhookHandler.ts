@@ -4,9 +4,19 @@ import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 
 const MAX_PENDING_JOBS = 500;
-// `processShopeeWebhookPayload` cập nhật cùng một orders.json trước khi upsert MongoDB.
-// Xử lý tuần tự tránh hai event cùng lúc ghi đè mất đơn vừa nhận.
-const MAX_CONCURRENT_JOBS = 1;
+// Hai event cho CÙNG một đơn phải chạy theo thứ tự; các đơn khác nhau có thể xử lý
+// song song. Giới hạn 2 giữ số request get_order_detail trong ngưỡng an toàn.
+const MAX_CONCURRENT_JOBS = 2;
+
+function webhookOrderKey(payload: Record<string, unknown>): string {
+  const data =
+    payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+      ? (payload.data as Record<string, unknown>)
+      : payload;
+  const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
+  const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? "").trim();
+  return orderSn ? `${shopId}:${orderSn}` : "";
+}
 
 /**
  * Hàng đợi in-process có giới hạn để một đợt retry bất thường không giữ vô hạn
@@ -16,24 +26,46 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
   const pending: Array<Record<string, unknown>> = [];
   let running = 0;
   let scheduled = false;
+  const activeOrderKeys = new Set<string>();
 
   const scheduleDrain = () => {
     if (scheduled) return;
     scheduled = true;
     setImmediate(() => {
       scheduled = false;
-      while (running < MAX_CONCURRENT_JOBS && pending.length > 0) {
-        const payload = pending.shift()!;
-        running += 1;
+      const capacity = MAX_CONCURRENT_JOBS - running;
+      if (capacity <= 0 || pending.length === 0) return;
 
-        // Mọi rejection được tiêu thụ tại đây, không thể thành unhandled rejection.
-        void processPayload(payload)
-          .catch((error) => console.error("[Shopee Webhook] Background processing failed:", error))
-          .finally(() => {
-            running -= 1;
-            scheduleDrain();
-          });
+      const batch: Array<{ payload: Record<string, unknown>; orderKey: string }> = [];
+      for (let i = 0; i < pending.length && batch.length < capacity;) {
+        const payload = pending[i];
+        const orderKey = webhookOrderKey(payload);
+        if (orderKey && activeOrderKeys.has(orderKey)) {
+          i += 1;
+          continue;
+        }
+        pending.splice(i, 1);
+        if (orderKey) activeOrderKeys.add(orderKey);
+        batch.push({ payload, orderKey });
       }
+      if (batch.length === 0) return;
+
+      running += batch.length;
+      void Promise.allSettled(batch.map(({ payload }) => processPayload(payload)))
+        .then((results) => {
+          for (const result of results) {
+            if (result.status === "rejected") {
+              console.error("[Shopee Webhook] Background processing failed:", result.reason);
+            }
+          }
+        })
+        .finally(() => {
+          running -= batch.length;
+          for (const { orderKey } of batch) {
+            if (orderKey) activeOrderKeys.delete(orderKey);
+          }
+          scheduleDrain();
+        });
     });
   };
 
@@ -73,10 +105,9 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
       const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       const authHeader = req.get("authorization");
 
-      // Shopee verification mode: nếu không có Authorization, chấp nhận (test push).
-      // Nếu sai chữ ký: CHỈ log cảnh báo, KHÔNG chặn — vẫn ACK 200 để Shopee không khóa Webhook.
-      if (authHeader && !verifyShopeeWebhookSignature(rawBody, authHeader)) {
-        console.warn("[Shopee Webhook] Invalid signature — vẫn ACK 200 để tránh Shopee khóa Webhook.");
+      if (!verifyShopeeWebhookSignature(rawBody, authHeader)) {
+        console.warn("[Shopee Webhook] Missing or invalid signature; request rejected.");
+        return res.status(401).type("text/plain").send("Unauthorized");
       }
 
       let payload: Record<string, unknown> | null = null;
@@ -102,9 +133,8 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
       res.status(200).type("text/plain").send("OK");
       console.log("[WEBHOOK RECEIVED] ACK 200 sent; payload queued for background processing.");
     } catch (error) {
-      // Không throw ra Express/process; luôn trả 200 để Shopee không retry/khóa Webhook.
       console.error("[Shopee Webhook] Request handler failed:", error);
-      if (!res.headersSent) return res.status(200).type("text/plain").send("OK");
+      if (!res.headersSent) return res.status(500).type("text/plain").send("Internal Server Error");
     }
   });
 

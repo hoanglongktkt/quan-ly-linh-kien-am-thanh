@@ -18,14 +18,15 @@ export function verifyShopeeWebhookSignature(
   authorization: unknown,
 ): boolean {
   const secret = String(
-    process.env.SHOPEE_WEBHOOK_TOKEN || process.env.SHOPEE_PARTNER_KEY || "",
+    process.env.SHOPEE_PARTNER_KEY || process.env.SHOPEE_WEBHOOK_TOKEN || "",
   ).trim();
   const supplied = typeof authorization === "string" ? normalizeSignature(authorization) : "";
 
-  // Nếu chưa cấu hình secret, bỏ qua verify (môi trường dev/test).
+  // Webhook production phải luôn dùng Partner Key. Thiếu secret không được phép
+  // biến endpoint thành unauthenticated public endpoint.
   if (!secret) {
-    console.warn("[Shopee Webhook] SHOPEE_PARTNER_KEY not set, skipping signature verification.");
-    return true;
+    console.error("[Shopee Webhook] SHOPEE_PARTNER_KEY is not configured; rejecting webhook.");
+    return false;
   }
 
   // Signature không hợp lệ về format → từ chối.

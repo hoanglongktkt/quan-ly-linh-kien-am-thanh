@@ -1833,8 +1833,10 @@ const SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
 /** get_return_list: page_size tối đa Shopee = 100; paginate đầy đủ. */
 const SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
 const SHOPEE_RETURN_LIST_MAX_PAGES = 50;
-/** Batch sync: 10–20 đơn/lô — 1 lần get_order_detail + 1 lần Mongo bulkWrite (không update từng đơn). */
-const SHOPEE_SYNC_CHUNK_SIZE = 15;
+/** Shopee v2 get_order_detail chấp nhận tối đa 50 order_sn cho mỗi request. */
+const SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS = 50;
+/** Đồng bộ theo đúng giới hạn GetOrderDetail để ≤50 đơn dùng chính xác một request. */
+const SHOPEE_SYNC_CHUNK_SIZE = SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS;
 /** Nghỉ 1s giữa các lô — nhường GC / giải phóng process cPanel. */
 const ORDER_SYNC_SAVE_DELAY_MS = 1000;
 /** Nghỉ giữa mỗi lần get_tracking_number — tránh 429 (200–500ms). */
@@ -2763,6 +2765,11 @@ async function shopeeFetchAllReturnSns(
 /** Quét riêng CANCELLED / IN_CANCEL / TO_RETURN — cửa sổ rộng hơn sync thường. */
 // v2.order.get_order_detail
 async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSnList: string[]) {
+  if (orderSnList.length === 0 || orderSnList.length > SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS) {
+    throw new Error(
+      `get_order_detail requires 1–${SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS} order_sn values; received ${orderSnList.length}`,
+    );
+  }
   const apiPath = "/api/v2/order/get_order_detail";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
@@ -9034,9 +9041,27 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
 
   const incomingRaw = String(incoming.shopee_order_status || "").toUpperCase();
   const existingRaw = String(existing?.shopee_order_status || "").toUpperCase();
+  const incomingIsCancellation = incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL";
+  const existingIsCancellation = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL";
+  const existingStatusRank = Math.max(
+    shopeeLifecycleRank(existingRaw),
+    shopeeLifecycleRank(String(existing?.status || "")),
+  );
+  const incomingStatusRank = shopeeLifecycleRank(incomingRaw);
 
-  // BẮT BUỘC: SHIPPED/COMPLETED từ Shopee luôn thắng — ghi đè DB.
-  if (incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE") {
+  // State machine một chiều: trạng thái chỉ tiến về phía trước. CANCELLED/IN_CANCEL
+  // là ngoại lệ duy nhất, luôn ghi đè và sau đó không được event cũ hồi sinh.
+  if (incomingIsCancellation) {
+    merged.status = "cancelled";
+    merged.shopee_order_status = incomingRaw;
+    merged.isPrepared = false;
+    merged.is_pending_shopee_check = false;
+  } else if (existingIsCancellation || incomingStatusRank < existingStatusRank) {
+    merged.status = existing.status;
+    merged.shopee_order_status = existing.shopee_order_status;
+    merged.isPrepared = Boolean(existing.isPrepared);
+    merged.is_pending_shopee_check = Boolean(existing.is_pending_shopee_check);
+  } else if (incomingRaw === "SHIPPED" || incomingRaw === "TO_CONFIRM_RECEIVE") {
     merged.status = "shipping";
     merged.shopee_order_status = incomingRaw;
     merged.isPrepared = true;
@@ -9045,27 +9070,6 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     merged.status = "completed";
     merged.shopee_order_status = "COMPLETED";
     merged.isPrepared = true;
-    merged.is_pending_shopee_check = false;
-  } else if (incomingRaw === "CANCELLED" || incomingRaw === "IN_CANCEL") {
-    // Hủy trên Shopee PHẢI ghi đè tab local (kể cả đang pending_confirm) —
-    // thiếu nhánh này khiến merge rơi xuống logic heal/pending và kẹt "Chờ xác nhận".
-    merged.status = "cancelled";
-    merged.shopee_order_status = incomingRaw;
-    merged.isPrepared = false;
-    merged.is_pending_shopee_check = false;
-  } else if (
-    // Incoming thấp hơn terminal đã có trên DB → KHÔNG kéo lùi.
-    isShopeeTerminalRawStatus(existingRaw) &&
-    shopeeLifecycleRank(incomingRaw) < shopeeLifecycleRank(existingRaw)
-  ) {
-    merged.shopee_order_status = existingRaw;
-    const existingCancelled = existingRaw === "CANCELLED" || existingRaw === "IN_CANCEL";
-    merged.status = existingCancelled
-      ? "cancelled"
-      : existingRaw === "COMPLETED"
-        ? "completed"
-        : "shipping";
-    merged.isPrepared = !existingCancelled;
     merged.is_pending_shopee_check = false;
   } else if (incomingRaw === "PROCESSED") {
     // Drop-off/Pickup đã arrange — Đã xử lý (chỉ khi chưa SHIPPED/COMPLETED).
@@ -9136,10 +9140,7 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
     hasUsableShopeeTrackingNumber(merged) &&
     merged.status !== "shipping" &&
     merged.status !== "completed" &&
-    !isShopeeTerminalRawStatus(String(merged.shopee_order_status || "")) &&
-    incomingRaw !== "SHIPPED" &&
-    incomingRaw !== "TO_CONFIRM_RECEIVE" &&
-    incomingRaw !== "COMPLETED"
+    !isShopeeTerminalRawStatus(String(merged.shopee_order_status || ""))
   ) {
     merged.status = "processed";
     merged.isPrepared = true;
@@ -13056,37 +13057,9 @@ async function startServer() {
     console.error("[Labels] ensureLabelsDir lúc boot Express:", err);
   }
 
-  /**
-   * Shopee Push/Webhook POST — đăng ký SỚM (trước mọi route nặng / catch-all 404).
-   * URL Console thường dùng /api/auth/shopee/callback — bắt buộc nhận POST, luôn 200.
-   */
-  const handleShopeeCallbackPostEarly = (req: any, res: any) => {
-    try {
-      console.log(
-        "[WEBHOOK RECEIVED]",
-        JSON.stringify({
-          method: req.method,
-          url: req.originalUrl || req.url,
-          hasBody: Boolean(req.body && Object.keys(req.body || {}).length),
-        }),
-      );
-      if (!res.headersSent) {
-        res.status(200).json({ success: true });
-      }
-      const payload = req.body;
-      setImmediate(() => {
-        void processShopeeWebhookPayload(payload)
-          .then(() => console.log("[Shopee Callback POST] Đã xử lý payload."))
-          .catch((error) => console.error("[Shopee Callback POST] Lỗi xử lý:", error));
-      });
-    } catch (error) {
-      console.error("[Shopee Callback POST] handler crash:", error);
-      if (!res.headersSent) {
-        res.status(200).json({ success: true });
-      }
-    }
-  };
-  // Dùng mảng path — tránh wrapper string-only bỏ sót alias.
+  // Các URL callback cũ không được phép nhận Push: express.json đã làm mất raw
+  // payload nên không thể xác thực HMAC một cách đáng tin cậy. Chỉ route canonical
+  // /api/webhook/shopee (express.raw) mới được đưa event vào queue.
   app.post(
     [
       "/api/auth/shopee/callback",
@@ -13096,7 +13069,7 @@ async function startServer() {
       "/api/shopee/webhook",
       "/api/shopee/webhook/",
     ],
-    handleShopeeCallbackPostEarly,
+    (_req, res) => res.status(410).type("text/plain").send("Use /api/webhook/shopee"),
   );
 
   /** DB chưa sẵn sàng → trả 503 NGAY (sync, không await/chờ). Auth/health/oauth/ship-order vẫn chạy. */
@@ -13675,16 +13648,12 @@ async function startServer() {
     }
   });
 
-  /** Push webhook POST — đã đăng ký SỚM (handleShopeeCallbackPostEarly). Giữ GET probe. */
+  /** Legacy webhook URL: GET probe only; POST is rejected above. */
   app.get("/api/shopee/webhook", (req, res) => {
     logShopeeIngress("[Shopee Webhook]", req);
     console.log("[Shopee Webhook] GET verification probe — 200 success");
     res.status(200).type("text/plain; charset=utf-8").send("success");
   });
-  // Alias POST dự phòng (nếu early route bị bỏ qua vì mount khác).
-  app.post("/api/auth/shopee/callback", handleShopeeCallbackPostEarly);
-  app.post("/api/shopee/callback", handleShopeeCallbackPostEarly);
-  app.post("/api/shopee/webhook", handleShopeeCallbackPostEarly);
 
   // Real synced orders list — this is what the Order Management UI reads from.
   // --- Products warehouse API (MongoDB products) ---
