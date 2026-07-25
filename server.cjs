@@ -204284,6 +204284,70 @@ function inferShippingCarrierLabel(order) {
   return void 0;
 }
 
+// src/utils/shopeeOrderListPagination.ts
+function parseShopeeOrderListPagination(result) {
+  const root4 = result && typeof result === "object" ? result : {};
+  const body = root4.response && typeof root4.response === "object" ? root4.response : root4;
+  const nextCursor = String(body.next_cursor ?? "").trim();
+  const more = body.more === true || body.more === 1 || body.more === "true";
+  return { more, nextCursor };
+}
+function extractShopeeOrderListRows(result) {
+  const root4 = result && typeof result === "object" ? result : {};
+  const body = root4.response && typeof root4.response === "object" ? root4.response : root4;
+  const rows = body.order_list ?? root4.order_list;
+  return Array.isArray(rows) ? rows : [];
+}
+function advanceShopeeOrderListCursor(opts) {
+  const label = opts.logLabel || "get_order_list";
+  const rows = extractShopeeOrderListRows(opts.listResult);
+  const { more, nextCursor } = parseShopeeOrderListPagination(opts.listResult);
+  const prev = String(opts.currentCursor ?? "").trim();
+  if (opts.pageIndex >= opts.hardCap) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: hardCap=${opts.hardCap} reached`
+    };
+  }
+  if (!more) {
+    return { action: "break", nextCursor: null, reason: `${label}: more=false` };
+  }
+  if (rows.length === 0) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: more=true but order_list empty (Shopee quirk)`
+    };
+  }
+  if (!nextCursor) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: more=true but next_cursor empty`
+    };
+  }
+  if (nextCursor === prev) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: next_cursor unchanged ("${nextCursor.slice(0, 32)}")`
+    };
+  }
+  if (opts.seenCursors.has(nextCursor)) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: cursor cycle detected ("${nextCursor.slice(0, 32)}")`
+    };
+  }
+  return {
+    action: "continue",
+    nextCursor,
+    reason: `${label}: advance cursor \u2192 ${nextCursor.slice(0, 48)}`
+  };
+}
+
 // src/utils/orderWarehouseStatus.ts
 var ORDER_LOCAL_STATUS = {
   NONE: "NONE",
@@ -207497,9 +207561,11 @@ var SHOPEE_SYNC_CHUNK_DELAY_MS = 1e3;
 var SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
 var SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1e3;
 var SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
-var SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 10;
+var SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 5;
 var SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
-var SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
+var SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 80;
+var ORDERS_PULL_HARD_DEADLINE_MS = 9e4;
+var ordersPullInFlight = false;
 var SHOPEE_PRODUCT_API_DELAY_MS = 1e3;
 var SHOPEE_SYNC_QUEUE_GAP_MS = 750;
 var SHOPEE_SYNC_QUEUE_MAX_RETRY = 3;
@@ -208113,15 +208179,15 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
     return shopeeApiErrorResult(err2, `get_order_list fetch (shop_id=${shopId})`);
   }
 }
-function extractShopeeOrderListRows(result) {
-  const rows = result?.response?.order_list ?? result?.order_list;
-  return Array.isArray(rows) ? rows : [];
+function syncDiag(step, detail) {
+  const ts = (/* @__PURE__ */ new Date()).toISOString();
+  console.log(`[${ts}] [Orders Sync] ${step}${detail ? ` \u2014 ${detail}` : ""}`);
 }
-function parseShopeeOrderListPagination(result) {
-  const body = result?.response ?? result ?? {};
-  const nextCursor = String(body.next_cursor ?? "").trim();
-  const more = body.more === true || body.more === 1 || body.more === "true";
-  return { more, nextCursor };
+function assertOrdersPullDeadline(deadlineAt, label) {
+  if (Date.now() <= deadlineAt) return;
+  throw new Error(
+    `ORDERS_PULL_DEADLINE \u2014 qu\xE1 ${ORDERS_PULL_HARD_DEADLINE_MS}ms t\u1EA1i: ${label}`
+  );
 }
 async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const now = Math.floor(Date.now() / 1e3);
@@ -208129,9 +208195,13 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const timeFrom2 = now - lookback;
   const timeTo = now;
   const orderSnSet = /* @__PURE__ */ new Set();
+  const seenCursors = /* @__PURE__ */ new Set();
   let cursor;
   let page = 0;
+  const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_HARD_DEADLINE_MS;
+  syncDiag("Fetching order list...", `shop=${shopId} lookback=${lookback}s from=${timeFrom2} to=${timeTo}`);
   while (page < SHOPEE_ORDER_LIST_LOOP_HARD_CAP && orderSnSet.size < SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) {
+    assertOrdersPullDeadline(deadlineAt, `get_order_list page=${page + 1} shop=${shopId}`);
     page += 1;
     let listResult = await shopeeGetOrderList(shopId, accessToken, {
       timeRangeField: "update_time",
@@ -208140,7 +208210,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
       cursor
     });
     if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
-      console.warn(`[Orders Pull] GetOrderList auth fail shop=${shopId} \u2014 force refresh token + retry`);
+      syncDiag("GetOrderList AUTH FAIL \u2014 refresh once", `shop=${shopId}`);
       try {
         const refreshed = await refreshShopeeAccessTokenLocked(shopId, { force: true });
         if (refreshed) {
@@ -208174,124 +208244,186 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
       if (sn3) orderSnSet.add(sn3);
       if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
     }
-    const { more, nextCursor } = parseShopeeOrderListPagination(listResult);
-    console.log(
-      `[Orders Pull] shop=${shopId} page=${page}: +${rows.length} rows, totalSn=${orderSnSet.size}, more=${more}`
+    syncDiag(
+      "Order list received",
+      `${rows.length} orders (shop=${shopId} page=${page} totalSn=${orderSnSet.size} cursor=${cursor || "(start)"})`
     );
-    if (!more || rows.length === 0 || !nextCursor || nextCursor === String(cursor || "")) break;
-    cursor = nextCursor;
+    const adv = advanceShopeeOrderListCursor({
+      listResult,
+      currentCursor: cursor,
+      seenCursors,
+      pageIndex: page,
+      hardCap: SHOPEE_ORDER_LIST_LOOP_HARD_CAP,
+      logLabel: `shop=${shopId}`
+    });
+    syncDiag("Pagination decision", `${adv.action} \u2014 ${adv.reason}`);
+    if (adv.action === "break") break;
+    seenCursors.add(adv.nextCursor);
+    cursor = adv.nextCursor;
     await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
+  syncDiag("Order list pagination done", `shop=${shopId} pages=${page} uniqueSn=${orderSnSet.size}`);
   return [...orderSnSet];
 }
 async function pullIncrementalOrdersFromShopee(opts) {
-  const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).filter(Boolean);
-  const errors = [];
-  let pulled = 0;
-  let added = 0;
-  let updated = 0;
-  if (shopIds.length === 0) {
+  if (ordersPullInFlight) {
+    syncDiag("Pull SKIPPED \u2014 already in flight", "mutex busy");
     return {
       success: false,
       pulled: 0,
       added: 0,
       updated: 0,
       shops: 0,
-      errors: [{ error: "no_oauth_shop", message: "Ch\u01B0a c\xF3 shop Shopee OAuth." }],
-      message: "Ch\u01B0a c\xF3 shop Shopee OAuth \u2014 c\u1EA7n \u1EE7y quy\u1EC1n l\u1EA1i."
+      errors: [{ error: "pull_in_flight", message: "Pull \u0111ang ch\u1EA1y \u2014 b\u1ECF qua request tr\xF9ng." }],
+      message: "Pull \u0111ang ch\u1EA1y \u2014 kh\xF4ng ch\u1ED3ng v\xF2ng l\u1EB7p.",
+      skipped: true,
+      elapsedMs: 0
     };
   }
-  const orders = loadOrders();
-  console.log(
-    `[Orders Pull] B\u1EAFt \u0111\u1EA7u incremental pull ${shopIds.length} shop, lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s`
-  );
-  for (const shopId of shopIds) {
-    try {
-      let accessToken = await getValidShopeeAccessToken(shopId);
-      if (!accessToken) {
-        const msg = `Shop ${shopId}: kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token (h\u1EBFt h\u1EA1n / thi\u1EBFu refresh_token)`;
-        console.error(`[Orders Pull] ${msg}`);
-        errors.push({ shopId, error: "no_valid_access_token", message: msg });
-        continue;
-      }
-      const orderSnList = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
-        lookbackSec: opts?.lookbackSec
-      });
-      console.log(`[Orders Pull] Shop ${shopId}: get_order_list \u2192 ${orderSnList.length} order_sn`);
-      if (orderSnList.length === 0) continue;
-      for (let i6 = 0; i6 < orderSnList.length; i6 += SHOPEE_SYNC_CHUNK_SIZE) {
-        const chunkSns = orderSnList.slice(i6, i6 + SHOPEE_SYNC_CHUNK_SIZE);
-        try {
-          const fresh2 = await getValidShopeeAccessToken(shopId);
-          if (fresh2) accessToken = fresh2;
-          const { normalized, errors: chunkErrors } = await fetchNormalizeShopeeOrderChunk(
-            shopId,
-            accessToken,
-            shopId,
-            chunkSns,
-            { enrichTracking: true }
-          );
-          if (chunkErrors.length) errors.push(...chunkErrors);
-          if (normalized.length === 0) {
-            console.warn(
-              `[Orders Pull] Shop ${shopId}: get_order_detail normalize r\u1ED7ng cho ${chunkSns.length} sn \u2014 ${chunkSns.join(",")}`
-            );
-            continue;
-          }
+  ordersPullInFlight = true;
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + ORDERS_PULL_HARD_DEADLINE_MS;
+  const enrichTracking = opts?.enrichTracking === true;
+  const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).filter(Boolean);
+  const errors = [];
+  let pulled = 0;
+  let added = 0;
+  let updated = 0;
+  try {
+    if (shopIds.length === 0) {
+      return {
+        success: false,
+        pulled: 0,
+        added: 0,
+        updated: 0,
+        shops: 0,
+        errors: [{ error: "no_oauth_shop", message: "Ch\u01B0a c\xF3 shop Shopee OAuth." }],
+        message: "Ch\u01B0a c\xF3 shop Shopee OAuth \u2014 c\u1EA7n \u1EE7y quy\u1EC1n l\u1EA1i.",
+        elapsedMs: Date.now() - startedAt
+      };
+    }
+    const orders = loadOrders();
+    syncDiag(
+      "Pull START",
+      `shops=${shopIds.length} lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s deadline=${ORDERS_PULL_HARD_DEADLINE_MS}ms enrichTracking=${enrichTracking}`
+    );
+    for (const shopId of shopIds) {
+      try {
+        assertOrdersPullDeadline(deadlineAt, `before shop=${shopId}`);
+        let accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) {
+          const msg = `Shop ${shopId}: kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token (h\u1EBFt h\u1EA1n / thi\u1EBFu refresh_token)`;
+          console.error(`[Orders Pull] ${msg}`);
+          errors.push({ shopId, error: "no_valid_access_token", message: msg });
+          continue;
+        }
+        const orderSnList = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
+          lookbackSec: opts?.lookbackSec,
+          deadlineAt
+        });
+        syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
+        if (orderSnList.length === 0) continue;
+        for (let i6 = 0; i6 < orderSnList.length; i6 += SHOPEE_SYNC_CHUNK_SIZE) {
+          assertOrdersPullDeadline(deadlineAt, `detail chunk shop=${shopId} offset=${i6}`);
+          const chunkSns = orderSnList.slice(i6, i6 + SHOPEE_SYNC_CHUNK_SIZE);
+          const chunkNo = Math.floor(i6 / SHOPEE_SYNC_CHUNK_SIZE) + 1;
           try {
-            const upsert = await persistShopeeOrderChunk(orders, normalized, {
-              apiShopId: shopId,
-              accessToken
-            });
-            added += upsert.added;
-            updated += upsert.updated;
-            pulled += normalized.length;
-            console.log(
-              `[Orders Pull] Shop ${shopId}: DB OK +${upsert.added}/~${upsert.updated} (chunk ${normalized.length})`
+            const fresh2 = await getValidShopeeAccessToken(shopId);
+            if (fresh2) accessToken = fresh2;
+            syncDiag(
+              "Fetching details for chunk...",
+              `shop=${shopId} chunk=${chunkNo} count=${chunkSns.length} sn=${chunkSns.slice(0, 3).join(",")}`
             );
-          } catch (saveErr) {
+            const { normalized, errors: chunkErrors } = await fetchNormalizeShopeeOrderChunk(
+              shopId,
+              accessToken,
+              shopId,
+              chunkSns,
+              { enrichTracking: false, skipEscrow: true }
+            );
+            if (chunkErrors.length) errors.push(...chunkErrors);
+            if (normalized.length === 0) {
+              console.warn(
+                `[Orders Pull] Shop ${shopId}: get_order_detail normalize r\u1ED7ng cho ${chunkSns.length} sn \u2014 ${chunkSns.join(",")}`
+              );
+              continue;
+            }
+            syncDiag("Saving to MongoDB...", `shop=${shopId} chunk=${chunkNo} docs=${normalized.length}`);
+            try {
+              const upsert = await persistShopeeOrderChunk(orders, normalized, {
+                apiShopId: shopId,
+                accessToken,
+                skipTracking: !enrichTracking
+              });
+              added += upsert.added;
+              updated += upsert.updated;
+              pulled += normalized.length;
+              syncDiag(
+                "MongoDB save OK",
+                `shop=${shopId} +${upsert.added}/~${upsert.updated} elapsed=${Date.now() - startedAt}ms`
+              );
+            } catch (saveErr) {
+              console.error(
+                "[Orders Pull] Mongo/JSON upsert FAILED:",
+                saveErr?.message || saveErr,
+                saveErr?.stack || "",
+                "order_sn=",
+                normalized.map((o6) => o6?.orderSn).join(",")
+              );
+              errors.push({
+                shopId,
+                error: "db_upsert_failed",
+                message: saveErr?.message || String(saveErr),
+                orderSns: normalized.map((o6) => o6?.orderSn)
+              });
+            }
+          } catch (chunkErr) {
+            if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
             console.error(
-              "[Orders Pull] Mongo/JSON upsert FAILED:",
-              saveErr?.message || saveErr,
-              saveErr?.stack || "",
-              "order_sn=",
-              normalized.map((o6) => o6?.orderSn).join(",")
+              `[Orders Pull] Chunk exception shop=${shopId}:`,
+              chunkErr?.message || chunkErr,
+              chunkErr?.stack || ""
             );
             errors.push({
               shopId,
-              error: "db_upsert_failed",
-              message: saveErr?.message || String(saveErr),
-              orderSns: normalized.map((o6) => o6?.orderSn)
+              error: "chunk_failed",
+              message: chunkErr?.message || String(chunkErr)
             });
           }
-        } catch (chunkErr) {
-          console.error(
-            `[Orders Pull] Chunk exception shop=${shopId}:`,
-            chunkErr?.message || chunkErr,
-            chunkErr?.stack || ""
-          );
-          errors.push({
-            shopId,
-            error: "chunk_failed",
-            message: chunkErr?.message || String(chunkErr)
-          });
+          if (i6 + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
+            await shopeeSyncDelay(Math.min(SHOPEE_SYNC_CHUNK_DELAY_MS, 400));
+          }
         }
-        if (i6 + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
-          await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+      } catch (shopErr) {
+        if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
+          syncDiag("DEADLINE HIT \u2014 break remaining shops", shopErr.message);
+          errors.push({ error: "pull_deadline", message: shopErr.message });
+          break;
         }
+        console.error(`[Orders Pull] Shop ${shopId} exception:`, shopErr?.message || shopErr, shopErr?.stack || "");
+        errors.push({
+          shopId,
+          error: "pull_shop_failed",
+          message: shopErr?.message || String(shopErr)
+        });
       }
-    } catch (shopErr) {
-      console.error(`[Orders Pull] Shop ${shopId} exception:`, shopErr?.message || shopErr, shopErr?.stack || "");
-      errors.push({
-        shopId,
-        error: "pull_shop_failed",
-        message: shopErr?.message || String(shopErr)
-      });
     }
+    const elapsedMs = Date.now() - startedAt;
+    const message = pulled > 0 ? `\u0110\xE3 k\xE9o/c\u1EADp nh\u1EADt ${pulled} \u0111\u01A1n (+${added} m\u1EDBi, ~${updated} c\u1EADp nh\u1EADt) trong ${elapsedMs}ms` : errors.length > 0 ? `Pull 0 \u0111\u01A1n \u2014 c\xF3 l\u1ED7i: ${errors[0]?.message || errors[0]?.error}` : "Shopee tr\u1EA3 0 order_sn trong c\u1EEDa s\u1ED5 th\u1EDDi gian (ho\u1EB7c token l\u1ED7i).";
+    syncDiag("Pull DONE", `${message} errors=${errors.length}`);
+    return {
+      success: pulled > 0 || errors.length === 0,
+      pulled,
+      added,
+      updated,
+      shops: shopIds.length,
+      errors,
+      message,
+      elapsedMs
+    };
+  } finally {
+    ordersPullInFlight = false;
   }
-  const message = pulled > 0 ? `\u0110\xE3 k\xE9o/c\u1EADp nh\u1EADt ${pulled} \u0111\u01A1n (+${added} m\u1EDBi, ~${updated} c\u1EADp nh\u1EADt)` : errors.length > 0 ? `Pull 0 \u0111\u01A1n \u2014 c\xF3 l\u1ED7i: ${errors[0]?.message || errors[0]?.error}` : "Shopee tr\u1EA3 0 order_sn trong c\u1EEDa s\u1ED5 th\u1EDDi gian (ho\u1EB7c token l\u1ED7i).";
-  console.log(`[Orders Pull] XONG: ${message} errors=${errors.length}`);
-  return { success: pulled > 0 || errors.length === 0, pulled, added, updated, shops: shopIds.length, errors, message };
 }
 async function shopeeGetOrderDetail(shopId, accessToken, orderSnList) {
   if (orderSnList.length === 0 || orderSnList.length > SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS) {
@@ -212891,6 +213023,8 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
   const normalized = [];
   const errors = [];
   const enrichTracking = opts?.enrichTracking !== false;
+  void enrichTracking;
+  const skipEscrow = opts?.skipEscrow === true;
   const snList = orderSns.map((sn3) => String(sn3 || "").trim()).filter(Boolean);
   if (snList.length === 0) return { normalized, errors };
   if (snList.length > SHOPEE_SYNC_CHUNK_SIZE) {
@@ -212978,7 +213112,7 @@ async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, o
         });
       }
     }
-    if (normalized.length > 0) {
+    if (normalized.length > 0 && !skipEscrow) {
       await enrichShopeeOrdersEscrowFinance(apiShopId, accessToken, normalized);
     }
   } catch (err2) {
@@ -213081,11 +213215,12 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       `[DB UPDATED] Mongo bulkWrite OK \u2014 batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o6) => o6.orderSn).join(",")}`
     );
   }
-  if (syncCtx) {
+  if (syncCtx && syncCtx.skipTracking !== true) {
     const needTn = touched.filter((o6) => needsShopeeTrackingEnrichment(o6));
     if (needTn.length > 0) {
-      console.log(
-        `[Shopee Tracking] Sau l\u01B0u c\u01A1 b\u1EA3n: ${needTn.length} \u0111\u01A1n thi\u1EBFu tracking_no \u2192 logistics.get_tracking_number`
+      syncDiag(
+        "Tracking enrich (sequential)",
+        `${needTn.length} \u0111\u01A1n \u2192 get_tracking_number (delay=${SHOPEE_TRACKING_FETCH_DELAY_MS}ms)`
       );
       for (const row of needTn) {
         try {
@@ -213109,6 +213244,8 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       }
       queueOrdersJsonMirror(orders);
     }
+  } else if (syncCtx?.skipTracking) {
+    syncDiag("Tracking enrich SKIPPED", "fast-path pull \u2014 webhook/enrich ri\xEAng s\u1EBD b\u1ED5 sung m\xE3");
   }
   return { added, updated };
 }
