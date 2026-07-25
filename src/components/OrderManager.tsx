@@ -2419,6 +2419,9 @@ export default function OrderManager({
         return;
       }
 
+      // HTTP 202 means the server accepted the job; remove the blocking overlay
+      // before parsing/polling its payload so the UI is immediately interactive.
+      if (res.status === 202) clearShipProgressOverlay();
       const data = await readResponseJson<any>(res);
       if (!res.ok && res.status !== 202) {
         showToast(data.message || data.error || data.detail || 'Không thể bắt đầu xác nhận đơn hàng.');

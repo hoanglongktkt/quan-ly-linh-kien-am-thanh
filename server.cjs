@@ -219202,6 +219202,13 @@ async function startServer2() {
     if (!job) return;
     const t0 = Date.now();
     try {
+      if (!tryAcquireHeavyJob(`ship-order:${jobId}`)) {
+        job.status = "failed";
+        job.phase = "failed";
+        job.error = "heavy_job_busy";
+        job.message = "M\u1ED9t t\xE1c v\u1EE5 Shopee kh\xE1c \u0111ang ch\u1EA1y, vui l\xF2ng th\u1EED l\u1EA1i sau.";
+        return;
+      }
       job.status = "running";
       job.phase = "loading";
       job.message = "\u0110ang g\u1ECDi API Shopee...";
@@ -219251,7 +219258,8 @@ async function startServer2() {
               message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + (error3?.message || String(error3))
             };
           }
-          const treatedAsSuccess = result.success || isAlreadyShippedError(result);
+          const alreadyProcessedOnShopee = !result.success && isAlreadyShippedError(result);
+          const treatedAsSuccess = result.success || alreadyProcessedOnShopee;
           const pendingTrap = !treatedAsSuccess && isShopeePendingVerificationError(result);
           let patched = orders[index4];
           if (pendingTrap) {
@@ -219275,7 +219283,7 @@ async function startServer2() {
               trackingNumber: tn3 || orders[index4].trackingNumber,
               tracking_no: tn3 || orders[index4].tracking_no || orders[index4].trackingNumber,
               shopId: orders[index4].shopId || order.shopId || result.shopId || resolvedShopId,
-              shopee_order_status: order.shopee_order_status === "READY_TO_SHIP" || order.shopee_order_status === "RETRY_SHIP" || !order.shopee_order_status ? "PROCESSED" : order.shopee_order_status || orders[index4].shopee_order_status || "PROCESSED",
+              shopee_order_status: alreadyProcessedOnShopee ? "READY_TO_SHIP" : order.shopee_order_status === "READY_TO_SHIP" || order.shopee_order_status === "RETRY_SHIP" || !order.shopee_order_status ? "PROCESSED" : order.shopee_order_status || orders[index4].shopee_order_status || "PROCESSED",
               shopeeSyncPending: false,
               shopeeSyncError: void 0
             };
@@ -219301,7 +219309,7 @@ async function startServer2() {
             orderSn: order.orderSn,
             success: treatedAsSuccess,
             pendingShopeeCheck: pendingTrap,
-            alreadyShipped: !result.success && isAlreadyShippedError(result),
+            alreadyShipped: alreadyProcessedOnShopee,
             patched,
             error: result.error,
             message: result.message,
@@ -219425,12 +219433,6 @@ async function startServer2() {
         idList.length || snList.length
       );
       const jobId = createShipOrderJobId();
-      if (!tryAcquireHeavyJob(`ship-order:${jobId}`)) {
-        return res.status(503).json({
-          error: "heavy_job_busy",
-          message: "M\u1ED9t t\xE1c v\u1EE5 Shopee kh\xE1c \u0111ang ch\u1EA1y, vui l\xF2ng th\u1EED l\u1EA1i sau."
-        });
-      }
       shipOrderJobs.set(jobId, {
         id: jobId,
         status: "pending",

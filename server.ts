@@ -18122,6 +18122,13 @@ async function startServer() {
     const t0 = Date.now();
 
     try {
+      if (!tryAcquireHeavyJob(`ship-order:${jobId}`)) {
+        job.status = "failed";
+        job.phase = "failed";
+        job.error = "heavy_job_busy";
+        job.message = "Một tác vụ Shopee khác đang chạy, vui lòng thử lại sau.";
+        return;
+      }
       job.status = "running";
       job.phase = "loading";
       job.message = "Đang gọi API Shopee...";
@@ -18181,7 +18188,8 @@ async function startServer() {
             };
           }
 
-          const treatedAsSuccess = result.success || isAlreadyShippedError(result);
+          const alreadyProcessedOnShopee = !result.success && isAlreadyShippedError(result);
+          const treatedAsSuccess = result.success || alreadyProcessedOnShopee;
           const pendingTrap = !treatedAsSuccess && isShopeePendingVerificationError(result);
           let patched: any = orders[index];
 
@@ -18211,11 +18219,13 @@ async function startServer() {
               tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
               shopId: orders[index].shopId || order.shopId || result.shopId || resolvedShopId,
               shopee_order_status:
-                order.shopee_order_status === "READY_TO_SHIP" ||
-                order.shopee_order_status === "RETRY_SHIP" ||
-                !order.shopee_order_status
-                  ? "PROCESSED"
-                  : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
+                alreadyProcessedOnShopee
+                  ? "READY_TO_SHIP"
+                  : (order.shopee_order_status === "READY_TO_SHIP" ||
+                      order.shopee_order_status === "RETRY_SHIP" ||
+                      !order.shopee_order_status)
+                    ? "PROCESSED"
+                    : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
               shopeeSyncPending: false,
               shopeeSyncError: undefined,
             };
@@ -18244,7 +18254,7 @@ async function startServer() {
             orderSn: order.orderSn,
             success: treatedAsSuccess,
             pendingShopeeCheck: pendingTrap,
-            alreadyShipped: !result.success && isAlreadyShippedError(result),
+            alreadyShipped: alreadyProcessedOnShopee,
             patched,
             error: result.error,
             message: result.message,
@@ -18392,12 +18402,6 @@ async function startServer() {
       );
 
       const jobId = createShipOrderJobId();
-      if (!tryAcquireHeavyJob(`ship-order:${jobId}`)) {
-        return res.status(503).json({
-          error: "heavy_job_busy",
-          message: "Một tác vụ Shopee khác đang chạy, vui lòng thử lại sau.",
-        });
-      }
       shipOrderJobs.set(jobId, {
         id: jobId,
         status: "pending",
