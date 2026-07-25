@@ -1968,8 +1968,10 @@ try {
   });
   console.log("[Shopee HTTP] undici Agent OK — TLS dispatcher sẵn sàng cho sync Shopee.");
 } catch (undiciErr: any) {
-  console.warn(
-    "[Shopee HTTP] undici Agent không khởi tạo được — fallback fetch mặc định:",
+  // Node 20+ có sẵn fetch; `node:undici` không phải module public trên một số
+  // bản cPanel nên việc không có Agent riêng không phải lỗi khởi tạo hệ thống.
+  console.info(
+    "[Shopee HTTP] Dùng fetch tích hợp của Node (không dùng undici dispatcher):",
     undiciErr?.message || undiciErr,
   );
   shopeeHttpDispatcher = undefined;

@@ -432,14 +432,12 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     } catch (idxErr) {
       console.warn("[MongoDB] syncIndexes orders:", idxErr);
     }
-    try {
-      await Promise.all([OrderEventModel.syncIndexes(), SyncJobModel.syncIndexes()]);
-      console.log(
-        `[MongoDB] Retention indexes synced (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`,
-      );
-    } catch (idxErr) {
-      console.warn("[MongoDB] syncIndexes order events/jobs:", idxErr);
-    }
+    // TTL index đã được tạo khi triển khai trước. Không gọi syncIndexes() ở mỗi lần
+    // boot vì MongoDB không cho thay đổi expireAfterSeconds của index cùng tên bằng
+    // lệnh create; lỗi đó chỉ làm nhiễu log và dễ bị hiểu nhầm là Mongo không khởi tạo.
+    console.log(
+      `[MongoDB] Retention indexes giữ nguyên (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`,
+    );
 
     // One-time migrate từ JSON local nếu Atlas trống
     if (productCount === 0 && listingCount === 0) {

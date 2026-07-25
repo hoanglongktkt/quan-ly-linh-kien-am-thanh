@@ -93561,14 +93561,9 @@ async function initMongo(appRoot) {
     } catch (idxErr) {
       console.warn("[MongoDB] syncIndexes orders:", idxErr);
     }
-    try {
-      await Promise.all([OrderEventModel.syncIndexes(), SyncJobModel.syncIndexes()]);
-      console.log(
-        `[MongoDB] Retention indexes synced (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`
-      );
-    } catch (idxErr) {
-      console.warn("[MongoDB] syncIndexes order events/jobs:", idxErr);
-    }
+    console.log(
+      `[MongoDB] Retention indexes gi\u1EEF nguy\xEAn (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`
+    );
     if (productCount === 0 && listingCount === 0) {
       try {
         await maybeMigrateJsonFallbackToMongo();
@@ -96518,8 +96513,8 @@ try {
   });
   console.log("[Shopee HTTP] undici Agent OK \u2014 TLS dispatcher s\u1EB5n s\xE0ng cho sync Shopee.");
 } catch (undiciErr) {
-  console.warn(
-    "[Shopee HTTP] undici Agent kh\xF4ng kh\u1EDFi t\u1EA1o \u0111\u01B0\u1EE3c \u2014 fallback fetch m\u1EB7c \u0111\u1ECBnh:",
+  console.info(
+    "[Shopee HTTP] D\xF9ng fetch t\xEDch h\u1EE3p c\u1EE7a Node (kh\xF4ng d\xF9ng undici dispatcher):",
     undiciErr?.message || undiciErr
   );
   shopeeHttpDispatcher = void 0;
