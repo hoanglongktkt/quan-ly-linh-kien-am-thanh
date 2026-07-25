@@ -521,9 +521,6 @@ export default function ProductList({
       return;
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000);
-
     try {
       const token = localStorage.getItem('admin_token');
       const endpoint =
@@ -536,16 +533,25 @@ export default function ProductList({
       let shouldForceRefresh = false;
 
       while (hasMore) {
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          // Đồng bộ là upsert an toàn: không xóa Kho gốc trước khi sàn trả đủ dữ liệu.
-          body: JSON.stringify({ shopId: shop.shopId, offset, reset: false }),
-        });
+        // Giới hạn cho từng trang, không phải toàn bộ phiên khởi tạo. Catalog nhiều
+        // trang có thể cần hơn 5 phút nhưng các trang đã lưu vẫn tiếp tục được xử lý.
+        const pageController = new AbortController();
+        const pageTimeoutId = setTimeout(() => pageController.abort(), 300000);
+        let res: Response;
+        try {
+          res = await fetch(endpoint, {
+            method: 'POST',
+            signal: pageController.signal,
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            // Đồng bộ là upsert an toàn: không xóa Kho gốc trước khi sàn trả đủ dữ liệu.
+            body: JSON.stringify({ shopId: shop.shopId, offset, reset: false }),
+          });
+        } finally {
+          clearTimeout(pageTimeoutId);
+        }
         const data = await parseJsonResponse<{
           success?: boolean;
           productCount?: number;
@@ -614,7 +620,7 @@ export default function ProductList({
     } catch (err: any) {
       const message =
         err?.name === 'AbortError'
-          ? `Quá thời gian chờ (5 phút) khi khởi tạo từ ${
+          ? `Một trang dữ liệu đã quá thời gian chờ (5 phút) khi khởi tạo từ ${
               initPlatform === 'shopee' ? 'Shopee' : 'TikTok'
             }.`
           : err?.message || 'Khởi tạo sản phẩm thất bại.';
@@ -630,7 +636,6 @@ export default function ProductList({
         message: `Khởi tạo sản phẩm thất bại: ${message}`,
       });
     } finally {
-      clearTimeout(timeoutId);
       setIsInitializing(false);
     }
   };
