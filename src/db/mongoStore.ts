@@ -1222,13 +1222,60 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
   }
   if (ops.length === 0) return 0;
 
-  await enqueueWrite(async () => {
-    const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
-    await setMeta("orders_updated_at", new Date().toISOString());
-    console.log(
-      `[DB UPDATED] bulkWrite orders — upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}`,
+  try {
+    await enqueueWrite(async () => {
+      try {
+        const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
+        await setMeta("orders_updated_at", new Date().toISOString());
+        console.log(
+          `[DB UPDATED] bulkWrite orders — upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}` +
+            ` writeErrors=${(result as any).hasWriteErrors?.() ? (result as any).getWriteErrors?.()?.length || "?" : 0}`,
+        );
+        if (typeof (result as any).getWriteErrors === "function") {
+          const writeErrors = (result as any).getWriteErrors() || [];
+          for (const we of writeErrors.slice(0, 10)) {
+            console.error(
+              "[MongoDB] bulkWrite WRITE ERROR:",
+              we?.code,
+              we?.errmsg || we?.err?.message || we,
+            );
+          }
+        }
+      } catch (bulkErr: any) {
+        // ordered:false vẫn có thể throw khi có writeErrors — log chi tiết từng lỗi.
+        console.error(
+          "[MongoDB] bulkUpsertOrdersToStore bulkWrite FAILED:",
+          bulkErr?.message || bulkErr,
+          bulkErr?.stack || "",
+        );
+        const writeErrors = bulkErr?.writeErrors || bulkErr?.result?.getWriteErrors?.() || [];
+        for (const we of (Array.isArray(writeErrors) ? writeErrors : []).slice(0, 15)) {
+          console.error(
+            "[MongoDB] upsert WRITE ERROR detail:",
+            JSON.stringify({
+              code: we?.code,
+              index: we?.index,
+              errmsg: we?.errmsg || we?.err?.message,
+              op: we?.op ? { filter: we.op.q || we.op.filter, orderSn: we.op?.u?.["$set"]?.orderSn } : undefined,
+            }),
+          );
+        }
+        if (bulkErr?.errorLabels) {
+          console.error("[MongoDB] errorLabels:", bulkErr.errorLabels);
+        }
+        throw bulkErr;
+      }
+    });
+  } catch (err: any) {
+    console.error(
+      "[MongoDB] bulkUpsertOrdersToStore OUTER FAILED — orders dropped from this batch:",
+      err?.name,
+      err?.message || err,
+      "sample orderSn=",
+      list.slice(0, 5).map((o) => o?.orderSn || o?.order_sn || o?.id),
     );
-  });
+    throw err;
+  }
   return ops.length;
 }
 

@@ -100,12 +100,37 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
     console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee — headers:", {
       authorization: req.get("authorization") ? "(present)" : "(missing)",
       contentLength: req.get("content-length") || "0",
+      host: req.get("host") || "",
+      xfProto: req.get("x-forwarded-proto") || "",
     });
     try {
       const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       const authHeader = req.get("authorization");
 
-      if (!verifyShopeeWebhookSignature(rawBody, authHeader)) {
+      // Shopee HMAC = URL + "|" + rawBody. URL phải khớp Push URL đã đăng ký trên Console.
+      const configured =
+        String(process.env.SHOPEE_WEBHOOK_URL || process.env.APP_URL || process.env.API_BASE_URL || "")
+          .trim()
+          .replace(/\/$/, "");
+      const forwardedProto = String(req.get("x-forwarded-proto") || "")
+        .split(",")[0]
+        .trim();
+      const proto = forwardedProto || req.protocol || "https";
+      const host = String(req.get("x-forwarded-host") || req.get("host") || "")
+        .split(",")[0]
+        .trim();
+      const pathName = String(req.originalUrl || req.url || "/api/webhook/shopee").split("?")[0];
+      const urlCandidates = [
+        configured ? `${configured}/api/webhook/shopee` : "",
+        configured ? `${configured}${pathName}` : "",
+        host ? `${proto}://${host}${pathName}` : "",
+        host ? `https://${host}${pathName}` : "",
+        host ? `http://${host}${pathName}` : "",
+        "https://quanly.linhkienamthanh.net/api/webhook/shopee",
+        "https://api.linhkienamthanh.net/api/webhook/shopee",
+      ].filter(Boolean);
+
+      if (!verifyShopeeWebhookSignature(rawBody, authHeader, urlCandidates)) {
         console.warn("[Shopee Webhook] Missing or invalid signature; request rejected.");
         return res.status(401).type("text/plain").send("Unauthorized");
       }
