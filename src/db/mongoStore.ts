@@ -88,6 +88,15 @@ type SyncJobDoc = {
   requested_by?: string | null;
 };
 
+const ORDER_EVENT_TTL_SECONDS = Math.max(
+  24 * 60 * 60,
+  Number(process.env.ORDER_EVENT_TTL_SECONDS || 60 * 24 * 60 * 60),
+);
+const SYNC_JOB_TTL_SECONDS = Math.max(
+  24 * 60 * 60,
+  Number(process.env.SYNC_JOB_TTL_SECONDS || 60 * 24 * 60 * 60),
+);
+
 const ProductSchema = new Schema<ProductDoc>(
   {
     _id: { type: String, required: true },
@@ -166,6 +175,9 @@ OrderSchema.index({ orderSn: 1, shopId: 1 });
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
 OrderSchema.index({ shopId: 1, shopee_order_status: 1, last_synced_at: 1 });
+// ESR cho danh sách theo shop/trạng thái, sau đó sort đơn mới nhất.
+OrderSchema.index({ shopId: 1, shopee_order_status: 1, "data.date": -1, _id: -1 });
+OrderSchema.index({ shopId: 1, status: 1, "data.date": -1, _id: -1 });
 // Khớp trực tiếp với truy vấn danh sách đơn mới nhất, tránh MongoDB phải sort lại
 // toàn bộ collection sau mỗi lần làm mới.
 OrderSchema.index({ "data.date": -1, _id: -1 });
@@ -187,6 +199,10 @@ const OrderEventSchema = new Schema<OrderEventDoc>(
   { collection: "order_events", versionKey: false }
 );
 OrderEventSchema.index({ orderSn: 1, occurred_at: -1 });
+OrderEventSchema.index(
+  { occurred_at: 1 },
+  { expireAfterSeconds: ORDER_EVENT_TTL_SECONDS, name: "order_events_ttl" },
+);
 
 const SyncJobSchema = new Schema<SyncJobDoc>(
   {
@@ -202,6 +218,11 @@ const SyncJobSchema = new Schema<SyncJobDoc>(
   { collection: "sync_jobs", versionKey: false }
 );
 SyncJobSchema.index({ type: 1, started_at: -1 });
+// finished_at null cho job đang chạy, nên TTL không thể xóa job chưa hoàn tất.
+SyncJobSchema.index(
+  { finished_at: 1 },
+  { expireAfterSeconds: SYNC_JOB_TTL_SECONDS, name: "sync_jobs_ttl" },
+);
 
 let ProductModel: Model<ProductDoc>;
 let ChannelListingModel: Model<ListingDoc>;
@@ -410,6 +431,14 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
       console.log("[MongoDB] Order indexes synced (orderSn, shopId, orderSn+shopId compound)");
     } catch (idxErr) {
       console.warn("[MongoDB] syncIndexes orders:", idxErr);
+    }
+    try {
+      await Promise.all([OrderEventModel.syncIndexes(), SyncJobModel.syncIndexes()]);
+      console.log(
+        `[MongoDB] Retention indexes synced (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`,
+      );
+    } catch (idxErr) {
+      console.warn("[MongoDB] syncIndexes order events/jobs:", idxErr);
     }
 
     // One-time migrate từ JSON local nếu Atlas trống
@@ -1159,8 +1188,13 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     : [];
   if (list.length === 0) return 0;
 
-  const ops = [];
-  const events: OrderEventDoc[] = [];
+  const pendingWrites: Array<{
+    op: any;
+    event: OrderEventDoc | null;
+    orderSn: string;
+    id: string;
+    updateAt: Date | null;
+  }> = [];
   for (const order of list) {
     const id = String(order.id || "").trim();
     const orderSn = String(order.orderSn || order.order_sn || "").trim();
@@ -1203,9 +1237,11 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       "data.last_synced_at": new Date().toISOString(),
       "data.sync_state": String(order.sync_state || "verified"),
     };
+    let incomingUpdateAt: Date | null = null;
     if (order.last_shopee_update_at != null) {
       const updateAt = new Date(String(order.last_shopee_update_at));
       if (!Number.isNaN(updateAt.getTime())) {
+        incomingUpdateAt = updateAt;
         $set.last_shopee_update_at = updateAt;
         $set["data.last_shopee_update_at"] = updateAt.toISOString();
       }
@@ -1306,39 +1342,93 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // CANCELLED không bao giờ ghi đè bản pending_confirm cũ.
     const filter = buildOrderCompoundFilter(orderSn || String(_id).replace(/^shopee-/i, ""), _id, shopIdStr || null);
 
-    ops.push({
-      updateOne: {
-        filter,
-        update: {
-          $set,
-          $setOnInsert,
+    const event: OrderEventDoc | null = orderSn
+      ? {
+          _id: `order-event-${orderSn}-${Date.now()}-${pendingWrites.length}`,
+          orderSn,
+          shopId: shopIdStr || null,
+          source: String(order.sync_source || "shopee_sync"),
+          next_status: order.status != null ? String(order.status) : null,
+          next_shopee_status: rawStatus || null,
+          logistics_status:
+            order.logistics_status != null ? String(order.logistics_status) : null,
+          occurred_at: new Date(),
+          payload: {
+            tracking_no: usableTn,
+            package_number: order.packageNumber || null,
+            shopee_update_at: incomingUpdateAt?.toISOString() || null,
+          },
+        }
+      : null;
+    pendingWrites.push({
+      op: {
+        updateOne: {
+          filter,
+          update: {
+            $set,
+            $setOnInsert,
+          },
+          upsert: true,
         },
-        upsert: true,
       },
+      event,
+      orderSn,
+      id: _id,
+      updateAt: incomingUpdateAt,
     });
-    if (orderSn) {
-      events.push({
-        _id: `order-event-${orderSn}-${Date.now()}-${events.length}`,
-        orderSn,
-        shopId: shopIdStr || null,
-        source: String(order.sync_source || "shopee_sync"),
-        next_status: order.status != null ? String(order.status) : null,
-        next_shopee_status: rawStatus || null,
-        logistics_status:
-          order.logistics_status != null ? String(order.logistics_status) : null,
-        occurred_at: new Date(),
-        payload: {
-          tracking_no: usableTn,
-          package_number: order.packageNumber || null,
-        },
-      });
-    }
   }
-  if (ops.length === 0) return 0;
+  if (pendingWrites.length === 0) return 0;
 
   try {
     await enqueueWrite(async () => {
       try {
+        // enqueueWrite serializes this process; the conditional filter below is still
+        // required so an out-of-order retry/webhook cannot win at MongoDB level.
+        const ids = pendingWrites.map((item) => item.id);
+        const orderSns = pendingWrites.map((item) => item.orderSn).filter(Boolean);
+        const existing = await OrderModel.find({
+          $or: [{ _id: { $in: ids } }, { orderSn: { $in: orderSns } }, { "data.orderSn": { $in: orderSns } }],
+        })
+          .select({ _id: 1, orderSn: 1, "data.orderSn": 1, last_shopee_update_at: 1 })
+          .lean();
+        const existingByKey = new Map<string, any>();
+        for (const row of existing) {
+          for (const key of [row._id, row.orderSn, row.data?.orderSn]) {
+            if (key) existingByKey.set(String(key), row);
+          }
+        }
+        const accepted = pendingWrites.filter((item) => {
+          const current = existingByKey.get(item.id) || existingByKey.get(item.orderSn);
+          if (!current || !item.updateAt) return true;
+          const currentAt = current.last_shopee_update_at ? new Date(current.last_shopee_update_at) : null;
+          if (currentAt && !Number.isNaN(currentAt.getTime()) && currentAt > item.updateAt) {
+            console.warn(
+              `[MongoDB] STALE Shopee snapshot ignored order_sn=${item.orderSn || item.id} ` +
+                `incoming=${item.updateAt.toISOString()} stored=${currentAt.toISOString()}`,
+            );
+            return false;
+          }
+          if (current) {
+            const identityFilter = item.op.updateOne.filter;
+            item.op.updateOne.filter = {
+              $and: [
+                identityFilter,
+                {
+                  $or: [
+                    { last_shopee_update_at: null },
+                    { last_shopee_update_at: { $exists: false } },
+                    { last_shopee_update_at: { $lte: item.updateAt } },
+                  ],
+                },
+              ],
+            };
+            item.op.updateOne.upsert = false;
+          }
+          return true;
+        });
+        const ops = accepted.map((item) => item.op);
+        const events = accepted.flatMap((item) => (item.event ? [item.event] : []));
+        if (ops.length === 0) return;
         const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
         await setMeta("orders_updated_at", new Date().toISOString());
         if (events.length > 0) {
@@ -1393,7 +1483,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     );
     throw err;
   }
-  return ops.length;
+  return pendingWrites.length;
 }
 
 /**

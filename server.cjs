@@ -204726,6 +204726,14 @@ async function setCachedShopeeAddressList(shopId, result) {
 var import_mongoose = __toESM(require("mongoose"), 1);
 var import_fs2 = __toESM(require("fs"), 1);
 var import_path = __toESM(require("path"), 1);
+var ORDER_EVENT_TTL_SECONDS = Math.max(
+  24 * 60 * 60,
+  Number(process.env.ORDER_EVENT_TTL_SECONDS || 60 * 24 * 60 * 60)
+);
+var SYNC_JOB_TTL_SECONDS = Math.max(
+  24 * 60 * 60,
+  Number(process.env.SYNC_JOB_TTL_SECONDS || 60 * 24 * 60 * 60)
+);
 var ProductSchema = new import_mongoose.Schema(
   {
     _id: { type: String, required: true },
@@ -204792,6 +204800,8 @@ OrderSchema.index({ orderSn: 1, shopId: 1 });
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
 OrderSchema.index({ shopId: 1, shopee_order_status: 1, last_synced_at: 1 });
+OrderSchema.index({ shopId: 1, shopee_order_status: 1, "data.date": -1, _id: -1 });
+OrderSchema.index({ shopId: 1, status: 1, "data.date": -1, _id: -1 });
 OrderSchema.index({ "data.date": -1, _id: -1 });
 var OrderEventSchema = new import_mongoose.Schema(
   {
@@ -204810,6 +204820,10 @@ var OrderEventSchema = new import_mongoose.Schema(
   { collection: "order_events", versionKey: false }
 );
 OrderEventSchema.index({ orderSn: 1, occurred_at: -1 });
+OrderEventSchema.index(
+  { occurred_at: 1 },
+  { expireAfterSeconds: ORDER_EVENT_TTL_SECONDS, name: "order_events_ttl" }
+);
 var SyncJobSchema = new import_mongoose.Schema(
   {
     _id: { type: String, required: true },
@@ -204824,6 +204838,10 @@ var SyncJobSchema = new import_mongoose.Schema(
   { collection: "sync_jobs", versionKey: false }
 );
 SyncJobSchema.index({ type: 1, started_at: -1 });
+SyncJobSchema.index(
+  { finished_at: 1 },
+  { expireAfterSeconds: SYNC_JOB_TTL_SECONDS, name: "sync_jobs_ttl" }
+);
 var ProductModel;
 var ChannelListingModel;
 var MetaModel;
@@ -204987,6 +205005,14 @@ async function initMongo(appRoot) {
       console.log("[MongoDB] Order indexes synced (orderSn, shopId, orderSn+shopId compound)");
     } catch (idxErr) {
       console.warn("[MongoDB] syncIndexes orders:", idxErr);
+    }
+    try {
+      await Promise.all([OrderEventModel.syncIndexes(), SyncJobModel.syncIndexes()]);
+      console.log(
+        `[MongoDB] Retention indexes synced (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`
+      );
+    } catch (idxErr) {
+      console.warn("[MongoDB] syncIndexes order events/jobs:", idxErr);
     }
     if (productCount === 0 && listingCount === 0) {
       try {
@@ -205549,8 +205575,7 @@ async function bulkUpsertOrdersToStore(orders) {
   requireMongo();
   const list2 = Array.isArray(orders) ? orders.filter((o6) => o6 != null && typeof o6 === "object") : [];
   if (list2.length === 0) return 0;
-  const ops = [];
-  const events2 = [];
+  const pendingWrites = [];
   for (const order of list2) {
     const id3 = String(order.id || "").trim();
     const orderSn = String(order.orderSn || order.order_sn || "").trim();
@@ -205584,9 +205609,11 @@ async function bulkUpsertOrdersToStore(orders) {
       "data.last_synced_at": (/* @__PURE__ */ new Date()).toISOString(),
       "data.sync_state": String(order.sync_state || "verified")
     };
+    let incomingUpdateAt = null;
     if (order.last_shopee_update_at != null) {
       const updateAt = new Date(String(order.last_shopee_update_at));
       if (!Number.isNaN(updateAt.getTime())) {
+        incomingUpdateAt = updateAt;
         $set.last_shopee_update_at = updateAt;
         $set["data.last_shopee_update_at"] = updateAt.toISOString();
       }
@@ -205664,37 +205691,84 @@ async function bulkUpsertOrdersToStore(orders) {
       setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false"
     });
     const filter2 = buildOrderCompoundFilter(orderSn || String(_id2).replace(/^shopee-/i, ""), _id2, shopIdStr || null);
-    ops.push({
-      updateOne: {
-        filter: filter2,
-        update: {
-          $set,
-          $setOnInsert
-        },
-        upsert: true
+    const event = orderSn ? {
+      _id: `order-event-${orderSn}-${Date.now()}-${pendingWrites.length}`,
+      orderSn,
+      shopId: shopIdStr || null,
+      source: String(order.sync_source || "shopee_sync"),
+      next_status: order.status != null ? String(order.status) : null,
+      next_shopee_status: rawStatus || null,
+      logistics_status: order.logistics_status != null ? String(order.logistics_status) : null,
+      occurred_at: /* @__PURE__ */ new Date(),
+      payload: {
+        tracking_no: usableTn,
+        package_number: order.packageNumber || null,
+        shopee_update_at: incomingUpdateAt?.toISOString() || null
       }
-    });
-    if (orderSn) {
-      events2.push({
-        _id: `order-event-${orderSn}-${Date.now()}-${events2.length}`,
-        orderSn,
-        shopId: shopIdStr || null,
-        source: String(order.sync_source || "shopee_sync"),
-        next_status: order.status != null ? String(order.status) : null,
-        next_shopee_status: rawStatus || null,
-        logistics_status: order.logistics_status != null ? String(order.logistics_status) : null,
-        occurred_at: /* @__PURE__ */ new Date(),
-        payload: {
-          tracking_no: usableTn,
-          package_number: order.packageNumber || null
+    } : null;
+    pendingWrites.push({
+      op: {
+        updateOne: {
+          filter: filter2,
+          update: {
+            $set,
+            $setOnInsert
+          },
+          upsert: true
         }
-      });
-    }
+      },
+      event,
+      orderSn,
+      id: _id2,
+      updateAt: incomingUpdateAt
+    });
   }
-  if (ops.length === 0) return 0;
+  if (pendingWrites.length === 0) return 0;
   try {
     await enqueueWrite(async () => {
       try {
+        const ids = pendingWrites.map((item) => item.id);
+        const orderSns = pendingWrites.map((item) => item.orderSn).filter(Boolean);
+        const existing = await OrderModel.find({
+          $or: [{ _id: { $in: ids } }, { orderSn: { $in: orderSns } }, { "data.orderSn": { $in: orderSns } }]
+        }).select({ _id: 1, orderSn: 1, "data.orderSn": 1, last_shopee_update_at: 1 }).lean();
+        const existingByKey = /* @__PURE__ */ new Map();
+        for (const row of existing) {
+          for (const key of [row._id, row.orderSn, row.data?.orderSn]) {
+            if (key) existingByKey.set(String(key), row);
+          }
+        }
+        const accepted = pendingWrites.filter((item) => {
+          const current = existingByKey.get(item.id) || existingByKey.get(item.orderSn);
+          if (!current || !item.updateAt) return true;
+          const currentAt = current.last_shopee_update_at ? new Date(current.last_shopee_update_at) : null;
+          if (currentAt && !Number.isNaN(currentAt.getTime()) && currentAt > item.updateAt) {
+            console.warn(
+              `[MongoDB] STALE Shopee snapshot ignored order_sn=${item.orderSn || item.id} incoming=${item.updateAt.toISOString()} stored=${currentAt.toISOString()}`
+            );
+            return false;
+          }
+          if (current) {
+            const identityFilter = item.op.updateOne.filter;
+            item.op.updateOne.filter = {
+              $and: [
+                identityFilter,
+                {
+                  $or: [
+                    { last_shopee_update_at: null },
+                    { last_shopee_update_at: { $exists: false } },
+                    { last_shopee_update_at: { $lte: item.updateAt } }
+                  ]
+                }
+              ]
+            };
+            item.op.updateOne.upsert = false;
+          }
+          return true;
+        });
+        const ops = accepted.map((item) => item.op);
+        const events2 = accepted.flatMap((item) => item.event ? [item.event] : []);
+        if (ops.length === 0) return;
         const result = await OrderModel.bulkWrite(ops, { ordered: false });
         await setMeta("orders_updated_at", (/* @__PURE__ */ new Date()).toISOString());
         if (events2.length > 0) {
@@ -205747,7 +205821,7 @@ async function bulkUpsertOrdersToStore(orders) {
     );
     throw err2;
   }
-  return ops.length;
+  return pendingWrites.length;
 }
 async function bulkUpdateShippedOrdersBySn(patches) {
   if (!isMongoReady()) return 0;
@@ -207909,6 +207983,18 @@ async function yieldEventLoop(ms2 = CHANNEL_FETCH_YIELD_MS) {
 function shopeeExponentialBackoffMs(attempt, baseMs = SHOPEE_API_RETRY_BASE_MS) {
   return Math.min(3e4, baseMs * Math.pow(2, attempt));
 }
+var shopeeRetryTelemetry = { retries: 0, rateLimits: 0, exhausted: 0 };
+function snapshotShopeeRetryTelemetry() {
+  return { ...shopeeRetryTelemetry };
+}
+function diffShopeeRetryTelemetry(before) {
+  return {
+    retries: shopeeRetryTelemetry.retries - before.retries,
+    rate_limits: shopeeRetryTelemetry.rateLimits - before.rateLimits,
+    exhausted_retries: shopeeRetryTelemetry.exhausted - before.exhausted,
+    max_retries: SHOPEE_API_MAX_RETRY
+  };
+}
 function isShopeeRetryableNetworkError(err2) {
   const msg = err2 instanceof Error ? err2.message : String(err2);
   return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
@@ -208018,6 +208104,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
     } catch (err2) {
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err2)) {
+        shopeeRetryTelemetry.retries++;
         console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
         await sleep2(waitMs);
         continue;
@@ -208039,6 +208126,8 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
       };
     }
     if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       console.warn(
         `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
@@ -208052,6 +208141,7 @@ async function shopeeFetchJsonWithRetry(url2, context, opts) {
     }
     return { json: json2, httpStatus: res.status };
   }
+  shopeeRetryTelemetry.exhausted++;
   return {
     httpStatus: 429,
     json: {
@@ -208077,6 +208167,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
     } catch (err2) {
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err2)) {
+        shopeeRetryTelemetry.retries++;
         console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
         await sleep2(waitMs);
         continue;
@@ -208098,6 +208189,8 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
       };
     }
     if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       console.warn(
         `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
@@ -208110,6 +208203,7 @@ async function shopeePostJsonWithRetry(url2, body, context, opts) {
     }
     return { json: json2, httpStatus: res.status };
   }
+  shopeeRetryTelemetry.exhausted++;
   return {
     httpStatus: 429,
     json: {
@@ -213020,6 +213114,9 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
       shopee_order_status: rawStatus,
       status: mappedStatus,
       date: item?.create_time ? new Date(Number(item.create_time) * 1e3).toISOString() : (/* @__PURE__ */ new Date()).toISOString(),
+      // Watermark của Shopee, KHÔNG phải giờ server nhận payload. Mongo dùng field
+      // này để chặn webhook/pull đến trễ ghi đè snapshot mới hơn.
+      last_shopee_update_at: item?.update_time ? new Date(Number(item.update_time) * 1e3).toISOString() : void 0,
       packageNumber: pkg?.package_number || void 0,
       isPrepared: mappedStatus === "processed" || mappedStatus === "shipping" || rawStatus === "PROCESSED" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE",
       isPrinted: false,
@@ -217741,6 +217838,7 @@ async function startServer2() {
   });
   app.post("/api/orders/pull", authMiddleware, async (req2, res) => {
     let jobId = "";
+    const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
     try {
       const job = await createSyncJob("shopee_orders_pull", String(req2.user?.username || ""));
       jobId = job.id;
@@ -217758,7 +217856,8 @@ async function startServer2() {
         added: result.added,
         updated: result.updated,
         shops: result.shops,
-        errors: result.errors.length
+        errors: result.errors.length,
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
       }, result.success ? void 0 : result.message);
       return res.status(200).json({
         success: result.success,
@@ -217772,7 +217871,9 @@ async function startServer2() {
       });
     } catch (error3) {
       console.error("[Orders Pull] /api/orders/pull exception:", error3?.stack || error3?.message || error3);
-      if (jobId) await finishSyncJob(jobId, "failed", {}, error3?.message || String(error3));
+      if (jobId) await finishSyncJob(jobId, "failed", {
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
+      }, error3?.message || String(error3));
       return res.status(500).json({
         success: false,
         pulled: 0,
@@ -217783,6 +217884,7 @@ async function startServer2() {
   });
   app.post("/api/shopee/orders/sync", authMiddleware, async (req2, res) => {
     let jobId = "";
+    const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
     try {
       const job = await createSyncJob("shopee_orders_sync", String(req2.user?.username || ""));
       jobId = job.id;
@@ -217798,7 +217900,8 @@ async function startServer2() {
         added: result.added,
         updated: result.updated,
         shops: result.shops,
-        errors: result.errors.length
+        errors: result.errors.length,
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
       }, result.success ? void 0 : result.message);
       return res.status(200).json({
         success: result.success,
@@ -217812,7 +217915,9 @@ async function startServer2() {
       });
     } catch (error3) {
       console.error("[Orders Pull] /api/shopee/orders/sync exception:", error3?.stack || error3?.message || error3);
-      if (jobId) await finishSyncJob(jobId, "failed", {}, error3?.message || String(error3));
+      if (jobId) await finishSyncJob(jobId, "failed", {
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
+      }, error3?.message || String(error3));
       return res.status(500).json({
         success: false,
         pulled: 0,

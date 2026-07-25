@@ -2042,6 +2042,21 @@ function shopeeExponentialBackoffMs(attempt: number, baseMs = SHOPEE_API_RETRY_B
   return Math.min(30_000, baseMs * Math.pow(2, attempt));
 }
 
+// Chỉ số tiến trình để sync_jobs cho biết Shopee đã rate-limit/retry bao nhiêu lần.
+// Đây là telemetry tiến trình (không ảnh hưởng quyết định retry hoặc ship_order).
+const shopeeRetryTelemetry = { retries: 0, rateLimits: 0, exhausted: 0 };
+function snapshotShopeeRetryTelemetry() {
+  return { ...shopeeRetryTelemetry };
+}
+function diffShopeeRetryTelemetry(before: ReturnType<typeof snapshotShopeeRetryTelemetry>) {
+  return {
+    retries: shopeeRetryTelemetry.retries - before.retries,
+    rate_limits: shopeeRetryTelemetry.rateLimits - before.rateLimits,
+    exhausted_retries: shopeeRetryTelemetry.exhausted - before.exhausted,
+    max_retries: SHOPEE_API_MAX_RETRY,
+  };
+}
+
 function isShopeeRetryableNetworkError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
@@ -2236,6 +2251,7 @@ async function shopeeFetchJsonWithRetry(
     } catch (err) {
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        shopeeRetryTelemetry.retries++;
         console.warn(`[Shopee API] ${context} lỗi mạng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
         await sleep(waitMs);
         continue;
@@ -2259,6 +2275,8 @@ async function shopeeFetchJsonWithRetry(
     }
 
     if ((isShopeeRateLimited(res.status, json) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json)) shopeeRetryTelemetry.rateLimits++;
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       console.warn(
         `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`,
@@ -2276,6 +2294,7 @@ async function shopeeFetchJsonWithRetry(
     return { json, httpStatus: res.status };
   }
 
+  shopeeRetryTelemetry.exhausted++;
   return {
     httpStatus: 429,
     json: {
@@ -2308,6 +2327,7 @@ async function shopeePostJsonWithRetry(
     } catch (err) {
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        shopeeRetryTelemetry.retries++;
         console.warn(`[Shopee API] ${context} lỗi mạng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
         await sleep(waitMs);
         continue;
@@ -2331,6 +2351,8 @@ async function shopeePostJsonWithRetry(
     }
 
     if ((isShopeeRateLimited(res.status, json) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json)) shopeeRetryTelemetry.rateLimits++;
       const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
       console.warn(
         `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`,
@@ -2346,6 +2368,7 @@ async function shopeePostJsonWithRetry(
     return { json, httpStatus: res.status };
   }
 
+  shopeeRetryTelemetry.exhausted++;
   return {
     httpStatus: 429,
     json: {
@@ -9387,6 +9410,11 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       shopee_order_status: rawStatus,
       status: mappedStatus,
       date: item?.create_time ? new Date(Number(item.create_time) * 1000).toISOString() : new Date().toISOString(),
+      // Watermark của Shopee, KHÔNG phải giờ server nhận payload. Mongo dùng field
+      // này để chặn webhook/pull đến trễ ghi đè snapshot mới hơn.
+      last_shopee_update_at: item?.update_time
+        ? new Date(Number(item.update_time) * 1000).toISOString()
+        : undefined,
       packageNumber: pkg?.package_number || undefined,
       isPrepared:
         mappedStatus === "processed" ||
@@ -15873,6 +15901,7 @@ async function startServer() {
    */
   app.post("/api/orders/pull", authMiddleware, async (req, res) => {
     let jobId = "";
+    const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
     try {
       const job = await createSyncJob("shopee_orders_pull", String((req as any).user?.username || ""));
       jobId = job.id;
@@ -15892,6 +15921,7 @@ async function startServer() {
         updated: result.updated,
         shops: result.shops,
         errors: result.errors.length,
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
       }, result.success ? undefined : result.message);
       return res.status(200).json({
         success: result.success,
@@ -15905,7 +15935,9 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);
-      if (jobId) await finishSyncJob(jobId, "failed", {}, error?.message || String(error));
+      if (jobId) await finishSyncJob(jobId, "failed", {
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
+      }, error?.message || String(error));
       return res.status(500).json({
         success: false,
         pulled: 0,
@@ -15916,6 +15948,7 @@ async function startServer() {
   });
   app.post("/api/shopee/orders/sync", authMiddleware, async (req, res) => {
     let jobId = "";
+    const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
     try {
       const job = await createSyncJob("shopee_orders_sync", String((req as any).user?.username || ""));
       jobId = job.id;
@@ -15932,6 +15965,7 @@ async function startServer() {
         updated: result.updated,
         shops: result.shops,
         errors: result.errors.length,
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
       }, result.success ? undefined : result.message);
       return res.status(200).json({
         success: result.success,
@@ -15945,7 +15979,9 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error("[Orders Pull] /api/shopee/orders/sync exception:", error?.stack || error?.message || error);
-      if (jobId) await finishSyncJob(jobId, "failed", {}, error?.message || String(error));
+      if (jobId) await finishSyncJob(jobId, "failed", {
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
+      }, error?.message || String(error));
       return res.status(500).json({
         success: false,
         pulled: 0,

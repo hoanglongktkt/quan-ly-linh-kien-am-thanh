@@ -1266,14 +1266,15 @@ export default function App() {
     const bootstrapCatalog = async () => {
       purgeLegacyCatalogCache();
 
-      // F5: hydrate IndexedDB ngay → UI có đơn tức thì; sau đó shallow fetch nền (limit=50).
+      // Stale-while-revalidate: IndexedDB chỉ render tạm. API là SSOT và phải
+      // replace cache/UI, không merge để đơn đã bị xóa/hủy trên server thành "ghost".
       const cached = await loadOrdersCache();
       ordersHydrateRef.current = cached;
       if (cached.length > 0) {
         setOrders(cached);
         setHasLoadedOrdersOnce(true);
       }
-      void fetchOrders({ silent: true, limit: 50, merge: true });
+      void fetchOrders({ silent: true, limit: 50, merge: false });
 
       if (safeGetItem(CATALOG_PURGE_FLAG) !== '1') {
         try {
