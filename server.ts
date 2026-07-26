@@ -10331,18 +10331,36 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
 
-  // ROLLBACK: sync Shopee thuần — không preserve/khởi tạo cờ ĐVVC.
-  delete merged.is_handed_over;
-  delete merged.isHandedOverToCarrier;
-  delete merged.is_handed_over_to_carrier;
-  delete merged.is_handed_over_to_courier;
-  delete merged.handedOverAt;
-  delete merged.handed_over_source;
-  delete merged.handedOverSource;
-  if (String(merged.local_status || "").toUpperCase() === "HANDED_OVER") {
-    delete merged.local_status;
-    delete merged.localStatus;
-    delete merged.internal_status;
+  // Sync Shopee KHÔNG clear/ghi đè is_handed_over — giữ thao tác QR / bàn giao ĐVVC.
+  // Đã bàn giao → preserve toàn bộ alias; chưa bàn giao → xóa cờ do normalize/incoming invent.
+  if (resolveOrderHandoverFlag(existing)) {
+    merged.is_handed_over = true;
+    merged.isHandedOverToCarrier = true;
+    merged.is_handed_over_to_carrier = true;
+    merged.is_handed_over_to_courier = true;
+    merged.local_status = "HANDED_OVER";
+    merged.localStatus = "HANDED_OVER";
+    merged.internal_status = "HANDED_OVER";
+    if (existing.handedOverAt) merged.handedOverAt = existing.handedOverAt;
+    if (existing.handed_over_source != null) merged.handed_over_source = existing.handed_over_source;
+    if (existing.handedOverSource != null) merged.handedOverSource = existing.handedOverSource;
+    if (existing.localStatusAt) merged.localStatusAt = existing.localStatusAt;
+    if (existing.local_status_updated_at) {
+      merged.local_status_updated_at = existing.local_status_updated_at;
+    }
+  } else {
+    delete merged.is_handed_over;
+    delete merged.isHandedOverToCarrier;
+    delete merged.is_handed_over_to_carrier;
+    delete merged.is_handed_over_to_courier;
+    delete merged.handedOverAt;
+    delete merged.handed_over_source;
+    delete merged.handedOverSource;
+    if (String(merged.local_status || "").toUpperCase() === "HANDED_OVER") {
+      delete merged.local_status;
+      delete merged.localStatus;
+      delete merged.internal_status;
+    }
   }
 
   // Giữ RETURN_RECEIVED / CANCELLED_STORED nội bộ (không liên quan ĐVVC).
