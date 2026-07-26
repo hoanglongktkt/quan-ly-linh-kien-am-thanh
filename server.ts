@@ -5936,6 +5936,7 @@ async function mergeWarehouseProductsBatch(batchRows: any[]): Promise<{
     }
 
     let upserted = 0;
+    const changedRows: any[] = [];
     for (const row of batchRows) {
       try {
         if (!row || typeof row !== "object") continue;
@@ -5967,6 +5968,7 @@ async function mergeWarehouseProductsBatch(batchRows: any[]): Promise<{
         const merged = mergeShopeeRowPreservingLocal(prev, mapped);
         byId.set(id, merged);
         if (itemId) byShopeeItemId.set(itemId, id);
+        changedRows.push(merged);
         upserted++;
       } catch (rowErr: unknown) {
         console.error("Lỗi khi lưu DB chunk: (skip row)", rowErr);
@@ -5974,15 +5976,15 @@ async function mergeWarehouseProductsBatch(batchRows: any[]): Promise<{
     }
 
     console.log("Dữ liệu sau khi map (trước khi lưu):", upserted);
-    // DEBUG: giữ hành vi cũ (upsert toàn catalog) để đo upsertCount vs batchRows.
-    const allDocs = [...byId.values()];
+    // Chỉ upsert các dòng của trang hiện tại — tránh ghi lại cả catalog mỗi page
+    // (nguyên nhân khởi tạo chậm dần rồi timeout sau vài trang).
     const upsertStarted = Date.now();
-    await upsertProductsToStoreAsync(allDocs);
+    await upsertProductsToStoreAsync(changedRows);
     const upsertMs = Date.now() - upsertStarted;
     return {
       upserted,
       existingCount: existing.length,
-      upsertCount: allDocs.length,
+      upsertCount: changedRows.length,
       batchRows: batchRows.length,
       loadMs,
       upsertMs,
@@ -14248,6 +14250,55 @@ async function startServer() {
       shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
       shopeeWebhookUrl: SHOPEE_WEBHOOK_URL,
     });
+  });
+
+  // Debug ingest same-origin (HTTPS production không gọi được http://127.0.0.1).
+  app.post("/api/debug/client-log", authMiddleware, (req: any, res) => {
+    try {
+      ensureDataDirs();
+      const logPath = path.join(APP_ROOT, "data", "debug-556dce.ndjson");
+      const payload = {
+        sessionId: "556dce",
+        runId: req.body?.runId || "post-fix",
+        hypothesisId: req.body?.hypothesisId || null,
+        location: req.body?.location || "client",
+        message: req.body?.message || "",
+        data: req.body?.data || {},
+        timestamp: Date.now(),
+      };
+      fs.appendFileSync(logPath, `${JSON.stringify(payload)}\n`, "utf-8");
+      return res.status(200).json({ ok: true });
+    } catch (error: unknown) {
+      return res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.get("/api/debug/client-log", authMiddleware, (_req, res) => {
+    try {
+      const logPath = path.join(APP_ROOT, "data", "debug-556dce.ndjson");
+      if (!fs.existsSync(logPath)) return res.json({ ok: true, lines: [] });
+      const lines = fs
+        .readFileSync(logPath, "utf-8")
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .slice(-80)
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return { raw: line };
+          }
+        });
+      return res.json({ ok: true, lines });
+    } catch (error: unknown) {
+      return res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   app.get("/api/health", (_req, res) => {

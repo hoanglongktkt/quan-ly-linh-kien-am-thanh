@@ -533,7 +533,12 @@ export default function ProductList({
       let shouldForceRefresh = false;
       const initStartedAt = Date.now();
       // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'556dce'},body:JSON.stringify({sessionId:'556dce',runId:'pre-fix',hypothesisId:'A,B,C,D,E',location:'ProductList.tsx:init-start',message:'marketplace init started',data:{shopId:shop.shopId,endpoint,timeoutPerPageMs:300000},timestamp:Date.now()})}).catch(()=>{});
+      const agentLog = (hypothesisId: string, location: string, message: string, data: Record<string, unknown>) => {
+        const body = { sessionId: '556dce', runId: 'post-fix', hypothesisId, location, message, data, timestamp: Date.now() };
+        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '556dce' }, body: JSON.stringify(body) }).catch(() => {});
+        fetch('/api/debug/client-log', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }).catch(() => {});
+      };
+      agentLog('A,B,C,D,E', 'ProductList.tsx:init-start', 'marketplace init started', { shopId: shop.shopId, endpoint, timeoutPerPageMs: 300000 });
       // #endregion
 
       while (hasMore) {
@@ -589,7 +594,23 @@ export default function ProductList({
         }>(res);
 
         // #region agent log
-        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'556dce'},body:JSON.stringify({sessionId:'556dce',runId:'pre-fix',hypothesisId:'A,B,C,D,E',location:'ProductList.tsx:init-page',message:'marketplace init page response',data:{httpStatus:res.status,ok:res.ok,success:data?.success,requestOffset,pageElapsedMs,serverDebug:data?._debug||null,pageIndex:data?.pageIndex,hasMore:data?.hasMore,nextOffset:data?.nextOffset,itemsInPage:data?.stats?.itemsInPage,savedCount:data?.stats?.savedCount,productCount:data?.productCount,error:data?.error||null,message:data?.message||null,elapsedTotalMs:Date.now()-initStartedAt},timestamp:Date.now()})}).catch(()=>{});
+        agentLog('A,B,C,D,E', 'ProductList.tsx:init-page', 'marketplace init page response', {
+          httpStatus: res.status,
+          ok: res.ok,
+          success: data?.success,
+          requestOffset,
+          pageElapsedMs,
+          serverDebug: data?._debug || null,
+          pageIndex: data?.pageIndex,
+          hasMore: data?.hasMore,
+          nextOffset: data?.nextOffset,
+          itemsInPage: data?.stats?.itemsInPage,
+          savedCount: data?.stats?.savedCount,
+          productCount: data?.productCount,
+          error: data?.error || null,
+          message: data?.message || null,
+          elapsedTotalMs: Date.now() - initStartedAt,
+        });
         // #endregion
 
         if (!res.ok || data.success === false) {
@@ -601,9 +622,10 @@ export default function ProductList({
         variantCount += Number(data.stats?.variantItemCount ?? 0);
         shouldForceRefresh =
           data.forceRefresh === true || data.refresh?.forceRefresh === true || shouldForceRefresh;
+        const dbg = data._debug;
         setInitProgress((prev) => [
           ...prev,
-          `📄 Đã xử lý trang ${pageIndex}: ${Number(data.stats?.itemsInPage ?? 0)} sản phẩm, lưu ${Number(data.stats?.savedCount ?? 0)} dòng`,
+          `📄 Đã xử lý trang ${pageIndex}: ${Number(data.stats?.itemsInPage ?? 0)} sản phẩm, lưu ${Number(data.stats?.savedCount ?? 0)} dòng (${pageElapsedMs}ms, upsert ${dbg?.upsertCount ?? '?'}/${dbg?.batchRows ?? '?'} batch, catalog ${dbg?.existingCount ?? '?'})`,
         ]);
 
         const prevOffset = offset;
@@ -611,7 +633,12 @@ export default function ProductList({
         offset = Number(data.nextOffset ?? offset);
         // #region agent log
         if (hasMore && (!Number.isFinite(offset) || offset === prevOffset)) {
-          fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'556dce'},body:JSON.stringify({sessionId:'556dce',runId:'pre-fix',hypothesisId:'D',location:'ProductList.tsx:init-offset-stuck',message:'hasMore true but offset did not advance',data:{prevOffset,nextOffset:offset,hasMore,pageIndex},timestamp:Date.now()})}).catch(()=>{});
+          agentLog('D', 'ProductList.tsx:init-offset-stuck', 'hasMore true but offset did not advance', {
+            prevOffset,
+            nextOffset: offset,
+            hasMore,
+            pageIndex,
+          });
         }
         // #endregion
       }
@@ -628,6 +655,13 @@ export default function ProductList({
         `📦 ${variantCount} sản phẩm có phân loại (children).`,
         `🎉 HOÀN TẤT: ${total} sản phẩm đã được khởi tạo vào Kho chính!`,
       ]);
+      // #region agent log
+      agentLog('C', 'ProductList.tsx:init-success', 'marketplace init completed', {
+        total,
+        variantCount,
+        elapsedTotalMs: Date.now() - initStartedAt,
+      });
+      // #endregion
       setInitToast(
         `Khởi tạo kho thành công! ${total} sản phẩm (${variantCount} có phân loại).`
       );
@@ -650,7 +684,12 @@ export default function ProductList({
             }.`
           : err?.message || 'Khởi tạo sản phẩm thất bại.';
       // #region agent log
-      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'556dce'},body:JSON.stringify({sessionId:'556dce',runId:'pre-fix',hypothesisId:'A,B,E',location:'ProductList.tsx:init-error',message:'marketplace init failed',data:{errName:err?.name||null,errMessage:String(err?.message||message),isAbort:err?.name==='AbortError'},timestamp:Date.now()})}).catch(()=>{});
+      {
+        const token = localStorage.getItem('admin_token');
+        const body = { sessionId: '556dce', runId: 'post-fix', hypothesisId: 'A,B,E', location: 'ProductList.tsx:init-error', message: 'marketplace init failed', data: { errName: err?.name || null, errMessage: String(err?.message || message), isAbort: err?.name === 'AbortError' }, timestamp: Date.now() };
+        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '556dce' }, body: JSON.stringify(body) }).catch(() => {});
+        fetch('/api/debug/client-log', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) }).catch(() => {});
+      }
       // #endregion
       setInitProgress((prev) => [...prev, `❌ Lỗi: ${message}`]);
       alert(`Khởi tạo sản phẩm thất bại: ${message}`);

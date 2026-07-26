@@ -99458,6 +99458,7 @@ async function mergeWarehouseProductsBatch(batchRows) {
       if (itemId) byShopeeItemId.set(itemId, id);
     }
     let upserted = 0;
+    const changedRows = [];
     for (const row of batchRows) {
       try {
         if (!row || typeof row !== "object") continue;
@@ -99482,20 +99483,20 @@ async function mergeWarehouseProductsBatch(batchRows) {
         const merged = mergeShopeeRowPreservingLocal(prev, mapped);
         byId.set(id, merged);
         if (itemId) byShopeeItemId.set(itemId, id);
+        changedRows.push(merged);
         upserted++;
       } catch (rowErr) {
         console.error("L\u1ED7i khi l\u01B0u DB chunk: (skip row)", rowErr);
       }
     }
     console.log("D\u1EEF li\u1EC7u sau khi map (tr\u01B0\u1EDBc khi l\u01B0u):", upserted);
-    const allDocs = [...byId.values()];
     const upsertStarted = Date.now();
-    await upsertProductsToStoreAsync(allDocs);
+    await upsertProductsToStoreAsync(changedRows);
     const upsertMs = Date.now() - upsertStarted;
     return {
       upserted,
       existingCount: existing.length,
-      upsertCount: allDocs.length,
+      upsertCount: changedRows.length,
       batchRows: batchRows.length,
       loadMs,
       upsertMs
@@ -105023,6 +105024,48 @@ async function startServer() {
       shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
       shopeeWebhookUrl: SHOPEE_WEBHOOK_URL
     });
+  });
+  app.post("/api/debug/client-log", authMiddleware, (req, res) => {
+    try {
+      ensureDataDirs();
+      const logPath = import_path2.default.join(APP_ROOT, "data", "debug-556dce.ndjson");
+      const payload = {
+        sessionId: "556dce",
+        runId: req.body?.runId || "post-fix",
+        hypothesisId: req.body?.hypothesisId || null,
+        location: req.body?.location || "client",
+        message: req.body?.message || "",
+        data: req.body?.data || {},
+        timestamp: Date.now()
+      };
+      import_fs3.default.appendFileSync(logPath, `${JSON.stringify(payload)}
+`, "utf-8");
+      return res.status(200).json({ ok: true });
+    } catch (error) {
+      return res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  });
+  app.get("/api/debug/client-log", authMiddleware, (_req, res) => {
+    try {
+      const logPath = import_path2.default.join(APP_ROOT, "data", "debug-556dce.ndjson");
+      if (!import_fs3.default.existsSync(logPath)) return res.json({ ok: true, lines: [] });
+      const lines = import_fs3.default.readFileSync(logPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(-80).map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return { raw: line };
+        }
+      });
+      return res.json({ ok: true, lines });
+    } catch (error) {
+      return res.status(500).json({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   });
   app.get("/api/health", (_req, res) => {
     const shopIds = listShopeeOAuthShopIds();
