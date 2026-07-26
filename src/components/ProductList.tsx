@@ -614,7 +614,11 @@ export default function ProductList({
         // #endregion
 
         if (!res.ok || data.success === false) {
-          throw new Error(data?.message || data?.error || `Khởi tạo sản phẩm thất bại (HTTP ${res.status}).`);
+          const detail = [data?.message, data?.error, data?.snippet]
+            .filter(Boolean)
+            .map(String)
+            .join(' — ');
+          throw new Error(detail || `Khởi tạo sản phẩm thất bại (HTTP ${res.status}).`);
         }
 
         pageIndex = Number(data.pageIndex ?? pageIndex + 1);

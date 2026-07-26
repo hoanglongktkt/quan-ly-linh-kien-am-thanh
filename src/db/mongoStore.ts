@@ -1039,20 +1039,27 @@ export async function saveProductsToStoreAsync(products: any[]): Promise<void> {
     : [];
   const docs = toProductDocs(list);
 
+  // Không dùng withTransaction: một số môi trường cPanel/Passenger dễ 500 HTML
+  // khi session/transaction lỗi; ghi tuần tự qua enqueueWrite đã đủ an toàn.
   await enqueueWrite(async () => {
-    const session = await mongoose.startSession();
-    try {
-      await session.withTransaction(async () => {
-        await ProductModel.deleteMany({}, { session });
-        if (docs.length > 0) {
-          await ProductModel.insertMany(docs, { ordered: false, session });
-        }
-        await setMeta("products_updated_at", new Date().toISOString());
-      });
-    } finally {
-      await session.endSession();
+    if (docs.length === 0) {
+      await ProductModel.deleteMany({});
+    } else {
+      await ProductModel.bulkWrite(
+        docs.map((doc) => ({
+          updateOne: {
+            filter: { _id: doc._id },
+            update: { $set: { sku: doc.sku ?? null, data: doc.data } },
+            upsert: true,
+          },
+        })),
+        { ordered: false },
+      );
+      const keepIds = docs.map((doc) => doc._id);
+      await ProductModel.deleteMany({ _id: { $nin: keepIds } });
     }
-    console.log(`[MongoDB] insertMany products — ${docs.length} dòng`);
+    await setMeta("products_updated_at", new Date().toISOString());
+    console.log(`[MongoDB] replace products — ${docs.length} dòng`);
   });
 }
 

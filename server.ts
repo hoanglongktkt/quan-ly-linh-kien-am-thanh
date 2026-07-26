@@ -6248,9 +6248,13 @@ async function syncShopeeWarehouseSinglePage(
       ? await mergeWarehouseProductsBatch(dedupedRows)
       : { upserted: 0, existingCount: 0, upsertCount: 0, batchRows: 0, loadMs: 0, upsertMs: 0 };
   const savedCount = mergeResult.upserted;
-  const productCount = (await loadProducts()).filter(
-    (p: any) => p.shopeeItemId || (Array.isArray(p.channels) && p.channels.includes("shopee"))
-  ).length;
+  // Tránh loadProducts() lần 2 (nặng, dễ timeout/500 HTML trên cPanel).
+  let productCount = Number(mergeResult.existingCount || 0) + Number(savedCount || 0);
+  try {
+    productCount = await countProducts();
+  } catch {
+    /* giữ ước lượng ở trên */
+  }
 
   console.log(
     `[Shopee Warehouse Sync] Page ${page.pageIndex + 1} offset=${offset}: items=${allIds.length}, rows=${dedupedRows.length}, saved=${savedCount}, totalShopee=${productCount}, durationMs=${Date.now() - pageStarted}, upsertCount=${mergeResult.upsertCount}, existingCount=${mergeResult.existingCount}`
@@ -18026,7 +18030,16 @@ async function startServer() {
   // this project's Product shape. The frontend replaces its entire local
   // product list with this response — no more hardcoded/mock demo products.
   app.post("/api/shopee/products/sync", authMiddleware, async (req, res) => {
+    // Luôn trả JSON — tránh Passenger/Apache trả HTML 500 → Vercel báo invalid_cpanel_response.
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     try {
+      if (!isMongoReady()) {
+        return res.status(503).json({
+          success: false,
+          error: "mongodb_not_ready",
+          message: "Database chưa sẵn sàng. Thử lại sau vài giây.",
+        });
+      }
       if (!isShopeeConfigValid()) {
         return res.status(500).json({
           success: false,
@@ -18058,15 +18071,15 @@ async function startServer() {
 
       const rawOffset = Number(req.body?.offset ?? 0);
       const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
-      const reset = req.body?.reset === true || offset === 0;
 
-      if (reset) {
-        // Tương thích client cũ: reset không còn là thao tác xóa trước khi đồng bộ.
-        writeInventoryAudit("shopee_sync_reset_ignored", {
+      try {
+        writeInventoryAudit("shopee_sync_page", {
           shopId,
+          offset,
           requestedBy: (req as any).user?.username || null,
-          reason: "safe_upsert_preserves_existing_inventory",
         });
+      } catch {
+        /* ignore audit */
       }
 
       const syncStarted = Date.now();
@@ -18105,7 +18118,7 @@ async function startServer() {
         nextOffset: result.nextOffset,
         hasMore: result.hasMore,
         pageIndex: result.pageIndex + 1,
-        skippedItems: result.skippedItems?.length ? result.skippedItems : undefined,
+        skippedItems: result.skippedItems?.length ? result.skippedItems.slice(0, 20) : undefined,
         message: result.hasMore
           ? `Đã lưu trang ${result.pageIndex + 1} (${result.pageStats.itemsInPage} sản phẩm), tiếp tục trang sau`
           : `Đã khởi tạo xong ${initialized} sản phẩm`,
@@ -18129,8 +18142,8 @@ async function startServer() {
         return res.status(isRate ? 429 : 500).json({
           success: false,
           error: isRate ? "shopee_rate_limit" : "exception",
-          message,
-          details,
+          message: message || "Khởi tạo kho thất bại",
+          details: String(details || "").slice(0, 500),
         });
       }
       return;

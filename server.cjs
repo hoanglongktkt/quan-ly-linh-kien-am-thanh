@@ -94024,19 +94024,24 @@ async function saveProductsToStoreAsync(products) {
   const list = Array.isArray(products) ? products.filter((p) => p != null && typeof p === "object") : [];
   const docs = toProductDocs(list);
   await enqueueWrite(async () => {
-    const session = await import_mongoose.default.startSession();
-    try {
-      await session.withTransaction(async () => {
-        await ProductModel.deleteMany({}, { session });
-        if (docs.length > 0) {
-          await ProductModel.insertMany(docs, { ordered: false, session });
-        }
-        await setMeta("products_updated_at", (/* @__PURE__ */ new Date()).toISOString());
-      });
-    } finally {
-      await session.endSession();
+    if (docs.length === 0) {
+      await ProductModel.deleteMany({});
+    } else {
+      await ProductModel.bulkWrite(
+        docs.map((doc) => ({
+          updateOne: {
+            filter: { _id: doc._id },
+            update: { $set: { sku: doc.sku ?? null, data: doc.data } },
+            upsert: true
+          }
+        })),
+        { ordered: false }
+      );
+      const keepIds = docs.map((doc) => doc._id);
+      await ProductModel.deleteMany({ _id: { $nin: keepIds } });
     }
-    console.log(`[MongoDB] insertMany products \u2014 ${docs.length} d\xF2ng`);
+    await setMeta("products_updated_at", (/* @__PURE__ */ new Date()).toISOString());
+    console.log(`[MongoDB] replace products \u2014 ${docs.length} d\xF2ng`);
   });
 }
 async function upsertProductsToStoreAsync(products) {
@@ -99559,9 +99564,11 @@ async function syncShopeeWarehouseSinglePage(shopId, accessToken, offset) {
   const dedupedRows = dedupeShopeeParentVariantRows(pageRows);
   const mergeResult = dedupedRows.length > 0 ? await mergeWarehouseProductsBatch(dedupedRows) : { upserted: 0, existingCount: 0, upsertCount: 0, batchRows: 0, loadMs: 0, upsertMs: 0 };
   const savedCount = mergeResult.upserted;
-  const productCount = (await loadProducts()).filter(
-    (p) => p.shopeeItemId || Array.isArray(p.channels) && p.channels.includes("shopee")
-  ).length;
+  let productCount = Number(mergeResult.existingCount || 0) + Number(savedCount || 0);
+  try {
+    productCount = await countProducts();
+  } catch {
+  }
   console.log(
     `[Shopee Warehouse Sync] Page ${page.pageIndex + 1} offset=${offset}: items=${allIds.length}, rows=${dedupedRows.length}, saved=${savedCount}, totalShopee=${productCount}, durationMs=${Date.now() - pageStarted}, upsertCount=${mergeResult.upsertCount}, existingCount=${mergeResult.existingCount}`
   );
@@ -108160,7 +108167,15 @@ async function startServer() {
   app.post("/api/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
   app.post("/api/auto-link", authMiddleware, handleBatchAutoLink);
   app.post("/api/shopee/products/sync", authMiddleware, async (req, res) => {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
     try {
+      if (!isMongoReady()) {
+        return res.status(503).json({
+          success: false,
+          error: "mongodb_not_ready",
+          message: "Database ch\u01B0a s\u1EB5n s\xE0ng. Th\u1EED l\u1EA1i sau v\xE0i gi\xE2y."
+        });
+      }
       if (!isShopeeConfigValid()) {
         return res.status(500).json({
           success: false,
@@ -108189,13 +108204,13 @@ async function startServer() {
       }
       const rawOffset = Number(req.body?.offset ?? 0);
       const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
-      const reset = req.body?.reset === true || offset === 0;
-      if (reset) {
-        writeInventoryAudit("shopee_sync_reset_ignored", {
+      try {
+        writeInventoryAudit("shopee_sync_page", {
           shopId,
-          requestedBy: req.user?.username || null,
-          reason: "safe_upsert_preserves_existing_inventory"
+          offset,
+          requestedBy: req.user?.username || null
         });
+      } catch {
       }
       const syncStarted = Date.now();
       console.log(
@@ -108232,7 +108247,7 @@ async function startServer() {
         nextOffset: result.nextOffset,
         hasMore: result.hasMore,
         pageIndex: result.pageIndex + 1,
-        skippedItems: result.skippedItems?.length ? result.skippedItems : void 0,
+        skippedItems: result.skippedItems?.length ? result.skippedItems.slice(0, 20) : void 0,
         message: result.hasMore ? `\u0110\xE3 l\u01B0u trang ${result.pageIndex + 1} (${result.pageStats.itemsInPage} s\u1EA3n ph\u1EA9m), ti\u1EBFp t\u1EE5c trang sau` : `\u0110\xE3 kh\u1EDFi t\u1EA1o xong ${initialized} s\u1EA3n ph\u1EA9m`,
         forceRefresh: !result.hasMore,
         refresh: { forceRefresh: !result.hasMore },
@@ -108254,8 +108269,8 @@ async function startServer() {
         return res.status(isRate ? 429 : 500).json({
           success: false,
           error: isRate ? "shopee_rate_limit" : "exception",
-          message,
-          details
+          message: message || "Kh\u1EDFi t\u1EA1o kho th\u1EA5t b\u1EA1i",
+          details: String(details || "").slice(0, 500)
         });
       }
       return;
