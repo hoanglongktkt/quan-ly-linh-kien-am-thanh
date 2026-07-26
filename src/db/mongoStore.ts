@@ -499,6 +499,33 @@ export async function loadProductsFromStore(): Promise<any[]> {
   return docsToProducts(docs);
 }
 
+/** Phân trang kho gốc ngay trên Mongo — tránh find({}) + timeout khi catalog lớn. */
+export async function loadProductsPageFromStore(
+  page = 1,
+  pageSize = 50,
+): Promise<{ products: any[]; total: number; page: number; pageSize: number; totalPages: number; hasMore: boolean }> {
+  requireMongo();
+  const safePage = Math.max(1, Math.floor(Number(page) || 1));
+  const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  const total = await ProductModel.countDocuments().maxTimeMS(5000);
+  const totalPages = Math.max(1, Math.ceil(total / safeSize) || 1);
+  const currentPage = Math.min(safePage, totalPages);
+  const docs = await ProductModel.find({})
+    .sort({ _id: 1 })
+    .skip((currentPage - 1) * safeSize)
+    .limit(safeSize)
+    .maxTimeMS(8000)
+    .lean();
+  return {
+    products: docsToProducts(docs),
+    total,
+    page: currentPage,
+    pageSize: safeSize,
+    totalPages,
+    hasMore: currentPage < totalPages,
+  };
+}
+
 /** Đọc 1 product theo id nội bộ / shopeeItemId — không quét toàn bộ catalog. */
 export async function loadProductByIdFromStore(productId: string): Promise<any | null> {
   requireMongo();

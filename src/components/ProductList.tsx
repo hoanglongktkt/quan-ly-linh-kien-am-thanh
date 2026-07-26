@@ -652,22 +652,45 @@ export default function ProductList({
         "🔄 Đang tải lại Kho chính từ Database...",
       ]);
 
-      await onRefreshProducts?.({ page: 1, append: false, forceRefresh: shouldForceRefresh || true });
+      // Sync xong có thể đọc DB chậm — thử lại vài lần thay vì đóng modal với bảng trống.
+      let refreshed = false;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          await onRefreshProducts?.({ page: 1, append: false, forceRefresh: shouldForceRefresh || true });
+          refreshed = true;
+          break;
+        } catch (refreshErr) {
+          setInitProgress((prev) => [
+            ...prev,
+            `⚠️ Tải lại kho lần ${attempt}/3 thất bại, thử lại...`,
+          ]);
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, 800 * attempt));
+          } else {
+            console.error('Refresh after init failed:', refreshErr);
+          }
+        }
+      }
 
       setInitProgress((prev) => [
         ...prev,
         `📦 ${variantCount} sản phẩm có phân loại (children).`,
-        `🎉 HOÀN TẤT: ${total} sản phẩm đã được khởi tạo vào Kho chính!`,
+        refreshed
+          ? `🎉 HOÀN TẤT: ${total} sản phẩm đã được khởi tạo vào Kho chính!`
+          : `🎉 Đã lưu ${total} sản phẩm. Nếu bảng còn trống, bấm F5 để tải lại.`,
       ]);
       // #region agent log
       agentLog('C', 'ProductList.tsx:init-success', 'marketplace init completed', {
         total,
         variantCount,
+        refreshed,
         elapsedTotalMs: Date.now() - initStartedAt,
       });
       // #endregion
       setInitToast(
-        `Khởi tạo kho thành công! ${total} sản phẩm (${variantCount} có phân loại).`
+        refreshed
+          ? `Khởi tạo kho thành công! ${total} sản phẩm (${variantCount} có phân loại).`
+          : `Đã lưu ${total} sản phẩm. Hãy tải lại trang nếu danh sách chưa hiện.`
       );
 
       onAddLog({

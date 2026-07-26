@@ -576,6 +576,9 @@ export default function App() {
         setProductsMeta({ page: 1, pageSize: data.length, total: data.length, totalPages: 1, hasMore: false });
         return;
       }
+      if (data?.success === false) {
+        throw new Error(data?.message || data?.error || 'products_unavailable');
+      }
       const list: Product[] = Array.isArray(data.products) ? data.products : [];
       setProducts((prev) => (append ? [...prev, ...list] : list));
       setProductsMeta({
@@ -589,6 +592,7 @@ export default function App() {
       console.error('Fetch products error:', err);
       // Lỗi mạng/Mongo không đồng nghĩa kho thật rỗng. Giữ danh sách hiện có để
       // không biến sự cố tạm thời thành trạng thái "mất dữ liệu" trên giao diện.
+      if (forceRefresh) throw err;
     } finally {
       if (!silent) setProductsLoading(false);
     }

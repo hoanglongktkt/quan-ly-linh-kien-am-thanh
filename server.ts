@@ -43,6 +43,7 @@ import {
 import {
   initMongo,
   loadProductsFromStore,
+  loadProductsPageFromStore,
   loadProductByIdFromStore,
   loadProductsByIdsFromStore,
   searchProductsFromStore,
@@ -14844,10 +14845,6 @@ async function startServer() {
   // CHỈ đọc MongoDB nội bộ — TUYỆT ĐỐI không gọi Shopee API / fetch / axios ở đây.
   app.get("/api/products", authMiddleware, async (req, res) => {
     try {
-      // Không rebuild toàn bộ products + 900+ channel_listings cho MỖI request.
-      // Kết quả cache này không được route dùng, nhưng đã gây products_reload_cache_timeout
-      // và làm nghẽn Mongo khi đang chạy ship/print.
-      const all = await withLocalDbTimeout(loadProducts(), 8000, "products_load");
       const rawPage = Number(req.query?.page);
       const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
       const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
@@ -14855,20 +14852,21 @@ async function startServer() {
         ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize))
         : PRODUCTS_PAGE_SIZE_DEFAULT;
 
-      const total = all.length;
-      const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)) || 1);
-      const safePage = Math.min(page, totalPages);
-      const start = (safePage - 1) * pageSize;
-      const products = all.slice(start, start + pageSize);
+      // Phân trang Mongo trực tiếp — không find({}) toàn bộ rồi mới slice (dễ timeout → UI trống).
+      const paged = await withLocalDbTimeout(
+        loadProductsPageFromStore(page, pageSize),
+        12000,
+        "products_page_load",
+      );
 
       return res.status(200).json({
         success: true,
-        products,
-        page: safePage,
-        pageSize,
-        total,
-        totalPages,
-        hasMore: safePage < totalPages,
+        products: paged.products,
+        page: paged.page,
+        pageSize: paged.pageSize,
+        total: paged.total,
+        totalPages: paged.totalPages,
+        hasMore: paged.hasMore,
         grouped: false,
         source: isMongoReady() ? "mongodb" : "json_fallback",
       });

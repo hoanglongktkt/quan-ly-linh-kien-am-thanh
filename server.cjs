@@ -93616,6 +93616,23 @@ async function loadProductsFromStore() {
   const docs = await ProductModel.find({}).lean();
   return docsToProducts(docs);
 }
+async function loadProductsPageFromStore(page = 1, pageSize = 50) {
+  requireMongo();
+  const safePage = Math.max(1, Math.floor(Number(page) || 1));
+  const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  const total = await ProductModel.countDocuments().maxTimeMS(5e3);
+  const totalPages = Math.max(1, Math.ceil(total / safeSize) || 1);
+  const currentPage = Math.min(safePage, totalPages);
+  const docs = await ProductModel.find({}).sort({ _id: 1 }).skip((currentPage - 1) * safeSize).limit(safeSize).maxTimeMS(8e3).lean();
+  return {
+    products: docsToProducts(docs),
+    total,
+    page: currentPage,
+    pageSize: safeSize,
+    totalPages,
+    hasMore: currentPage < totalPages
+  };
+}
 async function loadProductByIdFromStore(productId) {
   requireMongo();
   const id = String(productId || "").trim();
@@ -105525,24 +105542,23 @@ async function startServer() {
   const PRODUCTS_PAGE_SIZE_MAX = 50;
   app.get("/api/products", authMiddleware, async (req, res) => {
     try {
-      const all = await withLocalDbTimeout(loadProducts(), 8e3, "products_load");
       const rawPage = Number(req.query?.page);
       const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
       const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
       const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize)) : PRODUCTS_PAGE_SIZE_DEFAULT;
-      const total = all.length;
-      const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)) || 1);
-      const safePage = Math.min(page, totalPages);
-      const start = (safePage - 1) * pageSize;
-      const products = all.slice(start, start + pageSize);
+      const paged = await withLocalDbTimeout(
+        loadProductsPageFromStore(page, pageSize),
+        12e3,
+        "products_page_load"
+      );
       return res.status(200).json({
         success: true,
-        products,
-        page: safePage,
-        pageSize,
-        total,
-        totalPages,
-        hasMore: safePage < totalPages,
+        products: paged.products,
+        page: paged.page,
+        pageSize: paged.pageSize,
+        total: paged.total,
+        totalPages: paged.totalPages,
+        hasMore: paged.hasMore,
         grouped: false,
         source: isMongoReady() ? "mongodb" : "json_fallback"
       });
