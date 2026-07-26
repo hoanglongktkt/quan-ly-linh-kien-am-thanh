@@ -1254,10 +1254,8 @@ function saveShopeeTokenForShop(shopId: string, record: Record<string, any>): vo
 }
 
 function listShopeeOAuthShopIds(): string[] {
-  return Object.keys(loadShopeeTokens())
-    .map(normalizeShopIdKey)
-    .filter(Boolean)
-    .sort();
+  // Gồm cả shop_id_list (VD: AuDIO 831052930 nằm trong token Main Account 4127421).
+  return listShopeeSyncShopIds();
 }
 
 /**
@@ -1278,6 +1276,118 @@ function listShopeeSyncShopIds(): string[] {
     }
   }
   return [...ids].sort();
+}
+
+/**
+ * Materialize token key cho mọi shop trong shop_id_list (Main Account).
+ * Tránh shop con (VD: 831052930 / AuDIO) chỉ tồn tại trong list → UI/oauth-shops bỏ sót,
+ * remap nhầm shopId, hoặc pull/filter không thấy shop.
+ */
+function ensureShopeeLinkedShopTokenKeys(): string[] {
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const updates: Record<string, any> = {};
+
+  for (const [rawKey, record] of Object.entries(tokens)) {
+    if (!record?.access_token && !record?.refresh_token) continue;
+    const owner = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
+    const oauth = normalizeShopIdKey(record?.oauth_shop_id) || owner;
+    const linked = new Set<string>();
+    if (owner) linked.add(owner);
+    if (oauth) linked.add(oauth);
+    for (const raw of Array.isArray(record?.shop_id_list) ? record.shop_id_list : []) {
+      const id = normalizeShopIdKey(raw);
+      if (id) linked.add(id);
+    }
+    if (linked.size <= 1) continue;
+
+    const linkedList = [...linked];
+    for (const id of linkedList) {
+      const existing = tokens[id] || updates[id];
+      if (existing?.access_token && existing?.refresh_token) {
+        const mergedList = [
+          ...new Set([
+            ...(Array.isArray(existing.shop_id_list)
+              ? existing.shop_id_list.map((x: unknown) => normalizeShopIdKey(x))
+              : []),
+            ...linkedList,
+          ].filter(Boolean)),
+        ];
+        if (mergedList.length !== (existing.shop_id_list || []).length) {
+          updates[id] = {
+            ...existing,
+            shop_id: id,
+            oauth_shop_id: existing.oauth_shop_id || oauth,
+            shop_id_list: mergedList,
+          };
+        }
+        continue;
+      }
+      updates[id] = buildShopeeTokenRecord(
+        id,
+        {
+          access_token: record.access_token,
+          refresh_token: record.refresh_token,
+          expire_in: record.expire_in,
+          obtained_at: record.obtained_at,
+          shop_id_list: linkedList,
+          merchant_id_list: record.merchant_id_list || [],
+        },
+        oauth || id,
+        existing,
+      );
+    }
+  }
+
+  if (Object.keys(updates).length > 0) {
+    saveShopeeTokens(updates);
+    console.log(
+      `[Shopee Tokens] ensureLinkedShopTokenKeys — upsert keys=[${Object.keys(updates).join(", ")}]`,
+    );
+  }
+  return listShopeeSyncShopIds();
+}
+
+/** Sau refresh token — ghi cùng access/refresh cho mọi shop liên kết trong shop_id_list. */
+function propagateShopeeTokenToLinkedShops(
+  sourceShopId: string,
+  patch: {
+    access_token?: string;
+    refresh_token?: string;
+    expire_in?: number;
+    obtained_at?: number;
+  },
+): void {
+  const key = normalizeShopIdKey(sourceShopId);
+  if (!key || !patch?.access_token) return;
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record) {
+    saveShopeeTokenForShop(key, patch);
+    return;
+  }
+  const linked = new Set<string>([key]);
+  const oauth = normalizeShopIdKey(record.oauth_shop_id);
+  if (oauth) linked.add(oauth);
+  const recordShop = normalizeShopIdKey(record.shop_id);
+  if (recordShop) linked.add(recordShop);
+  for (const raw of Array.isArray(record.shop_id_list) ? record.shop_id_list : []) {
+    const id = normalizeShopIdKey(raw);
+    if (id) linked.add(id);
+  }
+  const updates: Record<string, any> = {};
+  for (const id of linked) {
+    updates[id] = buildShopeeTokenRecord(
+      id,
+      {
+        ...record,
+        ...patch,
+        shop_id_list: [...linked],
+      },
+      oauth || key,
+      tokens[id] || record,
+    );
+  }
+  saveShopeeTokens(updates);
 }
 
 // Signature per Shopee v2 spec: HMAC-SHA256(partner_key, partner_id + path + timestamp [+ access_token + shop_id])
@@ -1526,18 +1636,24 @@ async function refreshShopeeAccessTokenLocked(
     console.log(
       `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)}...`,
     );
-    const apiShopId = resolveShopeeApiShopId(record, key);
-    const refreshed = await refreshShopeeToken(apiShopId, String(record.refresh_token));
+    // Refresh API dùng shop OAuth gốc; shop con trong shop_id_list dùng chung token.
+    const refreshAsShopId =
+      normalizeShopIdKey(record?.oauth_shop_id) ||
+      normalizeShopIdKey(record?.shop_id) ||
+      resolveShopeeApiShopId(record, key) ||
+      key;
+    const refreshed = await refreshShopeeToken(refreshAsShopId, String(record.refresh_token));
     if (refreshed.access_token) {
-      if (key !== apiShopId) {
-        saveShopeeTokenForShop(key, {
-          access_token: refreshed.access_token,
-          refresh_token: refreshed.refresh_token,
-          expire_in: refreshed.expire_in,
-          obtained_at: Math.floor(Date.now() / 1000),
-        });
-      }
-      console.log(`[Shopee Token] Refresh OK shop_id=${key} (api=${apiShopId})`);
+      const obtainedAt = Math.floor(Date.now() / 1000);
+      propagateShopeeTokenToLinkedShops(key, {
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token || record.refresh_token,
+        expire_in: refreshed.expire_in,
+        obtained_at: obtainedAt,
+      });
+      console.log(
+        `[Shopee Token] Refresh OK shop_id=${key} (refreshAs=${refreshAsShopId}) — propagated linked shops`,
+      );
       return String(refreshed.access_token);
     }
 
@@ -3198,7 +3314,11 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   const startedAt = Date.now();
   const deadlineAt = startedAt + ORDERS_PULL_HARD_DEADLINE_MS;
   const enrichTracking = opts?.enrichTracking === true;
-  const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).filter(Boolean);
+  // Materialize shop con (VD: 831052930) trước khi liệt kê — tránh bỏ sót pull/UI.
+  ensureShopeeLinkedShopTokenKeys();
+  const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
+    .map((id) => normalizeShopIdKey(id))
+    .filter(Boolean);
   const errors: any[] = [];
   let pulled = 0;
   let added = 0;
@@ -3220,15 +3340,30 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
     // MongoDB là SSOT: pull/merge không được lấy orders.json cũ làm base.
     const orders = isMongoReady() ? await loadOrdersFromStore() : [];
+    // Ngân sách thời gian công bằng — tránh shop đầu (4127421) chiếm hết 90s, shop AuDIO bị skip.
+    const perShopBudgetMs = Math.max(
+      28_000,
+      Math.floor(ORDERS_PULL_HARD_DEADLINE_MS / Math.max(1, shopIds.length)),
+    );
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s` +
-        ` deadline=${ORDERS_PULL_HARD_DEADLINE_MS}ms enrichTracking=${enrichTracking}`,
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s` +
+        ` deadline=${ORDERS_PULL_HARD_DEADLINE_MS}ms perShop=${perShopBudgetMs}ms enrichTracking=${enrichTracking}`,
     );
 
     for (const shopId of shopIds) {
+      if (Date.now() >= deadlineAt) {
+        syncDiag("DEADLINE HIT — stop before next shop", `remaining skipped after ${shopId}`);
+        errors.push({
+          error: "pull_deadline",
+          message: `Hết thời gian pull trước shop ${shopId}`,
+          shopId,
+        });
+        break;
+      }
+      const shopDeadlineAt = Math.min(deadlineAt, Date.now() + perShopBudgetMs);
       try {
-        assertOrdersPullDeadline(deadlineAt, `before shop=${shopId}`);
+        assertOrdersPullDeadline(shopDeadlineAt, `before shop=${shopId}`);
         let accessToken = await getValidShopeeAccessToken(shopId);
         if (!accessToken) {
           const msg = `Shop ${shopId}: không lấy được access_token (hết hạn / thiếu refresh_token)`;
@@ -3239,14 +3374,14 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
         const orderSnList = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
           lookbackSec: opts?.lookbackSec,
-          deadlineAt,
+          deadlineAt: shopDeadlineAt,
         });
         syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
 
         if (orderSnList.length === 0) continue;
 
         for (let i = 0; i < orderSnList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
-          assertOrdersPullDeadline(deadlineAt, `detail chunk shop=${shopId} offset=${i}`);
+          assertOrdersPullDeadline(shopDeadlineAt, `detail chunk shop=${shopId} offset=${i}`);
           const chunkSns = orderSnList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
           const chunkNo = Math.floor(i / SHOPEE_SYNC_CHUNK_SIZE) + 1;
           try {
@@ -3321,9 +3456,14 @@ async function pullIncrementalOrdersFromShopee(opts?: {
         }
       } catch (shopErr: any) {
         if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
-          syncDiag("DEADLINE HIT — break remaining shops", shopErr.message);
-          errors.push({ error: "pull_deadline", message: shopErr.message });
-          break;
+          // Không break cả vòng — chuyển shop tiếp theo với phần thời gian còn lại.
+          syncDiag("SHOP DEADLINE — continue next shop", shopErr.message);
+          errors.push({
+            shopId,
+            error: "pull_shop_deadline",
+            message: shopErr.message,
+          });
+          continue;
         }
         console.error(`[Orders Pull] Shop ${shopId} exception:`, shopErr?.message || shopErr, shopErr?.stack || "");
         errors.push({
@@ -12824,11 +12964,19 @@ function upsertShopsInChannelSettings(
     const key = shopListKey(normalized);
     const prev = map.get(key);
     if (prev) {
+      const incomingName = String(normalized.shopName || "").trim();
+      const prevName = String(prev.shopName || "").trim();
+      const incomingIsGeneric =
+        !incomingName ||
+        /^shopee\s+\d+$/i.test(incomingName) ||
+        incomingName.toLowerCase() === "shopee shop" ||
+        incomingName.toLowerCase() === "gian hàng";
       map.set(key, {
         ...prev,
         ...normalized,
         id: prev.id || normalized.id,
-        shopName: normalized.shopName || prev.shopName,
+        // Giữ tên user (VD: AuDIO) — không bị "Shopee 831052930" ghi đè.
+        shopName: (!incomingIsGeneric && incomingName) || prevName || incomingName,
         apiKey: normalized.apiKey || prev.apiKey,
         apiSecret: normalized.apiSecret ?? prev.apiSecret,
         wooUrl: normalized.wooUrl ?? prev.wooUrl,
@@ -16435,10 +16583,20 @@ async function startServer() {
       const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
       const lookbackSec = Math.floor(hours * 60 * 60);
-      console.log(`[Orders Pull] POST /api/orders/pull lookback_hours=${hours}`);
+      const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+      const shopIds = Array.isArray(shopIdsRaw)
+        ? shopIdsRaw.map((id: unknown) => normalizeShopIdKey(id as any)).filter(Boolean)
+        : shopIdsRaw
+          ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean)
+          : undefined;
+      console.log(
+        `[Orders Pull] POST /api/orders/pull lookback_hours=${hours}` +
+          (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all"),
+      );
       const result = await pullIncrementalOrdersFromShopee({
         lookbackSec,
         reconcileActive: true,
+        shopIds: shopIds?.length ? shopIds : undefined,
       });
       // Invalidate cache refresh để FE thấy đơn mới ngay.
       ordersRefreshCache = null;
@@ -16481,9 +16639,16 @@ async function startServer() {
       jobId = job.id;
       const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
+      const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+      const shopIds = Array.isArray(shopIdsRaw)
+        ? shopIdsRaw.map((id: unknown) => normalizeShopIdKey(id as any)).filter(Boolean)
+        : shopIdsRaw
+          ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean)
+          : undefined;
       const result = await pullIncrementalOrdersFromShopee({
         lookbackSec: Math.floor(hours * 60 * 60),
         reconcileActive: true,
+        shopIds: shopIds?.length ? shopIds : undefined,
       });
       ordersRefreshCache = null;
       await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
@@ -20651,15 +20816,20 @@ async function startServer() {
   }
 
   app.get("/api/shopee/oauth-shops", authMiddleware, async (_req, res) => {
+    ensureShopeeLinkedShopTokenKeys();
     const tokens = loadShopeeTokens();
-    const shopIds = listShopeeOAuthShopIds();
-    const details = shopIds.map((id) => ({
-      shop_id: id,
-      obtained_at: tokens[id]?.obtained_at ?? null,
-      expire_in: tokens[id]?.expire_in ?? null,
-      oauth_shop_id: tokens[id]?.oauth_shop_id ?? null,
-      shop_id_list: tokens[id]?.shop_id_list ?? [],
-    }));
+    const shopIds = listShopeeSyncShopIds();
+    const details = shopIds.map((id) => {
+      const record = getShopeeTokenRecord(tokens, id);
+      return {
+        shop_id: id,
+        obtained_at: record?.obtained_at ?? null,
+        expire_in: record?.expire_in ?? null,
+        oauth_shop_id: record?.oauth_shop_id ?? null,
+        shop_id_list: record?.shop_id_list ?? [],
+        has_own_key: Boolean(tokens[id]),
+      };
+    });
     let lastOAuth: any = loadLastOAuthAudit();
     return res.json({
       success: true,

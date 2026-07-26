@@ -2386,7 +2386,18 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
   const and: Record<string, unknown>[] = [];
   const tabFilter = orderTabFilter(opts?.tab);
   if (Object.keys(tabFilter).length) and.push(tabFilter);
-  if (opts?.shopId && opts.shopId !== "all") and.push({ shopId: String(opts.shopId) });
+  if (opts?.shopId && opts.shopId !== "all") {
+    const shopIdStr = String(opts.shopId).trim();
+    const shopVariants: Record<string, unknown>[] = [
+      { shopId: shopIdStr },
+      { "data.shopId": shopIdStr },
+    ];
+    const asNum = Number(shopIdStr);
+    if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+      shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+    }
+    and.push({ $or: shopVariants });
+  }
   if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
   const search = String(opts?.query || "").trim();
   if (search) {

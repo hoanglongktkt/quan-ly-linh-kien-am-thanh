@@ -614,6 +614,11 @@ export default function OrderManager({
       // Server hard-deadline ~90s; client cắt ~95s để nút không kẹt "Đang đồng bộ...".
       const pullTimeoutId = window.setTimeout(() => pullController.abort(), 95_000);
       try {
+        const pullBody: Record<string, unknown> = { lookback_hours: 168 };
+        // Đang lọc 1 shop (VD: AuDIO 831052930) → ưu tiên kéo đúng shop đó, tránh bị shop khác chiếm deadline.
+        if (selectedShopId && selectedShopId !== 'all') {
+          pullBody.shop_ids = [String(selectedShopId)];
+        }
         const pullRes = await fetch('/api/orders/pull', {
           method: 'POST',
           signal: pullController.signal,
@@ -622,7 +627,7 @@ export default function OrderManager({
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           // 7 ngày — đủ bắt đơn đã quét ĐVVC trên App mà webhook/local chưa kịp cập nhật.
-          body: JSON.stringify({ lookback_hours: 168 }),
+          body: JSON.stringify(pullBody),
         });
         const pullJson = await pullRes.json().catch(() => ({}));
         if (!pullRes.ok || pullJson?.success === false) {
@@ -764,13 +769,18 @@ export default function OrderManager({
     if (selectedShopId === 'all') return true;
 
     const orderShopId = String(order.shopId || '').trim();
-    if (orderShopId === selectedShopId) return true;
+    const selected = String(selectedShopId || '').trim();
+    if (orderShopId && orderShopId === selected) return true;
 
     // Đơn cũ có thể lưu ID nội bộ, còn đơn mới lưu shop_id thật từ sàn.
     const selectedShop = shops.find(
-      (shop) => String(shop.shopId) === selectedShopId || shop.id === selectedShopId,
+      (shop) => String(shop.shopId || '') === selected || String(shop.id || '') === selected,
     );
-    return Boolean(selectedShop && (orderShopId === selectedShop.shopId || orderShopId === selectedShop.id));
+    if (!selectedShop) return false;
+    return (
+      orderShopId === String(selectedShop.shopId || '') ||
+      orderShopId === String(selectedShop.id || '')
+    );
   };
 
   const openHandedOverCarrierTab = React.useCallback(() => {

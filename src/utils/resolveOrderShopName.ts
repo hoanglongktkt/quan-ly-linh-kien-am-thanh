@@ -12,10 +12,12 @@ export function isGenericShopeeShopLabel(name?: string): boolean {
 }
 
 export function resolveOrderShopDisplayName(order: Order, shops: ConnectedShop[]): string {
-  const sid = order.shopId?.trim();
+  const sid = String(order.shopId || '').trim();
 
   if (sid && shops.length > 0) {
-    const match = shops.find((s) => s.shopId === sid || s.id === sid);
+    const match = shops.find(
+      (s) => String(s.shopId || '') === sid || String(s.id || '') === sid,
+    );
     const configured = match?.shopName?.trim();
     if (configured && !isGenericShopeeShopLabel(configured)) {
       return configured;

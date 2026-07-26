@@ -1353,26 +1353,20 @@ export default function App() {
           const unmatchedTokens = shopIds.filter(
             (id) => !shopeeShops.some((s) => String(s.shopId) === id),
           );
-          const unmatchedShops = shopeeShops.filter(
-            (s) => !shopIds.includes(String(s.shopId)),
-          );
-          if (unmatchedTokens.length === 1 && unmatchedShops.length === 1) {
-            const target = unmatchedShops[0];
-            return {
-              ...prev,
-              shops: shops.map((s) =>
-                s.id === target.id
-                  ? {
-                      ...s,
-                      shopId: unmatchedTokens[0],
-                      connected: true,
-                      lastSynced: new Date().toISOString(),
-                    }
-                  : s,
-              ),
-            };
-          }
-          return prev;
+          // KHÔNG remap shopId 1↔1 (tránh ghi đè AuDIO 831052930 → shop khác).
+          // Chỉ THÊM shop OAuth còn thiếu vào danh sách kết nối.
+          if (unmatchedTokens.length === 0) return prev;
+          const now = new Date().toISOString();
+          const additions = unmatchedTokens.map((id) => ({
+            id: `shop-shopee-${id}`,
+            platform: 'shopee' as const,
+            shopId: id,
+            shopName: id === '831052930' ? 'AuDIO' : `Shopee ${id}`,
+            apiKey: 'oauth',
+            connected: true,
+            lastSynced: now,
+          }));
+          return { ...prev, shops: [...shops, ...additions] };
         });
       } catch {
         /* ignore */
