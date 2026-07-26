@@ -99441,9 +99441,13 @@ async function pullShopeeChannelListingsPage(shopId, accessToken, shopName, offs
 }
 async function mergeWarehouseProductsBatch(batchRows) {
   try {
-    if (!Array.isArray(batchRows) || batchRows.length === 0) return 0;
+    if (!Array.isArray(batchRows) || batchRows.length === 0) {
+      return { upserted: 0, existingCount: 0, upsertCount: 0, batchRows: 0, loadMs: 0, upsertMs: 0 };
+    }
     ensureDataDirs();
+    const loadStarted = Date.now();
     const existing = await loadProducts();
+    const loadMs = Date.now() - loadStarted;
     const byId = /* @__PURE__ */ new Map();
     const byShopeeItemId = /* @__PURE__ */ new Map();
     for (const p of existing) {
@@ -99484,14 +99488,25 @@ async function mergeWarehouseProductsBatch(batchRows) {
       }
     }
     console.log("D\u1EEF li\u1EC7u sau khi map (tr\u01B0\u1EDBc khi l\u01B0u):", upserted);
-    await upsertProductsToStoreAsync([...byId.values()]);
-    return upserted;
+    const allDocs = [...byId.values()];
+    const upsertStarted = Date.now();
+    await upsertProductsToStoreAsync(allDocs);
+    const upsertMs = Date.now() - upsertStarted;
+    return {
+      upserted,
+      existingCount: existing.length,
+      upsertCount: allDocs.length,
+      batchRows: batchRows.length,
+      loadMs,
+      upsertMs
+    };
   } catch (error) {
     console.error("L\u1ED7i khi l\u01B0u DB chunk:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
 async function syncShopeeWarehouseSinglePage(shopId, accessToken, offset) {
+  const pageStarted = Date.now();
   const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
   if (page.itemIds.length === 0) {
     const productCount2 = (await loadProducts()).filter(
@@ -99510,7 +99525,8 @@ async function syncShopeeWarehouseSinglePage(shopId, accessToken, offset) {
         savedCount: 0
       },
       skippedItems: [],
-      productCount: productCount2
+      productCount: productCount2,
+      mergeDebug: { existingCount: 0, upsertCount: 0, batchRows: 0, loadMs: 0, upsertMs: 0 }
     };
   }
   const allIds = asShopeeArray(page.itemIds).filter((n) => Number.isFinite(Number(n)) && Number(n) > 0);
@@ -99540,12 +99556,13 @@ async function syncShopeeWarehouseSinglePage(shopId, accessToken, offset) {
     }
   }
   const dedupedRows = dedupeShopeeParentVariantRows(pageRows);
-  const savedCount = dedupedRows.length > 0 ? await mergeWarehouseProductsBatch(dedupedRows) : 0;
+  const mergeResult = dedupedRows.length > 0 ? await mergeWarehouseProductsBatch(dedupedRows) : { upserted: 0, existingCount: 0, upsertCount: 0, batchRows: 0, loadMs: 0, upsertMs: 0 };
+  const savedCount = mergeResult.upserted;
   const productCount = (await loadProducts()).filter(
     (p) => p.shopeeItemId || Array.isArray(p.channels) && p.channels.includes("shopee")
   ).length;
   console.log(
-    `[Shopee Warehouse Sync] Page ${page.pageIndex + 1} offset=${offset}: items=${allIds.length}, rows=${dedupedRows.length}, saved=${savedCount}, totalShopee=${productCount}`
+    `[Shopee Warehouse Sync] Page ${page.pageIndex + 1} offset=${offset}: items=${allIds.length}, rows=${dedupedRows.length}, saved=${savedCount}, totalShopee=${productCount}, durationMs=${Date.now() - pageStarted}, upsertCount=${mergeResult.upsertCount}, existingCount=${mergeResult.existingCount}`
   );
   return {
     currentOffset: offset,
@@ -99560,7 +99577,14 @@ async function syncShopeeWarehouseSinglePage(shopId, accessToken, offset) {
       savedCount
     },
     skippedItems,
-    productCount
+    productCount,
+    mergeDebug: {
+      existingCount: mergeResult.existingCount,
+      upsertCount: mergeResult.upsertCount,
+      batchRows: mergeResult.batchRows,
+      loadMs: mergeResult.loadMs,
+      upsertMs: mergeResult.upsertMs
+    }
   };
 }
 async function fetchAllShopeeItemIds(shopId, accessToken) {
@@ -101788,19 +101812,22 @@ async function ensureOrderTrackingNoForPrint(order, ordersStore) {
     throw new Error("L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee: " + JSON.stringify({ error: "no_valid_access_token" }));
   }
   try {
-    const method = resolveAutoShipMethodForPrint(order);
-    agentDebugLogAc966f({
-      hypothesisId: "B",
-      location: "server.ts:ensureOrderTrackingNoForPrint:ship",
-      message: "auto ship_order before get_tracking",
-      data: { orderSn: order.orderSn, method, wasPrepared: isShopeeOrderPreparedForPrint(order) }
-    });
-    const shipResult = await arrangeShipment(order, method);
-    if (!shipResult.success && !isAlreadyShippedError(shipResult)) {
-      throw new Error("L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee: " + JSON.stringify(shipResult));
+    let shipResult;
+    if (!isShopeeOrderPreparedForPrint(order)) {
+      const method = resolveAutoShipMethodForPrint(order);
+      agentDebugLogAc966f({
+        hypothesisId: "B",
+        location: "server.ts:ensureOrderTrackingNoForPrint:ship",
+        message: "auto ship_order before get_tracking",
+        data: { orderSn: order.orderSn, method, wasPrepared: false }
+      });
+      shipResult = await arrangeShipment(order, method);
+      if (!shipResult.success && !isAlreadyShippedError(shipResult)) {
+        throw new Error("L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee: " + JSON.stringify(shipResult));
+      }
+      order.isPrepared = true;
     }
-    order.isPrepared = true;
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await sleep2(shipResult ? 500 : 300);
     console.log(
       `[Shopee Print Gate] get_tracking_number order_sn=${order.orderSn} package=${order.packageNumber || "-"}`
     );
@@ -101827,7 +101854,7 @@ async function ensureOrderTrackingNoForPrint(order, ordersStore) {
       resp?.third_party_tracking_number,
       order.trackingNumber,
       order.tracking_no,
-      shipResult.trackingNumber
+      shipResult?.trackingNumber
     ];
     let tn = "";
     for (const c of candidates) {
@@ -108127,13 +108154,15 @@ async function startServer() {
           reason: "safe_upsert_preserves_existing_inventory"
         });
       }
+      const syncStarted = Date.now();
       console.log(
         `[Shopee Product Sync] B\u1EAFt \u0111\u1EA7u \u0111\u1ED3ng b\u1ED9 1 trang shop_id=${shopId}, offset=${offset}, page_size=${SHOPEE_ITEM_LIST_PAGE_SIZE}`
       );
       const result = await syncShopeeWarehouseSinglePage(shopId, accessToken, offset);
       const initialized = Number(result.productCount) || 0;
+      const durationMs = Date.now() - syncStarted;
       console.log(
-        `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} \u2014 productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}`
+        `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} \u2014 productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}, durationMs=${durationMs}`
       );
       if (!result.hasMore) {
         writeInventoryAudit("shopee_sync_completed", {
@@ -108163,7 +108192,15 @@ async function startServer() {
         skippedItems: result.skippedItems?.length ? result.skippedItems : void 0,
         message: result.hasMore ? `\u0110\xE3 l\u01B0u trang ${result.pageIndex + 1} (${result.pageStats.itemsInPage} s\u1EA3n ph\u1EA9m), ti\u1EBFp t\u1EE5c trang sau` : `\u0110\xE3 kh\u1EDFi t\u1EA1o xong ${initialized} s\u1EA3n ph\u1EA9m`,
         forceRefresh: !result.hasMore,
-        refresh: { forceRefresh: !result.hasMore }
+        refresh: { forceRefresh: !result.hasMore },
+        _debug: {
+          durationMs,
+          existingCount: result.mergeDebug?.existingCount ?? 0,
+          upsertCount: result.mergeDebug?.upsertCount ?? 0,
+          batchRows: result.mergeDebug?.batchRows ?? 0,
+          loadMs: result.mergeDebug?.loadMs ?? 0,
+          upsertMs: result.mergeDebug?.upsertMs ?? 0
+        }
       });
     } catch (error) {
       console.error("[Shopee Product Sync] Exception:", error);
@@ -108689,6 +108726,26 @@ async function startServer() {
     console.log(`[Shopee Print] \u0110\xE3 g\u1ED9p ${pdfBuffers.length} PDF th\xE0nh 1 file: ${mergedName}`);
     return `/api/public/labels/${mergedName}`;
   }
+  const primedShippingDocuments = /* @__PURE__ */ new Map();
+  const SHIPPING_DOCUMENT_PRIME_TTL_MS = 10 * 60 * 1e3;
+  const shippingDocumentPrimeKey = (shopId, orderSn) => `${String(shopId)}:${String(orderSn).replace(/^shopee-/i, "")}`;
+  const hasPrimedShippingDocuments = (shopId, orderList) => {
+    const now = Date.now();
+    return orderList.length > 0 && orderList.every((item) => {
+      const key = shippingDocumentPrimeKey(shopId, item.order_sn);
+      const expiresAt = primedShippingDocuments.get(key) || 0;
+      if (expiresAt <= now) {
+        primedShippingDocuments.delete(key);
+        return false;
+      }
+      return true;
+    });
+  };
+  const clearPrimedShippingDocuments = (shopId, orderList) => {
+    for (const item of orderList) {
+      primedShippingDocuments.delete(shippingDocumentPrimeKey(shopId, item.order_sn));
+    }
+  };
   async function generateShopeeShippingDocument(shopId, orderList) {
     let accessToken;
     try {
@@ -108707,10 +108764,16 @@ async function startServer() {
     const RETRY_DELAY_MS = 2e3;
     let lastError = {};
     let didForceRefresh = false;
+    let usePrimedDocument = hasPrimedShippingDocuments(shopId, orderList);
     for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
       let result;
       try {
-        result = await tryGenerateShopeeShippingDocumentOnce(shopId, accessToken, orderList);
+        result = await tryGenerateShopeeShippingDocumentOnce(
+          shopId,
+          accessToken,
+          orderList,
+          usePrimedDocument
+        );
       } catch (error) {
         if (error instanceof ShopeeRefreshTokenExpiredError) {
           return { success: false, error: error.code, message: error.message, permanent: true };
@@ -108724,7 +108787,14 @@ async function startServer() {
           permanent: true
         };
       }
-      if (result.success) return result;
+      if (result.success) {
+        clearPrimedShippingDocuments(shopId, orderList);
+        return result;
+      }
+      if (usePrimedDocument) {
+        clearPrimedShippingDocuments(shopId, orderList);
+        usePrimedDocument = false;
+      }
       if (!didForceRefresh && isShopeeInvalidTokenError(result.error, result.message)) {
         didForceRefresh = true;
         try {
@@ -108757,126 +108827,30 @@ async function startServer() {
     "logistics.order_status_error",
     "error_param"
   ]);
-  async function tryGenerateShopeeShippingDocumentOnce(shopId, accessToken, orderList) {
-    const enrichedOrderList = [];
-    for (const row of orderList) {
-      const order_sn = String(row.order_sn || "").trim();
-      let tracking_no = String(row.tracking_number || "").trim();
-      if (tracking_no && isShopeeInternalTrackingCode2(tracking_no)) tracking_no = "";
-      console.log("=== B\u1EAET \u0110\u1EA6U IN \u0110\u01A0N ===", "M\xE3 \u0111\u01A1n:", order_sn, "Tracking No hi\u1EC7n t\u1EA1i:", tracking_no || "(r\u1ED7ng)");
-      agentDebugLogAc966f({
-        hypothesisId: "A",
-        location: "server.ts:tryGenerateShopeeShippingDocumentOnce:entry",
-        message: "print doc tracking check",
-        data: {
-          order_sn,
-          tracking_no: tracking_no || null,
-          rawRowTn: row.tracking_number || null,
-          package_number: row.package_number || null,
-          empty: !tracking_no
+  async function tryGenerateShopeeShippingDocumentOnce(shopId, accessToken, orderList, usePrimedDocument = false) {
+    const enrichedOrderList = await mapWithConcurrency(orderList, 4, async (row) => {
+      const orderSn = String(row.order_sn || "").trim();
+      let trackingNo = String(row.tracking_number || "").trim();
+      if (trackingNo && isShopeeInternalTrackingCode2(trackingNo)) trackingNo = "";
+      if (!trackingNo) {
+        const ordersStore = loadOrders();
+        let order = ordersStore.find((item) => String(item.orderSn) === orderSn);
+        if (!order) {
+          order = { orderSn, shopId, channel: "shopee", packageNumber: row.package_number };
         }
-      });
-      if (!tracking_no) {
-        console.log("-> \u0110\u01A1n ch\u01B0a c\xF3 tracking_no, t\u1EF1 \u0111\u1ED9ng ship_order + get_tracking_number...");
-        agentDebugLogAc966f({
-          hypothesisId: "B",
-          location: "server.ts:tryGenerateShopeeShippingDocumentOnce:emptyTn",
-          message: "empty tracking \u2014 auto ship_order then get_tracking",
-          data: { order_sn, willCallShipOrder: true }
-        });
-        try {
-          const ordersStore = loadOrders();
-          let orderObj = ordersStore.find((o) => String(o.orderSn) === order_sn);
-          if (!orderObj) {
-            orderObj = {
-              orderSn: order_sn,
-              shopId,
-              channel: "shopee",
-              packageNumber: row.package_number
-            };
-          }
-          if (!orderObj.shopId) orderObj.shopId = shopId;
-          const method = resolveAutoShipMethodForPrint(orderObj);
-          const shipResult = await arrangeShipment(orderObj, method);
-          if (!shipResult.success && !isAlreadyShippedError(shipResult)) {
-            throw new Error("L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee: " + JSON.stringify(shipResult));
-          }
-          orderObj.isPrepared = true;
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          const trackingResponse = await shopeeGetTrackingNumberWithRetry(
-            shopId,
-            accessToken,
-            order_sn,
-            row.package_number || orderObj.packageNumber,
-            3
-          );
-          console.log("-> K\u1EBFt qu\u1EA3 xin tracking:", JSON.stringify(trackingResponse));
-          applyShopeeGetTrackingResponse(orderObj, trackingResponse);
-          const resp = trackingResponse?.response ?? trackingResponse ?? {};
-          const candidates = [
-            resp?.tracking_number,
-            resp?.tracking_no,
-            resp?.last_mile_tracking_number,
-            resp?.third_party_tracking_number,
-            orderObj.trackingNumber,
-            orderObj.tracking_no,
-            shipResult.trackingNumber
-          ];
-          for (const c of candidates) {
-            const s2 = String(c || "").trim();
-            if (s2 && !isShopeeInternalTrackingCode2(s2)) {
-              tracking_no = s2;
-              break;
-            }
-          }
-          agentDebugLogAc966f({
-            hypothesisId: "D",
-            location: "server.ts:tryGenerateShopeeShippingDocumentOnce:afterGetTn",
-            message: "after auto ship + get_tracking_number",
-            data: {
-              order_sn,
-              apiError: trackingResponse?.error || null,
-              apiMessage: String(trackingResponse?.message || "").slice(0, 160),
-              respTn: resp?.tracking_number || null,
-              resolvedTn: tracking_no || null,
-              gotUsable: Boolean(tracking_no)
-            }
-          });
-          if (!tracking_no) {
-            throw new Error("L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee: " + JSON.stringify(trackingResponse ?? {}));
-          }
-          orderObj.trackingNumber = tracking_no;
-          orderObj.tracking_no = tracking_no;
-          const idx = ordersStore.findIndex((x2) => String(x2.orderSn) === order_sn);
-          if (idx >= 0) {
-            ordersStore[idx].trackingNumber = tracking_no;
-            ordersStore[idx].tracking_no = tracking_no;
-            ordersStore[idx].isPrepared = true;
-            ordersStore[idx].packageNumber = orderObj.packageNumber || ordersStore[idx].packageNumber;
-          }
-          await persistOrderTrackingToDb(orderObj);
-          saveOrders(ordersStore);
-        } catch (error) {
-          console.error("-> L\u1ED7i khi t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3:", error);
-          agentDebugLogAc966f({
-            hypothesisId: "B",
-            location: "server.ts:tryGenerateShopeeShippingDocumentOnce:getTnError",
-            message: "auto ship/get_tracking failed",
-            data: { order_sn, err: String(error?.message || error).slice(0, 300) }
-          });
-          const msg = String(error?.message || error || "");
-          if (msg.startsWith("L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee:")) throw error;
-          throw new Error(
-            "L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee: " + JSON.stringify(error?.response?.data || error?.message || msg)
-          );
-        }
+        if (!order.shopId) order.shopId = shopId;
+        const ensured = await ensureOrderTrackingNoForPrint(order, ordersStore);
+        trackingNo = ensured.trackingNo;
       }
-      enrichedOrderList.push({
-        order_sn,
+      if (!trackingNo || isShopeeInternalTrackingCode2(trackingNo)) {
+        throw new Error(`L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee: ${JSON.stringify({ order_sn: orderSn, error: "empty_tracking_number" })}`);
+      }
+      return {
+        order_sn: orderSn,
         package_number: row.package_number,
-        tracking_number: tracking_no
-      });
-    }
+        tracking_number: trackingNo
+      };
+    });
     agentDebugLogAc966f({
       hypothesisId: "A",
       location: "server.ts:tryGenerateShopeeShippingDocumentOnce:beforeCreate",
@@ -108887,7 +108861,12 @@ async function startServer() {
         items: enrichedOrderList.map((x2) => ({ sn: x2.order_sn, tn: x2.tracking_number || null }))
       }
     });
-    const createResult = await shopeeCreateShippingDocument(shopId, accessToken, enrichedOrderList);
+    const createResult = usePrimedDocument ? { response: { result_list: [] } } : await shopeeCreateShippingDocument(shopId, accessToken, enrichedOrderList);
+    if (usePrimedDocument) {
+      console.log(
+        `[Shopee Print] D\xF9ng ch\u1EE9ng t\u1EEB \u0111\xE3 t\u1EA1o n\u1EC1n cho ${enrichedOrderList.length} \u0111\u01A1n shop_id=${shopId}; chuy\u1EC3n th\u1EB3ng sang poll READY.`
+      );
+    }
     console.log(
       "=== K\u1EBET QU\u1EA2 create_shipping_document ===",
       JSON.stringify({
@@ -109234,8 +109213,14 @@ async function startServer() {
           const tn = String(opts?.trackingNumber || "").trim();
           if (pkg) entry.package_number = pkg;
           if (tn && !/^0FG/i.test(tn)) entry.tracking_number = tn;
-          await shopeeCreateShippingDocument(sid, token, [entry]);
-          console.log(`[Ship Order Job] BG create_shipping_document OK order_sn=${sn}`);
+          const createResult = await shopeeCreateShippingDocument(sid, token, [entry]);
+          if (!createResult?.error) {
+            primedShippingDocuments.set(
+              shippingDocumentPrimeKey(sid, sn),
+              Date.now() + SHIPPING_DOCUMENT_PRIME_TTL_MS
+            );
+            console.log(`[Ship Order Job] BG create_shipping_document OK order_sn=${sn}`);
+          }
         } catch (err) {
           console.warn(
             `[Ship Order Job] BG create_shipping_document skip order_sn=${sn}:`,
@@ -109524,6 +109509,21 @@ async function startServer() {
   async function printDocumentHandler(req, res) {
     try {
       const { orderIds, waitMs: rawWaitMs } = req.body;
+      const printStartedAt = Date.now();
+      const printPhaseMs = {};
+      let printPhaseStartedAt = printStartedAt;
+      const printJob = req.printJob;
+      const markPrintPhase = (phase, message) => {
+        const now = Date.now();
+        if (printJob?.phase) {
+          printPhaseMs[printJob.phase] = (printPhaseMs[printJob.phase] || 0) + (now - printPhaseStartedAt);
+        }
+        printPhaseStartedAt = now;
+        if (!printJob) return;
+        printJob.phase = phase;
+        printJob.message = message;
+        printJob.updatedAt = now;
+      };
       console.log(
         `[Shopee Print] B\u1EAFt \u0111\u1EA7u in cho \u0111\u01A1n: ${Array.isArray(orderIds) ? orderIds.join(", ") : String(orderIds || "")}`
       );
@@ -109533,6 +109533,7 @@ async function startServer() {
       }
       const waitMs = Math.min(3e3, Math.max(0, Number(rawWaitMs) || 0));
       if (waitMs > 0) {
+        markPrintPhase("tracking", "\u0110ang ch\u1EDD Shopee \u0111\u1ED3ng b\u1ED9 m\xE3 v\u1EADn \u0111\u01A1n...");
         console.log(`[Shopee Print] Ch\u1EDD ${waitMs}ms tr\u01B0\u1EDBc create_shipping_document...`);
         await new Promise((r2) => setTimeout(r2, waitMs));
       }
@@ -109556,6 +109557,7 @@ async function startServer() {
         groups[o.shopId] = groups[o.shopId] || [];
         groups[o.shopId].push(o);
       }
+      markPrintPhase("tracking", "\u0110ang ki\u1EC3m tra m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee...");
       console.log(`[Shopee Print] Gate: \u0111\u1EA3m b\u1EA3o tracking_no cho ${shopeeCandidates.length} \u0111\u01A1n tr\u01B0\u1EDBc khi t\u1EA1o PDF...`);
       await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 2 });
       saveOrders(orders);
@@ -109572,6 +109574,7 @@ async function startServer() {
       const missingTrackingOrders = [];
       const labelUrl = (filename) => absoluteLabelUrl(`/api/public/labels/${filename}`);
       for (const [shopId, groupOrders] of Object.entries(groups)) {
+        markPrintPhase("creating", "\u0110ang t\u1EA1o v\xE0 ch\u1EDD Shopee xu\u1EA5t PDF v\u1EADn \u0111\u01A1n...");
         const gateResults = await mapWithConcurrency(groupOrders, 4, async (o) => {
           try {
             agentDebugLogAc966f({
@@ -109771,6 +109774,7 @@ async function startServer() {
       let primaryUrl = null;
       let pdfFilename = null;
       if (mergeBuffers.length > 0 || allPrintedSns.length > 0) {
+        markPrintPhase("merging", "\u0110ang gh\xE9p v\xE0 l\u01B0u file PDF...");
         pdfFilename = buildMergedLabelFilename(allPrintedSns.length > 0 ? allPrintedSns : ["bulk"]);
         let mergedBuf = null;
         if (mergeBuffers.length === 1) {
@@ -109825,6 +109829,11 @@ async function startServer() {
         };
       });
       saveOrders(updatedOrders);
+      markPrintPhase("done", "PDF v\u1EADn \u0111\u01A1n \u0111\xE3 s\u1EB5n s\xE0ng.");
+      printPhaseMs.done = (printPhaseMs.done || 0) + (Date.now() - printPhaseStartedAt);
+      console.log(
+        `[Shopee Print Timing] total=${Date.now() - printStartedAt}ms phases=${JSON.stringify(printPhaseMs)} orders=${printedOrderSns.size}/${shopeeCandidates.length}`
+      );
       console.log(
         `[Shopee Print] Ho\xE0n t\u1EA5t: \u0111\xE3 in ${printedOrderSns.size} \u0111\u01A1n / ${shopeeCandidates.length} \u1EE9ng vi\xEAn (kh\xF4ng l\u1ECDc carrier).`
       );
@@ -109867,7 +109876,7 @@ async function startServer() {
         createdAt: Date.now(),
         updatedAt: Date.now()
       });
-      const fakeReq = { body: req.body };
+      const fakeReq = { body: req.body, printJob: printDocumentJobs.get(jobId) };
       setImmediate(() => {
         void (async () => {
           const job = printDocumentJobs.get(jobId);

@@ -531,12 +531,18 @@ export default function ProductList({
       let total = 0;
       let variantCount = 0;
       let shouldForceRefresh = false;
+      const initStartedAt = Date.now();
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'556dce'},body:JSON.stringify({sessionId:'556dce',runId:'pre-fix',hypothesisId:'A,B,C,D,E',location:'ProductList.tsx:init-start',message:'marketplace init started',data:{shopId:shop.shopId,endpoint,timeoutPerPageMs:300000},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
 
       while (hasMore) {
         // Giới hạn cho từng trang, không phải toàn bộ phiên khởi tạo. Catalog nhiều
         // trang có thể cần hơn 5 phút nhưng các trang đã lưu vẫn tiếp tục được xử lý.
         const pageController = new AbortController();
         const pageTimeoutId = setTimeout(() => pageController.abort(), 300000);
+        const pageStartedAt = Date.now();
+        const requestOffset = offset;
         let res: Response;
         try {
           res = await fetch(endpoint, {
@@ -552,6 +558,7 @@ export default function ProductList({
         } finally {
           clearTimeout(pageTimeoutId);
         }
+        const pageElapsedMs = Date.now() - pageStartedAt;
         const data = await parseJsonResponse<{
           success?: boolean;
           productCount?: number;
@@ -571,10 +578,22 @@ export default function ProductList({
           nextOffset?: number;
           hasMore?: boolean;
           pageIndex?: number;
+          _debug?: {
+            durationMs?: number;
+            existingCount?: number;
+            upsertCount?: number;
+            batchRows?: number;
+            loadMs?: number;
+            upsertMs?: number;
+          };
         }>(res);
 
+        // #region agent log
+        fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'556dce'},body:JSON.stringify({sessionId:'556dce',runId:'pre-fix',hypothesisId:'A,B,C,D,E',location:'ProductList.tsx:init-page',message:'marketplace init page response',data:{httpStatus:res.status,ok:res.ok,success:data?.success,requestOffset,pageElapsedMs,serverDebug:data?._debug||null,pageIndex:data?.pageIndex,hasMore:data?.hasMore,nextOffset:data?.nextOffset,itemsInPage:data?.stats?.itemsInPage,savedCount:data?.stats?.savedCount,productCount:data?.productCount,error:data?.error||null,message:data?.message||null,elapsedTotalMs:Date.now()-initStartedAt},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+
         if (!res.ok || data.success === false) {
-          throw new Error(data?.message || data?.error || 'Khởi tạo sản phẩm thất bại.');
+          throw new Error(data?.message || data?.error || `Khởi tạo sản phẩm thất bại (HTTP ${res.status}).`);
         }
 
         pageIndex = Number(data.pageIndex ?? pageIndex + 1);
@@ -587,8 +606,14 @@ export default function ProductList({
           `📄 Đã xử lý trang ${pageIndex}: ${Number(data.stats?.itemsInPage ?? 0)} sản phẩm, lưu ${Number(data.stats?.savedCount ?? 0)} dòng`,
         ]);
 
+        const prevOffset = offset;
         hasMore = data.hasMore === true;
         offset = Number(data.nextOffset ?? offset);
+        // #region agent log
+        if (hasMore && (!Number.isFinite(offset) || offset === prevOffset)) {
+          fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'556dce'},body:JSON.stringify({sessionId:'556dce',runId:'pre-fix',hypothesisId:'D',location:'ProductList.tsx:init-offset-stuck',message:'hasMore true but offset did not advance',data:{prevOffset,nextOffset:offset,hasMore,pageIndex},timestamp:Date.now()})}).catch(()=>{});
+        }
+        // #endregion
       }
 
       setInitProgress((prev) => [
@@ -624,6 +649,9 @@ export default function ProductList({
               initPlatform === 'shopee' ? 'Shopee' : 'TikTok'
             }.`
           : err?.message || 'Khởi tạo sản phẩm thất bại.';
+      // #region agent log
+      fetch('http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'556dce'},body:JSON.stringify({sessionId:'556dce',runId:'pre-fix',hypothesisId:'A,B,E',location:'ProductList.tsx:init-error',message:'marketplace init failed',data:{errName:err?.name||null,errMessage:String(err?.message||message),isAbort:err?.name==='AbortError'},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setInitProgress((prev) => [...prev, `❌ Lỗi: ${message}`]);
       alert(`Khởi tạo sản phẩm thất bại: ${message}`);
 

@@ -5907,12 +5907,23 @@ async function pullShopeeChannelListingsPage(
  * UPSERT Kho gốc theo khóa shopeeItemId (item_id) / id.
  * Có rồi → cập nhật; chưa có → thêm mới. Map đúng title/sku/price/stock từ Shopee.
  */
-async function mergeWarehouseProductsBatch(batchRows: any[]): number {
+async function mergeWarehouseProductsBatch(batchRows: any[]): Promise<{
+  upserted: number;
+  existingCount: number;
+  upsertCount: number;
+  batchRows: number;
+  loadMs: number;
+  upsertMs: number;
+}> {
   try {
-    if (!Array.isArray(batchRows) || batchRows.length === 0) return 0;
+    if (!Array.isArray(batchRows) || batchRows.length === 0) {
+      return { upserted: 0, existingCount: 0, upsertCount: 0, batchRows: 0, loadMs: 0, upsertMs: 0 };
+    }
 
     ensureDataDirs();
+    const loadStarted = Date.now();
     const existing = await loadProducts();
+    const loadMs = Date.now() - loadStarted;
     const byId = new Map<string, any>();
     const byShopeeItemId = new Map<string, string>();
 
@@ -5963,8 +5974,19 @@ async function mergeWarehouseProductsBatch(batchRows: any[]): number {
     }
 
     console.log("Dữ liệu sau khi map (trước khi lưu):", upserted);
-    await upsertProductsToStoreAsync([...byId.values()]);
-    return upserted;
+    // DEBUG: giữ hành vi cũ (upsert toàn catalog) để đo upsertCount vs batchRows.
+    const allDocs = [...byId.values()];
+    const upsertStarted = Date.now();
+    await upsertProductsToStoreAsync(allDocs);
+    const upsertMs = Date.now() - upsertStarted;
+    return {
+      upserted,
+      existingCount: existing.length,
+      upsertCount: allDocs.length,
+      batchRows: batchRows.length,
+      loadMs,
+      upsertMs,
+    };
   } catch (error: unknown) {
     console.error("Lỗi khi lưu DB chunk:", error);
     throw error instanceof Error ? error : new Error(String(error));
@@ -6010,7 +6032,7 @@ async function pullShopeeWarehouseAllPages(
       const n = await mergeWarehouseProductsBatch(pendingRows);
       pendingRows = [];
       pendingItemCount = 0;
-      return n;
+      return n.upserted;
     } catch (error: unknown) {
       console.error("Lỗi khi lưu DB chunk:", error);
       throw error;
@@ -6157,7 +6179,15 @@ async function syncShopeeWarehouseSinglePage(
   };
   skippedItems: { itemId: string; reason: string }[];
   productCount: number;
+  mergeDebug?: {
+    existingCount: number;
+    upsertCount: number;
+    batchRows: number;
+    loadMs: number;
+    upsertMs: number;
+  };
 }> {
+  const pageStarted = Date.now();
   const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
   if (page.itemIds.length === 0) {
     const productCount = (await loadProducts()).filter(
@@ -6177,6 +6207,7 @@ async function syncShopeeWarehouseSinglePage(
       },
       skippedItems: [],
       productCount,
+      mergeDebug: { existingCount: 0, upsertCount: 0, batchRows: 0, loadMs: 0, upsertMs: 0 },
     };
   }
 
@@ -6210,13 +6241,17 @@ async function syncShopeeWarehouseSinglePage(
   }
 
   const dedupedRows = dedupeShopeeParentVariantRows(pageRows);
-  const savedCount = dedupedRows.length > 0 ? await mergeWarehouseProductsBatch(dedupedRows) : 0;
+  const mergeResult =
+    dedupedRows.length > 0
+      ? await mergeWarehouseProductsBatch(dedupedRows)
+      : { upserted: 0, existingCount: 0, upsertCount: 0, batchRows: 0, loadMs: 0, upsertMs: 0 };
+  const savedCount = mergeResult.upserted;
   const productCount = (await loadProducts()).filter(
     (p: any) => p.shopeeItemId || (Array.isArray(p.channels) && p.channels.includes("shopee"))
   ).length;
 
   console.log(
-    `[Shopee Warehouse Sync] Page ${page.pageIndex + 1} offset=${offset}: items=${allIds.length}, rows=${dedupedRows.length}, saved=${savedCount}, totalShopee=${productCount}`
+    `[Shopee Warehouse Sync] Page ${page.pageIndex + 1} offset=${offset}: items=${allIds.length}, rows=${dedupedRows.length}, saved=${savedCount}, totalShopee=${productCount}, durationMs=${Date.now() - pageStarted}, upsertCount=${mergeResult.upsertCount}, existingCount=${mergeResult.existingCount}`
   );
 
   return {
@@ -6233,6 +6268,13 @@ async function syncShopeeWarehouseSinglePage(
     },
     skippedItems,
     productCount,
+    mergeDebug: {
+      existingCount: mergeResult.existingCount,
+      upsertCount: mergeResult.upsertCount,
+      batchRows: mergeResult.batchRows,
+      loadMs: mergeResult.loadMs,
+      upsertMs: mergeResult.upsertMs,
+    },
   };
 }
 
@@ -17976,13 +18018,15 @@ async function startServer() {
         });
       }
 
+      const syncStarted = Date.now();
       console.log(
         `[Shopee Product Sync] Bắt đầu đồng bộ 1 trang shop_id=${shopId}, offset=${offset}, page_size=${SHOPEE_ITEM_LIST_PAGE_SIZE}`
       );
       const result = await syncShopeeWarehouseSinglePage(shopId, accessToken, offset);
       const initialized = Number(result.productCount) || 0;
+      const durationMs = Date.now() - syncStarted;
       console.log(
-        `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} — productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}`
+        `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} — productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}, durationMs=${durationMs}`
       );
       if (!result.hasMore) {
         writeInventoryAudit("shopee_sync_completed", {
@@ -18016,6 +18060,14 @@ async function startServer() {
           : `Đã khởi tạo xong ${initialized} sản phẩm`,
         forceRefresh: !result.hasMore,
         refresh: { forceRefresh: !result.hasMore },
+        _debug: {
+          durationMs,
+          existingCount: result.mergeDebug?.existingCount ?? 0,
+          upsertCount: result.mergeDebug?.upsertCount ?? 0,
+          batchRows: result.mergeDebug?.batchRows ?? 0,
+          loadMs: result.mergeDebug?.loadMs ?? 0,
+          upsertMs: result.mergeDebug?.upsertMs ?? 0,
+        },
       });
     } catch (error: unknown) {
       console.error("[Shopee Product Sync] Exception:", error);
