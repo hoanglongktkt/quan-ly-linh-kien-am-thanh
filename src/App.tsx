@@ -592,8 +592,9 @@ export default function App() {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           const controller = new AbortController();
-          const timeoutId = window.setTimeout(() => controller.abort(), 20_000);
-          // Chỉ đọc trực tiếp DB Kho gốc, cấm fallback dữ liệu cũ.
+          // Khớp timeout backend 30s — cPanel/Mongo cold-start cần thêm thời gian.
+          const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
+          // Chỉ đọc trực tiếp DB Kho gốc theo trang (page/pageSize), không tải cả kho.
           const response = await fetch(`/api/products?page=${page}&pageSize=${pageSize}&t=${Date.now()}`, {
             method: 'GET',
             cache: 'no-store',

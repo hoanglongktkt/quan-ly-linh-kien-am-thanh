@@ -93620,35 +93620,29 @@ async function loadProductsPageFromStore(page = 1, pageSize = 50) {
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  const COUNT_MAX_MS = 15e3;
+  const PAGE_MAX_MS = 3e4;
+  let total = 0;
   try {
-    const total = await ProductModel.countDocuments({}).maxTimeMS(8e3);
-    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
-    const currentPage = Math.min(safePage, totalPages);
-    const docs = await ProductModel.find({}).sort({ _id: 1 }).skip((currentPage - 1) * safeSize).limit(safeSize).maxTimeMS(1e4).lean();
-    return {
-      products: docsToProducts(docs),
-      total,
-      page: currentPage,
-      pageSize: safeSize,
-      totalPages,
-      hasMore: currentPage < totalPages
-    };
-  } catch (err) {
-    console.warn("[MongoDB] loadProductsPageFromStore fallback find({}):", err);
-    const all = await loadProductsFromStore();
-    const total = all.length;
-    const totalPages = Math.max(1, Math.ceil(total / safeSize) || 1);
-    const currentPage = Math.min(safePage, totalPages);
-    const start = (currentPage - 1) * safeSize;
-    return {
-      products: all.slice(start, start + safeSize),
-      total,
-      page: currentPage,
-      pageSize: safeSize,
-      totalPages,
-      hasMore: currentPage < totalPages
-    };
+    total = await ProductModel.countDocuments({}).maxTimeMS(COUNT_MAX_MS);
+  } catch (countErr) {
+    console.warn(
+      "[MongoDB] countDocuments ch\u1EADm/l\u1ED7i \u2014 d\xF9ng estimatedDocumentCount:",
+      countErr instanceof Error ? countErr.message : countErr
+    );
+    total = await ProductModel.estimatedDocumentCount().maxTimeMS(COUNT_MAX_MS);
   }
+  const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
+  const currentPage = Math.min(safePage, totalPages);
+  const docs = await ProductModel.find({}).sort({ _id: 1 }).skip((currentPage - 1) * safeSize).limit(safeSize).maxTimeMS(PAGE_MAX_MS).lean();
+  return {
+    products: docsToProducts(docs),
+    total,
+    page: currentPage,
+    pageSize: safeSize,
+    totalPages,
+    hasMore: currentPage < totalPages
+  };
 }
 async function loadProductByIdFromStore(productId) {
   requireMongo();
@@ -105723,29 +105717,11 @@ async function startServer() {
       const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
       const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
       const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize)) : PRODUCTS_PAGE_SIZE_DEFAULT;
-      let paged;
-      try {
-        paged = await withLocalDbTimeout(
-          loadProductsPageFromStore(page, pageSize),
-          15e3,
-          "products_page_load"
-        );
-      } catch (pageErr) {
-        console.warn("[Products API] page load failed, fallback loadProducts:", pageErr);
-        const all = await withLocalDbTimeout(loadProducts(), 15e3, "products_load_fallback");
-        const total = all.length;
-        const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)) || 1);
-        const safePage = Math.min(page, totalPages);
-        const start = (safePage - 1) * pageSize;
-        paged = {
-          products: all.slice(start, start + pageSize),
-          total,
-          page: safePage,
-          pageSize,
-          totalPages,
-          hasMore: safePage < totalPages
-        };
-      }
+      const paged = await withLocalDbTimeout(
+        loadProductsPageFromStore(page, pageSize),
+        3e4,
+        "products_page_load"
+      );
       return res.status(200).json({
         success: true,
         products: paged.products,

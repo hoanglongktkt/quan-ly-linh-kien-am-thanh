@@ -14959,29 +14959,12 @@ async function startServer() {
         ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize))
         : PRODUCTS_PAGE_SIZE_DEFAULT;
 
-      let paged: Awaited<ReturnType<typeof loadProductsPageFromStore>>;
-      try {
-        paged = await withLocalDbTimeout(
-          loadProductsPageFromStore(page, pageSize),
-          15000,
-          "products_page_load",
-        );
-      } catch (pageErr) {
-        console.warn("[Products API] page load failed, fallback loadProducts:", pageErr);
-        const all = await withLocalDbTimeout(loadProducts(), 15000, "products_load_fallback");
-        const total = all.length;
-        const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)) || 1);
-        const safePage = Math.min(page, totalPages);
-        const start = (safePage - 1) * pageSize;
-        paged = {
-          products: all.slice(start, start + pageSize),
-          total,
-          page: safePage,
-          pageSize,
-          totalPages,
-          hasMore: safePage < totalPages,
-        };
-      }
+      // Chỉ đọc 1 trang (mặc định 50) — cấm fallback loadProducts()/find({}) toàn kho.
+      const paged = await withLocalDbTimeout(
+        loadProductsPageFromStore(page, pageSize),
+        30_000,
+        "products_page_load",
+      );
 
       return res.status(200).json({
         success: true,

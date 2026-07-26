@@ -499,7 +499,7 @@ export async function loadProductsFromStore(): Promise<any[]> {
   return docsToProducts(docs);
 }
 
-/** Phân trang kho gốc ngay trên Mongo — tránh find({}) + timeout khi catalog lớn. */
+/** Phân trang kho gốc ngay trên Mongo — luôn skip/limit, cấm find({}) toàn catalog. */
 export async function loadProductsPageFromStore(
   page = 1,
   pageSize = 50,
@@ -507,42 +507,38 @@ export async function loadProductsPageFromStore(
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  // cPanel/Mongo chậm: cho đến 30s mỗi query trang; không bao giờ fallback load hết kho.
+  const COUNT_MAX_MS = 15_000;
+  const PAGE_MAX_MS = 30_000;
 
+  let total = 0;
   try {
-    const total = await ProductModel.countDocuments({}).maxTimeMS(8000);
-    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
-    const currentPage = Math.min(safePage, totalPages);
-    const docs = await ProductModel.find({})
-      .sort({ _id: 1 })
-      .skip((currentPage - 1) * safeSize)
-      .limit(safeSize)
-      .maxTimeMS(10000)
-      .lean();
-    return {
-      products: docsToProducts(docs),
-      total,
-      page: currentPage,
-      pageSize: safeSize,
-      totalPages,
-      hasMore: currentPage < totalPages,
-    };
-  } catch (err) {
-    // Fallback an toàn: đọc toàn bộ rồi slice — không để UI trống vì lỗi phân trang.
-    console.warn("[MongoDB] loadProductsPageFromStore fallback find({}):", err);
-    const all = await loadProductsFromStore();
-    const total = all.length;
-    const totalPages = Math.max(1, Math.ceil(total / safeSize) || 1);
-    const currentPage = Math.min(safePage, totalPages);
-    const start = (currentPage - 1) * safeSize;
-    return {
-      products: all.slice(start, start + safeSize),
-      total,
-      page: currentPage,
-      pageSize: safeSize,
-      totalPages,
-      hasMore: currentPage < totalPages,
-    };
+    total = await ProductModel.countDocuments({}).maxTimeMS(COUNT_MAX_MS);
+  } catch (countErr) {
+    console.warn(
+      "[MongoDB] countDocuments chậm/lỗi — dùng estimatedDocumentCount:",
+      countErr instanceof Error ? countErr.message : countErr,
+    );
+    total = await ProductModel.estimatedDocumentCount().maxTimeMS(COUNT_MAX_MS);
   }
+
+  const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
+  const currentPage = Math.min(safePage, totalPages);
+  const docs = await ProductModel.find({})
+    .sort({ _id: 1 })
+    .skip((currentPage - 1) * safeSize)
+    .limit(safeSize)
+    .maxTimeMS(PAGE_MAX_MS)
+    .lean();
+
+  return {
+    products: docsToProducts(docs),
+    total,
+    page: currentPage,
+    pageSize: safeSize,
+    totalPages,
+    hasMore: currentPage < totalPages,
+  };
 }
 
 /** Đọc 1 product theo id nội bộ / shopeeItemId — không quét toàn bộ catalog. */
