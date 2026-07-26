@@ -479,6 +479,8 @@ export default function App() {
             }, 3000);
             return;
           }
+          // Hết retry / lỗi khác: thoát spinner vĩnh viễn, giữ cache/UI hiện có.
+          setHasLoadedOrdersOnce(true);
           console.warn('[Fetch Orders] Refresh failed; giữ nguyên danh sách hiện tại.');
           return;
         }
@@ -493,6 +495,12 @@ export default function App() {
         }
         lastAppliedOrdersSeqRef.current = requestId;
         const sanitized = sanitizeOrders(data);
+        // Shallow rỗng: không wipe cache/UI (Mongo tạm trống / race) — giữ dữ liệu cũ.
+        if (limit && sanitized.length === 0) {
+          setHasLoadedOrdersOnce(true);
+          console.warn('[Fetch Orders] Shallow rỗng — giữ danh sách/cache hiện tại.');
+          return;
+        }
         if (merge) {
           setOrders((prev) => {
             const base = prev.length > 0 ? prev : ordersHydrateRef.current;
@@ -501,14 +509,20 @@ export default function App() {
             void saveOrdersCache(merged);
             return merged;
           });
+        } else if (sanitized.length === 0) {
+          // Full replace rỗng: chỉ chấp nhận khi chưa có dữ liệu local.
+          const existing = ordersHydrateRef.current;
+          if (existing.length > 0) {
+            setHasLoadedOrdersOnce(true);
+            console.warn('[Fetch Orders] Full refresh rỗng — giữ cache hiện tại, không wipe.');
+            return;
+          }
+          setOrders([]);
+          ordersHydrateRef.current = [];
         } else {
           setOrders(sanitized);
           ordersHydrateRef.current = sanitized;
-          if (sanitized.length === 0) {
-            void saveOrdersCache([]);
-          } else {
-            void saveOrdersCache(sanitized);
-          }
+          void saveOrdersCache(sanitized);
         }
         setHasLoadedOrdersOnce(true);
         console.log(
@@ -517,6 +531,13 @@ export default function App() {
         );
       } else {
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG: (HTTP', response.status, ')');
+        if (retriesLeft > 0) {
+          window.setTimeout(() => {
+            void fetchOrders({ silent, bustCache, limit, merge, retriesLeft: retriesLeft - 1 });
+          }, 3000);
+        } else {
+          setHasLoadedOrdersOnce(true);
+        }
       }
     } catch (err) {
       console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
@@ -529,6 +550,9 @@ export default function App() {
         window.setTimeout(() => {
           void fetchOrders({ silent, bustCache, limit, merge, retriesLeft: retriesLeft - 1 });
         }, 3000);
+      } else {
+        // Hết retry: thoát spinner; giữ IndexedDB/cache nếu có.
+        setHasLoadedOrdersOnce(true);
       }
     } finally {
       if (requestTimeoutId !== undefined) window.clearTimeout(requestTimeoutId);
@@ -1291,15 +1315,15 @@ export default function App() {
     const bootstrapCatalog = async () => {
       purgeLegacyCatalogCache();
 
-      // Stale-while-revalidate: IndexedDB chỉ render tạm. API là SSOT và phải
-      // replace cache/UI, không merge để đơn đã bị xóa/hủy trên server thành "ghost".
+      // Stale-while-revalidate: IndexedDB render tạm; shallow merge 50 đơn mới nhất
+      // (không replace/wipe toàn bộ — tránh mất list khi Mongo chậm/rỗng tạm thời).
       const cached = await loadOrdersCache();
       ordersHydrateRef.current = cached;
       if (cached.length > 0) {
         setOrders(cached);
         setHasLoadedOrdersOnce(true);
       }
-      void fetchOrders({ silent: true, limit: 50, merge: false });
+      void fetchOrders({ silent: true, limit: 50, merge: true });
 
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });

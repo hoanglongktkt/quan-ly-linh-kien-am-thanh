@@ -72,6 +72,7 @@ import {
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
   loadOrdersFromStore,
+  loadShopeeTrackingEnrichCandidatesFromStore,
   queryOrdersPageFromStore,
   createSyncJob,
   finishSyncJob,
@@ -2574,10 +2575,18 @@ async function fetchReturnShippingTrackingNumber(
         `[Shopee Returns] reverse_tracking return_sn=${returnSn} tracking_number=${body.tracking_number || "(empty)"} rts=${body.rts_tracking_number || "(empty)"} extracted=${fromReverse || "(empty)"}`,
       );
     } else {
-      console.warn(
-        `[Shopee Returns] get_reverse_tracking_info lỗi return_sn=${returnSn}:`,
-        reverse.message || reverse.error,
-      );
+      const errText = `${reverse.error || ""} ${reverse.message || ""}`;
+      // Shopee chưa mở reverse logistics — trạng thái thường, không spam warn.
+      if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
+        console.log(
+          `[Shopee Returns] get_reverse_tracking_info pending return_sn=${returnSn}: ${errText.trim()}`,
+        );
+      } else {
+        console.warn(
+          `[Shopee Returns] get_reverse_tracking_info lỗi return_sn=${returnSn}:`,
+          reverse.message || reverse.error,
+        );
+      }
     }
   } catch (err: any) {
     console.warn(`[Shopee Returns] reverse_tracking exception ${returnSn}:`, err?.message || err);
@@ -8066,6 +8075,23 @@ function applyShopeeTrackingCode(order: any, rawCode: unknown) {
   order.tracking_no = code;
 }
 
+const TRACKING_ENRICH_COOLDOWN_MS = 8 * 60 * 60 * 1000; // 8h — tránh CLEAR/reverse spam mỗi 10 phút
+
+function setTrackingEnrichCooldown(order: any, reason: string): void {
+  if (!order || typeof order !== "object") return;
+  order.tracking_enrich_cooldown_until = new Date(
+    Date.now() + TRACKING_ENRICH_COOLDOWN_MS,
+  ).toISOString();
+  order.tracking_enrich_cooldown_reason = reason;
+}
+
+function isTrackingEnrichOnCooldown(order: any): boolean {
+  const raw = order?.tracking_enrich_cooldown_until;
+  if (!raw) return false;
+  const t = new Date(String(raw)).getTime();
+  return Number.isFinite(t) && t > Date.now();
+}
+
 function repairMisassignedTracking(order: any): any {
   if (!order || typeof order !== "object") return order;
   // Đồng bộ mirror field
@@ -8081,11 +8107,12 @@ function repairMisassignedTracking(order: any): any {
   const carrierHint =
     order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || "";
   if (tn && !isTrackingCompatibleWithCarrier(tn, carrierHint)) {
-    console.warn(
+    console.log(
       `[Shopee Tracking] CLEAR mismatched tracking order_sn=${order.orderSn} tn=${tn} carrier=${carrierHint}`,
     );
     order.trackingNumber = undefined;
     order.tracking_no = undefined;
+    setTrackingEnrichCooldown(order, "mismatched_tracking_cleared");
   }
   return order;
 }
@@ -8865,9 +8892,12 @@ async function shopeeGetTrackingNumberWithRetry(
         errBlob.includes("try again") ||
         errBlob.includes("not ready") ||
         errBlob.includes("empty");
-      console.warn(
-        `[Shopee Tracking] attempt ${attempt}/${maxAttempts} order_sn=${orderSn} chưa có mã — error="${last?.error || ""}" message="${last?.message || ""}"`,
-      );
+      // Chỉ log lần cuối — "chưa có mã" là trạng thái thường gặp, không spam warn.
+      if (attempt >= maxAttempts) {
+        console.log(
+          `[Shopee Tracking] attempt ${attempt}/${maxAttempts} order_sn=${orderSn} chưa có mã — error="${last?.error || ""}" message="${last?.message || ""}"`,
+        );
+      }
       if (!retriable || attempt >= maxAttempts) return last;
     } catch (err: any) {
       console.warn(
@@ -8989,14 +9019,20 @@ async function enrichShopeeOrderTrackingFromApi(
           if (body?.status) order.return_status = String(body.status);
           if (!hasUsableShopeeTrackingNumber(order)) {
             const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
-            const rtn = extractTrackingFromReturnPayload(reverse);
-            if (rtn) applyTn(rtn, "get_reverse_tracking_info");
+            const errText = `${reverse?.error || ""} ${reverse?.message || ""}`;
+            if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
+              setTrackingEnrichCooldown(order, "reverse_logistics_pending");
+            } else {
+              const rtn = extractTrackingFromReturnPayload(reverse);
+              if (rtn) applyTn(rtn, "get_reverse_tracking_info");
+            }
           }
         } catch (retErr: any) {
           console.warn(
             `[Shopee Tracking] returns fallback ${order.orderSn}:`,
             retErr?.message || retErr,
           );
+          setTrackingEnrichCooldown(order, "returns_fallback_error");
         }
       }
     }
@@ -9025,12 +9061,14 @@ async function enrichShopeeOrderTrackingFromApi(
       promoteOrderStatusWhenTrackingReady(order);
       await persistOrderTrackingToDb(order);
     } else {
-      console.warn(
-        `[Shopee Tracking] THIẾU MÃ sau mọi fallback — order_sn=${order.orderSn} return_sn=${order.return_sn || ""} status=${order.status} raw=${order.shopee_order_status || ""} existingTn=${existingTn || "(empty)"}`,
+      setTrackingEnrichCooldown(order, "missing_tracking_after_fallback");
+      console.log(
+        `[Shopee Tracking] THIẾU MÃ sau mọi fallback — order_sn=${order.orderSn} return_sn=${order.return_sn || ""} status=${order.status} raw=${order.shopee_order_status || ""} existingTn=${existingTn || "(empty)"} cooldown=8h`,
       );
     }
   } catch (err) {
     console.warn(`[Shopee Tracking] enrich ${order.orderSn} failed:`, err);
+    setTrackingEnrichCooldown(order, "enrich_exception");
     if (existingTn && !hasUsableShopeeTrackingNumber(order)) {
       order.trackingNumber = existingTn;
       order.tracking_no = existingTn;
@@ -9068,7 +9106,11 @@ function hasUsableOutboundShopeeTracking(order: any): boolean {
 }
 
 function needsBackgroundShopeeTrackingEnrichment(order: any, cutoffMs: number): boolean {
-  if (!order || String(order.channel || "") !== "shopee") return false;
+  if (!order) return false;
+  const channel = String(order.channel || "").trim();
+  // Legacy thiếu channel vẫn coi là Shopee; chỉ loại sàn khác.
+  if (channel && channel !== "shopee") return false;
+  if (isTrackingEnrichOnCooldown(order)) return false;
   if (getShopeeTrackingCandidateTime(order) < cutoffMs) return false;
 
   const isReturn = Boolean(order.return_sn) || isCancelOrReturnOrderStatus(order);
@@ -9107,7 +9149,13 @@ async function enrichMissingShopeeTracking(): Promise<{
   let candidatesCount = 0;
   try {
     const cutoffMs = Date.now() - SHOPEE_TRACKING_ENRICH_LOOKBACK_MS;
-    const orders = await loadOrdersFromStore();
+    // Query Mongo có filter + limit — không full-scan toàn bộ collection (tránh làm chậm refresh UI).
+    const orders = await loadShopeeTrackingEnrichCandidatesFromStore({
+      lookbackMs: SHOPEE_TRACKING_ENRICH_LOOKBACK_MS,
+      limit: SHOPEE_TRACKING_ENRICH_BATCH_LIMIT * 2,
+      localStatuses: [...SHOPEE_TRACKING_ENRICH_STATUSES],
+      shopeeStatuses: [...SHOPEE_RAW_STATUSES_MAY_HAVE_TRACKING],
+    });
     const candidates = orders
       .filter((order: any) => needsBackgroundShopeeTrackingEnrichment(order, cutoffMs))
       .sort((a: any, b: any) => getShopeeTrackingCandidateTime(b) - getShopeeTrackingCandidateTime(a))
@@ -9149,6 +9197,7 @@ async function enrichMissingShopeeTracking(): Promise<{
           async (order) => {
             const outboundBefore = String(order.trackingNumber || order.tracking_no || "").trim();
             const returnBefore = String(order.return_tracking_no || "").trim();
+            const cooldownBefore = String(order.tracking_enrich_cooldown_until || "");
             try {
               // Full enrich cho đơn hoàn để chạy cả returns API; khôi phục outbound
               // sau đó vì mã chiều về luôn phải nằm riêng trong return_tracking_no.
@@ -9156,7 +9205,19 @@ async function enrichMissingShopeeTracking(): Promise<{
                 light: false,
                 retries: 2,
               });
-              if (outboundBefore) {
+              // Chỉ khôi phục outbound cũ nếu enrich chưa CLEAR do lệch carrier
+              // (tránh gắn lại SPX lên đơn GHN → vòng CLEAR mỗi 10 phút).
+              if (
+                outboundBefore &&
+                order.tracking_enrich_cooldown_reason !== "mismatched_tracking_cleared" &&
+                isTrackingCompatibleWithCarrier(
+                  outboundBefore,
+                  order.shipping_carrier ||
+                    order.checkout_shipping_carrier ||
+                    order.carrier ||
+                    "",
+                )
+              ) {
                 order.trackingNumber = outboundBefore;
                 order.tracking_no = outboundBefore;
               }
@@ -9171,7 +9232,18 @@ async function enrichMissingShopeeTracking(): Promise<{
                     returnSn,
                     detail,
                   );
-                  if (returnTracking.tracking) order.return_tracking_no = returnTracking.tracking;
+                  if (returnTracking.tracking) {
+                    order.return_tracking_no = returnTracking.tracking;
+                  } else {
+                    // Chưa có mã chiều về / reverse logistics — cooldown để khỏi spam API.
+                    setTrackingEnrichCooldown(order, "return_tracking_pending");
+                  }
+                } else if (
+                  /error_reverse_logistics|does not have reverse logistics/i.test(
+                    `${detail.error || ""} ${detail.message || ""}`,
+                  )
+                ) {
+                  setTrackingEnrichCooldown(order, "reverse_logistics_pending");
                 }
               }
 
@@ -9185,11 +9257,20 @@ async function enrichMissingShopeeTracking(): Promise<{
                 returnFilled += 1;
                 shopReturnFilled += 1;
               }
-              // return_tracking_no không thuộc updateOrderTrackingInStore, nên upsert
-              // toàn bộ snapshot để Mongo giữ mã chiều về mà không thay outbound hợp lệ.
-              if (outboundAfter || returnAfter) await bulkUpsertOrdersToStore([order]);
+              const cooldownChanged =
+                String(order.tracking_enrich_cooldown_until || "") !== cooldownBefore;
+              // Upsert khi có mã mới HOẶC đã ghi cooldown (tránh CLEAR→enrich lặp mỗi 10 phút).
+              if (outboundAfter || returnAfter || cooldownChanged) {
+                await bulkUpsertOrdersToStore([order]);
+              }
             } catch (error: any) {
               errors += 1;
+              setTrackingEnrichCooldown(order, "enrich_batch_exception");
+              try {
+                await bulkUpsertOrdersToStore([order]);
+              } catch {
+                /* ignore persist cooldown failure */
+              }
               console.warn(
                 `[Shopee Tracking Enrich] order_sn=${order.orderSn} shop=${shopId} failed:`,
                 error?.message || error,

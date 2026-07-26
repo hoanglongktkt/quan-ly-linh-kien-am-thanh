@@ -2120,6 +2120,112 @@ export async function loadOrdersFromStore(opts?: {
   return out;
 }
 
+/**
+ * Candidate cho scheduler bù mã vận đơn — filter Mongo + limit, không full-scan collection.
+ * Cooldown (`data.tracking_enrich_cooldown_until`) loại đơn vừa CLEAR / reverse_logistics / thiếu mã.
+ */
+export async function loadShopeeTrackingEnrichCandidatesFromStore(opts: {
+  lookbackMs: number;
+  limit: number;
+  localStatuses: string[];
+  shopeeStatuses: string[];
+}): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts.limit) || 40)), 200);
+  const lookbackMs = Math.max(60_000, Number(opts.lookbackMs) || 14 * 24 * 60 * 60 * 1000);
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+  const nowIso = new Date().toISOString();
+  const localStatuses = (opts.localStatuses || []).map((s) => String(s)).filter(Boolean);
+  const shopeeStatuses = (opts.shopeeStatuses || []).map((s) => String(s).toUpperCase()).filter(Boolean);
+
+  const trackingEmpty = {
+    $or: [
+      { tracking_no: null },
+      { tracking_no: "" },
+      { tracking_no: { $exists: false } },
+      { tracking_no: { $regex: /^0FG/i } },
+      { "data.tracking_no": null },
+      { "data.tracking_no": "" },
+      { "data.trackingNumber": null },
+      { "data.trackingNumber": "" },
+    ],
+  };
+  const returnMissing = {
+    $and: [
+      {
+        $or: [
+          { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+          { shopee_order_status: { $in: ["TO_RETURN", "IN_CANCEL", "CANCELLED"] } },
+          { status: { $in: ["return_pending", "return_received", "cancelled"] } },
+        ],
+      },
+      {
+        $or: [
+          { "data.return_tracking_no": { $exists: false } },
+          { "data.return_tracking_no": null },
+          { "data.return_tracking_no": "" },
+        ],
+      },
+    ],
+  };
+  const statusMatch = {
+    $or: [
+      ...(localStatuses.length ? [{ status: { $in: localStatuses } }] : []),
+      ...(shopeeStatuses.length ? [{ shopee_order_status: { $in: shopeeStatuses } }] : []),
+      { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+    ],
+  };
+  const cooldownOk = {
+    $or: [
+      { "data.tracking_enrich_cooldown_until": { $exists: false } },
+      { "data.tracking_enrich_cooldown_until": null },
+      { "data.tracking_enrich_cooldown_until": "" },
+      { "data.tracking_enrich_cooldown_until": { $lte: nowIso } },
+    ],
+  };
+
+  const filter: Record<string, unknown> = {
+    $and: [
+      {
+        $or: [
+          { "data.channel": "shopee" },
+          { "data.channel": { $exists: false } },
+          { "data.channel": null },
+          { "data.channel": "" },
+        ],
+      },
+      {
+        $or: [
+          { "data.date": { $gte: cutoffIso } },
+          { last_synced_at: { $gte: new Date(Date.now() - lookbackMs) } },
+        ],
+      },
+      statusMatch,
+      cooldownOk,
+      { $or: [{ $and: [trackingEmpty, statusMatch] }, returnMissing] },
+    ],
+  };
+
+  let docs: any[];
+  try {
+    docs = await OrderModel.find(filter)
+      .select({ _id: 1 })
+      .sort({ "data.date": -1, _id: -1 })
+      .limit(limit)
+      .maxTimeMS(8_000)
+      .lean();
+  } catch (err: any) {
+    console.warn(
+      "[MongoDB] loadShopeeTrackingEnrichCandidatesFromStore failed:",
+      err?.message || err,
+    );
+    return [];
+  }
+  if (!docs.length) return [];
+  return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
+}
+
 export type OrdersPageQuery = {
   page?: number;
   pageSize?: number;

@@ -608,27 +608,48 @@ export default function OrderManager({
     try {
       const token = localStorage.getItem('admin_token') || '';
       console.log('[Orders Sync] Làm mới → POST /api/orders/pull (Shopee → Mongo)...');
-      const pullRes = await fetch('/api/orders/pull', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        // 7 ngày — đủ bắt đơn đã quét ĐVVC trên App mà webhook/local chưa kịp cập nhật.
-        body: JSON.stringify({ lookback_hours: 168 }),
-      });
-      const pullJson = await pullRes.json().catch(() => ({}));
-      if (!pullRes.ok || pullJson?.success === false) {
-        console.warn('[Orders Sync] Pull Shopee không thành công:', pullJson);
-        setLastSyncSummary(`Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`);
-      } else {
+      const pullController = new AbortController();
+      // Server hard-deadline ~90s; client cắt ~95s để nút không kẹt "Đang đồng bộ...".
+      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 95_000);
+      try {
+        const pullRes = await fetch('/api/orders/pull', {
+          method: 'POST',
+          signal: pullController.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          // 7 ngày — đủ bắt đơn đã quét ĐVVC trên App mà webhook/local chưa kịp cập nhật.
+          body: JSON.stringify({ lookback_hours: 168 }),
+        });
+        const pullJson = await pullRes.json().catch(() => ({}));
+        if (!pullRes.ok || pullJson?.success === false) {
+          console.warn('[Orders Sync] Pull Shopee không thành công:', pullJson);
+          setLastSyncSummary(
+            `Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`,
+          );
+        } else {
+          setLastSyncSummary(
+            `Đồng bộ xong: kiểm tra ${pullJson.pulled ?? 0}, cập nhật ${pullJson.updated ?? 0}, mới ${pullJson.added ?? 0}`,
+          );
+          console.log(
+            `[Orders Sync] Pull OK — pulled=${pullJson.pulled ?? 0} added=${pullJson.added ?? 0} updated=${pullJson.updated ?? 0}`,
+          );
+        }
+      } catch (pullErr) {
+        const aborted =
+          (pullErr instanceof DOMException && pullErr.name === 'AbortError') ||
+          (pullErr instanceof Error && pullErr.name === 'AbortError');
+        console.warn('[Orders Sync] Pull lỗi/timeout — vẫn đọc Mongo hiện có:', pullErr);
         setLastSyncSummary(
-          `Đồng bộ xong: kiểm tra ${pullJson.pulled ?? 0}, cập nhật ${pullJson.updated ?? 0}, mới ${pullJson.added ?? 0}`,
+          aborted
+            ? 'Đồng bộ quá lâu — đang tải danh sách từ Database.'
+            : 'Đồng bộ thất bại: lỗi kết nối máy chủ.',
         );
-        console.log(
-          `[Orders Sync] Pull OK — pulled=${pullJson.pulled ?? 0} added=${pullJson.added ?? 0} updated=${pullJson.updated ?? 0}`,
-        );
+      } finally {
+        window.clearTimeout(pullTimeoutId);
       }
+      // Luôn refresh Mongo dù pull lỗi/timeout — không để UI kẹt trống.
       await onFetchOrders?.({ silent: false, bustCache: true });
       console.log('[FRONTEND FETCHED] Làm mới đơn hàng thành công.');
     } catch (err) {

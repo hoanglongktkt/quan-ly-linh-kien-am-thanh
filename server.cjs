@@ -94827,6 +94827,94 @@ async function loadOrdersFromStore(opts) {
   }
   return out;
 }
+async function loadShopeeTrackingEnrichCandidatesFromStore(opts) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const limit = Math.min(Math.max(1, Math.floor(Number(opts.limit) || 40)), 200);
+  const lookbackMs = Math.max(6e4, Number(opts.lookbackMs) || 14 * 24 * 60 * 60 * 1e3);
+  const cutoffIso = new Date(Date.now() - lookbackMs).toISOString();
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  const localStatuses = (opts.localStatuses || []).map((s2) => String(s2)).filter(Boolean);
+  const shopeeStatuses = (opts.shopeeStatuses || []).map((s2) => String(s2).toUpperCase()).filter(Boolean);
+  const trackingEmpty = {
+    $or: [
+      { tracking_no: null },
+      { tracking_no: "" },
+      { tracking_no: { $exists: false } },
+      { tracking_no: { $regex: /^0FG/i } },
+      { "data.tracking_no": null },
+      { "data.tracking_no": "" },
+      { "data.trackingNumber": null },
+      { "data.trackingNumber": "" }
+    ]
+  };
+  const returnMissing = {
+    $and: [
+      {
+        $or: [
+          { "data.return_sn": { $exists: true, $nin: [null, ""] } },
+          { shopee_order_status: { $in: ["TO_RETURN", "IN_CANCEL", "CANCELLED"] } },
+          { status: { $in: ["return_pending", "return_received", "cancelled"] } }
+        ]
+      },
+      {
+        $or: [
+          { "data.return_tracking_no": { $exists: false } },
+          { "data.return_tracking_no": null },
+          { "data.return_tracking_no": "" }
+        ]
+      }
+    ]
+  };
+  const statusMatch = {
+    $or: [
+      ...localStatuses.length ? [{ status: { $in: localStatuses } }] : [],
+      ...shopeeStatuses.length ? [{ shopee_order_status: { $in: shopeeStatuses } }] : [],
+      { "data.return_sn": { $exists: true, $nin: [null, ""] } }
+    ]
+  };
+  const cooldownOk = {
+    $or: [
+      { "data.tracking_enrich_cooldown_until": { $exists: false } },
+      { "data.tracking_enrich_cooldown_until": null },
+      { "data.tracking_enrich_cooldown_until": "" },
+      { "data.tracking_enrich_cooldown_until": { $lte: nowIso } }
+    ]
+  };
+  const filter = {
+    $and: [
+      {
+        $or: [
+          { "data.channel": "shopee" },
+          { "data.channel": { $exists: false } },
+          { "data.channel": null },
+          { "data.channel": "" }
+        ]
+      },
+      {
+        $or: [
+          { "data.date": { $gte: cutoffIso } },
+          { last_synced_at: { $gte: new Date(Date.now() - lookbackMs) } }
+        ]
+      },
+      statusMatch,
+      cooldownOk,
+      { $or: [{ $and: [trackingEmpty, statusMatch] }, returnMissing] }
+    ]
+  };
+  let docs;
+  try {
+    docs = await OrderModel.find(filter).select({ _id: 1 }).sort({ "data.date": -1, _id: -1 }).limit(limit).maxTimeMS(8e3).lean();
+  } catch (err) {
+    console.warn(
+      "[MongoDB] loadShopeeTrackingEnrichCandidatesFromStore failed:",
+      err?.message || err
+    );
+    return [];
+  }
+  if (!docs.length) return [];
+  return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
+}
 function orderTabFilter(tab) {
   switch (String(tab || "").trim()) {
     case "shipping":
@@ -97001,10 +97089,17 @@ async function fetchReturnShippingTrackingNumber(shopId, accessToken, returnSn, 
         `[Shopee Returns] reverse_tracking return_sn=${returnSn} tracking_number=${body.tracking_number || "(empty)"} rts=${body.rts_tracking_number || "(empty)"} extracted=${fromReverse || "(empty)"}`
       );
     } else {
-      console.warn(
-        `[Shopee Returns] get_reverse_tracking_info l\u1ED7i return_sn=${returnSn}:`,
-        reverse.message || reverse.error
-      );
+      const errText = `${reverse.error || ""} ${reverse.message || ""}`;
+      if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
+        console.log(
+          `[Shopee Returns] get_reverse_tracking_info pending return_sn=${returnSn}: ${errText.trim()}`
+        );
+      } else {
+        console.warn(
+          `[Shopee Returns] get_reverse_tracking_info l\u1ED7i return_sn=${returnSn}:`,
+          reverse.message || reverse.error
+        );
+      }
     }
   } catch (err) {
     console.warn(`[Shopee Returns] reverse_tracking exception ${returnSn}:`, err?.message || err);
@@ -100869,6 +100964,20 @@ function applyShopeeTrackingCode(order, rawCode) {
   order.trackingNumber = code;
   order.tracking_no = code;
 }
+var TRACKING_ENRICH_COOLDOWN_MS = 8 * 60 * 60 * 1e3;
+function setTrackingEnrichCooldown(order, reason) {
+  if (!order || typeof order !== "object") return;
+  order.tracking_enrich_cooldown_until = new Date(
+    Date.now() + TRACKING_ENRICH_COOLDOWN_MS
+  ).toISOString();
+  order.tracking_enrich_cooldown_reason = reason;
+}
+function isTrackingEnrichOnCooldown(order) {
+  const raw = order?.tracking_enrich_cooldown_until;
+  if (!raw) return false;
+  const t2 = new Date(String(raw)).getTime();
+  return Number.isFinite(t2) && t2 > Date.now();
+}
 function repairMisassignedTracking(order) {
   if (!order || typeof order !== "object") return order;
   if (order.tracking_no && !order.trackingNumber) order.trackingNumber = order.tracking_no;
@@ -100881,11 +100990,12 @@ function repairMisassignedTracking(order) {
   const tn = String(order.trackingNumber || order.tracking_no || "").trim();
   const carrierHint = order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || "";
   if (tn && !isTrackingCompatibleWithCarrier(tn, carrierHint)) {
-    console.warn(
+    console.log(
       `[Shopee Tracking] CLEAR mismatched tracking order_sn=${order.orderSn} tn=${tn} carrier=${carrierHint}`
     );
     order.trackingNumber = void 0;
     order.tracking_no = void 0;
+    setTrackingEnrichCooldown(order, "mismatched_tracking_cleared");
   }
   return order;
 }
@@ -101411,9 +101521,11 @@ async function shopeeGetTrackingNumberWithRetry(shopId, accessToken, orderSn, pa
       }
       const errBlob = `${last?.error || ""} ${last?.message || ""}`.toLowerCase();
       const retriable = !last?.error || errBlob.includes("rate") || errBlob.includes("too many") || errBlob.includes("timeout") || errBlob.includes("busy") || errBlob.includes("try again") || errBlob.includes("not ready") || errBlob.includes("empty");
-      console.warn(
-        `[Shopee Tracking] attempt ${attempt}/${maxAttempts} order_sn=${orderSn} ch\u01B0a c\xF3 m\xE3 \u2014 error="${last?.error || ""}" message="${last?.message || ""}"`
-      );
+      if (attempt >= maxAttempts) {
+        console.log(
+          `[Shopee Tracking] attempt ${attempt}/${maxAttempts} order_sn=${orderSn} ch\u01B0a c\xF3 m\xE3 \u2014 error="${last?.error || ""}" message="${last?.message || ""}"`
+        );
+      }
       if (!retriable || attempt >= maxAttempts) return last;
     } catch (err) {
       console.warn(
@@ -101506,14 +101618,20 @@ async function enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, opts
           if (body?.status) order.return_status = String(body.status);
           if (!hasUsableShopeeTrackingNumber(order)) {
             const reverse = await shopeeGetReverseTrackingInfo(shopId, accessToken, returnSn);
-            const rtn = extractTrackingFromReturnPayload(reverse);
-            if (rtn) applyTn(rtn, "get_reverse_tracking_info");
+            const errText = `${reverse?.error || ""} ${reverse?.message || ""}`;
+            if (/error_reverse_logistics|does not have reverse logistics/i.test(errText)) {
+              setTrackingEnrichCooldown(order, "reverse_logistics_pending");
+            } else {
+              const rtn = extractTrackingFromReturnPayload(reverse);
+              if (rtn) applyTn(rtn, "get_reverse_tracking_info");
+            }
           }
         } catch (retErr) {
           console.warn(
             `[Shopee Tracking] returns fallback ${order.orderSn}:`,
             retErr?.message || retErr
           );
+          setTrackingEnrichCooldown(order, "returns_fallback_error");
         }
       }
     }
@@ -101536,12 +101654,14 @@ async function enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, opts
       promoteOrderStatusWhenTrackingReady(order);
       await persistOrderTrackingToDb(order);
     } else {
-      console.warn(
-        `[Shopee Tracking] THI\u1EBEU M\xC3 sau m\u1ECDi fallback \u2014 order_sn=${order.orderSn} return_sn=${order.return_sn || ""} status=${order.status} raw=${order.shopee_order_status || ""} existingTn=${existingTn || "(empty)"}`
+      setTrackingEnrichCooldown(order, "missing_tracking_after_fallback");
+      console.log(
+        `[Shopee Tracking] THI\u1EBEU M\xC3 sau m\u1ECDi fallback \u2014 order_sn=${order.orderSn} return_sn=${order.return_sn || ""} status=${order.status} raw=${order.shopee_order_status || ""} existingTn=${existingTn || "(empty)"} cooldown=8h`
       );
     }
   } catch (err) {
     console.warn(`[Shopee Tracking] enrich ${order.orderSn} failed:`, err);
+    setTrackingEnrichCooldown(order, "enrich_exception");
     if (existingTn && !hasUsableShopeeTrackingNumber(order)) {
       order.trackingNumber = existingTn;
       order.tracking_no = existingTn;
@@ -101570,7 +101690,10 @@ function hasUsableOutboundShopeeTracking(order) {
   return Boolean(tracking && !isShopeeInternalTrackingCode2(tracking));
 }
 function needsBackgroundShopeeTrackingEnrichment(order, cutoffMs) {
-  if (!order || String(order.channel || "") !== "shopee") return false;
+  if (!order) return false;
+  const channel = String(order.channel || "").trim();
+  if (channel && channel !== "shopee") return false;
+  if (isTrackingEnrichOnCooldown(order)) return false;
   if (getShopeeTrackingCandidateTime(order) < cutoffMs) return false;
   const isReturn = Boolean(order.return_sn) || isCancelOrReturnOrderStatus(order);
   const missingOutbound = !hasUsableOutboundShopeeTracking(order);
@@ -101596,7 +101719,12 @@ async function enrichMissingShopeeTracking() {
   let candidatesCount = 0;
   try {
     const cutoffMs = Date.now() - SHOPEE_TRACKING_ENRICH_LOOKBACK_MS;
-    const orders = await loadOrdersFromStore();
+    const orders = await loadShopeeTrackingEnrichCandidatesFromStore({
+      lookbackMs: SHOPEE_TRACKING_ENRICH_LOOKBACK_MS,
+      limit: SHOPEE_TRACKING_ENRICH_BATCH_LIMIT * 2,
+      localStatuses: [...SHOPEE_TRACKING_ENRICH_STATUSES],
+      shopeeStatuses: [...SHOPEE_RAW_STATUSES_MAY_HAVE_TRACKING]
+    });
     const candidates = orders.filter((order) => needsBackgroundShopeeTrackingEnrichment(order, cutoffMs)).sort((a, b) => getShopeeTrackingCandidateTime(b) - getShopeeTrackingCandidateTime(a)).slice(0, SHOPEE_TRACKING_ENRICH_BATCH_LIMIT);
     candidatesCount = candidates.length;
     if (candidates.length === 0) {
@@ -101632,12 +101760,16 @@ async function enrichMissingShopeeTracking() {
           async (order) => {
             const outboundBefore = String(order.trackingNumber || order.tracking_no || "").trim();
             const returnBefore = String(order.return_tracking_no || "").trim();
+            const cooldownBefore = String(order.tracking_enrich_cooldown_until || "");
             try {
               await enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, {
                 light: false,
                 retries: 2
               });
-              if (outboundBefore) {
+              if (outboundBefore && order.tracking_enrich_cooldown_reason !== "mismatched_tracking_cleared" && isTrackingCompatibleWithCarrier(
+                outboundBefore,
+                order.shipping_carrier || order.checkout_shipping_carrier || order.carrier || ""
+              )) {
                 order.trackingNumber = outboundBefore;
                 order.tracking_no = outboundBefore;
               }
@@ -101651,7 +101783,15 @@ async function enrichMissingShopeeTracking() {
                     returnSn,
                     detail
                   );
-                  if (returnTracking.tracking) order.return_tracking_no = returnTracking.tracking;
+                  if (returnTracking.tracking) {
+                    order.return_tracking_no = returnTracking.tracking;
+                  } else {
+                    setTrackingEnrichCooldown(order, "return_tracking_pending");
+                  }
+                } else if (/error_reverse_logistics|does not have reverse logistics/i.test(
+                  `${detail.error || ""} ${detail.message || ""}`
+                )) {
+                  setTrackingEnrichCooldown(order, "reverse_logistics_pending");
                 }
               }
               const outboundAfter = hasUsableOutboundShopeeTracking(order);
@@ -101664,9 +101804,17 @@ async function enrichMissingShopeeTracking() {
                 returnFilled += 1;
                 shopReturnFilled += 1;
               }
-              if (outboundAfter || returnAfter) await bulkUpsertOrdersToStore([order]);
+              const cooldownChanged = String(order.tracking_enrich_cooldown_until || "") !== cooldownBefore;
+              if (outboundAfter || returnAfter || cooldownChanged) {
+                await bulkUpsertOrdersToStore([order]);
+              }
             } catch (error) {
               errors += 1;
+              setTrackingEnrichCooldown(order, "enrich_batch_exception");
+              try {
+                await bulkUpsertOrdersToStore([order]);
+              } catch {
+              }
               console.warn(
                 `[Shopee Tracking Enrich] order_sn=${order.orderSn} shop=${shopId} failed:`,
                 error?.message || error
