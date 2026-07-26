@@ -132,11 +132,18 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
   const pendingItems = useMemo(() => {
     return auditLines
       .filter((line) => line.actualStock.trim() !== '')
-      .map((line) => ({
-        sku: line.product.sku,
-        actual_stock: Math.max(0, Math.round(Number(line.actualStock) || 0)),
-      }))
-      .filter((item) => item.sku && Number.isFinite(item.actual_stock));
+      .map((line) => {
+        const parsed = Number(line.actualStock.trim());
+        if (!Number.isFinite(parsed)) return null;
+        return {
+          sku: line.product.sku,
+          actual_stock: Math.max(0, Math.round(parsed)),
+        };
+      })
+      .filter(
+        (item): item is { sku: string; actual_stock: number } =>
+          !!item && !!item.sku && Number.isFinite(item.actual_stock)
+      );
   }, [auditLines]);
 
   const isMobile = () =>

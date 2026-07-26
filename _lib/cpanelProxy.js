@@ -18,6 +18,7 @@ const LONG_RUNNING_PREFIXES = [
   'shopee/products/sync',
   'shopee/channel-products/fetch',
   'shopee/channel-products/auto-link',
+  'sync-from-shop',
   'mapping-products/bulk-auto-link',
   'mapping/bulk-update',
   'mapping-products/batch-auto-link',

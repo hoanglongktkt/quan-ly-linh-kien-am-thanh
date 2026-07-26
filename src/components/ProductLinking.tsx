@@ -582,10 +582,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       setShowSyncModal(false);
     } catch (err: unknown) {
       const e = err as { name?: string; message?: string };
-      const message =
-        e?.name === 'AbortError'
-          ? 'Quá thời gian chờ khi tải dữ liệu từ Shopee. Vui lòng thử lại.'
-          : e?.message || 'Tải dữ liệu từ sàn thất bại.';
+      const rawMsg = String(e?.message || '');
+      const isTimeoutAbort =
+        e?.name === 'AbortError' ||
+        /operation was aborted|aborted|timeout|quá thời gian/i.test(rawMsg);
+      const message = isTimeoutAbort
+        ? 'Quá thời gian chờ khi tải dữ liệu từ Shopee. Vui lòng thử lại.'
+        : rawMsg || 'Tải dữ liệu từ sàn thất bại.';
       alert(`Tải dữ liệu từ sàn thất bại: ${message}`);
       onAddLog({
         id: `log-${Date.now()}`,
