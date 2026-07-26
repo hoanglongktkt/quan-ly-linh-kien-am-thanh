@@ -8670,11 +8670,37 @@ function isShopeeTerminalRawStatus(raw: string): boolean {
  * SHIPPED / COMPLETED từ Shopee → BẮT BUỘC ghi đè tab local + EXIT ĐVVC.
  * State Machine: KHÔNG promote Đang giao khi raw còn READY_TO_SHIP|PROCESSED.
  */
+/** Hủy/hoàn trên sàn → gỡ local HANDED_OVER (giữ handedOverAt để audit) để quét phân loại được. */
+function clearHandedOverLocalForCancelReturn(order: any): void {
+  if (!order || typeof order !== "object") return;
+  const local = String(order.local_status || order.localStatus || order.internal_status || "").toUpperCase();
+  // Không đụng đơn đã phân loại hủy/hoàn trong kho.
+  if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") return;
+  if (order.handedOverAt == null && order.handed_over_at != null) {
+    order.handedOverAt = order.handed_over_at;
+  }
+  order.is_handed_over = false;
+  order.isHandedOverToCarrier = false;
+  order.is_handed_over_to_carrier = false;
+  order.is_handed_over_to_courier = false;
+  if (local === "HANDED_OVER" || local === "NONE" || !local) {
+    delete order.local_status;
+    delete order.localStatus;
+    delete order.internal_status;
+  }
+}
+
+function isShopeeCancelOrReturnLikeOrder(order: any): boolean {
+  const raw = String(order?.shopee_order_status || "").toUpperCase();
+  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") return true;
+  const status = String(order?.status || "");
+  return status === "cancelled" || status === "return_pending" || status === "return_received";
+}
+
 function enforceShopeeTerminalLocalStatus(order: any): boolean {
   if (!order || String(order.channel || "") !== "shopee") return false;
   const raw = String(order.shopee_order_status || "").toUpperCase();
 
-  // Sync Shopee CHỈ cập nhật status — KHÔNG đụng is_handed_over.
   if (raw === "COMPLETED") {
     order.status = "completed";
     order.shopee_order_status = "COMPLETED";
@@ -8694,6 +8720,15 @@ function enforceShopeeTerminalLocalStatus(order: any): boolean {
     order.shopee_order_status = raw;
     order.isPrepared = false;
     order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
+    return true;
+  }
+  if (raw === "TO_RETURN") {
+    if (order.status !== "return_received") order.status = "return_pending";
+    order.shopee_order_status = "TO_RETURN";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
     return true;
   }
   return false;
@@ -10159,7 +10194,13 @@ async function archiveStaleReceivedCancelReturnOrders(
 
 function isOrderAlreadyScanProcessed(order: any): boolean {
   const local = resolveOrderLocalStatus(order);
-  return local === "HANDED_OVER" || local === "CANCELLED_STORED" || local === "RETURN_RECEIVED";
+  if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") return true;
+  if (local === "HANDED_OVER") {
+    // Cho quét phân loại hủy/hoàn sau khi đã bàn giao ĐVVC.
+    if (isShopeeCancelOrReturnLikeOrder(order)) return false;
+    return true;
+  }
+  return false;
 }
 
 function getScanProcessedReason(order: any): string {
@@ -10472,9 +10513,23 @@ function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
 
-  // Sync Shopee KHÔNG clear/ghi đè is_handed_over — giữ thao tác QR / bàn giao ĐVVC.
-  // Đã bàn giao → preserve toàn bộ alias; chưa bàn giao → xóa cờ do normalize/incoming invent.
-  if (resolveOrderHandoverFlag(existing)) {
+  // Sync Shopee: giữ HANDED_OVER khi còn chờ lấy; khi sàn đã hủy/hoàn → gỡ local HANDED_OVER
+  // (giữ handedOverAt) để quét QR phân loại hủy/hoàn được.
+  const existingLocalForHandover = resolveOrderLocalStatus(existing);
+  const alreadyStoredCancelReturn =
+    existingLocalForHandover === "CANCELLED_STORED" ||
+    existingLocalForHandover === "RETURN_RECEIVED";
+  if (alreadyStoredCancelReturn) {
+    // Giữ nguyên nhánh RETURN_RECEIVED / CANCELLED_STORED bên dưới.
+  } else if (
+    resolveOrderHandoverFlag(existing) &&
+    isShopeeCancelOrReturnLikeOrder(merged)
+  ) {
+    if (existing.handedOverAt) merged.handedOverAt = existing.handedOverAt;
+    if (existing.handed_over_source != null) merged.handed_over_source = existing.handed_over_source;
+    if (existing.handedOverSource != null) merged.handedOverSource = existing.handedOverSource;
+    clearHandedOverLocalForCancelReturn(merged);
+  } else if (resolveOrderHandoverFlag(existing)) {
     merged.is_handed_over = true;
     merged.isHandedOverToCarrier = true;
     merged.is_handed_over_to_carrier = true;
@@ -17585,6 +17640,7 @@ async function startServer() {
 
         const order = orders[index];
         const status = String(order.status || "");
+        const rawShopee = String(order.shopee_order_status || "").toUpperCase();
         const existingLocal = resolveOrderLocalStatus(order);
         const forceHandOver =
           forceHandOverCodes.has(codeKey) ||
@@ -17592,13 +17648,31 @@ async function startServer() {
           forceHandOverCodes.has(norm(String(order.trackingNumber || order.tracking_no || "")));
         const forceCancel =
           forceCancelCodes.has(codeKey) ||
-          forceCancelCodes.has(norm(String(order.orderSn || "")));
+          forceCancelCodes.has(norm(String(order.orderSn || ""))) ||
+          forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) ||
+          forceCancelCodes.has(norm(String(order.return_tracking_no || "")));
         const forceReturn =
           forceReturnCodes.has(codeKey) ||
-          forceReturnCodes.has(norm(String(order.orderSn || "")));
+          forceReturnCodes.has(norm(String(order.orderSn || ""))) ||
+          forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) ||
+          forceReturnCodes.has(norm(String(order.return_tracking_no || "")));
+        const isReturnLike =
+          status === "return_pending" ||
+          status === "return_received" ||
+          rawShopee === "TO_RETURN";
+        const isCancelLike =
+          !isReturnLike &&
+          (status === "cancelled" ||
+            rawShopee === "CANCELLED" ||
+            rawShopee === "IN_CANCEL" ||
+            isShopeeCancelOrReturnLikeOrder(order));
 
-        // Chặn quét trùng — đã có cờ nội bộ (không đếm vào xuất kho giả).
-        if (isOrderAlreadyScanProcessed(order)) {
+        // Chặn quét trùng — trừ forceCancel/forceReturn ghi đè HANDED_OVER → hủy/hoàn.
+        const allowForceCancelReturnOverride =
+          (forceCancel || forceReturn) &&
+          existingLocal === "HANDED_OVER" &&
+          (isCancelLike || isReturnLike || forceCancel || forceReturn);
+        if (isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride) {
           const reason = getScanProcessedReason(order);
           results.push({
             code,
@@ -17658,44 +17732,10 @@ async function startServer() {
           continue;
         }
 
-        // Đơn hủy → CANCELLED_STORED (không vào tab ĐVVC).
-        if (status === "cancelled" || (forceCancel && status === "cancelled")) {
+        // FE / raw Shopee: nhận hoàn (kể cả sau HANDED_OVER).
+        if (forceReturn || isReturnLike) {
           const updated = { ...order };
-          setOrderLocalStatus(updated, "CANCELLED_STORED");
-          orders[index] = updated;
-          changedOrders.push(updated);
-          updatedById.set(updated.id, updated);
-          summary.donHuy += 1;
-          results.push({
-            code,
-            action: "cancelled",
-            orderId: updated.id,
-            orderSn: updated.orderSn,
-            message: `Đơn hủy #${updated.orderSn} → CANCELLED_STORED`,
-            local_status: "CANCELLED_STORED",
-          });
-          continue;
-        }
-        if (forceCancel && status !== "cancelled") {
-          results.push({
-            code,
-            action: "rejected",
-            orderId: order.id,
-            orderSn: order.orderSn,
-            message: `Mã "${code}" không thuộc Đơn hủy trong DB`,
-            local_status: existingLocal,
-          });
-          failed_scans.push({
-            code,
-            orderId: order.id,
-            orderSn: order.orderSn,
-            reason: `Không thuộc Đơn hủy (status=${status})`,
-          });
-          continue;
-        }
-
-        if (forceReturn || status === "return_pending" || status === "return_received") {
-          const updated = { ...order };
+          clearHandedOverLocalForCancelReturn(updated);
           setOrderLocalStatus(updated, "RETURN_RECEIVED");
           orders[index] = updated;
           changedOrders.push(updated);
@@ -17708,6 +17748,27 @@ async function startServer() {
             orderSn: updated.orderSn,
             message: `Đã nhận hàng hoàn — đơn #${updated.orderSn}`,
             local_status: "RETURN_RECEIVED",
+          });
+          continue;
+        }
+
+        // FE / raw Shopee: đơn hủy (CANCELLED / IN_CANCEL), kể cả sau HANDED_OVER.
+        if (forceCancel || isCancelLike) {
+          const updated = { ...order };
+          if (updated.status !== "cancelled") updated.status = "cancelled";
+          clearHandedOverLocalForCancelReturn(updated);
+          setOrderLocalStatus(updated, "CANCELLED_STORED");
+          orders[index] = updated;
+          changedOrders.push(updated);
+          updatedById.set(updated.id, updated);
+          summary.donHuy += 1;
+          results.push({
+            code,
+            action: "cancelled",
+            orderId: updated.id,
+            orderSn: updated.orderSn,
+            message: `Đơn hủy #${updated.orderSn} → CANCELLED_STORED`,
+            local_status: "CANCELLED_STORED",
           });
           continue;
         }

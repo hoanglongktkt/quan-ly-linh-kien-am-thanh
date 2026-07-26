@@ -1225,7 +1225,24 @@ export default function OrderManager({
           return;
         }
 
-        // Chặn trùng theo DB (local_status đã xử lý trước đó).
+        // Phân loại theo badge + raw Shopee trước — hủy/hoàn sau bàn giao vẫn vào đúng bucket.
+        const badge = resolveOrderBadgeStatus(order);
+        const raw = getShopeeOrderRawStatus(order);
+        const isReturnBucket =
+          badge === 'return_pending' ||
+          badge === 'return_received' ||
+          order.status === 'return_pending' ||
+          order.status === 'return_received' ||
+          raw === 'TO_RETURN';
+        const isCancelBucket =
+          !isReturnBucket &&
+          (badge === 'cancelled' ||
+            order.status === 'cancelled' ||
+            raw === 'CANCELLED' ||
+            raw === 'IN_CANCEL' ||
+            isShopeeCancelledLikeStatus(order));
+
+        // Chặn trùng DB — HANDED_OVER + hủy/hoàn đã được nới trong isOrderAlreadyScanProcessed.
         if (isOrderAlreadyScanProcessed(order)) {
           const reason = getScanProcessedReason(order);
           playScanSound('warning');
@@ -1261,46 +1278,7 @@ export default function OrderManager({
           at: now,
         };
 
-        // Phân loại theo badge + raw Shopee (không phụ thuộc status local stale).
-        const badge = resolveOrderBadgeStatus(order);
-        const raw = getShopeeOrderRawStatus(order);
-        const isReturnBucket =
-          badge === 'return_pending' ||
-          badge === 'return_received' ||
-          order.status === 'return_pending' ||
-          order.status === 'return_received' ||
-          raw === 'TO_RETURN';
-        const isCancelBucket =
-          !isReturnBucket &&
-          (badge === 'cancelled' ||
-            order.status === 'cancelled' ||
-            raw === 'CANCELLED' ||
-            raw === 'IN_CANCEL' ||
-            isShopeeCancelledLikeStatus(order));
-
-        if (isEligibleForHandOverToCarrier(order)) {
-          playScanSound('success');
-          vibrateScan('success');
-          flashViewfinder('success', 500);
-          setDaXuatKhoList((prev) => {
-            const next = [item, ...prev];
-            daXuatKhoListRef.current = next;
-            return next;
-          });
-          setCameraScanResult(
-            waybill
-              ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
-              : `✓ Xuất kho #${order.orderSn}`,
-          );
-          showScanToast(
-            waybill
-              ? `Xuất kho #${order.orderSn} — mã VĐ: ${waybill}`
-              : `Đơn chờ lấy hàng (đã xử lý) #${order.orderSn} — đã ghi nhận xuất kho`,
-            'success',
-          );
-          return;
-        }
-
+        // Ưu tiên hủy/hoàn trước xuất kho — đơn từng bàn giao rồi bị hủy/hoàn.
         if (isReturnBucket) {
           playScanSound('success');
           vibrateScan('success');
@@ -1339,6 +1317,29 @@ export default function OrderManager({
               : `⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`,
           );
           showScanToast(`CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`, 'error');
+          return;
+        }
+
+        if (isEligibleForHandOverToCarrier(order)) {
+          playScanSound('success');
+          vibrateScan('success');
+          flashViewfinder('success', 500);
+          setDaXuatKhoList((prev) => {
+            const next = [item, ...prev];
+            daXuatKhoListRef.current = next;
+            return next;
+          });
+          setCameraScanResult(
+            waybill
+              ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
+              : `✓ Xuất kho #${order.orderSn}`,
+          );
+          showScanToast(
+            waybill
+              ? `Xuất kho #${order.orderSn} — mã VĐ: ${waybill}`
+              : `Đơn chờ lấy hàng (đã xử lý) #${order.orderSn} — đã ghi nhận xuất kho`,
+            'success',
+          );
           return;
         }
 

@@ -38,16 +38,39 @@ export function resolveLocalStatusUpdatedAt(
   return raw ? String(raw) : undefined;
 }
 
-/** Đơn đã được quét/phân loại nội bộ trước đó — chặn quét trùng. */
+/** Đơn sàn đã chuyển hủy/hoàn — cho phép quét lại dù từng HANDED_OVER. */
+export function isScanCancelOrReturnLikeOrder(
+  order: Partial<Order> & Record<string, unknown>,
+): boolean {
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || raw === 'TO_RETURN') return true;
+  const status = String(order.status || '');
+  return (
+    status === 'cancelled' ||
+    status === 'return_pending' ||
+    status === 'return_received'
+  );
+}
+
+/**
+ * Đơn đã được quét/phân loại nội bộ trước đó — chặn quét trùng.
+ * Ngoại lệ: HANDED_OVER + đơn đã hủy/hoàn trên sàn → cho quét vào bucket hủy/hoàn.
+ */
 export function isOrderAlreadyScanProcessed(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   const local = resolveOrderLocalStatus(order);
-  return (
-    local === ORDER_LOCAL_STATUS.HANDED_OVER ||
+  if (
     local === ORDER_LOCAL_STATUS.CANCELLED_STORED ||
     local === ORDER_LOCAL_STATUS.RETURN_RECEIVED
-  );
+  ) {
+    return true;
+  }
+  if (local === ORDER_LOCAL_STATUS.HANDED_OVER) {
+    if (isScanCancelOrReturnLikeOrder(order)) return false;
+    return true;
+  }
+  return false;
 }
 
 export function getScanProcessedReason(
