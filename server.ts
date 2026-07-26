@@ -5931,8 +5931,21 @@ async function mergeWarehouseProductsBatch(batchRows: any[]): Promise<{
     }
 
     ensureDataDirs();
+    // Chỉ load SP liên quan trang hiện tại — cấm find({}) toàn catalog (OOM/HTML 500 cPanel).
+    const wantedIds: string[] = [];
+    const wantedItemIds: string[] = [];
+    for (const row of batchRows) {
+      if (!row || typeof row !== "object") continue;
+      const itemId = String(row.shopeeItemId || row.item_id || "").trim();
+      const id = String(row.id || "").trim();
+      if (itemId) {
+        wantedItemIds.push(itemId);
+        wantedIds.push(`shopee-item-${itemId}`);
+      }
+      if (id) wantedIds.push(id);
+    }
     const loadStarted = Date.now();
-    const existing = await loadProducts();
+    const existing = await loadProductsByIdsFromStore(wantedIds, wantedItemIds);
     const loadMs = Date.now() - loadStarted;
     const byId = new Map<string, any>();
     const byShopeeItemId = new Map<string, string>();
@@ -6202,9 +6215,12 @@ async function syncShopeeWarehouseSinglePage(
   const pageStarted = Date.now();
   const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
   if (page.itemIds.length === 0) {
-    const productCount = (await loadProducts()).filter(
-      (p: any) => p.shopeeItemId || (Array.isArray(p.channels) && p.channels.includes("shopee"))
-    ).length;
+    let productCount = 0;
+    try {
+      productCount = await countProducts();
+    } catch {
+      productCount = 0;
+    }
     return {
       currentOffset: offset,
       nextOffset: page.nextOffset,

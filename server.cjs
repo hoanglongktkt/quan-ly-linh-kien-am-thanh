@@ -99567,8 +99567,20 @@ async function mergeWarehouseProductsBatch(batchRows) {
       return { upserted: 0, existingCount: 0, upsertCount: 0, batchRows: 0, loadMs: 0, upsertMs: 0 };
     }
     ensureDataDirs();
+    const wantedIds = [];
+    const wantedItemIds = [];
+    for (const row of batchRows) {
+      if (!row || typeof row !== "object") continue;
+      const itemId = String(row.shopeeItemId || row.item_id || "").trim();
+      const id = String(row.id || "").trim();
+      if (itemId) {
+        wantedItemIds.push(itemId);
+        wantedIds.push(`shopee-item-${itemId}`);
+      }
+      if (id) wantedIds.push(id);
+    }
     const loadStarted = Date.now();
-    const existing = await loadProducts();
+    const existing = await loadProductsByIdsFromStore(wantedIds, wantedItemIds);
     const loadMs = Date.now() - loadStarted;
     const byId = /* @__PURE__ */ new Map();
     const byShopeeItemId = /* @__PURE__ */ new Map();
@@ -99632,9 +99644,12 @@ async function syncShopeeWarehouseSinglePage(shopId, accessToken, offset) {
   const pageStarted = Date.now();
   const page = await fetchShopeeItemListPage(shopId, accessToken, offset);
   if (page.itemIds.length === 0) {
-    const productCount2 = (await loadProducts()).filter(
-      (p) => p.shopeeItemId || Array.isArray(p.channels) && p.channels.includes("shopee")
-    ).length;
+    let productCount2 = 0;
+    try {
+      productCount2 = await countProducts();
+    } catch {
+      productCount2 = 0;
+    }
     return {
       currentOffset: offset,
       nextOffset: page.nextOffset,
