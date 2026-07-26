@@ -1881,7 +1881,7 @@ export default function OrderManager({
    */
   const fetchPrintDocumentApi = async (
     orderIds: string[],
-    opts?: { waitMs?: number }
+    opts?: { waitMs?: number; onStatus?: (message: string) => void }
   ): Promise<{
     ok: boolean;
     status: number;
@@ -1906,8 +1906,14 @@ export default function OrderManager({
 
       const jobId = startData.jobId;
       const deadline = Date.now() + 3 * 60 * 1000;
+      let pollCount = 0;
+      opts?.onStatus?.('Đang chuẩn bị tạo PDF vận đơn...');
       while (Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 500));
+        // Kiểm tra nhanh ở các nhịp đầu, sau đó backoff để giảm request polling
+        // trong khi Shopee vẫn đang tạo chứng từ.
+        const pollDelay = pollCount < 3 ? 500 : pollCount < 8 ? 1000 : 1500;
+        await new Promise((r) => setTimeout(r, pollDelay));
+        pollCount += 1;
         const jobRes = await fetch(`/api/shopee/print-document/job/${jobId}`, {
           headers: authHeaders(),
         });
@@ -1915,9 +1921,12 @@ export default function OrderManager({
         const job = await parseJsonResponse<{
           status?: string;
           httpStatus?: number;
+          phase?: string;
+          message?: string;
           result?: PrintDocumentResponse;
           error?: string;
         }>(jobRes);
+        if (job.message) opts?.onStatus?.(job.message);
         if (job.status === 'done' || job.status === 'failed') {
           if (job.result) {
             const status = job.httpStatus || (job.status === 'done' ? 200 : 500);
@@ -2048,11 +2057,12 @@ export default function OrderManager({
     options: {
       openPdf?: boolean;
       onProgress?: (completed: number, total: number) => void;
+      onStatus?: (message: string) => void;
       waitMs?: number;
       reservedWindow?: Window | null;
     } = {}
   ): Promise<{ success: boolean; message?: string; mergedUrl?: string | null }> => {
-    const { openPdf = true, onProgress, waitMs, reservedWindow } = options;
+    const { openPdf = true, onProgress, onStatus, waitMs, reservedWindow } = options;
     const uniqueIds = [...new Set(orderIds.map(String).filter(Boolean))];
     if (uniqueIds.length === 0) {
       closeReservedPrintWindow(reservedWindow);
@@ -2073,7 +2083,7 @@ export default function OrderManager({
       }
 
       // Một request duy nhất — backend gộp PDF toàn bộ orderIds (+ chờ Shopee nếu waitMs).
-      const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds, { waitMs });
+      const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds, { waitMs, onStatus });
       if (!ok) {
         closeReservedPrintWindow(reservedWindow);
         if (data.error === 'tracking_number_missing' || status === 409) {
@@ -2412,6 +2422,9 @@ export default function OrderManager({
               ? 'Hoàn tất — đang mở PDF vận đơn...'
               : `Đang tải vận đơn từ Shopee: ${completed}/${total} đơn...`
           );
+        },
+        onStatus: (message) => {
+          setProgressMessage(message);
         },
       });
       if (!result.success) {
