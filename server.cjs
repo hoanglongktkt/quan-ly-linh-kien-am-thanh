@@ -93620,18 +93620,35 @@ async function loadProductsPageFromStore(page = 1, pageSize = 50) {
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
-  const total = await ProductModel.countDocuments().maxTimeMS(5e3);
-  const totalPages = Math.max(1, Math.ceil(total / safeSize) || 1);
-  const currentPage = Math.min(safePage, totalPages);
-  const docs = await ProductModel.find({}).sort({ _id: 1 }).skip((currentPage - 1) * safeSize).limit(safeSize).maxTimeMS(8e3).lean();
-  return {
-    products: docsToProducts(docs),
-    total,
-    page: currentPage,
-    pageSize: safeSize,
-    totalPages,
-    hasMore: currentPage < totalPages
-  };
+  try {
+    const total = await ProductModel.countDocuments({}).maxTimeMS(8e3);
+    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
+    const currentPage = Math.min(safePage, totalPages);
+    const docs = await ProductModel.find({}).sort({ _id: 1 }).skip((currentPage - 1) * safeSize).limit(safeSize).maxTimeMS(1e4).lean();
+    return {
+      products: docsToProducts(docs),
+      total,
+      page: currentPage,
+      pageSize: safeSize,
+      totalPages,
+      hasMore: currentPage < totalPages
+    };
+  } catch (err) {
+    console.warn("[MongoDB] loadProductsPageFromStore fallback find({}):", err);
+    const all = await loadProductsFromStore();
+    const total = all.length;
+    const totalPages = Math.max(1, Math.ceil(total / safeSize) || 1);
+    const currentPage = Math.min(safePage, totalPages);
+    const start = (currentPage - 1) * safeSize;
+    return {
+      products: all.slice(start, start + safeSize),
+      total,
+      page: currentPage,
+      pageSize: safeSize,
+      totalPages,
+      hasMore: currentPage < totalPages
+    };
+  }
 }
 async function loadProductByIdFromStore(productId) {
   requireMongo();
@@ -94041,24 +94058,12 @@ async function saveProductsToStoreAsync(products) {
   const list = Array.isArray(products) ? products.filter((p) => p != null && typeof p === "object") : [];
   const docs = toProductDocs(list);
   await enqueueWrite(async () => {
-    if (docs.length === 0) {
-      await ProductModel.deleteMany({});
-    } else {
-      await ProductModel.bulkWrite(
-        docs.map((doc) => ({
-          updateOne: {
-            filter: { _id: doc._id },
-            update: { $set: { sku: doc.sku ?? null, data: doc.data } },
-            upsert: true
-          }
-        })),
-        { ordered: false }
-      );
-      const keepIds = docs.map((doc) => doc._id);
-      await ProductModel.deleteMany({ _id: { $nin: keepIds } });
+    await ProductModel.deleteMany({});
+    if (docs.length > 0) {
+      await ProductModel.insertMany(docs, { ordered: false });
     }
     await setMeta("products_updated_at", (/* @__PURE__ */ new Date()).toISOString());
-    console.log(`[MongoDB] replace products \u2014 ${docs.length} d\xF2ng`);
+    console.log(`[MongoDB] insertMany products \u2014 ${docs.length} d\xF2ng`);
   });
 }
 async function upsertProductsToStoreAsync(products) {
@@ -105541,16 +105546,43 @@ async function startServer() {
   const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
   const PRODUCTS_PAGE_SIZE_MAX = 50;
   app.get("/api/products", authMiddleware, async (req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     try {
+      if (!isMongoReady()) {
+        return res.status(503).json({
+          success: false,
+          products: [],
+          error: "mongodb_not_ready",
+          message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 th\u1EED l\u1EA1i sau v\xE0i gi\xE2y."
+        });
+      }
       const rawPage = Number(req.query?.page);
       const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
       const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
       const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize)) : PRODUCTS_PAGE_SIZE_DEFAULT;
-      const paged = await withLocalDbTimeout(
-        loadProductsPageFromStore(page, pageSize),
-        12e3,
-        "products_page_load"
-      );
+      let paged;
+      try {
+        paged = await withLocalDbTimeout(
+          loadProductsPageFromStore(page, pageSize),
+          15e3,
+          "products_page_load"
+        );
+      } catch (pageErr) {
+        console.warn("[Products API] page load failed, fallback loadProducts:", pageErr);
+        const all = await withLocalDbTimeout(loadProducts(), 15e3, "products_load_fallback");
+        const total = all.length;
+        const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)) || 1);
+        const safePage = Math.min(page, totalPages);
+        const start = (safePage - 1) * pageSize;
+        paged = {
+          products: all.slice(start, start + pageSize),
+          total,
+          page: safePage,
+          pageSize,
+          totalPages,
+          hasMore: safePage < totalPages
+        };
+      }
       return res.status(200).json({
         success: true,
         products: paged.products,
@@ -105560,7 +105592,7 @@ async function startServer() {
         totalPages: paged.totalPages,
         hasMore: paged.hasMore,
         grouped: false,
-        source: isMongoReady() ? "mongodb" : "json_fallback"
+        source: "mongodb"
       });
     } catch (err) {
       console.error("[Products API] GET /api/products failed:", err);
@@ -106687,7 +106719,21 @@ async function startServer() {
       const rawLimit = Number(req.query.limit);
       const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : void 0;
       const rawOrders = await readOrdersForRefresh(limit);
-      const products = await loadProductsForOrders(rawOrders);
+      let products = [];
+      if (!limit) {
+        try {
+          products = await withLocalDbTimeout(
+            loadProductsForOrders(rawOrders),
+            2500,
+            "orders_refresh_catalog"
+          );
+        } catch (catalogErr) {
+          console.warn(
+            "[GET /api/orders/refresh] Catalog enrich skipped:",
+            catalogErr instanceof Error ? catalogErr.message : catalogErr
+          );
+        }
+      }
       const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
       console.log(
         `[FRONTEND FETCHED] GET /api/orders/refresh${limit ? `?limit=${limit}` : ""} \u2014 tr\u1EA3 v\u1EC1 ${orders.length} \u0111\u01A1n t\u1EEB MongoDB.`

@@ -452,8 +452,8 @@ export default function App() {
         );
       }
       const controller = new AbortController();
-      // Shallow nhanh hơn — timeout ngắn hơn; full list giữ 12s.
-      requestTimeoutId = window.setTimeout(() => controller.abort(), limit ? 8_000 : 12_000);
+      // Shallow phải về nhanh; full list cho thêm thời gian khi Mongo cold-start.
+      requestTimeoutId = window.setTimeout(() => controller.abort(), limit ? 15_000 : 25_000);
       const response = await fetch(path, {
         method: 'GET',
         cache: 'no-store',
@@ -562,37 +562,58 @@ export default function App() {
     const silent = Boolean(opts?.silent);
 
     if (!silent) setProductsLoading(true);
+    const maxAttempts = forceRefresh ? 3 : 2;
+    let lastErr: unknown = null;
     try {
-      // Chỉ đọc trực tiếp DB Kho gốc, cấm fallback dữ liệu cũ.
-      const response = await fetch(`/api/products?page=${page}&pageSize=${pageSize}`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error('Không thể đọc dữ liệu Kho gốc từ Database.');
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = window.setTimeout(() => controller.abort(), 20_000);
+          // Chỉ đọc trực tiếp DB Kho gốc, cấm fallback dữ liệu cũ.
+          const response = await fetch(`/api/products?page=${page}&pageSize=${pageSize}&t=${Date.now()}`, {
+            method: 'GET',
+            cache: 'no-store',
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Cache-Control': 'no-cache',
+              Pragma: 'no-cache',
+            },
+          });
+          window.clearTimeout(timeoutId);
+          if (!response.ok) throw new Error('Không thể đọc dữ liệu Kho gốc từ Database.');
 
-      const data = await response.json();
-      if (Array.isArray(data)) {
-        setProducts(data);
-        setProductsMeta({ page: 1, pageSize: data.length, total: data.length, totalPages: 1, hasMore: false });
-        return;
+          const data = await response.json();
+          if (Array.isArray(data)) {
+            setProducts(data);
+            setProductsMeta({ page: 1, pageSize: data.length, total: data.length, totalPages: 1, hasMore: false });
+            return;
+          }
+          if (data?.success === false) {
+            throw new Error(data?.message || data?.error || 'products_unavailable');
+          }
+          const list: Product[] = Array.isArray(data.products) ? data.products : [];
+          setProducts((prev) => (append ? [...prev, ...list] : list));
+          setProductsMeta({
+            page: Number(data.page) || page,
+            pageSize: Number(data.pageSize) || pageSize,
+            total: Number(data.total) || list.length,
+            totalPages: Number(data.totalPages) || 1,
+            hasMore: !!data.hasMore,
+          });
+          return;
+        } catch (err) {
+          lastErr = err;
+          console.warn(`[Fetch Products] attempt ${attempt}/${maxAttempts} failed:`, err);
+          if (attempt < maxAttempts) {
+            await new Promise((r) => window.setTimeout(r, 1500 * attempt));
+          }
+        }
       }
-      if (data?.success === false) {
-        throw new Error(data?.message || data?.error || 'products_unavailable');
-      }
-      const list: Product[] = Array.isArray(data.products) ? data.products : [];
-      setProducts((prev) => (append ? [...prev, ...list] : list));
-      setProductsMeta({
-        page: Number(data.page) || page,
-        pageSize: Number(data.pageSize) || pageSize,
-        total: Number(data.total) || list.length,
-        totalPages: Number(data.totalPages) || 1,
-        hasMore: !!data.hasMore,
-      });
-    } catch (err) {
-      console.error('Fetch products error:', err);
-      // Lỗi mạng/Mongo không đồng nghĩa kho thật rỗng. Giữ danh sách hiện có để
-      // không biến sự cố tạm thời thành trạng thái "mất dữ liệu" trên giao diện.
-      if (forceRefresh) throw err;
+      console.error('Fetch products error:', lastErr);
+      // Lỗi mạng/Mongo không đồng nghĩa kho thật rỗng. Giữ danh sách hiện có.
+      // Chỉ ném lỗi khi caller chủ động forceRefresh (vd: sau khởi tạo kho).
+      if (forceRefresh) throw lastErr;
     } finally {
       if (!silent) setProductsLoading(false);
     }

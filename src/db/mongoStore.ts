@@ -507,23 +507,42 @@ export async function loadProductsPageFromStore(
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
-  const total = await ProductModel.countDocuments().maxTimeMS(5000);
-  const totalPages = Math.max(1, Math.ceil(total / safeSize) || 1);
-  const currentPage = Math.min(safePage, totalPages);
-  const docs = await ProductModel.find({})
-    .sort({ _id: 1 })
-    .skip((currentPage - 1) * safeSize)
-    .limit(safeSize)
-    .maxTimeMS(8000)
-    .lean();
-  return {
-    products: docsToProducts(docs),
-    total,
-    page: currentPage,
-    pageSize: safeSize,
-    totalPages,
-    hasMore: currentPage < totalPages,
-  };
+
+  try {
+    const total = await ProductModel.countDocuments({}).maxTimeMS(8000);
+    const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
+    const currentPage = Math.min(safePage, totalPages);
+    const docs = await ProductModel.find({})
+      .sort({ _id: 1 })
+      .skip((currentPage - 1) * safeSize)
+      .limit(safeSize)
+      .maxTimeMS(10000)
+      .lean();
+    return {
+      products: docsToProducts(docs),
+      total,
+      page: currentPage,
+      pageSize: safeSize,
+      totalPages,
+      hasMore: currentPage < totalPages,
+    };
+  } catch (err) {
+    // Fallback an toàn: đọc toàn bộ rồi slice — không để UI trống vì lỗi phân trang.
+    console.warn("[MongoDB] loadProductsPageFromStore fallback find({}):", err);
+    const all = await loadProductsFromStore();
+    const total = all.length;
+    const totalPages = Math.max(1, Math.ceil(total / safeSize) || 1);
+    const currentPage = Math.min(safePage, totalPages);
+    const start = (currentPage - 1) * safeSize;
+    return {
+      products: all.slice(start, start + safeSize),
+      total,
+      page: currentPage,
+      pageSize: safeSize,
+      totalPages,
+      hasMore: currentPage < totalPages,
+    };
+  }
 }
 
 /** Đọc 1 product theo id nội bộ / shopeeItemId — không quét toàn bộ catalog. */
@@ -1066,27 +1085,15 @@ export async function saveProductsToStoreAsync(products: any[]): Promise<void> {
     : [];
   const docs = toProductDocs(list);
 
-  // Không dùng withTransaction: một số môi trường cPanel/Passenger dễ 500 HTML
-  // khi session/transaction lỗi; ghi tuần tự qua enqueueWrite đã đủ an toàn.
+  // deleteMany + insertMany trong 1 enqueueWrite (không transaction, không $nin).
+  // Tránh xóa nhầm catalog khi payload thiếu id / bulkWrite lỗi giữa chừng.
   await enqueueWrite(async () => {
-    if (docs.length === 0) {
-      await ProductModel.deleteMany({});
-    } else {
-      await ProductModel.bulkWrite(
-        docs.map((doc) => ({
-          updateOne: {
-            filter: { _id: doc._id },
-            update: { $set: { sku: doc.sku ?? null, data: doc.data } },
-            upsert: true,
-          },
-        })),
-        { ordered: false },
-      );
-      const keepIds = docs.map((doc) => doc._id);
-      await ProductModel.deleteMany({ _id: { $nin: keepIds } });
+    await ProductModel.deleteMany({});
+    if (docs.length > 0) {
+      await ProductModel.insertMany(docs, { ordered: false });
     }
     await setMeta("products_updated_at", new Date().toISOString());
-    console.log(`[MongoDB] replace products — ${docs.length} dòng`);
+    console.log(`[MongoDB] insertMany products — ${docs.length} dòng`);
   });
 }
 

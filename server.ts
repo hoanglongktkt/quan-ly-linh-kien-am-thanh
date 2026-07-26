@@ -14844,7 +14844,17 @@ async function startServer() {
 
   // CHỈ đọc MongoDB nội bộ — TUYỆT ĐỐI không gọi Shopee API / fetch / axios ở đây.
   app.get("/api/products", authMiddleware, async (req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     try {
+      if (!isMongoReady()) {
+        return res.status(503).json({
+          success: false,
+          products: [],
+          error: "mongodb_not_ready",
+          message: "MongoDB chưa sẵn sàng — thử lại sau vài giây.",
+        });
+      }
+
       const rawPage = Number(req.query?.page);
       const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
       const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
@@ -14852,12 +14862,29 @@ async function startServer() {
         ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize))
         : PRODUCTS_PAGE_SIZE_DEFAULT;
 
-      // Phân trang Mongo trực tiếp — không find({}) toàn bộ rồi mới slice (dễ timeout → UI trống).
-      const paged = await withLocalDbTimeout(
-        loadProductsPageFromStore(page, pageSize),
-        12000,
-        "products_page_load",
-      );
+      let paged: Awaited<ReturnType<typeof loadProductsPageFromStore>>;
+      try {
+        paged = await withLocalDbTimeout(
+          loadProductsPageFromStore(page, pageSize),
+          15000,
+          "products_page_load",
+        );
+      } catch (pageErr) {
+        console.warn("[Products API] page load failed, fallback loadProducts:", pageErr);
+        const all = await withLocalDbTimeout(loadProducts(), 15000, "products_load_fallback");
+        const total = all.length;
+        const totalPages = Math.max(1, Math.ceil(total / Math.max(1, pageSize)) || 1);
+        const safePage = Math.min(page, totalPages);
+        const start = (safePage - 1) * pageSize;
+        paged = {
+          products: all.slice(start, start + pageSize),
+          total,
+          page: safePage,
+          pageSize,
+          totalPages,
+          hasMore: safePage < totalPages,
+        };
+      }
 
       return res.status(200).json({
         success: true,
@@ -14868,7 +14895,7 @@ async function startServer() {
         totalPages: paged.totalPages,
         hasMore: paged.hasMore,
         grouped: false,
-        source: isMongoReady() ? "mongodb" : "json_fallback",
+        source: "mongodb",
       });
     } catch (err: unknown) {
       console.error("[Products API] GET /api/products failed:", err);
@@ -16182,7 +16209,23 @@ async function startServer() {
       const rawOrders = await readOrdersForRefresh(limit);
       // Webhook cũ hoặc payload detail thiếu model_name vẫn được khôi phục từ catalog
       // trước khi trả về UI; không ghi ngược vào Mongo trong route read-only này.
-      const products = await loadProductsForOrders(rawOrders);
+      // Catalog lỗi/timeout/chậm KHÔNG được làm hỏng danh sách đơn.
+      // Shallow (?limit=) bỏ enrich hẳn — ưu tiên trả đơn < 2s cho FE lần đầu load.
+      let products: any[] = [];
+      if (!limit) {
+        try {
+          products = await withLocalDbTimeout(
+            loadProductsForOrders(rawOrders),
+            2500,
+            "orders_refresh_catalog",
+          );
+        } catch (catalogErr) {
+          console.warn(
+            "[GET /api/orders/refresh] Catalog enrich skipped:",
+            catalogErr instanceof Error ? catalogErr.message : catalogErr,
+          );
+        }
+      }
       const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
       console.log(
         `[FRONTEND FETCHED] GET /api/orders/refresh` +
