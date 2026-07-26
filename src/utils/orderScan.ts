@@ -221,15 +221,25 @@ export async function lookupOrderByScanCode(
   const trimmed = raw.trim();
   if (!trimmed) return null;
 
-  const local = findOrderByScanPayload(localOrders, trimmed, scanIndex);
-  if (local) return local;
+  if (localOrders.length > 0) {
+    const local = findOrderByScanPayload(localOrders, trimmed, scanIndex);
+    if (local) return local;
+  }
 
   if (!token) return null;
 
   try {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer =
+      controller && typeof window !== 'undefined'
+        ? window.setTimeout(() => controller.abort(), 8_000)
+        : undefined;
     const res = await fetch(`/api/orders/lookup?code=${encodeURIComponent(trimmed)}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: controller?.signal,
+      cache: 'no-store',
     });
+    if (timer !== undefined) window.clearTimeout(timer);
     if (!res.ok) return null;
     const order = (await res.json()) as Order;
     return order?.id ? order : null;

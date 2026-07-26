@@ -72,6 +72,7 @@ import {
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
   loadOrdersFromStore,
+  findOrderByScanCodeInStore,
   loadShopeeTrackingEnrichCandidatesFromStore,
   queryOrdersPageFromStore,
   createSyncJob,
@@ -10827,9 +10828,9 @@ function rebuildOrderLookupIndex(orders: any[]): OrderLookupIndex {
 }
 
 function getOrderLookupIndex(orders: any[]): OrderLookupIndex {
-  if (!orderLookupIndex) {
-    orderLookupIndex = rebuildOrderLookupIndex(orders);
-  }
+  // Luôn build theo đúng mảng `orders` đang lookup — tránh index JSON cũ
+  // trỏ sai index khi nguồn là Mongo (gây "không tìm thấy" / khớp nhầm).
+  orderLookupIndex = rebuildOrderLookupIndex(orders);
   return orderLookupIndex;
 }
 
@@ -16922,10 +16923,16 @@ async function startServer() {
     if (!code) {
       return res.status(400).json({ error: "Thi\u1EBFu m\u00E3 qu\u00E9t (code)." });
     }
-    // READ ONLY — không dirty/mirror/sync khi lookup.
-    let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
-    rawOrders = rawOrders.filter(isValidOrder);
-    const foundRaw = await findOrderByScanLookup(rawOrders, code);
+    // Mongo index lookup (tracking_no / orderSn) — không full-dump collection.
+    let foundRaw: any | null = null;
+    try {
+      foundRaw = await findOrderByScanCodeInStore(code);
+      if (foundRaw && !isValidOrder(foundRaw)) foundRaw = null;
+      if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
+    } catch (err: any) {
+      console.warn("[Orders Lookup] failed:", err?.message || err);
+    }
+
     if (!foundRaw) {
       return res.status(404).json({
         error: "Kh\u00F4ng t\u00ECm th\u1EA5y \u0111\u01A1n h\u00E0ng kh\u1EDBp m\u00E3 qu\u00E9t.",

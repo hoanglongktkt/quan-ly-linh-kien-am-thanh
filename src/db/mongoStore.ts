@@ -1995,6 +1995,162 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
   return ops.length;
 }
 
+/** Biến thể mã quét để match Mongo (raw / UPPER / bỏ ký tự tách). */
+function buildScanKeyVariantsForMongo(rawKeys: string[]): string[] {
+  const out = new Set<string>();
+  for (const raw of rawKeys) {
+    const text = String(raw || "").trim();
+    if (!text) continue;
+    const upper = text.toUpperCase();
+    const stripped = upper.replace(/[\s\-_#./\\|:;,]+/g, "");
+    for (const v of [text, upper, stripped, text.replace(/^shopee-/i, ""), stripped.replace(/^SHOPEE/, "")]) {
+      if (v && v.length >= 4) out.add(v);
+    }
+  }
+  return [...out];
+}
+
+function hydrateOrderFromMongoDoc(d: any): any | null {
+  if (!d) return null;
+  const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
+  const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
+  if (!sn && !d?._id) return null;
+  const tn = String(d?.tracking_no || data.tracking_no || data.trackingNumber || "").trim();
+  const rawStatus = String(d?.shopee_order_status || data.shopee_order_status || "")
+    .trim()
+    .toUpperCase();
+  const carrier = String(
+    d?.shipping_carrier || data.shipping_carrier || data.checkout_shipping_carrier || "",
+  ).trim();
+  const handed =
+    d?.is_handed_over === true ||
+    data.is_handed_over === true ||
+    data.isHandedOverToCarrier === true ||
+    data.is_handed_over_to_carrier === true ||
+    data.is_handed_over_to_courier === true ||
+    String(data.local_status || data.localStatus || "").toUpperCase() === "HANDED_OVER";
+  return {
+    ...data,
+    id: data.id || d._id || (sn ? `shopee-${sn}` : undefined),
+    orderSn: sn || data.orderSn,
+    status: d?.status != null ? d.status : data.status,
+    shopee_order_status: rawStatus || data.shopee_order_status || undefined,
+    shopId: d?.shopId != null ? d.shopId : data.shopId,
+    tracking_no: tn || undefined,
+    trackingNumber: tn || undefined,
+    shipping_carrier: carrier || data.shipping_carrier || undefined,
+    is_pending_shopee_check:
+      d?.is_pending_shopee_check != null
+        ? Boolean(d.is_pending_shopee_check)
+        : Boolean(data.is_pending_shopee_check),
+    is_handed_over: handed,
+    isHandedOverToCarrier: handed,
+    is_handed_over_to_carrier: handed,
+    is_handed_over_to_courier: handed,
+    isPrinted: d?.isPrinted != null ? Boolean(d.isPrinted) : Boolean(data.isPrinted),
+    isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
+    ...(handed
+      ? {
+          local_status: data.local_status || "HANDED_OVER",
+          localStatus: data.localStatus || "HANDED_OVER",
+          internal_status: data.internal_status || "HANDED_OVER",
+        }
+      : {}),
+  };
+}
+
+/**
+ * Lookup 1 đơn theo mã quét (tracking / orderSn / package / internal) — dùng index Mongo,
+ * KHÔNG full-scan collection. Phục vụ /api/orders/lookup trên mobile.
+ */
+export async function findOrderByScanCodeInStore(rawCode: string): Promise<any | null> {
+  if (!isMongoReady()) return null;
+  requireMongo();
+  const text = String(rawCode || "").trim();
+  if (!text) return null;
+
+  const seedKeys = [text, text.replace(/^#+/, "")];
+  if (/^https?:\/\//i.test(text)) {
+    try {
+      const url = new URL(text);
+      for (const p of [
+        "tracking",
+        "tracking_no",
+        "tracking_number",
+        "tn",
+        "order_sn",
+        "ordersn",
+        "order",
+        "order_id",
+        "package_number",
+        "code",
+        "sn",
+      ]) {
+        const v = url.searchParams.get(p);
+        if (v) seedKeys.push(v);
+      }
+      for (const part of url.pathname.split("/")) {
+        if (part) seedKeys.push(part);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  const keys = buildScanKeyVariantsForMongo(seedKeys);
+  if (keys.length === 0) return null;
+
+  const idKeys = keys.flatMap((k) => {
+    const sn = k.replace(/^SHOPEE-/i, "").replace(/^shopee-/i, "");
+    return sn ? [`shopee-${sn}`, sn] : [k];
+  });
+  const uniqueIds = [...new Set(idKeys)];
+
+  const filter = {
+    $or: [
+      { tracking_no: { $in: keys } },
+      { orderSn: { $in: keys } },
+      { _id: { $in: uniqueIds } },
+      { "data.tracking_no": { $in: keys } },
+      { "data.trackingNumber": { $in: keys } },
+      { "data.return_tracking_no": { $in: keys } },
+      { "data.internalTrackingCode": { $in: keys } },
+      { "data.packageNumber": { $in: keys } },
+      { "data.orderSn": { $in: keys } },
+      { "data.order_sn": { $in: keys } },
+    ],
+  };
+
+  try {
+    let doc = await OrderModel.findOne(filter).maxTimeMS(4_000).lean();
+    if (!doc) {
+      // Suffix fallback (QR đôi khi cắt prefix) — chỉ mã dài ≥10, timeout ngắn.
+      const primary =
+        keys.find((k) => k.length >= 10 && /[A-Z0-9]{10,}/i.test(k)) ||
+        keys.find((k) => k.length >= 10);
+      if (primary) {
+        const escaped = primary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const rx = new RegExp(`${escaped}$`, "i");
+        doc = await OrderModel.findOne({
+          $or: [
+            { tracking_no: rx },
+            { "data.tracking_no": rx },
+            { "data.trackingNumber": rx },
+            { "data.return_tracking_no": rx },
+            { "data.internalTrackingCode": rx },
+            { orderSn: rx },
+          ],
+        })
+          .maxTimeMS(3_000)
+          .lean();
+      }
+    }
+    return hydrateOrderFromMongoDoc(doc);
+  } catch (err: any) {
+    console.warn("[MongoDB] findOrderByScanCodeInStore failed:", err?.message || err);
+    return null;
+  }
+}
+
 /** Đọc đơn từ Mongo — ưu tiên top-level shopee_order_status / tracking / carrier.
  *  `limit` (vd: 50) = shallow fetch nhanh cho FE cache merge; bỏ limit = full dump.
  *  `orderSns` / `ids` = chỉ lấy đơn cần thiết (ship-order scoped load). */
@@ -2062,56 +2218,8 @@ export async function loadOrdersFromStore(opts?: {
   }
   const out: any[] = [];
   for (const d of docs as any[]) {
-    const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
-    const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, ""))
-      .trim();
-    if (!sn && !d?._id) continue;
-    const tn = String(
-      d?.tracking_no || data.tracking_no || data.trackingNumber || "",
-    ).trim();
-    const rawStatus = String(
-      d?.shopee_order_status || data.shopee_order_status || "",
-    )
-      .trim()
-      .toUpperCase();
-    const carrier = String(
-      d?.shipping_carrier || data.shipping_carrier || data.checkout_shipping_carrier || "",
-    ).trim();
-    const handed =
-      d?.is_handed_over === true ||
-      data.is_handed_over === true ||
-      data.isHandedOverToCarrier === true ||
-      data.is_handed_over_to_carrier === true ||
-      data.is_handed_over_to_courier === true ||
-      String(data.local_status || data.localStatus || "").toUpperCase() === "HANDED_OVER";
-    out.push({
-      ...data,
-      id: data.id || d._id || (sn ? `shopee-${sn}` : undefined),
-      orderSn: sn || data.orderSn,
-      status: d?.status != null ? d.status : data.status,
-      shopee_order_status: rawStatus || data.shopee_order_status || undefined,
-      shopId: d?.shopId != null ? d.shopId : data.shopId,
-      tracking_no: tn || undefined,
-      trackingNumber: tn || undefined,
-      shipping_carrier: carrier || data.shipping_carrier || undefined,
-      is_pending_shopee_check:
-        d?.is_pending_shopee_check != null
-          ? Boolean(d.is_pending_shopee_check)
-          : Boolean(data.is_pending_shopee_check),
-      is_handed_over: handed,
-      isHandedOverToCarrier: handed,
-      is_handed_over_to_carrier: handed,
-      is_handed_over_to_courier: handed,
-      isPrinted: d?.isPrinted != null ? Boolean(d.isPrinted) : Boolean(data.isPrinted),
-      isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
-      ...(handed
-        ? {
-            local_status: data.local_status || "HANDED_OVER",
-            localStatus: data.localStatus || "HANDED_OVER",
-            internal_status: data.internal_status || "HANDED_OVER",
-          }
-        : {}),
-    });
+    const order = hydrateOrderFromMongoDoc(d);
+    if (order) out.push(order);
   }
   return out;
 }

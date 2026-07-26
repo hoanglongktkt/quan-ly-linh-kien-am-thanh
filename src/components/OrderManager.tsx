@@ -34,6 +34,8 @@ import {
   buildHandedOverWritePatch,
   isEligibleForHandOverToCarrier,
   getHandOverIneligibleReason,
+  getShopeeOrderRawStatus,
+  isShopeeCancelledLikeStatus,
   HANDED_OVER_SOURCE,
   UI_TAB_HANDED_OVER_CARRIER,
 } from '../utils/orderHandover';
@@ -716,6 +718,8 @@ export default function OrderManager({
   const applyScanRef = React.useRef<(query: string) => void>(() => {});
   const verifyScanRef = React.useRef<(query: string) => void>(() => {});
   const isScanBusyRef = React.useRef(false);
+  /** Hàng đợi mã quét khi đang verify — không bỏ mã khi quét liên tục. */
+  const pendingScanQueueRef = React.useRef<string[]>([]);
   const isHandingOverRef = React.useRef(false);
   const daXuatKhoListRef = React.useRef(daXuatKhoList);
   const donHuyListRef = React.useRef(donHuyList);
@@ -1152,13 +1156,13 @@ export default function OrderManager({
       if (!key) return;
 
       const now = Date.now();
-      // Debounce 2.5s cùng mã — tránh gọi API/âm thanh liên tục.
-      if (key === lastQrScanRef.current.key && now - lastQrScanRef.current.at < 2500) {
+      // Debounce 1.2s cùng mã — tránh gọi API/âm thanh liên tục khi giữ camera.
+      if (key === lastQrScanRef.current.key && now - lastQrScanRef.current.at < 1200) {
         return;
       }
-      lastQrScanRef.current = { key, at: now };
 
       if (isCodeAlreadyVerified(key)) {
+        lastQrScanRef.current = { key, at: now };
         playScanSound('warning');
         vibrateScan('warning');
         flashViewfinder('error', 500);
@@ -1167,21 +1171,32 @@ export default function OrderManager({
         return;
       }
 
-      if (isScanBusyRef.current) return;
+      // Đang verify mã khác → xếp hàng, không bỏ mã khi quét liên tục.
+      if (isScanBusyRef.current) {
+        const q = pendingScanQueueRef.current;
+        if (!q.some((c) => normalizeOrderScanKey(c) === key) && q.length < 20) {
+          q.push(trimmed);
+        }
+        return;
+      }
+
+      lastQrScanRef.current = { key, at: now };
       isScanBusyRef.current = true;
       setIsVerifyingScan(true);
       setCameraScanResult(`Đang kiểm tra: ${trimmed}...`);
 
       try {
         const token = localStorage.getItem('admin_token');
-        const order =
-          findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex) ||
-          (await lookupOrderByScanCode(trimmed, ordersRef.current, token, orderScanIndex));
+        // Ưu tiên index local; miss → API lookup nhanh (Mongo index).
+        let order = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
+        if (!order) {
+          order = await lookupOrderByScanCode(trimmed, [], token, undefined);
+        }
 
         if (order) {
-          const idx = ordersRef.current.findIndex((o) => o.id === order.id);
+          const idx = ordersRef.current.findIndex((o) => o.id === order!.id);
           if (idx >= 0) {
-            const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order } : o));
+            const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
             ordersRef.current = merged;
             onUpdateOrders(merged);
           } else {
@@ -1217,7 +1232,8 @@ export default function OrderManager({
           isCodeAlreadyVerified(orderKey) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(waybill)) ||
           isCodeAlreadyVerified(normalizeOrderScanKey(order.trackingNumber || '')) ||
-          isCodeAlreadyVerified(normalizeOrderScanKey(order.tracking_no || ''))
+          isCodeAlreadyVerified(normalizeOrderScanKey(order.tracking_no || '')) ||
+          isCodeAlreadyVerified(normalizeOrderScanKey(order.return_tracking_no || ''))
         ) {
           playScanSound('warning');
           vibrateScan('warning');
@@ -1234,6 +1250,23 @@ export default function OrderManager({
           trackingNumber: waybill || order.trackingNumber || order.tracking_no || order.internalTrackingCode,
           at: now,
         };
+
+        // Phân loại theo badge + raw Shopee (không phụ thuộc status local stale).
+        const badge = resolveOrderBadgeStatus(order);
+        const raw = getShopeeOrderRawStatus(order);
+        const isReturnBucket =
+          badge === 'return_pending' ||
+          badge === 'return_received' ||
+          order.status === 'return_pending' ||
+          order.status === 'return_received' ||
+          raw === 'TO_RETURN';
+        const isCancelBucket =
+          !isReturnBucket &&
+          (badge === 'cancelled' ||
+            order.status === 'cancelled' ||
+            raw === 'CANCELLED' ||
+            raw === 'IN_CANCEL' ||
+            isShopeeCancelledLikeStatus(order));
 
         if (isEligibleForHandOverToCarrier(order)) {
           playScanSound('success');
@@ -1258,37 +1291,7 @@ export default function OrderManager({
           return;
         }
 
-        if (order.status === 'unprocessed') {
-          playScanSound('error');
-          vibrateScan('error');
-          flashViewfinder('error', 500);
-          setCameraScanResult(`Đơn #${order.orderSn} còn Chưa xử lý — không xuất kho ĐVVC`);
-          showScanToast(
-            `Chỉ quét đơn ở Chờ lấy hàng (đã xử lý) hoặc Đơn hủy`,
-            'error',
-          );
-          return;
-        }
-
-        if (order.status === 'cancelled') {
-          playScanSound('warning');
-          vibrateScan('warning');
-          flashViewfinder('error', 500);
-          setDonHuyList((prev) => {
-            const next = [item, ...prev];
-            donHuyListRef.current = next;
-            return next;
-          });
-          setCameraScanResult(
-            waybill
-              ? `⚠ ĐƠN HỦY · VĐ ${waybill} · #${order.orderSn}`
-              : `⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`,
-          );
-          showScanToast(`CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`, 'error');
-          return;
-        }
-
-        if (order.status === 'return_pending') {
+        if (isReturnBucket) {
           playScanSound('success');
           vibrateScan('success');
           flashViewfinder('success', 500);
@@ -1311,14 +1314,58 @@ export default function OrderManager({
           return;
         }
 
+        if (isCancelBucket) {
+          playScanSound('warning');
+          vibrateScan('warning');
+          flashViewfinder('error', 500);
+          setDonHuyList((prev) => {
+            const next = [item, ...prev];
+            donHuyListRef.current = next;
+            return next;
+          });
+          setCameraScanResult(
+            waybill
+              ? `⚠ ĐƠN HỦY · VĐ ${waybill} · #${order.orderSn}`
+              : `⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`,
+          );
+          showScanToast(`CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`, 'error');
+          return;
+        }
+
+        if (badge === 'unprocessed' || order.status === 'unprocessed') {
+          playScanSound('error');
+          vibrateScan('error');
+          flashViewfinder('error', 500);
+          setCameraScanResult(`Đơn #${order.orderSn} còn Chưa xử lý — không xuất kho ĐVVC`);
+          showScanToast(
+            `Chỉ quét đơn ở Chờ lấy hàng (đã xử lý), Đơn hủy hoặc Đơn hoàn`,
+            'error',
+          );
+          return;
+        }
+
+        const reason = getHandOverIneligibleReason(order);
         playScanSound('error');
         vibrateScan('error');
         flashViewfinder('error', 500);
-        setCameraScanResult(`Đơn #${order.orderSn} — trạng thái không xử lý được`);
-        showScanToast(`Đơn #${order.orderSn} không thuộc trạng thái cần phân loại`, 'error');
+        setCameraScanResult(
+          reason
+            ? `Đơn #${order.orderSn} — ${reason}`
+            : `Đơn #${order.orderSn} — trạng thái không xử lý được`,
+        );
+        showScanToast(
+          reason || `Đơn #${order.orderSn} không thuộc trạng thái cần phân loại`,
+          'error',
+        );
       } finally {
         isScanBusyRef.current = false;
         setIsVerifyingScan(false);
+        const nextQueued = pendingScanQueueRef.current.shift();
+        if (nextQueued && !isTearingDownScannerRef.current) {
+          queueMicrotask(() => {
+            void verifySingleOrder(nextQueued);
+          });
+        }
       }
     },
     [isFlushingQueue, orderScanIndex, onUpdateOrders]
@@ -1345,6 +1392,8 @@ export default function OrderManager({
       setCameraScanError(false);
       setCameraError('');
       lastQrScanRef.current = { key: '', at: 0 };
+      pendingScanQueueRef.current = [];
+      isScanBusyRef.current = false;
       setIsFlushingQueue(false);
       setCameraScanResult((prev) =>
         prev.includes('Xuất kho') ||
@@ -1411,6 +1460,13 @@ export default function OrderManager({
       isMounted = false;
     };
   }, [focusScanner, cameraRestartKey]);
+
+  // Prefetch thêm đơn vào cache local khi mở quét — giảm miss → API.
+  useEffect(() => {
+    if (!focusScanner) return;
+    void onFetchOrders?.({ silent: true, limit: 500, merge: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusScanner]);
 
   // Platform filtering & dropdown states
   const [selectedPlatform, setSelectedPlatform] = useState<'all' | 'shopee' | 'tiktok' | 'lazada' | 'woocommerce' | 'manual'>('all');

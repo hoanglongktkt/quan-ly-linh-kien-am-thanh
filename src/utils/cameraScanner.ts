@@ -64,10 +64,29 @@ export function getCameraBlockedReason(): string | null {
   return null;
 }
 
+/** QR + barcode 1D thường gặp trên phiếu gửi / vận đơn Shopee. */
+const DETECTOR_FORMATS = [
+  'qr_code',
+  'code_128',
+  'code_39',
+  'code_93',
+  'ean_13',
+  'ean_8',
+  'upc_a',
+  'upc_e',
+  'itf',
+  'codabar',
+] as const;
+
 function createBarcodeDetector(): BarcodeDetectorLike | null {
   try {
     if (typeof window === 'undefined' || !window.BarcodeDetector) return null;
-    return new window.BarcodeDetector({ formats: ['qr_code'] });
+    try {
+      return new window.BarcodeDetector({ formats: [...DETECTOR_FORMATS] });
+    } catch {
+      // Một số trình duyệt chỉ hỗ trợ qr_code.
+      return new window.BarcodeDetector({ formats: ['qr_code'] });
+    }
   } catch {
     return null;
   }
@@ -258,11 +277,22 @@ function drawDownscaledFrame(
 
 function createZxingReader(): BrowserMultiFormatReader {
   const hints = new Map();
-  hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+    BarcodeFormat.QR_CODE,
+    BarcodeFormat.CODE_128,
+    BarcodeFormat.CODE_39,
+    BarcodeFormat.CODE_93,
+    BarcodeFormat.EAN_13,
+    BarcodeFormat.EAN_8,
+    BarcodeFormat.UPC_A,
+    BarcodeFormat.UPC_E,
+    BarcodeFormat.ITF,
+    BarcodeFormat.CODABAR,
+  ]);
   hints.set(DecodeHintType.TRY_HARDER, true);
   return new BrowserMultiFormatReader(hints, {
     delayBetweenScanAttempts: DECODE_INTERVAL_MS,
-    delayBetweenScanSuccess: 600,
+    delayBetweenScanSuccess: 400,
   });
 }
 
