@@ -1292,8 +1292,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs5 = require("fs");
-          stream2 = new fs5.SyncWriteStream(fd2, { autoClose: false });
+          var fs6 = require("fs");
+          stream2 = new fs6.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -14080,11 +14080,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path4) {
-      if (!path4 || typeof path4 !== "string") {
+    function lookup(path5) {
+      if (!path5 || typeof path5 !== "string") {
         return false;
       }
-      var extension3 = extname("x." + path4).toLowerCase().substr(1);
+      var extension3 = extname("x." + path5).toLowerCase().substr(1);
       if (!extension3) {
         return false;
       }
@@ -17713,8 +17713,8 @@ var require_node2 = __commonJS({
           }
           break;
         case "FILE":
-          var fs5 = require("fs");
-          stream2 = new fs5.SyncWriteStream(fd2, { autoClose: false });
+          var fs6 = require("fs");
+          stream2 = new fs6.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18432,8 +18432,8 @@ var require_node3 = __commonJS({
           }
           break;
         case "FILE":
-          var fs5 = require("fs");
-          stream2 = new fs5.SyncWriteStream(fd2, { autoClose: false });
+          var fs6 = require("fs");
+          stream2 = new fs6.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18521,7 +18521,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path4, keys, options) {
+    function pathToRegexp(path5, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -18535,8 +18535,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m2;
-      if (path4 instanceof RegExp) {
-        while (m2 = MATCHING_GROUP_REGEXP.exec(path4.source)) {
+      if (path5 instanceof RegExp) {
+        while (m2 = MATCHING_GROUP_REGEXP.exec(path5.source)) {
           if (m2[0][0] === "\\") continue;
           keys.push({
             name: m2[1] || name++,
@@ -18544,18 +18544,18 @@ var require_path_to_regexp = __commonJS({
             offset: m2.index
           });
         }
-        return path4;
+        return path5;
       }
-      if (Array.isArray(path4)) {
-        path4 = path4.map(function(value) {
+      if (Array.isArray(path5)) {
+        path5 = path5.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path4.join("|"), flags);
+        return new RegExp(path5.join("|"), flags);
       }
-      if (typeof path4 !== "string") {
+      if (typeof path5 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path4 = path4.replace(
+      path5 = path5.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -18572,7 +18572,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path4.slice(pos, offset);
+            backtrack += path5.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -18602,7 +18602,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m2 = MATCHING_GROUP_REGEXP.exec(path4)) {
+      while (m2 = MATCHING_GROUP_REGEXP.exec(path5)) {
         if (m2[0][0] === "\\") continue;
         if (keysOffset + i2 === keys.length || keys[keysOffset + i2].offset > m2.index) {
           keys.splice(keysOffset + i2, 0, {
@@ -18614,13 +18614,13 @@ var require_path_to_regexp = __commonJS({
         }
         i2++;
       }
-      path4 += strict ? "" : path4[path4.length - 1] === "/" ? "?" : "/?";
+      path5 += strict ? "" : path5[path5.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path4 += "$";
-      } else if (path4[path4.length - 1] !== "/") {
-        path4 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path5 += "$";
+      } else if (path5[path5.length - 1] !== "/") {
+        path5 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path4, flags);
+      return new RegExp("^" + path5, flags);
     }
   }
 });
@@ -18633,19 +18633,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path4, options, fn) {
+    function Layer(path5, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path4, options, fn);
+        return new Layer(path5, options, fn);
       }
-      debug("new %o", path4);
+      debug("new %o", path5);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path4, this.keys = [], opts);
-      this.regexp.fast_star = path4 === "*";
-      this.regexp.fast_slash = path4 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path5, this.keys = [], opts);
+      this.regexp.fast_star = path5 === "*";
+      this.regexp.fast_slash = path5 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -18669,20 +18669,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path4) {
+    Layer.prototype.match = function match2(path5) {
       var match3;
-      if (path4 != null) {
+      if (path5 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path4) };
-          this.path = path4;
+          this.params = { "0": decode_param(path5) };
+          this.path = path5;
           return true;
         }
-        match3 = this.regexp.exec(path4);
+        match3 = this.regexp.exec(path5);
       }
       if (!match3) {
         this.params = void 0;
@@ -18775,10 +18775,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path4) {
-      this.path = path4;
+    function Route(path5) {
+      this.path = path5;
       this.stack = [];
-      debug("new %o", path4);
+      debug("new %o", path5);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18990,8 +18990,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path4 = getPathname(req);
-        if (path4 == null) {
+        var path5 = getPathname(req);
+        if (path5 == null) {
           return done(layerError);
         }
         var layer;
@@ -18999,7 +18999,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path4);
+          match2 = matchLayer(layer, path5);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -19037,18 +19037,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path4);
+            trim_prefix(layer, layerError, layerPath, path5);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path4) {
+      function trim_prefix(layer, layerError, layerPath, path5) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path4.slice(0, layerPath.length)) {
+          if (layerPath !== path5.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path4[layerPath.length];
+          var c = path5[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -19126,7 +19126,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path4 = "/";
+      var path5 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -19134,7 +19134,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path4 = fn;
+          path5 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -19146,8 +19146,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path4, fn.name || "<anonymous>");
-        var layer = new Layer(path4, {
+        debug("use %o %s", path5, fn.name || "<anonymous>");
+        var layer = new Layer(path5, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -19157,9 +19157,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path4) {
-      var route2 = new Route(path4);
-      var layer = new Layer(path4, {
+    proto.route = function route(path5) {
+      var route2 = new Route(path5);
+      var layer = new Layer(path5, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -19169,8 +19169,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path4) {
-        var route = this.route(path4);
+      proto[method] = function(path5) {
+        var route = this.route(path5);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -19206,9 +19206,9 @@ var require_router = __commonJS({
       }
       return toString.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path4) {
+    function matchLayer(layer, path5) {
       try {
-        return layer.match(path4);
+        return layer.match(path5);
       } catch (err) {
         return err;
       }
@@ -19326,13 +19326,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path4 = require("path");
-    var fs5 = require("fs");
-    var dirname = path4.dirname;
-    var basename3 = path4.basename;
-    var extname = path4.extname;
-    var join = path4.join;
-    var resolve = path4.resolve;
+    var path5 = require("path");
+    var fs6 = require("fs");
+    var dirname = path5.dirname;
+    var basename3 = path5.basename;
+    var extname = path5.extname;
+    var join = path5.join;
+    var resolve = path5.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -19361,17 +19361,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path5;
+      var path6;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i2 = 0; i2 < roots.length && !path5; i2++) {
+      for (var i2 = 0; i2 < roots.length && !path6; i2++) {
         var root = roots[i2];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename3(loc);
-        path5 = this.resolve(dir, file);
+        path6 = this.resolve(dir, file);
       }
-      return path5;
+      return path6;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -19379,21 +19379,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path5 = join(dir, file);
-      var stat3 = tryStat(path5);
+      var path6 = join(dir, file);
+      var stat3 = tryStat(path6);
       if (stat3 && stat3.isFile()) {
-        return path5;
+        return path6;
       }
-      path5 = join(dir, basename3(file, ext), "index" + ext);
-      stat3 = tryStat(path5);
+      path6 = join(dir, basename3(file, ext), "index" + ext);
+      stat3 = tryStat(path6);
       if (stat3 && stat3.isFile()) {
-        return path5;
+        return path6;
       }
     };
-    function tryStat(path5) {
-      debug('stat "%s"', path5);
+    function tryStat(path6) {
+      debug('stat "%s"', path6);
       try {
-        return fs5.statSync(path5);
+        return fs6.statSync(path6);
       } catch (e2) {
         return void 0;
       }
@@ -19998,8 +19998,8 @@ var require_node4 = __commonJS({
           }
           break;
         case "FILE":
-          var fs5 = require("fs");
-          stream2 = new fs5.SyncWriteStream(fd2, { autoClose: false });
+          var fs6 = require("fs");
+          stream2 = new fs6.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -20171,8 +20171,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports2, module2) {
-    var path4 = require("path");
-    var fs5 = require("fs");
+    var path5 = require("path");
+    var fs6 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -20193,7 +20193,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs5.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs6.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -20201,8 +20201,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path5, fallback) {
-      var ext = path5.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path6, fallback) {
+      var ext = path6.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -20431,33 +20431,33 @@ var require_send = __commonJS({
     var escapeHtml = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs5 = require("fs");
+    var fs6 = require("fs");
     var mime = require_mime();
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path4 = require("path");
+    var path5 = require("path");
     var statuses = require_statuses();
     var Stream4 = require("stream");
     var util = require("util");
-    var extname = path4.extname;
-    var join = path4.join;
-    var normalize = path4.normalize;
-    var resolve = path4.resolve;
-    var sep = path4.sep;
+    var extname = path5.extname;
+    var join = path5.join;
+    var normalize = path5.normalize;
+    var resolve = path5.resolve;
+    var sep = path5.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path5, options) {
-      return new SendStream(req, path5, options);
+    function send(req, path6, options) {
+      return new SendStream(req, path6, options);
     }
-    function SendStream(req, path5, options) {
+    function SendStream(req, path6, options) {
       Stream4.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path5;
+      this.path = path6;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -20503,8 +20503,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path5) {
-      this._root = resolve(String(path5));
+    SendStream.prototype.root = function root(path6) {
+      this._root = resolve(String(path6));
       debug("root %s", this._root);
       return this;
     };
@@ -20617,10 +20617,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path5) {
+    SendStream.prototype.redirect = function redirect(path6) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path5);
+        this.emit("directory", res, path6);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -20640,42 +20640,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path5 = decode(this.path);
-      if (path5 === -1) {
+      var path6 = decode(this.path);
+      if (path6 === -1) {
         this.error(400);
         return res;
       }
-      if (~path5.indexOf("\0")) {
+      if (~path6.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path5) {
-          path5 = normalize("." + sep + path5);
+        if (path6) {
+          path6 = normalize("." + sep + path6);
         }
-        if (UP_PATH_REGEXP.test(path5)) {
-          debug('malicious path "%s"', path5);
+        if (UP_PATH_REGEXP.test(path6)) {
+          debug('malicious path "%s"', path6);
           this.error(403);
           return res;
         }
-        parts = path5.split(sep);
-        path5 = normalize(join(root, path5));
+        parts = path6.split(sep);
+        path6 = normalize(join(root, path6));
       } else {
-        if (UP_PATH_REGEXP.test(path5)) {
-          debug('malicious path "%s"', path5);
+        if (UP_PATH_REGEXP.test(path6)) {
+          debug('malicious path "%s"', path6);
           this.error(403);
           return res;
         }
-        parts = normalize(path5).split(sep);
-        path5 = resolve(path5);
+        parts = normalize(path6).split(sep);
+        path6 = resolve(path6);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path5);
+        debug('%s dotfile "%s"', access, path6);
         switch (access) {
           case "allow":
             break;
@@ -20689,13 +20689,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path5);
+        this.sendIndex(path6);
         return res;
       }
-      this.sendFile(path5);
+      this.sendFile(path6);
       return res;
     };
-    SendStream.prototype.send = function send2(path5, stat3) {
+    SendStream.prototype.send = function send2(path6, stat3) {
       var len = stat3.size;
       var options = this.options;
       var opts = {};
@@ -20707,9 +20707,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path5);
-      this.setHeader(path5, stat3);
-      this.type(path5);
+      debug('pipe "%s"', path6);
+      this.setHeader(path6, stat3);
+      this.type(path6);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -20758,28 +20758,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path5, opts);
+      this.stream(path6, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path5) {
+    SendStream.prototype.sendFile = function sendFile(path6) {
       var i2 = 0;
       var self2 = this;
-      debug('stat "%s"', path5);
-      fs5.stat(path5, function onstat(err, stat3) {
-        if (err && err.code === "ENOENT" && !extname(path5) && path5[path5.length - 1] !== sep) {
+      debug('stat "%s"', path6);
+      fs6.stat(path6, function onstat(err, stat3) {
+        if (err && err.code === "ENOENT" && !extname(path6) && path6[path6.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat3.isDirectory()) return self2.redirect(path5);
-        self2.emit("file", path5, stat3);
-        self2.send(path5, stat3);
+        if (stat3.isDirectory()) return self2.redirect(path6);
+        self2.emit("file", path6, stat3);
+        self2.send(path6, stat3);
       });
       function next(err) {
         if (self2._extensions.length <= i2) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path5 + "." + self2._extensions[i2++];
+        var p = path6 + "." + self2._extensions[i2++];
         debug('stat "%s"', p);
-        fs5.stat(p, function(err2, stat3) {
+        fs6.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20787,7 +20787,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path5) {
+    SendStream.prototype.sendIndex = function sendIndex(path6) {
       var i2 = -1;
       var self2 = this;
       function next(err) {
@@ -20795,9 +20795,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path5, self2._index[i2]);
+        var p = join(path6, self2._index[i2]);
         debug('stat "%s"', p);
-        fs5.stat(p, function(err2, stat3) {
+        fs6.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20806,10 +20806,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path5, options) {
+    SendStream.prototype.stream = function stream(path6, options) {
       var self2 = this;
       var res = this.res;
-      var stream2 = fs5.createReadStream(path5, options);
+      var stream2 = fs6.createReadStream(path6, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -20824,10 +20824,10 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path5) {
+    SendStream.prototype.type = function type(path6) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path5);
+      var type2 = mime.lookup(path6);
       if (!type2) {
         debug("no content-type");
         return;
@@ -20836,9 +20836,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path5, stat3) {
+    SendStream.prototype.setHeader = function setHeader(path6, stat3) {
       var res = this.res;
-      this.emit("headers", res, path5, stat3);
+      this.emit("headers", res, path6, stat3);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -20897,9 +20897,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path5) {
+    function decode(path6) {
       try {
-        return decodeURIComponent(path5);
+        return decodeURIComponent(path6);
       } catch (err) {
         return -1;
       }
@@ -21808,10 +21808,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path4) {
-      if ("/" === path4[0]) return true;
-      if (":" === path4[1] && ("\\" === path4[2] || "/" === path4[2])) return true;
-      if ("\\\\" === path4.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path5) {
+      if ("/" === path5[0]) return true;
+      if (":" === path5[1] && ("\\" === path5[2] || "/" === path5[2])) return true;
+      if ("\\\\" === path5.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate3.function(
       flatten,
@@ -22023,7 +22023,7 @@ var require_application = __commonJS({
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path4 = "/";
+      var path5 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22031,7 +22031,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path4 = fn;
+          path5 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -22042,12 +22042,12 @@ var require_application = __commonJS({
       var router = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router.use(path4, fn2);
+          return router.use(path5, fn2);
         }
-        debug(".use app under %s", path4);
-        fn2.mountpath = path4;
+        debug(".use app under %s", path5);
+        fn2.mountpath = path5;
         fn2.parent = this;
-        router.use(path4, function mounted_app(req, res, next) {
+        router.use(path5, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -22059,9 +22059,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path4) {
+    app.route = function route(path5) {
       this.lazyrouter();
-      return this._router.route(path4);
+      return this._router.route(path5);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -22112,7 +22112,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path4() {
+    app.path = function path5() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -22128,19 +22128,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path4) {
+      app[method] = function(path5) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path4);
+          return this.set(path5);
         }
         this.lazyrouter();
-        var route = this._router.route(path4);
+        var route = this._router.route(path5);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path4) {
+    app.all = function all(path5) {
       this.lazyrouter();
-      var route = this._router.route(path4);
+      var route = this._router.route(path5);
       var args = slice.call(arguments, 1);
       for (var i2 = 0; i2 < methods.length; i2++) {
         route[methods[i2]].apply(route, args);
@@ -22899,7 +22899,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP2(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path4() {
+    defineGetter(req, "path", function path5() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -23221,7 +23221,7 @@ var require_response = __commonJS({
     var http3 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path4 = require("path");
+    var path5 = require("path");
     var statuses = require_statuses();
     var merge = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -23230,9 +23230,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path4.extname;
+    var extname = path5.extname;
     var mime = send.mime;
-    var resolve = path4.resolve;
+    var resolve = path5.resolve;
     var vary = require_vary();
     var res = Object.create(http3.ServerResponse.prototype);
     module2.exports = res;
@@ -23409,26 +23409,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path5, options, callback) {
+    res.sendFile = function sendFile(path6, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path5) {
+      if (!path6) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path5 !== "string") {
+      if (typeof path6 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path5)) {
+      if (!opts.root && !isAbsolute(path6)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path5);
+      var pathname = encodeURI(path6);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -23438,7 +23438,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path5, options, callback) {
+    res.sendfile = function(path6, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -23448,7 +23448,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path5, opts);
+      var file = send(req, path6, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -23461,7 +23461,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path5, filename, options, callback) {
+    res.download = function download(path6, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23478,7 +23478,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path5)
+        "Content-Disposition": contentDisposition(name || path6)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23491,7 +23491,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path5) : path5;
+      var fullPath = !opts.root ? resolve(path6) : path6;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23792,11 +23792,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path4 = parseUrl(req).pathname;
-        if (path4 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path4 = "";
+        var path5 = parseUrl(req).pathname;
+        if (path5 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path5 = "";
         }
-        var stream = send(req, path4, opts);
+        var stream = send(req, path5, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -40569,14 +40569,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path4) {
+    var parse = function(path5) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path4; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path5; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -40890,8 +40890,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path4) {
-      return apply(parse(path4));
+    exports2.svgPathToOperators = function(path5) {
+      return apply(parse(path5));
     };
   }
 });
@@ -41074,7 +41074,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path4, options) {
+    exports2.drawSvgPath = function(path5, options) {
       var _a2, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -41088,7 +41088,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path4), [
+      ], svgPath_1.svgPathToOperators(path5), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -45386,12 +45386,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path4, options) {
+        PDFPage2.prototype.drawSvgPath = function(path5, options) {
           var _a2, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path4, "path", ["string"]);
+          utils_1.assertIs(path5, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -45420,7 +45420,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path4, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path5, {
             x: (_a2 = options.x) !== null && _a2 !== void 0 ? _a2 : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -52598,22 +52598,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path4, type) => fromBlob((0, import_node_fs.statSync)(path4), path4, type);
-    blobFrom = (path4, type) => stat(path4).then((stat3) => fromBlob(stat3, path4, type));
-    fileFrom = (path4, type) => stat(path4).then((stat3) => fromFile(stat3, path4, type));
-    fileFromSync = (path4, type) => fromFile((0, import_node_fs.statSync)(path4), path4, type);
-    fromBlob = (stat3, path4, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path4,
+    blobFromSync = (path5, type) => fromBlob((0, import_node_fs.statSync)(path5), path5, type);
+    blobFrom = (path5, type) => stat(path5).then((stat3) => fromBlob(stat3, path5, type));
+    fileFrom = (path5, type) => stat(path5).then((stat3) => fromFile(stat3, path5, type));
+    fileFromSync = (path5, type) => fromFile((0, import_node_fs.statSync)(path5), path5, type);
+    fromBlob = (stat3, path5, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path5,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path4, type = "") => new file_default([new BlobDataItem({
-      path: path4,
+    fromFile = (stat3, path5, type = "") => new file_default([new BlobDataItem({
+      path: path5,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path4), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path5), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -57734,9 +57734,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs5 = require("fs");
+    var fs6 = require("fs");
     var os = require("os");
-    var path4 = require("path");
+    var path5 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -57822,15 +57822,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs5.promises.lstat(filePath);
+        const stats = await fs6.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path4.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path4.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path4.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path5.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path5.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path5.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os.platform().startsWith("win");
@@ -59776,11 +59776,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path4 = require("path");
-    var fs5 = require("fs");
+    var path5 = require("path");
+    var fs6 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs5.readFile ? (0, util_1.promisify)(fs5.readFile) : async () => {
+    var readFile = fs6.readFile ? (0, util_1.promisify)(fs6.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -59848,7 +59848,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path4.extname(keyFilePath);
+        const keyFileExtension = path5.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -61457,12 +61457,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs5 = require("fs");
-    var readFile = (0, util_1.promisify)(fs5.readFile ?? (() => {
+    var fs6 = require("fs");
+    var readFile = (0, util_1.promisify)(fs6.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs5.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs6.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs5.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs6.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -61580,7 +61580,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs5 = require("fs");
+    var fs6 = require("fs");
     var crypto_1 = require("crypto");
     var https2 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -61674,7 +61674,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs5.promises.readFile(configPath, "utf8");
+          fileContents = await fs6.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -61699,14 +61699,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs5.promises.readFile(certPath);
+          cert = await fs6.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs5.promises.readFile(keyPath);
+          key = await fs6.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -61725,7 +61725,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs5.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs6.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index) => {
             try {
@@ -62427,7 +62427,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs5 = require("fs");
+    var fs6 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -62512,14 +62512,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs5.promises.realpath(this.outputFile);
+          filePath = await fs6.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs5.promises.lstat(filePath)).isFile()) {
+        if (!(await fs6.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs5.promises.readFile(filePath, {
+        const responseString = await fs6.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -62930,7 +62930,7 @@ var require_gdchclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
     var crypto4 = require("crypto");
-    var fs5 = require("fs");
+    var fs6 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -63153,7 +63153,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs5.promises.readFile(currentPath);
+            const ca = await fs6.promises.readFile(currentPath);
             return new https2.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -63213,11 +63213,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs5 = require("fs");
+    var fs6 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
     var os = require("os");
-    var path4 = require("path");
+    var path5 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -63504,12 +63504,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location = path4.join(home, ".config");
+            location = path5.join(home, ".config");
           }
         }
         if (location) {
-          location = path4.join(location, "gcloud", "application_default_credentials.json");
-          if (!fs5.existsSync(location)) {
+          location = path5.join(location, "gcloud", "application_default_credentials.json");
+          if (!fs6.existsSync(location)) {
             location = null;
           }
         }
@@ -63530,8 +63530,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs5.realpathSync(filePath);
-          if (!fs5.lstatSync(filePath).isFile()) {
+          filePath = fs6.realpathSync(filePath);
+          if (!fs6.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -63540,7 +63540,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream = fs5.createReadStream(filePath);
+        const readStream = fs6.createReadStream(filePath);
         return this.fromStream(readStream, options);
       }
       /**
@@ -63867,8 +63867,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path4.resolve(this.keyFilename);
-          const stream = fs5.createReadStream(filePath);
+          const filePath = path5.resolve(this.keyFilename);
+          const stream = fs6.createReadStream(filePath);
           return await this.fromStreamAsync(stream, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -68096,8 +68096,8 @@ var require_websocket_server = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs5 = require("fs");
-    var path4 = require("path");
+    var fs6 = require("fs");
+    var path5 = require("path");
     var os = require("os");
     var crypto4 = require("crypto");
     var TIPS = [
@@ -68228,7 +68228,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs5.existsSync(filepath)) {
+            if (fs6.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -68236,15 +68236,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path4.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path5.resolve(process.cwd(), ".env.vault");
       }
-      if (fs5.existsSync(possibleVaultPath)) {
+      if (fs6.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path4.join(os.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path5.join(os.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -68261,7 +68261,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path4.resolve(process.cwd(), ".env");
+      const dotenvPath = path5.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -68289,13 +68289,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path5 of optionPaths) {
+      for (const path6 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs5.readFileSync(path5, { encoding }));
+          const parsed = DotenvModule.parse(fs6.readFileSync(path6, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e2) {
           if (debug) {
-            _debug(`failed to load ${path5} ${e2.message}`);
+            _debug(`failed to load ${path6} ${e2.message}`);
           }
           lastError = e2;
         }
@@ -68308,7 +68308,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path4.relative(process.cwd(), filePath);
+            const relative = path5.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e2) {
             if (debug) {
@@ -71462,8 +71462,8 @@ var require_jsonwebtoken = __commonJS({
 
 // server.ts
 var import_express2 = __toESM(require_express2(), 1);
-var import_path2 = __toESM(require("path"), 1);
-var import_fs3 = __toESM(require("fs"), 1);
+var import_path3 = __toESM(require("path"), 1);
+var import_fs4 = __toESM(require("fs"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 var import_node_module = require("node:module");
 var import_pdf_lib = __toESM(require_cjs(), 1);
@@ -75078,7 +75078,7 @@ var Batches = class extends BaseModule {
       params
     );
     const urlParams = body["_url"];
-    const path4 = formatMap("{model}:batchGenerateContent", urlParams);
+    const path5 = formatMap("{model}:batchGenerateContent", urlParams);
     const batch = body["batch"];
     const inputConfig = batch["inputConfig"];
     const requestsWrapper = inputConfig["requests"];
@@ -75099,7 +75099,7 @@ var Batches = class extends BaseModule {
     delete body["config"];
     delete body["_url"];
     delete body["_query"];
-    return { path: path4, body };
+    return { path: path5, body };
   }
   // Helper function to get the first GCS URI
   getGcsUri(src) {
@@ -75155,16 +75155,16 @@ var Batches = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createBatchJobParametersToVertex(this.apiClient, params);
-      path4 = formatMap("batchPredictionJobs", body["_url"]);
+      path5 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75179,12 +75179,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = createBatchJobParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{model}:batchGenerateContent", body["_url"]);
+      path5 = formatMap("{model}:batchGenerateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75209,18 +75209,18 @@ var Batches = class extends BaseModule {
   async createEmbeddingsInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+      path5 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75249,16 +75249,16 @@ var Batches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getBatchJobParametersToVertex(this.apiClient, params);
-      path4 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path5 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75273,12 +75273,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = getBatchJobParametersToMldev(this.apiClient, params);
-      path4 = formatMap("batches/{name}", body["_url"]);
+      path5 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75306,16 +75306,16 @@ var Batches = class extends BaseModule {
    */
   async cancel(params) {
     var _a2, _b, _c, _d;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-      path4 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+      path5 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75324,12 +75324,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-      path4 = formatMap("batches/{name}:cancel", body["_url"]);
+      path5 = formatMap("batches/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75341,16 +75341,16 @@ var Batches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listBatchJobsParametersToVertex(params);
-      path4 = formatMap("batchPredictionJobs", body["_url"]);
+      path5 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75373,12 +75373,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = listBatchJobsParametersToMldev(params);
-      path4 = formatMap("batches", body["_url"]);
+      path5 = formatMap("batches", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75415,16 +75415,16 @@ var Batches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-      path4 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path5 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -75445,12 +75445,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-      path4 = formatMap("batches/{name}", body["_url"]);
+      path5 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -76374,16 +76374,16 @@ var Caches = class extends BaseModule {
   async create(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createCachedContentParametersToVertex(this.apiClient, params);
-      path4 = formatMap("cachedContents", body["_url"]);
+      path5 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -76397,12 +76397,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = createCachedContentParametersToMldev(this.apiClient, params);
-      path4 = formatMap("cachedContents", body["_url"]);
+      path5 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -76430,16 +76430,16 @@ var Caches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getCachedContentParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -76453,12 +76453,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = getCachedContentParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -76486,16 +76486,16 @@ var Caches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -76518,12 +76518,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -76563,16 +76563,16 @@ var Caches = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateCachedContentParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -76586,12 +76586,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = updateCachedContentParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -76608,16 +76608,16 @@ var Caches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listCachedContentsParametersToVertex(params);
-      path4 = formatMap("cachedContents", body["_url"]);
+      path5 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -76640,12 +76640,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = listCachedContentsParametersToMldev(params);
-      path4 = formatMap("cachedContents", body["_url"]);
+      path5 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77241,18 +77241,18 @@ var Files = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFilesParametersToMldev(params);
-      path4 = formatMap("files", body["_url"]);
+      path5 = formatMap("files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77278,18 +77278,18 @@ var Files = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileParametersToMldev(params);
-      path4 = formatMap("upload/v1beta/files", body["_url"]);
+      path5 = formatMap("upload/v1beta/files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77324,18 +77324,18 @@ var Files = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileParametersToMldev(params);
-      path4 = formatMap("files/{file}", body["_url"]);
+      path5 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77365,18 +77365,18 @@ var Files = class extends BaseModule {
   async delete(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileParametersToMldev(params);
-      path4 = formatMap("files/{file}", body["_url"]);
+      path5 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -77402,18 +77402,18 @@ var Files = class extends BaseModule {
   async registerFilesInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = internalRegisterFilesParametersToMldev(params);
-      path4 = formatMap("files:register", body["_url"]);
+      path5 = formatMap("files:register", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -82667,13 +82667,13 @@ var ApiClient = class {
       throw new Error("HTTP options are not correctly set.");
     }
   }
-  constructUrl(path4, httpOptions, prependProjectLocation) {
+  constructUrl(path5, httpOptions, prependProjectLocation) {
     const urlElement = [this.getRequestUrlInternal(httpOptions)];
     if (prependProjectLocation) {
       urlElement.push(this.getBaseResourcePath());
     }
-    if (path4 !== "") {
-      urlElement.push(path4);
+    if (path5 !== "") {
+      urlElement.push(path5);
     }
     const url = new URL(`${urlElement.join("/")}`);
     return url;
@@ -82972,8 +82972,8 @@ var ApiClient = class {
       file: fileToUpload
     };
     const fileName = this.getFileName(file);
-    const path4 = formatMap("upload/v1beta/files", body["_url"]);
-    const uploadUrl = await this.fetchUploadUrl(path4, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const path5 = formatMap("upload/v1beta/files", body["_url"]);
+    const uploadUrl = await this.fetchUploadUrl(path5, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.upload(file, uploadUrl, this);
   }
   /**
@@ -82997,13 +82997,13 @@ var ApiClient = class {
     if (mimeType === void 0 || mimeType === "") {
       throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
     }
-    const path4 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+    const path5 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
     const fileName = this.getFileName(file);
     const body = {};
     if (config != null) {
       uploadToFileSearchStoreConfigToMldev(config, body);
     }
-    const uploadUrl = await this.fetchUploadUrl(path4, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const uploadUrl = await this.fetchUploadUrl(path5, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);
   }
   /**
@@ -83016,7 +83016,7 @@ var ApiClient = class {
     const downloader = this.clientOptions.downloader;
     await downloader.download(params, this);
   }
-  async fetchUploadUrl(path4, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+  async fetchUploadUrl(path5, sizeBytes, mimeType, fileName, body, configHttpOptions) {
     var _a2;
     let httpOptions = {};
     if (configHttpOptions) {
@@ -83029,7 +83029,7 @@ var ApiClient = class {
       };
     }
     const httpResponse = await this.request({
-      path: path4,
+      path: path5,
       body: JSON.stringify(body),
       httpMethod: "POST",
       httpOptions
@@ -84225,16 +84225,16 @@ var Models = class extends BaseModule {
   async generateContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:generateContent", body["_url"]);
+      path5 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84257,12 +84257,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{model}:generateContent", body["_url"]);
+      path5 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84288,17 +84288,17 @@ var Models = class extends BaseModule {
   async generateContentStreamInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path5 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84334,13 +84334,13 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path5 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84400,17 +84400,17 @@ var Models = class extends BaseModule {
   async embedContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
       const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-      path4 = formatMap(endpointUrl, body["_url"]);
+      path5 = formatMap(endpointUrl, body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84433,12 +84433,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-      path4 = formatMap("{model}:batchEmbedContents", body["_url"]);
+      path5 = formatMap("{model}:batchEmbedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84467,16 +84467,16 @@ var Models = class extends BaseModule {
   async generateImagesInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateImagesParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:predict", body["_url"]);
+      path5 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84499,12 +84499,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateImagesParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{model}:predict", body["_url"]);
+      path5 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84533,16 +84533,16 @@ var Models = class extends BaseModule {
   async editImageInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = editImageParametersInternalToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:predict", body["_url"]);
+      path5 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84573,16 +84573,16 @@ var Models = class extends BaseModule {
   async upscaleImageInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:predict", body["_url"]);
+      path5 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84634,16 +84634,16 @@ var Models = class extends BaseModule {
   async recontextImage(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = recontextImageParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:predict", body["_url"]);
+      path5 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84685,16 +84685,16 @@ var Models = class extends BaseModule {
   async segmentImage(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = segmentImageParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:predict", body["_url"]);
+      path5 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84724,16 +84724,16 @@ var Models = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getModelParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84748,12 +84748,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = getModelParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84771,16 +84771,16 @@ var Models = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listModelsParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{models_url}", body["_url"]);
+      path5 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84803,12 +84803,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = listModelsParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{models_url}", body["_url"]);
+      path5 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84851,16 +84851,16 @@ var Models = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateModelParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{model}", body["_url"]);
+      path5 = formatMap("{model}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -84875,12 +84875,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = updateModelParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -84909,16 +84909,16 @@ var Models = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteModelParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -84941,12 +84941,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = deleteModelParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -84988,16 +84988,16 @@ var Models = class extends BaseModule {
   async countTokens(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = countTokensParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:countTokens", body["_url"]);
+      path5 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85020,12 +85020,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = countTokensParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{model}:countTokens", body["_url"]);
+      path5 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85069,16 +85069,16 @@ var Models = class extends BaseModule {
   async computeTokens(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = computeTokensParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:computeTokens", body["_url"]);
+      path5 = formatMap("{model}:computeTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85109,16 +85109,16 @@ var Models = class extends BaseModule {
   async generateVideosInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateVideosParametersToVertex(this.apiClient, params);
-      path4 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path5 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85135,12 +85135,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateVideosParametersToMldev(this.apiClient, params);
-      path4 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path5 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85242,16 +85242,16 @@ var Operations = class extends BaseModule {
   async getVideosOperationInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getOperationParametersToVertex(params);
-      path4 = formatMap("{operationName}", body["_url"]);
+      path5 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -85263,12 +85263,12 @@ var Operations = class extends BaseModule {
       return response;
     } else {
       const body = getOperationParametersToMldev(params);
-      path4 = formatMap("{operationName}", body["_url"]);
+      path5 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -85283,16 +85283,16 @@ var Operations = class extends BaseModule {
   async fetchPredictVideosOperationInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = fetchPredictOperationParametersToVertex(params);
-      path4 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+      path5 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85980,20 +85980,20 @@ var Tokens = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
     } else {
       const body = createAuthTokenParametersToMldev(this.apiClient, params);
-      path4 = formatMap("auth_tokens", body["_url"]);
+      path5 = formatMap("auth_tokens", body["_url"]);
       queryParams = body["_query"];
       delete body["config"];
       delete body["_url"];
       delete body["_query"];
       const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(transformedBody),
         httpMethod: "POST",
@@ -86103,18 +86103,18 @@ var Documents = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getDocumentParametersToMldev(params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86135,18 +86135,18 @@ var Documents = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteDocumentParametersToMldev(params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86158,18 +86158,18 @@ var Documents = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listDocumentsParametersToMldev(params);
-      path4 = formatMap("{parent}/documents", body["_url"]);
+      path5 = formatMap("{parent}/documents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86286,18 +86286,18 @@ var FileSearchStores = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-      path4 = formatMap("fileSearchStores", body["_url"]);
+      path5 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86320,18 +86320,18 @@ var FileSearchStores = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileSearchStoreParametersToMldev(params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86352,18 +86352,18 @@ var FileSearchStores = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileSearchStoreParametersToMldev(params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86375,18 +86375,18 @@ var FileSearchStores = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFileSearchStoresParametersToMldev(params);
-      path4 = formatMap("fileSearchStores", body["_url"]);
+      path5 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86406,18 +86406,18 @@ var FileSearchStores = class extends BaseModule {
   async uploadToFileSearchStoreInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = uploadToFileSearchStoreParametersToMldev(params);
-      path4 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+      path5 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86445,18 +86445,18 @@ var FileSearchStores = class extends BaseModule {
   async importFile(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = importFileParametersToMldev(params);
-      path4 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+      path5 = formatMap("{file_search_store_name}:importFile", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87592,16 +87592,16 @@ var ClientSDK = class {
   }
   _createRequest(context, conf, options) {
     var _a2, _b, _c, _d, _e;
-    const { method, path: path4, query, headers: opHeaders, security } = conf;
+    const { method, path: path5, query, headers: opHeaders, security } = conf;
     const base = (_a2 = conf.baseURL) !== null && _a2 !== void 0 ? _a2 : this._baseURL;
     if (!base) {
       return ERR(new InvalidRequestError("No base URL provided for operation"));
     }
     const baseURL = new URL(base);
     let reqURL;
-    if (path4) {
+    if (path5) {
       baseURL.pathname = baseURL.pathname.replace(/\/+$/, "") + "/";
-      reqURL = new URL(path4, baseURL);
+      reqURL = new URL(path5, baseURL);
       if (!reqURL.search && baseURL.search) {
         reqURL.search = baseURL.search;
       }
@@ -88417,7 +88417,7 @@ async function $do$e(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path4 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path5 = pathToFunc("/{api_version}/agents")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -88448,7 +88448,7 @@ async function $do$e(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -88492,7 +88492,7 @@ async function $do$d(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path5 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -88522,7 +88522,7 @@ async function $do$d(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -88566,7 +88566,7 @@ async function $do$c(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path5 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -88596,7 +88596,7 @@ async function $do$c(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -88638,7 +88638,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path4 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path5 = pathToFunc("/{api_version}/agents")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token,
@@ -88673,7 +88673,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     query,
     body,
@@ -88825,7 +88825,7 @@ async function $do$a(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
+  const path5 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -88855,7 +88855,7 @@ async function $do$a(client, id, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -88898,7 +88898,7 @@ async function $do$9(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path4 = pathToFunc("/{api_version}/interactions")(pathParams);
+  const path5 = pathToFunc("/{api_version}/interactions")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: ((_b = input === null || input === void 0 ? void 0 : input.body) === null || _b === void 0 ? void 0 : _b.stream) ? "text/event-stream" : "application/json"
@@ -88929,7 +88929,7 @@ async function $do$9(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -88979,7 +88979,7 @@ async function $do$8(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path5 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -89009,7 +89009,7 @@ async function $do$8(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -89059,7 +89059,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path5 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const query = encodeFormQuery({
     "include_input": payload.include_input,
     "last_event_id": payload.last_event_id,
@@ -89094,7 +89094,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     query,
     body,
@@ -89168,7 +89168,7 @@ async function $do$6(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path4 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path5 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -89199,7 +89199,7 @@ async function $do$6(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -89243,7 +89243,7 @@ async function $do$5(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path5 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -89273,7 +89273,7 @@ async function $do$5(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -89317,7 +89317,7 @@ async function $do$4(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path5 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -89347,7 +89347,7 @@ async function $do$4(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -89388,7 +89388,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path4 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path5 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token
@@ -89422,7 +89422,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     query,
     body,
@@ -89468,7 +89468,7 @@ async function $do$2(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
+  const path5 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -89499,7 +89499,7 @@ async function $do$2(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -89544,7 +89544,7 @@ async function $do$1(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
+  const path5 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -89575,7 +89575,7 @@ async function $do$1(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -89621,7 +89621,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
       charEncoding: "percent"
     })
   };
-  const path4 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path5 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const query = encodeFormQuery({
     "update_mask": payload.update_mask
   });
@@ -89655,7 +89655,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
     security: requestSecurity,
     method: "PATCH",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path4,
+    path: path5,
     headers,
     query,
     body: body$,
@@ -91671,16 +91671,16 @@ var Tunings = class extends BaseModule {
   async getInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getTuningJobParametersToVertex(params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91701,12 +91701,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = getTuningJobParametersToMldev(params);
-      path4 = formatMap("{name}", body["_url"]);
+      path5 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91730,16 +91730,16 @@ var Tunings = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listTuningJobsParametersToVertex(params);
-      path4 = formatMap("tuningJobs", body["_url"]);
+      path5 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91778,16 +91778,16 @@ var Tunings = class extends BaseModule {
   async cancel(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelTuningJobParametersToVertex(params);
-      path4 = formatMap("{name}:cancel", body["_url"]);
+      path5 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91810,12 +91810,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = cancelTuningJobParametersToMldev(params);
-      path4 = formatMap("{name}:cancel", body["_url"]);
+      path5 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91841,16 +91841,16 @@ var Tunings = class extends BaseModule {
   async tuneInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createTuningJobParametersPrivateToVertex(params, params);
-      path4 = formatMap("tuningJobs", body["_url"]);
+      path5 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91876,18 +91876,18 @@ var Tunings = class extends BaseModule {
   async tuneMldevInternal(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createTuningJobParametersPrivateToMldev(params);
-      path4 = formatMap("tunedModels", body["_url"]);
+      path5 = formatMap("tunedModels", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91911,16 +91911,16 @@ var Tunings = class extends BaseModule {
   async validateReward(params) {
     var _a2, _b;
     let response;
-    let path4 = "";
+    let path5 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = validateRewardParametersToVertex(params);
-      path4 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
+      path5 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path4,
+        path: path5,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93279,8 +93279,302 @@ async function setCachedShopeeAddressList(shopId, result) {
 
 // src/db/mongoStore.ts
 var import_mongoose = __toESM(require("mongoose"), 1);
+var import_fs3 = __toESM(require("fs"), 1);
+var import_path2 = __toESM(require("path"), 1);
+
+// src/db/productsDiskStore.ts
 var import_fs2 = __toESM(require("fs"), 1);
 var import_path = __toESM(require("path"), 1);
+function isProductsDiskMode() {
+  const raw = process.env.PRODUCTS_STORAGE ?? process.env.PRODUCTS_DISK;
+  if (raw == null || String(raw).trim() === "") return true;
+  const v = String(raw).trim().toLowerCase();
+  if (v === "mongo" || v === "atlas" || v === "0" || v === "false" || v === "off") {
+    return false;
+  }
+  return v === "disk" || v === "json" || v === "file" || v === "1" || v === "true" || v === "on";
+}
+var appRootResolved = "";
+var productsCache = null;
+var writeChain = Promise.resolve();
+function setProductsDiskAppRoot(appRoot) {
+  appRootResolved = String(appRoot || "").trim();
+}
+function resolveAppRoot() {
+  if (appRootResolved) return appRootResolved;
+  return process.cwd();
+}
+function getProductsDiskPath() {
+  return import_path.default.join(resolveAppRoot(), "data", "products.json");
+}
+function ensureDataDir() {
+  const dir = import_path.default.dirname(getProductsDiskPath());
+  if (!import_fs2.default.existsSync(dir)) import_fs2.default.mkdirSync(dir, { recursive: true });
+}
+function normalizeProduct(p) {
+  if (!p || typeof p !== "object") return null;
+  const id = String(p.id || "").trim();
+  if (!id) return null;
+  return { ...p, id };
+}
+function readProductsFromDisk() {
+  const file = getProductsDiskPath();
+  if (!import_fs2.default.existsSync(file)) {
+    productsCache = { mtimeMs: 0, products: [] };
+    return [];
+  }
+  const st = import_fs2.default.statSync(file);
+  if (productsCache && productsCache.mtimeMs === st.mtimeMs) {
+    return productsCache.products;
+  }
+  try {
+    const raw = import_fs2.default.readFileSync(file, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    const products = (Array.isArray(parsed) ? parsed : []).map(normalizeProduct).filter(Boolean);
+    productsCache = { mtimeMs: st.mtimeMs, products };
+    return products;
+  } catch (err) {
+    console.error("[Products Disk] \u0110\u1ECDc products.json th\u1EA5t b\u1EA1i:", err?.message || err);
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+function writeProductsToDiskSync(products) {
+  ensureDataDir();
+  const file = getProductsDiskPath();
+  const list = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean);
+  const tmp = `${file}.tmp.${process.pid}`;
+  import_fs2.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
+  import_fs2.default.renameSync(tmp, file);
+  try {
+    const st = import_fs2.default.statSync(file);
+    productsCache = { mtimeMs: st.mtimeMs, products: list };
+  } catch {
+    productsCache = { mtimeMs: Date.now(), products: list };
+  }
+  console.log(`[Products Disk] WRITE OK \u2014 path=${file} count=${list.length}`);
+}
+async function saveProductsToDisk(products) {
+  const run = writeChain.then(() => {
+    writeProductsToDiskSync(products);
+  });
+  writeChain = run.catch(() => void 0);
+  await run;
+}
+async function upsertProductsToDisk(products) {
+  const incoming = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean);
+  if (incoming.length === 0) return 0;
+  const current = readProductsFromDisk();
+  const byId = new Map(current.map((p) => [String(p.id), p]));
+  for (const p of incoming) byId.set(String(p.id), { ...byId.get(String(p.id)), ...p, id: p.id });
+  await saveProductsToDisk([...byId.values()]);
+  return incoming.length;
+}
+async function deleteProductsByIdsFromDisk(ids) {
+  const safe = new Set(ids.map((id) => String(id || "").trim()).filter(Boolean));
+  if (safe.size === 0) return 0;
+  const current = readProductsFromDisk();
+  const kept = current.filter((p) => !safe.has(String(p.id || "").trim()));
+  const deleted = current.length - kept.length;
+  if (deleted > 0) await saveProductsToDisk(kept);
+  return deleted;
+}
+function countProductsOnDisk() {
+  return readProductsFromDisk().length;
+}
+function loadProductsPageFromDisk(page = 1, pageSize = 50) {
+  const all = readProductsFromDisk();
+  const safePage = Math.max(1, Math.floor(Number(page) || 1));
+  const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  const total = all.length;
+  const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
+  const currentPage = Math.min(safePage, totalPages);
+  const start = (currentPage - 1) * safeSize;
+  return {
+    products: all.slice(start, start + safeSize),
+    total,
+    page: currentPage,
+    pageSize: safeSize,
+    totalPages,
+    hasMore: currentPage < totalPages
+  };
+}
+function productMatchKeys(p) {
+  const keys = [
+    p?.id,
+    p?.sku,
+    p?.shopeeItemId,
+    p?.shopeeModelId,
+    p?.barcode
+  ];
+  for (const c of Array.isArray(p?.children) ? p.children : []) {
+    keys.push(c?.id, c?.sku, c?.shopeeModelId);
+  }
+  for (const c of Array.isArray(p?.children_models) ? p.children_models : []) {
+    keys.push(c?.id, c?.sku, c?.shopeeModelId);
+  }
+  return keys.map((k) => String(k || "").trim()).filter(Boolean);
+}
+function loadProductByIdFromDisk(productId) {
+  const id = String(productId || "").trim();
+  if (!id) return null;
+  const all = readProductsFromDisk();
+  for (const p of all) {
+    if (String(p.id || "").trim() === id) return p;
+    if (String(p.shopeeItemId || "").trim() === id) return p;
+    if (String(p.shopeeModelId || "").trim() === id) return p;
+    for (const key of ["children", "children_models"]) {
+      const list = Array.isArray(p[key]) ? p[key] : [];
+      const child = list.find(
+        (c) => String(c?.id || "").trim() === id || String(c?.shopeeModelId || "").trim() === id
+      );
+      if (child) {
+        return {
+          ...child,
+          title: child.title || p.title,
+          imageUrl: child.imageUrl || p.imageUrl,
+          avatarUrl: child.avatarUrl || p.avatarUrl
+        };
+      }
+    }
+  }
+  return null;
+}
+function loadProductsByIdsFromDisk(productIds, shopeeItemIds = []) {
+  const wanted = new Set(
+    [...productIds, ...shopeeItemIds].map((v) => String(v || "").trim()).filter(Boolean)
+  );
+  if (wanted.size === 0) return [];
+  return readProductsFromDisk().filter(
+    (p) => productMatchKeys(p).some((k) => wanted.has(k) || wanted.has(`shopee-item-${k}`))
+  );
+}
+function searchProductsFromDisk(query, limit = 40) {
+  const q = String(query || "").trim().toLowerCase();
+  const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
+  const all = readProductsFromDisk();
+  if (!q) return all.slice(0, safeLimit);
+  const scored = [];
+  for (const p of all) {
+    const sku = String(p.sku || "").toLowerCase();
+    const title = String(p.title || "").toLowerCase();
+    let score = 0;
+    if (sku === q) score = 300;
+    else if (sku.startsWith(q)) score = 200;
+    else if (sku.includes(q)) score = 120;
+    else if (title.includes(q)) score = 80;
+    else {
+      const childHit = [...p.children || [], ...p.children_models || []].some((c) => {
+        const csku = String(c?.sku || "").toLowerCase();
+        const ctitle = String(c?.title || c?.modelName || "").toLowerCase();
+        return csku === q || csku.startsWith(q) || csku.includes(q) || ctitle.includes(q);
+      });
+      if (childHit) score = 90;
+    }
+    if (score > 0) scored.push({ p, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, safeLimit).map((x2) => x2.p);
+}
+async function applyImportStockAndPriceOnDisk(productId, quantityDelta, importPrice, opts) {
+  const id = String(productId || "").trim();
+  const skuHint = String(opts?.skuHint || "").trim();
+  if (!id && !skuHint) throw new Error("Thi\u1EBFu productId/sku \u0111\u1EC3 c\u1EADp nh\u1EADt Kho G\u1ED1c");
+  const qty = Math.round(Number(quantityDelta) || 0);
+  const price = Math.max(0, Math.round(Number(importPrice) || 0));
+  const all = readProductsFromDisk();
+  let parentIdx = -1;
+  let mode = "parent";
+  let childKey = null;
+  let childIdx = -1;
+  for (let i2 = 0; i2 < all.length; i2++) {
+    const p = all[i2];
+    const parentMatch = id && String(p.id || "").trim() === id || skuHint && String(p.sku || "").trim().toLowerCase() === skuHint.toLowerCase();
+    const cKey = Array.isArray(p.children) && p.children.length ? "children" : Array.isArray(p.children_models) && p.children_models.length ? "children_models" : null;
+    if (cKey) {
+      const children = p[cKey];
+      const cIdx = children.findIndex((c) => {
+        const cid = String(c?.id || c?.shopeeModelId || "").trim();
+        const csku = String(c?.sku || "").trim();
+        return id && cid === id || skuHint && csku.toLowerCase() === skuHint.toLowerCase();
+      });
+      if (cIdx >= 0) {
+        parentIdx = i2;
+        mode = "child";
+        childKey = cKey;
+        childIdx = cIdx;
+        break;
+      }
+    }
+    if (parentMatch) {
+      parentIdx = i2;
+      childKey = cKey;
+      break;
+    }
+  }
+  if (parentIdx < 0) {
+    throw new Error(
+      `Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m trong Kho G\u1ED1c (disk). id=${id || "\u2014"} sku=${skuHint || "\u2014"}`
+    );
+  }
+  const parent = { ...all[parentIdx], id: String(all[parentIdx].id) };
+  let productOut;
+  let oldStock = 0;
+  let newStock = 0;
+  let oldImportPrice = 0;
+  if (mode === "child" && childKey && childIdx >= 0) {
+    const children = [...parent[childKey]];
+    const before = children[childIdx];
+    oldStock = Math.max(0, Math.round(Number(before.stock) || 0));
+    oldImportPrice = Math.max(0, Math.round(Number(before.importPrice) || 0));
+    newStock = Math.max(0, oldStock + qty);
+    const mergedChild = {
+      ...before,
+      id: before.id || id,
+      stock: newStock,
+      importPrice: price,
+      status: newStock <= 0 && before.status !== "draft" ? "out_of_stock" : before.status === "out_of_stock" ? "active" : before.status,
+      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    children[childIdx] = mergedChild;
+    const totalStock = children.reduce(
+      (s2, c) => s2 + Math.max(0, Math.round(Number(c.stock) || 0)),
+      0
+    );
+    all[parentIdx] = {
+      ...parent,
+      [childKey]: children,
+      stock: totalStock,
+      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    productOut = mergedChild;
+  } else {
+    oldStock = Math.max(0, Math.round(Number(parent.stock) || 0));
+    oldImportPrice = Math.max(0, Math.round(Number(parent.importPrice) || 0));
+    newStock = Math.max(0, oldStock + qty);
+    productOut = {
+      ...parent,
+      stock: newStock,
+      importPrice: price,
+      status: newStock <= 0 && parent.status !== "draft" ? "out_of_stock" : parent.status === "out_of_stock" ? "active" : parent.status,
+      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    all[parentIdx] = productOut;
+  }
+  await saveProductsToDisk(all);
+  return {
+    product: productOut,
+    oldStock,
+    newStock,
+    oldImportPrice,
+    newImportPrice: price,
+    target: mode,
+    parentId: String(parent.id),
+    warehouse: "KhoGoc",
+    collection: "products"
+  };
+}
+
+// src/db/mongoStore.ts
 var ORDER_EVENT_TTL_SECONDS = Math.max(
   24 * 60 * 60,
   Number(process.env.ORDER_EVENT_TTL_SECONDS || 60 * 24 * 60 * 60)
@@ -93404,8 +93698,8 @@ var OrderModel;
 var OrderEventModel;
 var SyncJobModel;
 var mongoReady = false;
-var appRootResolved = "";
-var writeChain = Promise.resolve();
+var appRootResolved2 = "";
+var writeChain2 = Promise.resolve();
 function getMongoUri() {
   return String(process.env.MONGODB_URI || process.env.MONGO_URL || "").trim();
 }
@@ -93474,8 +93768,8 @@ function docsToListings(docs) {
   return out;
 }
 function enqueueWrite(task) {
-  const next = writeChain.then(task);
-  writeChain = next.catch((err) => {
+  const next = writeChain2.then(task);
+  writeChain2 = next.catch((err) => {
     console.error("[MongoDB] Write chain error:", err);
   });
   return next;
@@ -93498,10 +93792,16 @@ function getMongoUriMasked() {
   return uri.replace(/\/\/([^:]+):([^@]+)@/, "//$1:***@");
 }
 async function initMongo(appRoot) {
-  if (appRoot) appRootResolved = appRoot;
-  if (!appRootResolved) appRootResolved = process.cwd();
+  if (appRoot) appRootResolved2 = appRoot;
+  if (!appRootResolved2) appRootResolved2 = process.cwd();
+  setProductsDiskAppRoot(appRootResolved2);
+  if (isProductsDiskMode()) {
+    console.log(
+      `[Products] STORAGE=disk \u2014 Kho G\u1ED1c tr\xEAn hosting: ${getProductsDiskPath()} (kh\xF4ng ghi Mongo products)`
+    );
+  }
   const uri = getMongoUri();
-  console.log(`[MongoDB] Boot \u2014 APP_ROOT=${appRootResolved}`);
+  console.log(`[MongoDB] Boot \u2014 APP_ROOT=${appRootResolved2}`);
   console.log(`[MongoDB] Boot \u2014 URI=${getMongoUriMasked()}`);
   if (!uri) {
     mongoReady = false;
@@ -93509,7 +93809,7 @@ async function initMongo(appRoot) {
       "L\u1ED6I MONGODB STARTUP:",
       "thi\u1EBFu MONGODB_URI / MONGO_URL trong .env ho\u1EB7c Environment Variables."
     );
-    return false;
+    return isProductsDiskMode();
   }
   try {
     ensureModels();
@@ -93528,8 +93828,8 @@ async function initMongo(appRoot) {
         waitQueueTimeoutMS: 8e3,
         maxIdleTimeMS: 3e4
       });
-      import_fs2.default.writeFileSync(
-        import_path.default.join(appRootResolved, "db_status.txt"),
+      import_fs3.default.writeFileSync(
+        import_path2.default.join(appRootResolved2, "db_status.txt"),
         "KET_NOI_THANH_CONG_LUC: " + (/* @__PURE__ */ new Date()).toISOString()
       );
     }
@@ -93539,7 +93839,7 @@ async function initMongo(appRoot) {
         "L\u1ED6I MONGODB STARTUP:",
         `mongoose readyState=${import_mongoose.default.connection.readyState} (expect 1)`
       );
-      return false;
+      return isProductsDiskMode();
     }
     const [productCount, listingCount] = await Promise.all([
       ProductModel.countDocuments(),
@@ -93547,13 +93847,21 @@ async function initMongo(appRoot) {
     ]);
     console.log("MongoDB Connected Successfully");
     console.log(
-      `[MongoDB] Connected Successfully \u2014 ${getMongoUriMasked()} | products=${productCount} | channel_listings=${listingCount} | warehouse=KhoGoc(collection:products)`
+      `[MongoDB] Connected Successfully \u2014 ${getMongoUriMasked()} | products(mongo)=${productCount} | channel_listings=${listingCount}` + (isProductsDiskMode() ? ` | warehouse=KhoGoc(DISK:${countProductsOnDisk()})` : " | warehouse=KhoGoc(collection:products)")
     );
-    try {
-      await ProductModel.syncIndexes();
-      console.log("[MongoDB] Product indexes synced (sku, data.sku, text title/sku, children.sku)");
-    } catch (idxErr) {
-      console.warn("[MongoDB] syncIndexes products:", idxErr);
+    if (!isProductsDiskMode()) {
+      try {
+        await ProductModel.syncIndexes();
+        console.log("[MongoDB] Product indexes synced (sku, data.sku, text title/sku, children.sku)");
+      } catch (idxErr) {
+        console.warn("[MongoDB] syncIndexes products:", idxErr);
+      }
+    } else {
+      try {
+        await maybeMigrateMongoProductsToDisk(productCount);
+      } catch (migErr) {
+        console.warn("[Products Disk] migrate Mongo\u2192disk:", migErr?.message || migErr);
+      }
     }
     try {
       await OrderModel.syncIndexes();
@@ -93564,7 +93872,7 @@ async function initMongo(appRoot) {
     console.log(
       `[MongoDB] Retention indexes gi\u1EEF nguy\xEAn (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`
     );
-    if (productCount === 0 && listingCount === 0) {
+    if (!isProductsDiskMode() && productCount === 0 && listingCount === 0) {
       try {
         await maybeMigrateJsonFallbackToMongo();
       } catch (migrateErr) {
@@ -93577,27 +93885,57 @@ async function initMongo(appRoot) {
     mongoReady = false;
     const msg = err instanceof Error ? err.message : String(err);
     const code = err && typeof err === "object" && "code" in err ? String(err.code) : "undefined";
-    import_fs2.default.writeFileSync(
-      import_path.default.join(appRootResolved, "db_status.txt"),
+    import_fs3.default.writeFileSync(
+      import_path2.default.join(appRootResolved2, "db_status.txt"),
       "LOI_KET_NOI: " + msg + " | CODE: " + code
     );
     console.error("L\u1ED6I MONGODB STARTUP:", msg);
     if (err instanceof Error && err.stack) console.error(err.stack);
-    return false;
+    return isProductsDiskMode();
+  }
+}
+async function maybeMigrateMongoProductsToDisk(mongoProductCount) {
+  if (!isProductsDiskMode()) return;
+  const existing = readProductsFromDisk();
+  if (existing.length > 0) {
+    console.log(`[Products Disk] \u0110\xE3 c\xF3 ${existing.length} SP tr\xEAn \u0111\u0129a \u2014 b\u1ECF qua migrate.`);
+    return;
+  }
+  if (!mongoReady || mongoProductCount <= 0) {
+    console.log("[Products Disk] Disk tr\u1ED1ng v\xE0 Mongo kh\xF4ng c\xF3 products \u2014 b\u1EAFt \u0111\u1EA7u kho tr\u1ED1ng tr\xEAn \u0111\u0129a.");
+    return;
+  }
+  console.log(`[Products Disk] Migrating ${mongoProductCount} products Mongo \u2192 disk...`);
+  const docs = await ProductModel.find({}).lean();
+  const products = docsToProducts(docs);
+  await saveProductsToDisk(products);
+  const drop = String(process.env.PRODUCTS_DROP_MONGO_AFTER_MIGRATE || "1").trim() !== "0";
+  if (drop) {
+    try {
+      const del = await ProductModel.deleteMany({});
+      console.log(
+        `[Products Disk] \u0110\xE3 x\xF3a products tr\xEAn Mongo \u0111\u1EC3 gi\u1EA3i ph\xF3ng Atlas \u2014 deleted=${del.deletedCount || 0}`
+      );
+    } catch (err) {
+      console.warn(
+        "[Products Disk] Kh\xF4ng x\xF3a \u0111\u01B0\u1EE3c products tr\xEAn Mongo (c\xF3 th\u1EC3 Atlas ch\u1EB7n ghi):",
+        err?.message || err
+      );
+    }
   }
 }
 async function maybeMigrateJsonFallbackToMongo() {
-  const productsPath = import_path.default.join(appRootResolved, "data", "products.json");
-  const listingsPath = import_path.default.join(appRootResolved, "data", "channel_listings.json");
+  const productsPath = import_path2.default.join(appRootResolved2, "data", "products.json");
+  const listingsPath = import_path2.default.join(appRootResolved2, "data", "channel_listings.json");
   let products = [];
   let listings = [];
   try {
-    if (import_fs2.default.existsSync(productsPath)) {
-      const parsed = JSON.parse(import_fs2.default.readFileSync(productsPath, "utf-8"));
+    if (import_fs3.default.existsSync(productsPath)) {
+      const parsed = JSON.parse(import_fs3.default.readFileSync(productsPath, "utf-8"));
       products = Array.isArray(parsed) ? parsed : [];
     }
-    if (import_fs2.default.existsSync(listingsPath)) {
-      const parsed = JSON.parse(import_fs2.default.readFileSync(listingsPath, "utf-8"));
+    if (import_fs3.default.existsSync(listingsPath)) {
+      const parsed = JSON.parse(import_fs3.default.readFileSync(listingsPath, "utf-8"));
       listings = Array.isArray(parsed) ? parsed : [];
     }
   } catch (err) {
@@ -93612,11 +93950,13 @@ async function maybeMigrateJsonFallbackToMongo() {
   await saveChannelListingsToStoreAsync(listings);
 }
 async function loadProductsFromStore() {
+  if (isProductsDiskMode()) return readProductsFromDisk();
   requireMongo();
   const docs = await ProductModel.find({}).lean();
   return docsToProducts(docs);
 }
 async function loadProductsPageFromStore(page = 1, pageSize = 50) {
+  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize);
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
@@ -93645,6 +93985,7 @@ async function loadProductsPageFromStore(page = 1, pageSize = 50) {
   };
 }
 async function loadProductByIdFromStore(productId) {
+  if (isProductsDiskMode()) return loadProductByIdFromDisk(productId);
   requireMongo();
   const id = String(productId || "").trim();
   if (!id) return null;
@@ -93676,6 +94017,7 @@ async function loadProductByIdFromStore(productId) {
   return null;
 }
 async function loadProductsByIdsFromStore(productIds, shopeeItemIds = []) {
+  if (isProductsDiskMode()) return loadProductsByIdsFromDisk(productIds, shopeeItemIds);
   requireMongo();
   const ids = [...new Set(productIds.map((v) => String(v || "").trim()).filter(Boolean))];
   const itemIds = [...new Set(shopeeItemIds.map((v) => String(v || "").trim()).filter(Boolean))];
@@ -93721,76 +94063,86 @@ function toSearchLeanRow(row) {
   };
 }
 async function searchProductsFromStore(query, limit = 40) {
-  requireMongo();
   const q = String(query || "").trim();
   const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
   const parentFetchLimit = Math.min(120, Math.max(safeLimit * 2, 40));
   const qLower = q.toLowerCase();
   let docs = [];
-  if (!q) {
-    docs = await ProductModel.find({}, { sku: 1, data: 1 }).sort({ _id: 1 }).limit(parentFetchLimit).lean();
-  } else {
-    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const exactSku = new RegExp(`^${escaped}$`, "i");
-    const prefixSku = new RegExp(`^${escaped}`, "i");
-    const contains = { $regex: escaped, $options: "i" };
-    docs = await ProductModel.find(
-      {
-        $or: [
-          { sku: exactSku },
-          { "data.sku": exactSku },
-          { "data.children.sku": exactSku },
-          { "data.children_models.sku": exactSku },
-          { "data.barcode": exactSku }
-        ]
-      },
-      { sku: 1, data: 1 }
-    ).limit(parentFetchLimit).lean();
-    if (docs.length < safeLimit) {
-      const more = await ProductModel.find(
-        {
-          $or: [
-            { sku: prefixSku },
-            { "data.sku": prefixSku },
-            { "data.children.sku": prefixSku },
-            { "data.children_models.sku": prefixSku }
-          ]
-        },
-        { sku: 1, data: 1 }
-      ).limit(parentFetchLimit).lean();
-      const seen2 = new Set(docs.map((d) => String(d._id)));
-      for (const d of more) {
-        const key = String(d._id);
-        if (seen2.has(key)) continue;
-        seen2.add(key);
-        docs.push(d);
-      }
-    }
-    if (docs.length < safeLimit) {
-      const more = await ProductModel.find(
-        {
-          $or: [
-            { "data.title": contains },
-            { "data.modelName": contains },
-            { "data.children.title": contains },
-            { "data.children_models.title": contains }
-          ]
-        },
-        { sku: 1, data: 1 }
-      ).limit(parentFetchLimit).lean();
-      const seen2 = new Set(docs.map((d) => String(d._id)));
-      for (const d of more) {
-        const key = String(d._id);
-        if (seen2.has(key)) continue;
-        seen2.add(key);
-        docs.push(d);
-      }
-    }
-    console.log("[MongoSearch] KhoGoc products", {
+  if (isProductsDiskMode()) {
+    const parents2 = searchProductsFromDisk(q, parentFetchLimit);
+    docs = parents2.map((p) => ({ _id: p.id, sku: p.sku, data: p }));
+    console.log("[DiskSearch] KhoGoc products", {
       q,
       parentHits: docs.length,
       sampleSkus: docs.slice(0, 5).map((d) => d?.sku || d?.data?.sku)
     });
+  } else {
+    requireMongo();
+    if (!q) {
+      docs = await ProductModel.find({}, { sku: 1, data: 1 }).sort({ _id: 1 }).limit(parentFetchLimit).lean();
+    } else {
+      const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const exactSku = new RegExp(`^${escaped}$`, "i");
+      const prefixSku = new RegExp(`^${escaped}`, "i");
+      const contains = { $regex: escaped, $options: "i" };
+      docs = await ProductModel.find(
+        {
+          $or: [
+            { sku: exactSku },
+            { "data.sku": exactSku },
+            { "data.children.sku": exactSku },
+            { "data.children_models.sku": exactSku },
+            { "data.barcode": exactSku }
+          ]
+        },
+        { sku: 1, data: 1 }
+      ).limit(parentFetchLimit).lean();
+      if (docs.length < safeLimit) {
+        const more = await ProductModel.find(
+          {
+            $or: [
+              { sku: prefixSku },
+              { "data.sku": prefixSku },
+              { "data.children.sku": prefixSku },
+              { "data.children_models.sku": prefixSku }
+            ]
+          },
+          { sku: 1, data: 1 }
+        ).limit(parentFetchLimit).lean();
+        const seenIds = new Set(docs.map((d) => String(d._id)));
+        for (const d of more) {
+          const key = String(d._id);
+          if (seenIds.has(key)) continue;
+          seenIds.add(key);
+          docs.push(d);
+        }
+      }
+      if (docs.length < safeLimit) {
+        const more = await ProductModel.find(
+          {
+            $or: [
+              { "data.title": contains },
+              { "data.modelName": contains },
+              { "data.children.title": contains },
+              { "data.children_models.title": contains }
+            ]
+          },
+          { sku: 1, data: 1 }
+        ).limit(parentFetchLimit).lean();
+        const seenIds = new Set(docs.map((d) => String(d._id)));
+        for (const d of more) {
+          const key = String(d._id);
+          if (seenIds.has(key)) continue;
+          seenIds.add(key);
+          docs.push(d);
+        }
+      }
+      console.log("[MongoSearch] KhoGoc products", {
+        q,
+        parentHits: docs.length,
+        sampleSkus: docs.slice(0, 5).map((d) => d?.sku || d?.data?.sku)
+      });
+    }
   }
   const parents = docsToProducts(docs);
   const flat = [];
@@ -93852,6 +94204,9 @@ async function searchProductsFromStore(query, limit = 40) {
   return flat.slice(0, safeLimit);
 }
 async function applyImportStockAndPriceToMainWarehouse(productId, quantityDelta, importPrice, opts) {
+  if (isProductsDiskMode()) {
+    return applyImportStockAndPriceOnDisk(productId, quantityDelta, importPrice, opts);
+  }
   requireMongo();
   const id = String(productId || "").trim();
   const skuHint = String(opts?.skuHint || "").trim();
@@ -94022,6 +94377,7 @@ async function loadChannelListingsFromStore() {
   return docsToListings(docs);
 }
 async function countProducts() {
+  if (isProductsDiskMode()) return countProductsOnDisk();
   requireMongo();
   return ProductModel.countDocuments();
 }
@@ -94048,8 +94404,12 @@ async function setMeta(key, value) {
   await MetaModel.findByIdAndUpdate(key, { value }, { upsert: true });
 }
 async function saveProductsToStoreAsync(products) {
-  requireMongo();
   const list = Array.isArray(products) ? products.filter((p) => p != null && typeof p === "object") : [];
+  if (isProductsDiskMode()) {
+    await saveProductsToDisk(list);
+    return;
+  }
+  requireMongo();
   const docs = toProductDocs(list);
   await enqueueWrite(async () => {
     await ProductModel.deleteMany({});
@@ -94061,6 +94421,7 @@ async function saveProductsToStoreAsync(products) {
   });
 }
 async function upsertProductsToStoreAsync(products) {
+  if (isProductsDiskMode()) return upsertProductsToDisk(products);
   requireMongo();
   const docs = toProductDocs(Array.isArray(products) ? products : []);
   if (docs.length === 0) return 0;
@@ -94080,6 +94441,7 @@ async function upsertProductsToStoreAsync(products) {
   return docs.length;
 }
 async function deleteProductsByIdsFromStore(ids) {
+  if (isProductsDiskMode()) return deleteProductsByIdsFromDisk(ids);
   requireMongo();
   const safeIds = [...new Set(ids.map((id) => String(id || "").trim()).filter(Boolean))];
   if (safeIds.length === 0) return 0;
@@ -94704,6 +95066,193 @@ async function deleteHandedOverOrdersFromStore() {
   );
   return { deleted, sns };
 }
+async function deleteClosedOrdersByRetention(opts) {
+  if (!isMongoReady()) {
+    return {
+      deleted: 0,
+      sns: [],
+      scanned: 0,
+      dryRun: Boolean(opts?.dryRun),
+      cancelReturnMatched: 0,
+      closedMatched: 0
+    };
+  }
+  requireMongo();
+  const cancelReturnDays = Math.max(1, Math.floor(opts?.cancelReturnDays ?? 14));
+  const closedDays = Math.max(1, Math.floor(opts?.closedDays ?? 30));
+  const dryRun = Boolean(opts?.dryRun);
+  const limit = Math.min(
+    5e3,
+    Math.max(1, Math.floor(opts?.limit ?? 3e3))
+  );
+  const cancelCutoff = Date.now() - cancelReturnDays * 24 * 60 * 60 * 1e3;
+  const closedCutoff = Date.now() - closedDays * 24 * 60 * 60 * 1e3;
+  const parseTs = (raw) => {
+    if (raw == null || raw === "") return 0;
+    if (typeof raw === "number") {
+      return raw < 1e12 ? raw * 1e3 : raw;
+    }
+    if (raw instanceof Date) return raw.getTime();
+    const ms = Date.parse(String(raw));
+    return Number.isFinite(ms) ? ms : 0;
+  };
+  const orderAgeMs = (d) => {
+    const data = d?.data && typeof d.data === "object" ? d.data : {};
+    const candidates = [
+      data.local_status_updated_at,
+      data.localStatusAt,
+      data.handedOverAt,
+      d.local_status_updated_at,
+      data.date,
+      d.date,
+      data.update_time,
+      d.update_time,
+      d.last_synced_at,
+      data.last_synced_at
+    ];
+    let best = 0;
+    for (const c of candidates) {
+      const t2 = parseTs(c);
+      if (t2 > best) best = t2;
+    }
+    return best;
+  };
+  const localOf = (d) => String(d?.data?.local_status || d?.data?.localStatus || d?.local_status || "").trim().toUpperCase();
+  const statusOf = (d) => String(d?.status || d?.data?.status || "").trim().toLowerCase();
+  const rawOf = (d) => String(d?.shopee_order_status || d?.data?.shopee_order_status || "").trim().toUpperCase();
+  const isProtectedLive = (d) => {
+    const local = localOf(d);
+    if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED" || d?.data?.is_local_return_archived === true || d?.is_local_return_archived === true) {
+      return false;
+    }
+    const raw = rawOf(d);
+    if (["CANCELLED", "IN_CANCEL", "TO_RETURN", "COMPLETED", "SHIPPED", "TO_CONFIRM_RECEIVE"].includes(raw)) {
+      return false;
+    }
+    const st = statusOf(d);
+    if (["cancelled", "return_received", "return_pending", "completed", "shipping", "handed_over"].includes(st)) {
+      return false;
+    }
+    if (local === "HANDED_OVER" || d?.is_handed_over === true || d?.data?.is_handed_over === true) {
+      return false;
+    }
+    if (["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED", "UNPAID", "PENDING"].includes(raw)) return true;
+    if (["unprocessed", "processed", "pending_confirm", "pending_verification"].includes(st)) return true;
+    return false;
+  };
+  const isCancelReturnClosed = (d) => {
+    const local = localOf(d);
+    if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") return true;
+    if (d?.data?.is_local_return_archived === true || d?.is_local_return_archived === true) return true;
+    const st = statusOf(d);
+    if (st === "cancelled" || st === "return_received" || st === "return_pending") return true;
+    const raw = rawOf(d);
+    return raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN";
+  };
+  const isTerminalClosed = (d) => {
+    if (isCancelReturnClosed(d)) return false;
+    const local = localOf(d);
+    if (local === "HANDED_OVER") return true;
+    if (d?.is_handed_over === true || d?.data?.is_handed_over === true) return true;
+    const st = statusOf(d);
+    if (st === "completed" || st === "shipping" || st === "handed_over") return true;
+    const raw = rawOf(d);
+    return raw === "COMPLETED" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE";
+  };
+  const filter = {
+    $or: [
+      { status: { $in: ["cancelled", "return_received", "return_pending", "completed", "shipping", "handed_over"] } },
+      {
+        shopee_order_status: {
+          $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN", "COMPLETED", "SHIPPED", "TO_CONFIRM_RECEIVE"]
+        }
+      },
+      { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED", "HANDED_OVER"] } },
+      { "data.localStatus": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED", "HANDED_OVER"] } },
+      { "data.is_local_return_archived": true },
+      { is_handed_over: true },
+      { "data.is_handed_over": true }
+    ]
+  };
+  let docs = [];
+  try {
+    docs = await OrderModel.find(filter).select({
+      _id: 1,
+      orderSn: 1,
+      status: 1,
+      shopee_order_status: 1,
+      is_handed_over: 1,
+      local_status: 1,
+      last_synced_at: 1,
+      "data.orderSn": 1,
+      "data.status": 1,
+      "data.date": 1,
+      "data.update_time": 1,
+      "data.local_status": 1,
+      "data.localStatus": 1,
+      "data.local_status_updated_at": 1,
+      "data.localStatusAt": 1,
+      "data.handedOverAt": 1,
+      "data.is_handed_over": 1,
+      "data.is_local_return_archived": 1,
+      "data.shopee_order_status": 1,
+      "data.last_synced_at": 1
+    }).limit(limit).maxTimeMS(2e4).lean();
+  } catch (err) {
+    console.warn("[MongoDB] deleteClosedOrdersByRetention find failed:", err?.message || err);
+    throw err;
+  }
+  const toDeleteKeys = [];
+  const sns = [];
+  let cancelReturnMatched = 0;
+  let closedMatched = 0;
+  for (const d of docs) {
+    if (isProtectedLive(d)) continue;
+    const age = orderAgeMs(d);
+    if (!age) continue;
+    let matched = false;
+    if (isCancelReturnClosed(d) && age < cancelCutoff) {
+      cancelReturnMatched += 1;
+      matched = true;
+    } else if (isTerminalClosed(d) && age < closedCutoff) {
+      closedMatched += 1;
+      matched = true;
+    }
+    if (!matched) continue;
+    const sn = String(d?.orderSn || d?.data?.orderSn || "").trim();
+    const id = String(d?._id || "").trim();
+    if (sn) {
+      sns.push(sn);
+      toDeleteKeys.push(sn);
+    }
+    if (id) toDeleteKeys.push(id);
+  }
+  if (dryRun || toDeleteKeys.length === 0) {
+    console.log(
+      `[MongoDB] retention dryRun=${dryRun} scanned=${docs.length} cancelReturn=${cancelReturnMatched} closed=${closedMatched} wouldDelete=${sns.length}`
+    );
+    return {
+      deleted: 0,
+      sns: [...new Set(sns)],
+      scanned: docs.length,
+      dryRun,
+      cancelReturnMatched,
+      closedMatched
+    };
+  }
+  const deleted = await deleteOrdersFromStore(toDeleteKeys);
+  console.log(
+    `[MongoDB] retention deleted=${deleted} cancelReturn=${cancelReturnMatched} closed=${closedMatched} scanned=${docs.length}`
+  );
+  return {
+    deleted,
+    sns: [...new Set(sns)],
+    scanned: docs.length,
+    dryRun: false,
+    cancelReturnMatched,
+    closedMatched
+  };
+}
 async function mirrorTopLevelTrackingIntoData() {
   if (!isMongoReady()) return 0;
   requireMongo();
@@ -94734,6 +95283,131 @@ async function mirrorTopLevelTrackingIntoData() {
     `[MongoDB] mirrorTopLevelTrackingIntoData \u2014 modified=${result.modifiedCount || 0} ops=${ops.length}`
   );
   return ops.length;
+}
+function buildScanKeyVariantsForMongo(rawKeys) {
+  const out = /* @__PURE__ */ new Set();
+  for (const raw of rawKeys) {
+    const text = String(raw || "").trim();
+    if (!text) continue;
+    const upper = text.toUpperCase();
+    const stripped = upper.replace(/[\s\-_#./\\|:;,]+/g, "");
+    for (const v of [text, upper, stripped, text.replace(/^shopee-/i, ""), stripped.replace(/^SHOPEE/, "")]) {
+      if (v && v.length >= 4) out.add(v);
+    }
+  }
+  return [...out];
+}
+function hydrateOrderFromMongoDoc(d) {
+  if (!d) return null;
+  const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
+  const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
+  if (!sn && !d?._id) return null;
+  const tn = String(d?.tracking_no || data.tracking_no || data.trackingNumber || "").trim();
+  const rawStatus = String(d?.shopee_order_status || data.shopee_order_status || "").trim().toUpperCase();
+  const carrier = String(
+    d?.shipping_carrier || data.shipping_carrier || data.checkout_shipping_carrier || ""
+  ).trim();
+  const handed = d?.is_handed_over === true || data.is_handed_over === true || data.isHandedOverToCarrier === true || data.is_handed_over_to_carrier === true || data.is_handed_over_to_courier === true || String(data.local_status || data.localStatus || "").toUpperCase() === "HANDED_OVER";
+  return {
+    ...data,
+    id: data.id || d._id || (sn ? `shopee-${sn}` : void 0),
+    orderSn: sn || data.orderSn,
+    status: d?.status != null ? d.status : data.status,
+    shopee_order_status: rawStatus || data.shopee_order_status || void 0,
+    shopId: d?.shopId != null ? d.shopId : data.shopId,
+    tracking_no: tn || void 0,
+    trackingNumber: tn || void 0,
+    shipping_carrier: carrier || data.shipping_carrier || void 0,
+    is_pending_shopee_check: d?.is_pending_shopee_check != null ? Boolean(d.is_pending_shopee_check) : Boolean(data.is_pending_shopee_check),
+    is_handed_over: handed,
+    isHandedOverToCarrier: handed,
+    is_handed_over_to_carrier: handed,
+    is_handed_over_to_courier: handed,
+    isPrinted: d?.isPrinted != null ? Boolean(d.isPrinted) : Boolean(data.isPrinted),
+    isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
+    ...handed ? {
+      local_status: data.local_status || "HANDED_OVER",
+      localStatus: data.localStatus || "HANDED_OVER",
+      internal_status: data.internal_status || "HANDED_OVER"
+    } : {}
+  };
+}
+async function findOrderByScanCodeInStore(rawCode) {
+  if (!isMongoReady()) return null;
+  requireMongo();
+  const text = String(rawCode || "").trim();
+  if (!text) return null;
+  const seedKeys = [text, text.replace(/^#+/, "")];
+  if (/^https?:\/\//i.test(text)) {
+    try {
+      const url = new URL(text);
+      for (const p of [
+        "tracking",
+        "tracking_no",
+        "tracking_number",
+        "tn",
+        "order_sn",
+        "ordersn",
+        "order",
+        "order_id",
+        "package_number",
+        "code",
+        "sn"
+      ]) {
+        const v = url.searchParams.get(p);
+        if (v) seedKeys.push(v);
+      }
+      for (const part of url.pathname.split("/")) {
+        if (part) seedKeys.push(part);
+      }
+    } catch {
+    }
+  }
+  const keys = buildScanKeyVariantsForMongo(seedKeys);
+  if (keys.length === 0) return null;
+  const idKeys = keys.flatMap((k) => {
+    const sn = k.replace(/^SHOPEE-/i, "").replace(/^shopee-/i, "");
+    return sn ? [`shopee-${sn}`, sn] : [k];
+  });
+  const uniqueIds = [...new Set(idKeys)];
+  const filter = {
+    $or: [
+      { tracking_no: { $in: keys } },
+      { orderSn: { $in: keys } },
+      { _id: { $in: uniqueIds } },
+      { "data.tracking_no": { $in: keys } },
+      { "data.trackingNumber": { $in: keys } },
+      { "data.return_tracking_no": { $in: keys } },
+      { "data.internalTrackingCode": { $in: keys } },
+      { "data.packageNumber": { $in: keys } },
+      { "data.orderSn": { $in: keys } },
+      { "data.order_sn": { $in: keys } }
+    ]
+  };
+  try {
+    let doc = await OrderModel.findOne(filter).maxTimeMS(4e3).lean();
+    if (!doc) {
+      const primary = keys.find((k) => k.length >= 10 && /[A-Z0-9]{10,}/i.test(k)) || keys.find((k) => k.length >= 10);
+      if (primary) {
+        const escaped = primary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const rx = new RegExp(`${escaped}$`, "i");
+        doc = await OrderModel.findOne({
+          $or: [
+            { tracking_no: rx },
+            { "data.tracking_no": rx },
+            { "data.trackingNumber": rx },
+            { "data.return_tracking_no": rx },
+            { "data.internalTrackingCode": rx },
+            { orderSn: rx }
+          ]
+        }).maxTimeMS(3e3).lean();
+      }
+    }
+    return hydrateOrderFromMongoDoc(doc);
+  } catch (err) {
+    console.warn("[MongoDB] findOrderByScanCodeInStore failed:", err?.message || err);
+    return null;
+  }
 }
 async function loadOrdersFromStore(opts) {
   if (!isMongoReady()) return [];
@@ -94782,42 +95456,8 @@ async function loadOrdersFromStore(opts) {
   }
   const out = [];
   for (const d of docs) {
-    const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
-    const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
-    if (!sn && !d?._id) continue;
-    const tn = String(
-      d?.tracking_no || data.tracking_no || data.trackingNumber || ""
-    ).trim();
-    const rawStatus = String(
-      d?.shopee_order_status || data.shopee_order_status || ""
-    ).trim().toUpperCase();
-    const carrier = String(
-      d?.shipping_carrier || data.shipping_carrier || data.checkout_shipping_carrier || ""
-    ).trim();
-    const handed = d?.is_handed_over === true || data.is_handed_over === true || data.isHandedOverToCarrier === true || data.is_handed_over_to_carrier === true || data.is_handed_over_to_courier === true || String(data.local_status || data.localStatus || "").toUpperCase() === "HANDED_OVER";
-    out.push({
-      ...data,
-      id: data.id || d._id || (sn ? `shopee-${sn}` : void 0),
-      orderSn: sn || data.orderSn,
-      status: d?.status != null ? d.status : data.status,
-      shopee_order_status: rawStatus || data.shopee_order_status || void 0,
-      shopId: d?.shopId != null ? d.shopId : data.shopId,
-      tracking_no: tn || void 0,
-      trackingNumber: tn || void 0,
-      shipping_carrier: carrier || data.shipping_carrier || void 0,
-      is_pending_shopee_check: d?.is_pending_shopee_check != null ? Boolean(d.is_pending_shopee_check) : Boolean(data.is_pending_shopee_check),
-      is_handed_over: handed,
-      isHandedOverToCarrier: handed,
-      is_handed_over_to_carrier: handed,
-      is_handed_over_to_courier: handed,
-      isPrinted: d?.isPrinted != null ? Boolean(d.isPrinted) : Boolean(data.isPrinted),
-      isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
-      ...handed ? {
-        local_status: data.local_status || "HANDED_OVER",
-        localStatus: data.localStatus || "HANDED_OVER",
-        internal_status: data.internal_status || "HANDED_OVER"
-      } : {}
-    });
+    const order = hydrateOrderFromMongoDoc(d);
+    if (order) out.push(order);
   }
   return out;
 }
@@ -94947,7 +95587,18 @@ async function queryOrdersPageFromStore(opts) {
   const and = [];
   const tabFilter = orderTabFilter(opts?.tab);
   if (Object.keys(tabFilter).length) and.push(tabFilter);
-  if (opts?.shopId && opts.shopId !== "all") and.push({ shopId: String(opts.shopId) });
+  if (opts?.shopId && opts.shopId !== "all") {
+    const shopIdStr = String(opts.shopId).trim();
+    const shopVariants = [
+      { shopId: shopIdStr },
+      { "data.shopId": shopIdStr }
+    ];
+    const asNum = Number(shopIdStr);
+    if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+      shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+    }
+    and.push({ $or: shopVariants });
+  }
   if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
   const search = String(opts?.query || "").trim();
   if (search) {
@@ -95202,7 +95853,7 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey) {
   };
 }
 async function flushDbWrites() {
-  await writeChain;
+  await writeChain2;
 }
 async function seedStoreFromArrays(products, listings) {
   await saveProductsToStoreAsync(products);
@@ -95219,12 +95870,12 @@ function writeCpanelCrashLog(kind, err) {
 ${(/* @__PURE__ */ new Date()).toISOString()}
 `;
     const targets = [
-      import_path2.default.join(process.cwd(), "cpanel_error_log.txt"),
-      typeof __dirname !== "undefined" ? import_path2.default.join(__dirname, "cpanel_error_log.txt") : ""
+      import_path3.default.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? import_path3.default.join(__dirname, "cpanel_error_log.txt") : ""
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs3.default.writeFileSync(file, line);
+        import_fs4.default.writeFileSync(file, line);
       } catch {
       }
     }
@@ -95238,21 +95889,21 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (err) => {
   writeCpanelCrashLog("Rejection", err);
 });
-function resolveAppRoot() {
+function resolveAppRoot2() {
   const candidates = [
     process.env.PASSENGER_APP_ROOT,
     typeof __dirname !== "undefined" ? __dirname : "",
     process.cwd()
   ].map((c) => String(c || "").trim()).filter(Boolean);
   for (const candidate of candidates) {
-    const abs = import_path2.default.resolve(candidate);
-    if (import_fs3.default.existsSync(import_path2.default.join(abs, "server.cjs")) || import_fs3.default.existsSync(import_path2.default.join(abs, "data")) || import_fs3.default.existsSync(import_path2.default.join(abs, ".htaccess")) || import_fs3.default.existsSync(import_path2.default.join(abs, ".env"))) {
+    const abs = import_path3.default.resolve(candidate);
+    if (import_fs4.default.existsSync(import_path3.default.join(abs, "server.cjs")) || import_fs4.default.existsSync(import_path3.default.join(abs, "data")) || import_fs4.default.existsSync(import_path3.default.join(abs, ".htaccess")) || import_fs4.default.existsSync(import_path3.default.join(abs, ".env"))) {
       return abs;
     }
   }
-  return import_path2.default.resolve(candidates[0] || process.cwd());
+  return import_path3.default.resolve(candidates[0] || process.cwd());
 }
-var APP_ROOT = resolveAppRoot();
+var APP_ROOT = resolveAppRoot2();
 var isCpanelPassengerRuntime = Boolean(
   String(
     process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
@@ -95263,12 +95914,12 @@ if (isCpanelPassengerRuntime) {
   console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
 }
 var dotenvCandidates = [
-  import_path2.default.join(APP_ROOT, ".env"),
-  import_path2.default.join(process.cwd(), ".env"),
-  import_path2.default.resolve(".env")
+  import_path3.default.join(APP_ROOT, ".env"),
+  import_path3.default.join(process.cwd(), ".env"),
+  import_path3.default.resolve(".env")
 ];
 for (const envPath of dotenvCandidates) {
-  if (import_fs3.default.existsSync(envPath)) {
+  if (import_fs4.default.existsSync(envPath)) {
     const loaded = import_dotenv.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
@@ -95284,8 +95935,8 @@ console.log(
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs3.default.writeFileSync(
-      import_path2.default.join(APP_ROOT, "cpanel_error_log.txt"),
+    import_fs4.default.writeFileSync(
+      import_path3.default.join(APP_ROOT, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
 ${(/* @__PURE__ */ new Date()).toISOString()}
@@ -95296,35 +95947,35 @@ ${(/* @__PURE__ */ new Date()).toISOString()}
 }
 process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
 process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
-var WAYBILLS_DIR = import_path2.default.join(APP_ROOT, "storage", "waybills");
-var LEGACY_PUBLIC_PRINTS_DIR = import_path2.default.join(APP_ROOT, "public", "prints");
+var WAYBILLS_DIR = import_path3.default.join(APP_ROOT, "storage", "waybills");
+var LEGACY_PUBLIC_PRINTS_DIR = import_path3.default.join(APP_ROOT, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
-var LABELS_DIR = import_path2.default.join(APP_ROOT, "storage", "labels");
-var LABEL_DISK_TTL_MS = 72 * 60 * 60 * 1e3;
+var LABELS_DIR = import_path3.default.join(APP_ROOT, "storage", "labels");
+var LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
 var labelMemCache = /* @__PURE__ */ new Map();
 var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs3.default.existsSync(LABELS_DIR)) import_fs3.default.mkdirSync(LABELS_DIR, { recursive: true });
+    if (!import_fs4.default.existsSync(LABELS_DIR)) import_fs4.default.mkdirSync(LABELS_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path2.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
+  const probe = import_path3.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
   try {
-    import_fs3.default.writeFileSync(probe, "ok");
-    import_fs3.default.unlinkSync(probe);
+    import_fs4.default.writeFileSync(probe, "ok");
+    import_fs4.default.unlinkSync(probe);
   } catch (err) {
     console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
 function safeLabelFilename(raw) {
-  const base = import_path2.default.basename(String(raw || "").trim());
+  const base = import_path3.default.basename(String(raw || "").trim());
   if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
   return base;
 }
@@ -95361,14 +96012,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs3.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs4.default.readdirSync(LABELS_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs3.default.unlinkSync(import_path2.default.join(LABELS_DIR, name));
+        import_fs4.default.unlinkSync(import_path3.default.join(LABELS_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -95406,16 +96057,16 @@ function putLabelMem(filename, buffer, contentType) {
     cleanupExpiredLabelFiles();
     const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
     if (snMatch?.[1]) removeExistingLabelFilesForOrderSns([snMatch[1]]);
-    const dest = import_path2.default.join(LABELS_DIR, safe);
+    const dest = import_path3.default.join(LABELS_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
-    import_fs3.default.writeFileSync(dest, buffer);
-    if (!import_fs3.default.existsSync(dest)) {
+    import_fs4.default.writeFileSync(dest, buffer);
+    if (!import_fs4.default.existsSync(dest)) {
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file kh\xF4ng t\u1ED3n t\u1EA1i sau writeFileSync: ${dest}`);
     }
-    const st = import_fs3.default.statSync(dest);
+    const st = import_fs4.default.statSync(dest);
     if (!st.isFile() || st.size <= 0) {
       try {
-        import_fs3.default.unlinkSync(dest);
+        import_fs4.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file tr\xEAn \u0111\u0129a r\u1ED7ng: ${dest}`);
@@ -95424,15 +96075,15 @@ function putLabelMem(filename, buffer, contentType) {
       console.warn(`[Labels] C\u1EA3nh b\xE1o size l\u1EC7ch: buffer=${buffer.length} disk=${st.size} \u2192 ${dest}`);
     }
     const head = Buffer.alloc(5);
-    const fd = import_fs3.default.openSync(dest, "r");
+    const fd = import_fs4.default.openSync(dest, "r");
     try {
-      import_fs3.default.readSync(fd, head, 0, 5, 0);
+      import_fs4.default.readSync(fd, head, 0, 5, 0);
     } finally {
-      import_fs3.default.closeSync(fd);
+      import_fs4.default.closeSync(fd);
     }
     if (head.toString("utf8", 0, 4) !== "%PDF") {
       try {
-        import_fs3.default.unlinkSync(dest);
+        import_fs4.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`File ghi ra kh\xF4ng c\xF2n l\xE0 PDF h\u1EE3p l\u1EC7: ${safe}`);
@@ -95460,19 +96111,19 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path2.default.join(LABELS_DIR, safe);
+  const filePath = import_path3.default.join(LABELS_DIR, safe);
   try {
-    if (!import_fs3.default.existsSync(filePath)) return null;
-    const st = import_fs3.default.statSync(filePath);
+    if (!import_fs4.default.existsSync(filePath)) return null;
+    const st = import_fs4.default.statSync(filePath);
     if (!st.isFile() || st.size <= 0) {
       console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
       try {
-        import_fs3.default.unlinkSync(filePath);
+        import_fs4.default.unlinkSync(filePath);
       } catch {
       }
       return null;
     }
-    const buf = import_fs3.default.readFileSync(filePath);
+    const buf = import_fs4.default.readFileSync(filePath);
     if (!buf.length || !isPdfBuffer(buf)) return null;
     labelMemCache.set(safe, {
       buf,
@@ -95499,9 +96150,9 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path2.default.join(LABELS_DIR, safe);
-  if (import_fs3.default.existsSync(diskPath)) {
-    const st = import_fs3.default.statSync(diskPath);
+  const diskPath = import_path3.default.join(LABELS_DIR, safe);
+  if (import_fs4.default.existsSync(diskPath)) {
+    const st = import_fs4.default.statSync(diskPath);
     if (st.size <= 0) {
       throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
     }
@@ -95520,13 +96171,13 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs3.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs4.default.readdirSync(LABELS_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path2.default.join(LABELS_DIR, name);
+      const full = import_path3.default.join(LABELS_DIR, name);
       try {
-        const st = import_fs3.default.statSync(full);
+        const st = import_fs4.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs3.default.unlinkSync(full);
+          import_fs4.default.unlinkSync(full);
           labelMemCache.delete(name);
           deleted += 1;
         }
@@ -95548,11 +96199,11 @@ function wipeLegacyPublicPrints() {
   let deleted = 0;
   for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
     try {
-      if (!import_fs3.default.existsSync(dir)) continue;
-      for (const name of import_fs3.default.readdirSync(dir)) {
+      if (!import_fs4.default.existsSync(dir)) continue;
+      for (const name of import_fs4.default.readdirSync(dir)) {
         if (!WAYBILL_FILE_RE.test(name)) continue;
         try {
-          import_fs3.default.unlinkSync(import_path2.default.join(dir, name));
+          import_fs4.default.unlinkSync(import_path3.default.join(dir, name));
           deleted += 1;
         } catch {
         }
@@ -95585,11 +96236,18 @@ try {
 wipeLegacyPublicPrints();
 cleanupExpiredLabelFiles();
 var labelDiskCleanupRunning = false;
+var labelDailySweepAt = 0;
 var labelDiskCleanupTimer = setInterval(() => {
   if (labelDiskCleanupRunning) return;
   labelDiskCleanupRunning = true;
   try {
-    cleanupExpiredLabelFiles();
+    const n = cleanupExpiredLabelFiles();
+    const now = Date.now();
+    if (now - labelDailySweepAt >= 24 * 60 * 60 * 1e3) {
+      labelDailySweepAt = now;
+      wipeLegacyPublicPrints();
+      console.log(`[Labels Cleanup] Daily sweep xong \u2014 deleted\u2248${n}, TTL=24h, dir=${LABELS_DIR}`);
+    }
   } catch (err) {
     console.warn("[Labels Cleanup] setInterval l\u1ED7i:", err);
   } finally {
@@ -95636,7 +96294,7 @@ function serveLabelPdfFromMem(filename, res) {
   }
 }
 var JWT_SECRET = process.env.JWT_SECRET || "omnisales-vn-super-secret-key-2026";
-var ENV_PATH = import_path2.default.join(APP_ROOT, ".env");
+var ENV_PATH = import_path3.default.join(APP_ROOT, ".env");
 var PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
 function resolveAppBaseUrl() {
   const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
@@ -95664,7 +96322,7 @@ function absoluteLabelUrl(relativePath) {
   } else {
     const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
     const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || import_path2.default.basename(p));
+    fn = decodeURIComponent(fnMatch?.[1] || import_path3.default.basename(p));
   }
   if (!safeLabelFilename(fn)) return null;
   try {
@@ -95687,8 +96345,8 @@ var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
 var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 function updateEnvVar(key, value) {
   let content = "";
-  if (import_fs3.default.existsSync(ENV_PATH)) {
-    content = import_fs3.default.readFileSync(ENV_PATH, "utf-8");
+  if (import_fs4.default.existsSync(ENV_PATH)) {
+    content = import_fs4.default.readFileSync(ENV_PATH, "utf-8");
   }
   const regex = new RegExp(`^${key}\\s*=.*$`, "m");
   const line = `${key}=${value}`;
@@ -95697,7 +96355,7 @@ function updateEnvVar(key, value) {
   } else {
     content = (content.trimEnd() ? content.trimEnd() + "\n" : "") + line + "\n";
   }
-  import_fs3.default.writeFileSync(ENV_PATH, content, "utf-8");
+  import_fs4.default.writeFileSync(ENV_PATH, content, "utf-8");
   process.env[key] = value;
 }
 function maskApiKey(key) {
@@ -95719,19 +96377,19 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path2.default.resolve(APP_ROOT, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path2.default.resolve(APP_ROOT, "data", "shopee_oauth_last.json");
+var SHOPEE_TOKENS_PATH = import_path3.default.resolve(APP_ROOT, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path3.default.resolve(APP_ROOT, "data", "shopee_oauth_last.json");
 function ensureDataDirs() {
-  const dataDir = import_path2.default.join(APP_ROOT, "data");
-  import_fs3.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs3.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs3.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  const dataDir = import_path3.default.join(APP_ROOT, "data");
+  import_fs4.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs4.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs4.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs3.default.writeFileSync(
+    import_fs4.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -95742,8 +96400,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs3.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs3.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs4.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs4.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -95759,12 +96417,12 @@ try {
   console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
 }
 console.log(
-  `[Boot] APP_ROOT=${APP_ROOT} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs3.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL}`
+  `[Boot] APP_ROOT=${APP_ROOT} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs4.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL}`
 );
 function loadShopeeTokens() {
   try {
-    if (!import_fs3.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs3.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs4.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs4.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -95798,7 +96456,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path2.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path3.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -95835,10 +96493,10 @@ function saveShopeeTokens(tokensToWrite) {
         byteLength: Buffer.byteLength(payload, "utf-8")
       })
     );
-    import_fs3.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs4.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs3.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs4.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -96109,7 +96767,7 @@ function saveShopeeTokenForShop(shopId, record) {
   console.log(`[Shopee Tokens] Saved token for shop_id=${key}. All shops: [${Object.keys(tokens).join(", ")}]`);
 }
 function listShopeeOAuthShopIds() {
-  return Object.keys(loadShopeeTokens()).map(normalizeShopIdKey).filter(Boolean).sort();
+  return listShopeeSyncShopIds();
 }
 function listShopeeSyncShopIds() {
   const ids = /* @__PURE__ */ new Set();
@@ -96124,6 +96782,97 @@ function listShopeeSyncShopIds() {
     }
   }
   return [...ids].sort();
+}
+function ensureShopeeLinkedShopTokenKeys() {
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const updates = {};
+  for (const [rawKey, record] of Object.entries(tokens)) {
+    if (!record?.access_token && !record?.refresh_token) continue;
+    const owner = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
+    const oauth = normalizeShopIdKey(record?.oauth_shop_id) || owner;
+    const linked = /* @__PURE__ */ new Set();
+    if (owner) linked.add(owner);
+    if (oauth) linked.add(oauth);
+    for (const raw of Array.isArray(record?.shop_id_list) ? record.shop_id_list : []) {
+      const id = normalizeShopIdKey(raw);
+      if (id) linked.add(id);
+    }
+    if (linked.size <= 1) continue;
+    const linkedList = [...linked];
+    for (const id of linkedList) {
+      const existing = tokens[id] || updates[id];
+      if (existing?.access_token && existing?.refresh_token) {
+        const mergedList = [
+          ...new Set([
+            ...Array.isArray(existing.shop_id_list) ? existing.shop_id_list.map((x2) => normalizeShopIdKey(x2)) : [],
+            ...linkedList
+          ].filter(Boolean))
+        ];
+        if (mergedList.length !== (existing.shop_id_list || []).length) {
+          updates[id] = {
+            ...existing,
+            shop_id: id,
+            oauth_shop_id: existing.oauth_shop_id || oauth,
+            shop_id_list: mergedList
+          };
+        }
+        continue;
+      }
+      updates[id] = buildShopeeTokenRecord(
+        id,
+        {
+          access_token: record.access_token,
+          refresh_token: record.refresh_token,
+          expire_in: record.expire_in,
+          obtained_at: record.obtained_at,
+          shop_id_list: linkedList,
+          merchant_id_list: record.merchant_id_list || []
+        },
+        oauth || id,
+        existing
+      );
+    }
+  }
+  if (Object.keys(updates).length > 0) {
+    saveShopeeTokens(updates);
+    console.log(
+      `[Shopee Tokens] ensureLinkedShopTokenKeys \u2014 upsert keys=[${Object.keys(updates).join(", ")}]`
+    );
+  }
+  return listShopeeSyncShopIds();
+}
+function propagateShopeeTokenToLinkedShops(sourceShopId, patch) {
+  const key = normalizeShopIdKey(sourceShopId);
+  if (!key || !patch?.access_token) return;
+  const tokens = normalizeTokenStore(loadShopeeTokens());
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record) {
+    saveShopeeTokenForShop(key, patch);
+    return;
+  }
+  const linked = /* @__PURE__ */ new Set([key]);
+  const oauth = normalizeShopIdKey(record.oauth_shop_id);
+  if (oauth) linked.add(oauth);
+  const recordShop = normalizeShopIdKey(record.shop_id);
+  if (recordShop) linked.add(recordShop);
+  for (const raw of Array.isArray(record.shop_id_list) ? record.shop_id_list : []) {
+    const id = normalizeShopIdKey(raw);
+    if (id) linked.add(id);
+  }
+  const updates = {};
+  for (const id of linked) {
+    updates[id] = buildShopeeTokenRecord(
+      id,
+      {
+        ...record,
+        ...patch,
+        shop_id_list: [...linked]
+      },
+      oauth || key,
+      tokens[id] || record
+    );
+  }
+  saveShopeeTokens(updates);
 }
 function shopeeSign(apiPath, timestamp, accessToken, shopId) {
   const baseString = accessToken && shopId ? `${SHOPEE_PARTNER_ID}${apiPath}${timestamp}${accessToken}${shopId}` : `${SHOPEE_PARTNER_ID}${apiPath}${timestamp}`;
@@ -96320,18 +97069,19 @@ async function refreshShopeeAccessTokenLocked(shopId, opts) {
     console.log(
       `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)}...`
     );
-    const apiShopId = resolveShopeeApiShopId(record, key);
-    const refreshed = await refreshShopeeToken(apiShopId, String(record.refresh_token));
+    const refreshAsShopId = normalizeShopIdKey(record?.oauth_shop_id) || normalizeShopIdKey(record?.shop_id) || resolveShopeeApiShopId(record, key) || key;
+    const refreshed = await refreshShopeeToken(refreshAsShopId, String(record.refresh_token));
     if (refreshed.access_token) {
-      if (key !== apiShopId) {
-        saveShopeeTokenForShop(key, {
-          access_token: refreshed.access_token,
-          refresh_token: refreshed.refresh_token,
-          expire_in: refreshed.expire_in,
-          obtained_at: Math.floor(Date.now() / 1e3)
-        });
-      }
-      console.log(`[Shopee Token] Refresh OK shop_id=${key} (api=${apiShopId})`);
+      const obtainedAt = Math.floor(Date.now() / 1e3);
+      propagateShopeeTokenToLinkedShops(key, {
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token || record.refresh_token,
+        expire_in: refreshed.expire_in,
+        obtained_at: obtainedAt
+      });
+      console.log(
+        `[Shopee Token] Refresh OK shop_id=${key} (refreshAs=${refreshAsShopId}) \u2014 propagated linked shops`
+      );
       return String(refreshed.access_token);
     }
     console.error(
@@ -96552,8 +97302,11 @@ function toShopeeUnixSeconds(raw, fallbackSec) {
   if (n >= 1e12) return Math.floor(n / 1e3);
   return Math.floor(n);
 }
+var SHOPEE_CANCEL_RETURN_MAX_WINDOWS = 2;
 var SHOPEE_RETURN_LIST_WINDOW_SEC = 15 * 24 * 60 * 60;
+var SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS = 800;
 var SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
+var SHOPEE_RETURN_LIST_MAX_PAGES = 50;
 var SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS = 50;
 var SHOPEE_SYNC_CHUNK_SIZE = SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS;
 var ORDER_SYNC_SAVE_DELAY_MS = 1e3;
@@ -96595,7 +97348,7 @@ function resolveCreateRequireFilename() {
     if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
-  return import_path2.default.resolve(process.cwd(), "server.cjs");
+  return import_path3.default.resolve(process.cwd(), "server.cjs");
 }
 var shopeeHttpDispatcher = void 0;
 try {
@@ -97166,6 +97919,114 @@ function mapShopeeReturnKind(detail) {
   }
   return "refund_return";
 }
+async function shopeePaginateReturnListWindow(shopId, accessToken, opts) {
+  let pageNo = 1;
+  while (pageNo <= SHOPEE_RETURN_LIST_MAX_PAGES) {
+    if (opts.out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) return;
+    const listOpts = {
+      pageNo,
+      pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE,
+      status: opts.status
+    };
+    if (opts.timeField === "update") {
+      listOpts.updateTimeFrom = opts.timeFrom;
+      listOpts.updateTimeTo = opts.timeTo;
+    } else {
+      listOpts.createTimeFrom = opts.timeFrom;
+      listOpts.createTimeTo = opts.timeTo;
+    }
+    const listResult = await shopeeGetReturnList(shopId, accessToken, listOpts);
+    if (listResult.error) {
+      console.warn(
+        `[Shopee Returns] ${opts.label} page=${pageNo} l\u1ED7i:`,
+        listResult.message || listResult.error
+      );
+      return;
+    }
+    const rows = extractShopeeReturnListRows(listResult);
+    for (const row of rows) {
+      const returnSn = String(row?.return_sn || row?.returnSn || "").trim();
+      if (!returnSn || opts.seen.has(returnSn)) continue;
+      opts.seen.add(returnSn);
+      opts.out.push({
+        returnSn,
+        orderSn: row?.order_sn ? String(row.order_sn) : void 0,
+        status: row?.status ? String(row.status) : opts.status
+      });
+      if (opts.out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
+    }
+    const more = parseShopeeReturnListMore(listResult);
+    console.log(
+      `[Shopee Returns] ${opts.label} page=${pageNo}: +${rows.length} (t\u1ED5ng ${opts.out.length}), more=${more}`
+    );
+    if (!more || rows.length === 0) return;
+    pageNo++;
+    await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+  }
+}
+async function shopeeFetchAllReturnSns(shopId, accessToken, opts) {
+  const mode = opts?.mode === "full" ? "full" : "incremental";
+  const now = Math.floor(Date.now() / 1e3);
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  console.log(`[Shopee Returns] shop=${shopId} mode=${mode}: paginate get_return_list (no time filter)...`);
+  let pageNo = 1;
+  while (pageNo <= SHOPEE_RETURN_LIST_MAX_PAGES) {
+    if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
+    const listResult = await shopeeGetReturnList(shopId, accessToken, {
+      pageNo,
+      pageSize: SHOPEE_RETURN_LIST_PAGE_SIZE
+    });
+    if (listResult.error) {
+      console.error(
+        `[Shopee Returns] no-time page=${pageNo} L\u1ED6I:`,
+        listResult.error,
+        listResult.message || ""
+      );
+      break;
+    }
+    const rows = extractShopeeReturnListRows(listResult);
+    for (const row of rows) {
+      const returnSn = String(row?.return_sn || row?.returnSn || "").trim();
+      if (!returnSn || seen.has(returnSn)) continue;
+      seen.add(returnSn);
+      out.push({
+        returnSn,
+        orderSn: row?.order_sn ? String(row.order_sn) : void 0,
+        status: row?.status ? String(row.status) : void 0
+      });
+      if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
+    }
+    const more = parseShopeeReturnListMore(listResult);
+    console.log(
+      `[Shopee Returns] no-time page=${pageNo}: +${rows.length} (t\u1ED5ng ${out.length}), more=${more}`
+    );
+    if (!more || rows.length === 0) break;
+    if (mode === "incremental" && pageNo >= 2) break;
+    pageNo++;
+    await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+  }
+  if (mode === "full") {
+    const maxWindows = SHOPEE_CANCEL_RETURN_MAX_WINDOWS;
+    const windowSec = SHOPEE_RETURN_LIST_WINDOW_SEC;
+    for (let windowIdx = 0; windowIdx < maxWindows; windowIdx++) {
+      if (out.length >= SHOPEE_SYNC_MAX_CANCEL_RETURN_SNS) break;
+      const timeTo = now - windowIdx * windowSec;
+      const timeFrom = timeTo - windowSec + 1;
+      await shopeePaginateReturnListWindow(shopId, accessToken, {
+        timeFrom,
+        timeTo,
+        timeField: "update",
+        seen,
+        out,
+        label: `shop=${shopId} update w${windowIdx + 1}`
+      });
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+    }
+  }
+  console.log(`[Shopee Returns] shop=${shopId} mode=${mode}: T\u1ED4NG ${out.length} return_sn (unique)`);
+  return out;
+}
 async function shopeeGetOrderList(shopId, accessToken, opts) {
   const apiPath = "/api/v2/order/get_order_list";
   const timestamp = Math.floor(Date.now() / 1e3);
@@ -97247,8 +98108,16 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   let cursor;
   let page = 0;
   const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_HARD_DEADLINE_MS;
-  syncDiag("Fetching order list...", `shop=${shopId} lookback=${lookback}s from=${timeFrom} to=${timeTo}`);
-  while (page < SHOPEE_ORDER_LIST_LOOP_HARD_CAP && orderSnSet.size < SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) {
+  const maxOrderSns = Math.max(
+    1,
+    Math.floor(opts?.maxOrderSns ?? SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP)
+  );
+  const pageHardCap = Math.max(
+    1,
+    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_HARD_CAP)
+  );
+  syncDiag("Fetching order list...", `shop=${shopId} lookback=${lookback}s from=${timeFrom} to=${timeTo} maxSn=${maxOrderSns} hardCap=${pageHardCap}`);
+  while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
     assertOrdersPullDeadline(deadlineAt, `get_order_list page=${page + 1} shop=${shopId}`);
     page += 1;
     let listResult = await shopeeGetOrderList(shopId, accessToken, {
@@ -97290,7 +98159,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
     for (const row of rows) {
       const sn = String(row?.order_sn || row?.ordersn || "").trim();
       if (sn) orderSnSet.add(sn);
-      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
+      if (orderSnSet.size >= maxOrderSns) break;
     }
     syncDiag(
       "Order list received",
@@ -97301,7 +98170,7 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
       currentCursor: cursor,
       seenCursors,
       pageIndex: page,
-      hardCap: SHOPEE_ORDER_LIST_LOOP_HARD_CAP,
+      hardCap: pageHardCap,
       logLabel: `shop=${shopId}`
     });
     syncDiag("Pagination decision", `${adv.action} \u2014 ${adv.reason}`);
@@ -97419,9 +98288,14 @@ async function pullIncrementalOrdersFromShopee(opts) {
   }
   ordersPullInFlight = true;
   const startedAt = Date.now();
-  const deadlineAt = startedAt + ORDERS_PULL_HARD_DEADLINE_MS;
   const enrichTracking = opts?.enrichTracking === true;
-  const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).filter(Boolean);
+  ensureShopeeLinkedShopTokenKeys();
+  const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => normalizeShopIdKey(id)).filter(Boolean);
+  const singleShopPull = shopIds.length === 1;
+  const pullDeadlineMs = singleShopPull ? 18e4 : ORDERS_PULL_HARD_DEADLINE_MS;
+  const maxOrderSnsPerShop = singleShopPull ? 200 : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
+  const pageHardCap = singleShopPull ? 10 : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+  const deadlineAt = startedAt + pullDeadlineMs;
   const errors = [];
   let pulled = 0;
   let added = 0;
@@ -97440,13 +98314,27 @@ async function pullIncrementalOrdersFromShopee(opts) {
       };
     }
     const orders = isMongoReady() ? await loadOrdersFromStore() : [];
+    const perShopBudgetMs = Math.max(
+      28e3,
+      Math.floor(pullDeadlineMs / Math.max(1, shopIds.length))
+    );
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s deadline=${ORDERS_PULL_HARD_DEADLINE_MS}ms enrichTracking=${enrichTracking}`
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking}`
     );
     for (const shopId of shopIds) {
+      if (Date.now() >= deadlineAt) {
+        syncDiag("DEADLINE HIT \u2014 stop before next shop", `remaining skipped after ${shopId}`);
+        errors.push({
+          error: "pull_deadline",
+          message: `H\u1EBFt th\u1EDDi gian pull tr\u01B0\u1EDBc shop ${shopId}`,
+          shopId
+        });
+        break;
+      }
+      const shopDeadlineAt = Math.min(deadlineAt, Date.now() + perShopBudgetMs);
       try {
-        assertOrdersPullDeadline(deadlineAt, `before shop=${shopId}`);
+        assertOrdersPullDeadline(shopDeadlineAt, `before shop=${shopId}`);
         let accessToken = await getValidShopeeAccessToken(shopId);
         if (!accessToken) {
           const msg = `Shop ${shopId}: kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token (h\u1EBFt h\u1EA1n / thi\u1EBFu refresh_token)`;
@@ -97454,14 +98342,44 @@ async function pullIncrementalOrdersFromShopee(opts) {
           errors.push({ shopId, error: "no_valid_access_token", message: msg });
           continue;
         }
-        const orderSnList = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
+        let orderSnList = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
           lookbackSec: opts?.lookbackSec,
-          deadlineAt
+          deadlineAt: shopDeadlineAt,
+          maxOrderSns: maxOrderSnsPerShop,
+          pageHardCap
         });
+        if ((opts?.lookbackSec ?? 0) >= 168 * 3600 && Date.now() < shopDeadlineAt) {
+          try {
+            const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
+              mode: "incremental"
+            });
+            const snSet = new Set(orderSnList);
+            let addedFromReturns = 0;
+            for (const row of returnRows) {
+              const sn = String(row?.orderSn || "").trim();
+              if (!sn || snSet.has(sn)) continue;
+              if (snSet.size >= maxOrderSnsPerShop) break;
+              snSet.add(sn);
+              addedFromReturns += 1;
+            }
+            if (addedFromReturns > 0) {
+              orderSnList = [...snSet];
+              syncDiag(
+                "Return list merged",
+                `shop=${shopId} +${addedFromReturns} order_sn from get_return_list (total=${orderSnList.length})`
+              );
+            }
+          } catch (returnErr) {
+            console.warn(
+              `[Orders Pull] shopeeFetchAllReturnSns skip shop=${shopId}:`,
+              returnErr?.message || returnErr
+            );
+          }
+        }
         syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
         if (orderSnList.length === 0) continue;
         for (let i2 = 0; i2 < orderSnList.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
-          assertOrdersPullDeadline(deadlineAt, `detail chunk shop=${shopId} offset=${i2}`);
+          assertOrdersPullDeadline(shopDeadlineAt, `detail chunk shop=${shopId} offset=${i2}`);
           const chunkSns = orderSnList.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
           const chunkNo = Math.floor(i2 / SHOPEE_SYNC_CHUNK_SIZE) + 1;
           try {
@@ -97533,9 +98451,13 @@ async function pullIncrementalOrdersFromShopee(opts) {
         }
       } catch (shopErr) {
         if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
-          syncDiag("DEADLINE HIT \u2014 break remaining shops", shopErr.message);
-          errors.push({ error: "pull_deadline", message: shopErr.message });
-          break;
+          syncDiag("SHOP DEADLINE \u2014 continue next shop", shopErr.message);
+          errors.push({
+            shopId,
+            error: "pull_shop_deadline",
+            message: shopErr.message
+          });
+          continue;
         }
         console.error(`[Orders Pull] Shop ${shopId} exception:`, shopErr?.message || shopErr, shopErr?.stack || "");
         errors.push({
@@ -97878,9 +98800,9 @@ async function resolvePublishImageBuffer(src) {
   }
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
-    const filePath = import_path2.default.join(APP_ROOT, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs3.default.existsSync(filePath)) {
-      return { buf: import_fs3.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    const filePath = import_path3.default.join(APP_ROOT, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (import_fs4.default.existsSync(filePath)) {
+      return { buf: import_fs4.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
@@ -98879,7 +99801,7 @@ async function resolveProductWithShopeeMapping(product) {
     const linkedId = row.linkedProductId != null && String(row.linkedProductId).trim() !== "" ? String(row.linkedProductId).trim() : row.linkedProduct?.id != null ? String(row.linkedProduct.id).trim() : "";
     if (!linkedId || linkedId !== productId) return false;
     const status = String(row.status || "").trim().toLowerCase();
-    return status === "success" || linkedId !== "";
+    return status === "success";
   });
   if (!match2) return null;
   const channelId = String(match2.channelId || match2.itemId || "").trim();
@@ -98896,7 +99818,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
   if (!mapped) {
     return { ok: false, message: "Ch\u01B0a li\xEAn k\u1EBFt Mapping Shopee \u2014 b\u1ECF qua sync." };
   }
-  const shopId = resolveShopeeTokenShopId();
+  const shopId = resolveShopeeTokenShopId(opts.shopId);
   if (!shopId) {
     return { ok: false, message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n." };
   }
@@ -98908,6 +99830,19 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
   const modelId = resolveShopeeModelIdForStockPush(mapped);
   if (itemId == null) {
     return { ok: false, message: "Thi\u1EBFu Shopee item_id sau khi resolve Mapping." };
+  }
+  if (productRequiresShopeeModelId(mapped, 1) && modelId == null) {
+    const msg = "Ph\xE2n lo\u1EA1i (variant) thi\u1EBFu model_id \u2014 b\u1EAFt bu\u1ED9c truy\u1EC1n item_id + model_id khi update_stock";
+    await appendShopeeSyncErrorToDb({
+      itemId,
+      modelId: void 0,
+      sku: mapped.sku,
+      shopId,
+      action: "update_stock",
+      error: msg,
+      productId: mapped.id
+    });
+    return { ok: false, message: msg };
   }
   const lines = [];
   if (opts.syncStock) {
@@ -99021,7 +99956,8 @@ async function processShopeeSyncQueue() {
         }
         const result = await executeShopeeStockPriceSyncJob(mapped, {
           syncStock: job.syncStock,
-          syncPrice: job.syncPrice
+          syncPrice: job.syncPrice,
+          shopId: job.shopId
         });
         if (result.ok) {
           console.log(
@@ -99033,7 +99969,7 @@ async function processShopeeSyncQueue() {
             `[Shopee Sync Queue] FAIL attempt ${job.attempts}/${SHOPEE_SYNC_QUEUE_MAX_RETRY} productId=${job.productId} sku=${mapped.sku}: ${result.message}`
           );
           if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
-            const retryKey = `${job.productId}|stock=${job.syncStock}|price=${job.syncPrice}`;
+            const retryKey = `${job.productId}|stock=${job.syncStock}|price=${job.syncPrice}|shop=${job.shopId || ""}`;
             job.key = retryKey;
             if (!shopeeSyncQueueKeys.has(retryKey)) {
               shopeeSyncQueueKeys.add(retryKey);
@@ -99073,6 +100009,7 @@ async function enqueueShopeeStockPriceSync(products, opts) {
   const syncStock = opts.syncStock === true;
   const syncPrice = opts.syncPrice === true;
   if (!syncStock && !syncPrice) return 0;
+  const preferredShopId = String(opts.shopId || "").trim() || void 0;
   let enqueued = 0;
   for (const raw of Array.isArray(products) ? products : []) {
     if (!raw || typeof raw !== "object") continue;
@@ -99080,7 +100017,7 @@ async function enqueueShopeeStockPriceSync(products, opts) {
     if (!productId) continue;
     const mapped = await resolveProductWithShopeeMapping(raw);
     if (!mapped) continue;
-    const key = `${productId}|stock=${syncStock}|price=${syncPrice}`;
+    const key = `${productId}|stock=${syncStock}|price=${syncPrice}|shop=${preferredShopId || ""}`;
     if (shopeeSyncQueueKeys.has(key)) {
       continue;
     }
@@ -99090,6 +100027,7 @@ async function enqueueShopeeStockPriceSync(products, opts) {
       productId,
       syncStock,
       syncPrice,
+      shopId: preferredShopId,
       attempts: 0,
       enqueuedAt: (/* @__PURE__ */ new Date()).toISOString()
     });
@@ -101013,7 +101951,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
   const sources = [];
   let carrier;
   let internal;
-  const consider = (key, value, path4) => {
+  const consider = (key, value, path5) => {
     if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
@@ -101023,7 +101961,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
         internal = s2;
-        sources.push(`${path4}=${s2}(internal)`);
+        sources.push(`${path5}=${s2}(internal)`);
       }
       return;
     }
@@ -101031,20 +101969,20 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (!carrier || isCarrierTrackingCode(s2)) {
       if (!carrier || isCarrierTrackingCode(s2) && !isCarrierTrackingCode(carrier)) {
         carrier = s2;
-        sources.push(`${path4}=${s2}`);
+        sources.push(`${path5}=${s2}`);
       } else if (!carrier) {
         carrier = s2;
-        sources.push(`${path4}=${s2}`);
+        sources.push(`${path5}=${s2}`);
       }
     } else if (!carrier && s2.length >= 6) {
       carrier = s2;
-      sources.push(`${path4}=${s2}`);
+      sources.push(`${path5}=${s2}`);
     }
   };
-  const walk = (node, path4, depth) => {
+  const walk = (node, path5, depth) => {
     if (node == null || depth > 8) return;
     if (Array.isArray(node)) {
-      node.forEach((item, i2) => walk(item, `${path4}[${i2}]`, depth + 1));
+      node.forEach((item, i2) => walk(item, `${path5}[${i2}]`, depth + 1));
       return;
     }
     if (typeof node !== "object") return;
@@ -101053,7 +101991,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (nodeSn && nodeSn !== wantSn) return;
     }
     for (const [k, v] of Object.entries(node)) {
-      const childPath = path4 ? `${path4}.${k}` : k;
+      const childPath = path5 ? `${path5}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
         consider(k, v, childPath);
       } else {
@@ -101289,6 +102227,29 @@ function isShopeeTerminalRawStatus(raw) {
   const r2 = String(raw || "").toUpperCase();
   return r2 === "SHIPPED" || r2 === "TO_CONFIRM_RECEIVE" || r2 === "COMPLETED" || r2 === "CANCELLED" || r2 === "IN_CANCEL";
 }
+function clearHandedOverLocalForCancelReturn(order) {
+  if (!order || typeof order !== "object") return;
+  const local = String(order.local_status || order.localStatus || order.internal_status || "").toUpperCase();
+  if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") return;
+  if (order.handedOverAt == null && order.handed_over_at != null) {
+    order.handedOverAt = order.handed_over_at;
+  }
+  order.is_handed_over = false;
+  order.isHandedOverToCarrier = false;
+  order.is_handed_over_to_carrier = false;
+  order.is_handed_over_to_courier = false;
+  if (local === "HANDED_OVER" || local === "NONE" || !local) {
+    delete order.local_status;
+    delete order.localStatus;
+    delete order.internal_status;
+  }
+}
+function isShopeeCancelOrReturnLikeOrder(order) {
+  const raw = String(order?.shopee_order_status || "").toUpperCase();
+  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") return true;
+  const status = String(order?.status || "");
+  return status === "cancelled" || status === "return_pending" || status === "return_received";
+}
 function enforceShopeeTerminalLocalStatus(order) {
   if (!order || String(order.channel || "") !== "shopee") return false;
   const raw = String(order.shopee_order_status || "").toUpperCase();
@@ -101311,6 +102272,15 @@ function enforceShopeeTerminalLocalStatus(order) {
     order.shopee_order_status = raw;
     order.isPrepared = false;
     order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
+    return true;
+  }
+  if (raw === "TO_RETURN") {
+    if (order.status !== "return_received") order.status = "return_pending";
+    order.shopee_order_status = "TO_RETURN";
+    order.isPrepared = false;
+    order.is_pending_shopee_check = false;
+    clearHandedOverLocalForCancelReturn(order);
     return true;
   }
   return false;
@@ -101970,7 +102940,7 @@ function agentDebugLogAc966f(payload) {
     timestamp: Date.now()
   };
   try {
-    import_fs3.default.appendFileSync(import_path2.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
+    import_fs4.default.appendFileSync(import_path3.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
   } catch {
   }
   fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
@@ -102246,9 +103216,88 @@ function matchesReceivedCancelReturnTabOrder(order) {
   const local = resolveOrderLocalStatus2(order);
   return local === "RETURN_RECEIVED" || local === "CANCELLED_STORED";
 }
+async function purgeClosedOrdersByRetention(opts) {
+  const cancelReturnDays = Math.max(1, Math.floor(opts?.cancelReturnDays ?? 14));
+  const closedDays = Math.max(1, Math.floor(opts?.closedDays ?? 30));
+  const dryRun = Boolean(opts?.dryRun);
+  if (!isMongoReady()) {
+    return {
+      deleted: 0,
+      jsonRemoved: 0,
+      sns: [],
+      scanned: 0,
+      dryRun,
+      cancelReturnMatched: 0,
+      closedMatched: 0,
+      message: "Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua retention cleanup."
+    };
+  }
+  const mongoResult = await deleteClosedOrdersByRetention({
+    cancelReturnDays,
+    closedDays,
+    dryRun
+  });
+  let jsonRemoved = 0;
+  if (!dryRun && mongoResult.sns.length > 0) {
+    try {
+      const snSet = new Set(
+        mongoResult.sns.map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+      );
+      const orders = loadOrders();
+      const kept = orders.filter((o) => {
+        const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+        const id = String(o?.id || "").replace(/^shopee-/i, "").trim();
+        return !snSet.has(sn) && !snSet.has(id);
+      });
+      jsonRemoved = orders.length - kept.length;
+      if (jsonRemoved > 0) saveOrders(kept);
+    } catch (err) {
+      console.warn("[Orders Retention] JSON mirror cleanup:", err?.message || err);
+    }
+    try {
+      queueOrdersJsonMirrorFromMongo();
+    } catch {
+    }
+  }
+  const message = dryRun ? `Dry-run: s\u1EBD x\xF3a ~${mongoResult.sns.length} \u0111\u01A1n (h\u1EE7y/ho\xE0n ${mongoResult.cancelReturnMatched} @${cancelReturnDays}d, \u0111\xF3ng ${mongoResult.closedMatched} @${closedDays}d).` : mongoResult.deleted > 0 ? `\u0110\xE3 x\xF3a ${mongoResult.deleted} \u0111\u01A1n \u0111\xE3 \u0111\xF3ng (h\u1EE7y/ho\xE0n>${cancelReturnDays}d / ho\xE0n t\u1EA5t-\u0110VVC>${closedDays}d).` : `Kh\xF4ng c\xF3 \u0111\u01A1n \u0111\xE3 \u0111\xF3ng qu\xE1 h\u1EA1n \u0111\u1EC3 x\xF3a (${cancelReturnDays}/${closedDays} ng\xE0y).`;
+  console.log(`[Orders Retention] ${message}`);
+  return {
+    deleted: mongoResult.deleted,
+    jsonRemoved,
+    sns: mongoResult.sns,
+    scanned: mongoResult.scanned,
+    dryRun,
+    cancelReturnMatched: mongoResult.cancelReturnMatched,
+    closedMatched: mongoResult.closedMatched,
+    message
+  };
+}
+var closedOrdersRetentionRunning = false;
+var closedOrdersRetentionTimer;
+function scheduleClosedOrdersRetentionCleanup() {
+  if (closedOrdersRetentionTimer) return;
+  const run = () => {
+    if (closedOrdersRetentionRunning || !isMongoReady()) return;
+    closedOrdersRetentionRunning = true;
+    void purgeClosedOrdersByRetention().catch((err) => console.warn("[Orders Retention] schedule error:", err?.message || err)).finally(() => {
+      closedOrdersRetentionRunning = false;
+    });
+  };
+  setTimeout(run, 2 * 60 * 1e3);
+  closedOrdersRetentionTimer = setInterval(run, 24 * 60 * 60 * 1e3);
+  if (typeof closedOrdersRetentionTimer.unref === "function") {
+    closedOrdersRetentionTimer.unref();
+  }
+  console.log("[Orders Retention] Scheduled: h\u1EE7y/ho\xE0n >14d, ho\xE0n t\u1EA5t/\u0110VVC >30d, m\u1ED7i 24h.");
+}
 function isOrderAlreadyScanProcessed(order) {
   const local = resolveOrderLocalStatus2(order);
-  return local === "HANDED_OVER" || local === "CANCELLED_STORED" || local === "RETURN_RECEIVED";
+  if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") return true;
+  if (local === "HANDED_OVER") {
+    if (isShopeeCancelOrReturnLikeOrder(order)) return false;
+    return true;
+  }
+  return false;
 }
 function getScanProcessedReason(order) {
   const local = resolveOrderLocalStatus2(order);
@@ -102274,6 +103323,13 @@ function queueOrdersJsonMirror(orders) {
       console.warn("[Orders JSON Mirror] skipped:", err?.message || err);
     }
     if (ordersJsonMirrorSnapshot) queueOrdersJsonMirror(ordersJsonMirrorSnapshot);
+  });
+}
+function queueOrdersJsonMirrorFromMongo() {
+  setImmediate(() => {
+    void loadOrdersFromStore().then((orders) => queueOrdersJsonMirror(orders)).catch(
+      (err) => console.warn("[Orders JSON Mirror] Mongo snapshot skipped:", err?.message || err)
+    );
   });
 }
 async function persistOrdersToDatabase(orders, changedOrders) {
@@ -102469,17 +103525,42 @@ function mergeShopeeOrderOnSync(existing, incoming) {
   }
   if (incoming.partialCancel != null) merged.partialCancel = incoming.partialCancel;
   if (incoming.canPartialCancel != null) merged.canPartialCancel = incoming.canPartialCancel;
-  delete merged.is_handed_over;
-  delete merged.isHandedOverToCarrier;
-  delete merged.is_handed_over_to_carrier;
-  delete merged.is_handed_over_to_courier;
-  delete merged.handedOverAt;
-  delete merged.handed_over_source;
-  delete merged.handedOverSource;
-  if (String(merged.local_status || "").toUpperCase() === "HANDED_OVER") {
-    delete merged.local_status;
-    delete merged.localStatus;
-    delete merged.internal_status;
+  const existingLocalForHandover = resolveOrderLocalStatus2(existing);
+  const alreadyStoredCancelReturn = existingLocalForHandover === "CANCELLED_STORED" || existingLocalForHandover === "RETURN_RECEIVED";
+  if (alreadyStoredCancelReturn) {
+  } else if (resolveOrderHandoverFlag(existing) && isShopeeCancelOrReturnLikeOrder(merged)) {
+    if (existing.handedOverAt) merged.handedOverAt = existing.handedOverAt;
+    if (existing.handed_over_source != null) merged.handed_over_source = existing.handed_over_source;
+    if (existing.handedOverSource != null) merged.handedOverSource = existing.handedOverSource;
+    clearHandedOverLocalForCancelReturn(merged);
+  } else if (resolveOrderHandoverFlag(existing)) {
+    merged.is_handed_over = true;
+    merged.isHandedOverToCarrier = true;
+    merged.is_handed_over_to_carrier = true;
+    merged.is_handed_over_to_courier = true;
+    merged.local_status = "HANDED_OVER";
+    merged.localStatus = "HANDED_OVER";
+    merged.internal_status = "HANDED_OVER";
+    if (existing.handedOverAt) merged.handedOverAt = existing.handedOverAt;
+    if (existing.handed_over_source != null) merged.handed_over_source = existing.handed_over_source;
+    if (existing.handedOverSource != null) merged.handedOverSource = existing.handedOverSource;
+    if (existing.localStatusAt) merged.localStatusAt = existing.localStatusAt;
+    if (existing.local_status_updated_at) {
+      merged.local_status_updated_at = existing.local_status_updated_at;
+    }
+  } else {
+    delete merged.is_handed_over;
+    delete merged.isHandedOverToCarrier;
+    delete merged.is_handed_over_to_carrier;
+    delete merged.is_handed_over_to_courier;
+    delete merged.handedOverAt;
+    delete merged.handed_over_source;
+    delete merged.handedOverSource;
+    if (String(merged.local_status || "").toUpperCase() === "HANDED_OVER") {
+      delete merged.local_status;
+      delete merged.localStatus;
+      delete merged.internal_status;
+    }
   }
   if (existing?.is_local_return_archived != null) {
     merged.is_local_return_archived = existing.is_local_return_archived;
@@ -102733,7 +103814,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
   }
   return { added, updated };
 }
-var ORDERS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "orders.json");
+var ORDERS_DB_PATH = import_path3.default.join(APP_ROOT, "data", "orders.json");
 var orderLookupIndex = null;
 function normalizeOrderIndexKey(raw) {
   return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
@@ -102765,9 +103846,7 @@ function rebuildOrderLookupIndex(orders) {
   return { byId, byOrderSn, byTracking, byReturnTracking, byInternal, byPackage };
 }
 function getOrderLookupIndex(orders) {
-  if (!orderLookupIndex) {
-    orderLookupIndex = rebuildOrderLookupIndex(orders);
-  }
+  orderLookupIndex = rebuildOrderLookupIndex(orders);
   return orderLookupIndex;
 }
 function withLocalDbTimeout(promise, timeoutMs, label) {
@@ -102779,11 +103858,11 @@ function withLocalDbTimeout(promise, timeoutMs, label) {
 }
 function loadOrders() {
   try {
-    if (!import_fs3.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs4.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs3.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs4.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -102872,6 +103951,14 @@ async function loadOrdersForShipScoped(orderIds, orderSns) {
   }
   return out;
 }
+async function persistChangedOrdersPatch(changedOrders) {
+  const changed = (Array.isArray(changedOrders) ? changedOrders : []).filter(Boolean);
+  if (changed.length === 0) return 0;
+  if (!isMongoReady()) throw new Error("mongodb_not_ready");
+  const written = await bulkUpsertOrdersToStore(changed);
+  queueOrdersJsonMirrorFromMongo();
+  return written;
+}
 async function hydrateTrackingFromMongoToJson() {
   let mirrored = 0;
   try {
@@ -102910,8 +103997,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs3.default.mkdirSync(import_path2.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs3.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs4.default.mkdirSync(import_path3.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs4.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -102929,12 +104016,12 @@ function saveOrders(orders) {
 function isHandedOverGarbageOrder(order) {
   return matchesHandedOverCarrierTabOrder(order);
 }
-var HANDED_OVER_CLEANUP_MARKER = import_path2.default.join(APP_ROOT, "data", ".cleanup-handed-over-v2");
+var HANDED_OVER_CLEANUP_MARKER = import_path3.default.join(APP_ROOT, "data", ".cleanup-handed-over-v2");
 async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs3.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs4.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -102964,10 +104051,10 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
   if (stillLeft === 0) {
     try {
-      const v1 = import_path2.default.join(APP_ROOT, "data", ".cleanup-handed-over-v1");
-      if (import_fs3.default.existsSync(v1)) import_fs3.default.unlinkSync(v1);
-      import_fs3.default.mkdirSync(import_path2.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs3.default.writeFileSync(
+      const v1 = import_path3.default.join(APP_ROOT, "data", ".cleanup-handed-over-v1");
+      if (import_fs4.default.existsSync(v1)) import_fs4.default.unlinkSync(v1);
+      import_fs4.default.mkdirSync(import_path3.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs4.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -103076,9 +104163,9 @@ function buildDashboardChart(dailyRevenue, range) {
   }
   return Array.from(buckets.values());
 }
-var PRODUCTS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "products.json");
-var LOCAL_INVENTORY_CACHE_PATH = import_path2.default.join(APP_ROOT, "data", "local_inventory.json");
-var SQLITE_LEGACY_PATH = import_path2.default.join(APP_ROOT, "database.sqlite");
+var PRODUCTS_DB_PATH = import_path3.default.join(APP_ROOT, "data", "products.json");
+var LOCAL_INVENTORY_CACHE_PATH = import_path3.default.join(APP_ROOT, "data", "local_inventory.json");
+var SQLITE_LEGACY_PATH = import_path3.default.join(APP_ROOT, "database.sqlite");
 function getProductChildrenList(p) {
   try {
     if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
@@ -103091,7 +104178,7 @@ async function loadProducts() {
   try {
     return await loadProductsFromStore();
   } catch (error) {
-    console.error("[Products DB] Failed to read from MongoDB:", error);
+    console.error("[Products DB] Failed to read products:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
@@ -103173,18 +104260,18 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
-var INVENTORY_AUDIT_PATH = import_path2.default.join(APP_ROOT, "data", "inventory_audit.json");
-var INVENTORY_BACKUP_DIR = import_path2.default.join(APP_ROOT, "data", "inventory_backups");
+var INVENTORY_AUDIT_PATH = import_path3.default.join(APP_ROOT, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path3.default.join(APP_ROOT, "data", "inventory_backups");
 function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs3.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs3.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs4.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs4.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs3.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs4.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -103192,36 +104279,36 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs3.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs4.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs3.default.writeFileSync(
-    import_path2.default.join(INVENTORY_BACKUP_DIR, fileName),
+  import_fs4.default.writeFileSync(
+    import_path3.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
   );
   writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
   return fileName;
 }
-var CHANNEL_LISTINGS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "channel_listings.json");
-var SHOPEE_SYNC_ERRORS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "shopee_sync_errors.json");
+var CHANNEL_LISTINGS_DB_PATH = import_path3.default.join(APP_ROOT, "data", "channel_listings.json");
+var SHOPEE_SYNC_ERRORS_DB_PATH = import_path3.default.join(APP_ROOT, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs3.default.existsSync(filePath)) return;
+  if (!import_fs4.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs3.default.renameSync(filePath, dest);
-    console.log(`[Mongo Migrate] Renamed ${import_path2.default.basename(filePath)} \u2192 ${import_path2.default.basename(dest)}`);
+    import_fs4.default.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${import_path3.default.basename(filePath)} \u2192 ${import_path3.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
   }
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs3.default.existsSync(filePath)) return [];
-    const raw = import_fs3.default.readFileSync(filePath, "utf-8");
+    if (!import_fs4.default.existsSync(filePath)) return [];
+    const raw = import_fs4.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -103230,20 +104317,20 @@ function readLegacyJsonArray(filePath) {
   }
 }
 function findLatestMigratedJson(baseName) {
-  const dataDir = import_path2.default.join(APP_ROOT, "data");
-  if (!import_fs3.default.existsSync(dataDir)) return null;
+  const dataDir = import_path3.default.join(APP_ROOT, "data");
+  if (!import_fs4.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs3.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs4.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
-  return import_path2.default.join(dataDir, matches[matches.length - 1]);
+  return import_path3.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs3.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs3.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs3.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs4.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs4.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs4.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -103262,10 +104349,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs3.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs4.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs3.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs4.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -103291,10 +104378,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs3.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs4.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs3.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs4.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -103305,8 +104392,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs3.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs3.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs4.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs4.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -103330,8 +104417,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs3.default.mkdirSync(import_path2.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs3.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs4.default.mkdirSync(import_path3.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs4.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -103941,7 +105028,7 @@ async function bulkAutoLinkListingsByIds(rawIds) {
     masterProductCount: masterProducts.length
   };
 }
-var SUPPLIERS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "suppliers.json");
+var SUPPLIERS_DB_PATH = import_path3.default.join(APP_ROOT, "data", "suppliers.json");
 function normalizeSupplier(raw) {
   const totalOrderValue = Number(raw?.totalOrderValue) || 0;
   const totalPaid = Number(raw?.totalPaid) || 0;
@@ -103957,8 +105044,8 @@ function normalizeSupplier(raw) {
 }
 function loadSuppliers() {
   try {
-    if (!import_fs3.default.existsSync(SUPPLIERS_DB_PATH)) return [];
-    const raw = import_fs3.default.readFileSync(SUPPLIERS_DB_PATH, "utf-8");
+    if (!import_fs4.default.existsSync(SUPPLIERS_DB_PATH)) return [];
+    const raw = import_fs4.default.readFileSync(SUPPLIERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed.map(normalizeSupplier) : [];
   } catch (error) {
@@ -103968,8 +105055,8 @@ function loadSuppliers() {
 }
 function saveSuppliers(suppliers) {
   try {
-    import_fs3.default.mkdirSync(import_path2.default.dirname(SUPPLIERS_DB_PATH), { recursive: true });
-    import_fs3.default.writeFileSync(SUPPLIERS_DB_PATH, JSON.stringify(suppliers, null, 2), "utf-8");
+    import_fs4.default.mkdirSync(import_path3.default.dirname(SUPPLIERS_DB_PATH), { recursive: true });
+    import_fs4.default.writeFileSync(SUPPLIERS_DB_PATH, JSON.stringify(suppliers, null, 2), "utf-8");
   } catch (error) {
     console.error(
       "L\u1ED7i chi ti\u1EBFt khi l\u01B0u shop/OAuth:",
@@ -103978,7 +105065,7 @@ function saveSuppliers(suppliers) {
     console.error("[Suppliers DB] Failed to write suppliers.json:", error);
   }
 }
-var CHANNEL_SETTINGS_PATH = import_path2.default.join(APP_ROOT, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH = import_path3.default.join(APP_ROOT, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -104097,11 +105184,15 @@ function upsertShopsInChannelSettings(existing = [], incoming = []) {
     const key = shopListKey(normalized);
     const prev = map.get(key);
     if (prev) {
+      const incomingName = String(normalized.shopName || "").trim();
+      const prevName = String(prev.shopName || "").trim();
+      const incomingIsGeneric = !incomingName || /^shopee\s+\d+$/i.test(incomingName) || incomingName.toLowerCase() === "shopee shop" || incomingName.toLowerCase() === "gian h\xE0ng";
       map.set(key, {
         ...prev,
         ...normalized,
         id: prev.id || normalized.id,
-        shopName: normalized.shopName || prev.shopName,
+        // Giữ tên user (VD: AuDIO) — không bị "Shopee 831052930" ghi đè.
+        shopName: !incomingIsGeneric && incomingName || prevName || incomingName,
         apiKey: normalized.apiKey || prev.apiKey,
         apiSecret: normalized.apiSecret ?? prev.apiSecret,
         wooUrl: normalized.wooUrl ?? prev.wooUrl,
@@ -104125,8 +105216,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs3.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs3.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs4.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs4.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -104148,7 +105239,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs3.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs4.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -104195,11 +105286,11 @@ function syncOAuthShopsToChannelSettings(savedShopIds, opts) {
     logOAuthSaveError("syncOAuthShopsToChannelSettings", error);
   }
 }
-var IMPORTS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "imports.json");
+var IMPORTS_DB_PATH = import_path3.default.join(APP_ROOT, "data", "imports.json");
 function loadImports() {
   try {
-    if (!import_fs3.default.existsSync(IMPORTS_DB_PATH)) return [];
-    const raw = import_fs3.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
+    if (!import_fs4.default.existsSync(IMPORTS_DB_PATH)) return [];
+    const raw = import_fs4.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -104209,18 +105300,18 @@ function loadImports() {
 }
 function saveImports(imports) {
   try {
-    import_fs3.default.mkdirSync(import_path2.default.dirname(IMPORTS_DB_PATH), { recursive: true });
-    import_fs3.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+    import_fs4.default.mkdirSync(import_path3.default.dirname(IMPORTS_DB_PATH), { recursive: true });
+    import_fs4.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
   } catch (error) {
     console.error("[Imports DB] Failed to write imports.json:", error);
   }
 }
-var EXPENSES_DB_PATH = import_path2.default.join(APP_ROOT, "data", "expenses.json");
-var EXPENSES_CLEAR_MARKER = import_path2.default.join(APP_ROOT, "data", ".expenses-cleared-v2");
+var EXPENSES_DB_PATH = import_path3.default.join(APP_ROOT, "data", "expenses.json");
+var EXPENSES_CLEAR_MARKER = import_path3.default.join(APP_ROOT, "data", ".expenses-cleared-v2");
 function loadExpenses() {
   try {
-    if (!import_fs3.default.existsSync(EXPENSES_DB_PATH)) return [];
-    const raw = import_fs3.default.readFileSync(EXPENSES_DB_PATH, "utf-8");
+    if (!import_fs4.default.existsSync(EXPENSES_DB_PATH)) return [];
+    const raw = import_fs4.default.readFileSync(EXPENSES_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -104230,18 +105321,18 @@ function loadExpenses() {
 }
 function saveExpenses(expenses) {
   try {
-    import_fs3.default.mkdirSync(import_path2.default.dirname(EXPENSES_DB_PATH), { recursive: true });
-    import_fs3.default.writeFileSync(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
+    import_fs4.default.mkdirSync(import_path3.default.dirname(EXPENSES_DB_PATH), { recursive: true });
+    import_fs4.default.writeFileSync(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
   } catch (error) {
     console.error("[Expenses DB] Failed to write expenses.json:", error);
   }
 }
 function migrateExpensesStorageOnce() {
-  if (import_fs3.default.existsSync(EXPENSES_CLEAR_MARKER)) return;
+  if (import_fs4.default.existsSync(EXPENSES_CLEAR_MARKER)) return;
   saveExpenses([]);
   try {
-    import_fs3.default.mkdirSync(import_path2.default.dirname(EXPENSES_CLEAR_MARKER), { recursive: true });
-    import_fs3.default.writeFileSync(EXPENSES_CLEAR_MARKER, (/* @__PURE__ */ new Date()).toISOString(), "utf-8");
+    import_fs4.default.mkdirSync(import_path3.default.dirname(EXPENSES_CLEAR_MARKER), { recursive: true });
+    import_fs4.default.writeFileSync(EXPENSES_CLEAR_MARKER, (/* @__PURE__ */ new Date()).toISOString(), "utf-8");
     console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch d\u1EEF li\u1EC7u chi ph\xED c\u0169 (migration m\u1ED9t l\u1EA7n).");
   } catch (error) {
     console.error("[Expenses] Failed to write clear marker:", error);
@@ -105214,7 +106305,7 @@ async function startServer() {
   app.post("/api/debug/client-log", authMiddleware, (req, res) => {
     try {
       ensureDataDirs();
-      const logPath = import_path2.default.join(APP_ROOT, "data", "debug-556dce.ndjson");
+      const logPath = import_path3.default.join(APP_ROOT, "data", "debug-556dce.ndjson");
       const payload = {
         sessionId: "556dce",
         runId: req.body?.runId || "post-fix",
@@ -105224,7 +106315,7 @@ async function startServer() {
         data: req.body?.data || {},
         timestamp: Date.now()
       };
-      import_fs3.default.appendFileSync(logPath, `${JSON.stringify(payload)}
+      import_fs4.default.appendFileSync(logPath, `${JSON.stringify(payload)}
 `, "utf-8");
       return res.status(200).json({ ok: true });
     } catch (error) {
@@ -105236,9 +106327,9 @@ async function startServer() {
   });
   app.get("/api/debug/client-log", authMiddleware, (_req, res) => {
     try {
-      const logPath = import_path2.default.join(APP_ROOT, "data", "debug-556dce.ndjson");
-      if (!import_fs3.default.existsSync(logPath)) return res.json({ ok: true, lines: [] });
-      const lines = import_fs3.default.readFileSync(logPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(-80).map((line) => {
+      const logPath = import_path3.default.join(APP_ROOT, "data", "debug-556dce.ndjson");
+      if (!import_fs4.default.existsSync(logPath)) return res.json({ ok: true, lines: [] });
+      const lines = import_fs4.default.readFileSync(logPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(-80).map((line) => {
         try {
           return JSON.parse(line);
         } catch {
@@ -105258,7 +106349,7 @@ async function startServer() {
     let dataDirWritable = false;
     try {
       ensureDataDirs();
-      import_fs3.default.accessSync(import_path2.default.join(APP_ROOT, "data"), import_fs3.default.constants.W_OK);
+      import_fs4.default.accessSync(import_path3.default.join(APP_ROOT, "data"), import_fs4.default.constants.W_OK);
       dataDirWritable = true;
     } catch {
       dataDirWritable = false;
@@ -105269,7 +106360,7 @@ async function startServer() {
       host: APP_BASE_URL,
       appRoot: APP_ROOT,
       tokensPath: SHOPEE_TOKENS_PATH,
-      tokensFileExists: import_fs3.default.existsSync(SHOPEE_TOKENS_PATH),
+      tokensFileExists: import_fs4.default.existsSync(SHOPEE_TOKENS_PATH),
       dataDirWritable,
       shopeeOAuthShopIds: shopIds,
       lastOAuth: loadLastOAuthAudit(),
@@ -105705,7 +106796,8 @@ async function startServer() {
   app.get("/api/products", authMiddleware, async (req, res) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     try {
-      if (!isMongoReady()) {
+      const diskMode = isProductsDiskMode();
+      if (!diskMode && !isMongoReady()) {
         return res.status(503).json({
           success: false,
           products: [],
@@ -105719,7 +106811,7 @@ async function startServer() {
       const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize)) : PRODUCTS_PAGE_SIZE_DEFAULT;
       const paged = await withLocalDbTimeout(
         loadProductsPageFromStore(page, pageSize),
-        3e4,
+        diskMode ? 15e3 : 3e4,
         "products_page_load"
       );
       return res.status(200).json({
@@ -105731,7 +106823,8 @@ async function startServer() {
         totalPages: paged.totalPages,
         hasMore: paged.hasMore,
         grouped: false,
-        source: "mongodb"
+        source: diskMode ? "disk" : "mongodb",
+        storage: diskMode ? getProductsDiskPath() : "mongodb.products"
       });
     } catch (err) {
       console.error("[Products API] GET /api/products failed:", err);
@@ -106061,12 +107154,16 @@ async function startServer() {
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ success: false, message: "Ch\u01B0a c\xF3 d\xF2ng t\u1ED3n kho n\xE0o \u0111\u1EC3 c\xE2n b\u1EB1ng." });
       }
+      const preferredShopId = String(req.body?.shopId || "").trim() || void 0;
       const skuStockMap = /* @__PURE__ */ new Map();
       for (const item of items) {
         const sku = String(item?.sku || "").trim();
         if (!sku) continue;
-        const actual = Math.max(0, Math.round(Number(item.actual_stock)));
-        if (!Number.isFinite(actual)) continue;
+        const rawStock = item?.actual_stock;
+        if (rawStock === "" || rawStock == null) continue;
+        const parsed = Number(rawStock);
+        if (!Number.isFinite(parsed)) continue;
+        const actual = Math.max(0, Math.round(parsed));
         skuStockMap.set(sku, actual);
       }
       if (skuStockMap.size === 0) {
@@ -106104,7 +107201,8 @@ async function startServer() {
       console.log(`[Inventory Balance] C\u1EADp nh\u1EADt kho g\u1ED1c ${updatedCount} SKU`);
       const queued = await enqueueShopeeStockPriceSync(updatedProducts, {
         syncStock: true,
-        syncPrice: false
+        syncPrice: false,
+        shopId: preferredShopId
       });
       const parts = [];
       parts.push("kho g\u1ED1c \u0111\xE3 c\u1EADp nh\u1EADt");
@@ -106947,10 +108045,15 @@ async function startServer() {
       const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
       const lookbackSec = Math.floor(hours * 60 * 60);
-      console.log(`[Orders Pull] POST /api/orders/pull lookback_hours=${hours}`);
+      const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+      const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean) : shopIdsRaw ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean) : void 0;
+      console.log(
+        `[Orders Pull] POST /api/orders/pull lookback_hours=${hours}` + (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all")
+      );
       const result = await pullIncrementalOrdersFromShopee({
         lookbackSec,
-        reconcileActive: true
+        reconcileActive: true,
+        shopIds: shopIds?.length ? shopIds : void 0
       });
       ordersRefreshCache = null;
       await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
@@ -106992,9 +108095,12 @@ async function startServer() {
       jobId = job.id;
       const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
       const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
+      const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+      const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean) : shopIdsRaw ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean) : void 0;
       const result = await pullIncrementalOrdersFromShopee({
         lookbackSec: Math.floor(hours * 60 * 60),
-        reconcileActive: true
+        reconcileActive: true,
+        shopIds: shopIds?.length ? shopIds : void 0
       });
       ordersRefreshCache = null;
       await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
@@ -107093,8 +108199,8 @@ async function startServer() {
     try {
       for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
         try {
-          const p = import_path2.default.join(APP_ROOT, "data", name);
-          if (import_fs3.default.existsSync(p)) import_fs3.default.unlinkSync(p);
+          const p = import_path3.default.join(APP_ROOT, "data", name);
+          if (import_fs4.default.existsSync(p)) import_fs4.default.unlinkSync(p);
         } catch {
         }
       }
@@ -107111,6 +108217,49 @@ async function startServer() {
       return res.status(500).json({
         success: false,
         error: error?.message || "cleanup_failed"
+      });
+    }
+  });
+  app.post("/api/orders/cleanup-closed-retention", authMiddleware, async (req, res) => {
+    try {
+      const dryRun = req.body?.dry_run === true || req.body?.dryRun === true || String(req.query?.dry_run || "") === "1";
+      const cancelReturnDays = Number(req.body?.cancel_return_days ?? req.body?.cancelReturnDays);
+      const closedDays = Number(req.body?.closed_days ?? req.body?.closedDays);
+      const result = await purgeClosedOrdersByRetention({
+        dryRun,
+        cancelReturnDays: Number.isFinite(cancelReturnDays) && cancelReturnDays > 0 ? cancelReturnDays : void 0,
+        closedDays: Number.isFinite(closedDays) && closedDays > 0 ? closedDays : void 0
+      });
+      return res.json({
+        success: true,
+        ...result,
+        orderSns: result.sns.slice(0, 100)
+      });
+    } catch (error) {
+      console.error("[Orders Retention] API error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "cleanup_closed_retention_failed",
+        message: error?.message || "Kh\xF4ng th\u1EC3 d\u1ECDn \u0111\u01A1n \u0111\xE3 \u0111\xF3ng."
+      });
+    }
+  });
+  app.post("/api/orders/cleanup-label-pdfs", authMiddleware, async (_req, res) => {
+    try {
+      const deleted = cleanupExpiredLabelFiles();
+      wipeLegacyPublicPrints();
+      return res.json({
+        success: true,
+        deleted,
+        ttlHours: 24,
+        storage: "disk",
+        mongo: false,
+        message: `\u0110\xE3 d\u1ECDn PDF v\u1EADn \u0111\u01A1n >24h tr\xEAn \u0111\u0129a (kh\xF4ng l\u01B0u Mongo). X\xF3a ${deleted} m\u1EE5c.`
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "cleanup_label_pdfs_failed"
       });
     }
   });
@@ -107324,9 +108473,14 @@ async function startServer() {
     if (!code) {
       return res.status(400).json({ error: "Thi\u1EBFu m\xE3 qu\xE9t (code)." });
     }
-    let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
-    rawOrders = rawOrders.filter(isValidOrder);
-    const foundRaw = await findOrderByScanLookup(rawOrders, code);
+    let foundRaw = null;
+    try {
+      foundRaw = await findOrderByScanCodeInStore(code);
+      if (foundRaw && !isValidOrder(foundRaw)) foundRaw = null;
+      if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
+    } catch (err) {
+      console.warn("[Orders Lookup] failed:", err?.message || err);
+    }
     if (!foundRaw) {
       return res.status(404).json({
         error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng kh\u1EDBp m\xE3 qu\xE9t.",
@@ -107679,26 +108833,50 @@ async function startServer() {
       const forceHandOverCodes = toCodeSet(req.body?.daXuatKhoCodes);
       const forceCancelCodes = toCodeSet(req.body?.donHuyCodes);
       const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const validOrders = orders.filter(isValidOrder);
+      const lookupPairs = await Promise.all(
+        codes.map(async (code) => {
+          let found = null;
+          try {
+            found = await findOrderByScanCodeInStore(code);
+            if (found && !isValidOrder(found)) found = null;
+            if (found) found = mirrorTrackingFieldsForRead(found);
+          } catch (lookupErr) {
+            console.warn(
+              `[Orders Scan Bulk] lookup miss code=${code}:`,
+              lookupErr?.message || lookupErr
+            );
+          }
+          return { code, found };
+        })
+      );
+      const orders = [];
+      const orderIndexById = /* @__PURE__ */ new Map();
+      const putScoped = (order) => {
+        if (!order?.id) return -1;
+        const existing = orderIndexById.get(String(order.id));
+        if (existing !== void 0) return existing;
+        const idx = orders.length;
+        orders.push(order);
+        orderIndexById.set(String(order.id), idx);
+        return idx;
+      };
+      for (const pair of lookupPairs) {
+        if (pair.found) putScoped(pair.found);
+      }
       const results = [];
       const failed_scans = [];
       const changedOrders = [];
       const updatedById = /* @__PURE__ */ new Map();
       const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
       const norm = (c) => String(c || "").trim().toUpperCase();
-      for (const code of codes) {
+      for (const { code, found } of lookupPairs) {
         const codeKey = norm(code);
-        const found = await findOrderByScanLookup(validOrders, code);
         if (!found) {
           results.push({ code, action: "not_found", message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n v\u1EDBi m\xE3 "${code}"` });
           failed_scans.push({ code, reason: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n trong h\u1EC7 th\u1ED1ng" });
           continue;
         }
-        const index = orders.findIndex(
-          (o) => o.id === found.id || String(o.orderSn || "") === String(found.orderSn || "")
-        );
+        const index = putScoped(found);
         if (index < 0) {
           results.push({ code, action: "not_found", message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n v\u1EDBi m\xE3 "${code}"` });
           failed_scans.push({ code, reason: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n trong h\u1EC7 th\u1ED1ng" });
@@ -107706,11 +108884,15 @@ async function startServer() {
         }
         const order = orders[index];
         const status = String(order.status || "");
+        const rawShopee = String(order.shopee_order_status || "").toUpperCase();
         const existingLocal = resolveOrderLocalStatus2(order);
         const forceHandOver = forceHandOverCodes.has(codeKey) || forceHandOverCodes.has(norm(String(order.orderSn || ""))) || forceHandOverCodes.has(norm(String(order.trackingNumber || order.tracking_no || "")));
-        const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || "")));
-        const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || "")));
-        if (isOrderAlreadyScanProcessed(order)) {
+        const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || ""))) || forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceCancelCodes.has(norm(String(order.return_tracking_no || "")));
+        const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.return_tracking_no || "")));
+        const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN";
+        const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || isShopeeCancelOrReturnLikeOrder(order));
+        const allowForceCancelReturnOverride = (forceCancel || forceReturn) && existingLocal === "HANDED_OVER" && (isCancelLike || isReturnLike || forceCancel || forceReturn);
+        if (isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride) {
           const reason = getScanProcessedReason(order);
           results.push({
             code,
@@ -107765,42 +108947,9 @@ async function startServer() {
           });
           continue;
         }
-        if (status === "cancelled" || forceCancel && status === "cancelled") {
+        if (forceReturn || isReturnLike) {
           const updated = { ...order };
-          setOrderLocalStatus(updated, "CANCELLED_STORED");
-          orders[index] = updated;
-          changedOrders.push(updated);
-          updatedById.set(updated.id, updated);
-          summary.donHuy += 1;
-          results.push({
-            code,
-            action: "cancelled",
-            orderId: updated.id,
-            orderSn: updated.orderSn,
-            message: `\u0110\u01A1n h\u1EE7y #${updated.orderSn} \u2192 CANCELLED_STORED`,
-            local_status: "CANCELLED_STORED"
-          });
-          continue;
-        }
-        if (forceCancel && status !== "cancelled") {
-          results.push({
-            code,
-            action: "rejected",
-            orderId: order.id,
-            orderSn: order.orderSn,
-            message: `M\xE3 "${code}" kh\xF4ng thu\u1ED9c \u0110\u01A1n h\u1EE7y trong DB`,
-            local_status: existingLocal
-          });
-          failed_scans.push({
-            code,
-            orderId: order.id,
-            orderSn: order.orderSn,
-            reason: `Kh\xF4ng thu\u1ED9c \u0110\u01A1n h\u1EE7y (status=${status})`
-          });
-          continue;
-        }
-        if (forceReturn || status === "return_pending" || status === "return_received") {
-          const updated = { ...order };
+          clearHandedOverLocalForCancelReturn(updated);
           setOrderLocalStatus(updated, "RETURN_RECEIVED");
           orders[index] = updated;
           changedOrders.push(updated);
@@ -107813,6 +108962,25 @@ async function startServer() {
             orderSn: updated.orderSn,
             message: `\u0110\xE3 nh\u1EADn h\xE0ng ho\xE0n \u2014 \u0111\u01A1n #${updated.orderSn}`,
             local_status: "RETURN_RECEIVED"
+          });
+          continue;
+        }
+        if (forceCancel || isCancelLike) {
+          const updated = { ...order };
+          if (updated.status !== "cancelled") updated.status = "cancelled";
+          clearHandedOverLocalForCancelReturn(updated);
+          setOrderLocalStatus(updated, "CANCELLED_STORED");
+          orders[index] = updated;
+          changedOrders.push(updated);
+          updatedById.set(updated.id, updated);
+          summary.donHuy += 1;
+          results.push({
+            code,
+            action: "cancelled",
+            orderId: updated.id,
+            orderSn: updated.orderSn,
+            message: `\u0110\u01A1n h\u1EE7y #${updated.orderSn} \u2192 CANCELLED_STORED`,
+            local_status: "CANCELLED_STORED"
           });
           continue;
         }
@@ -107868,12 +109036,7 @@ async function startServer() {
         });
       }
       if (changedOrders.length > 0) {
-        await persistOrdersToDatabase(orders, changedOrders);
-      } else if (loaded.dirty) {
-        saveOrders(orders);
-        if (loaded.handoverMongoSync.length > 0) {
-          await persistOrdersToDatabase(orders, loaded.handoverMongoSync);
-        }
+        await persistChangedOrdersPatch(changedOrders);
       }
       const updatedList = [...updatedById.values()];
       const products = await loadProductsForOrders(updatedList);
@@ -108370,7 +109533,7 @@ async function startServer() {
   app.post("/api/shopee/products/sync", authMiddleware, async (req, res) => {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     try {
-      if (!isMongoReady()) {
+      if (!isProductsDiskMode() && !isMongoReady()) {
         return res.status(503).json({
           success: false,
           error: "mongodb_not_ready",
@@ -108847,11 +110010,11 @@ async function startServer() {
     if (!sn) return null;
     try {
       ensureLabelsDir();
-      const matches = import_fs3.default.readdirSync(LABELS_DIR).filter(
+      const matches = import_fs4.default.readdirSync(LABELS_DIR).filter(
         (name) => /\.pdf$/i.test(name) && (name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`))
       ).map((name) => {
-        const full = import_path2.default.join(LABELS_DIR, name);
-        return { name, mtime: import_fs3.default.statSync(full).mtimeMs, size: import_fs3.default.statSync(full).size };
+        const full = import_path3.default.join(LABELS_DIR, name);
+        return { name, mtime: import_fs4.default.statSync(full).mtimeMs, size: import_fs4.default.statSync(full).size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
       if (!newest) return null;
@@ -109315,7 +110478,7 @@ async function startServer() {
     const savedFromDownload = "savedFiles" in downloadResult && Array.isArray(downloadResult.savedFiles) ? downloadResult.savedFiles.filter((n) => safeLabelFilename(n) && hasLabelMem(n)) : [];
     let filename = savedFromDownload[savedFromDownload.length - 1] || (ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`);
     console.log(`[Shopee Print] B\u1EAFt \u0111\u1EA7u in cho \u0111\u01A1n ${orderSns.join(",")}`);
-    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path2.default.join(LABELS_DIR, filename)}`);
+    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path3.default.join(LABELS_DIR, filename)}`);
     if (!hasLabelMem(filename)) {
       filename = saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
@@ -109445,7 +110608,7 @@ async function startServer() {
     } else if (savedFilenames.length > 0) {
       const relative = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
       if (relative) {
-        const fn = import_path2.default.basename(relative);
+        const fn = import_path3.default.basename(relative);
         assertLabelFileReady(fn);
         primaryUrl = absoluteLabelUrl(relative);
         pdfFilename = fn;
@@ -110380,15 +111543,20 @@ async function startServer() {
     return { online: false, message: "N\u1EC1n t\u1EA3ng kh\xF4ng h\u1ED7 tr\u1EE3" };
   }
   app.get("/api/shopee/oauth-shops", authMiddleware, async (_req, res) => {
+    ensureShopeeLinkedShopTokenKeys();
     const tokens = loadShopeeTokens();
-    const shopIds = listShopeeOAuthShopIds();
-    const details = shopIds.map((id) => ({
-      shop_id: id,
-      obtained_at: tokens[id]?.obtained_at ?? null,
-      expire_in: tokens[id]?.expire_in ?? null,
-      oauth_shop_id: tokens[id]?.oauth_shop_id ?? null,
-      shop_id_list: tokens[id]?.shop_id_list ?? []
-    }));
+    const shopIds = listShopeeSyncShopIds();
+    const details = shopIds.map((id) => {
+      const record = getShopeeTokenRecord(tokens, id);
+      return {
+        shop_id: id,
+        obtained_at: record?.obtained_at ?? null,
+        expire_in: record?.expire_in ?? null,
+        oauth_shop_id: record?.oauth_shop_id ?? null,
+        shop_id_list: record?.shop_id_list ?? [],
+        has_own_key: Boolean(tokens[id])
+      };
+    });
     let lastOAuth = loadLastOAuthAudit();
     return res.json({
       success: true,
@@ -110547,11 +111715,11 @@ Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
       return res.status(500).json({ error: error.message || "L\u1ED7i x\u1EED l\xFD AI t\u1EEB server" });
     }
   });
-  const LISTINGS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "multi_channel_listings.json");
+  const LISTINGS_DB_PATH = import_path3.default.join(APP_ROOT, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs3.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs3.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs4.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs4.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -110559,9 +111727,9 @@ Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
     }
   };
   const writeListingsDb = (listings) => {
-    const dir = import_path2.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs3.default.existsSync(dir)) import_fs3.default.mkdirSync(dir, { recursive: true });
-    import_fs3.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    const dir = import_path3.default.dirname(LISTINGS_DB_PATH);
+    if (!import_fs4.default.existsSync(dir)) import_fs4.default.mkdirSync(dir, { recursive: true });
+    import_fs4.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
   const markdownToHtml = (text) => {
     if (!text) return "";
@@ -110732,11 +111900,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       return res.status(500).json({ success: false, error: error.message || "L\u01B0u th\u1EA5t b\u1EA1i" });
     }
   });
-  const PRODUCT_LISTINGS_DB_PATH = import_path2.default.join(APP_ROOT, "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = import_path3.default.join(APP_ROOT, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs3.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs3.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs4.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs4.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -110744,9 +111912,9 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   };
   const writeProductListingsDb = (rows) => {
-    const dir = import_path2.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs3.default.existsSync(dir)) import_fs3.default.mkdirSync(dir, { recursive: true });
-    import_fs3.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    const dir = import_path3.default.dirname(PRODUCT_LISTINGS_DB_PATH);
+    if (!import_fs4.default.existsSync(dir)) import_fs4.default.mkdirSync(dir, { recursive: true });
+    import_fs4.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -111003,12 +112171,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       });
     }
   });
-  const PUBLISH_EDIT_DB_PATH = import_path2.default.join(APP_ROOT, "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = import_path2.default.join(APP_ROOT, "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = import_path3.default.join(APP_ROOT, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = import_path3.default.join(APP_ROOT, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs3.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs3.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs4.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs4.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -111016,9 +112184,9 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   };
   const writePublishEditDb = (data) => {
-    const dir = import_path2.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs3.default.existsSync(dir)) import_fs3.default.mkdirSync(dir, { recursive: true });
-    import_fs3.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    const dir = import_path3.default.dirname(PUBLISH_EDIT_DB_PATH);
+    if (!import_fs4.default.existsSync(dir)) import_fs4.default.mkdirSync(dir, { recursive: true });
+    import_fs4.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -111059,11 +112227,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs3.default.existsSync(FRAMED_IMAGES_DIR)) import_fs3.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs4.default.existsSync(FRAMED_IMAGES_DIR)) import_fs4.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs3.default.writeFileSync(import_path2.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs4.default.writeFileSync(import_path3.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -111085,12 +112253,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   });
   app.get("/api/framed-images/:productId", (req, res) => {
-    const filePath = import_path2.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs3.default.existsSync(filePath)) {
+    const filePath = import_path3.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
+    if (!import_fs4.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs3.default.readFileSync(filePath));
+    return res.send(import_fs4.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -111118,7 +112286,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
-    const distPath = import_path2.default.join(APP_ROOT, "dist");
+    const distPath = import_path3.default.join(APP_ROOT, "dist");
     app.use(import_express2.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
@@ -111144,7 +112312,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.sendFile(import_path2.default.join(distPath, "index.html"));
+      return res.sendFile(import_path3.default.join(distPath, "index.html"));
     });
   }
   async function connectDB() {
@@ -111153,6 +112321,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
+        scheduleClosedOrdersRetentionCleanup();
       }
       console.log(`[MongoDB] connectDB xong \u2014 ready=${isMongoReady()} uri=${getMongoUriMasked()}`);
     } catch (err) {
@@ -111179,7 +112348,8 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       void connectDB();
       console.log("[Boot] Order sync: webhook ON + one-shot recovery pull (24h) after Mongo ready.");
       console.log("[Shopee Tracking Scanner] T\u1EA0M T\u1EAET (iron-fist purge) \u2014 kh\xF4ng qu\xE9t khi boot.");
-      console.log("[Local Return Archive] T\u1EA0M T\u1EAET (iron-fist purge).");
+      console.log("[Orders Retention] Job x\xF3a \u0111\u01A1n \u0111\xE3 \u0111\xF3ng: h\u1EE7y/ho\xE0n >14d, ho\xE0n t\u1EA5t/\u0110VVC >30d (sau Mongo ready).");
+      console.log("[Labels Cleanup] PDF v\u1EADn \u0111\u01A1n l\u01B0u \u0111\u0129a storage/labels (kh\xF4ng Mongo) \u2014 TTL 24h, d\u1ECDn m\u1ED7i gi\u1EDD.");
       console.log(
         `[Shopee Webhook] orders write ${String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"}`
       );

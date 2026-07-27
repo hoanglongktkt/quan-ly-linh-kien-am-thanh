@@ -6,10 +6,21 @@ import fs from "fs";
 import path from "path";
 
 export function isProductsDiskMode(): boolean {
-  const v = String(process.env.PRODUCTS_STORAGE || process.env.PRODUCTS_DISK || "")
-    .trim()
-    .toLowerCase();
-  return v === "disk" || v === "json" || v === "file" || v === "1" || v === "true";
+  // Mặc định disk (hosting) — Atlas free dễ đầy. Set PRODUCTS_STORAGE=mongo để dùng Atlas.
+  const raw = process.env.PRODUCTS_STORAGE ?? process.env.PRODUCTS_DISK;
+  if (raw == null || String(raw).trim() === "") return true;
+  const v = String(raw).trim().toLowerCase();
+  if (v === "mongo" || v === "atlas" || v === "0" || v === "false" || v === "off") {
+    return false;
+  }
+  return (
+    v === "disk" ||
+    v === "json" ||
+    v === "file" ||
+    v === "1" ||
+    v === "true" ||
+    v === "on"
+  );
 }
 
 let appRootResolved = "";

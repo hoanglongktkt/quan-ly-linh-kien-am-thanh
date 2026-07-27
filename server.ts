@@ -64,6 +64,8 @@ import {
   reloadCachesFromDb,
   isMongoReady,
   getMongoUriMasked,
+  isProductsDiskMode,
+  getProductsDiskPath,
   bulkUpsertOrdersToStore,
   bulkUpdateShippedOrdersBySn,
   markOrderHandedOverInStore,
@@ -15349,11 +15351,12 @@ async function startServer() {
   const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
   const PRODUCTS_PAGE_SIZE_MAX = 50;
 
-  // CHỈ đọc MongoDB nội bộ — TUYỆT ĐỐI không gọi Shopee API / fetch / axios ở đây.
+  // Kho Gốc: disk (mặc định) hoặc Mongo — TUYỆT ĐỐI không gọi Shopee API ở đây.
   app.get("/api/products", authMiddleware, async (req, res) => {
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     try {
-      if (!isMongoReady()) {
+      const diskMode = isProductsDiskMode();
+      if (!diskMode && !isMongoReady()) {
         return res.status(503).json({
           success: false,
           products: [],
@@ -15372,7 +15375,7 @@ async function startServer() {
       // Chỉ đọc 1 trang (mặc định 50) — cấm fallback loadProducts()/find({}) toàn kho.
       const paged = await withLocalDbTimeout(
         loadProductsPageFromStore(page, pageSize),
-        30_000,
+        diskMode ? 15_000 : 30_000,
         "products_page_load",
       );
 
@@ -15385,7 +15388,8 @@ async function startServer() {
         totalPages: paged.totalPages,
         hasMore: paged.hasMore,
         grouped: false,
-        source: "mongodb",
+        source: diskMode ? "disk" : "mongodb",
+        storage: diskMode ? getProductsDiskPath() : "mongodb.products",
       });
     } catch (err: unknown) {
       console.error("[Products API] GET /api/products failed:", err);
@@ -18674,7 +18678,9 @@ async function startServer() {
     // Luôn trả JSON — tránh Passenger/Apache trả HTML 500 → Vercel báo invalid_cpanel_response.
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     try {
-      if (!isMongoReady()) {
+      // Kho Gốc disk: không bắt buộc Mongo sẵn sàng để ghi products.
+      // Mapping/listings vẫn cần Mongo khi có — nhưng khởi tạo kho ghi disk được.
+      if (!isProductsDiskMode() && !isMongoReady()) {
         return res.status(503).json({
           success: false,
           error: "mongodb_not_ready",
