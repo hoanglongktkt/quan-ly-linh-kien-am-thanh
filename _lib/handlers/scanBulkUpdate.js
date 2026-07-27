@@ -3,7 +3,7 @@
  * Ưu tiên proxy cPanel (persist JSON+Mongo). Fallback: PATCH từng đơn với local_status.
  * KHÔNG gọi Shopee API.
  */
-import { buildCpanelTarget } from '../cpanelProxy.js';
+import { buildCpanelTarget, resolveProxyTimeoutMs } from '../cpanelProxy.js';
 import { resolveCpanelBackend } from '../cpanelBackend.js';
 import { fetchWithDiagnostics } from '../fetchDiagnostics.js';
 
@@ -39,7 +39,11 @@ function processedReason(order) {
   return 'Đơn đã được xử lý trước đó';
 }
 
-async function fetchJson(backendUrl, req, pathPart, init = {}, timeoutMs = 60000) {
+async function fetchJson(backendUrl, req, pathPart, init = {}, timeoutMs) {
+  const resolvedTimeout =
+    typeof timeoutMs === 'number' && Number.isFinite(timeoutMs)
+      ? timeoutMs
+      : resolveProxyTimeoutMs(pathPart);
   const target = buildCpanelTarget(backendUrl, pathPart, init.query || {});
   const headers = {
     Authorization: req.headers?.authorization || req.headers?.Authorization || '',
@@ -51,7 +55,7 @@ async function fetchJson(backendUrl, req, pathPart, init = {}, timeoutMs = 60000
     method: init.method || 'GET',
     headers,
     body: init.body,
-  }, timeoutMs);
+  }, resolvedTimeout);
 
   if (!result.ok) {
     throw new Error(result.error?.message || 'Không kết nối được backend cPanel.');

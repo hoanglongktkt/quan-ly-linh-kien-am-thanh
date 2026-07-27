@@ -3064,7 +3064,12 @@ function assertOrdersPullDeadline(deadlineAt: number, label: string): void {
 async function collectShopeeOrderSnsIncremental(
   shopId: string,
   accessToken: string,
-  opts?: { lookbackSec?: number; deadlineAt?: number },
+  opts?: {
+    lookbackSec?: number;
+    deadlineAt?: number;
+    maxOrderSns?: number;
+    pageHardCap?: number;
+  },
 ): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000);
   const lookback = Math.max(60, Math.min(15 * 24 * 60 * 60, opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC));
@@ -3075,10 +3080,18 @@ async function collectShopeeOrderSnsIncremental(
   let cursor: string | undefined;
   let page = 0;
   const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_HARD_DEADLINE_MS;
+  const maxOrderSns = Math.max(
+    1,
+    Math.floor(opts?.maxOrderSns ?? SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP),
+  );
+  const pageHardCap = Math.max(
+    1,
+    Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_HARD_CAP),
+  );
 
-  syncDiag("Fetching order list...", `shop=${shopId} lookback=${lookback}s from=${timeFrom} to=${timeTo}`);
+  syncDiag("Fetching order list...", `shop=${shopId} lookback=${lookback}s from=${timeFrom} to=${timeTo} maxSn=${maxOrderSns} hardCap=${pageHardCap}`);
 
-  while (page < SHOPEE_ORDER_LIST_LOOP_HARD_CAP && orderSnSet.size < SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) {
+  while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
     assertOrdersPullDeadline(deadlineAt, `get_order_list page=${page + 1} shop=${shopId}`);
     page += 1;
 
@@ -3129,7 +3142,7 @@ async function collectShopeeOrderSnsIncremental(
     for (const row of rows) {
       const sn = String(row?.order_sn || row?.ordersn || "").trim();
       if (sn) orderSnSet.add(sn);
-      if (orderSnSet.size >= SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP) break;
+      if (orderSnSet.size >= maxOrderSns) break;
     }
 
     syncDiag(
@@ -3142,7 +3155,7 @@ async function collectShopeeOrderSnsIncremental(
       currentCursor: cursor,
       seenCursors,
       pageIndex: page,
-      hardCap: SHOPEE_ORDER_LIST_LOOP_HARD_CAP,
+      hardCap: pageHardCap,
       logLabel: `shop=${shopId}`,
     });
     syncDiag("Pagination decision", `${adv.action} — ${adv.reason}`);
@@ -3312,13 +3325,18 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
   ordersPullInFlight = true;
   const startedAt = Date.now();
-  const deadlineAt = startedAt + ORDERS_PULL_HARD_DEADLINE_MS;
   const enrichTracking = opts?.enrichTracking === true;
   // Materialize shop con (VD: 831052930) trước khi liệt kê — tránh bỏ sót pull/UI.
   ensureShopeeLinkedShopTokenKeys();
   const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
     .map((id) => normalizeShopIdKey(id))
     .filter(Boolean);
+  const singleShopPull = shopIds.length === 1;
+  // 1 shop (VD AuDIO): nới cap + deadline để kéo đủ ~90+ đơn / 7 ngày.
+  const pullDeadlineMs = singleShopPull ? 180_000 : ORDERS_PULL_HARD_DEADLINE_MS;
+  const maxOrderSnsPerShop = singleShopPull ? 200 : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
+  const pageHardCap = singleShopPull ? 10 : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+  const deadlineAt = startedAt + pullDeadlineMs;
   const errors: any[] = [];
   let pulled = 0;
   let added = 0;
@@ -3340,15 +3358,16 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
     // MongoDB là SSOT: pull/merge không được lấy orders.json cũ làm base.
     const orders = isMongoReady() ? await loadOrdersFromStore() : [];
-    // Ngân sách thời gian công bằng — tránh shop đầu (4127421) chiếm hết 90s, shop AuDIO bị skip.
+    // Ngân sách thời gian công bằng — tránh shop đầu (4127421) chiếm hết deadline, shop AuDIO bị skip.
     const perShopBudgetMs = Math.max(
       28_000,
-      Math.floor(ORDERS_PULL_HARD_DEADLINE_MS / Math.max(1, shopIds.length)),
+      Math.floor(pullDeadlineMs / Math.max(1, shopIds.length)),
     );
     syncDiag(
       "Pull START",
       `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s` +
-        ` deadline=${ORDERS_PULL_HARD_DEADLINE_MS}ms perShop=${perShopBudgetMs}ms enrichTracking=${enrichTracking}`,
+        ` deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap}` +
+        ` enrichTracking=${enrichTracking}`,
     );
 
     for (const shopId of shopIds) {
@@ -3372,10 +3391,43 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           continue;
         }
 
-        const orderSnList = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
+        let orderSnList = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
           lookbackSec: opts?.lookbackSec,
           deadlineAt: shopDeadlineAt,
+          maxOrderSns: maxOrderSnsPerShop,
+          pageHardCap,
         });
+
+        // lookback ≥ 168h: bổ sung order_sn từ get_return_list (TO_RETURN / tracking hoàn).
+        if ((opts?.lookbackSec ?? 0) >= 168 * 3600 && Date.now() < shopDeadlineAt) {
+          try {
+            const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
+              mode: "incremental",
+            });
+            const snSet = new Set(orderSnList);
+            let addedFromReturns = 0;
+            for (const row of returnRows) {
+              const sn = String(row?.orderSn || "").trim();
+              if (!sn || snSet.has(sn)) continue;
+              if (snSet.size >= maxOrderSnsPerShop) break;
+              snSet.add(sn);
+              addedFromReturns += 1;
+            }
+            if (addedFromReturns > 0) {
+              orderSnList = [...snSet];
+              syncDiag(
+                "Return list merged",
+                `shop=${shopId} +${addedFromReturns} order_sn from get_return_list (total=${orderSnList.length})`,
+              );
+            }
+          } catch (returnErr: any) {
+            console.warn(
+              `[Orders Pull] shopeeFetchAllReturnSns skip shop=${shopId}:`,
+              returnErr?.message || returnErr,
+            );
+          }
+        }
+
         syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
 
         if (orderSnList.length === 0) continue;
@@ -17587,9 +17639,39 @@ async function startServer() {
       const forceCancelCodes = toCodeSet(req.body?.donHuyCodes);
       const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
 
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const validOrders = orders.filter(isValidOrder);
+      // Lookup theo mã quét (Mongo indexed) — không loadOrdersForApi() full collection.
+      const lookupPairs = await Promise.all(
+        codes.map(async (code) => {
+          let found: any | null = null;
+          try {
+            found = await findOrderByScanCodeInStore(code);
+            if (found && !isValidOrder(found)) found = null;
+            if (found) found = mirrorTrackingFieldsForRead(found);
+          } catch (lookupErr: any) {
+            console.warn(
+              `[Orders Scan Bulk] lookup miss code=${code}:`,
+              lookupErr?.message || lookupErr,
+            );
+          }
+          return { code, found };
+        }),
+      );
+
+      const orders: any[] = [];
+      const orderIndexById = new Map<string, number>();
+      const putScoped = (order: any) => {
+        if (!order?.id) return -1;
+        const existing = orderIndexById.get(String(order.id));
+        if (existing !== undefined) return existing;
+        const idx = orders.length;
+        orders.push(order);
+        orderIndexById.set(String(order.id), idx);
+        return idx;
+      };
+      for (const pair of lookupPairs) {
+        if (pair.found) putScoped(pair.found);
+      }
+
       const results: Array<{
         code: string;
         action:
@@ -17618,20 +17700,15 @@ async function startServer() {
 
       const norm = (c: string) => String(c || "").trim().toUpperCase();
 
-      for (const code of codes) {
+      for (const { code, found } of lookupPairs) {
         const codeKey = norm(code);
-        const found = await findOrderByScanLookup(validOrders, code);
         if (!found) {
           results.push({ code, action: "not_found", message: `Không tìm thấy đơn với mã "${code}"` });
           failed_scans.push({ code, reason: "Không tìm thấy đơn trong hệ thống" });
           continue;
         }
 
-        const index = orders.findIndex(
-          (o: any) =>
-            o.id === found.id ||
-            String(o.orderSn || "") === String(found.orderSn || ""),
-        );
+        const index = putScoped(found);
         if (index < 0) {
           results.push({ code, action: "not_found", message: `Không tìm thấy đơn với mã "${code}"` });
           failed_scans.push({ code, reason: "Không tìm thấy đơn trong hệ thống" });
@@ -17827,14 +17904,9 @@ async function startServer() {
         });
       }
 
-      // BẮT BUỘC ghi DB thật (JSON + Mongo) — summary chỉ đếm record đã đổi.
+      // Chỉ persist các đơn đã đổi — không full-collection rewrite.
       if (changedOrders.length > 0) {
-        await persistOrdersToDatabase(orders, changedOrders);
-      } else if (loaded.dirty) {
-        saveOrders(orders);
-        if (loaded.handoverMongoSync.length > 0) {
-          await persistOrdersToDatabase(orders, loaded.handoverMongoSync);
-        }
+        await persistChangedOrdersPatch(changedOrders);
       }
 
       const updatedList = [...updatedById.values()];

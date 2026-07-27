@@ -604,6 +604,11 @@ export default function OrderManager({
   // 2) đọc lại Mongo qua /api/orders/refresh. Trước đây chỉ bước 2 → bấm không có tác dụng.
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const showToast = (msg: string, durationMs = 4500) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), durationMs);
+  };
   const handleRefreshOrders = async () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
@@ -611,8 +616,8 @@ export default function OrderManager({
       const token = localStorage.getItem('admin_token') || '';
       console.log('[Orders Sync] Làm mới → POST /api/orders/pull (Shopee → Mongo)...');
       const pullController = new AbortController();
-      // Server hard-deadline ~90s; client cắt ~95s để nút không kẹt "Đang đồng bộ...".
-      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 95_000);
+      // Proxy long-running 240s; client cắt ~245s để nút không kẹt "Đang đồng bộ...".
+      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 245_000);
       try {
         const pullBody: Record<string, unknown> = { lookback_hours: 168 };
         // Đang lọc 1 shop (VD: AuDIO 831052930) → ưu tiên kéo đúng shop đó, tránh bị shop khác chiếm deadline.
@@ -629,8 +634,28 @@ export default function OrderManager({
           // 7 ngày — đủ bắt đơn đã quét ĐVVC trên App mà webhook/local chưa kịp cập nhật.
           body: JSON.stringify(pullBody),
         });
-        const pullJson = await pullRes.json().catch(() => ({}));
-        if (!pullRes.ok || pullJson?.success === false) {
+        const pullJson = await pullRes.json().catch(() => ({} as Record<string, unknown>));
+        const pullErrors = Array.isArray(pullJson?.errors) ? pullJson.errors : [];
+        const tokenErr = pullErrors.find(
+          (e: { error?: string; shopId?: string; message?: string }) =>
+            String(e?.error || '') === 'no_valid_access_token',
+        );
+        if (tokenErr) {
+          const shopHint = String(tokenErr.shopId || selectedShopId || '');
+          const audioHint =
+            shopHint === '831052930' || String(selectedShopId) === '831052930'
+              ? ' (shop AuDIO 831052930)'
+              : shopHint
+                ? ` (shop ${shopHint})`
+                : '';
+          showToast(
+            `Thiếu access_token hợp lệ${audioHint} — ủy quyền lại Shopee rồi Làm mới.`,
+            7000,
+          );
+          setLastSyncSummary(
+            `Đồng bộ thất bại: không có access_token hợp lệ${audioHint}`,
+          );
+        } else if (!pullRes.ok || pullJson?.success === false) {
           console.warn('[Orders Sync] Pull Shopee không thành công:', pullJson);
           setLastSyncSummary(
             `Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`,
@@ -656,7 +681,7 @@ export default function OrderManager({
       } finally {
         window.clearTimeout(pullTimeoutId);
       }
-      // Luôn refresh Mongo dù pull lỗi/timeout — không để UI kẹt trống.
+      // Luôn refresh Mongo full sau pull — không silent limit 50.
       await onFetchOrders?.({ silent: false, bustCache: true });
       console.log('[FRONTEND FETCHED] Làm mới đơn hàng thành công.');
     } catch (err) {
@@ -733,13 +758,44 @@ export default function OrderManager({
   const liveScannerRef = React.useRef<LiveQrScannerHandle | null>(null);
   const isTearingDownScannerRef = React.useRef(false);
   const orderScanIndex = useMemo(() => buildOrderScanIndex(orders), [orders]);
-  const continuousScanTarget = useMemo(
-    () =>
-      orders.filter((o) =>
-        ['unprocessed', 'processed', 'cancelled', 'return_pending'].includes(o.status)
-      ).length,
-    [orders]
-  );
+  /** Pool quét thực tế 7 ngày: đã in / chờ lấy (đã xử lý) + hủy/hoàn — không đếm unprocessed thuần. */
+  const continuousScanTarget = useMemo(() => {
+    const lookbackMs = 7 * 24 * 60 * 60 * 1000;
+    const cutoff = Date.now() - lookbackMs;
+    const inScanWindow = (o: Order) => {
+      const candidates = [
+        o.date,
+        o.local_status_updated_at,
+        (o as Order & { update_time?: number | string }).update_time,
+        (o as Order & { updated_at?: string }).updated_at,
+      ];
+      for (const t of candidates) {
+        if (t == null || t === '') continue;
+        const ms =
+          typeof t === 'number'
+            ? t < 1e12
+              ? t * 1000
+              : t
+            : Date.parse(String(t));
+        if (Number.isFinite(ms) && ms >= cutoff) return true;
+      }
+      return false;
+    };
+    return orders.filter((o) => {
+      const pickupEligible =
+        matchesProcessedPickupTab(o) &&
+        (Boolean(getOrderWaybillCode(o)) || isOrderPrintedEffective(o));
+      if (pickupEligible) return true;
+      const raw = String(o.shopee_order_status || '').toUpperCase();
+      const isCancelReturn =
+        o.status === 'cancelled' ||
+        o.status === 'return_pending' ||
+        raw === 'CANCELLED' ||
+        raw === 'IN_CANCEL' ||
+        raw === 'TO_RETURN';
+      return isCancelReturn && inScanWindow(o);
+    }).length;
+  }, [orders]);
   const totalVerifiedScans = daXuatKhoList.length + donHuyList.length + daNhanHoanList.length;
 
   useEffect(() => {
@@ -1472,12 +1528,45 @@ export default function OrderManager({
     };
   }, [focusScanner, cameraRestartKey]);
 
-  // Prefetch thêm đơn vào cache local khi mở quét — giảm miss → API.
+  // Prefetch + pull 7 ngày khi mở quét — đủ pool đã in / hủy / hoàn, không shallow 50/500.
   useEffect(() => {
     if (!focusScanner) return;
-    void onFetchOrders?.({ silent: true, limit: 500, merge: true });
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = localStorage.getItem('admin_token') || '';
+        const pullBody: Record<string, unknown> = { lookback_hours: 168 };
+        if (selectedShopId && selectedShopId !== 'all') {
+          pullBody.shop_ids = [String(selectedShopId)];
+        }
+        const pullController = new AbortController();
+        const pullTimeoutId = window.setTimeout(() => pullController.abort(), 245_000);
+        try {
+          await fetch('/api/orders/pull', {
+            method: 'POST',
+            signal: pullController.signal,
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(pullBody),
+          });
+        } catch (pullErr) {
+          console.warn('[Scan Prefetch] Pull 168h skip/fail:', pullErr);
+        } finally {
+          window.clearTimeout(pullTimeoutId);
+        }
+      } catch {
+        /* ignore */
+      }
+      if (cancelled) return;
+      void onFetchOrders?.({ silent: true, limit: 2000, merge: true });
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusScanner]);
+  }, [focusScanner, selectedShopId]);
 
   // Platform filtering & dropdown states
   const [selectedPlatform, setSelectedPlatform] = useState<'all' | 'shopee' | 'tiktok' | 'lazada' | 'woocommerce' | 'manual'>('all');
@@ -1552,11 +1641,7 @@ export default function OrderManager({
   const lastOpenedPdfKeyRef = React.useRef('');
 
   // Auto-hiding toast — replaces blocking alert() in bulk ship/print flows.
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const showToast = (msg: string, durationMs = 4500) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), durationMs);
-  };
+  // (state + showToast khai báo gần đầu component — dùng chung Làm mới / in / bàn giao)
 
   const authHeaders = (): Record<string, string> => {
     const token = localStorage.getItem('admin_token');
@@ -3288,9 +3373,23 @@ export default function OrderManager({
         console.error('Refresh orders after scan failed:', refreshErr);
       }
     } catch (err: unknown) {
+      // Giữ 3 list đã verify khi abort/timeout — cho phép bấm lại GHI DB.
       const msg = err instanceof Error ? err.message : String(err);
-      showScanToast(`Lỗi ghi DB hàng loạt: ${msg}`, 'error');
-      setCameraScanResult(`Lỗi: ${msg}`);
+      const aborted =
+        /aborted|AbortError|timeout|quá lâu|timed?\s*out/i.test(msg) ||
+        (err instanceof DOMException && err.name === 'AbortError') ||
+        (err instanceof Error && err.name === 'AbortError');
+      showScanToast(
+        aborted
+          ? `Ghi DB bị hủy/timeout — giữ ${codes.length} mã đã quét. Bấm GHI DB lại.`
+          : `Lỗi ghi DB hàng loạt: ${msg}`,
+        'error',
+      );
+      setCameraScanResult(
+        aborted
+          ? `Timeout — còn ${codes.length} mã. Bấm GHI DB để thử lại`
+          : `Lỗi: ${msg}`,
+      );
       setIsFlushingQueue(false);
       isTearingDownScannerRef.current = false;
     }

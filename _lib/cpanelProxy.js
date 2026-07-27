@@ -32,6 +32,8 @@ const LONG_RUNNING_PREFIXES = [
   'settings/shop-connection-status',
   'multi-channel/publish',
   'shopee/category-attributes',
+  'orders/pull',
+  'orders/scan-bulk-update',
 ];
 
 const RETRYABLE_ERROR_CODES = new Set([
