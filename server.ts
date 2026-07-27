@@ -11664,7 +11664,7 @@ function buildDashboardChart(
   return Array.from(buckets.values());
 }
 
-const PRODUCTS_DB_PATH = path.join(APP_ROOT, "data", "products.json"); // legacy — chỉ dùng khi migrate
+const PRODUCTS_DB_PATH = path.join(APP_ROOT, "data", "products.json"); // Kho Gốc khi PRODUCTS_STORAGE=disk
 const LOCAL_INVENTORY_CACHE_PATH = path.join(APP_ROOT, "data", "local_inventory.json"); // legacy
 const SQLITE_LEGACY_PATH = path.join(APP_ROOT, "database.sqlite"); // legacy — không dùng runtime
 
@@ -11679,12 +11679,12 @@ function getProductChildrenList(p: any): any[] {
   return [];
 }
 
-/** Đọc products TRỰC TIẾP từ MongoDB (Model.find). */
+/** Đọc products — disk (hosting) hoặc Mongo tùy PRODUCTS_STORAGE. */
 async function loadProducts(): Promise<any[]> {
   try {
     return await loadProductsFromStore();
   } catch (error) {
-    console.error("[Products DB] Failed to read from MongoDB:", error);
+    console.error("[Products DB] Failed to read products:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
@@ -16400,7 +16400,7 @@ async function startServer() {
     const unitPrice = Math.max(0, Math.round(Number(body.newImportPrice)));
     const importCost = Math.max(0, Math.round(Number(body.importCost) || 0));
     const computedTotal = qty * unitPrice + importCost;
-    // Kho Gốc duy nhất = Mongo collection `products` — bỏ hardcode kho cũ
+    // Kho Gốc = disk (PRODUCTS_STORAGE=disk) hoặc Mongo collection `products`
     const warehouseId = "KhoGoc";
 
     try {

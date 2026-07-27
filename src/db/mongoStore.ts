@@ -7,6 +7,23 @@
 import mongoose, { Schema, type Model } from "mongoose";
 import fs from "fs";
 import path from "path";
+import {
+  isProductsDiskMode,
+  setProductsDiskAppRoot,
+  getProductsDiskPath,
+  readProductsFromDisk,
+  saveProductsToDisk,
+  upsertProductsToDisk,
+  deleteProductsByIdsFromDisk,
+  countProductsOnDisk,
+  loadProductsPageFromDisk,
+  loadProductByIdFromDisk,
+  loadProductsByIdsFromDisk,
+  searchProductsFromDisk,
+  applyImportStockAndPriceOnDisk,
+} from "./productsDiskStore.ts";
+
+export { isProductsDiskMode, getProductsDiskPath };
 
 export type LocalInventoryCache = {
   updatedAt: string;
@@ -363,6 +380,13 @@ export function setStoreAppRoot(appRoot: string): void {
 export async function initMongo(appRoot?: string): Promise<boolean> {
   if (appRoot) appRootResolved = appRoot;
   if (!appRootResolved) appRootResolved = process.cwd();
+  setProductsDiskAppRoot(appRootResolved);
+
+  if (isProductsDiskMode()) {
+    console.log(
+      `[Products] STORAGE=disk — Kho Gốc trên hosting: ${getProductsDiskPath()} (không ghi Mongo products)`,
+    );
+  }
 
   const uri = getMongoUri();
   console.log(`[MongoDB] Boot — APP_ROOT=${appRootResolved}`);
@@ -374,7 +398,7 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
       "LỖI MONGODB STARTUP:",
       "thiếu MONGODB_URI / MONGO_URL trong .env hoặc Environment Variables."
     );
-    return false;
+    return isProductsDiskMode();
   }
 
   try {
@@ -406,7 +430,7 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
         "LỖI MONGODB STARTUP:",
         `mongoose readyState=${mongoose.connection.readyState} (expect 1)`
       );
-      return false;
+      return isProductsDiskMode();
     }
 
     const [productCount, listingCount] = await Promise.all([
@@ -416,14 +440,25 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
 
     console.log("MongoDB Connected Successfully");
     console.log(
-      `[MongoDB] Connected Successfully — ${getMongoUriMasked()} | products=${productCount} | channel_listings=${listingCount} | warehouse=KhoGoc(collection:products)`
+      `[MongoDB] Connected Successfully — ${getMongoUriMasked()} | products(mongo)=${productCount} | channel_listings=${listingCount}` +
+        (isProductsDiskMode()
+          ? ` | warehouse=KhoGoc(DISK:${countProductsOnDisk()})`
+          : " | warehouse=KhoGoc(collection:products)"),
     );
 
-    try {
-      await ProductModel.syncIndexes();
-      console.log("[MongoDB] Product indexes synced (sku, data.sku, text title/sku, children.sku)");
-    } catch (idxErr) {
-      console.warn("[MongoDB] syncIndexes products:", idxErr);
+    if (!isProductsDiskMode()) {
+      try {
+        await ProductModel.syncIndexes();
+        console.log("[MongoDB] Product indexes synced (sku, data.sku, text title/sku, children.sku)");
+      } catch (idxErr) {
+        console.warn("[MongoDB] syncIndexes products:", idxErr);
+      }
+    } else {
+      try {
+        await maybeMigrateMongoProductsToDisk(productCount);
+      } catch (migErr: any) {
+        console.warn("[Products Disk] migrate Mongo→disk:", migErr?.message || migErr);
+      }
     }
 
     try {
@@ -439,8 +474,8 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
       `[MongoDB] Retention indexes giữ nguyên (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`,
     );
 
-    // One-time migrate từ JSON local nếu Atlas trống
-    if (productCount === 0 && listingCount === 0) {
+    // One-time migrate từ JSON local nếu Atlas trống (chỉ khi Kho Gốc vẫn dùng Mongo).
+    if (!isProductsDiskMode() && productCount === 0 && listingCount === 0) {
       try {
         await maybeMigrateJsonFallbackToMongo();
       } catch (migrateErr: unknown) {
@@ -462,7 +497,40 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     );
     console.error("LỖI MONGODB STARTUP:", msg);
     if (err instanceof Error && err.stack) console.error(err.stack);
-    return false;
+    return isProductsDiskMode();
+  }
+}
+
+/** Xuất collection products Mongo → data/products.json khi disk còn trống. */
+async function maybeMigrateMongoProductsToDisk(mongoProductCount: number): Promise<void> {
+  if (!isProductsDiskMode()) return;
+  const existing = readProductsFromDisk();
+  if (existing.length > 0) {
+    console.log(`[Products Disk] Đã có ${existing.length} SP trên đĩa — bỏ qua migrate.`);
+    return;
+  }
+  if (!mongoReady || mongoProductCount <= 0) {
+    console.log("[Products Disk] Disk trống và Mongo không có products — bắt đầu kho trống trên đĩa.");
+    return;
+  }
+  console.log(`[Products Disk] Migrating ${mongoProductCount} products Mongo → disk...`);
+  const docs = await ProductModel.find({}).lean();
+  const products = docsToProducts(docs as any[]);
+  await saveProductsToDisk(products);
+  const drop =
+    String(process.env.PRODUCTS_DROP_MONGO_AFTER_MIGRATE || "1").trim() !== "0";
+  if (drop) {
+    try {
+      const del = await ProductModel.deleteMany({});
+      console.log(
+        `[Products Disk] Đã xóa products trên Mongo để giải phóng Atlas — deleted=${del.deletedCount || 0}`,
+      );
+    } catch (err: any) {
+      console.warn(
+        "[Products Disk] Không xóa được products trên Mongo (có thể Atlas chặn ghi):",
+        err?.message || err,
+      );
+    }
   }
 }
 
@@ -492,18 +560,20 @@ async function maybeMigrateJsonFallbackToMongo(): Promise<void> {
   await saveChannelListingsToStoreAsync(listings);
 }
 
-/** Đọc products TRỰC TIẾP từ MongoDB — Model.find({}) */
+/** Đọc products — disk (hosting) hoặc Mongo. */
 export async function loadProductsFromStore(): Promise<any[]> {
+  if (isProductsDiskMode()) return readProductsFromDisk();
   requireMongo();
   const docs = await ProductModel.find({}).lean();
   return docsToProducts(docs);
 }
 
-/** Phân trang kho gốc ngay trên Mongo — luôn skip/limit, cấm find({}) toàn catalog. */
+/** Phân trang kho gốc — luôn skip/limit, cấm find({}) toàn catalog khi dùng Mongo. */
 export async function loadProductsPageFromStore(
   page = 1,
   pageSize = 50,
 ): Promise<{ products: any[]; total: number; page: number; pageSize: number; totalPages: number; hasMore: boolean }> {
+  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize);
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
@@ -541,8 +611,9 @@ export async function loadProductsPageFromStore(
   };
 }
 
-/** Đọc 1 product theo id nội bộ / shopeeItemId — không quét toàn bộ catalog. */
+/** Đọc 1 product theo id nội bộ / shopeeItemId — không quét toàn bộ catalog (Mongo). */
 export async function loadProductByIdFromStore(productId: string): Promise<any | null> {
+  if (isProductsDiskMode()) return loadProductByIdFromDisk(productId);
   requireMongo();
   const id = String(productId || "").trim();
   if (!id) return null;
@@ -583,11 +654,12 @@ export async function loadProductByIdFromStore(productId: string): Promise<any |
   return null;
 }
 
-/** Chỉ kéo products liên quan tới danh sách id / shopeeItemId (dùng $in, không find({})). */
+/** Chỉ kéo products liên quan tới danh sách id / shopeeItemId. */
 export async function loadProductsByIdsFromStore(
   productIds: string[],
   shopeeItemIds: string[] = [],
 ): Promise<any[]> {
+  if (isProductsDiskMode()) return loadProductsByIdsFromDisk(productIds, shopeeItemIds);
   requireMongo();
   const ids = [...new Set(productIds.map((v) => String(v || "").trim()).filter(Boolean))];
   const itemIds = [...new Set(shopeeItemIds.map((v) => String(v || "").trim()).filter(Boolean))];
@@ -640,20 +712,30 @@ function toSearchLeanRow(row: any): any {
 }
 
 /**
- * Tìm sản phẩm Kho Gốc (collection `products`) — CHỈ Mongo nội bộ, không gọi Shopee.
+ * Tìm sản phẩm Kho Gốc — disk hoặc Mongo. Không gọi Shopee.
  * Ưu tiên exact SKU → prefix SKU → regex tên. Trả field lean.
  */
 export async function searchProductsFromStore(
   query: string,
   limit = 40,
 ): Promise<any[]> {
-  requireMongo();
   const q = String(query || "").trim();
   const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
   const parentFetchLimit = Math.min(120, Math.max(safeLimit * 2, 40));
   const qLower = q.toLowerCase();
 
   let docs: Array<{ _id?: any; data?: any; sku?: string | null }> = [];
+
+  if (isProductsDiskMode()) {
+    const parents = searchProductsFromDisk(q, parentFetchLimit);
+    docs = parents.map((p) => ({ _id: p.id, sku: p.sku, data: p }));
+    console.log("[DiskSearch] KhoGoc products", {
+      q,
+      parentHits: docs.length,
+      sampleSkus: docs.slice(0, 5).map((d) => d?.sku || d?.data?.sku),
+    });
+  } else {
+  requireMongo();
 
   if (!q) {
     docs = await ProductModel.find({}, { sku: 1, data: 1 })
@@ -697,11 +779,11 @@ export async function searchProductsFromStore(
       )
         .limit(parentFetchLimit)
         .lean();
-      const seen = new Set(docs.map((d) => String(d._id)));
+      const seenIds = new Set(docs.map((d) => String(d._id)));
       for (const d of more) {
         const key = String(d._id);
-        if (seen.has(key)) continue;
-        seen.add(key);
+        if (seenIds.has(key)) continue;
+        seenIds.add(key);
         docs.push(d);
       }
     }
@@ -721,11 +803,11 @@ export async function searchProductsFromStore(
       )
         .limit(parentFetchLimit)
         .lean();
-      const seen = new Set(docs.map((d) => String(d._id)));
+      const seenIds = new Set(docs.map((d) => String(d._id)));
       for (const d of more) {
         const key = String(d._id);
-        if (seen.has(key)) continue;
-        seen.add(key);
+        if (seenIds.has(key)) continue;
+        seenIds.add(key);
         docs.push(d);
       }
     }
@@ -735,6 +817,7 @@ export async function searchProductsFromStore(
       parentHits: docs.length,
       sampleSkus: docs.slice(0, 5).map((d) => d?.sku || d?.data?.sku),
     });
+  }
   }
 
   const parents = docsToProducts(docs);
@@ -843,6 +926,9 @@ export async function applyImportStockAndPriceToMainWarehouse(
   importPrice: number,
   opts?: { skuHint?: string },
 ): Promise<ApplyImportResult> {
+  if (isProductsDiskMode()) {
+    return applyImportStockAndPriceOnDisk(productId, quantityDelta, importPrice, opts);
+  }
   requireMongo();
   const id = String(productId || "").trim();
   const skuHint = String(opts?.skuHint || "").trim();
@@ -1042,6 +1128,7 @@ export async function loadChannelListingsFromStore(): Promise<any[]> {
 }
 
 export async function countProducts(): Promise<number> {
+  if (isProductsDiskMode()) return countProductsOnDisk();
   requireMongo();
   return ProductModel.countDocuments();
 }
@@ -1075,10 +1162,14 @@ async function setMeta(key: string, value: string): Promise<void> {
 
 /** Ghi đè toàn bộ products chỉ cho thao tác quản trị/migration đã xác nhận. */
 export async function saveProductsToStoreAsync(products: any[]): Promise<void> {
-  requireMongo();
   const list = Array.isArray(products)
     ? products.filter((p) => p != null && typeof p === "object")
     : [];
+  if (isProductsDiskMode()) {
+    await saveProductsToDisk(list);
+    return;
+  }
+  requireMongo();
   const docs = toProductDocs(list);
 
   // deleteMany + insertMany trong 1 enqueueWrite (không transaction, không $nin).
@@ -1095,6 +1186,7 @@ export async function saveProductsToStoreAsync(products: any[]): Promise<void> {
 
 /** Upsert theo id — dùng cho thêm/sửa/sync để không tạo khoảng trống toàn collection. */
 export async function upsertProductsToStoreAsync(products: any[]): Promise<number> {
+  if (isProductsDiskMode()) return upsertProductsToDisk(products);
   requireMongo();
   const docs = toProductDocs(Array.isArray(products) ? products : []);
   if (docs.length === 0) return 0;
@@ -1116,6 +1208,7 @@ export async function upsertProductsToStoreAsync(products: any[]): Promise<numbe
 
 /** Xóa có chủ đích theo id, không dùng để reset kho trong luồng đồng bộ. */
 export async function deleteProductsByIdsFromStore(ids: string[]): Promise<number> {
+  if (isProductsDiskMode()) return deleteProductsByIdsFromDisk(ids);
   requireMongo();
   const safeIds = [...new Set(ids.map((id) => String(id || "").trim()).filter(Boolean))];
   if (safeIds.length === 0) return 0;
