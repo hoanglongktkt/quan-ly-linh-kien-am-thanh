@@ -488,9 +488,59 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
   }, []);
 
+  const searchMasterViaApi = useCallback(async (q: string) => {
+    const query = String(q || '').trim();
+    if (!query) return;
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await apiFetch(
+        `/api/products/search?q=${encodeURIComponent(query)}&limit=50`,
+        {
+          cache: 'no-store',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      const rows = Array.isArray(data?.products)
+        ? data.products
+        : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data?.results)
+            ? data.results
+            : [];
+      if (rows.length === 0) return;
+      setMasterCatalog((prev) => {
+        const byId = new Map(prev.map((r) => [r.id, r]));
+        for (const it of rows) {
+          const id = String(it?.id || '').trim();
+          const sku = String(it?.sku || '').trim();
+          if (!id || !sku) continue;
+          byId.set(id, {
+            id,
+            sku,
+            title: String(it?.title || it?.name || sku).trim(),
+          });
+        }
+        return [...byId.values()];
+      });
+    } catch {
+      /* ignore — sku-index vẫn là nguồn chính */
+    }
+  }, []);
+
   useEffect(() => {
     void loadMasterCatalog();
   }, [loadMasterCatalog]);
+
+  useEffect(() => {
+    if (!mappingListing) return;
+    const q = mappingSearch.trim();
+    if (q.length < 1) return;
+    const t = window.setTimeout(() => {
+      void searchMasterViaApi(q);
+    }, 280);
+    return () => window.clearTimeout(t);
+  }, [mappingListing, mappingSearch, searchMasterViaApi]);
 
   const flattenedMasterProducts = useMemo(() => {
     if (masterCatalog.length > 0) {
@@ -732,6 +782,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     setMappingListing(listing);
     setMappingSearch(String(listing.sku || '').trim());
     void loadMasterCatalog();
+    void searchMasterViaApi(String(listing.sku || '').trim());
   };
 
   // 3. Confirm Manual Mapping — dùng listingId + masterProductId từ DATA (state), không lấy từ UI text.
@@ -776,31 +827,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   };
 
   // Handler to auto link a single channel product
-  // Ưu tiên khớp trên Kho chính đang hiển thị (cùng nguồn với Search thủ công),
-  // rồi mới fallback API server.
+  // Auto-link: luôn gọi API server (toàn bộ kho gốc + ghi mapping disk) — không phụ thuộc trang Kho.
   const handleAutoLinkIndividual = async (
     item: ChannelListing,
     opts?: { silent?: boolean }
   ): Promise<boolean> => {
     const silent = opts?.silent === true;
     try {
-      const localMatch = findMasterProductLikeSearch(item?.sku, flattenedMasterProducts);
-      if (localMatch?.id) {
-        handleMapProduct(String(item.id), String(localMatch.id));
-        if (!silent) {
-          showToast(`⚡ Liên kết tự động thành công với Kho chính [${localMatch.sku}]`);
-          onAddLog({
-            id: `log-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            channel: (item.platform === 'lazada' ? 'shopee' : item.platform) as any,
-            type: 'product_sync',
-            status: 'success',
-            message: `Liên kết tự động thành công sản phẩm sàn [ID: ${item.channelId}] với Kho chính [${localMatch.sku}]`,
-          });
-        }
-        return true;
-      }
-
       const result = await requestSingleAutoLink(item);
       if (result.success && result.listing) {
         mergeListingIntoState(result.listing);
@@ -818,12 +851,31 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         return true;
       }
 
+      // Fallback: khớp local từ sku-index toàn kho nếu API trả không khớp (không phải lỗi quota)
+      const localMatch = findMasterProductLikeSearch(item?.sku, flattenedMasterProducts);
+      if (localMatch?.id) {
+        handleMapProduct(String(item.id), String(localMatch.id));
+        if (!silent) {
+          showToast(`⚡ Liên kết tự động thành công với Kho chính [${localMatch.sku}]`);
+        }
+        return true;
+      }
+
       if (!silent) {
         showToast(result.message);
       }
       return false;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // Fallback local khi API lỗi (vd. trước đây Atlas đầy) — vẫn thử map từ catalog disk
+      const localMatch = findMasterProductLikeSearch(item?.sku, flattenedMasterProducts);
+      if (localMatch?.id) {
+        handleMapProduct(String(item.id), String(localMatch.id));
+        if (!silent) {
+          showToast(`⚡ Liên kết tự động thành công với Kho chính [${localMatch.sku}]`);
+        }
+        return true;
+      }
       if (!silent) {
         showToast(`Liên kết thất bại: ${message}`);
         onAddLog({

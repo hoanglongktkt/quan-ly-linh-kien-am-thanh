@@ -12082,7 +12082,7 @@ async function writeChannelListingsDbAsync(rows: any[]): Promise<void> {
   const payload = Array.isArray(rows) ? rows.filter((r) => r != null && typeof r === "object") : [];
   await saveChannelListingsToStoreAsync(payload);
   console.log(
-    `Đã lưu DB thành công — MongoDB channel_listings insertMany: ${payload.length} dòng -> ${getMongoUriMasked()}`
+    `Đã lưu DB thành công — channel_listings ${isProductsDiskMode() ? "disk" : "MongoDB"}: ${payload.length} dòng`,
   );
 }
 
@@ -15063,12 +15063,13 @@ async function startServer() {
 
       const addOne = (row: any) => {
         if (!row || typeof row !== "object" || isSyntheticShopeePullProduct(row)) return;
-        const key = normalizeSkuKey(row.sku);
+        const rawSku = String(row.sku || "").trim();
+        const key = normalizeSkuKey(rawSku);
         const id = row.id != null ? String(row.id).trim() : "";
         if (!key || !id || seen.has(key)) return;
         seen.add(key);
         items.push({
-          sku: key,
+          sku: rawSku || key,
           id,
           title: String(row.title || "").trim(),
         });

@@ -22,8 +22,19 @@ import {
   searchProductsFromDisk,
   applyImportStockAndPriceOnDisk,
 } from "./productsDiskStore.ts";
+import {
+  setChannelListingsDiskAppRoot,
+  getChannelListingsDiskPath,
+  readChannelListingsFromDisk,
+  saveChannelListingsToDisk,
+  upsertChannelListingsToDisk,
+  upsertChannelListingToDisk,
+  countChannelListingsOnDisk,
+  deleteAllChannelListingsFromDisk,
+} from "./channelListingsDiskStore.ts";
 
 export { isProductsDiskMode, getProductsDiskPath, setProductsDiskAppRoot };
+export { getChannelListingsDiskPath };
 
 export type LocalInventoryCache = {
   updatedAt: string;
@@ -381,10 +392,11 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
   if (appRoot) appRootResolved = appRoot;
   if (!appRootResolved) appRootResolved = process.cwd();
   setProductsDiskAppRoot(appRootResolved);
+  setChannelListingsDiskAppRoot(appRootResolved);
 
   if (isProductsDiskMode()) {
     console.log(
-      `[Products] STORAGE=disk — Kho Gốc trên hosting: ${getProductsDiskPath()} (không ghi Mongo products)`,
+      `[Products] STORAGE=disk — Kho Gốc: ${getProductsDiskPath()} | Mapping: ${getChannelListingsDiskPath()} (không ghi Mongo products/listings)`,
     );
   }
 
@@ -440,10 +452,10 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
 
     console.log("MongoDB Connected Successfully");
     console.log(
-      `[MongoDB] Connected Successfully — ${getMongoUriMasked()} | products(mongo)=${productCount} | channel_listings=${listingCount}` +
+      `[MongoDB] Connected Successfully — ${getMongoUriMasked()} | products(mongo)=${productCount} | channel_listings(mongo)=${listingCount}` +
         (isProductsDiskMode()
-          ? ` | warehouse=KhoGoc(DISK:${countProductsOnDisk()})`
-          : " | warehouse=KhoGoc(collection:products)"),
+          ? ` | warehouse=DISK products=${countProductsOnDisk()} listings=${countChannelListingsOnDisk()}`
+          : " | warehouse=Mongo products+listings"),
     );
 
     if (!isProductsDiskMode()) {
@@ -458,6 +470,18 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
         await maybeMigrateMongoProductsToDisk(productCount);
       } catch (migErr: any) {
         console.warn("[Products Disk] migrate Mongo→disk:", migErr?.message || migErr);
+      }
+      try {
+        await maybeMigrateMongoListingsToDisk(listingCount);
+      } catch (migErr: any) {
+        console.warn("[Listings Disk] migrate Mongo→disk:", migErr?.message || migErr);
+      }
+      try {
+        await maybeDropMongoListingsWhenDiskReady(
+          await ChannelListingModel.countDocuments().catch(() => listingCount),
+        );
+      } catch (dropErr: any) {
+        console.warn("[Listings Disk] drop Mongo leftover:", dropErr?.message || dropErr);
       }
     }
 
@@ -531,6 +555,58 @@ async function maybeMigrateMongoProductsToDisk(mongoProductCount: number): Promi
         err?.message || err,
       );
     }
+  }
+}
+
+/** Xuất channel_listings Mongo → data/channel_listings.json khi disk còn trống. */
+async function maybeMigrateMongoListingsToDisk(mongoListingCount: number): Promise<void> {
+  if (!isProductsDiskMode()) return;
+  const existing = readChannelListingsFromDisk();
+  if (existing.length > 0) {
+    console.log(`[Listings Disk] Đã có ${existing.length} mapping trên đĩa — bỏ qua migrate.`);
+    return;
+  }
+  if (!mongoReady || mongoListingCount <= 0) {
+    console.log("[Listings Disk] Disk trống và Mongo không có listings — bắt đầu mapping trống trên đĩa.");
+    return;
+  }
+  console.log(`[Listings Disk] Migrating ${mongoListingCount} channel_listings Mongo → disk...`);
+  const docs = await ChannelListingModel.find({}).lean();
+  const listings = docsToListings(docs as any[]);
+  await saveChannelListingsToDisk(listings);
+  const drop =
+    String(process.env.LISTINGS_DROP_MONGO_AFTER_MIGRATE || process.env.PRODUCTS_DROP_MONGO_AFTER_MIGRATE || "1").trim() !==
+    "0";
+  if (drop) {
+    try {
+      const del = await ChannelListingModel.deleteMany({});
+      console.log(
+        `[Listings Disk] Đã xóa channel_listings trên Mongo để giải phóng Atlas — deleted=${del.deletedCount || 0}`,
+      );
+    } catch (err: any) {
+      console.warn(
+        "[Listings Disk] Không xóa được listings trên Mongo (có thể Atlas chặn ghi):",
+        err?.message || err,
+      );
+    }
+  }
+}
+
+/** Disk đã là SSOT — cố gắng xóa collection Mongo còn sót để giải phóng Atlas. */
+async function maybeDropMongoListingsWhenDiskReady(mongoListingCount: number): Promise<void> {
+  if (!isProductsDiskMode() || !mongoReady || mongoListingCount <= 0) return;
+  if (countChannelListingsOnDisk() <= 0) return;
+  const drop =
+    String(process.env.LISTINGS_DROP_MONGO_AFTER_MIGRATE || process.env.PRODUCTS_DROP_MONGO_AFTER_MIGRATE || "1").trim() !==
+    "0";
+  if (!drop) return;
+  try {
+    const del = await ChannelListingModel.deleteMany({});
+    console.log(
+      `[Listings Disk] Drop Mongo listings (disk SSOT) — deleted=${del.deletedCount || 0}`,
+    );
+  } catch (err: any) {
+    console.warn("[Listings Disk] Drop Mongo listings (disk SSOT) failed:", err?.message || err);
   }
 }
 
@@ -1120,8 +1196,9 @@ export async function applyImportStockAndPriceToMainWarehouse(
   }
 }
 
-/** Đọc channel_listings TRỰC TIẾP từ MongoDB — Model.find({}) */
+/** Đọc channel_listings — disk (PRODUCTS_STORAGE=disk) hoặc Mongo. */
 export async function loadChannelListingsFromStore(): Promise<any[]> {
+  if (isProductsDiskMode()) return readChannelListingsFromDisk();
   requireMongo();
   const docs = await ChannelListingModel.find({}).lean();
   return docsToListings(docs);
@@ -1134,6 +1211,7 @@ export async function countProducts(): Promise<number> {
 }
 
 export async function countChannelListings(): Promise<number> {
+  if (isProductsDiskMode()) return countChannelListingsOnDisk();
   requireMongo();
   return ChannelListingModel.countDocuments();
 }
@@ -1221,12 +1299,16 @@ export async function deleteProductsByIdsFromStore(ids: string[]): Promise<numbe
   return deleted;
 }
 
-/** Ghi đè toàn bộ channel_listings — deleteMany + insertMany (await). */
+/** Ghi đè toàn bộ channel_listings — disk hoặc Mongo deleteMany + insertMany. */
 export async function saveChannelListingsToStoreAsync(rows: any[]): Promise<void> {
-  requireMongo();
   const list = Array.isArray(rows)
     ? rows.filter((r) => r != null && typeof r === "object")
     : [];
+  if (isProductsDiskMode()) {
+    await saveChannelListingsToDisk(list);
+    return;
+  }
+  requireMongo();
   const docs = toListingDocs(list);
 
   await enqueueWrite(async () => {
@@ -1239,8 +1321,9 @@ export async function saveChannelListingsToStoreAsync(rows: any[]): Promise<void
   });
 }
 
-/** Upsert 1 listing — findOneAndUpdate / findByIdAndUpdate. */
+/** Upsert 1 listing — disk hoặc findByIdAndUpdate. */
 export async function upsertChannelListingToStore(row: any): Promise<any> {
+  if (isProductsDiskMode()) return upsertChannelListingToDisk(row);
   requireMongo();
   if (!row || typeof row !== "object") {
     throw new Error("upsertChannelListing: row không hợp lệ");
@@ -1267,10 +1350,10 @@ export async function upsertChannelListingToStore(row: any): Promise<any> {
 }
 
 /**
- * Upsert lô channel_listings bằng bulkWrite (1 lệnh Mongo / lô).
- * Dùng cho auto-map hàng loạt — tránh N lần findByIdAndUpdate (NPROC/CageFS).
+ * Upsert lô channel_listings — disk hoặc bulkWrite Mongo.
  */
 export async function bulkUpsertChannelListingsToStore(rows: any[]): Promise<number> {
+  if (isProductsDiskMode()) return upsertChannelListingsToDisk(rows);
   requireMongo();
   const list = Array.isArray(rows)
     ? rows.filter((r) => r != null && typeof r === "object")
@@ -1311,12 +1394,20 @@ export async function bulkUpsertChannelListingsToStore(rows: any[]): Promise<num
 }
 
 export async function deleteAllProductsFromStore(): Promise<void> {
+  if (isProductsDiskMode()) {
+    await saveProductsToDisk([]);
+    return;
+  }
   requireMongo();
   await ProductModel.deleteMany({});
   await setMeta("products_updated_at", new Date().toISOString());
 }
 
 export async function deleteAllChannelListingsFromStore(): Promise<void> {
+  if (isProductsDiskMode()) {
+    await deleteAllChannelListingsFromDisk();
+    return;
+  }
   requireMongo();
   await ChannelListingModel.deleteMany({});
   await setMeta("listings_updated_at", new Date().toISOString());
