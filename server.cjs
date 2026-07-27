@@ -95932,6 +95932,10 @@ import_dotenv.default.config();
 console.log(
   `[Config] APP_ROOT=${APP_ROOT} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
 );
+setProductsDiskAppRoot(APP_ROOT);
+console.log(
+  `[Products] storage=${isProductsDiskMode() ? "disk" : "mongo"} path=${getProductsDiskPath()}`
+);
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
@@ -104253,10 +104257,10 @@ async function saveProducts(products) {
     const list = Array.isArray(products) ? products.filter((p) => p != null && typeof p === "object") : [];
     await saveProductsToStoreAsync(list);
     console.log(
-      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 MongoDB products insertMany: ${list.length} d\xF2ng -> ${getMongoUriMasked()}`
+      `[Products DB] WRITE OK \u2014 ${isProductsDiskMode() ? "disk" : "mongo"} count=${list.length} path=${isProductsDiskMode() ? getProductsDiskPath() : getMongoUriMasked()}`
     );
   } catch (error) {
-    console.error("[Products DB] Failed to write MongoDB:", error);
+    console.error("[Products DB] Failed to write products:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
@@ -104325,6 +104329,31 @@ function findLatestMigratedJson(baseName) {
   return import_path3.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
+  if (isProductsDiskMode()) {
+    try {
+      const existing = import_fs4.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs4.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      if (!Array.isArray(existing) || existing.length === 0) {
+        const dataDir = import_path3.default.join(APP_ROOT, "data");
+        if (import_fs4.default.existsSync(dataDir)) {
+          const migrated = import_fs4.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+          const latest = migrated[migrated.length - 1];
+          if (latest) {
+            const src = import_path3.default.join(dataDir, latest);
+            const dest = getProductsDiskPath();
+            import_fs4.default.copyFileSync(src, dest);
+            console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
+          }
+        }
+      }
+    } catch (restoreErr) {
+      console.warn("[Products Disk] restore migrated:", restoreErr?.message || restoreErr);
+    }
+    const diskCount = await countProducts().catch(() => 0);
+    console.log(
+      `[Products Disk] B\u1ECF qua migrate JSON\u2192Mongo \u2014 Kho G\u1ED1c tr\xEAn disk (${diskCount} SP) @ ${getProductsDiskPath()}`
+    );
+    return;
+  }
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
@@ -107403,21 +107432,45 @@ async function startServer() {
       }
       const backupFile = await backupInventoryBeforeDestructiveAction("inventory-clear");
       await saveProducts([]);
-      await writeChannelListingsDb([]);
+      let listingsCleared = false;
+      let listingsError = null;
+      try {
+        await writeChannelListingsDb([]);
+        listingsCleared = true;
+      } catch (listErr) {
+        listingsError = listErr?.message || String(listErr);
+        console.warn("[Inventory] clear listings failed (Atlas?):", listingsError);
+      }
       try {
         writeProductListingsDb([]);
       } catch {
       }
-      await refreshCache();
-      writeInventoryAudit("inventory_cleared", { requestedBy: req.user?.username || null, backupFile });
-      console.log("[Inventory] \u0110\xE3 x\xF3a s\u1EA1ch Kho g\u1ED1c (products) + Mapping (channel_listings).");
+      try {
+        await refreshCache();
+      } catch (cacheErr) {
+        console.warn("[Inventory] refreshCache after clear:", cacheErr?.message || cacheErr);
+      }
+      writeInventoryAudit("inventory_cleared", {
+        requestedBy: req.user?.username || null,
+        backupFile,
+        productsCleared: true,
+        listingsCleared,
+        listingsError,
+        storage: isProductsDiskMode() ? "disk" : "mongo"
+      });
+      console.log(
+        `[Inventory] \u0110\xE3 x\xF3a Kho g\u1ED1c (products=${isProductsDiskMode() ? "disk" : "mongo"}) listingsCleared=${listingsCleared}.`
+      );
       return res.status(200).json({
         success: true,
-        message: "\u0110\xE3 x\xF3a to\xE0n b\u1ED9 Kho g\u1ED1c v\xE0 d\u1EEF li\u1EC7u Li\xEAn k\u1EBFt (Mapping).",
+        message: listingsCleared ? "\u0110\xE3 x\xF3a to\xE0n b\u1ED9 Kho g\u1ED1c v\xE0 d\u1EEF li\u1EC7u Li\xEAn k\u1EBFt (Mapping)." : `\u0110\xE3 x\xF3a Kho g\u1ED1c. Mapping ch\u01B0a x\xF3a \u0111\u01B0\u1EE3c (Mongo \u0111\u1EA7y/l\u1ED7i): ${listingsError || "unknown"}`,
         backupFile,
         cleared: true,
+        productsCleared: true,
+        listingsCleared,
+        listingsError,
         products: [],
-        channelListings: []
+        channelListings: listingsCleared ? [] : void 0
       });
     } catch (error) {
       const errObj = error instanceof Error ? error : new Error(String(error));
@@ -109568,10 +109621,18 @@ async function startServer() {
       }
       const rawOffset = Number(req.body?.offset ?? 0);
       const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
+      const resetWarehouse = offset === 0 && (req.body?.reset === true || req.body?.reset === 1 || req.body?.reset === "1" || req.body?.replace === true);
+      if (resetWarehouse) {
+        console.log(
+          `[Shopee Product Sync] RESET Kho G\u1ED1c tr\u01B0\u1EDBc khi sync shop=${shopId} storage=${isProductsDiskMode() ? "disk" : "mongo"}`
+        );
+        await saveProducts([]);
+      }
       try {
         writeInventoryAudit("shopee_sync_page", {
           shopId,
           offset,
+          reset: resetWarehouse,
           requestedBy: req.user?.username || null
         });
       } catch {

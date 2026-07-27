@@ -557,8 +557,12 @@ export default function ProductList({
               'Content-Type': 'application/json',
               ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
-            // Đồng bộ là upsert an toàn: không xóa Kho gốc trước khi sàn trả đủ dữ liệu.
-            body: JSON.stringify({ shopId: shop.shopId, offset, reset: false }),
+            // Trang đầu: reset=true để thay toàn bộ Kho gốc bằng dữ liệu mới từ sàn.
+            body: JSON.stringify({
+              shopId: shop.shopId,
+              offset,
+              reset: offset === 0,
+            }),
           });
         } finally {
           clearTimeout(pageTimeoutId);

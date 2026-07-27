@@ -23,7 +23,7 @@ import {
   applyImportStockAndPriceOnDisk,
 } from "./productsDiskStore.ts";
 
-export { isProductsDiskMode, getProductsDiskPath };
+export { isProductsDiskMode, getProductsDiskPath, setProductsDiskAppRoot };
 
 export type LocalInventoryCache = {
   updatedAt: string;

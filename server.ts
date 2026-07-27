@@ -66,6 +66,7 @@ import {
   getMongoUriMasked,
   isProductsDiskMode,
   getProductsDiskPath,
+  setProductsDiskAppRoot,
   bulkUpsertOrdersToStore,
   bulkUpdateShippedOrdersBySn,
   markOrderHandedOverInStore,
@@ -180,6 +181,10 @@ for (const envPath of dotenvCandidates) {
 dotenv.config(); // fallback: process.cwd()/.env nếu còn biến thiếu
 console.log(
   `[Config] APP_ROOT=${APP_ROOT} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
+);
+setProductsDiskAppRoot(APP_ROOT);
+console.log(
+  `[Products] storage=${isProductsDiskMode() ? "disk" : "mongo"} path=${getProductsDiskPath()}`,
 );
 
 /** Ghi crash log thêm vào APP_ROOT (cPanel app root). */
@@ -11770,7 +11775,7 @@ async function initLocalInventoryIfNeeded(_force = false): Promise<LocalInventor
   return await loadLocalInventoryCache();
 }
 
-/** Ghi products — await insertMany MongoDB. */
+/** Ghi products — disk (PRODUCTS_STORAGE=disk) hoặc Mongo. */
 async function saveProducts(products: any[]): Promise<void> {
   try {
     ensureDataDirs();
@@ -11779,10 +11784,10 @@ async function saveProducts(products: any[]): Promise<void> {
       : [];
     await saveProductsToStoreAsync(list);
     console.log(
-      `Đã lưu DB thành công — MongoDB products insertMany: ${list.length} dòng -> ${getMongoUriMasked()}`
+      `[Products DB] WRITE OK — ${isProductsDiskMode() ? "disk" : "mongo"} count=${list.length} path=${isProductsDiskMode() ? getProductsDiskPath() : getMongoUriMasked()}`,
     );
   } catch (error) {
-    console.error("[Products DB] Failed to write MongoDB:", error);
+    console.error("[Products DB] Failed to write products:", error);
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
@@ -11875,8 +11880,40 @@ function findLatestMigratedJson(baseName: string): string | null {
   return path.join(dataDir, matches[matches.length - 1]);
 }
 
-/** Boot-time: nếu Mongo trống mà còn JSON/legacy → migrate lên Atlas. */
+/** Boot-time: nếu Mongo trống mà còn JSON/legacy → migrate lên Atlas.
+ *  Khi Kho Gốc = disk: TUYỆT ĐỐI không rename/xóa data/products.json (đó là SSOT). */
 async function maybeMigrateJsonToMongoOnBoot(): Promise<void> {
+  if (isProductsDiskMode()) {
+    // Khôi phục nếu boot migrate cũ từng rename products.json → .migrated.*
+    try {
+      const existing = fs.existsSync(getProductsDiskPath())
+        ? JSON.parse(fs.readFileSync(getProductsDiskPath(), "utf-8") || "[]")
+        : [];
+      if (!Array.isArray(existing) || existing.length === 0) {
+        const dataDir = path.join(APP_ROOT, "data");
+        if (fs.existsSync(dataDir)) {
+          const migrated = fs
+            .readdirSync(dataDir)
+            .filter((n) => /^products\.json\.migrated\./i.test(n))
+            .sort();
+          const latest = migrated[migrated.length - 1];
+          if (latest) {
+            const src = path.join(dataDir, latest);
+            const dest = getProductsDiskPath();
+            fs.copyFileSync(src, dest);
+            console.log(`[Products Disk] Khôi phục Kho Gốc từ ${latest} → products.json`);
+          }
+        }
+      }
+    } catch (restoreErr: any) {
+      console.warn("[Products Disk] restore migrated:", restoreErr?.message || restoreErr);
+    }
+    const diskCount = await countProducts().catch(() => 0);
+    console.log(
+      `[Products Disk] Bỏ qua migrate JSON→Mongo — Kho Gốc trên disk (${diskCount} SP) @ ${getProductsDiskPath()}`,
+    );
+    return;
+  }
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
@@ -16037,24 +16074,50 @@ async function startServer() {
         });
       }
       const backupFile = await backupInventoryBeforeDestructiveAction("inventory-clear");
+      // 1) Xóa Kho Gốc trước (disk hoặc mongo) — không phụ thuộc Atlas quota.
       await saveProducts([]);
-      await writeChannelListingsDb([]);
+      let listingsCleared = false;
+      let listingsError: string | null = null;
+      try {
+        await writeChannelListingsDb([]);
+        listingsCleared = true;
+      } catch (listErr: any) {
+        listingsError = listErr?.message || String(listErr);
+        console.warn("[Inventory] clear listings failed (Atlas?):", listingsError);
+      }
       try {
         writeProductListingsDb([]);
       } catch {
         /* optional */
       }
-      // await saveProducts([]) refresh cache trước khi mapping bị xóa; refresh lại để cache đồng bộ cả hai DB.
-      await refreshCache();
-      writeInventoryAudit("inventory_cleared", { requestedBy: req.user?.username || null, backupFile });
-      console.log("[Inventory] Đã xóa sạch Kho gốc (products) + Mapping (channel_listings).");
+      try {
+        await refreshCache();
+      } catch (cacheErr: any) {
+        console.warn("[Inventory] refreshCache after clear:", cacheErr?.message || cacheErr);
+      }
+      writeInventoryAudit("inventory_cleared", {
+        requestedBy: req.user?.username || null,
+        backupFile,
+        productsCleared: true,
+        listingsCleared,
+        listingsError,
+        storage: isProductsDiskMode() ? "disk" : "mongo",
+      });
+      console.log(
+        `[Inventory] Đã xóa Kho gốc (products=${isProductsDiskMode() ? "disk" : "mongo"}) listingsCleared=${listingsCleared}.`,
+      );
       return res.status(200).json({
         success: true,
-        message: "Đã xóa toàn bộ Kho gốc và dữ liệu Liên kết (Mapping).",
+        message: listingsCleared
+          ? "Đã xóa toàn bộ Kho gốc và dữ liệu Liên kết (Mapping)."
+          : `Đã xóa Kho gốc. Mapping chưa xóa được (Mongo đầy/lỗi): ${listingsError || "unknown"}`,
         backupFile,
         cleared: true,
+        productsCleared: true,
+        listingsCleared,
+        listingsError,
         products: [],
-        channelListings: [],
+        channelListings: listingsCleared ? [] : undefined,
       });
     } catch (error: unknown) {
       const errObj = error instanceof Error ? error : new Error(String(error));
@@ -18718,11 +18781,26 @@ async function startServer() {
 
       const rawOffset = Number(req.body?.offset ?? 0);
       const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
+      const resetWarehouse =
+        offset === 0 &&
+        (req.body?.reset === true ||
+          req.body?.reset === 1 ||
+          req.body?.reset === "1" ||
+          req.body?.replace === true);
+
+      // Trang đầu + reset: xóa Kho Gốc cũ rồi mới kéo từ sàn (tránh giữ SP cũ không cập nhật).
+      if (resetWarehouse) {
+        console.log(
+          `[Shopee Product Sync] RESET Kho Gốc trước khi sync shop=${shopId} storage=${isProductsDiskMode() ? "disk" : "mongo"}`,
+        );
+        await saveProducts([]);
+      }
 
       try {
         writeInventoryAudit("shopee_sync_page", {
           shopId,
           offset,
+          reset: resetWarehouse,
           requestedBy: (req as any).user?.username || null,
         });
       } catch {
