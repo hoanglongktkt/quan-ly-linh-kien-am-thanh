@@ -12567,7 +12567,8 @@ function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
   if (!Array.isArray(masterData)) return index;
 
   const addSku = (row: any) => {
-    if (!row || isSyntheticShopeePullProduct(row)) return;
+    if (!row || typeof row !== "object") return;
+    // Cho phép mọi SP có SKU trong Kho Gốc (kể cả id shopee-item-*) để liên kết trang 2+.
     const key = normalizeSkuKey(row.sku);
     if (key && !index.has(key)) index.set(key, row);
   };
@@ -15166,7 +15167,8 @@ async function startServer() {
       const seen = new Set<string>();
 
       const addOne = (row: any) => {
-        if (!row || typeof row !== "object" || isSyntheticShopeePullProduct(row)) return;
+        if (!row || typeof row !== "object") return;
+        // Index mọi SKU trong Kho Gốc — kể cả id shopee-item-* (cần để Mapping trang 2+).
         const rawSku = String(row.sku || "").trim();
         const key = normalizeSkuKey(rawSku);
         const id = row.id != null ? String(row.id).trim() : "";

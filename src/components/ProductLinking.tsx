@@ -209,9 +209,10 @@ interface ProductLinkingProps {
 
 function applyProductChannelLink(masterProd: Product, listing: ChannelListing): Product {
   const platform = listing.platform as Product['channels'][number];
-  const channels = masterProd.channels.includes(platform)
-    ? masterProd.channels
-    : [...masterProd.channels, platform];
+  const existingChannels = Array.isArray(masterProd.channels) ? masterProd.channels : [];
+  const channels = existingChannels.includes(platform)
+    ? existingChannels
+    : [...existingChannels, platform];
 
   const linked: Product = { ...masterProd, channels };
 
@@ -237,6 +238,24 @@ function applyProductChannelLink(masterProd: Product, listing: ChannelListing): 
   }
 
   return linked;
+}
+
+/** Tìm SP (kể cả biến thể con) trong mảng products đang có ở UI. */
+function findProductInTree(list: Product[] | null | undefined, productId: string): Product | null {
+  const id = String(productId || '').trim();
+  if (!id || !Array.isArray(list)) return null;
+  for (const p of list) {
+    if (!p) continue;
+    if (String(p.id) === id) return p;
+    const children = [
+      ...(Array.isArray((p as any).children) ? (p as any).children : []),
+      ...(Array.isArray((p as any).children_models) ? (p as any).children_models : []),
+    ] as Product[];
+    for (const c of children) {
+      if (c && String(c.id) === id) return c;
+    }
+  }
+  return null;
 }
 
 function buildListingsFromProducts(products: Product[], shops: ConnectedShop[]): ChannelListing[] {
@@ -822,9 +841,12 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
   // 3. Confirm Manual Mapping — dùng listingId + masterProductId từ DATA (state), không lấy từ UI text.
   const handleMapProduct = (listingId: string, masterProductId: string) => {
-    const masterProd = flattenedMasterProducts.find((p) => String(p.id) === String(masterProductId));
+    const catalogHit = flattenedMasterProducts.find((p) => String(p.id) === String(masterProductId));
     const listing = listings.find((l) => String(l.id) === String(listingId));
-    if (!masterProd || !listing) {
+    // Ưu tiên SP đầy đủ từ trang Kho đang load; catalog chỉ có id/sku/title (không được PATCH stock=0).
+    const warehouseProd = findProductInTree(products, masterProductId);
+    const displayProd = warehouseProd || catalogHit;
+    if (!displayProd || !listing) {
       showToast('Lỗi dữ liệu: thiếu listing.id hoặc sản phẩm kho gốc.');
       return;
     }
@@ -835,18 +857,58 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         return {
           ...item,
           status: 'success',
-          linkedProductId: String(masterProd.id),
-          linkedProductTitle: masterProd.title,
-          linkedProductSku: masterProd.sku,
-          linkedProduct: { id: String(masterProd.id), title: masterProd.title, sku: masterProd.sku },
-          sku: item.sku || masterProd.sku,
+          linkedProductId: String(displayProd.id),
+          linkedProductTitle: displayProd.title,
+          linkedProductSku: displayProd.sku,
+          linkedProduct: { id: String(displayProd.id), title: displayProd.title, sku: displayProd.sku },
+          sku: item.sku || displayProd.sku,
           syncError: undefined,
           linkBroken: false,
         };
       })
     );
 
-    onUpdateProduct(applyProductChannelLink(masterProd, listing), { save: true });
+    if (warehouseProd) {
+      onUpdateProduct(applyProductChannelLink(warehouseProd, listing), { save: true });
+    } else {
+      // SP ở trang 2+ Kho Gốc — chỉ PATCH field liên kết kênh, không ghi đè tồn/giá.
+      void (async () => {
+        try {
+          const token = localStorage.getItem('admin_token');
+          if (!token) return;
+          const patched = applyProductChannelLink(
+            {
+              id: displayProd.id,
+              title: displayProd.title,
+              sku: displayProd.sku,
+              stock: 0,
+              price: 0,
+              status: 'active',
+              createdAt: 0,
+              channels: [],
+            } as Product,
+            listing
+          );
+          await apiFetch(`/api/products/${encodeURIComponent(String(displayProd.id))}`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              channels: patched.channels,
+              shopeeId: patched.shopeeId,
+              shopeeItemId: patched.shopeeItemId,
+              shopeeModelId: patched.shopeeModelId,
+              tiktokId: patched.tiktokId,
+              wooId: patched.wooId,
+            }),
+          });
+        } catch (err) {
+          console.warn('[ProductLinking] patch channel link (off-page) failed', err);
+        }
+      })();
+    }
 
     setMappingListing(null);
     showToast(`Liên kết thành công sàn [${listing.shopName}] với kho sản phẩm chính!`);
@@ -857,7 +919,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       channel: listing.platform,
       type: 'product_sync',
       status: 'success',
-      message: `Liên kết thủ công sản phẩm sàn [ID: ${listing.channelId}] sang Kho chính sản phẩm [${masterProd.sku}]`,
+      message: `Liên kết thủ công sản phẩm sàn [ID: ${listing.channelId}] sang Kho chính sản phẩm [${displayProd.sku}]`,
     });
   };
 
@@ -1037,6 +1099,85 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       if (pendingListings.length === 0) {
         showToast('Không có sản phẩm chưa liên kết hoặc liên kết thất bại để xử lý.');
         return;
+      }
+
+      // Ưu tiên 1 request server (all-pending) — Hash Map cache + toàn kho, không phụ thuộc trang UI.
+      setAutoLinkProgress({ current: 0, total: pendingListings.length });
+      try {
+        const allRes = await apiFetch('/api/mapping-products/bulk-auto-link', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ mode: 'all-pending' }),
+        });
+        const allData = await parseJsonResponse<{
+          success?: boolean;
+          linkedCount?: number;
+          failedCount?: number;
+          processed?: number;
+          listings?: ChannelListing[];
+          results?: Array<{ id: string; success: boolean; listing?: ChannelListing; message?: string }>;
+          message?: string;
+          error?: string;
+        }>(allRes);
+
+        if (allRes.ok && allData.success !== false) {
+          const resultById = new Map<string, ChannelListing>();
+          if (Array.isArray(allData.results)) {
+            for (const row of allData.results) {
+              const normalized =
+                normalizeListingRecord(row.listing) ??
+                normalizeListingRecord({
+                  ...pendingListings.find((c) => String(c.id) === String(row.id)),
+                  status: row.success ? 'success' : 'failed',
+                  syncError: row.success ? undefined : row.message,
+                });
+              if (normalized) resultById.set(String(normalized.id), normalized);
+            }
+          } else if (Array.isArray(allData.listings)) {
+            for (const row of allData.listings) {
+              const normalized = normalizeListingRecord(row);
+              if (normalized) resultById.set(String(normalized.id), normalized);
+            }
+          }
+
+          if (resultById.size > 0) {
+            setListings((prev) =>
+              prev.map((row) => {
+                const next = resultById.get(String(row.id));
+                return next || row;
+              })
+            );
+          }
+
+          const totalLinked = Number(allData.linkedCount) || 0;
+          const totalFailed = Number(allData.failedCount) || 0;
+          const processed = Number(allData.processed) || pendingListings.length;
+          setAutoLinkProgress({ current: processed, total: processed });
+
+          if (totalLinked > 0) {
+            showToast(`Đã liên kết thành công ${totalLinked}/${processed} sản phẩm`);
+          } else {
+            showToast(`Đã chạy xong ${processed} sản phẩm nhưng không có dòng nào liên kết thành công.`);
+          }
+          onAddLog({
+            id: `log-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            channel: 'all',
+            type: 'product_sync',
+            status: totalLinked > 0 ? 'success' : 'failed',
+            message:
+              totalLinked > 0
+                ? `Liên kết tự động all-pending: ${totalLinked}/${processed} thành công, thất bại ${totalFailed}.`
+                : `Liên kết tự động all-pending thất bại hoặc không khớp ở ${processed} sản phẩm.`,
+          });
+          await refreshListingsFromDb({ forceRefresh: true });
+          return;
+        }
+      } catch (allPendingErr) {
+        console.warn('[ProductLinking] all-pending failed, fallback chunk ids', allPendingErr);
       }
 
       const total = pendingListings.length;

@@ -101985,6 +101985,7 @@ async function restoreLocalStockForPartialCancel(shopId, existing, incoming) {
   if (changed) {
     try {
       await saveProductsToStoreAsync(products);
+      invalidateMasterSkuIndexCache("shopee_partial_cancel");
     } catch (err) {
       console.warn("[Shopee Partial Cancel] L\u01B0u t\u1ED3n kho th\u1EA5t b\u1EA1i:", err);
     }
@@ -104414,6 +104415,7 @@ async function saveProducts(products) {
     ensureDataDirs();
     const list = Array.isArray(products) ? products.filter((p) => p != null && typeof p === "object") : [];
     await saveProductsToStoreAsync(list);
+    invalidateMasterSkuIndexCache("saveProducts");
     console.log(
       `[Products DB] WRITE OK \u2014 ${isProductsDiskMode() ? "disk" : "mongo"} count=${list.length} path=${isProductsDiskMode() ? getProductsDiskPath() : getMongoUriMasked()}`
     );
@@ -104881,7 +104883,7 @@ function buildMasterSkuIndex(masterData) {
   const index = /* @__PURE__ */ new Map();
   if (!Array.isArray(masterData)) return index;
   const addSku = (row) => {
-    if (!row || isSyntheticShopeePullProduct(row)) return;
+    if (!row || typeof row !== "object") return;
     const key = normalizeSkuKey(row.sku);
     if (key && !index.has(key)) index.set(key, row);
   };
@@ -104897,6 +104899,33 @@ function buildMasterSkuIndex(masterData) {
     }
   }
   return index;
+}
+var cachedMasterSkuIndex = null;
+var cachedMasterProductsRef = null;
+var cachedMasterSkuIndexBuiltAt = 0;
+function invalidateMasterSkuIndexCache(reason = "products_write") {
+  cachedMasterSkuIndex = null;
+  cachedMasterProductsRef = null;
+  cachedMasterSkuIndexBuiltAt = 0;
+  console.log(`[SKU Index Cache] invalidated \u2014 ${reason}`);
+}
+async function getCachedMasterSkuIndex() {
+  if (cachedMasterSkuIndex && cachedMasterProductsRef) {
+    return {
+      index: cachedMasterSkuIndex,
+      products: cachedMasterProductsRef,
+      fromCache: true
+    };
+  }
+  const products = await loadProducts();
+  const index = buildMasterSkuIndex(products);
+  cachedMasterSkuIndex = index;
+  cachedMasterProductsRef = products;
+  cachedMasterSkuIndexBuiltAt = Date.now();
+  console.log(
+    `[SKU Index Cache] built \u2014 products=${products.length} skuKeys=${index.size} at=${cachedMasterSkuIndexBuiltAt}`
+  );
+  return { index, products, fromCache: false };
 }
 function findMasterProductBySku(masterSkuIndex, listingSku, _masterData) {
   const key = normalizeSkuKey(listingSku);
@@ -104944,7 +104973,7 @@ async function autoLinkSingleListingFromDatabase(opts) {
     throw new Error("Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m s\xE0n c\u1EA7n li\xEAn k\u1EBFt.");
   }
   const current = sanitizeChannelListingRow(dbListings[rowIndex]);
-  const masterProducts = await loadProducts();
+  const { index: masterSkuIndex, products: masterProducts } = await getCachedMasterSkuIndex();
   if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
     throw new Error("Kho s\u1EA3n ph\u1EA9m ch\xEDnh \u0111ang tr\u1ED1ng. H\xE3y kh\u1EDFi t\u1EA1o/sync d\u1EEF li\u1EC7u tr\u01B0\u1EDBc.");
   }
@@ -104965,7 +104994,6 @@ async function autoLinkSingleListingFromDatabase(opts) {
       message: "SKU s\u1EA3n ph\u1EA9m s\xE0n \u0111ang tr\u1ED1ng ho\u1EB7c kh\xF4ng h\u1EE3p l\u1EC7."
     };
   }
-  const masterSkuIndex = buildMasterSkuIndex(masterProducts);
   const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku, masterProducts);
   if (!masterItem) {
     return {
@@ -105006,7 +105034,7 @@ async function batchAutoLinkFromDatabase(opts) {
     if (!Array.isArray(dbListings) || dbListings.length === 0) {
       throw new Error("Kh\xF4ng c\xF3 d\u1EEF li\u1EC7u channel_listings \u0111\u1EC3 li\xEAn k\u1EBFt.");
     }
-    const masterProducts = await loadProducts();
+    const { index: masterSkuIndex, products: masterProducts, fromCache } = await getCachedMasterSkuIndex();
     if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
       throw new Error("Kho s\u1EA3n ph\u1EA9m ch\xEDnh \u0111ang tr\u1ED1ng. H\xE3y kh\u1EDFi t\u1EA1o/sync d\u1EEF li\u1EC7u tr\u01B0\u1EDBc.");
     }
@@ -105020,13 +105048,12 @@ async function batchAutoLinkFromDatabase(opts) {
     let nextCursor = dbListings.length;
     let wroteChanges = false;
     const newlyLinkedRows = [];
-    const masterSkuIndex = buildMasterSkuIndex(masterProducts);
     console.log(
-      `[Batch Auto-link] DB loaded: masterProducts=${masterProducts.length}, skuIndex=${masterSkuIndex.size}, listings=${dbListings.length}, cursor=${requestedCursor}, limit=${requestedLimit}`
+      `[Batch Auto-link] DB loaded: masterProducts=${masterProducts.length}, skuIndex=${masterSkuIndex.size}, listings=${dbListings.length}, cursor=${requestedCursor}, limit=${requestedLimit}, skuCache=${fromCache}`
     );
     for (let rowIndex = requestedCursor; rowIndex < dbListings.length; rowIndex += 1) {
       const item = sanitizeChannelListingRow(dbListings[rowIndex]);
-      if (item.status !== "unlinked" || isListingAlreadyLinkedProtected(item)) {
+      if (item.status !== "unlinked" && item.status !== "failed" || isListingAlreadyLinkedProtected(item)) {
         alreadyLinked += 1;
         continue;
       }
@@ -105062,7 +105089,7 @@ async function batchAutoLinkFromDatabase(opts) {
     }
     const unlinkedRemaining = dbListings.filter((row) => {
       const safeRow = sanitizeChannelListingRow(row);
-      return safeRow.status === "unlinked" && !isListingAlreadyLinkedProtected(safeRow);
+      return (safeRow.status === "unlinked" || safeRow.status === "failed") && !isListingAlreadyLinkedProtected(safeRow);
     }).length;
     const hasMore = nextCursor < dbListings.length;
     console.log(
@@ -105096,11 +105123,10 @@ async function bulkAutoLinkListingsByIds(rawIds) {
   if (!Array.isArray(dbListings) || dbListings.length === 0) {
     throw new Error("Kh\xF4ng c\xF3 d\u1EEF li\u1EC7u channel_listings \u0111\u1EC3 li\xEAn k\u1EBFt.");
   }
-  const masterProducts = await loadProducts();
+  const { index: masterSkuIndex, products: masterProducts, fromCache } = await getCachedMasterSkuIndex();
   if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
     throw new Error("Kho s\u1EA3n ph\u1EA9m ch\xEDnh \u0111ang tr\u1ED1ng. H\xE3y kh\u1EDFi t\u1EA1o/sync d\u1EEF li\u1EC7u tr\u01B0\u1EDBc.");
   }
-  const masterSkuIndex = buildMasterSkuIndex(masterProducts);
   const byId = /* @__PURE__ */ new Map();
   for (let i2 = 0; i2 < dbListings.length; i2 += 1) {
     const safe = sanitizeChannelListingRow(dbListings[i2]);
@@ -105201,9 +105227,8 @@ async function bulkAutoLinkListingsByIds(rawIds) {
     await bulkUpsertChannelListingsToStore(toWrite);
     await flushDbWrites();
   }
-  await sleep2(200);
   console.log(
-    `[Bulk Auto-link] chunk=${ids.length} linked=${linkedCount} failed=${failedCount} skipped=${skippedCount} wrote=${toWrite.length} skuIndex=${masterSkuIndex.size}`
+    `[Bulk Auto-link] chunk=${ids.length} linked=${linkedCount} failed=${failedCount} skipped=${skippedCount} wrote=${toWrite.length} skuIndex=${masterSkuIndex.size} skuCache=${fromCache}`
   );
   return {
     linkedCount,
@@ -105213,6 +105238,51 @@ async function bulkAutoLinkListingsByIds(rawIds) {
     results,
     skuIndexSize: masterSkuIndex.size,
     masterProductCount: masterProducts.length
+  };
+}
+async function bulkAutoLinkAllPending(opts) {
+  const dbListings = await readChannelListingsDb();
+  if (!Array.isArray(dbListings) || dbListings.length === 0) {
+    throw new Error("Kh\xF4ng c\xF3 d\u1EEF li\u1EC7u channel_listings \u0111\u1EC3 li\xEAn k\u1EBFt.");
+  }
+  const pendingIds = [];
+  for (const row of dbListings) {
+    const safe = sanitizeChannelListingRow(row);
+    const id = String(safe?.id || "").trim();
+    if (!id) continue;
+    if (isListingAlreadyLinkedProtected(safe)) continue;
+    if (safe.status === "unlinked" || safe.status === "failed") pendingIds.push(id);
+  }
+  const maxTotal = Math.min(
+    pendingIds.length,
+    Math.max(1, Math.floor(Number(opts?.limit) || pendingIds.length || 1))
+  );
+  const idsToProcess = pendingIds.slice(0, maxTotal);
+  let linkedCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+  const allResults = [];
+  let skuIndexSize = 0;
+  let masterProductCount = 0;
+  for (let i2 = 0; i2 < idsToProcess.length; i2 += BULK_AUTO_LINK_CHUNK_MAX) {
+    const chunk = idsToProcess.slice(i2, i2 + BULK_AUTO_LINK_CHUNK_MAX);
+    const part = await bulkAutoLinkListingsByIds(chunk);
+    linkedCount += part.linkedCount;
+    failedCount += part.failedCount;
+    skippedCount += part.skippedCount;
+    skuIndexSize = part.skuIndexSize;
+    masterProductCount = part.masterProductCount;
+    allResults.push(...part.results);
+  }
+  return {
+    linkedCount,
+    failedCount,
+    skippedCount,
+    processed: idsToProcess.length,
+    listings: allResults.map((r2) => r2.listing).filter(Boolean),
+    results: allResults,
+    skuIndexSize,
+    masterProductCount
   };
 }
 var SUPPLIERS_DB_PATH = import_path4.default.join(APP_ROOT, "data", "suppliers.json");
@@ -106719,7 +106789,7 @@ async function startServer() {
       const items = [];
       const seen = /* @__PURE__ */ new Set();
       const addOne = (row) => {
-        if (!row || typeof row !== "object" || isSyntheticShopeePullProduct(row)) return;
+        if (!row || typeof row !== "object") return;
         const rawSku = String(row.sku || "").trim();
         const key = normalizeSkuKey(rawSku);
         const id = row.id != null ? String(row.id).trim() : "";
@@ -106758,6 +106828,17 @@ async function startServer() {
   const handleBulkAutoLinkByIds = async (req, res) => {
     try {
       const body = req?.body && typeof req.body === "object" ? req.body : {};
+      const mode = String(body.mode || "").trim().toLowerCase();
+      if (mode === "all-pending" || mode === "all_pending" || body.allPending === true) {
+        const result2 = await bulkAutoLinkAllPending({
+          limit: Number.isFinite(Number(body.limit)) ? Number(body.limit) : void 0
+        });
+        return res.status(200).json({
+          success: true,
+          ...result2,
+          message: result2.linkedCount > 0 ? `\u0110\xE3 li\xEAn k\u1EBFt th\xE0nh c\xF4ng ${result2.linkedCount}/${result2.processed} s\u1EA3n ph\u1EA9m pending` : "Kh\xF4ng c\xF3 s\u1EA3n ph\u1EA9m n\xE0o li\xEAn k\u1EBFt th\xE0nh c\xF4ng trong l\xF4 pending"
+        });
+      }
       const rawIds = Array.isArray(body.ids) ? body.ids : Array.isArray(body.listingIds) ? body.listingIds : Array.isArray(body.listings) ? body.listings.map((row) => row?.id) : [];
       const result = await bulkAutoLinkListingsByIds(rawIds);
       return res.status(200).json({
