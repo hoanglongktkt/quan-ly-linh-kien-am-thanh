@@ -4120,8 +4120,8 @@ export default function OrderManager({
         <div className="bg-teal-50/80 border border-teal-100 rounded-2xl px-4 py-3 text-xs text-teal-900 font-semibold leading-relaxed">
           Đối soát kiện hủy/hoàn đã quét nhận về kho (cờ nội bộ{' '}
           <code className="font-mono text-[11px]">RETURN_RECEIVED</code> /{' '}
-          <code className="font-mono text-[11px]">CANCELLED_STORED</code>). Tự ẩn sau 14 ngày —
-          không xóa lịch sử đơn Shopee.
+          <code className="font-mono text-[11px]">CANCELLED_STORED</code>). Tự xóa khỏi DB sau 14 ngày
+          (đơn hoàn tất/ĐVVC sau 30 ngày) để giải phóng dung lượng.
         </div>
       )}
 

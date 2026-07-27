@@ -1920,6 +1920,244 @@ export async function deleteHandedOverOrdersFromStore(): Promise<{
 }
 
 /**
+ * Xóa đơn đã đóng quá hạn retention (giải phóng dung lượng Atlas).
+ * - Hủy/hoàn đã lưu / archived: > cancelReturnDays (mặc định 14)
+ * - Hoàn tất / đang giao cũ / ĐVVC: > closedDays (mặc định 30)
+ * Không đụng đơn đang chờ lấy / chờ xác nhận.
+ */
+export async function deleteClosedOrdersByRetention(opts?: {
+  cancelReturnDays?: number;
+  closedDays?: number;
+  dryRun?: boolean;
+  limit?: number;
+}): Promise<{
+  deleted: number;
+  sns: string[];
+  scanned: number;
+  dryRun: boolean;
+  cancelReturnMatched: number;
+  closedMatched: number;
+}> {
+  if (!isMongoReady()) {
+    return {
+      deleted: 0,
+      sns: [],
+      scanned: 0,
+      dryRun: Boolean(opts?.dryRun),
+      cancelReturnMatched: 0,
+      closedMatched: 0,
+    };
+  }
+  requireMongo();
+
+  const cancelReturnDays = Math.max(1, Math.floor(opts?.cancelReturnDays ?? 14));
+  const closedDays = Math.max(1, Math.floor(opts?.closedDays ?? 30));
+  const dryRun = Boolean(opts?.dryRun);
+  const limit = Math.min(
+    5000,
+    Math.max(1, Math.floor(opts?.limit ?? 3000)),
+  );
+  const cancelCutoff = Date.now() - cancelReturnDays * 24 * 60 * 60 * 1000;
+  const closedCutoff = Date.now() - closedDays * 24 * 60 * 60 * 1000;
+
+  const parseTs = (raw: unknown): number => {
+    if (raw == null || raw === "") return 0;
+    if (typeof raw === "number") {
+      return raw < 1e12 ? raw * 1000 : raw;
+    }
+    if (raw instanceof Date) return raw.getTime();
+    const ms = Date.parse(String(raw));
+    return Number.isFinite(ms) ? ms : 0;
+  };
+
+  const orderAgeMs = (d: any): number => {
+    const data = d?.data && typeof d.data === "object" ? d.data : {};
+    const candidates = [
+      data.local_status_updated_at,
+      data.localStatusAt,
+      data.handedOverAt,
+      d.local_status_updated_at,
+      data.date,
+      d.date,
+      data.update_time,
+      d.update_time,
+      d.last_synced_at,
+      data.last_synced_at,
+    ];
+    let best = 0;
+    for (const c of candidates) {
+      const t = parseTs(c);
+      if (t > best) best = t;
+    }
+    return best;
+  };
+
+  const localOf = (d: any): string =>
+    String(d?.data?.local_status || d?.data?.localStatus || d?.local_status || "")
+      .trim()
+      .toUpperCase();
+  const statusOf = (d: any): string =>
+    String(d?.status || d?.data?.status || "")
+      .trim()
+      .toLowerCase();
+  const rawOf = (d: any): string =>
+    String(d?.shopee_order_status || d?.data?.shopee_order_status || "")
+      .trim()
+      .toUpperCase();
+
+  const isProtectedLive = (d: any): boolean => {
+    const local = localOf(d);
+    if (
+      local === "CANCELLED_STORED" ||
+      local === "RETURN_RECEIVED" ||
+      d?.data?.is_local_return_archived === true ||
+      d?.is_local_return_archived === true
+    ) {
+      return false;
+    }
+    const raw = rawOf(d);
+    if (["CANCELLED", "IN_CANCEL", "TO_RETURN", "COMPLETED", "SHIPPED", "TO_CONFIRM_RECEIVE"].includes(raw)) {
+      return false;
+    }
+    const st = statusOf(d);
+    if (["cancelled", "return_received", "return_pending", "completed", "shipping", "handed_over"].includes(st)) {
+      return false;
+    }
+    if (local === "HANDED_OVER" || d?.is_handed_over === true || d?.data?.is_handed_over === true) {
+      return false;
+    }
+    // Đơn đang vận hành: chờ xác nhận / chờ lấy hàng.
+    if (["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED", "UNPAID", "PENDING"].includes(raw)) return true;
+    if (["unprocessed", "processed", "pending_confirm", "pending_verification"].includes(st)) return true;
+    return false;
+  };
+
+  const isCancelReturnClosed = (d: any): boolean => {
+    const local = localOf(d);
+    if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") return true;
+    if (d?.data?.is_local_return_archived === true || d?.is_local_return_archived === true) return true;
+    const st = statusOf(d);
+    if (st === "cancelled" || st === "return_received" || st === "return_pending") return true;
+    const raw = rawOf(d);
+    return raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN";
+  };
+
+  const isTerminalClosed = (d: any): boolean => {
+    if (isCancelReturnClosed(d)) return false;
+    const local = localOf(d);
+    if (local === "HANDED_OVER") return true;
+    if (d?.is_handed_over === true || d?.data?.is_handed_over === true) return true;
+    const st = statusOf(d);
+    if (st === "completed" || st === "shipping" || st === "handed_over") return true;
+    const raw = rawOf(d);
+    return raw === "COMPLETED" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE";
+  };
+
+  const filter = {
+    $or: [
+      { status: { $in: ["cancelled", "return_received", "return_pending", "completed", "shipping", "handed_over"] } },
+      {
+        shopee_order_status: {
+          $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN", "COMPLETED", "SHIPPED", "TO_CONFIRM_RECEIVE"],
+        },
+      },
+      { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED", "HANDED_OVER"] } },
+      { "data.localStatus": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED", "HANDED_OVER"] } },
+      { "data.is_local_return_archived": true },
+      { is_handed_over: true },
+      { "data.is_handed_over": true },
+    ],
+  };
+
+  let docs: any[] = [];
+  try {
+    docs = await OrderModel.find(filter)
+      .select({
+        _id: 1,
+        orderSn: 1,
+        status: 1,
+        shopee_order_status: 1,
+        is_handed_over: 1,
+        local_status: 1,
+        last_synced_at: 1,
+        "data.orderSn": 1,
+        "data.status": 1,
+        "data.date": 1,
+        "data.update_time": 1,
+        "data.local_status": 1,
+        "data.localStatus": 1,
+        "data.local_status_updated_at": 1,
+        "data.localStatusAt": 1,
+        "data.handedOverAt": 1,
+        "data.is_handed_over": 1,
+        "data.is_local_return_archived": 1,
+        "data.shopee_order_status": 1,
+        "data.last_synced_at": 1,
+      })
+      .limit(limit)
+      .maxTimeMS(20_000)
+      .lean();
+  } catch (err: any) {
+    console.warn("[MongoDB] deleteClosedOrdersByRetention find failed:", err?.message || err);
+    throw err;
+  }
+
+  const toDeleteKeys: string[] = [];
+  const sns: string[] = [];
+  let cancelReturnMatched = 0;
+  let closedMatched = 0;
+
+  for (const d of docs) {
+    if (isProtectedLive(d)) continue;
+    const age = orderAgeMs(d);
+    if (!age) continue;
+    let matched = false;
+    if (isCancelReturnClosed(d) && age < cancelCutoff) {
+      cancelReturnMatched += 1;
+      matched = true;
+    } else if (isTerminalClosed(d) && age < closedCutoff) {
+      closedMatched += 1;
+      matched = true;
+    }
+    if (!matched) continue;
+    const sn = String(d?.orderSn || d?.data?.orderSn || "").trim();
+    const id = String(d?._id || "").trim();
+    if (sn) {
+      sns.push(sn);
+      toDeleteKeys.push(sn);
+    }
+    if (id) toDeleteKeys.push(id);
+  }
+
+  if (dryRun || toDeleteKeys.length === 0) {
+    console.log(
+      `[MongoDB] retention dryRun=${dryRun} scanned=${docs.length} cancelReturn=${cancelReturnMatched} closed=${closedMatched} wouldDelete=${sns.length}`,
+    );
+    return {
+      deleted: 0,
+      sns: [...new Set(sns)],
+      scanned: docs.length,
+      dryRun,
+      cancelReturnMatched,
+      closedMatched,
+    };
+  }
+
+  const deleted = await deleteOrdersFromStore(toDeleteKeys);
+  console.log(
+    `[MongoDB] retention deleted=${deleted} cancelReturn=${cancelReturnMatched} closed=${closedMatched} scanned=${docs.length}`,
+  );
+  return {
+    deleted,
+    sns: [...new Set(sns)],
+    scanned: docs.length,
+    dryRun: false,
+    cancelReturnMatched,
+    closedMatched,
+  };
+}
+
+/**
  * Map orderSn → tracking_no từ Mongo (top-level + data).
  * Dùng để hydrate orders.json / API khi mã đã sync Mongo nhưng JSON local còn trống.
  */

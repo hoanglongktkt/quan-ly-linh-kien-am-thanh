@@ -71,6 +71,7 @@ import {
   updateOrderTrackingInStore,
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
+  deleteClosedOrdersByRetention,
   loadOrdersFromStore,
   findOrderByScanCodeInStore,
   loadShopeeTrackingEnrichCandidatesFromStore,
@@ -208,8 +209,8 @@ const WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
  * URL chuẩn phục vụ FE: /api/public/labels/:filename — tuyệt đối KHÔNG dùng /prints/.
  */
 const LABELS_DIR = path.join(APP_ROOT, "storage", "labels");
-/** Disk TTL 72h; RAM TTL 60 phút (đủ cho phiên in). */
-const LABEL_DISK_TTL_MS = 72 * 60 * 60 * 1000;
+/** Disk TTL 24h; RAM TTL 60 phút (đủ cho phiên in). PDF không lưu Mongo. */
+const LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1000;
 const LABEL_RAM_TTL_MS = 60 * 60 * 1000;
 const labelMemCache = new Map<string, { buf: Buffer; expires: number; contentType?: string }>();
 const LABEL_MEM_MAX_ENTRIES = 48;
@@ -456,7 +457,7 @@ function assertLabelFileReady(filename: string): { safe: string; size: number } 
   return { safe, size: hit.buf.length };
 }
 
-/** Dọn PDF trong storage/labels/ > 72h + RAM hết hạn. */
+/** Dọn PDF trong storage/labels/ > 24h + RAM hết hạn. (PDF không lưu MongoDB.) */
 function cleanupExpiredLabelFiles(): number {
   let deleted = 0;
   const now = Date.now();
@@ -550,11 +551,19 @@ wipeLegacyPublicPrints();
 cleanupExpiredLabelFiles();
 /** Không chạy chồng cleanup — tránh treo/fork thừa trên cPanel. */
 let labelDiskCleanupRunning = false;
+/** Mỗi giờ: xóa PDF > 24h. Mỗi ngày (24h): quét lại + log rõ. */
+let labelDailySweepAt = 0;
 const labelDiskCleanupTimer = setInterval(() => {
   if (labelDiskCleanupRunning) return;
   labelDiskCleanupRunning = true;
   try {
-    cleanupExpiredLabelFiles();
+    const n = cleanupExpiredLabelFiles();
+    const now = Date.now();
+    if (now - labelDailySweepAt >= 24 * 60 * 60 * 1000) {
+      labelDailySweepAt = now;
+      wipeLegacyPublicPrints();
+      console.log(`[Labels Cleanup] Daily sweep xong — deleted≈${n}, TTL=24h, dir=${LABELS_DIR}`);
+    }
   } catch (err) {
     console.warn("[Labels Cleanup] setInterval lỗi:", err);
   } finally {
@@ -10244,6 +10253,115 @@ async function archiveStaleReceivedCancelReturnOrders(
   return { scanned: orders.length, archived: changed.length };
 }
 
+/**
+ * Xóa đơn đã đóng khỏi Mongo (+ mirror JSON) để giải phóng Atlas free tier.
+ * - Hủy/hoàn đã lưu / archived: > 14 ngày
+ * - Hoàn tất / đang giao cũ / ĐVVC: > 30 ngày
+ * Không xóa đơn chờ lấy / chờ xác nhận.
+ */
+async function purgeClosedOrdersByRetention(opts?: {
+  cancelReturnDays?: number;
+  closedDays?: number;
+  dryRun?: boolean;
+}): Promise<{
+  deleted: number;
+  jsonRemoved: number;
+  sns: string[];
+  scanned: number;
+  dryRun: boolean;
+  cancelReturnMatched: number;
+  closedMatched: number;
+  message: string;
+}> {
+  const cancelReturnDays = Math.max(1, Math.floor(opts?.cancelReturnDays ?? 14));
+  const closedDays = Math.max(1, Math.floor(opts?.closedDays ?? 30));
+  const dryRun = Boolean(opts?.dryRun);
+
+  if (!isMongoReady()) {
+    return {
+      deleted: 0,
+      jsonRemoved: 0,
+      sns: [],
+      scanned: 0,
+      dryRun,
+      cancelReturnMatched: 0,
+      closedMatched: 0,
+      message: "Mongo chưa sẵn sàng — bỏ qua retention cleanup.",
+    };
+  }
+
+  const mongoResult = await deleteClosedOrdersByRetention({
+    cancelReturnDays,
+    closedDays,
+    dryRun,
+  });
+
+  let jsonRemoved = 0;
+  if (!dryRun && mongoResult.sns.length > 0) {
+    try {
+      const snSet = new Set(
+        mongoResult.sns.map((s) => String(s || "").replace(/^shopee-/i, "").trim()).filter(Boolean),
+      );
+      const orders = loadOrders();
+      const kept = orders.filter((o: any) => {
+        const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+        const id = String(o?.id || "").replace(/^shopee-/i, "").trim();
+        return !snSet.has(sn) && !snSet.has(id);
+      });
+      jsonRemoved = orders.length - kept.length;
+      if (jsonRemoved > 0) saveOrders(kept);
+    } catch (err: any) {
+      console.warn("[Orders Retention] JSON mirror cleanup:", err?.message || err);
+    }
+    try {
+      queueOrdersJsonMirrorFromMongo();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const message = dryRun
+    ? `Dry-run: sẽ xóa ~${mongoResult.sns.length} đơn (hủy/hoàn ${mongoResult.cancelReturnMatched} @${cancelReturnDays}d, đóng ${mongoResult.closedMatched} @${closedDays}d).`
+    : mongoResult.deleted > 0
+      ? `Đã xóa ${mongoResult.deleted} đơn đã đóng (hủy/hoàn>${cancelReturnDays}d / hoàn tất-ĐVVC>${closedDays}d).`
+      : `Không có đơn đã đóng quá hạn để xóa (${cancelReturnDays}/${closedDays} ngày).`;
+
+  console.log(`[Orders Retention] ${message}`);
+  return {
+    deleted: mongoResult.deleted,
+    jsonRemoved,
+    sns: mongoResult.sns,
+    scanned: mongoResult.scanned,
+    dryRun,
+    cancelReturnMatched: mongoResult.cancelReturnMatched,
+    closedMatched: mongoResult.closedMatched,
+    message,
+  };
+}
+
+let closedOrdersRetentionRunning = false;
+let closedOrdersRetentionTimer: ReturnType<typeof setInterval> | undefined;
+
+function scheduleClosedOrdersRetentionCleanup(): void {
+  if (closedOrdersRetentionTimer) return;
+  const run = () => {
+    if (closedOrdersRetentionRunning || !isMongoReady()) return;
+    closedOrdersRetentionRunning = true;
+    void purgeClosedOrdersByRetention()
+      .catch((err) => console.warn("[Orders Retention] schedule error:", err?.message || err))
+      .finally(() => {
+        closedOrdersRetentionRunning = false;
+      });
+  };
+  // Chạy 1 lần sau khi Mongo sẵn sàng (~2 phút), rồi mỗi 24h.
+  setTimeout(run, 2 * 60 * 1000);
+  closedOrdersRetentionTimer = setInterval(run, 24 * 60 * 60 * 1000);
+  if (typeof (closedOrdersRetentionTimer as any).unref === "function") {
+    (closedOrdersRetentionTimer as any).unref();
+  }
+  console.log("[Orders Retention] Scheduled: hủy/hoàn >14d, hoàn tất/ĐVVC >30d, mỗi 24h.");
+}
+
 function isOrderAlreadyScanProcessed(order: any): boolean {
   const local = resolveOrderLocalStatus(order);
   if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") return true;
@@ -16920,6 +17038,61 @@ async function startServer() {
   });
 
   /**
+   * Xóa đơn đã đóng theo retention: hủy/hoàn >14 ngày, hoàn tất/ĐVVC/đang giao cũ >30 ngày.
+   * Body: { dry_run?: boolean, cancel_return_days?: number, closed_days?: number }
+   */
+  app.post("/api/orders/cleanup-closed-retention", authMiddleware, async (req, res) => {
+    try {
+      const dryRun =
+        req.body?.dry_run === true ||
+        req.body?.dryRun === true ||
+        String(req.query?.dry_run || "") === "1";
+      const cancelReturnDays = Number(req.body?.cancel_return_days ?? req.body?.cancelReturnDays);
+      const closedDays = Number(req.body?.closed_days ?? req.body?.closedDays);
+      const result = await purgeClosedOrdersByRetention({
+        dryRun,
+        cancelReturnDays: Number.isFinite(cancelReturnDays) && cancelReturnDays > 0
+          ? cancelReturnDays
+          : undefined,
+        closedDays: Number.isFinite(closedDays) && closedDays > 0 ? closedDays : undefined,
+      });
+      return res.json({
+        success: true,
+        ...result,
+        orderSns: result.sns.slice(0, 100),
+      });
+    } catch (error: any) {
+      console.error("[Orders Retention] API error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "cleanup_closed_retention_failed",
+        message: error?.message || "Không thể dọn đơn đã đóng.",
+      });
+    }
+  });
+
+  /** Dọn PDF vận đơn hết hạn trên đĩa (không lưu Mongo). */
+  app.post("/api/orders/cleanup-label-pdfs", authMiddleware, async (_req, res) => {
+    try {
+      const deleted = cleanupExpiredLabelFiles();
+      wipeLegacyPublicPrints();
+      return res.json({
+        success: true,
+        deleted,
+        ttlHours: 24,
+        storage: "disk",
+        mongo: false,
+        message: `Đã dọn PDF vận đơn >24h trên đĩa (không lưu Mongo). Xóa ${deleted} mục.`,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "cleanup_label_pdfs_failed",
+      });
+    }
+  });
+
+  /**
    * Xóa HẾT đơn đang ở tab "Chờ lấy hàng (Đã xử lý)" — deleteMany trên JSON (+ Mongo).
    * Dùng SSOT matchesProcessedPickupTabShared (State Machine).
    */
@@ -21806,6 +21979,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
+        scheduleClosedOrdersRetentionCleanup();
       }
       // KHÔNG tự xóa đơn ĐVVC khi boot — chỉ qua POST /api/orders/cleanup-handed-over.
       console.log(`[MongoDB] connectDB xong — ready=${isMongoReady()} uri=${getMongoUriMasked()}`);
@@ -21845,7 +22019,8 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       // Một lần recovery pull sau boot (24h) để lấy đơn miss khi webhook từng bị chặn HMAC sai.
       console.log("[Boot] Order sync: webhook ON + one-shot recovery pull (24h) after Mongo ready.");
       console.log("[Shopee Tracking Scanner] TẠM TẮT (iron-fist purge) — không quét khi boot.");
-      console.log("[Local Return Archive] TẠM TẮT (iron-fist purge).");
+      console.log("[Orders Retention] Job xóa đơn đã đóng: hủy/hoàn >14d, hoàn tất/ĐVVC >30d (sau Mongo ready).");
+      console.log("[Labels Cleanup] PDF vận đơn lưu đĩa storage/labels (không Mongo) — TTL 24h, dọn mỗi giờ.");
       console.log(
         `[Shopee Webhook] orders write ${
           String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"

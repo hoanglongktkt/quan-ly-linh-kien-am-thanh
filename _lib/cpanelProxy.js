@@ -34,6 +34,7 @@ const LONG_RUNNING_PREFIXES = [
   'shopee/category-attributes',
   'orders/pull',
   'orders/scan-bulk-update',
+  'orders/cleanup-closed-retention',
 ];
 
 const RETRYABLE_ERROR_CODES = new Set([
