@@ -462,14 +462,59 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   // Manual Mapping Modal state
   const [mappingListing, setMappingListing] = useState<ChannelListing | null>(null);
   const [mappingSearch, setMappingSearch] = useState('');
+  /** Toàn bộ SKU kho gốc — không phụ thuộc phân trang trang Kho sản phẩm. */
+  const [masterCatalog, setMasterCatalog] = useState<Array<{ id: string; sku: string; title: string }>>([]);
+
+  const loadMasterCatalog = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('admin_token');
+      const res = await apiFetch('/api/mapping-products/sku-index', {
+        cache: 'no-store',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !Array.isArray(data?.items)) return;
+      setMasterCatalog(
+        data.items
+          .map((it: any) => ({
+            id: String(it?.id || '').trim(),
+            sku: String(it?.sku || '').trim(),
+            title: String(it?.title || '').trim(),
+          }))
+          .filter((x: { id: string; sku: string }) => Boolean(x.id && x.sku))
+      );
+    } catch (err: unknown) {
+      console.warn('[ProductLinking] loadMasterCatalog failed', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMasterCatalog();
+  }, [loadMasterCatalog]);
+
   const flattenedMasterProducts = useMemo(() => {
+    if (masterCatalog.length > 0) {
+      return masterCatalog.map(
+        (r) =>
+          ({
+            id: r.id,
+            sku: r.sku,
+            title: r.title || r.sku,
+            stock: 0,
+            price: 0,
+            status: 'active',
+            createdAt: 0,
+          }) as Product
+      );
+    }
+    // Fallback tạm khi chưa tải xong index (có thể thiếu trang 2+)
     const rows: Product[] = [];
     for (const product of products) {
       rows.push(product);
       rows.push(...getProductChildren(product));
     }
     return rows;
-  }, [products]);
+  }, [masterCatalog, products]);
 
   // Sync dữ liệu sàn -> Mapping table
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -565,6 +610,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
       await refreshListingsFromDb({ forceRefresh: true });
       if (onRefreshProducts) await onRefreshProducts({ forceRefresh: true });
+      void loadMasterCatalog();
 
       const count = lastListingsCount || totalSaved;
       const rangeLabel = syncTimeRange === 'all' ? 'toàn thời gian' : '24h qua';
@@ -684,7 +730,8 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   // 2. Open Manual Mapping Modal
   const handleOpenMapping = (listing: ChannelListing) => {
     setMappingListing(listing);
-    setMappingSearch('');
+    setMappingSearch(String(listing.sku || '').trim());
+    void loadMasterCatalog();
   };
 
   // 3. Confirm Manual Mapping — dùng listingId + masterProductId từ DATA (state), không lấy từ UI text.
@@ -865,6 +912,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
 
     showToast(`🎉 Đã tạo ${createdProducts.length} phiên bản sản phẩm "${initTitle}" về Kho gốc!`);
+    void loadMasterCatalog();
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -1111,22 +1159,26 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     }
   };
 
-  // Master product search in manual mapping modal
+  // Master product search in manual mapping modal (toàn bộ kho gốc qua sku-index)
   const normalizedSearch = normalizeSKU(mappingSearch);
   const searchRaw = String(mappingSearch || '').trim().toLowerCase();
-  const filteredMasterProducts = flattenedMasterProducts.filter((p) => {
-    const titleMatch = String(p.title || '')
-      .trim()
-      .toLowerCase()
-      .includes(searchRaw);
-    const rawSku = String(p.sku || '').trim().toLowerCase();
-    const normalizedSku = normalizeSKU(p.sku);
-    const skuMatch = !!searchRaw && (rawSku.includes(searchRaw) || searchRaw.includes(rawSku));
-    const normalizedSkuMatch = normalizedSearch
-      ? normalizedSku.includes(normalizedSearch) || normalizedSearch.includes(normalizedSku)
-      : false;
-    return titleMatch || skuMatch || normalizedSkuMatch;
-  });
+  const filteredMasterProducts = (() => {
+    const matched = flattenedMasterProducts.filter((p) => {
+      if (!searchRaw) return true;
+      const titleMatch = String(p.title || '')
+        .trim()
+        .toLowerCase()
+        .includes(searchRaw);
+      const rawSku = String(p.sku || '').trim().toLowerCase();
+      const normalizedSku = normalizeSKU(p.sku);
+      const skuMatch = rawSku.includes(searchRaw) || searchRaw.includes(rawSku);
+      const normalizedSkuMatch = normalizedSearch
+        ? normalizedSku.includes(normalizedSearch) || normalizedSearch.includes(normalizedSku)
+        : false;
+      return titleMatch || skuMatch || normalizedSkuMatch;
+    });
+    return matched.slice(0, searchRaw ? 80 : 30);
+  })();
 
   return (
     <div className="space-y-6">
@@ -1895,6 +1947,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               <div className="space-y-2">
                 <label className="text-xs font-black text-gray-700 block">
                   Tìm sản phẩm trong Kho chính để liên kết
+                  {masterCatalog.length > 0 ? (
+                    <span className="ml-1 font-bold text-gray-400 normal-case tracking-normal">
+                      ({masterCatalog.length} SKU toàn kho)
+                    </span>
+                  ) : null}
                 </label>
                 <div className="relative">
                   <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />

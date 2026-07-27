@@ -15091,7 +15091,7 @@ async function startServer() {
         success: true,
         count: items.length,
         items,
-        source: isMongoReady() ? "mongodb" : "json_fallback",
+        source: isProductsDiskMode() ? "disk" : isMongoReady() ? "mongodb" : "json_fallback",
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
