@@ -217,7 +217,22 @@ export async function handleMappingBulkAutoLink(req, res) {
       return res.status(503).json({ success: false, message: backend.error });
     }
 
-    const ids = resolveIds(req.body || {})
+    const body = req.body || {};
+    const mode = String(body.mode || '').trim().toLowerCase();
+    const allPending = mode === 'all-pending' || mode === 'all_pending' || body.allPending === true;
+
+    if (allPending) {
+      const direct = await fetchJson(backend.url, req, 'mapping-products/bulk-auto-link', {
+        method: 'POST',
+        body: JSON.stringify({
+          mode: 'all-pending',
+          limit: body.limit,
+        }),
+      }, 240000);
+      return res.status(200).json(direct);
+    }
+
+    const ids = resolveIds(body)
       .map((id) => String(id ?? '').trim())
       .filter(Boolean)
       .slice(0, CHUNK_MAX);

@@ -8195,6 +8195,7 @@ async function restoreLocalStockForPartialCancel(
   if (changed) {
     try {
       await saveProductsToStoreAsync(products);
+      invalidateMasterSkuIndexCache("shopee_partial_cancel");
     } catch (err) {
       console.warn("[Shopee Partial Cancel] Lưu tồn kho thất bại:", err);
     }
@@ -11783,6 +11784,7 @@ async function saveProducts(products: any[]): Promise<void> {
       ? products.filter((p) => p != null && typeof p === "object")
       : [];
     await saveProductsToStoreAsync(list);
+    invalidateMasterSkuIndexCache("saveProducts");
     console.log(
       `[Products DB] WRITE OK — ${isProductsDiskMode() ? "disk" : "mongo"} count=${list.length} path=${isProductsDiskMode() ? getProductsDiskPath() : getMongoUriMasked()}`,
     );
@@ -12584,6 +12586,41 @@ function buildMasterSkuIndex(masterData: any[]): Map<string, any> {
   return index;
 }
 
+/** Cache Hash Map SKU — tránh loadProducts + rebuild mỗi chunk bulk-auto-link. */
+let cachedMasterSkuIndex: Map<string, any> | null = null;
+let cachedMasterProductsRef: any[] | null = null;
+let cachedMasterSkuIndexBuiltAt = 0;
+
+function invalidateMasterSkuIndexCache(reason = "products_write"): void {
+  cachedMasterSkuIndex = null;
+  cachedMasterProductsRef = null;
+  cachedMasterSkuIndexBuiltAt = 0;
+  console.log(`[SKU Index Cache] invalidated — ${reason}`);
+}
+
+async function getCachedMasterSkuIndex(): Promise<{
+  index: Map<string, any>;
+  products: any[];
+  fromCache: boolean;
+}> {
+  if (cachedMasterSkuIndex && cachedMasterProductsRef) {
+    return {
+      index: cachedMasterSkuIndex,
+      products: cachedMasterProductsRef,
+      fromCache: true,
+    };
+  }
+  const products = await loadProducts();
+  const index = buildMasterSkuIndex(products);
+  cachedMasterSkuIndex = index;
+  cachedMasterProductsRef = products;
+  cachedMasterSkuIndexBuiltAt = Date.now();
+  console.log(
+    `[SKU Index Cache] built — products=${products.length} skuKeys=${index.size} at=${cachedMasterSkuIndexBuiltAt}`,
+  );
+  return { index, products, fromCache: false };
+}
+
 /** Tìm sản phẩm kho theo SKU sàn — CHỈ exact match. */
 function findMasterProductBySku(
   masterSkuIndex: Map<string, any>,
@@ -12617,6 +12654,7 @@ async function writeProductsFileOnly(products: any[]): Promise<void> {
     ? products.filter((p) => p != null && typeof p === "object")
     : [];
   await saveProductsToStoreAsync(list);
+  invalidateMasterSkuIndexCache("writeProductsFileOnly");
   console.log(`[Batch Auto-link] Ghi MongoDB products xong — ${list.length} dòng.`);
 }
 
@@ -12677,7 +12715,7 @@ async function autoLinkSingleListingFromDatabase(opts?: {
   }
 
   const current = sanitizeChannelListingRow(dbListings[rowIndex]);
-  const masterProducts = await loadProducts();
+  const { index: masterSkuIndex, products: masterProducts } = await getCachedMasterSkuIndex();
   if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
     throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
   }
@@ -12704,7 +12742,6 @@ async function autoLinkSingleListingFromDatabase(opts?: {
     };
   }
 
-  const masterSkuIndex = buildMasterSkuIndex(masterProducts);
   const masterItem = findMasterProductBySku(masterSkuIndex, current?.sku, masterProducts);
   if (!masterItem) {
     return {
@@ -12781,7 +12818,8 @@ async function batchAutoLinkFromDatabase(opts?: {
     if (!Array.isArray(dbListings) || dbListings.length === 0) {
       throw new Error("Không có dữ liệu channel_listings để liên kết.");
     }
-    const masterProducts = await loadProducts();
+    const { index: masterSkuIndex, products: masterProducts, fromCache } =
+      await getCachedMasterSkuIndex();
     if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
       throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
     }
@@ -12801,16 +12839,19 @@ async function batchAutoLinkFromDatabase(opts?: {
     let nextCursor = dbListings.length;
     let wroteChanges = false;
     const newlyLinkedRows: any[] = [];
-    // Hash Map SKU (trim + toUpperCase) — so khớp O(1), không query DB từng dòng.
-    const masterSkuIndex = buildMasterSkuIndex(masterProducts);
+    // Hash Map SKU (trim + toUpperCase) — so khớp O(1), dùng cache in-memory.
     console.log(
-      `[Batch Auto-link] DB loaded: masterProducts=${masterProducts.length}, skuIndex=${masterSkuIndex.size}, listings=${dbListings.length}, cursor=${requestedCursor}, limit=${requestedLimit}`
+      `[Batch Auto-link] DB loaded: masterProducts=${masterProducts.length}, skuIndex=${masterSkuIndex.size}, listings=${dbListings.length}, cursor=${requestedCursor}, limit=${requestedLimit}, skuCache=${fromCache}`
     );
 
     // ===== 3, 4) SO KHỚP SÂU + GHI DB TUẦN TỰ THEO BATCH NHỎ =====
     for (let rowIndex = requestedCursor; rowIndex < dbListings.length; rowIndex += 1) {
       const item = sanitizeChannelListingRow(dbListings[rowIndex]);
-      if (item.status !== "unlinked" || isListingAlreadyLinkedProtected(item)) {
+      // Retry cả failed (SKU trước đó không khớp / lỗi tạm) — không chỉ unlinked.
+      if (
+        (item.status !== "unlinked" && item.status !== "failed") ||
+        isListingAlreadyLinkedProtected(item)
+      ) {
         alreadyLinked += 1;
         continue;
       }
@@ -12855,7 +12896,10 @@ async function batchAutoLinkFromDatabase(opts?: {
 
     const unlinkedRemaining = dbListings.filter((row) => {
       const safeRow = sanitizeChannelListingRow(row);
-      return safeRow.status === "unlinked" && !isListingAlreadyLinkedProtected(safeRow);
+      return (
+        (safeRow.status === "unlinked" || safeRow.status === "failed") &&
+        !isListingAlreadyLinkedProtected(safeRow)
+      );
     }).length;
     const hasMore = nextCursor < dbListings.length;
     console.log(
@@ -12885,7 +12929,7 @@ const BULK_AUTO_LINK_CHUNK_MAX = 50;
 
 /**
  * Auto-link theo lô ID từ Frontend (≤50).
- * Hash Map SKU 1 lần / request → bulkWrite 1 lần → thở 200ms.
+ * Hash Map SKU từ cache in-memory → bulkWrite 1 lần (không reload products mỗi chunk).
  */
 async function bulkAutoLinkListingsByIds(rawIds: unknown[]): Promise<{
   linkedCount: number;
@@ -12909,12 +12953,12 @@ async function bulkAutoLinkListingsByIds(rawIds: unknown[]): Promise<{
   if (!Array.isArray(dbListings) || dbListings.length === 0) {
     throw new Error("Không có dữ liệu channel_listings để liên kết.");
   }
-  const masterProducts = await loadProducts();
+  const { index: masterSkuIndex, products: masterProducts, fromCache } =
+    await getCachedMasterSkuIndex();
   if (!Array.isArray(masterProducts) || masterProducts.length === 0) {
     throw new Error("Kho sản phẩm chính đang trống. Hãy khởi tạo/sync dữ liệu trước.");
   }
 
-  const masterSkuIndex = buildMasterSkuIndex(masterProducts);
   const byId = new Map<string, { index: number; row: any }>();
   for (let i = 0; i < dbListings.length; i += 1) {
     const safe = sanitizeChannelListingRow(dbListings[i]);
@@ -13028,11 +13072,8 @@ async function bulkAutoLinkListingsByIds(rawIds: unknown[]): Promise<{
     await flushDbWrites();
   }
 
-  // Nhịp thở Event Loop giữa các lô (Frontend chờ response rồi mới gửi lô tiếp).
-  await sleep(200);
-
   console.log(
-    `[Bulk Auto-link] chunk=${ids.length} linked=${linkedCount} failed=${failedCount} skipped=${skippedCount} wrote=${toWrite.length} skuIndex=${masterSkuIndex.size}`
+    `[Bulk Auto-link] chunk=${ids.length} linked=${linkedCount} failed=${failedCount} skipped=${skippedCount} wrote=${toWrite.length} skuIndex=${masterSkuIndex.size} skuCache=${fromCache}`
   );
 
   return {
@@ -13043,6 +13084,69 @@ async function bulkAutoLinkListingsByIds(rawIds: unknown[]): Promise<{
     results,
     skuIndexSize: masterSkuIndex.size,
     masterProductCount: masterProducts.length,
+  };
+}
+
+/**
+ * Liên kết toàn bộ listing unlinked|failed trên server (1 lần dựng Map, ghi theo chunk).
+ */
+async function bulkAutoLinkAllPending(opts?: { limit?: number }): Promise<{
+  linkedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  processed: number;
+  listings: any[];
+  results: Array<{ id: string; success: boolean; listing: any; message: string }>;
+  skuIndexSize: number;
+  masterProductCount: number;
+}> {
+  const dbListings = await readChannelListingsDb();
+  if (!Array.isArray(dbListings) || dbListings.length === 0) {
+    throw new Error("Không có dữ liệu channel_listings để liên kết.");
+  }
+
+  const pendingIds: string[] = [];
+  for (const row of dbListings) {
+    const safe = sanitizeChannelListingRow(row);
+    const id = String(safe?.id || "").trim();
+    if (!id) continue;
+    if (isListingAlreadyLinkedProtected(safe)) continue;
+    if (safe.status === "unlinked" || safe.status === "failed") pendingIds.push(id);
+  }
+
+  const maxTotal = Math.min(
+    pendingIds.length,
+    Math.max(1, Math.floor(Number(opts?.limit) || pendingIds.length || 1)),
+  );
+  const idsToProcess = pendingIds.slice(0, maxTotal);
+
+  let linkedCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+  const allResults: Array<{ id: string; success: boolean; listing: any; message: string }> = [];
+  let skuIndexSize = 0;
+  let masterProductCount = 0;
+
+  for (let i = 0; i < idsToProcess.length; i += BULK_AUTO_LINK_CHUNK_MAX) {
+    const chunk = idsToProcess.slice(i, i + BULK_AUTO_LINK_CHUNK_MAX);
+    const part = await bulkAutoLinkListingsByIds(chunk);
+    linkedCount += part.linkedCount;
+    failedCount += part.failedCount;
+    skippedCount += part.skippedCount;
+    skuIndexSize = part.skuIndexSize;
+    masterProductCount = part.masterProductCount;
+    allResults.push(...part.results);
+  }
+
+  return {
+    linkedCount,
+    failedCount,
+    skippedCount,
+    processed: idsToProcess.length,
+    listings: allResults.map((r) => r.listing).filter(Boolean),
+    results: allResults,
+    skuIndexSize,
+    masterProductCount,
   };
 }
 const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
@@ -15101,10 +15205,26 @@ async function startServer() {
     }
   });
 
-  /** Auto-link theo lô ≤50 id — Hash Map + bulkWrite + thở 200ms (chống NPROC). */
+  /** Auto-link theo lô ≤50 id — Hash Map cache + bulkWrite (FE đã có gap giữa chunk). */
   const handleBulkAutoLinkByIds = async (req: any, res: any) => {
     try {
       const body = req?.body && typeof req.body === "object" ? req.body : {};
+      const mode = String(body.mode || "").trim().toLowerCase();
+
+      if (mode === "all-pending" || mode === "all_pending" || body.allPending === true) {
+        const result = await bulkAutoLinkAllPending({
+          limit: Number.isFinite(Number(body.limit)) ? Number(body.limit) : undefined,
+        });
+        return res.status(200).json({
+          success: true,
+          ...result,
+          message:
+            result.linkedCount > 0
+              ? `Đã liên kết thành công ${result.linkedCount}/${result.processed} sản phẩm pending`
+              : "Không có sản phẩm nào liên kết thành công trong lô pending",
+        });
+      }
+
       const rawIds = Array.isArray(body.ids)
         ? body.ids
         : Array.isArray(body.listingIds)

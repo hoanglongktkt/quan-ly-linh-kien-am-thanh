@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Product, SyncLog, ConnectedShop, getProductChildren } from '../types';
+import { Product, SyncLog, ConnectedShop } from '../types';
 import { parseJsonResponse, apiFetch } from '../utils/apiClient';
 import { 
   Check, 
@@ -464,8 +464,42 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [mappingSearch, setMappingSearch] = useState('');
   /** Toàn bộ SKU kho gốc — không phụ thuộc phân trang trang Kho sản phẩm. */
   const [masterCatalog, setMasterCatalog] = useState<Array<{ id: string; sku: string; title: string }>>([]);
+  const [masterCatalogLoading, setMasterCatalogLoading] = useState(false);
+  const [masterCatalogError, setMasterCatalogError] = useState<string | null>(null);
+
+  const mergeCatalogRows = useCallback(
+    (rows: any[]): Array<{ id: string; sku: string; title: string }> => {
+      const out: Array<{ id: string; sku: string; title: string }> = [];
+      const pushOne = (it: any, parentTitle = '') => {
+        if (!it || typeof it !== 'object') return;
+        const id = String(it?.id || '').trim();
+        const sku = String(it?.sku || '').trim();
+        if (!id || !sku) return;
+        out.push({
+          id,
+          sku,
+          title: String(it?.title || it?.name || parentTitle || sku).trim(),
+        });
+      };
+      for (const it of Array.isArray(rows) ? rows : []) {
+        pushOne(it);
+        const children = [
+          ...(Array.isArray(it?.children) ? it.children : []),
+          ...(Array.isArray(it?.children_models) ? it.children_models : []),
+          ...(Array.isArray(it?.variants) ? it.variants : []),
+          ...(Array.isArray(it?.models) ? it.models : []),
+        ];
+        const parentTitle = String(it?.title || it?.name || '').trim();
+        for (const child of children) pushOne(child, parentTitle);
+      }
+      return out;
+    },
+    []
+  );
 
   const loadMasterCatalog = useCallback(async () => {
+    setMasterCatalogLoading(true);
+    setMasterCatalogError(null);
     try {
       const token = localStorage.getItem('admin_token');
       const res = await apiFetch('/api/mapping-products/sku-index', {
@@ -473,18 +507,33 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !Array.isArray(data?.items)) return;
-      setMasterCatalog(
-        data.items
-          .map((it: any) => ({
-            id: String(it?.id || '').trim(),
-            sku: String(it?.sku || '').trim(),
-            title: String(it?.title || '').trim(),
-          }))
-          .filter((x: { id: string; sku: string }) => Boolean(x.id && x.sku))
-      );
+      if (!res.ok || !Array.isArray(data?.items)) {
+        const msg =
+          data?.message ||
+          data?.error ||
+          `Không tải được danh mục SKU Kho gốc (HTTP ${res.status}).`;
+        setMasterCatalogError(msg);
+        setMasterCatalog([]);
+        return;
+      }
+      const items = data.items
+        .map((it: any) => ({
+          id: String(it?.id || '').trim(),
+          sku: String(it?.sku || '').trim(),
+          title: String(it?.title || '').trim(),
+        }))
+        .filter((x: { id: string; sku: string }) => Boolean(x.id && x.sku));
+      setMasterCatalog(items);
+      if (items.length === 0) {
+        setMasterCatalogError('Kho gốc chưa có SKU nào trong index. Hãy kiểm tra data/products.json.');
+      }
     } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       console.warn('[ProductLinking] loadMasterCatalog failed', err);
+      setMasterCatalogError(msg || 'Không tải được danh mục SKU Kho gốc.');
+      setMasterCatalog([]);
+    } finally {
+      setMasterCatalogLoading(false);
     }
   }, []);
 
@@ -509,24 +558,18 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             ? data.results
             : [];
       if (rows.length === 0) return;
+      const flattened = mergeCatalogRows(rows);
+      if (flattened.length === 0) return;
       setMasterCatalog((prev) => {
         const byId = new Map(prev.map((r) => [r.id, r]));
-        for (const it of rows) {
-          const id = String(it?.id || '').trim();
-          const sku = String(it?.sku || '').trim();
-          if (!id || !sku) continue;
-          byId.set(id, {
-            id,
-            sku,
-            title: String(it?.title || it?.name || sku).trim(),
-          });
-        }
+        for (const row of flattened) byId.set(row.id, row);
         return [...byId.values()];
       });
-    } catch {
-      /* ignore — sku-index vẫn là nguồn chính */
+      setMasterCatalogError(null);
+    } catch (err: unknown) {
+      console.warn('[ProductLinking] searchMasterViaApi failed', err);
     }
-  }, []);
+  }, [mergeCatalogRows]);
 
   useEffect(() => {
     void loadMasterCatalog();
@@ -542,29 +585,21 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     return () => window.clearTimeout(t);
   }, [mappingListing, mappingSearch, searchMasterViaApi]);
 
+  /** Chỉ dùng sku-index / search API — tuyệt đối không fallback sang products trang 1 của App. */
   const flattenedMasterProducts = useMemo(() => {
-    if (masterCatalog.length > 0) {
-      return masterCatalog.map(
-        (r) =>
-          ({
-            id: r.id,
-            sku: r.sku,
-            title: r.title || r.sku,
-            stock: 0,
-            price: 0,
-            status: 'active',
-            createdAt: 0,
-          }) as Product
-      );
-    }
-    // Fallback tạm khi chưa tải xong index (có thể thiếu trang 2+)
-    const rows: Product[] = [];
-    for (const product of products) {
-      rows.push(product);
-      rows.push(...getProductChildren(product));
-    }
-    return rows;
-  }, [masterCatalog, products]);
+    return masterCatalog.map(
+      (r) =>
+        ({
+          id: r.id,
+          sku: r.sku,
+          title: r.title || r.sku,
+          stock: 0,
+          price: 0,
+          status: 'active',
+          createdAt: 0,
+        }) as Product
+    );
+  }, [masterCatalog]);
 
   // Sync dữ liệu sàn -> Mapping table
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -995,16 +1030,19 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       const token = localStorage.getItem('admin_token');
       if (!token) throw new Error('Phiên đăng nhập đã hết hạn.');
 
-      const unlinkedVisibleListings = filteredListings.filter((item) => item?.status === 'unlinked');
-      if (unlinkedVisibleListings.length === 0) {
-        showToast('Không có sản phẩm chưa liên kết trong danh sách đang hiển thị.');
+      // Toàn bộ listings — không phụ thuộc tab/search/shop filter; retry cả failed.
+      const pendingListings = listings.filter(
+        (item) => item?.status === 'unlinked' || item?.status === 'failed'
+      );
+      if (pendingListings.length === 0) {
+        showToast('Không có sản phẩm chưa liên kết hoặc liên kết thất bại để xử lý.');
         return;
       }
 
-      const total = unlinkedVisibleListings.length;
+      const total = pendingListings.length;
       const chunks: ChannelListing[][] = [];
-      for (let i = 0; i < unlinkedVisibleListings.length; i += CHUNK_SIZE) {
-        chunks.push(unlinkedVisibleListings.slice(i, i + CHUNK_SIZE));
+      for (let i = 0; i < pendingListings.length; i += CHUNK_SIZE) {
+        chunks.push(pendingListings.slice(i, i + CHUNK_SIZE));
       }
 
       let processed = 0;
@@ -1103,6 +1141,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
             ? `Liên kết tự động theo lô ${CHUNK_SIZE}: ${totalLinked}/${total} thành công, thất bại ${totalFailed}.`
             : `Liên kết tự động theo lô thất bại hoặc không khớp ở ${total} sản phẩm.`,
       });
+      await refreshListingsFromDb({ forceRefresh: true });
     } catch (err: unknown) {
       const message = (err as Error)?.message || 'Liên kết tự động thất bại.';
       alert(`Liên kết tự động thất bại: ${message}`);
@@ -1999,12 +2038,31 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               <div className="space-y-2">
                 <label className="text-xs font-black text-gray-700 block">
                   Tìm sản phẩm trong Kho chính để liên kết
-                  {masterCatalog.length > 0 ? (
+                  {masterCatalogLoading ? (
+                    <span className="ml-1 font-bold text-amber-500 normal-case tracking-normal">
+                      (đang tải index…)
+                    </span>
+                  ) : masterCatalog.length > 0 ? (
                     <span className="ml-1 font-bold text-gray-400 normal-case tracking-normal">
                       ({masterCatalog.length} SKU toàn kho)
                     </span>
                   ) : null}
                 </label>
+                {masterCatalogError && (
+                  <div className="flex items-start gap-2 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-[11px] text-rose-700 font-bold">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <div className="flex-1 space-y-1.5">
+                      <p>{masterCatalogError}</p>
+                      <button
+                        type="button"
+                        onClick={() => void loadMasterCatalog()}
+                        className="px-2.5 py-1 bg-white border border-rose-300 rounded-lg text-[10px] font-extrabold text-rose-600 hover:bg-rose-100"
+                      >
+                        Thử lại tải SKU index
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="relative">
                   <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />
                   <input
@@ -2025,7 +2083,11 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
 
                 {filteredMasterProducts.length === 0 ? (
                   <div className="p-6 text-center text-gray-400 font-bold bg-slate-50 rounded-2xl text-xs">
-                    Không tìm thấy sản phẩm Kho chính nào khớp với từ khóa tìm kiếm.
+                    {masterCatalogLoading
+                      ? 'Đang tải danh mục SKU Kho gốc…'
+                      : masterCatalogError
+                        ? 'Chưa có danh mục SKU. Bấm «Thử lại» hoặc gõ tìm để gọi API search toàn kho.'
+                        : 'Không tìm thấy sản phẩm Kho chính nào khớp với từ khóa tìm kiếm.'}
                   </div>
                 ) : (
                   <div className="space-y-2">
