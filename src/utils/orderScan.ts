@@ -249,7 +249,7 @@ export async function lookupOrderByScanCode(
   }
 }
 
-/** Âm thanh public tạm (mp3 ngắn) — success / warning(hủy) / error. */
+/** Âm thanh public tạm (mp3 ngắn) — success / warning(hủy) / error / pending(dò ngầm). */
 export const SCAN_SOUND_URLS = {
   success:
     'https://actions.google.com/sounds/v1/cartoon/pop.ogg',
@@ -257,9 +257,11 @@ export const SCAN_SOUND_URLS = {
     'https://actions.google.com/sounds/v1/alarms/beep_short.ogg',
   error:
     'https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg',
+  pending:
+    'https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg',
 } as const;
 
-export type ScanSoundType = 'success' | 'warning' | 'error';
+export type ScanSoundType = 'success' | 'warning' | 'error' | 'pending';
 
 function playHtmlAudio(url: string) {
   try {
@@ -297,6 +299,11 @@ function playWebAudioTone(type: ScanSoundType) {
       beep(620, 0, 0.12, 0.4, 'square');
       beep(420, 0.14, 0.16, 0.4, 'square');
       beep(620, 0.32, 0.14, 0.35, 'square');
+    } else if (type === 'pending') {
+      // 3 tone ngắn trung bình — khác success/warning/error, báo "đang dò ngầm".
+      beep(740, 0, 0.07, 0.3, 'sine');
+      beep(880, 0.1, 0.07, 0.28, 'sine');
+      beep(740, 0.2, 0.1, 0.25, 'sine');
     } else {
       beep(320, 0, 0.28, 0.4, 'triangle');
     }
@@ -319,11 +326,16 @@ export function vibrateScan(type: ScanSoundType | 'success' | 'error' = 'success
   if (typeof navigator !== 'undefined' && navigator.vibrate) {
     if (type === 'success') navigator.vibrate([30, 20, 30]);
     else if (type === 'warning') navigator.vibrate([100, 50, 100, 50, 120]);
+    else if (type === 'pending') navigator.vibrate([40, 30, 40, 30, 40]);
     else navigator.vibrate([80, 40, 80]);
   }
 }
 
 export function scanFeedback(type: ScanSoundType | 'success' | 'error') {
-  playScanSound(type === 'success' || type === 'warning' || type === 'error' ? type : 'error');
+  playScanSound(
+    type === 'success' || type === 'warning' || type === 'error' || type === 'pending'
+      ? type
+      : 'error',
+  );
   vibrateScan(type);
 }

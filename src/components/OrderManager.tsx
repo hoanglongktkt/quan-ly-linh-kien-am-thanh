@@ -557,6 +557,34 @@ function matchesCancelReturnTab(order: Order, tab: CancelReturnTab): boolean {
   return kind === tab;
 }
 
+/** Phân loại hủy/hoàn dùng chung verify realtime + background lookup. */
+function classifyScanCancelReturnBuckets(order: Order): {
+  isReturnBucket: boolean;
+  isCancelBucket: boolean;
+} {
+  const badge = resolveOrderBadgeStatus(order);
+  const raw = getShopeeOrderRawStatus(order);
+  const cancelReturnKind = resolveCancelReturnKind(order);
+  const isReturnBucket =
+    cancelReturnKind === 'refund_return' ||
+    badge === 'return_pending' ||
+    badge === 'return_received' ||
+    order.status === 'return_pending' ||
+    order.status === 'return_received' ||
+    raw === 'TO_RETURN';
+  const isCancelBucket =
+    !isReturnBucket &&
+    (cancelReturnKind === 'cancelled' ||
+      cancelReturnKind === 'failed_delivery' ||
+      badge === 'cancelled' ||
+      order.status === 'cancelled' ||
+      raw === 'CANCELLED' ||
+      raw === 'IN_CANCEL' ||
+      isShopeeCancelledLikeStatus(order) ||
+      Boolean(isCancelReturnOrder(order) && cancelReturnKind));
+  return { isReturnBucket, isCancelBucket };
+}
+
 function VariationNameBadge({ variationName }: { variationName?: string }) {
   const name = variationName?.trim();
   if (!name) return null;
@@ -813,6 +841,11 @@ export default function OrderManager({
   const isScanBusyRef = React.useRef(false);
   /** Hàng đợi mã quét khi đang verify — không bỏ mã khi quét liên tục. */
   const pendingScanQueueRef = React.useRef<string[]>([]);
+  /** Hàng đợi dò ngầm khi mã không có trong local DB (không block camera). */
+  const backgroundLookupQueueRef = React.useRef<string[]>([]);
+  const backgroundLookupBusyRef = React.useRef(false);
+  const backgroundLookupSeenRef = React.useRef<Set<string>>(new Set());
+  const prevFocusScannerRef = React.useRef(focusScanner);
   const isHandingOverRef = React.useRef(false);
   const daXuatKhoListRef = React.useRef(daXuatKhoList);
   const donHuyListRef = React.useRef(donHuyList);
@@ -881,6 +914,16 @@ export default function OrderManager({
   useEffect(() => {
     daNhanHoanListRef.current = daNhanHoanList;
   }, [daNhanHoanList]);
+
+  /** Thoát Quét → Menu: luôn refresh để badge Đã nhận hủy/hoàn khớp Mongo. */
+  useEffect(() => {
+    const wasFocused = prevFocusScannerRef.current;
+    prevFocusScannerRef.current = focusScanner;
+    if (wasFocused && !focusScanner) {
+      void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusScanner]);
 
   const showScanToast = (text: string, type: 'success' | 'error') => {
     setScanToast({ text, type });
@@ -1287,7 +1330,114 @@ export default function OrderManager({
     );
   };
 
-  /** Real-time: quét → dò trạng thái ngay (chưa ghi DB). */
+  /** Real-time: quét → dò trạng thái ngay (chưa ghi DB). Local miss → queue dò ngầm, không block. */
+  const drainBackgroundLookupQueue = React.useCallback(async () => {
+    if (backgroundLookupBusyRef.current) return;
+    backgroundLookupBusyRef.current = true;
+    try {
+      while (backgroundLookupQueueRef.current.length > 0) {
+        const code = backgroundLookupQueueRef.current.shift();
+        if (!code) continue;
+        const key = normalizeOrderScanKey(code);
+        const token = localStorage.getItem('admin_token');
+        if (!token) continue;
+
+        let order: Order | null = null;
+        try {
+          order = await lookupOrderByScanCode(code, [], token, undefined);
+        } catch (err) {
+          console.warn('[Scan BG lookup] failed:', err);
+          continue;
+        }
+        if (!order) continue;
+
+        // Merge vào local cache (không PATCH full — DB ghi bằng scan-bulk-update bên dưới).
+        const idx = ordersRef.current.findIndex((o) => o.id === order!.id);
+        if (idx >= 0) {
+          const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
+          ordersRef.current = merged;
+          onUpdateOrders(merged, { persist: false });
+        } else {
+          const merged = [order, ...ordersRef.current];
+          ordersRef.current = merged;
+          onUpdateOrders(merged, { persist: false });
+        }
+
+        const { isReturnBucket, isCancelBucket } = classifyScanCancelReturnBuckets(order);
+        if (!isReturnBucket && !isCancelBucket) continue;
+
+        // Âm thầm ghi cờ CANCELLED_STORED / RETURN_RECEIVED vào DB.
+        try {
+          const res = await fetch('/api/orders/scan-bulk-update', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              codes: [code],
+              scannedCodes: [code],
+              daXuatKhoCodes: [],
+              donHuyCodes: isCancelBucket ? [code] : [],
+              daNhanHoanCodes: isReturnBucket ? [code] : [],
+            }),
+          });
+          const data = await res.json().catch(() => ({} as Record<string, unknown>));
+          if (!res.ok || data?.success === false) {
+            console.warn('[Scan BG lookup] silent DB update failed:', data?.message || res.status);
+            continue;
+          }
+          const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
+          if (updatedOrders.length > 0) {
+            const byId = new Map(updatedOrders.map((o) => [o.id, o]));
+            const merged = ordersRef.current.map((o) => {
+              const next = byId.get(o.id);
+              return next ? { ...o, ...next } : o;
+            });
+            for (const o of updatedOrders) {
+              if (!merged.some((x) => x.id === o.id)) merged.unshift(o);
+            }
+            ordersRef.current = merged;
+            onUpdateOrders(merged, { persist: false });
+          }
+          if (!isTearingDownScannerRef.current) {
+            showScanToast(
+              isReturnBucket
+                ? `Dò ngầm: nhận hoàn #${order.orderSn}`
+                : `Dò ngầm: đơn hủy #${order.orderSn}`,
+              'success',
+            );
+          }
+        } catch (err) {
+          console.warn('[Scan BG lookup] silent update error:', err);
+        } finally {
+          backgroundLookupSeenRef.current.delete(key);
+        }
+      }
+    } finally {
+      backgroundLookupBusyRef.current = false;
+      if (backgroundLookupQueueRef.current.length > 0) {
+        queueMicrotask(() => {
+          void drainBackgroundLookupQueue();
+        });
+      }
+    }
+  }, [onUpdateOrders]);
+
+  const enqueueBackgroundLookup = React.useCallback(
+    (rawCode: string) => {
+      const trimmed = String(rawCode || '').trim();
+      const key = normalizeOrderScanKey(trimmed);
+      if (!trimmed || !key) return;
+      if (backgroundLookupSeenRef.current.has(key)) return;
+      if (backgroundLookupQueueRef.current.some((c) => normalizeOrderScanKey(c) === key)) return;
+      backgroundLookupSeenRef.current.add(key);
+      backgroundLookupQueueRef.current.push(trimmed);
+      void drainBackgroundLookupQueue();
+    },
+    [drainBackgroundLookupQueue],
+  );
+
   const verifySingleOrder = React.useCallback(
     async (rawQuery: string) => {
       const trimmed = String(rawQuery || '').trim();
@@ -1322,61 +1472,38 @@ export default function OrderManager({
       }
 
       lastQrScanRef.current = { key, at: now };
+
+      // Local-only trước — miss không await API (non-blocking).
+      const localOrder = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
+      if (!localOrder) {
+        playScanSound('pending');
+        vibrateScan('pending');
+        flashViewfinder('error', 400);
+        setCameraScanResult(`Chưa có data, đang dò ngầm: ${trimmed}`);
+        showScanToast('Chưa có data, đang dò ngầm', 'error');
+        enqueueBackgroundLookup(trimmed);
+        return;
+      }
+
       isScanBusyRef.current = true;
       setIsVerifyingScan(true);
       setCameraScanResult(`Đang kiểm tra: ${trimmed}...`);
 
       try {
-        const token = localStorage.getItem('admin_token');
-        // Ưu tiên index local; miss → API lookup nhanh (Mongo index).
-        let order = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
-        if (!order) {
-          order = await lookupOrderByScanCode(trimmed, [], token, undefined);
-        }
+        const order = localOrder;
 
-        if (order) {
-          const idx = ordersRef.current.findIndex((o) => o.id === order!.id);
-          if (idx >= 0) {
-            const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
-            ordersRef.current = merged;
-            onUpdateOrders(merged);
-          } else {
-            const merged = [order, ...ordersRef.current];
-            ordersRef.current = merged;
-            onUpdateOrders(merged);
-          }
-        }
-
-        if (!order) {
-          playScanSound('error');
-          vibrateScan('error');
-          flashViewfinder('error', 500);
-          setCameraScanResult(`Không tìm thấy: ${trimmed}`);
-          showScanToast('Không tìm thấy mã này trong hệ thống', 'error');
-          return;
+        const idx = ordersRef.current.findIndex((o) => o.id === order.id);
+        if (idx >= 0) {
+          const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order } : o));
+          ordersRef.current = merged;
+          onUpdateOrders(merged);
         }
 
         // Phân loại theo cancel/return kind + badge — gồm failed_delivery / hoàn / hủy.
         const badge = resolveOrderBadgeStatus(order);
         const raw = getShopeeOrderRawStatus(order);
         const cancelReturnKind = resolveCancelReturnKind(order);
-        const isReturnBucket =
-          cancelReturnKind === 'refund_return' ||
-          badge === 'return_pending' ||
-          badge === 'return_received' ||
-          order.status === 'return_pending' ||
-          order.status === 'return_received' ||
-          raw === 'TO_RETURN';
-        const isCancelBucket =
-          !isReturnBucket &&
-          (cancelReturnKind === 'cancelled' ||
-            cancelReturnKind === 'failed_delivery' ||
-            badge === 'cancelled' ||
-            order.status === 'cancelled' ||
-            raw === 'CANCELLED' ||
-            raw === 'IN_CANCEL' ||
-            isShopeeCancelledLikeStatus(order) ||
-            Boolean(isCancelReturnOrder(order) && cancelReturnKind));
+        const { isReturnBucket, isCancelBucket } = classifyScanCancelReturnBuckets(order);
 
         // Đang giao (SHIPPED) / đã bàn giao thuần — tìm thấy rồi, không báo "không tìm thấy".
         const isShippingOnly =
@@ -1554,7 +1681,7 @@ export default function OrderManager({
         }
       }
     },
-    [isFlushingQueue, orderScanIndex, onUpdateOrders]
+    [isFlushingQueue, orderScanIndex, onUpdateOrders, enqueueBackgroundLookup]
   );
 
   useEffect(() => {
@@ -3369,6 +3496,8 @@ export default function OrderManager({
     setScanToast(null);
     setShowEndConfirm(false);
     setIsFlushingQueue(false);
+    // Refresh badge Menu ngay khi thoát Quét (worker dò ngầm có thể vừa ghi DB).
+    void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
     if (onCloseScanner) onCloseScanner();
     else if (onEndScanSession) onEndScanSession();
   };
@@ -3513,12 +3642,7 @@ export default function OrderManager({
       );
       setIsFlushingQueue(false);
 
-      try {
-        // Chỉ đọc DB nội bộ sau khi xử lý quét.
-        if (onFetchOrders) void onFetchOrders({ silent: true });
-      } catch (refreshErr) {
-        console.error('Refresh orders after scan failed:', refreshErr);
-      }
+      // Một lần refresh SSOT — tránh race với silent shallow limit=500.
     } catch (err: unknown) {
       // Giữ 3 list đã verify khi abort/timeout — cho phép bấm lại GHI DB.
       const msg = err instanceof Error ? err.message : String(err);
