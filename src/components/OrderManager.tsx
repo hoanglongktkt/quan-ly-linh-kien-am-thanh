@@ -681,6 +681,33 @@ export default function OrderManager({
       } finally {
         window.clearTimeout(pullTimeoutId);
       }
+      // Bù mã vận đơn từ Shopee (pull nhanh thường skipTracking → nhiều đơn "Chưa có mã vận đơn").
+      try {
+        const enrichController = new AbortController();
+        const enrichTimeoutId = window.setTimeout(() => enrichController.abort(), 180_000);
+        try {
+          const enrichRes = await fetch('/api/orders/enrich-tracking', {
+            method: 'POST',
+            signal: enrichController.signal,
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ max: 120 }),
+          });
+          const enrichJson = await enrichRes.json().catch(() => ({} as Record<string, unknown>));
+          const filled = Number(enrichJson?.filled || 0);
+          if (filled > 0) {
+            setLastSyncSummary((prev) =>
+              prev ? `${prev} · đã bù ${filled} mã VĐ` : `Đã bù ${filled} mã vận đơn từ Shopee`,
+            );
+          }
+        } finally {
+          window.clearTimeout(enrichTimeoutId);
+        }
+      } catch (enrichErr) {
+        console.warn('[Orders Sync] enrich-tracking skip/fail:', enrichErr);
+      }
       // Luôn refresh Mongo full sau pull — không silent limit 50.
       await onFetchOrders?.({ silent: false, bustCache: true });
       console.log('[FRONTEND FETCHED] Làm mới đơn hàng thành công.');
@@ -715,7 +742,7 @@ export default function OrderManager({
   }, [activeSubTab, cancelReturnTab]);
   
   // Camera Barcode Scanning States and Ref
-  const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét mã QR...');
+  const [cameraScanResult, setCameraScanResult] = useState<string>('Đang chờ quét QR / mã vạch...');
   const [cameraScanSuccess, setCameraScanSuccess] = useState<boolean>(false);
   const [cameraScanError, setCameraScanError] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string>('');
@@ -1524,7 +1551,7 @@ export default function OrderManager({
         prev.includes('Nhận hoàn') ||
         prev.includes('sẵn sàng quét tiếp')
           ? prev
-          : 'Quét realtime — dò trạng thái ngay mỗi mã',
+          : 'Quét realtime QR + mã vạch — dò trạng thái ngay mỗi mã',
       );
 
       const timer = setTimeout(() => {
@@ -1591,8 +1618,8 @@ export default function OrderManager({
     // Fetch song song ngay — không chờ pull xong (giảm cửa sổ local-miss khi quét sớm).
     void onFetchOrders?.({ silent: true, limit: 2000, merge: true });
     (async () => {
+      const token = localStorage.getItem('admin_token') || '';
       try {
-        const token = localStorage.getItem('admin_token') || '';
         const pullBody: Record<string, unknown> = { lookback_hours: 168 };
         if (selectedShopId && selectedShopId !== 'all') {
           pullBody.shop_ids = [String(selectedShopId)];
@@ -1613,6 +1640,29 @@ export default function OrderManager({
           console.warn('[Scan Prefetch] Pull 168h skip/fail:', pullErr);
         } finally {
           window.clearTimeout(pullTimeoutId);
+        }
+      } catch {
+        /* ignore */
+      }
+      if (cancelled) return;
+      // Bù mã VĐ từ Shopee trước khi refresh pool quét.
+      try {
+        const enrichController = new AbortController();
+        const enrichTimeoutId = window.setTimeout(() => enrichController.abort(), 180_000);
+        try {
+          await fetch('/api/orders/enrich-tracking', {
+            method: 'POST',
+            signal: enrichController.signal,
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({ max: 120 }),
+          });
+        } catch (enrichErr) {
+          console.warn('[Scan Prefetch] enrich-tracking skip/fail:', enrichErr);
+        } finally {
+          window.clearTimeout(enrichTimeoutId);
         }
       } catch {
         /* ignore */
@@ -3278,7 +3328,7 @@ export default function OrderManager({
   /** Chỉ đóng UI quét khi user chủ động thoát — không redirect trang chủ. */
   const closeScannerUiOnly = () => {
     clearVerifiedScanLists();
-    setCameraScanResult('Quét realtime — dò trạng thái ngay mỗi mã');
+    setCameraScanResult('Quét realtime QR + mã vạch — dò trạng thái ngay mỗi mã');
     setCameraScanSuccess(false);
     setScanToast(null);
     setShowEndConfirm(false);
@@ -3489,7 +3539,7 @@ export default function OrderManager({
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span className="text-white font-extrabold text-[10px] uppercase tracking-widest">
-                Quét realtime · Verify ngay
+                Quét realtime · QR + mã vạch
               </span>
             </div>
             <div className="rounded-lg bg-blue-500/20 border border-blue-400/40 px-2.5 py-1">

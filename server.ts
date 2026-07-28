@@ -17796,6 +17796,68 @@ async function startServer() {
     }
   });
 
+  /**
+   * Bù mã vận đơn từ Shopee (get_tracking_number) cho đơn thiếu tracking_no.
+   * Dùng khi Làm mới / mở Quét mã — pull nhanh thường skipTracking.
+   */
+  app.post("/api/orders/enrich-tracking", authMiddleware, async (req, res) => {
+    try {
+      const maxRaw = Number(req.body?.max ?? req.query?.max ?? 100);
+      const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 100;
+
+      // 1) Scheduler-style enrich (Mongo candidates + return tracking).
+      let enrichResult: Awaited<ReturnType<typeof enrichMissingShopeeTracking>> | null = null;
+      try {
+        enrichResult = await enrichMissingShopeeTracking();
+      } catch (enrichErr: any) {
+        console.warn(
+          "[Orders] enrich-tracking enrichMissingShopeeTracking:",
+          enrichErr?.message || enrichErr,
+        );
+      }
+
+      // 2) Fallback/bổ sung: repair trên pool loadOrdersForApi (ưu tiên PROCESSED/SHIPPED).
+      let repaired = 0;
+      try {
+        const { orders } = await loadOrdersForApi();
+        repaired = await repairMissingShopeeTrackingInOrders(orders, {
+          max,
+          retries: 2,
+        });
+      } catch (repairErr: any) {
+        console.warn(
+          "[Orders] enrich-tracking repairMissing:",
+          repairErr?.message || repairErr,
+        );
+      }
+
+      ordersRefreshCache = null;
+      const filled =
+        Number(enrichResult?.filled || 0) +
+        Number(enrichResult?.returnFilled || 0) +
+        repaired;
+      console.log(
+        `[Orders] enrich-tracking filled=${filled} scheduler=${JSON.stringify(enrichResult)} repaired=${repaired}`,
+      );
+      return res.json({
+        success: true,
+        filled,
+        repaired,
+        scheduler: enrichResult || undefined,
+        message: filled > 0
+          ? `Đã bù ${filled} mã vận đơn từ Shopee.`
+          : "Không có đơn nào cần bù mã (hoặc Shopee chưa trả tracking).",
+      });
+    } catch (err: any) {
+      console.error("[Orders] enrich-tracking failed:", err?.message || err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Không thể bù mã vận đơn từ Shopee.",
+      });
+    }
+  });
+
   // Update a real order's status/tracking after a warehouse/UI action.
   app.patch("/api/orders/:id", authMiddleware, async (req, res) => {
     const orders = loadOrders();
