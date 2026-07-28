@@ -3193,6 +3193,269 @@ async function collectShopeeOrderSnsIncremental(
   return [...orderSnSet];
 }
 
+/** Thu thập order_sn theo 1 order_status (vd CANCELLED) — phục vụ lookup quét mã miss. */
+async function collectShopeeOrderSnsByStatus(
+  shopId: string,
+  accessToken: string,
+  orderStatus: string,
+  opts?: {
+    lookbackSec?: number;
+    deadlineAt?: number;
+    maxOrderSns?: number;
+    pageHardCap?: number;
+  },
+): Promise<string[]> {
+  const now = Math.floor(Date.now() / 1000);
+  const lookback = Math.max(60, Math.min(15 * 24 * 60 * 60, opts?.lookbackSec ?? 7 * 24 * 60 * 60));
+  const timeFrom = now - lookback;
+  const timeTo = now;
+  const orderSnSet = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+  let page = 0;
+  const deadlineAt = opts?.deadlineAt ?? Date.now() + 45_000;
+  const maxOrderSns = Math.max(1, Math.floor(opts?.maxOrderSns ?? 80));
+  const pageHardCap = Math.max(1, Math.floor(opts?.pageHardCap ?? 4));
+  const status = String(orderStatus || "").trim().toUpperCase();
+  if (!status) return [];
+
+  while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
+    if (Date.now() > deadlineAt) break;
+    page += 1;
+    const listResult = await shopeeGetOrderList(shopId, accessToken, {
+      timeRangeField: "update_time",
+      timeFrom,
+      timeTo,
+      cursor,
+      orderStatus: status,
+    });
+    if (listResult?.error) break;
+    const rows = extractShopeeOrderListRows(listResult) as any[];
+    for (const row of rows) {
+      const sn = String(row?.order_sn || row?.ordersn || "").trim();
+      if (sn) orderSnSet.add(sn);
+      if (orderSnSet.size >= maxOrderSns) break;
+    }
+    const adv = advanceShopeeOrderListCursor({
+      listResult,
+      currentCursor: cursor,
+      seenCursors,
+      pageIndex: page,
+      hardCap: pageHardCap,
+      logLabel: `scan-lookup status=${status} shop=${shopId}`,
+    });
+    if (adv.action === "break") break;
+    seenCursors.add(adv.nextCursor);
+    cursor = adv.nextCursor;
+    await shopeeSyncDelay(Math.min(SHOPEE_ORDER_LIST_PAGE_DELAY_MS, 250));
+  }
+  return [...orderSnSet];
+}
+
+/**
+ * Khi quét miss local: kéo đơn từ Shopee (đặc biệt CANCELLED có mã VĐ) rồi khớp mã.
+ * Trả order đã persist Mongo (hoặc null).
+ */
+async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | null> {
+  const code = String(rawCode || "").trim();
+  if (!code) return null;
+  const scanKeys = new Set(
+    [
+      code,
+      code.toUpperCase(),
+      code.toLowerCase(),
+      code.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, ""),
+    ].filter((k) => k && k.length >= 4),
+  );
+  const primaryKey =
+    [...scanKeys].find((k) => k.length >= 8) || [...scanKeys][0] || "";
+  const looksLikeTracking =
+    /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST)/i.test(primaryKey) ||
+    (/^[A-Z0-9]{10,}$/i.test(primaryKey) && /[A-Z]/i.test(primaryKey) && /\d/.test(primaryKey));
+  const looksLikeOrderSn =
+    !looksLikeTracking &&
+    (/^\d{6}[A-Z0-9]{6,}$/i.test(primaryKey) || /^[A-Z0-9]{10,20}$/i.test(primaryKey));
+
+  const orderMatchesScan = (order: any): boolean => {
+    if (!order) return false;
+    const fields = [
+      order.orderSn,
+      order.trackingNumber,
+      order.tracking_no,
+      order.return_tracking_no,
+      order.packageNumber,
+      order.internalTrackingCode,
+    ];
+    for (const f of fields) {
+      const nk = String(f || "")
+        .trim()
+        .toUpperCase()
+        .replace(/[\s\-_#./\\|:;,]+/g, "");
+      if (!nk) continue;
+      for (const sk of scanKeys) {
+        const skn = sk.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+        if (!skn) continue;
+        if (nk === skn) return true;
+        if (skn.length >= 10 && nk.length >= 10 && (nk.endsWith(skn) || skn.endsWith(nk))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  ensureShopeeLinkedShopTokenKeys();
+  const shopIds = listShopeeSyncShopIds();
+  if (!shopIds.length) return null;
+
+  const deadlineAt = Date.now() + 55_000;
+  const { orders } = await loadOrdersForApi();
+
+  const persistAndReturn = async (
+    shopId: string,
+    accessToken: string,
+    normalized: any[],
+  ): Promise<any | null> => {
+    if (!normalized.length) return null;
+    await persistShopeeOrderChunk(orders, normalized, {
+      apiShopId: shopId,
+      accessToken,
+      skipTracking: false,
+    });
+    for (const o of normalized) {
+      if (orderMatchesScan(o)) return o;
+      // Sau persist có thể đã có tracking từ get_tracking_number.
+      if (needsShopeeTrackingEnrichment(o)) {
+        try {
+          await fetchAndForceSaveTrackingNumber(shopId, accessToken, o, { retries: 2 });
+        } catch {
+          /* ignore */
+        }
+      }
+      if (orderMatchesScan(o)) return o;
+    }
+    // Match lại trên pool orders sau persist.
+    for (const o of orders) {
+      if (orderMatchesScan(o)) return o;
+    }
+    return null;
+  };
+
+  // A) Mã giống order_sn — get_order_detail trực tiếp từng shop.
+  if (looksLikeOrderSn) {
+    const sn = primaryKey.replace(/^SHOPEE-/i, "");
+    for (const shopId of shopIds) {
+      if (Date.now() > deadlineAt) break;
+      try {
+        const accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) continue;
+        const { normalized } = await fetchNormalizeShopeeOrderChunk(
+          shopId,
+          accessToken,
+          shopId,
+          [sn],
+          { enrichTracking: true, skipEscrow: true },
+        );
+        const hit = await persistAndReturn(shopId, accessToken, normalized);
+        if (hit) {
+          console.log(
+            `[Orders Lookup] Shopee on-demand hit by order_sn=${sn} shop=${shopId} tn=${hit.tracking_no || hit.trackingNumber || "-"}`,
+          );
+          return hit;
+        }
+      } catch (err: any) {
+        console.warn(
+          `[Orders Lookup] Shopee order_sn resolve shop=${shopId}:`,
+          err?.message || err,
+        );
+      }
+    }
+  }
+
+  // B) Mã vận đơn — kéo CANCELLED / IN_CANCEL / TO_RETURN / SHIPPED 7 ngày rồi khớp tracking.
+  if (looksLikeTracking || !looksLikeOrderSn) {
+    const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED", "PROCESSED"];
+    for (const shopId of shopIds) {
+      if (Date.now() > deadlineAt) break;
+      try {
+        let accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) continue;
+        const snSet = new Set<string>();
+        for (const st of statuses) {
+          if (Date.now() > deadlineAt) break;
+          const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
+            lookbackSec: 7 * 24 * 60 * 60,
+            deadlineAt,
+            maxOrderSns: 60,
+            pageHardCap: 3,
+          });
+          for (const sn of sns) snSet.add(sn);
+        }
+        const snList = [...snSet];
+        if (!snList.length) continue;
+        console.log(
+          `[Orders Lookup] Shopee on-demand scan tracking shop=${shopId} candidates=${snList.length} code=${code}`,
+        );
+        for (let i = 0; i < snList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+          if (Date.now() > deadlineAt) break;
+          const chunk = snList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+          const fresh = await getValidShopeeAccessToken(shopId);
+          if (fresh) accessToken = fresh;
+          const { normalized } = await fetchNormalizeShopeeOrderChunk(
+            shopId,
+            accessToken,
+            shopId,
+            chunk,
+            { enrichTracking: true, skipEscrow: true },
+          );
+          // Ưu tiên đơn đã có TN khớp trước khi persist cả chunk.
+          let matched = normalized.find((o) => orderMatchesScan(o));
+          if (!matched) {
+            for (const o of normalized) {
+              if (!needsShopeeTrackingEnrichment(o) && hasUsableShopeeTrackingNumber(o)) continue;
+              try {
+                await fetchAndForceSaveTrackingNumber(shopId, accessToken!, o, { retries: 1 });
+              } catch {
+                /* ignore */
+              }
+              if (orderMatchesScan(o)) {
+                matched = o;
+                break;
+              }
+            }
+          }
+          if (matched) {
+            const hit = await persistAndReturn(shopId, accessToken!, [matched]);
+            if (hit) {
+              console.log(
+                `[Orders Lookup] Shopee on-demand hit by tracking code=${code} order_sn=${hit.orderSn} shop=${shopId}`,
+              );
+              return hit;
+            }
+          } else if (normalized.length) {
+            // Persist chunk để lần sau local lookup có data (kể cả chưa khớp mã này).
+            await persistShopeeOrderChunk(orders, normalized, {
+              apiShopId: shopId,
+              accessToken,
+              skipTracking: true,
+            });
+          }
+          if (i + SHOPEE_SYNC_CHUNK_SIZE < snList.length) {
+            await shopeeSyncDelay(200);
+          }
+        }
+      } catch (err: any) {
+        console.warn(
+          `[Orders Lookup] Shopee tracking resolve shop=${shopId}:`,
+          err?.message || err,
+        );
+      }
+    }
+  }
+
+  return null;
+}
+
 const SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP = 150;
 
 /**
@@ -10061,16 +10324,17 @@ async function repairMissingShopeeTrackingInOrders(
   let filled = 0;
   const authCache = new Map<string, { token: string; apiShopId: string } | null>();
 
-  // Ưu tiên đơn đã xử lý / READY_TO_SHIP thiếu mã (đúng bug user báo).
+  // Ưu tiên đơn đã xử lý / hủy / đang giao thiếu mã (đúng bug quét đơn hủy).
   const prioritized = [...orders].sort((a, b) => {
     const score = (o: any) => {
       const raw = String(o?.shopee_order_status || "").toUpperCase();
       const st = String(o?.status || "");
-      if (st === "processed" || raw === "PROCESSED") return 0;
-      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || st === "unprocessed") return 1;
-      if (st === "shipping" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return 2;
-      if (st === "cancelled" || raw === "CANCELLED" || st === "return_pending") return 3;
-      return 4;
+      if (st === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL") return 0;
+      if (st === "return_pending" || st === "return_received" || raw === "TO_RETURN") return 1;
+      if (st === "processed" || raw === "PROCESSED") return 2;
+      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || st === "unprocessed") return 3;
+      if (st === "shipping" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return 4;
+      return 5;
     };
     return score(a) - score(b);
   });
@@ -17746,6 +18010,19 @@ async function startServer() {
         }
       } catch (err: any) {
         console.warn("[Orders Lookup] fallback failed:", err?.message || err);
+      }
+    }
+
+    // 3) On-demand Shopee: đơn hủy/hoàn có mã VĐ trên sàn nhưng chưa có trong DB local.
+    if (!foundRaw) {
+      try {
+        const fromShopee = await resolveOrderFromShopeeByScanCode(code);
+        if (fromShopee) {
+          foundRaw = mirrorTrackingFieldsForRead(fromShopee);
+          ordersRefreshCache = null;
+        }
+      } catch (err: any) {
+        console.warn("[Orders Lookup] Shopee on-demand failed:", err?.message || err);
       }
     }
 

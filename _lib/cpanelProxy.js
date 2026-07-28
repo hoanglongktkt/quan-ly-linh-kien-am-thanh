@@ -36,6 +36,7 @@ const LONG_RUNNING_PREFIXES = [
   'orders/scan-bulk-update',
   'orders/enrich-tracking',
   'orders/hydrate-tracking',
+  'orders/lookup',
   'orders/cleanup-closed-retention',
 ];
 

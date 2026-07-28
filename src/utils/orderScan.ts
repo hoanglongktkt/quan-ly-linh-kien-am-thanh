@@ -230,9 +230,10 @@ export async function lookupOrderByScanCode(
 
   try {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    // On-demand Shopee (đơn hủy thiếu trong DB) có thể >8s — cho tới ~60s.
     const timer =
       controller && typeof window !== 'undefined'
-        ? window.setTimeout(() => controller.abort(), 8_000)
+        ? window.setTimeout(() => controller.abort(), 60_000)
         : undefined;
     const res = await fetch(`/api/orders/lookup?code=${encodeURIComponent(trimmed)}`, {
       headers: { Authorization: `Bearer ${token}` },
