@@ -758,7 +758,7 @@ export default function OrderManager({
   const liveScannerRef = React.useRef<LiveQrScannerHandle | null>(null);
   const isTearingDownScannerRef = React.useRef(false);
   const orderScanIndex = useMemo(() => buildOrderScanIndex(orders), [orders]);
-  /** Pool quét thực tế 7 ngày: đã in / chờ lấy (đã xử lý) + hủy/hoàn — không đếm unprocessed thuần. */
+  /** Pool quét thực tế 7 ngày: đã in / chờ lấy (đã xử lý) + đang giao + hủy/hoàn/giao thất bại. */
   const continuousScanTarget = useMemo(() => {
     const lookbackMs = 7 * 24 * 60 * 60 * 1000;
     const cutoff = Date.now() - lookbackMs;
@@ -786,13 +786,20 @@ export default function OrderManager({
         matchesProcessedPickupTab(o) &&
         (Boolean(getOrderWaybillCode(o)) || isOrderPrintedEffective(o));
       if (pickupEligible) return true;
+      if (matchesShippingTab(o) && inScanWindow(o)) return true;
       const raw = String(o.shopee_order_status || '').toUpperCase();
+      const kind = o.shopee_cancel_return_kind;
       const isCancelReturn =
         o.status === 'cancelled' ||
         o.status === 'return_pending' ||
+        o.status === 'return_received' ||
         raw === 'CANCELLED' ||
         raw === 'IN_CANCEL' ||
-        raw === 'TO_RETURN';
+        raw === 'TO_RETURN' ||
+        kind === 'refund_return' ||
+        kind === 'cancelled' ||
+        kind === 'failed_delivery' ||
+        isCancelReturnOrder(o);
       return isCancelReturn && inScanWindow(o);
     }).length;
   }, [orders]);
@@ -1141,11 +1148,16 @@ export default function OrderManager({
         }
 
         if (order.status === 'shipping') {
-          scanFeedback('error');
+          scanFeedback('warning');
           setCameraScanSuccess(false);
           setCameraScanError(true);
-          setCameraScanResult(`Đơn #${order.orderSn} đã ở trạng thái Đang giao`);
-          showScanToast(`Đơn #${order.orderSn} đã xuất kho trước đó`, 'error');
+          const waybillShip = getOrderWaybillCode(order);
+          setCameraScanResult(
+            waybillShip
+              ? `Đang giao · VĐ ${waybillShip} · #${order.orderSn}`
+              : `Đơn #${order.orderSn} đang giao`,
+          );
+          showScanToast(`Đơn #${order.orderSn} đang giao — không cần xuất kho lại`, 'error');
           setTimeout(() => setCameraScanError(false), 2000);
           return;
         }
@@ -1281,10 +1293,12 @@ export default function OrderManager({
           return;
         }
 
-        // Phân loại theo badge + raw Shopee trước — hủy/hoàn sau bàn giao vẫn vào đúng bucket.
+        // Phân loại theo cancel/return kind + badge — gồm failed_delivery / hoàn / hủy.
         const badge = resolveOrderBadgeStatus(order);
         const raw = getShopeeOrderRawStatus(order);
+        const cancelReturnKind = resolveCancelReturnKind(order);
         const isReturnBucket =
+          cancelReturnKind === 'refund_return' ||
           badge === 'return_pending' ||
           badge === 'return_received' ||
           order.status === 'return_pending' ||
@@ -1292,20 +1306,52 @@ export default function OrderManager({
           raw === 'TO_RETURN';
         const isCancelBucket =
           !isReturnBucket &&
-          (badge === 'cancelled' ||
+          (cancelReturnKind === 'cancelled' ||
+            cancelReturnKind === 'failed_delivery' ||
+            badge === 'cancelled' ||
             order.status === 'cancelled' ||
             raw === 'CANCELLED' ||
             raw === 'IN_CANCEL' ||
-            isShopeeCancelledLikeStatus(order));
+            isShopeeCancelledLikeStatus(order) ||
+            Boolean(isCancelReturnOrder(order) && cancelReturnKind));
+
+        // Đang giao (SHIPPED) / đã bàn giao thuần — tìm thấy rồi, không báo "không tìm thấy".
+        const isShippingOnly =
+          !isReturnBucket &&
+          !isCancelBucket &&
+          (matchesShippingTab(order) ||
+            badge === 'shipping' ||
+            order.status === 'shipping' ||
+            raw === 'SHIPPED' ||
+            raw === 'TO_CONFIRM_RECEIVE');
 
         // Chặn trùng DB — HANDED_OVER + hủy/hoàn đã được nới trong isOrderAlreadyScanProcessed.
-        if (isOrderAlreadyScanProcessed(order)) {
-          const reason = getScanProcessedReason(order);
+        if (isOrderAlreadyScanProcessed(order) && !isReturnBucket && !isCancelBucket) {
+          const reason = isShippingOnly
+            ? `Đơn #${order.orderSn} đang giao / đã bàn giao ĐVVC`
+            : getScanProcessedReason(order);
           playScanSound('warning');
           vibrateScan('warning');
           flashViewfinder('error', 500);
           setCameraScanResult(`⚠ ${reason}`);
           showScanToast(reason, 'error');
+          return;
+        }
+
+        if (isShippingOnly && !isEligibleForHandOverToCarrier(order)) {
+          const waybillShip = getOrderWaybillCode(order);
+          playScanSound('warning');
+          vibrateScan('warning');
+          flashViewfinder('error', 500);
+          setCameraScanResult(
+            waybillShip
+              ? `Đang giao · VĐ ${waybillShip} · #${order.orderSn}`
+              : `Đơn #${order.orderSn} đang giao`,
+          );
+          showScanToast(
+            `Đơn #${order.orderSn} đang giao — không cần xuất kho lại`,
+            'error',
+          );
           return;
         }
 
@@ -1359,6 +1405,7 @@ export default function OrderManager({
         }
 
         if (isCancelBucket) {
+          const isFailedDelivery = cancelReturnKind === 'failed_delivery';
           playScanSound('warning');
           vibrateScan('warning');
           flashViewfinder('error', 500);
@@ -1369,10 +1416,19 @@ export default function OrderManager({
           });
           setCameraScanResult(
             waybill
-              ? `⚠ ĐƠN HỦY · VĐ ${waybill} · #${order.orderSn}`
-              : `⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`,
+              ? isFailedDelivery
+                ? `⚠ GIAO THẤT BẠI · VĐ ${waybill} · #${order.orderSn}`
+                : `⚠ ĐƠN HỦY · VĐ ${waybill} · #${order.orderSn}`
+              : isFailedDelivery
+                ? `⚠ GIAO THẤT BẠI #${order.orderSn}`
+                : `⚠ ĐƠN HỦY #${order.orderSn} — loại kiện này ra!`,
           );
-          showScanToast(`CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`, 'error');
+          showScanToast(
+            isFailedDelivery
+              ? `Giao không thành công #${order.orderSn} — đã ghi nhận nhận kiện`
+              : `CẢNH BÁO: Đơn hủy #${order.orderSn} — hãy loại kiện hàng này`,
+            'error',
+          );
           return;
         }
 
@@ -1528,10 +1584,12 @@ export default function OrderManager({
     };
   }, [focusScanner, cameraRestartKey]);
 
-  // Prefetch + pull 7 ngày khi mở quét — đủ pool đã in / hủy / hoàn, không shallow 50/500.
+  // Prefetch + pull 7 ngày khi mở quét — đủ pool đã in / hủy / hoàn / đang giao, không shallow 50.
   useEffect(() => {
     if (!focusScanner) return;
     let cancelled = false;
+    // Fetch song song ngay — không chờ pull xong (giảm cửa sổ local-miss khi quét sớm).
+    void onFetchOrders?.({ silent: true, limit: 2000, merge: true });
     (async () => {
       try {
         const token = localStorage.getItem('admin_token') || '';

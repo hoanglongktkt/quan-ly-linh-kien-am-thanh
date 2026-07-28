@@ -44,6 +44,21 @@ export function isScanCancelOrReturnLikeOrder(
 ): boolean {
   const raw = String(order.shopee_order_status || '').toUpperCase();
   if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || raw === 'TO_RETURN') return true;
+  const kind = String(order.shopee_cancel_return_kind || '');
+  if (kind === 'refund_return' || kind === 'cancelled' || kind === 'failed_delivery') {
+    return true;
+  }
+  const logistics = String(
+    (order as { logistics_status?: string }).logistics_status || '',
+  ).toUpperCase();
+  if (
+    /DELIVERY_FAILED|FAILED_DELIVERY|LOGISTICS_DELIVERY_FAILED|UNDELIVERABLE|PICKUP_FAILED|LOST/.test(
+      logistics,
+    )
+  ) {
+    return true;
+  }
+  if (order.return_sn) return true;
   const status = String(order.status || '');
   return (
     status === 'cancelled' ||

@@ -2413,15 +2413,26 @@ export async function mirrorTopLevelTrackingIntoData(): Promise<number> {
   return ops.length;
 }
 
-/** Biến thể mã quét để match Mongo (raw / UPPER / bỏ ký tự tách). */
+/** Biến thể mã quét để match Mongo (raw / UPPER / lower / bỏ ký tự tách). */
 function buildScanKeyVariantsForMongo(rawKeys: string[]): string[] {
   const out = new Set<string>();
   for (const raw of rawKeys) {
     const text = String(raw || "").trim();
     if (!text) continue;
     const upper = text.toUpperCase();
-    const stripped = upper.replace(/[\s\-_#./\\|:;,]+/g, "");
-    for (const v of [text, upper, stripped, text.replace(/^shopee-/i, ""), stripped.replace(/^SHOPEE/, "")]) {
+    const lower = text.toLowerCase();
+    const strippedUpper = upper.replace(/[\s\-_#./\\|:;,]+/g, "");
+    const strippedLower = lower.replace(/[\s\-_#./\\|:;,]+/g, "");
+    for (const v of [
+      text,
+      upper,
+      lower,
+      strippedUpper,
+      strippedLower,
+      text.replace(/^shopee-/i, ""),
+      strippedUpper.replace(/^SHOPEE/, ""),
+      strippedLower.replace(/^shopee/, ""),
+    ]) {
       if (v && v.length >= 4) out.add(v);
     }
   }
@@ -2541,23 +2552,38 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
   try {
     let doc = await OrderModel.findOne(filter).maxTimeMS(4_000).lean();
     if (!doc) {
-      // Suffix fallback (QR đôi khi cắt prefix) — chỉ mã dài ≥10, timeout ngắn.
+      // Case-insensitive / suffix fallback — QR casing lệch DB hoặc cắt prefix.
       const primary =
-        keys.find((k) => k.length >= 10 && /[A-Z0-9]{10,}/i.test(k)) ||
-        keys.find((k) => k.length >= 10);
-      if (primary) {
+        keys.find((k) => k.length >= 8 && /[A-Za-z0-9]{8,}/.test(k)) ||
+        keys.find((k) => k.length >= 8) ||
+        keys[0];
+      if (primary && primary.length >= 4) {
         const escaped = primary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const rx = new RegExp(`${escaped}$`, "i");
-        doc = await OrderModel.findOne({
-          $or: [
-            { tracking_no: rx },
-            { "data.tracking_no": rx },
-            { "data.trackingNumber": rx },
-            { "data.return_tracking_no": rx },
-            { "data.internalTrackingCode": rx },
-            { orderSn: rx },
-          ],
-        })
+        const rxExact = new RegExp(`^${escaped}$`, "i");
+        const rxSuffix =
+          primary.length >= 10 ? new RegExp(`${escaped}$`, "i") : null;
+        const fieldMatchers = [
+          { tracking_no: rxExact },
+          { orderSn: rxExact },
+          { "data.tracking_no": rxExact },
+          { "data.trackingNumber": rxExact },
+          { "data.return_tracking_no": rxExact },
+          { "data.internalTrackingCode": rxExact },
+          { "data.packageNumber": rxExact },
+          { "data.orderSn": rxExact },
+          { "data.order_sn": rxExact },
+          ...(rxSuffix
+            ? [
+                { tracking_no: rxSuffix },
+                { "data.tracking_no": rxSuffix },
+                { "data.trackingNumber": rxSuffix },
+                { "data.return_tracking_no": rxSuffix },
+                { "data.internalTrackingCode": rxSuffix },
+                { orderSn: rxSuffix },
+              ]
+            : []),
+        ];
+        doc = await OrderModel.findOne({ $or: fieldMatchers })
           .maxTimeMS(3_000)
           .lean();
       }

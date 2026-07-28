@@ -8903,6 +8903,17 @@ function clearHandedOverLocalForCancelReturn(order: any): void {
 function isShopeeCancelOrReturnLikeOrder(order: any): boolean {
   const raw = String(order?.shopee_order_status || "").toUpperCase();
   if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") return true;
+  const kind = String(order?.shopee_cancel_return_kind || "");
+  if (kind === "refund_return" || kind === "cancelled" || kind === "failed_delivery") return true;
+  const logistics = String(order?.logistics_status || "").toUpperCase();
+  if (
+    /DELIVERY_FAILED|FAILED_DELIVERY|LOGISTICS_DELIVERY_FAILED|UNDELIVERABLE|PICKUP_FAILED|LOST/.test(
+      logistics,
+    )
+  ) {
+    return true;
+  }
+  if (order?.return_sn) return true;
   const status = String(order?.status || "");
   return status === "cancelled" || status === "return_pending" || status === "return_received";
 }
@@ -17712,14 +17723,30 @@ async function startServer() {
     if (!code) {
       return res.status(400).json({ error: "Thi\u1EBFu m\u00E3 qu\u00E9t (code)." });
     }
-    // Mongo index lookup (tracking_no / orderSn) — không full-dump collection.
+    // 1) Mongo index lookup (tracking_no / orderSn) — nhanh, không full-dump.
     let foundRaw: any | null = null;
     try {
       foundRaw = await findOrderByScanCodeInStore(code);
       if (foundRaw && !isValidOrder(foundRaw)) foundRaw = null;
       if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
     } catch (err: any) {
-      console.warn("[Orders Lookup] failed:", err?.message || err);
+      console.warn("[Orders Lookup] mongo failed:", err?.message || err);
+    }
+
+    // 2) Fallback: loadOrdersForApi + flexible in-memory match (casing / return VĐ / package).
+    if (!foundRaw) {
+      try {
+        const { orders } = await loadOrdersForApi({ readOnly: true });
+        const hit = await findOrderByScanLookup(
+          (Array.isArray(orders) ? orders : []).filter(isValidOrder),
+          code,
+        );
+        if (hit && isValidOrder(hit)) {
+          foundRaw = mirrorTrackingFieldsForRead(hit);
+        }
+      } catch (err: any) {
+        console.warn("[Orders Lookup] fallback failed:", err?.message || err);
+      }
     }
 
     if (!foundRaw) {
