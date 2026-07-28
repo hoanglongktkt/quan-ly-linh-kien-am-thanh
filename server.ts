@@ -71,6 +71,7 @@ import {
   bulkUpsertOrdersToStore,
   bulkUpdateShippedOrdersBySn,
   markOrderHandedOverInStore,
+  markOrderLocalStatusInStore,
   updateOrderPendingShopeeCheckInStore,
   updateOrderTrackingInStore,
   deleteOrdersFromStore,
@@ -18897,8 +18898,64 @@ async function startServer() {
       }
 
       // Chỉ persist các đơn đã đổi — không full-collection rewrite.
+      // QUAN TRỌNG: bulkUpsertOrdersToStore CỐ Ý bỏ INTERNAL_FLAG_KEYS
+      // (is_handed_over / local_status) → phải ghi cờ kho bằng API chuyên dụng.
       if (changedOrders.length > 0) {
-        await persistChangedOrdersPatch(changedOrders);
+        try {
+          await persistChangedOrdersPatch(changedOrders);
+        } catch (persistErr: any) {
+          console.warn(
+            "[Orders Scan Bulk] persistChangedOrdersPatch:",
+            persistErr?.message || persistErr,
+          );
+        }
+
+        let flagOk = 0;
+        for (const o of changedOrders) {
+          const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+          if (!sn) continue;
+          const shopId = o?.shopId != null ? String(o.shopId) : undefined;
+          const local = String(
+            o?.local_status || o?.localStatus || o?.internal_status || "",
+          ).toUpperCase();
+          try {
+            if (
+              local === "HANDED_OVER" ||
+              o?.is_handed_over === true ||
+              o?.isHandedOverToCarrier === true
+            ) {
+              const ok = await markOrderHandedOverInStore(sn, {
+                source: "qr_scan",
+                handedOverAt: String(o.handedOverAt || new Date().toISOString()),
+                shopId,
+              });
+              if (ok) flagOk += 1;
+            } else if (local === "CANCELLED_STORED") {
+              const ok = await markOrderLocalStatusInStore(sn, "CANCELLED_STORED", {
+                shopId,
+                clearHandedOver: true,
+                status: String(o.status || "cancelled"),
+              });
+              if (ok) flagOk += 1;
+            } else if (local === "RETURN_RECEIVED") {
+              const ok = await markOrderLocalStatusInStore(sn, "RETURN_RECEIVED", {
+                shopId,
+                clearHandedOver: true,
+                status: "return_received",
+              });
+              if (ok) flagOk += 1;
+            }
+          } catch (flagErr: any) {
+            console.error(
+              `[Orders Scan Bulk] mark flag fail order_sn=${sn}:`,
+              flagErr?.message || flagErr,
+            );
+          }
+        }
+        console.log(
+          `[Orders Scan Bulk] warehouse flags written=${flagOk}/${changedOrders.length}`,
+        );
+        ordersRefreshCache = null;
       }
 
       const updatedList = [...updatedById.values()];

@@ -3464,6 +3464,9 @@ export default function OrderManager({
         onUpdateOrders(merged, { persist: false });
       }
 
+      // Reload từ Mongo (SSOT) — đảm bảo máy khác / Làm mới thấy cờ ĐVVC / nhận hoàn.
+      void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
+
       if (safeXuat > 0) openHandedOverCarrierTab();
       else if (safeHoan > 0 || safeHuy > 0) {
         setActiveSubTab('received_cancel_returns');

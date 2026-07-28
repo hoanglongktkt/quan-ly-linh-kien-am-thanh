@@ -1923,6 +1923,78 @@ export async function markOrderHandedOverInStore(
   return Boolean(result);
 }
 
+/**
+ * Ghi cờ kho nội bộ CANCELLED_STORED / RETURN_RECEIVED / NONE — atomic $set.
+ * Dùng sau quét QR (scan-bulk-update). KHÔNG dùng bulkUpsert (bỏ qua INTERNAL_FLAG_KEYS).
+ */
+export async function markOrderLocalStatusInStore(
+  orderSn: string,
+  localStatus: "CANCELLED_STORED" | "RETURN_RECEIVED" | "NONE",
+  meta?: {
+    shopId?: string;
+    clearHandedOver?: boolean;
+    status?: string;
+  },
+): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const _id = `shopee-${sn}`;
+  const now = new Date().toISOString();
+  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
+  const status = String(localStatus || "").toUpperCase();
+  if (status !== "CANCELLED_STORED" && status !== "RETURN_RECEIVED" && status !== "NONE") {
+    return false;
+  }
+
+  const $set: Record<string, unknown> = {
+    "data.local_status": status,
+    "data.localStatus": status,
+    "data.internal_status": status,
+    "data.localStatusAt": now,
+    "data.local_status_updated_at": now,
+    "data.is_local_return_archived": false,
+  };
+  if (meta?.clearHandedOver || status === "CANCELLED_STORED" || status === "RETURN_RECEIVED") {
+    $set.is_handed_over = false;
+    $set["data.is_handed_over"] = false;
+    $set["data.isHandedOverToCarrier"] = false;
+    $set["data.is_handed_over_to_carrier"] = false;
+    $set["data.is_handed_over_to_courier"] = false;
+  }
+  if (status === "RETURN_RECEIVED") {
+    $set.status = "return_received";
+    $set["data.status"] = "return_received";
+  } else if (meta?.status) {
+    $set.status = String(meta.status);
+    $set["data.status"] = String(meta.status);
+  }
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
+
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    {
+      $set,
+      $setOnInsert: {
+        _id,
+        orderSn: sn,
+        "data.id": _id,
+        "data.orderSn": sn,
+        "data.channel": "shopee",
+      },
+    },
+    { new: true, upsert: true },
+  );
+  console.log(
+    `[MongoDB] findOneAndUpdate markOrderLocalStatus=${status} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
+  );
+  return Boolean(result);
+}
+
 /** Cưỡng bức update flag is_pending_shopee_check theo order_sn (JSON sync caller + Mongo). */
 export async function updateOrderPendingShopeeCheckInStore(
   orderSn: string,

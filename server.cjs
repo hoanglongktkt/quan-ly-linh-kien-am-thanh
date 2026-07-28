@@ -95087,6 +95087,63 @@ async function markOrderHandedOverInStore(orderSn, meta) {
   );
   return Boolean(result);
 }
+async function markOrderLocalStatusInStore(orderSn, localStatus, meta) {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const _id = `shopee-${sn}`;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
+  const status = String(localStatus || "").toUpperCase();
+  if (status !== "CANCELLED_STORED" && status !== "RETURN_RECEIVED" && status !== "NONE") {
+    return false;
+  }
+  const $set = {
+    "data.local_status": status,
+    "data.localStatus": status,
+    "data.internal_status": status,
+    "data.localStatusAt": now,
+    "data.local_status_updated_at": now,
+    "data.is_local_return_archived": false
+  };
+  if (meta?.clearHandedOver || status === "CANCELLED_STORED" || status === "RETURN_RECEIVED") {
+    $set.is_handed_over = false;
+    $set["data.is_handed_over"] = false;
+    $set["data.isHandedOverToCarrier"] = false;
+    $set["data.is_handed_over_to_carrier"] = false;
+    $set["data.is_handed_over_to_courier"] = false;
+  }
+  if (status === "RETURN_RECEIVED") {
+    $set.status = "return_received";
+    $set["data.status"] = "return_received";
+  } else if (meta?.status) {
+    $set.status = String(meta.status);
+    $set["data.status"] = String(meta.status);
+  }
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    {
+      $set,
+      $setOnInsert: {
+        _id,
+        orderSn: sn,
+        "data.id": _id,
+        "data.orderSn": sn,
+        "data.channel": "shopee"
+      }
+    },
+    { new: true, upsert: true }
+  );
+  console.log(
+    `[MongoDB] findOneAndUpdate markOrderLocalStatus=${status} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`
+  );
+  return Boolean(result);
+}
 async function updateOrderPendingShopeeCheckInStore(orderSn, isPending, patch, shopId) {
   if (!isMongoReady()) return false;
   requireMongo();
@@ -109910,7 +109967,56 @@ async function startServer() {
         });
       }
       if (changedOrders.length > 0) {
-        await persistChangedOrdersPatch(changedOrders);
+        try {
+          await persistChangedOrdersPatch(changedOrders);
+        } catch (persistErr) {
+          console.warn(
+            "[Orders Scan Bulk] persistChangedOrdersPatch:",
+            persistErr?.message || persistErr
+          );
+        }
+        let flagOk = 0;
+        for (const o of changedOrders) {
+          const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+          if (!sn) continue;
+          const shopId = o?.shopId != null ? String(o.shopId) : void 0;
+          const local = String(
+            o?.local_status || o?.localStatus || o?.internal_status || ""
+          ).toUpperCase();
+          try {
+            if (local === "HANDED_OVER" || o?.is_handed_over === true || o?.isHandedOverToCarrier === true) {
+              const ok = await markOrderHandedOverInStore(sn, {
+                source: "qr_scan",
+                handedOverAt: String(o.handedOverAt || (/* @__PURE__ */ new Date()).toISOString()),
+                shopId
+              });
+              if (ok) flagOk += 1;
+            } else if (local === "CANCELLED_STORED") {
+              const ok = await markOrderLocalStatusInStore(sn, "CANCELLED_STORED", {
+                shopId,
+                clearHandedOver: true,
+                status: String(o.status || "cancelled")
+              });
+              if (ok) flagOk += 1;
+            } else if (local === "RETURN_RECEIVED") {
+              const ok = await markOrderLocalStatusInStore(sn, "RETURN_RECEIVED", {
+                shopId,
+                clearHandedOver: true,
+                status: "return_received"
+              });
+              if (ok) flagOk += 1;
+            }
+          } catch (flagErr) {
+            console.error(
+              `[Orders Scan Bulk] mark flag fail order_sn=${sn}:`,
+              flagErr?.message || flagErr
+            );
+          }
+        }
+        console.log(
+          `[Orders Scan Bulk] warehouse flags written=${flagOk}/${changedOrders.length}`
+        );
+        ordersRefreshCache = null;
       }
       const updatedList = [...updatedById.values()];
       const products = await loadProductsForOrders(updatedList);
