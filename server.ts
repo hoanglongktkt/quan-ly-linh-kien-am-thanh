@@ -2010,16 +2010,16 @@ const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1000;
 /** get_order_list page_size — Shopee max 100; giữ 50 để nhẹ cPanel. */
 const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 /** Hard-cap số trang get_order_list mỗi lần pull (tránh treo). */
-const SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 5;
+const SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 8;
 /**
  * Incremental pull: chỉ lấy đơn có update_time trong N giây gần nhất.
  * Shopee bắt buộc time_from/time_to là UNIX SECONDS (không phải ms).
  */
 const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
-/** Giới hạn order_sn mỗi shop mỗi lần pull — đủ kéo đơn mới, tránh quét cả ngày. */
-const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 80;
+/** Giới hạn order_sn mỗi shop mỗi lần pull — đủ 7 ngày shop bận, tránh cắt lệch Shopee. */
+const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
 /** Deadline tường cho cả phiên pull — quá hạn thì BREAK (không treo process). */
-const ORDERS_PULL_HARD_DEADLINE_MS = 90_000;
+const ORDERS_PULL_HARD_DEADLINE_MS = 180_000;
 /** Mutex in-process: chặn boot pull + manual pull chạy chồng lên nhau. */
 let ordersPullInFlight = false;
 /** Delay tối thiểu giữa mỗi lần gọi API sản phẩm Shopee */
@@ -3618,15 +3618,40 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     .map((id) => normalizeShopIdKey(id))
     .filter(Boolean);
   const singleShopPull = shopIds.length === 1;
-  // 1 shop (VD AuDIO): nới cap + deadline để kéo đủ ~90+ đơn / 7 ngày.
-  const pullDeadlineMs = singleShopPull ? 180_000 : ORDERS_PULL_HARD_DEADLINE_MS;
-  const maxOrderSnsPerShop = singleShopPull ? 200 : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
-  const pageHardCap = singleShopPull ? 10 : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+  const lookbackSec = Math.max(
+    60,
+    Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC),
+  );
+  const longLookback = lookbackSec >= 168 * 3600;
+  // 7 ngày / Làm mới: nới cap để không lệch số đơn với Seller Center.
+  // 1 shop: ưu tiên kéo đủ; nhiều shop: vẫn cao hơn mặc định cũ (80/5/90s).
+  const pullDeadlineMs = singleShopPull
+    ? longLookback
+      ? 240_000
+      : 180_000
+    : longLookback
+      ? 240_000
+      : ORDERS_PULL_HARD_DEADLINE_MS;
+  const maxOrderSnsPerShop = singleShopPull
+    ? longLookback
+      ? 400
+      : 250
+    : longLookback
+      ? 300
+      : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
+  const pageHardCap = singleShopPull
+    ? longLookback
+      ? 15
+      : 12
+    : longLookback
+      ? 12
+      : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
   const deadlineAt = startedAt + pullDeadlineMs;
   const errors: any[] = [];
   let pulled = 0;
   let added = 0;
   let updated = 0;
+  let truncatedShops = 0;
 
   try {
     if (shopIds.length === 0) {
@@ -3644,16 +3669,16 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
     // MongoDB là SSOT: pull/merge không được lấy orders.json cũ làm base.
     const orders = isMongoReady() ? await loadOrdersFromStore() : [];
-    // Ngân sách thời gian công bằng — tránh shop đầu (4127421) chiếm hết deadline, shop AuDIO bị skip.
+    // Ngân sách thời gian công bằng — tránh shop đầu chiếm hết deadline.
     const perShopBudgetMs = Math.max(
-      28_000,
+      longLookback ? 45_000 : 28_000,
       Math.floor(pullDeadlineMs / Math.max(1, shopIds.length)),
     );
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s` +
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s` +
         ` deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap}` +
-        ` enrichTracking=${enrichTracking}`,
+        ` enrichTracking=${enrichTracking} longLookback=${longLookback}`,
     );
 
     for (const shopId of shopIds) {
@@ -3678,14 +3703,51 @@ async function pullIncrementalOrdersFromShopee(opts?: {
         }
 
         let orderSnList = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
-          lookbackSec: opts?.lookbackSec,
+          lookbackSec,
           deadlineAt: shopDeadlineAt,
           maxOrderSns: maxOrderSnsPerShop,
           pageHardCap,
         });
 
+        // lookback ≥ 168h: bổ sung CANCELLED / IN_CANCEL / TO_RETURN / SHIPPED
+        // — tránh bị đơn RTS/PROCESSED chiếm hết cap  khiến lệch Seller Center.
+        if (longLookback && Date.now() < shopDeadlineAt) {
+          const statusExtra = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED"];
+          const snSet = new Set(orderSnList);
+          let addedByStatus = 0;
+          for (const st of statusExtra) {
+            if (Date.now() >= shopDeadlineAt || snSet.size >= maxOrderSnsPerShop) break;
+            try {
+              const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
+                lookbackSec,
+                deadlineAt: shopDeadlineAt,
+                maxOrderSns: Math.min(120, maxOrderSnsPerShop),
+                pageHardCap: Math.min(6, pageHardCap),
+              });
+              for (const sn of sns) {
+                if (snSet.has(sn)) continue;
+                if (snSet.size >= maxOrderSnsPerShop) break;
+                snSet.add(sn);
+                addedByStatus += 1;
+              }
+            } catch (stErr: any) {
+              console.warn(
+                `[Orders Pull] status=${st} collect skip shop=${shopId}:`,
+                stErr?.message || stErr,
+              );
+            }
+          }
+          if (addedByStatus > 0) {
+            orderSnList = [...snSet];
+            syncDiag(
+              "Status list merged",
+              `shop=${shopId} +${addedByStatus} order_sn from CANCELLED/IN_CANCEL/TO_RETURN/SHIPPED (total=${orderSnList.length})`,
+            );
+          }
+        }
+
         // lookback ≥ 168h: bổ sung order_sn từ get_return_list (TO_RETURN / tracking hoàn).
-        if ((opts?.lookbackSec ?? 0) >= 168 * 3600 && Date.now() < shopDeadlineAt) {
+        if (longLookback && Date.now() < shopDeadlineAt) {
           try {
             const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
               mode: "incremental",
@@ -3712,6 +3774,15 @@ async function pullIncrementalOrdersFromShopee(opts?: {
               returnErr?.message || returnErr,
             );
           }
+        }
+
+        if (orderSnList.length >= maxOrderSnsPerShop) {
+          truncatedShops += 1;
+          errors.push({
+            shopId,
+            error: "pull_sn_cap",
+            message: `Shop ${shopId}: đã chạm trần ${maxOrderSnsPerShop} order_sn — có thể còn đơn trên Shopee chưa kéo hết.`,
+          });
         }
 
         syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
@@ -3829,12 +3900,15 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     const elapsedMs = Date.now() - startedAt;
     const message =
       pulled > 0
-        ? `Đã kéo/cập nhật ${pulled} đơn (+${added} mới, ~${updated} cập nhật) trong ${elapsedMs}ms`
+        ? `Đã kéo/cập nhật ${pulled} đơn (+${added} mới, ~${updated} cập nhật) trong ${elapsedMs}ms` +
+          (truncatedShops > 0
+            ? ` — ${truncatedShops} shop chạm trần SN, có thể còn lệch Shopee`
+            : "")
         : errors.length > 0
           ? `Pull 0 đơn — có lỗi: ${errors[0]?.message || errors[0]?.error}`
           : "Shopee trả 0 order_sn trong cửa sổ thời gian (hoặc token lỗi).";
 
-    syncDiag("Pull DONE", `${message} errors=${errors.length}`);
+    syncDiag("Pull DONE", `${message} errors=${errors.length} truncatedShops=${truncatedShops}`);
     return {
       success: pulled > 0 || errors.length === 0,
       pulled,
@@ -3844,6 +3918,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       errors,
       message,
       elapsedMs,
+      truncatedShops,
+      maxOrderSnsPerShop,
+      lookbackSec,
     };
   } finally {
     ordersPullInFlight = false;
@@ -17461,6 +17538,10 @@ async function startServer() {
         shops: result.shops,
         errors: result.errors.slice(0, 20),
         message: result.message,
+        truncatedShops: (result as any).truncatedShops || 0,
+        maxOrderSnsPerShop: (result as any).maxOrderSnsPerShop,
+        lookbackSec: (result as any).lookbackSec,
+        elapsedMs: result.elapsedMs,
       });
     } catch (error: any) {
       console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);

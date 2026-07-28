@@ -93317,6 +93317,20 @@ function normalizeProduct(p) {
   if (!id) return null;
   return { ...p, id };
 }
+function inheritShopeeLinkFromParent(child, parent) {
+  if (!child || typeof child !== "object") return child;
+  if (!parent || typeof parent !== "object") return child;
+  const next = { ...child };
+  if (!next.shopeeItemId && parent.shopeeItemId) next.shopeeItemId = parent.shopeeItemId;
+  if (!next.shopeeId && parent.shopeeId) next.shopeeId = parent.shopeeId;
+  if (!next.channels?.length && Array.isArray(parent.channels) && parent.channels.length) {
+    next.channels = [...parent.channels];
+  }
+  if (!next.title && parent.title) next.title = parent.title;
+  if (!next.imageUrl && parent.imageUrl) next.imageUrl = parent.imageUrl;
+  if (!next.avatarUrl && parent.avatarUrl) next.avatarUrl = parent.avatarUrl;
+  return next;
+}
 function readProductsFromDisk() {
   const file = getProductsDiskPath();
   if (!import_fs2.default.existsSync(file)) {
@@ -93428,12 +93442,7 @@ function loadProductByIdFromDisk(productId) {
         (c) => String(c?.id || "").trim() === id || String(c?.shopeeModelId || "").trim() === id
       );
       if (child) {
-        return {
-          ...child,
-          title: child.title || p.title,
-          imageUrl: child.imageUrl || p.imageUrl,
-          avatarUrl: child.avatarUrl || p.avatarUrl
-        };
+        return inheritShopeeLinkFromParent(child, p);
       }
     }
   }
@@ -94147,19 +94156,14 @@ async function loadProductByIdFromStore(productId) {
   if (byChild?.data && typeof byChild.data === "object") {
     const children = Array.isArray(byChild.data.children) ? byChild.data.children : [];
     const child = children.find((c) => String(c?.id || "").trim() === id);
-    if (child) return child;
+    if (child) return inheritShopeeLinkFromParent(child, byChild.data);
   }
   const byChildModel = await ProductModel.findOne({ "data.children_models.id": id }).lean();
   if (byChildModel?.data && typeof byChildModel.data === "object") {
     const models = Array.isArray(byChildModel.data.children_models) ? byChildModel.data.children_models : [];
     const child = models.find((c) => String(c?.id || "").trim() === id);
     if (child) {
-      return {
-        ...child,
-        title: child.title || byChildModel.data.title,
-        imageUrl: child.imageUrl || byChildModel.data.imageUrl,
-        avatarUrl: child.avatarUrl || byChildModel.data.avatarUrl
-      };
+      return inheritShopeeLinkFromParent(child, byChildModel.data);
     }
   }
   const byModel = await ProductModel.findOne({ "data.shopeeModelId": id }).lean();
@@ -95448,8 +95452,19 @@ function buildScanKeyVariantsForMongo(rawKeys) {
     const text = String(raw || "").trim();
     if (!text) continue;
     const upper = text.toUpperCase();
-    const stripped = upper.replace(/[\s\-_#./\\|:;,]+/g, "");
-    for (const v of [text, upper, stripped, text.replace(/^shopee-/i, ""), stripped.replace(/^SHOPEE/, "")]) {
+    const lower2 = text.toLowerCase();
+    const strippedUpper = upper.replace(/[\s\-_#./\\|:;,]+/g, "");
+    const strippedLower = lower2.replace(/[\s\-_#./\\|:;,]+/g, "");
+    for (const v of [
+      text,
+      upper,
+      lower2,
+      strippedUpper,
+      strippedLower,
+      text.replace(/^shopee-/i, ""),
+      strippedUpper.replace(/^SHOPEE/, ""),
+      strippedLower.replace(/^shopee/, "")
+    ]) {
       if (v && v.length >= 4) out.add(v);
     }
   }
@@ -95545,20 +95560,31 @@ async function findOrderByScanCodeInStore(rawCode) {
   try {
     let doc = await OrderModel.findOne(filter).maxTimeMS(4e3).lean();
     if (!doc) {
-      const primary = keys.find((k) => k.length >= 10 && /[A-Z0-9]{10,}/i.test(k)) || keys.find((k) => k.length >= 10);
-      if (primary) {
+      const primary = keys.find((k) => k.length >= 8 && /[A-Za-z0-9]{8,}/.test(k)) || keys.find((k) => k.length >= 8) || keys[0];
+      if (primary && primary.length >= 4) {
         const escaped = primary.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const rx = new RegExp(`${escaped}$`, "i");
-        doc = await OrderModel.findOne({
-          $or: [
-            { tracking_no: rx },
-            { "data.tracking_no": rx },
-            { "data.trackingNumber": rx },
-            { "data.return_tracking_no": rx },
-            { "data.internalTrackingCode": rx },
-            { orderSn: rx }
-          ]
-        }).maxTimeMS(3e3).lean();
+        const rxExact = new RegExp(`^${escaped}$`, "i");
+        const rxSuffix = primary.length >= 10 ? new RegExp(`${escaped}$`, "i") : null;
+        const fieldMatchers = [
+          { tracking_no: rxExact },
+          { orderSn: rxExact },
+          { "data.tracking_no": rxExact },
+          { "data.trackingNumber": rxExact },
+          { "data.return_tracking_no": rxExact },
+          { "data.internalTrackingCode": rxExact },
+          { "data.packageNumber": rxExact },
+          { "data.orderSn": rxExact },
+          { "data.order_sn": rxExact },
+          ...rxSuffix ? [
+            { tracking_no: rxSuffix },
+            { "data.tracking_no": rxSuffix },
+            { "data.trackingNumber": rxSuffix },
+            { "data.return_tracking_no": rxSuffix },
+            { "data.internalTrackingCode": rxSuffix },
+            { orderSn: rxSuffix }
+          ] : []
+        ];
+        doc = await OrderModel.findOne({ $or: fieldMatchers }).maxTimeMS(3e3).lean();
       }
     }
     return hydrateOrderFromMongoDoc(doc);
@@ -97477,10 +97503,10 @@ var SHOPEE_SYNC_CHUNK_DELAY_MS = 1e3;
 var SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
 var SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1e3;
 var SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
-var SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 5;
+var SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 8;
 var SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
-var SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 80;
-var ORDERS_PULL_HARD_DEADLINE_MS = 9e4;
+var SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
+var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var ordersPullInFlight = false;
 var SHOPEE_PRODUCT_API_DELAY_MS = 1e3;
 var SHOPEE_SYNC_QUEUE_GAP_MS = 750;
@@ -97853,9 +97879,14 @@ async function shopeePostJsonWithRetry(url, body, context, opts) {
     }
   };
 }
-function buildShopeeUpdateStockEntry(stock, modelId) {
+function buildShopeeUpdateStockEntry(stock, modelId, locationId) {
+  const sellerStock = {
+    stock: Math.max(0, Math.round(Number(stock) || 0))
+  };
+  const loc = String(locationId || "").trim();
+  if (loc) sellerStock.location_id = loc;
   const entry = {
-    seller_stock: [{ stock: Math.max(0, Math.round(Number(stock) || 0)) }]
+    seller_stock: [sellerStock]
   };
   const mid = Number(modelId);
   if (Number.isFinite(mid) && mid > 0) {
@@ -98344,6 +98375,224 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   syncDiag("Order list pagination done", `shop=${shopId} pages=${page} uniqueSn=${orderSnSet.size}`);
   return [...orderSnSet];
 }
+async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, opts) {
+  const now = Math.floor(Date.now() / 1e3);
+  const lookback = Math.max(60, Math.min(15 * 24 * 60 * 60, opts?.lookbackSec ?? 7 * 24 * 60 * 60));
+  const timeFrom = now - lookback;
+  const timeTo = now;
+  const orderSnSet = /* @__PURE__ */ new Set();
+  const seenCursors = /* @__PURE__ */ new Set();
+  let cursor;
+  let page = 0;
+  const deadlineAt = opts?.deadlineAt ?? Date.now() + 45e3;
+  const maxOrderSns = Math.max(1, Math.floor(opts?.maxOrderSns ?? 80));
+  const pageHardCap = Math.max(1, Math.floor(opts?.pageHardCap ?? 4));
+  const status = String(orderStatus || "").trim().toUpperCase();
+  if (!status) return [];
+  while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
+    if (Date.now() > deadlineAt) break;
+    page += 1;
+    const listResult = await shopeeGetOrderList(shopId, accessToken, {
+      timeRangeField: "update_time",
+      timeFrom,
+      timeTo,
+      cursor,
+      orderStatus: status
+    });
+    if (listResult?.error) break;
+    const rows = extractShopeeOrderListRows(listResult);
+    for (const row of rows) {
+      const sn = String(row?.order_sn || row?.ordersn || "").trim();
+      if (sn) orderSnSet.add(sn);
+      if (orderSnSet.size >= maxOrderSns) break;
+    }
+    const adv = advanceShopeeOrderListCursor({
+      listResult,
+      currentCursor: cursor,
+      seenCursors,
+      pageIndex: page,
+      hardCap: pageHardCap,
+      logLabel: `scan-lookup status=${status} shop=${shopId}`
+    });
+    if (adv.action === "break") break;
+    seenCursors.add(adv.nextCursor);
+    cursor = adv.nextCursor;
+    await shopeeSyncDelay(Math.min(SHOPEE_ORDER_LIST_PAGE_DELAY_MS, 250));
+  }
+  return [...orderSnSet];
+}
+async function resolveOrderFromShopeeByScanCode(rawCode) {
+  const code = String(rawCode || "").trim();
+  if (!code) return null;
+  const scanKeys = new Set(
+    [
+      code,
+      code.toUpperCase(),
+      code.toLowerCase(),
+      code.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "")
+    ].filter((k) => k && k.length >= 4)
+  );
+  const primaryKey = [...scanKeys].find((k) => k.length >= 8) || [...scanKeys][0] || "";
+  const looksLikeTracking = /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST)/i.test(primaryKey) || /^[A-Z0-9]{10,}$/i.test(primaryKey) && /[A-Z]/i.test(primaryKey) && /\d/.test(primaryKey);
+  const looksLikeOrderSn = !looksLikeTracking && (/^\d{6}[A-Z0-9]{6,}$/i.test(primaryKey) || /^[A-Z0-9]{10,20}$/i.test(primaryKey));
+  const orderMatchesScan = (order) => {
+    if (!order) return false;
+    const fields = [
+      order.orderSn,
+      order.trackingNumber,
+      order.tracking_no,
+      order.return_tracking_no,
+      order.packageNumber,
+      order.internalTrackingCode
+    ];
+    for (const f3 of fields) {
+      const nk = String(f3 || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+      if (!nk) continue;
+      for (const sk of scanKeys) {
+        const skn = sk.toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+        if (!skn) continue;
+        if (nk === skn) return true;
+        if (skn.length >= 10 && nk.length >= 10 && (nk.endsWith(skn) || skn.endsWith(nk))) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  ensureShopeeLinkedShopTokenKeys();
+  const shopIds = listShopeeSyncShopIds();
+  if (!shopIds.length) return null;
+  const deadlineAt = Date.now() + 55e3;
+  const { orders } = await loadOrdersForApi();
+  const persistAndReturn = async (shopId, accessToken, normalized) => {
+    if (!normalized.length) return null;
+    await persistShopeeOrderChunk(orders, normalized, {
+      apiShopId: shopId,
+      accessToken,
+      skipTracking: false
+    });
+    for (const o of normalized) {
+      if (orderMatchesScan(o)) return o;
+      if (needsShopeeTrackingEnrichment(o)) {
+        try {
+          await fetchAndForceSaveTrackingNumber(shopId, accessToken, o, { retries: 2 });
+        } catch {
+        }
+      }
+      if (orderMatchesScan(o)) return o;
+    }
+    for (const o of orders) {
+      if (orderMatchesScan(o)) return o;
+    }
+    return null;
+  };
+  if (looksLikeOrderSn) {
+    const sn = primaryKey.replace(/^SHOPEE-/i, "");
+    for (const shopId of shopIds) {
+      if (Date.now() > deadlineAt) break;
+      try {
+        const accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) continue;
+        const { normalized } = await fetchNormalizeShopeeOrderChunk(
+          shopId,
+          accessToken,
+          shopId,
+          [sn],
+          { enrichTracking: true, skipEscrow: true }
+        );
+        const hit = await persistAndReturn(shopId, accessToken, normalized);
+        if (hit) {
+          console.log(
+            `[Orders Lookup] Shopee on-demand hit by order_sn=${sn} shop=${shopId} tn=${hit.tracking_no || hit.trackingNumber || "-"}`
+          );
+          return hit;
+        }
+      } catch (err) {
+        console.warn(
+          `[Orders Lookup] Shopee order_sn resolve shop=${shopId}:`,
+          err?.message || err
+        );
+      }
+    }
+  }
+  if (looksLikeTracking || !looksLikeOrderSn) {
+    const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED", "PROCESSED"];
+    for (const shopId of shopIds) {
+      if (Date.now() > deadlineAt) break;
+      try {
+        let accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) continue;
+        const snSet = /* @__PURE__ */ new Set();
+        for (const st of statuses) {
+          if (Date.now() > deadlineAt) break;
+          const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
+            lookbackSec: 7 * 24 * 60 * 60,
+            deadlineAt,
+            maxOrderSns: 60,
+            pageHardCap: 3
+          });
+          for (const sn of sns) snSet.add(sn);
+        }
+        const snList = [...snSet];
+        if (!snList.length) continue;
+        console.log(
+          `[Orders Lookup] Shopee on-demand scan tracking shop=${shopId} candidates=${snList.length} code=${code}`
+        );
+        for (let i2 = 0; i2 < snList.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
+          if (Date.now() > deadlineAt) break;
+          const chunk = snList.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
+          const fresh = await getValidShopeeAccessToken(shopId);
+          if (fresh) accessToken = fresh;
+          const { normalized } = await fetchNormalizeShopeeOrderChunk(
+            shopId,
+            accessToken,
+            shopId,
+            chunk,
+            { enrichTracking: true, skipEscrow: true }
+          );
+          let matched = normalized.find((o) => orderMatchesScan(o));
+          if (!matched) {
+            for (const o of normalized) {
+              if (!needsShopeeTrackingEnrichment(o) && hasUsableShopeeTrackingNumber(o)) continue;
+              try {
+                await fetchAndForceSaveTrackingNumber(shopId, accessToken, o, { retries: 1 });
+              } catch {
+              }
+              if (orderMatchesScan(o)) {
+                matched = o;
+                break;
+              }
+            }
+          }
+          if (matched) {
+            const hit = await persistAndReturn(shopId, accessToken, [matched]);
+            if (hit) {
+              console.log(
+                `[Orders Lookup] Shopee on-demand hit by tracking code=${code} order_sn=${hit.orderSn} shop=${shopId}`
+              );
+              return hit;
+            }
+          } else if (normalized.length) {
+            await persistShopeeOrderChunk(orders, normalized, {
+              apiShopId: shopId,
+              accessToken,
+              skipTracking: true
+            });
+          }
+          if (i2 + SHOPEE_SYNC_CHUNK_SIZE < snList.length) {
+            await shopeeSyncDelay(200);
+          }
+        }
+      } catch (err) {
+        console.warn(
+          `[Orders Lookup] Shopee tracking resolve shop=${shopId}:`,
+          err?.message || err
+        );
+      }
+    }
+  }
+  return null;
+}
 var SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP = 150;
 async function reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt) {
   const result = { pulled: 0, added: 0, updated: 0, errors: [] };
@@ -98454,14 +98703,20 @@ async function pullIncrementalOrdersFromShopee(opts) {
   ensureShopeeLinkedShopTokenKeys();
   const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => normalizeShopIdKey(id)).filter(Boolean);
   const singleShopPull = shopIds.length === 1;
-  const pullDeadlineMs = singleShopPull ? 18e4 : ORDERS_PULL_HARD_DEADLINE_MS;
-  const maxOrderSnsPerShop = singleShopPull ? 200 : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
-  const pageHardCap = singleShopPull ? 10 : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+  const lookbackSec = Math.max(
+    60,
+    Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC)
+  );
+  const longLookback = lookbackSec >= 168 * 3600;
+  const pullDeadlineMs = singleShopPull ? longLookback ? 24e4 : 18e4 : longLookback ? 24e4 : ORDERS_PULL_HARD_DEADLINE_MS;
+  const maxOrderSnsPerShop = singleShopPull ? longLookback ? 400 : 250 : longLookback ? 300 : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
+  const pageHardCap = singleShopPull ? longLookback ? 15 : 12 : longLookback ? 12 : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
   const deadlineAt = startedAt + pullDeadlineMs;
   const errors = [];
   let pulled = 0;
   let added = 0;
   let updated = 0;
+  let truncatedShops = 0;
   try {
     if (shopIds.length === 0) {
       return {
@@ -98477,12 +98732,12 @@ async function pullIncrementalOrdersFromShopee(opts) {
     }
     const orders = isMongoReady() ? await loadOrdersFromStore() : [];
     const perShopBudgetMs = Math.max(
-      28e3,
+      longLookback ? 45e3 : 28e3,
       Math.floor(pullDeadlineMs / Math.max(1, shopIds.length))
     );
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC}s deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking}`
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking} longLookback=${longLookback}`
     );
     for (const shopId of shopIds) {
       if (Date.now() >= deadlineAt) {
@@ -98505,12 +98760,46 @@ async function pullIncrementalOrdersFromShopee(opts) {
           continue;
         }
         let orderSnList = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
-          lookbackSec: opts?.lookbackSec,
+          lookbackSec,
           deadlineAt: shopDeadlineAt,
           maxOrderSns: maxOrderSnsPerShop,
           pageHardCap
         });
-        if ((opts?.lookbackSec ?? 0) >= 168 * 3600 && Date.now() < shopDeadlineAt) {
+        if (longLookback && Date.now() < shopDeadlineAt) {
+          const statusExtra = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED"];
+          const snSet = new Set(orderSnList);
+          let addedByStatus = 0;
+          for (const st of statusExtra) {
+            if (Date.now() >= shopDeadlineAt || snSet.size >= maxOrderSnsPerShop) break;
+            try {
+              const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
+                lookbackSec,
+                deadlineAt: shopDeadlineAt,
+                maxOrderSns: Math.min(120, maxOrderSnsPerShop),
+                pageHardCap: Math.min(6, pageHardCap)
+              });
+              for (const sn of sns) {
+                if (snSet.has(sn)) continue;
+                if (snSet.size >= maxOrderSnsPerShop) break;
+                snSet.add(sn);
+                addedByStatus += 1;
+              }
+            } catch (stErr) {
+              console.warn(
+                `[Orders Pull] status=${st} collect skip shop=${shopId}:`,
+                stErr?.message || stErr
+              );
+            }
+          }
+          if (addedByStatus > 0) {
+            orderSnList = [...snSet];
+            syncDiag(
+              "Status list merged",
+              `shop=${shopId} +${addedByStatus} order_sn from CANCELLED/IN_CANCEL/TO_RETURN/SHIPPED (total=${orderSnList.length})`
+            );
+          }
+        }
+        if (longLookback && Date.now() < shopDeadlineAt) {
           try {
             const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
               mode: "incremental"
@@ -98537,6 +98826,14 @@ async function pullIncrementalOrdersFromShopee(opts) {
               returnErr?.message || returnErr
             );
           }
+        }
+        if (orderSnList.length >= maxOrderSnsPerShop) {
+          truncatedShops += 1;
+          errors.push({
+            shopId,
+            error: "pull_sn_cap",
+            message: `Shop ${shopId}: \u0111\xE3 ch\u1EA1m tr\u1EA7n ${maxOrderSnsPerShop} order_sn \u2014 c\xF3 th\u1EC3 c\xF2n \u0111\u01A1n tr\xEAn Shopee ch\u01B0a k\xE9o h\u1EBFt.`
+          });
         }
         syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
         if (orderSnList.length === 0) continue;
@@ -98641,8 +98938,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
       );
     }
     const elapsedMs = Date.now() - startedAt;
-    const message = pulled > 0 ? `\u0110\xE3 k\xE9o/c\u1EADp nh\u1EADt ${pulled} \u0111\u01A1n (+${added} m\u1EDBi, ~${updated} c\u1EADp nh\u1EADt) trong ${elapsedMs}ms` : errors.length > 0 ? `Pull 0 \u0111\u01A1n \u2014 c\xF3 l\u1ED7i: ${errors[0]?.message || errors[0]?.error}` : "Shopee tr\u1EA3 0 order_sn trong c\u1EEDa s\u1ED5 th\u1EDDi gian (ho\u1EB7c token l\u1ED7i).";
-    syncDiag("Pull DONE", `${message} errors=${errors.length}`);
+    const message = pulled > 0 ? `\u0110\xE3 k\xE9o/c\u1EADp nh\u1EADt ${pulled} \u0111\u01A1n (+${added} m\u1EDBi, ~${updated} c\u1EADp nh\u1EADt) trong ${elapsedMs}ms` + (truncatedShops > 0 ? ` \u2014 ${truncatedShops} shop ch\u1EA1m tr\u1EA7n SN, c\xF3 th\u1EC3 c\xF2n l\u1EC7ch Shopee` : "") : errors.length > 0 ? `Pull 0 \u0111\u01A1n \u2014 c\xF3 l\u1ED7i: ${errors[0]?.message || errors[0]?.error}` : "Shopee tr\u1EA3 0 order_sn trong c\u1EEDa s\u1ED5 th\u1EDDi gian (ho\u1EB7c token l\u1ED7i).";
+    syncDiag("Pull DONE", `${message} errors=${errors.length} truncatedShops=${truncatedShops}`);
     return {
       success: pulled > 0 || errors.length === 0,
       pulled,
@@ -98651,7 +98948,10 @@ async function pullIncrementalOrdersFromShopee(opts) {
       shops: shopIds.length,
       errors,
       message,
-      elapsedMs
+      elapsedMs,
+      truncatedShops,
+      maxOrderSnsPerShop,
+      lookbackSec
     };
   } finally {
     ordersPullInFlight = false;
@@ -98832,6 +99132,77 @@ async function shopeeGetModelListWithRetry(shopId, accessToken, itemId, retries 
     if (isShopeeRateLimited(0, last)) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS * 2);
   }
   return last;
+}
+var shopeeWarehouseLocationCache = /* @__PURE__ */ new Map();
+var SHOPEE_WAREHOUSE_CACHE_TTL_MS = 10 * 60 * 1e3;
+async function shopeeGetWarehouseDetail(shopId, accessToken) {
+  const apiPath = "/api/v2/shop/get_warehouse_detail";
+  const timestamp = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const params = new URLSearchParams({
+    partner_id: SHOPEE_PARTNER_ID,
+    timestamp: String(timestamp),
+    access_token: accessToken,
+    shop_id: shopId,
+    sign,
+    warehouse_type: "1"
+  });
+  const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
+  const { json: json2, httpStatus } = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} shop=${shopId}`);
+  console.log(
+    `[Shopee API] GET ${apiPath} shop=${shopId} -> HTTP ${httpStatus}, error=${json2?.error || "none"}`
+  );
+  return json2;
+}
+async function resolveShopeeStockLocationId(shopId, accessToken) {
+  const key = String(shopId || "").trim();
+  if (!key) return null;
+  const cached = shopeeWarehouseLocationCache.get(key);
+  if (cached && Date.now() - cached.at < SHOPEE_WAREHOUSE_CACHE_TTL_MS) {
+    return cached.locationId;
+  }
+  try {
+    const json2 = await shopeeGetWarehouseDetail(key, accessToken);
+    if (json2?.error) {
+      shopeeWarehouseLocationCache.set(key, { locationId: null, at: Date.now() });
+      return null;
+    }
+    const list = asShopeeArray(json2?.response);
+    const first = list.find((w) => String(w?.location_id || "").trim()) || list[0];
+    const locationId = String(first?.location_id || "").trim() || null;
+    shopeeWarehouseLocationCache.set(key, { locationId, at: Date.now() });
+    return locationId;
+  } catch (err) {
+    console.warn(`[Shopee Warehouse] get_warehouse_detail th\u1EA5t b\u1EA1i shop=${key}:`, err);
+    shopeeWarehouseLocationCache.set(key, { locationId: null, at: Date.now() });
+    return null;
+  }
+}
+async function resolveShopeeModelIdFromApi(shopId, accessToken, itemId, product) {
+  try {
+    const json2 = await shopeeGetModelListWithRetry(shopId, accessToken, itemId);
+    if (json2?.error) return { modelId: null, hasModel: false };
+    const { models } = parseModelListFromResponse(json2);
+    if (models.length === 0) return { modelId: null, hasModel: false };
+    const sku = String(product?.sku || product?.modelSku || "").trim().toLowerCase();
+    if (sku) {
+      const bySku = models.find(
+        (m2) => String(m2?.model_sku || "").trim().toLowerCase() === sku
+      );
+      if (bySku?.model_id != null) {
+        const n = Number(bySku.model_id);
+        if (Number.isFinite(n) && n > 0) return { modelId: n, hasModel: true };
+      }
+    }
+    if (models.length === 1 && models[0]?.model_id != null) {
+      const n = Number(models[0].model_id);
+      if (Number.isFinite(n) && n > 0) return { modelId: n, hasModel: true };
+    }
+    return { modelId: null, hasModel: true };
+  } catch (err) {
+    console.warn(`[Shopee Sync] resolve model_id t\u1EEB API th\u1EA5t b\u1EA1i item_id=${itemId}:`, err);
+    return { modelId: null, hasModel: false };
+  }
 }
 async function shopeeUpdateStock(shopId, accessToken, itemId, stockList) {
   const apiPath = "/api/v2/product/update_stock";
@@ -99340,7 +99711,7 @@ function parseShopeeApiResult(result, product, action) {
 }
 async function syncProductToShopee(product, shopId, accessToken) {
   const itemId = getShopeeItemIdForStockPush(product);
-  const modelId = resolveShopeeModelIdForStockPush(product);
+  let modelId = resolveShopeeModelIdForStockPush(product);
   if (itemId == null) {
     const base = {
       productId: product.id,
@@ -99354,7 +99725,16 @@ async function syncProductToShopee(product, shopId, accessToken) {
       { ...base, action: "update_price" }
     ];
   }
-  if (productRequiresShopeeModelId(product, 1) && modelId == null) {
+  let needsModel = productRequiresShopeeModelId(product, 1);
+  if (modelId == null) {
+    const fromApi = await resolveShopeeModelIdFromApi(shopId, accessToken, itemId, product);
+    if (fromApi.hasModel) needsModel = true;
+    if (fromApi.modelId != null) {
+      modelId = fromApi.modelId;
+      product.shopeeModelId = String(fromApi.modelId);
+    }
+  }
+  if (needsModel && modelId == null) {
     const msg = "Ph\xE2n lo\u1EA1i (variant) thi\u1EBFu model_id \u2014 b\u1EAFt bu\u1ED9c truy\u1EC1n item_id + model_id khi update_stock";
     await appendShopeeSyncErrorToDb({
       itemId,
@@ -99402,7 +99782,8 @@ async function syncProductToShopee(product, shopId, accessToken) {
       { ...base, action: "update_price" }
     ];
   }
-  const stockEntry = buildShopeeUpdateStockEntry(product.stock, modelId);
+  const locationId = await resolveShopeeStockLocationId(shopId, accessToken);
+  const stockEntry = buildShopeeUpdateStockEntry(product.stock, modelId, locationId);
   const priceEntry = buildShopeeUpdatePriceEntry(product.sellingPrice, modelId);
   let stockResult;
   try {
@@ -99700,9 +100081,14 @@ function extractShopeeStockPushErrorMessage(resultOrErr, fallback = "L\u1ED7i Sh
   return formatShopeeApiError(anyVal) || fallback;
 }
 async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
-  const shopeeRows = flattenProductsForStockSync(updatedProducts).filter(
-    (p) => getShopeeItemIdForStockPush(p) != null
-  );
+  const flattened = flattenProductsForStockSync(updatedProducts);
+  const shopeeRows = [];
+  for (const raw of flattened) {
+    const mapped = await resolveProductWithShopeeMapping(raw);
+    if (mapped && getShopeeItemIdForStockPush(mapped) != null) {
+      shopeeRows.push(mapped);
+    }
+  }
   if (shopeeRows.length === 0) {
     return { ok: true, errors: [], warnings: [], pushed: 0, staleSkus: [] };
   }
@@ -99783,11 +100169,26 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
       continue;
     }
     await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+    const locationId = await resolveShopeeStockLocationId(resolved.shopId, resolved.accessToken);
     const stockList = [];
     for (const p of rows) {
-      const modelId = resolveShopeeModelIdForStockPush(p);
+      let modelId = resolveShopeeModelIdForStockPush(p);
       const masterStock = Math.max(0, Math.round(Number(p.stock) || 0));
-      if (productRequiresShopeeModelId(p, rows.length) && modelId == null) {
+      let needsModel = productRequiresShopeeModelId(p, rows.length);
+      if (modelId == null && (needsModel || rows.length === 1)) {
+        const fromApi = await resolveShopeeModelIdFromApi(
+          resolved.shopId,
+          resolved.accessToken,
+          itemId,
+          p
+        );
+        if (fromApi.hasModel) needsModel = true;
+        if (fromApi.modelId != null) {
+          modelId = fromApi.modelId;
+          p.shopeeModelId = String(fromApi.modelId);
+        }
+      }
+      if (needsModel && modelId == null) {
         const line = `SKU ${p.sku || p.id}: ph\xE2n lo\u1EA1i (variant) thi\u1EBFu model_id \u2014 b\u1EAFt bu\u1ED9c truy\u1EC1n item_id + model_id khi update_stock.`;
         errors.push(line);
         await appendShopeeSyncErrorToDb({
@@ -99801,7 +100202,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
         });
         continue;
       }
-      stockList.push(buildShopeeUpdateStockEntry(masterStock, modelId));
+      stockList.push(buildShopeeUpdateStockEntry(masterStock, modelId, locationId));
     }
     if (stockList.length === 0) {
       processedInBatch++;
@@ -99937,43 +100338,50 @@ function findProductRowById(products, productId) {
   for (const p of Array.isArray(products) ? products : []) {
     if (String(p?.id || "").trim() === id) return p;
     for (const child of getProductChildrenList(p)) {
-      if (String(child?.id || "").trim() === id) return child;
+      if (String(child?.id || "").trim() === id) {
+        return inheritShopeeLinkFromParent(child, p);
+      }
     }
   }
   return null;
 }
 async function resolveProductWithShopeeMapping(product) {
   if (!product || typeof product !== "object") return null;
-  if (getShopeeItemIdForStockPush(product) != null) {
-    return product;
+  let current = product;
+  const hasItemId = () => getShopeeItemIdForStockPush(current) != null;
+  const hasModelId = () => resolveShopeeModelIdForStockPush(current) != null;
+  if (!hasItemId() || !hasModelId()) {
+    let listings = [];
+    try {
+      listings = await readChannelListingsDb();
+    } catch (err) {
+      console.error("[Shopee Sync Queue] Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c channel_listings:", err);
+      if (!hasItemId()) return null;
+    }
+    const productId = String(product.id || "").trim();
+    if (productId && listings.length > 0) {
+      const match2 = listings.find((row) => {
+        if (!row || typeof row !== "object") return false;
+        const platform = String(row.platform || "shopee").trim().toLowerCase();
+        if (platform && platform !== "shopee") return false;
+        const linkedId = row.linkedProductId != null && String(row.linkedProductId).trim() !== "" ? String(row.linkedProductId).trim() : row.linkedProduct?.id != null ? String(row.linkedProduct.id).trim() : "";
+        if (!linkedId || linkedId !== productId) return false;
+        const status = String(row.status || "").trim().toLowerCase();
+        return status === "success";
+      });
+      if (match2) {
+        const channelId = String(match2.channelId || match2.itemId || "").trim();
+        if (channelId || match2.itemId != null) {
+          current = applyShopeeLinkFieldsToProduct(current, channelId || String(match2.itemId), {
+            modelId: match2.modelId ?? match2.shopeeModelId ?? current.shopeeModelId,
+            itemId: match2.itemId ?? getShopeeItemIdForStockPush(current)
+          });
+        }
+      }
+    }
   }
-  let listings = [];
-  try {
-    listings = await readChannelListingsDb();
-  } catch (err) {
-    console.error("[Shopee Sync Queue] Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c channel_listings:", err);
-    return null;
-  }
-  const productId = String(product.id || "").trim();
-  if (!productId) return null;
-  const match2 = listings.find((row) => {
-    if (!row || typeof row !== "object") return false;
-    const platform = String(row.platform || "shopee").trim().toLowerCase();
-    if (platform && platform !== "shopee") return false;
-    const linkedId = row.linkedProductId != null && String(row.linkedProductId).trim() !== "" ? String(row.linkedProductId).trim() : row.linkedProduct?.id != null ? String(row.linkedProduct.id).trim() : "";
-    if (!linkedId || linkedId !== productId) return false;
-    const status = String(row.status || "").trim().toLowerCase();
-    return status === "success";
-  });
-  if (!match2) return null;
-  const channelId = String(match2.channelId || match2.itemId || "").trim();
-  if (!channelId && match2.itemId == null) return null;
-  const enriched = applyShopeeLinkFieldsToProduct(product, channelId || String(match2.itemId), {
-    modelId: match2.modelId ?? match2.shopeeModelId,
-    itemId: match2.itemId
-  });
-  if (getShopeeItemIdForStockPush(enriched) == null) return null;
-  return enriched;
+  if (getShopeeItemIdForStockPush(current) == null) return null;
+  return current;
 }
 async function executeShopeeStockPriceSyncJob(product, opts) {
   const mapped = await resolveProductWithShopeeMapping(product);
@@ -99989,11 +100397,20 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
     return { ok: false, message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId}.` };
   }
   const itemId = getShopeeItemIdForStockPush(mapped);
-  const modelId = resolveShopeeModelIdForStockPush(mapped);
+  let modelId = resolveShopeeModelIdForStockPush(mapped);
   if (itemId == null) {
     return { ok: false, message: "Thi\u1EBFu Shopee item_id sau khi resolve Mapping." };
   }
-  if (productRequiresShopeeModelId(mapped, 1) && modelId == null) {
+  let itemHasModel = productRequiresShopeeModelId(mapped, 1);
+  if (modelId == null) {
+    const fromApi = await resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
+    if (fromApi.hasModel) itemHasModel = true;
+    if (fromApi.modelId != null) {
+      modelId = fromApi.modelId;
+      mapped.shopeeModelId = String(fromApi.modelId);
+    }
+  }
+  if (itemHasModel && modelId == null) {
     const msg = "Ph\xE2n lo\u1EA1i (variant) thi\u1EBFu model_id \u2014 b\u1EAFt bu\u1ED9c truy\u1EC1n item_id + model_id khi update_stock";
     await appendShopeeSyncErrorToDb({
       itemId,
@@ -100006,9 +100423,10 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
     });
     return { ok: false, message: msg };
   }
+  const locationId = opts.syncStock ? await resolveShopeeStockLocationId(shopId, accessToken) : null;
   const lines = [];
   if (opts.syncStock) {
-    const stockEntry = buildShopeeUpdateStockEntry(mapped.stock, modelId);
+    const stockEntry = buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
     try {
       const stockResult = await shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
       const parsed = parseShopeeApiResult(stockResult, mapped, "update_stock");
@@ -100350,11 +100768,7 @@ function flattenProductsForStockSync(products) {
     const children = getProductChildrenList(p);
     if (children.length > 0) {
       for (const child of children) {
-        out.push({
-          ...child,
-          shopeeItemId: child.shopeeItemId || p.shopeeItemId,
-          channels: child.channels?.length ? child.channels : p.channels
-        });
+        out.push(inheritShopeeLinkFromParent(child, p));
       }
       continue;
     }
@@ -102410,6 +102824,15 @@ function clearHandedOverLocalForCancelReturn(order) {
 function isShopeeCancelOrReturnLikeOrder(order) {
   const raw = String(order?.shopee_order_status || "").toUpperCase();
   if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") return true;
+  const kind = String(order?.shopee_cancel_return_kind || "");
+  if (kind === "refund_return" || kind === "cancelled" || kind === "failed_delivery") return true;
+  const logistics = String(order?.logistics_status || "").toUpperCase();
+  if (/DELIVERY_FAILED|FAILED_DELIVERY|LOGISTICS_DELIVERY_FAILED|UNDELIVERABLE|PICKUP_FAILED|LOST/.test(
+    logistics
+  )) {
+    return true;
+  }
+  if (order?.return_sn) return true;
   const status = String(order?.status || "");
   return status === "cancelled" || status === "return_pending" || status === "return_received";
 }
@@ -103213,6 +103636,61 @@ async function ensureOrderTrackingNoForPrint(order, ordersStore) {
       "L\u1ED7i t\u1EF1 \u0111\u1ED9ng l\u1EA5y m\xE3 t\u1EEB Shopee: " + JSON.stringify(error?.response?.data || error?.message || msg)
     );
   }
+}
+async function repairMissingShopeeTrackingInOrders(orders, opts) {
+  const max = Math.max(1, Math.min(opts?.max ?? 80, 200));
+  const retries = opts?.retries ?? 2;
+  let attempted = 0;
+  let filled = 0;
+  const authCache = /* @__PURE__ */ new Map();
+  const prioritized = [...orders].sort((a, b) => {
+    const score = (o) => {
+      const raw = String(o?.shopee_order_status || "").toUpperCase();
+      const st = String(o?.status || "");
+      if (st === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL") return 0;
+      if (st === "return_pending" || st === "return_received" || raw === "TO_RETURN") return 1;
+      if (st === "processed" || raw === "PROCESSED") return 2;
+      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || st === "unprocessed") return 3;
+      if (st === "shipping" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return 4;
+      return 5;
+    };
+    return score(a) - score(b);
+  });
+  for (const o of prioritized) {
+    if (attempted >= max) break;
+    if (!needsShopeeTrackingEnrichment(o) || !o.shopId) continue;
+    const shopKey = String(o.shopId);
+    try {
+      if (!authCache.has(shopKey)) {
+        const auth2 = await getShopeeAccessTokenForApi(shopKey);
+        authCache.set(
+          shopKey,
+          auth2?.token ? { token: auth2.token, apiShopId: auth2.apiShopId } : null
+        );
+      }
+      const auth = authCache.get(shopKey);
+      if (!auth?.token) continue;
+      const before = hasUsableShopeeTrackingNumber(o);
+      const ok = await fetchAndForceSaveTrackingNumber(auth.apiShopId, auth.token, o, {
+        retries
+      });
+      attempted++;
+      if (!before && ok) filled++;
+    } catch (error) {
+      console.error("L\u1ED7i 1 \u0111\u01A1n:", error);
+      attempted++;
+      continue;
+    } finally {
+      await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+    }
+  }
+  if (attempted > 0) {
+    saveOrders(orders);
+    console.log(
+      `[Shopee Tracking] repairMissingShopeeTrackingInOrders: attempted=${attempted} filled=${filled} delay=${SHOPEE_TRACKING_FETCH_DELAY_MS}ms`
+    );
+  }
+  return filled;
 }
 function normalizeShopeeOrderDetail(shopId, shopName, item) {
   if (!item || !item.order_sn) {
@@ -107390,10 +107868,13 @@ async function startServer() {
         products[i2] = { ...products[i2], children: nextChildren, stock: totalStock };
         await upsertProductsToStoreAsync([products[i2]]);
         const changes = detectStockPriceChanges(beforeChild, mergedChild);
-        const shopee = await pushProductStockPriceToShopeeImmediate(mergedChild, {
-          syncStock: changes.stock,
-          syncPrice: changes.price
-        });
+        const shopee = await pushProductStockPriceToShopeeImmediate(
+          inheritShopeeLinkFromParent(mergedChild, products[i2]),
+          {
+            syncStock: changes.stock,
+            syncPrice: changes.price
+          }
+        );
         if (!shopee.ok) {
           return res.status(400).json({
             success: false,
@@ -107468,26 +107949,35 @@ async function startServer() {
       );
       await upsertProductsToStoreAsync(next.filter((product, index) => product !== products[index]));
       console.log(`[Inventory Balance] C\u1EADp nh\u1EADt kho g\u1ED1c ${updatedCount} SKU`);
-      const queued = await enqueueShopeeStockPriceSync(updatedProducts, {
-        syncStock: true,
-        syncPrice: false,
-        shopId: preferredShopId
-      });
+      const pushResult = await pushStockUpdatesToShopee(updatedProducts, preferredShopId);
       const parts = [];
       parts.push("kho g\u1ED1c \u0111\xE3 c\u1EADp nh\u1EADt");
-      if (queued > 0) {
-        parts.push(`${queued} SKU \u0111\xE3 x\u1EBFp h\xE0ng \u0111\u1ED3ng b\u1ED9 t\u1ED3n kho l\xEAn Shopee`);
-      } else {
+      if (pushResult.pushed > 0) {
+        parts.push(`\u0111\xE3 \u0111\u1EA9y t\u1ED3n ${pushResult.pushed} SKU l\xEAn Shopee`);
+      } else if (pushResult.errors.length === 0 && pushResult.warnings.length === 0) {
         parts.push("kh\xF4ng c\xF3 SKU Mapping Shopee \u0111\u1EC3 \u0111\u1ED3ng b\u1ED9 (ho\u1EB7c ch\u01B0a li\xEAn k\u1EBFt)");
       }
       const msg = `C\xE2n b\u1EB1ng kho th\xE0nh c\xF4ng (${parts.join(", ")}).`;
       console.log(`[Inventory Balance] ${msg}`);
+      if (pushResult.errors.length > 0) {
+        return res.status(200).json({
+          success: true,
+          message: msg,
+          shopeeQueued: 0,
+          shopeePushed: pushResult.pushed,
+          shopeeErrors: pushResult.errors,
+          shopeeWarnings: pushResult.warnings,
+          staleSkus: pushResult.staleSkus
+        });
+      }
       return res.status(200).json({
         success: true,
         message: msg,
-        shopeeQueued: queued,
-        shopeeWarnings: [],
-        staleSkus: []
+        shopeeQueued: 0,
+        shopeePushed: pushResult.pushed,
+        shopeeErrors: [],
+        shopeeWarnings: pushResult.warnings,
+        staleSkus: pushResult.staleSkus
       });
     } catch (err) {
       console.error("[Inventory Balance] Exception:", err);
@@ -108365,7 +108855,11 @@ async function startServer() {
         updated: result.updated,
         shops: result.shops,
         errors: result.errors.slice(0, 20),
-        message: result.message
+        message: result.message,
+        truncatedShops: result.truncatedShops || 0,
+        maxOrderSnsPerShop: result.maxOrderSnsPerShop,
+        lookbackSec: result.lookbackSec,
+        elapsedMs: result.elapsedMs
       });
     } catch (error) {
       console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);
@@ -108772,7 +109266,32 @@ async function startServer() {
       if (foundRaw && !isValidOrder(foundRaw)) foundRaw = null;
       if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
     } catch (err) {
-      console.warn("[Orders Lookup] failed:", err?.message || err);
+      console.warn("[Orders Lookup] mongo failed:", err?.message || err);
+    }
+    if (!foundRaw) {
+      try {
+        const { orders } = await loadOrdersForApi({ readOnly: true });
+        const hit = await findOrderByScanLookup(
+          (Array.isArray(orders) ? orders : []).filter(isValidOrder),
+          code
+        );
+        if (hit && isValidOrder(hit)) {
+          foundRaw = mirrorTrackingFieldsForRead(hit);
+        }
+      } catch (err) {
+        console.warn("[Orders Lookup] fallback failed:", err?.message || err);
+      }
+    }
+    if (!foundRaw) {
+      try {
+        const fromShopee = await resolveOrderFromShopeeByScanCode(code);
+        if (fromShopee) {
+          foundRaw = mirrorTrackingFieldsForRead(fromShopee);
+          ordersRefreshCache = null;
+        }
+      } catch (err) {
+        console.warn("[Orders Lookup] Shopee on-demand failed:", err?.message || err);
+      }
     }
     if (!foundRaw) {
       return res.status(404).json({
@@ -108811,6 +109330,53 @@ async function startServer() {
       return res.status(500).json({
         success: false,
         error: err?.message || String(err)
+      });
+    }
+  });
+  app.post("/api/orders/enrich-tracking", authMiddleware, async (req, res) => {
+    try {
+      const maxRaw = Number(req.body?.max ?? req.query?.max ?? 100);
+      const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 100;
+      let enrichResult = null;
+      try {
+        enrichResult = await enrichMissingShopeeTracking();
+      } catch (enrichErr) {
+        console.warn(
+          "[Orders] enrich-tracking enrichMissingShopeeTracking:",
+          enrichErr?.message || enrichErr
+        );
+      }
+      let repaired = 0;
+      try {
+        const { orders } = await loadOrdersForApi();
+        repaired = await repairMissingShopeeTrackingInOrders(orders, {
+          max,
+          retries: 2
+        });
+      } catch (repairErr) {
+        console.warn(
+          "[Orders] enrich-tracking repairMissing:",
+          repairErr?.message || repairErr
+        );
+      }
+      ordersRefreshCache = null;
+      const filled = Number(enrichResult?.filled || 0) + Number(enrichResult?.returnFilled || 0) + repaired;
+      console.log(
+        `[Orders] enrich-tracking filled=${filled} scheduler=${JSON.stringify(enrichResult)} repaired=${repaired}`
+      );
+      return res.json({
+        success: true,
+        filled,
+        repaired,
+        scheduler: enrichResult || void 0,
+        message: filled > 0 ? `\u0110\xE3 b\xF9 ${filled} m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee.` : "Kh\xF4ng c\xF3 \u0111\u01A1n n\xE0o c\u1EA7n b\xF9 m\xE3 (ho\u1EB7c Shopee ch\u01B0a tr\u1EA3 tracking)."
+      });
+    } catch (err) {
+      console.error("[Orders] enrich-tracking failed:", err?.message || err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Kh\xF4ng th\u1EC3 b\xF9 m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee."
       });
     }
   });

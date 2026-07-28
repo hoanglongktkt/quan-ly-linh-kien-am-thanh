@@ -661,11 +661,19 @@ export default function OrderManager({
             `Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`,
           );
         } else {
+          const truncated = Number(pullJson?.truncatedShops || 0);
           setLastSyncSummary(
-            `Đồng bộ xong: kiểm tra ${pullJson.pulled ?? 0}, cập nhật ${pullJson.updated ?? 0}, mới ${pullJson.added ?? 0}`,
+            `Đồng bộ xong: kiểm tra ${pullJson.pulled ?? 0}, cập nhật ${pullJson.updated ?? 0}, mới ${pullJson.added ?? 0}` +
+              (truncated > 0 ? ` — ${truncated} shop chưa kéo hết (chạm trần)` : ''),
           );
+          if (truncated > 0) {
+            showToast(
+              `Đồng bộ chưa đủ so với Shopee (${truncated} shop chạm trần). Lọc 1 shop rồi bấm Làm mới lại.`,
+              7000,
+            );
+          }
           console.log(
-            `[Orders Sync] Pull OK — pulled=${pullJson.pulled ?? 0} added=${pullJson.added ?? 0} updated=${pullJson.updated ?? 0}`,
+            `[Orders Sync] Pull OK — pulled=${pullJson.pulled ?? 0} added=${pullJson.added ?? 0} updated=${pullJson.updated ?? 0} truncated=${truncated}`,
           );
         }
       } catch (pullErr) {

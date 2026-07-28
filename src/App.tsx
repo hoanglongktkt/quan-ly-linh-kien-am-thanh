@@ -405,12 +405,12 @@ export default function App() {
 
     const silent = Boolean(opts?.silent);
     const bustCache = opts?.bustCache !== false;
-    // Silent/background mặc định shallow 50 đơn; nút "Làm mới" (silent:false) = full list.
+    // Silent/background mặc định shallow vừa đủ đếm tab; nút "Làm mới" = full list.
     const limit =
       typeof opts?.limit === 'number' && opts.limit > 0
         ? opts.limit
         : silent
-          ? 50
+          ? 500
           : undefined;
     const merge = opts?.merge ?? Boolean(limit);
     const flightKey = limit ? `limit:${limit}` : 'full';
@@ -1324,7 +1324,7 @@ export default function App() {
         setOrders(cached);
         setHasLoadedOrdersOnce(true);
       }
-      void fetchOrders({ silent: true, limit: 50, merge: true });
+      void fetchOrders({ silent: true, limit: 500, merge: true });
 
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });
