@@ -262,7 +262,15 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       });
 
       const raw = await res.text();
-      let data: { success?: boolean; message?: string; error?: string; shopeeWarnings?: string[]; shopeeErrors?: string[] } = {};
+      let data: {
+        success?: boolean;
+        message?: string;
+        error?: string;
+        shopeeWarnings?: string[];
+        shopeeErrors?: string[];
+        shopeePushed?: number;
+        staleSkus?: string[];
+      } = {};
       try {
         data = raw ? JSON.parse(raw) : {};
       } catch {
@@ -283,12 +291,25 @@ export default function InventoryAudit({ products, shopId, onRefreshProducts }: 
       setAuditLines([]);
       setSearch('');
       setCurrentPage(1);
-      const warnNote =
-        Array.isArray(data.shopeeWarnings) && data.shopeeWarnings.length > 0
-          ? ` (${data.shopeeWarnings.length} SKU Shopee bỏ qua do liên kết hết hạn)`
-          : '';
-      setToast({ type: 'success', text: (data.message || 'Cân bằng kho thành công!') + warnNote });
-      setTimeout(() => setToast(null), 4000);
+
+      const shopeeErrors = Array.isArray(data.shopeeErrors) ? data.shopeeErrors : [];
+      const shopeeWarnings = Array.isArray(data.shopeeWarnings) ? data.shopeeWarnings : [];
+      if (shopeeErrors.length > 0) {
+        const errPreview = shopeeErrors.slice(0, 3).join('; ');
+        const more = shopeeErrors.length > 3 ? ` (+${shopeeErrors.length - 3} lỗi khác)` : '';
+        setToast({
+          type: 'error',
+          text: `Kho gốc đã cập nhật nhưng Shopee lỗi: ${errPreview}${more}`,
+        });
+        setTimeout(() => setToast(null), 8000);
+      } else {
+        const warnNote =
+          shopeeWarnings.length > 0
+            ? ` (${shopeeWarnings.length} SKU Shopee bỏ qua do liên kết hết hạn)`
+            : '';
+        setToast({ type: 'success', text: (data.message || 'Cân bằng kho thành công!') + warnNote });
+        setTimeout(() => setToast(null), 4000);
+      }
       searchRef.current?.focus();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Cân bằng kho thất bại.';

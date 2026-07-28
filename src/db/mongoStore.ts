@@ -21,6 +21,7 @@ import {
   loadProductsByIdsFromDisk,
   searchProductsFromDisk,
   applyImportStockAndPriceOnDisk,
+  inheritShopeeLinkFromParent,
 } from "./productsDiskStore.ts";
 import {
   setChannelListingsDiskAppRoot,
@@ -33,7 +34,7 @@ import {
   deleteAllChannelListingsFromDisk,
 } from "./channelListingsDiskStore.ts";
 
-export { isProductsDiskMode, getProductsDiskPath, setProductsDiskAppRoot };
+export { isProductsDiskMode, getProductsDiskPath, setProductsDiskAppRoot, inheritShopeeLinkFromParent };
 export { getChannelListingsDiskPath };
 
 export type LocalInventoryCache = {
@@ -704,7 +705,7 @@ export async function loadProductByIdFromStore(productId: string): Promise<any |
   if (byChild?.data && typeof byChild.data === "object") {
     const children = Array.isArray(byChild.data.children) ? byChild.data.children : [];
     const child = children.find((c: any) => String(c?.id || "").trim() === id);
-    if (child) return child;
+    if (child) return inheritShopeeLinkFromParent(child, byChild.data);
   }
 
   // Biến thể lưu trong children_models (search flatten dùng field này)
@@ -715,12 +716,7 @@ export async function loadProductByIdFromStore(productId: string): Promise<any |
       : [];
     const child = models.find((c: any) => String(c?.id || "").trim() === id);
     if (child) {
-      return {
-        ...child,
-        title: child.title || byChildModel.data.title,
-        imageUrl: child.imageUrl || byChildModel.data.imageUrl,
-        avatarUrl: child.avatarUrl || byChildModel.data.avatarUrl,
-      };
+      return inheritShopeeLinkFromParent(child, byChildModel.data);
     }
   }
 

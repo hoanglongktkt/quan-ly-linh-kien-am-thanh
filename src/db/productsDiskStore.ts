@@ -52,6 +52,22 @@ function normalizeProduct(p: any): any | null {
   return { ...p, id };
 }
 
+/** Child kế thừa shopeeItemId / channels từ parent nếu thiếu (để sync stock/price không mất Mapping). */
+export function inheritShopeeLinkFromParent(child: any, parent: any): any {
+  if (!child || typeof child !== "object") return child;
+  if (!parent || typeof parent !== "object") return child;
+  const next = { ...child };
+  if (!next.shopeeItemId && parent.shopeeItemId) next.shopeeItemId = parent.shopeeItemId;
+  if (!next.shopeeId && parent.shopeeId) next.shopeeId = parent.shopeeId;
+  if (!next.channels?.length && Array.isArray(parent.channels) && parent.channels.length) {
+    next.channels = [...parent.channels];
+  }
+  if (!next.title && parent.title) next.title = parent.title;
+  if (!next.imageUrl && parent.imageUrl) next.imageUrl = parent.imageUrl;
+  if (!next.avatarUrl && parent.avatarUrl) next.avatarUrl = parent.avatarUrl;
+  return next;
+}
+
 export function readProductsFromDisk(): any[] {
   const file = getProductsDiskPath();
   if (!fs.existsSync(file)) {
@@ -189,12 +205,7 @@ export function loadProductByIdFromDisk(productId: string): any | null {
           String(c?.shopeeModelId || "").trim() === id,
       );
       if (child) {
-        return {
-          ...child,
-          title: child.title || p.title,
-          imageUrl: child.imageUrl || p.imageUrl,
-          avatarUrl: child.avatarUrl || p.avatarUrl,
-        };
+        return inheritShopeeLinkFromParent(child, p);
       }
     }
   }
