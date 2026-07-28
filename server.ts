@@ -3778,11 +3778,11 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
         if (orderSnList.length >= maxOrderSnsPerShop) {
           truncatedShops += 1;
-          errors.push({
-            shopId,
-            error: "pull_sn_cap",
-            message: `Shop ${shopId}: đã chạm trần ${maxOrderSnsPerShop} order_sn — có thể còn đơn trên Shopee chưa kéo hết.`,
-          });
+          // Soft warning — KHÔNG đẩy vào errors (tránh FE báo "Đồng bộ thất bại" dù đã kéo được đơn).
+          syncDiag(
+            "SN cap hit",
+            `shop=${shopId} sn=${orderSnList.length} cap=${maxOrderSnsPerShop} — có thể còn đơn trên Shopee`,
+          );
         }
 
         syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
@@ -3898,24 +3898,51 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     }
 
     const elapsedMs = Date.now() - startedAt;
+    const hardErrors = errors.filter((e) => {
+      const code = String(e?.error || "");
+      // Soft / partial — không làm fail cả phiên nếu đã kéo được đơn.
+      return (
+        code !== "pull_sn_cap" &&
+        code !== "pull_deadline" &&
+        code !== "pull_shop_deadline"
+      );
+    });
+    const softOnly =
+      errors.length > 0 && hardErrors.length === 0 && (pulled > 0 || truncatedShops > 0);
+    const success =
+      pulled > 0 || hardErrors.length === 0 || softOnly;
     const message =
       pulled > 0
         ? `Đã kéo/cập nhật ${pulled} đơn (+${added} mới, ~${updated} cập nhật) trong ${elapsedMs}ms` +
           (truncatedShops > 0
             ? ` — ${truncatedShops} shop chạm trần SN, có thể còn lệch Shopee`
             : "")
-        : errors.length > 0
-          ? `Pull 0 đơn — có lỗi: ${errors[0]?.message || errors[0]?.error}`
-          : "Shopee trả 0 order_sn trong cửa sổ thời gian (hoặc token lỗi).";
+        : hardErrors.length > 0
+          ? `Pull 0 đơn — có lỗi: ${hardErrors[0]?.message || hardErrors[0]?.error}`
+          : errors.length > 0
+            ? `Pull 0 đơn — ${errors[0]?.message || errors[0]?.error}`
+            : "Shopee trả 0 order_sn trong cửa sổ thời gian (hoặc token lỗi).";
 
-    syncDiag("Pull DONE", `${message} errors=${errors.length} truncatedShops=${truncatedShops}`);
+    syncDiag(
+      "Pull DONE",
+      `${message} success=${success} errors=${errors.length} hard=${hardErrors.length} truncatedShops=${truncatedShops}`,
+    );
     return {
-      success: pulled > 0 || errors.length === 0,
+      success,
       pulled,
       added,
       updated,
       shops: shopIds.length,
       errors,
+      warnings:
+        truncatedShops > 0
+          ? [
+              {
+                error: "pull_sn_cap",
+                message: `${truncatedShops} shop chạm trần ${maxOrderSnsPerShop} order_sn — lọc 1 shop rồi Làm mới lại nếu còn lệch.`,
+              },
+            ]
+          : [],
       message,
       elapsedMs,
       truncatedShops,
@@ -17542,6 +17569,7 @@ async function startServer() {
         maxOrderSnsPerShop: (result as any).maxOrderSnsPerShop,
         lookbackSec: (result as any).lookbackSec,
         elapsedMs: result.elapsedMs,
+        warnings: (result as any).warnings || [],
       });
     } catch (error: any) {
       console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);

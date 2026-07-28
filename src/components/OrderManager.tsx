@@ -656,10 +656,33 @@ export default function OrderManager({
             `Đồng bộ thất bại: không có access_token hợp lệ${audioHint}`,
           );
         } else if (!pullRes.ok || pullJson?.success === false) {
-          console.warn('[Orders Sync] Pull Shopee không thành công:', pullJson);
-          setLastSyncSummary(
-            `Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`,
+          const softDeadline = pullErrors.some(
+            (e: { error?: string }) =>
+              String(e?.error || '') === 'pull_deadline' ||
+              String(e?.error || '') === 'pull_shop_deadline',
           );
+          const inFlight = pullErrors.some(
+            (e: { error?: string }) => String(e?.error || '') === 'pull_in_flight',
+          ) || String(pullJson?.error || '') === 'pull_in_flight';
+          const pulledN = Number(pullJson?.pulled || 0);
+          if (inFlight) {
+            setLastSyncSummary('Đồng bộ đang chạy — vui lòng đợi xong rồi Làm mới lại.');
+            showToast('Đồng bộ đang chạy nền — đợi vài phút rồi bấm Làm mới lại.', 7000);
+          } else if (softDeadline && pulledN > 0) {
+            setLastSyncSummary(
+              `Đồng bộ một phần: ${pulledN} đơn (hết thời gian). Cập nhật ${pullJson?.updated ?? 0}, mới ${pullJson?.added ?? 0}.`,
+            );
+            showToast('Đồng bộ một phần — bấm Làm mới lại (lọc 1 shop) để kéo tiếp.', 7000);
+          } else {
+            console.warn('[Orders Sync] Pull Shopee không thành công:', pullJson);
+            setLastSyncSummary(
+              `Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`,
+            );
+            showToast(
+              String(pullJson?.message || pullJson?.error || 'Không đồng bộ được với dữ liệu Shopee'),
+              7000,
+            );
+          }
         } else {
           const truncated = Number(pullJson?.truncatedShops || 0);
           setLastSyncSummary(
@@ -668,8 +691,13 @@ export default function OrderManager({
           );
           if (truncated > 0) {
             showToast(
-              `Đồng bộ chưa đủ so với Shopee (${truncated} shop chạm trần). Lọc 1 shop rồi bấm Làm mới lại.`,
+              `Đã đồng bộ ${pullJson.pulled ?? 0} đơn, nhưng ${truncated} shop chưa kéo hết so với Shopee. Lọc 1 shop rồi Làm mới lại.`,
               7000,
+            );
+          } else {
+            showToast(
+              `Đồng bộ thành công: ${pullJson.pulled ?? 0} đơn (+${pullJson.added ?? 0} mới).`,
+              4500,
             );
           }
           console.log(

@@ -98829,11 +98829,10 @@ async function pullIncrementalOrdersFromShopee(opts) {
         }
         if (orderSnList.length >= maxOrderSnsPerShop) {
           truncatedShops += 1;
-          errors.push({
-            shopId,
-            error: "pull_sn_cap",
-            message: `Shop ${shopId}: \u0111\xE3 ch\u1EA1m tr\u1EA7n ${maxOrderSnsPerShop} order_sn \u2014 c\xF3 th\u1EC3 c\xF2n \u0111\u01A1n tr\xEAn Shopee ch\u01B0a k\xE9o h\u1EBFt.`
-          });
+          syncDiag(
+            "SN cap hit",
+            `shop=${shopId} sn=${orderSnList.length} cap=${maxOrderSnsPerShop} \u2014 c\xF3 th\u1EC3 c\xF2n \u0111\u01A1n tr\xEAn Shopee`
+          );
         }
         syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
         if (orderSnList.length === 0) continue;
@@ -98938,15 +98937,30 @@ async function pullIncrementalOrdersFromShopee(opts) {
       );
     }
     const elapsedMs = Date.now() - startedAt;
-    const message = pulled > 0 ? `\u0110\xE3 k\xE9o/c\u1EADp nh\u1EADt ${pulled} \u0111\u01A1n (+${added} m\u1EDBi, ~${updated} c\u1EADp nh\u1EADt) trong ${elapsedMs}ms` + (truncatedShops > 0 ? ` \u2014 ${truncatedShops} shop ch\u1EA1m tr\u1EA7n SN, c\xF3 th\u1EC3 c\xF2n l\u1EC7ch Shopee` : "") : errors.length > 0 ? `Pull 0 \u0111\u01A1n \u2014 c\xF3 l\u1ED7i: ${errors[0]?.message || errors[0]?.error}` : "Shopee tr\u1EA3 0 order_sn trong c\u1EEDa s\u1ED5 th\u1EDDi gian (ho\u1EB7c token l\u1ED7i).";
-    syncDiag("Pull DONE", `${message} errors=${errors.length} truncatedShops=${truncatedShops}`);
+    const hardErrors = errors.filter((e2) => {
+      const code = String(e2?.error || "");
+      return code !== "pull_sn_cap" && code !== "pull_deadline" && code !== "pull_shop_deadline";
+    });
+    const softOnly = errors.length > 0 && hardErrors.length === 0 && (pulled > 0 || truncatedShops > 0);
+    const success = pulled > 0 || hardErrors.length === 0 || softOnly;
+    const message = pulled > 0 ? `\u0110\xE3 k\xE9o/c\u1EADp nh\u1EADt ${pulled} \u0111\u01A1n (+${added} m\u1EDBi, ~${updated} c\u1EADp nh\u1EADt) trong ${elapsedMs}ms` + (truncatedShops > 0 ? ` \u2014 ${truncatedShops} shop ch\u1EA1m tr\u1EA7n SN, c\xF3 th\u1EC3 c\xF2n l\u1EC7ch Shopee` : "") : hardErrors.length > 0 ? `Pull 0 \u0111\u01A1n \u2014 c\xF3 l\u1ED7i: ${hardErrors[0]?.message || hardErrors[0]?.error}` : errors.length > 0 ? `Pull 0 \u0111\u01A1n \u2014 ${errors[0]?.message || errors[0]?.error}` : "Shopee tr\u1EA3 0 order_sn trong c\u1EEDa s\u1ED5 th\u1EDDi gian (ho\u1EB7c token l\u1ED7i).";
+    syncDiag(
+      "Pull DONE",
+      `${message} success=${success} errors=${errors.length} hard=${hardErrors.length} truncatedShops=${truncatedShops}`
+    );
     return {
-      success: pulled > 0 || errors.length === 0,
+      success,
       pulled,
       added,
       updated,
       shops: shopIds.length,
       errors,
+      warnings: truncatedShops > 0 ? [
+        {
+          error: "pull_sn_cap",
+          message: `${truncatedShops} shop ch\u1EA1m tr\u1EA7n ${maxOrderSnsPerShop} order_sn \u2014 l\u1ECDc 1 shop r\u1ED3i L\xE0m m\u1EDBi l\u1EA1i n\u1EBFu c\xF2n l\u1EC7ch.`
+        }
+      ] : [],
       message,
       elapsedMs,
       truncatedShops,
@@ -108859,7 +108873,8 @@ async function startServer() {
         truncatedShops: result.truncatedShops || 0,
         maxOrderSnsPerShop: result.maxOrderSnsPerShop,
         lookbackSec: result.lookbackSec,
-        elapsedMs: result.elapsedMs
+        elapsedMs: result.elapsedMs,
+        warnings: result.warnings || []
       });
     } catch (error) {
       console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);
