@@ -677,33 +677,62 @@ export async function loadProductsFromStore(): Promise<any[]> {
   return docsToProducts(docs);
 }
 
+/** Filter $regex (i) cho phân trang + count Kho Gốc theo tên/SKU. */
+function buildProductListSearchFilter(search: string): Record<string, unknown> {
+  const q = String(search || "").trim();
+  if (!q) return {};
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const contains = { $regex: escaped, $options: "i" as const };
+  return {
+    $or: [
+      { sku: contains },
+      { "data.sku": contains },
+      { "data.name": contains },
+      { "data.title": contains },
+      { "data.modelName": contains },
+      { "data.barcode": contains },
+      { "data.children.sku": contains },
+      { "data.children.title": contains },
+      { "data.children.name": contains },
+      { "data.children_models.sku": contains },
+      { "data.children_models.title": contains },
+      { "data.children_models.modelName": contains },
+    ],
+  };
+}
+
 /** Phân trang kho gốc — luôn skip/limit, cấm find({}) toàn catalog khi dùng Mongo. */
 export async function loadProductsPageFromStore(
   page = 1,
   pageSize = 50,
+  search = "",
 ): Promise<{ products: any[]; total: number; page: number; pageSize: number; totalPages: number; hasMore: boolean }> {
-  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize);
+  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize, search);
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  const filter = buildProductListSearchFilter(search);
+  const hasSearch = Object.keys(filter).length > 0;
   // cPanel/Mongo chậm: cho đến 30s mỗi query trang; không bao giờ fallback load hết kho.
   const COUNT_MAX_MS = 15_000;
   const PAGE_MAX_MS = 30_000;
 
   let total = 0;
   try {
-    total = await ProductModel.countDocuments({}).maxTimeMS(COUNT_MAX_MS);
+    total = await ProductModel.countDocuments(filter).maxTimeMS(COUNT_MAX_MS);
   } catch (countErr) {
     console.warn(
       "[MongoDB] countDocuments chậm/lỗi — dùng estimatedDocumentCount:",
       countErr instanceof Error ? countErr.message : countErr,
     );
+    // estimatedDocumentCount không áp dụng filter search — chỉ dùng khi không search.
+    if (hasSearch) throw countErr;
     total = await ProductModel.estimatedDocumentCount().maxTimeMS(COUNT_MAX_MS);
   }
 
   const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
-  const docs = await ProductModel.find({})
+  const docs = await ProductModel.find(filter)
     .sort({ _id: 1 })
     .skip((currentPage - 1) * safeSize)
     .limit(safeSize)

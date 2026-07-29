@@ -282,6 +282,8 @@ export default function App() {
   const fetchOrdersInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   /** Snapshot cache hydrate — tránh merge shallow đè mất cache khi setState chưa flush. */
   const ordersHydrateRef = useRef<Order[]>([]);
+  /** Từ khóa search Kho SP chính — giữ qua phân trang / focus refresh. */
+  const productsSearchRef = useRef('');
 
   const [logs, setLogs] = useState<SyncLog[]>(() =>
     safeGetJson('omni_logs', INITIAL_SYNC_LOGS),
@@ -587,6 +589,7 @@ export default function App() {
     pageSize?: number;
     forceRefresh?: boolean;
     silent?: boolean;
+    search?: string;
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
@@ -596,6 +599,10 @@ export default function App() {
     const pageSize = Math.min(50, Math.max(1, opts?.pageSize ?? 50));
     const append = !!opts?.append;
     const silent = Boolean(opts?.silent);
+    if (opts && Object.prototype.hasOwnProperty.call(opts, 'search')) {
+      productsSearchRef.current = String(opts.search ?? '').trim();
+    }
+    const searchQ = productsSearchRef.current;
 
     if (!silent) setProductsLoading(true);
     const maxAttempts = forceRefresh ? 3 : 2;
@@ -607,7 +614,13 @@ export default function App() {
           // Khớp timeout backend 30s — cPanel/Mongo cold-start cần thêm thời gian.
           const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
           // Chỉ đọc trực tiếp DB Kho gốc theo trang (page/pageSize), không tải cả kho.
-          const response = await fetch(`/api/products?page=${page}&pageSize=${pageSize}&t=${Date.now()}`, {
+          const params = new URLSearchParams({
+            page: String(page),
+            pageSize: String(pageSize),
+            t: String(Date.now()),
+          });
+          if (searchQ) params.set('search', searchQ);
+          const response = await fetch(`/api/products?${params.toString()}`, {
             method: 'GET',
             cache: 'no-store',
             signal: controller.signal,

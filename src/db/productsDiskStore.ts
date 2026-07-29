@@ -144,9 +144,34 @@ export function countProductsOnDisk(): number {
   return readProductsFromDisk().length;
 }
 
+function productMatchesDiskSearch(p: any, qLower: string): boolean {
+  if (!qLower) return true;
+  const hay = [
+    p?.sku,
+    p?.barcode,
+    p?.title,
+    p?.name,
+    p?.modelName,
+  ]
+    .map((v) => String(v || "").toLowerCase())
+    .join(" ");
+  if (hay.includes(qLower)) return true;
+  for (const key of ["children", "children_models"] as const) {
+    const list = Array.isArray(p?.[key]) ? p[key] : [];
+    for (const c of list) {
+      const childHay = [c?.sku, c?.title, c?.name, c?.modelName]
+        .map((v) => String(v || "").toLowerCase())
+        .join(" ");
+      if (childHay.includes(qLower)) return true;
+    }
+  }
+  return false;
+}
+
 export function loadProductsPageFromDisk(
   page = 1,
   pageSize = 50,
+  search = "",
 ): {
   products: any[];
   total: number;
@@ -156,14 +181,16 @@ export function loadProductsPageFromDisk(
   hasMore: boolean;
 } {
   const all = readProductsFromDisk();
+  const qLower = String(search || "").trim().toLowerCase();
+  const filtered = qLower ? all.filter((p) => productMatchesDiskSearch(p, qLower)) : all;
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
-  const total = all.length;
+  const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
   const start = (currentPage - 1) * safeSize;
   return {
-    products: all.slice(start, start + safeSize),
+    products: filtered.slice(start, start + safeSize),
     total,
     page: currentPage,
     pageSize: safeSize,

@@ -50,6 +50,7 @@ interface ProductListProps {
     append?: boolean;
     pageSize?: number;
     forceRefresh?: boolean;
+    search?: string;
   }) => Promise<void>;
   onProductsUpdated?: (products: Product[]) => void;
   onBulkSelect: (selectedIds: string[]) => void;
@@ -162,9 +163,31 @@ export default function ProductList({
 
   // Search & Filter state
   const [search, setSearch] = useState('');
+  const [serverSearch, setServerSearch] = useState('');
+  const searchDebounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchInitRef = React.useRef(true);
+  const onRefreshProductsRef = React.useRef(onRefreshProducts);
+  onRefreshProductsRef.current = onRefreshProducts;
   const [channelFilter, setChannelFilter] = useState<'all' | 'shopee' | 'tiktok' | 'none'>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
+
+  // Server-side search: debounce 400ms, luôn reset page về 1 khi đổi từ khóa.
+  useEffect(() => {
+    if (searchInitRef.current) {
+      searchInitRef.current = false;
+      return;
+    }
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => {
+      const q = search.trim();
+      setServerSearch(q);
+      void onRefreshProductsRef.current?.({ page: 1, append: false, search: q });
+    }, 400);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [search]);
 
   // Detail Modal state
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
@@ -344,11 +367,7 @@ export default function ProductList({
 
   const filteredGroups = productGroups.filter((group) => {
     const rep = group.representative;
-    const q = search.toLowerCase();
-    const matchesSearch = !q || group.displayTitle.toLowerCase().includes(q) ||
-      group.variants.some(v =>
-        v.title.toLowerCase().includes(q) || v.sku.toLowerCase().includes(q)
-      );
+    // Search đã lọc server-side (toàn DB) — không filter lại theo search trên trang hiện tại.
 
     const matchesChannel =
       channelFilter === 'all' ? true :
@@ -363,7 +382,7 @@ export default function ProductList({
       stockFilter === 'low' ? group.totalStock > 0 && group.totalStock <= 10 :
       group.totalStock === 0;
 
-    return matchesSearch && matchesChannel && matchesCategory && matchesStock;
+    return matchesChannel && matchesCategory && matchesStock;
   });
 
   const allFilteredIds = filteredGroups.flatMap((g) => g.variants.map((v) => v.id));
@@ -955,7 +974,7 @@ export default function ProductList({
               <button
                 type="button"
                 disabled={productsLoading || productsMeta.page <= 1}
-                onClick={() => onRefreshProducts?.({ page: productsMeta.page - 1, append: false })}
+                onClick={() => onRefreshProducts?.({ page: productsMeta.page - 1, append: false, search: serverSearch })}
                 className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
               >
                 Trang trước
@@ -963,7 +982,7 @@ export default function ProductList({
               <button
                 type="button"
                 disabled={productsLoading || !productsMeta.hasMore}
-                onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: false })}
+                onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: false, search: serverSearch })}
                 className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 font-semibold"
               >
                 Trang sau
@@ -972,7 +991,7 @@ export default function ProductList({
                 <button
                   type="button"
                   disabled={productsLoading}
-                  onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: true })}
+                  onClick={() => onRefreshProducts?.({ page: productsMeta.page + 1, append: true, search: serverSearch })}
                   className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-100 font-semibold"
                 >
                   Tải thêm

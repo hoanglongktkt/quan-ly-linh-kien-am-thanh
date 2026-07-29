@@ -89,10 +89,11 @@ export async function listProducts(req, res) {
       Number.isFinite(rawSize) && rawSize > 0
         ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize))
         : PRODUCTS_PAGE_SIZE_DEFAULT;
+    const search = String(req.query?.search ?? req.query?.keyword ?? "").trim();
 
     // Chỉ đọc 1 trang (mặc định 50) — cấm fallback loadProducts()/find({}) toàn kho.
     const paged = await deps.withLocalDbTimeout(
-      deps.loadProductsPageFromStore(page, pageSize),
+      deps.loadProductsPageFromStore(page, pageSize, search),
       diskMode ? 15_000 : 30_000,
       "products_page_load",
     );
