@@ -20,6 +20,13 @@ import {
   healHandedOver,
   createManualOrder,
 } from "../controllers/ordersController.js";
+import { saveScanOrders, listDonHoanHuy } from "../controllers/scanController.js";
+import {
+  enqueueScanBg,
+  getScanBgStatus,
+  ackScanBg,
+} from "../controllers/scanBgController.js";
+import { scanBulkUpdate } from "../controllers/scanBulkController.js";
 
 const router = Router();
 
@@ -38,6 +45,12 @@ router.post("/hand-over-carrier/bulk", handOverCarrierBulk);
 router.post("/hand-over-carrier", handOverCarrierByCode);
 router.post("/heal-handed-over", healHandedOver);
 router.post("/manual", createManualOrder);
+router.get("/don-hoan-huy", listDonHoanHuy);
+router.post("/don-hoan-huy", saveScanOrders);
+router.post("/scan-bg-enqueue", enqueueScanBg);
+router.get("/scan-bg-status", getScanBgStatus);
+router.post("/scan-bg-ack", ackScanBg);
+router.post("/scan-bulk-update", scanBulkUpdate);
 router.get("/:orderSn/events", getOrderEvents);
 router.post("/:id/hand-over-carrier", handOverCarrierById);
 router.get("/", listOrders);
@@ -46,10 +59,3 @@ router.delete("/:id", deleteOrder);
 
 export default router;
 export { router };
-
-/** Handlers mount ngoài /api/orders — dùng trực tiếp từ server.ts */
-export {
-  getSyncJobById,
-  cleanupMongoTemp,
-  ensureMongoTtl,
-} from "../controllers/ordersController.js";

@@ -1,5 +1,9 @@
-import jwt from 'jsonwebtoken';
-import { getJwtSecret } from '../jwtSecret.js';
+/**
+ * Vercel — GET /api/auth/verify
+ * Đồng bộ middlewares/auth + authController (Phase 7).
+ */
+import { authMiddleware } from '../../middlewares/auth.js';
+import { verifyAuth } from '../../controllers/authController.js';
 
 export async function handleAuthVerify(req, res) {
   if (req.method === 'OPTIONS') {
@@ -14,16 +18,14 @@ export async function handleAuthVerify(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const authHeader = req.headers.authorization || req.headers.Authorization;
-  if (!authHeader || !String(authHeader).startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Yêu cầu cung cấp Token xác thực hợp lệ.' });
-  }
-
-  const token = String(authHeader).split(' ')[1];
-  try {
-    const decoded = jwt.verify(token, getJwtSecret());
-    return res.status(200).json({ valid: true, username: decoded.username });
-  } catch {
-    return res.status(401).json({ error: 'Token không hợp lệ hoặc đã hết hạn.' });
-  }
+  return new Promise((resolve) => {
+    authMiddleware(req, res, () => {
+      Promise.resolve(verifyAuth(req, res)).then(resolve).catch((err) => {
+        if (!res.headersSent) {
+          res.status(500).json({ error: err?.message || 'verify_failed' });
+        }
+        resolve(undefined);
+      });
+    });
+  });
 }

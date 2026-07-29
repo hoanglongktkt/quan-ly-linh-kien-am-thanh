@@ -1,5 +1,8 @@
-import jwt from 'jsonwebtoken';
-import { getJwtSecret } from '../jwtSecret.js';
+/**
+ * Vercel — POST /api/login
+ * Đồng bộ authController (Phase 7).
+ */
+import { login } from '../../controllers/authController.js';
 
 export async function handleLogin(req, res) {
   if (req.method === 'OPTIONS') {
@@ -14,16 +17,5 @@ export async function handleLogin(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { username, password } = req.body || {};
-  const expectedUsername = process.env.ADMIN_USERNAME || 'admin';
-  const expectedPassword = process.env.ADMIN_PASSWORD || 'password123';
-
-  if (username === expectedUsername && password === expectedPassword) {
-    const token = jwt.sign({ username }, getJwtSecret(), { expiresIn: '24h' });
-    return res.status(200).json({ token, username });
-  }
-
-  return res.status(401).json({
-    error: 'Tên đăng nhập hoặc mật khẩu không chính xác.',
-  });
+  return login(req, res);
 }

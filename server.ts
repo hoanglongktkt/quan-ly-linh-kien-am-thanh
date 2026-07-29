@@ -118,6 +118,15 @@ import {
 import productsRoutesImport from "./routes/productsRoutes.js";
 import mappingRoutesImport from "./routes/mappingRoutes.js";
 import ordersRoutesImport from "./routes/ordersRoutes.js";
+import shopeeAuthRoutesImport, { shopeeAuthCallbackAlias as shopeeAuthCallbackAliasImport } from "./routes/shopeeAuthRoutes.js";
+import shopeeOrdersRoutesImport from "./routes/shopeeOrdersRoutes.js";
+import shopeeProductsRoutesImport from "./routes/shopeeProductsRoutes.js";
+import shopeeShipRoutesImport from "./routes/shopeeShipRoutes.js";
+import shopeePrintRoutesImport from "./routes/shopeePrintRoutes.js";
+import inventoryRoutesImport from "./routes/inventoryRoutes.js";
+import autoLinkRoutesImport from "./routes/autoLinkRoutes.js";
+import apiSystemRoutesImport from "./routes/apiSystemRoutes.js";
+import labelsRoutesImport, { initLabelsRoutes } from "./routes/labelsRoutes.js";
 import {
   initOrdersService,
   loadOrders,
@@ -334,6 +343,16 @@ const dashboardRoutes = asRouter(dashboardRoutesImport);
 const productsRoutes = asRouter(productsRoutesImport);
 const mappingRoutes = asRouter(mappingRoutesImport);
 const ordersRoutes = asRouter(ordersRoutesImport);
+const shopeeAuthRoutes = asRouter(shopeeAuthRoutesImport);
+const shopeeAuthCallbackAlias = asRouter(shopeeAuthCallbackAliasImport);
+const shopeeOrdersRoutes = asRouter(shopeeOrdersRoutesImport);
+const shopeeProductsRoutes = asRouter(shopeeProductsRoutesImport);
+const shopeeShipRoutes = asRouter(shopeeShipRoutesImport);
+const shopeePrintRoutes = asRouter(shopeePrintRoutesImport);
+const inventoryRoutes = asRouter(inventoryRoutesImport);
+const autoLinkRoutes = asRouter(autoLinkRoutesImport);
+const apiSystemRoutes = asRouter(apiSystemRoutesImport);
+const labelsRoutes = asRouter(labelsRoutesImport);
 import {
   initMongo,
   loadProductsFromStore,
@@ -12405,22 +12424,11 @@ async function startServer() {
     shopeeWebhookUrl: SHOPEE_WEBHOOK_URL,
   });
 
-  app.post("/api/login", login);
-  app.get("/api/auth/verify", authMiddleware, verifyAuth);
   app.use("/api", authRoutes);
-
-  /** MVC — đăng ký tường minh (không phụ thuộc app.use router). */
-  app.post("/api/scan/save", authMiddleware, saveScanOrders);
-  app.get("/api/scan/don-hoan-huy", authMiddleware, listDonHoanHuy);
   app.use("/api/scan", authMiddleware, scanRoutes);
-
-  app.get("/api/config/public", getPublicConfig);
-  app.post("/api/debug/client-log", authMiddleware, postClientLog);
-  app.get("/api/debug/client-log", authMiddleware, getClientLog);
-  app.get("/api/health", getHealth);
   app.use("/api", healthRoutes);
 
-  // ─── Mapping products — Phase 4 MVC (ĐẶT SỚM, TRƯỚC static / SPA catch-all) ───
+  // ─── Mapping products — Phase 4 MVC  // ─── Mapping products — Phase 4 MVC (ĐẶT SỚM, TRƯỚC static / SPA catch-all) ───
   initMappingController({
     reloadCachesFromDb,
     enrichChannelListingsWithMaster,
@@ -12445,41 +12453,22 @@ async function startServer() {
     writeChannelListingsDb,
     refreshCache,
   });
-  app.get("/api/mapping-products/sku-index", authMiddleware, handleMappingSkuIndex);
-  app.post("/api/mapping-products/auto-link-single", authMiddleware, handleSingleAutoLink);
-  app.post("/api/mapping-products/batch-auto-link", authMiddleware, handleBatchAutoLink);
-  app.post("/api/mapping-products/bulk-auto-link", authMiddleware, handleBulkAutoLinkByIds);
-  app.post("/api/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
-  app.post("/api/mapping-products/purge-broken", authMiddleware, handleMappingPurgeBroken);
-  app.post("/api/mapping-products/heal", authMiddleware, handleMappingProductsHeal);
-  app.get("/api/mapping-products", authMiddleware, handleMappingProductsGet);
-  app.put("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
-  app.post("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
   app.use("/api/mapping-products", authMiddleware, mappingRoutes);
-  // Alias auto-link (gom về cùng handler)
-  app.post("/api/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-  app.post("/api/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-  app.post("/api/auto-link", authMiddleware, handleBatchAutoLink);
+  app.use("/api", autoLinkRoutes);
 
-    // PDF vận đơn — chuẩn /api/public/labels + alias /api/labels|/labels|/prints → cùng handler.
-    const handlePublicLabelGet = (req: any, res: any) => {
-      const result = serveLabelPdfFromMem(req.params.filename, res);
-      if (result === "not_found") {
-        res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (đã hết hạn hoặc chưa tạo).");
-      }
-    };
-    app.get("/api/public/labels/:filename", handlePublicLabelGet);
-    app.get("/api/labels/:filename", handlePublicLabelGet);
-    app.get("/labels/:filename", handlePublicLabelGet);
-    app.get("/prints/:filename", handlePublicLabelGet);
+  initLabelsRoutes((req: any, res: any) => {
+    const result = serveLabelPdfFromMem(req.params.filename, res);
+    if (result === "not_found") {
+      res.status(404).type("text/plain").send("Không tìm thấy file vận đơn (đã hết hạn hoặc chưa tạo).");
+    }
+  });
+  app.use(labelsRoutes);
 
   initShopeeAuthController({ logOAuthSaveError });
-  app.get("/api/shopee/oauth/complete", oauthComplete);
-  app.get(["/api/shopee/callback", "/api/auth/shopee/callback"], oauthCallback);
-  app.get("/api/shopee/webhook", webhookProbe);
+  app.use("/api/shopee", shopeeAuthRoutes);
+  app.use("/api/auth/shopee", shopeeAuthCallbackAlias);
 
-
-  // Real synced orders list — this is what the Order Management UI reads from.
+  // Real synced orders list  // Real synced orders list — this is what the Order Management UI reads from.
   // --- Products warehouse API — Phase 4 MVC ---
   initStockSyncQueue({
     getProductChildrenList,
@@ -12541,32 +12530,10 @@ async function startServer() {
     syncProductToWoo,
     syncProductToTikTok,
   });
-  app.get("/api/products", authMiddleware, listProducts);
-  app.get("/api/products/search", authMiddleware, searchProducts);
-  app.post("/api/products/sync-shopee", authMiddleware, handleProductSyncShopee);
-  app.post("/api/products/:id/sync-shopee", authMiddleware, handleProductSyncShopee);
-  app.post("/api/products", authMiddleware, createProduct);
-  app.get("/api/local-inventory", authMiddleware, getLocalInventory);
-  app.post("/api/local-inventory/refresh", authMiddleware, refreshLocalInventory);
-  app.put("/api/products/replace", authMiddleware, replaceProducts);
-  app.patch("/api/products/:id", authMiddleware, patchProduct);
-  app.post("/api/products/inventory-balance", authMiddleware, inventoryBalance);
-  app.post("/api/sync-stock", authMiddleware, syncStock);
-  app.post("/api/products/bulk-save", authMiddleware, bulkSaveProducts);
-  app.delete("/api/products/:id", authMiddleware, deleteProduct);
-  app.post("/api/products/clear-all", authMiddleware, clearAllProducts);
-  app.delete("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-  app.post("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-  app.post("/api/products/bulk-update", authMiddleware, bulkUpdateProducts);
-  app.post("/api/products/bulk-channel-sync", authMiddleware, bulkChannelSync);
   app.use("/api/products", authMiddleware, productsRoutes);
+  app.use("/api", inventoryRoutes);
 
   // --- Suppliers API (data/suppliers.json) — Phase 1 MVC ---
-  app.get("/api/suppliers", authMiddleware, listSuppliers);
-  app.post("/api/suppliers", authMiddleware, createSupplier);
-  app.put("/api/suppliers/:id", authMiddleware, updateSupplier);
-  app.delete("/api/suppliers/:id", authMiddleware, deleteSupplier);
-  app.post("/api/suppliers/clear-all", authMiddleware, clearAllSuppliers);
   app.use("/api/suppliers", authMiddleware, suppliersRoutes);
 
   // --- Imports API — Phase 2 MVC ---
@@ -12575,18 +12542,9 @@ async function startServer() {
     loadProducts,
     applyImportStockAndPriceToMainWarehouse,
   });
-  app.get("/api/imports", authMiddleware, listImports);
-  app.get("/api/imports/history/:productId", authMiddleware, getImportHistory);
-  app.get("/api/imports/product-context/:productId", authMiddleware, getImportProductContext);
-  app.post("/api/imports", authMiddleware, createImport);
-  app.post("/api/imports/clear-all", authMiddleware, clearAllImports);
   app.use("/api/imports", authMiddleware, importsRoutes);
 
   // --- Expenses API (data/expenses.json) — Phase 1 MVC ---
-  app.get("/api/expenses", authMiddleware, listExpenses);
-  app.post("/api/expenses", authMiddleware, createExpense);
-  app.delete("/api/expenses/:id", authMiddleware, deleteExpense);
-  app.post("/api/expenses/clear-all", authMiddleware, clearAllExpenses);
   app.use("/api/expenses", authMiddleware, expensesRoutes);
 
   // --- Dashboard API — Phase 2 MVC ---
@@ -12598,7 +12556,6 @@ async function startServer() {
     getLowStockProductsFromStore,
     loadProductsByIdsFromStore,
   });
-  app.get("/api/dashboard", authMiddleware, getDashboard);
   app.use("/api/dashboard", authMiddleware, dashboardRoutes);
 
   // --- Orders Core — Phase 5 MVC ---
@@ -12705,11 +12662,6 @@ async function startServer() {
     generateCarrierTracking,
   });
 
-  app.get("/api/orders/refresh", authMiddleware, refreshOrders);
-  app.get("/api/orders/query", authMiddleware, queryOrders);
-  app.get("/api/orders/:orderSn/events", authMiddleware, getOrderEvents);
-  app.get("/api/sync-jobs/:jobId", authMiddleware, getSyncJobById);
-
   initShopeeOrdersController({
     createSyncJob,
     finishSyncJob,
@@ -12743,35 +12695,6 @@ async function startServer() {
     replaceProductsForShopeeItem,
     extractHttpClientError,
   });
-
-  app.post("/api/orders/pull", authMiddleware, pullOrders);
-  app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
-
-  app.get("/api/orders", authMiddleware, listOrders);
-  app.post("/api/orders/cleanup-handed-over", authMiddleware, cleanupHandedOver);
-  app.post("/api/orders/cleanup-closed-retention", authMiddleware, cleanupClosedRetention);
-  app.post("/api/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
-  app.post("/api/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
-  app.post("/api/orders/cleanup-label-pdfs", authMiddleware, cleanupLabelPdfs);
-  app.post("/api/orders/cleanup-processed-pickup", authMiddleware, cleanupProcessedPickup);
-  app.get("/api/orders/lookup", authMiddleware, lookupOrder);
-  app.post("/api/orders/cleanup-mock", authMiddleware, cleanupMockOrders);
-  app.post("/api/orders/hydrate-tracking", authMiddleware, hydrateTracking);
-  app.post("/api/orders/enrich-tracking", authMiddleware, enrichTracking);
-  app.patch("/api/orders/:id", authMiddleware, patchOrder);
-  app.delete("/api/orders/:id", authMiddleware, deleteOrder);
-  app.post("/api/orders/:id/hand-over-carrier", authMiddleware, handOverCarrierById);
-  app.post("/api/orders/hand-over-carrier", authMiddleware, handOverCarrierByCode);
-  app.post("/api/orders/hand-over-carrier/bulk", authMiddleware, handOverCarrierBulk);
-  app.post("/api/orders/heal-handed-over", authMiddleware, healHandedOver);
-  app.post("/api/orders/manual", authMiddleware, createManualOrder);
-  app.use("/api/orders", authMiddleware, ordersRoutes);
-
-  /** Danh sách tab Đã nhận đơn hủy/hoàn — alias MVC GET /api/scan/don-hoan-huy. */
-  app.get("/api/orders/don-hoan-huy", authMiddleware, listDonHoanHuy);
-
-  /** Ghi trực tiếp collection don_hoan_huy — alias MVC POST /api/scan/save. */
-  app.post("/api/orders/don-hoan-huy", authMiddleware, saveScanOrders);
 
   // --- Scan BG + Scan Bulk — Phase 3 MVC ---
   initScanBgQueue({
@@ -12813,36 +12736,12 @@ async function startServer() {
     invalidateOrdersRefreshCache,
   });
 
-  /** Queue dò ngầm quét mã — Backend worker độc lập FE. */
-  app.post("/api/orders/scan-bg-enqueue", authMiddleware, enqueueScanBg);
-  app.get("/api/orders/scan-bg-status", authMiddleware, getScanBgStatus);
-  app.post("/api/orders/scan-bg-ack", authMiddleware, ackScanBg);
-
-  /**
-   * Bulk phân loại đơn sau phiên quét QR — CHỈ cập nhật DB nội bộ.
-   * KHÔNG gọi Shopee API.
-   */
-  app.post("/api/orders/scan-bulk-update", authMiddleware, scanBulkUpdate);
-
-  // --- Vietnam Address API — Phase 1 MVC ---
-  app.get("/api/vietnam-address/provinces", authMiddleware, getProvinces);
-  app.get("/api/vietnam-address/districts/:provinceCode", authMiddleware, getDistricts);
-  app.get("/api/vietnam-address/wards/:districtCode", authMiddleware, getWards);
+  // Orders + system + Vietnam + Shopee (routers) — sau init scan/bulk deps
+  app.use("/api/orders", authMiddleware, ordersRoutes);
+  app.use("/api", apiSystemRoutes);
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
-
-  app.get("/api/shopee/diagnostics", authMiddleware, getDiagnostics);
-  app.get("/api/shopee/debug/return-by-order", authMiddleware, debugReturnByOrder);
-  app.post("/api/sync-from-shop", authMiddleware, syncFromShop);
-
-  // Alias auto-link đã mount sớm cùng Mapping (Phase 4).
-
-  // Real product sync — "Khởi tạo kho chính từ Shopee API": pulls the shop's
-  // REAL listed items (v2.product.get_item_list -> get_item_base_info, plus
-  // get_model_list for items with variants) and returns them normalized to
-  // this project's Product shape. The frontend replaces its entire local
-  // product list with this response — no more hardcoded/mock demo products.
-  app.post("/api/shopee/products/sync", authMiddleware, syncProducts);
-  app.post("/api/shopee/products/sync-item-variants", authMiddleware, syncItemVariants);
+  app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);
+  app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
 
   // --- Shopee logistics: "Chuẩn bị hàng" (ship_order) ------------------------
 
@@ -13059,8 +12958,6 @@ async function startServer() {
       failedOrders,
     };
   }
-
-  app.post("/api/shopee/ship-order", authMiddleware, shipOrder);
 
   // Bulk: arrange shipment ONLY ("Xác nhận Chuẩn bị hàng loạt").
   // KHÔNG tạo/fetch PDF tại đây — user in thủ công bằng nút "In đơn" sau.
@@ -14290,9 +14187,7 @@ async function startServer() {
     createShipOrderJobId,
     pruneOldShipOrderJobs,
   });
-  app.post("/api/shopee/ship-order/bulk", authMiddleware, shipOrderBulk);
-  app.post("/api/shopee/ship-order/bulk-async", authMiddleware, shipOrderBulkAsync);
-  app.get("/api/shopee/ship-order/job/:jobId", authMiddleware, getShipOrderJob);
+  app.use("/api/shopee", authMiddleware, shopeeShipRoutes);
 
   // Single or bulk print: fetch the REAL Shopee AWB PDF for the given orders.
   async function printDocumentHandler(req: any, res: any) {
@@ -14719,9 +14614,7 @@ async function startServer() {
     createPrintDocumentJobId,
     pruneOldPrintDocumentJobs,
   });
-  app.post("/api/shopee/print-document", authMiddleware, printDocument);
-  app.post("/api/shopee/print-document/async", authMiddleware, printDocumentAsync);
-  app.get("/api/shopee/print-document/job/:jobId", authMiddleware, getPrintDocumentJob);
+  app.use("/api/shopee", authMiddleware, shopeePrintRoutes);
 
   async function checkShopConnectionStatus(shop: any): Promise<{ online: boolean; message: string }> {
     if (!shop?.connected) {
@@ -14822,16 +14715,7 @@ async function startServer() {
     logOAuthSaveError,
     checkShopConnectionStatus,
   });
-  app.get("/api/settings/channels", authMiddleware, getChannelSettings);
-  app.put("/api/settings/channels", authMiddleware, putChannelSettings);
-  app.get("/api/settings/gemini-status", authMiddleware, getGeminiStatus);
-  app.post("/api/settings/update-gemini-key", authMiddleware, updateGeminiKey);
-  app.post("/api/settings/test-gemini-key", authMiddleware, testGeminiKey);
-  app.post("/api/settings/shop-connection-status", authMiddleware, postShopConnectionStatus);
   app.use("/api/settings", authMiddleware, settingsRoutes);
-
-  app.get("/api/shopee/oauth-shops", authMiddleware, listOauthShops);
-  app.get("/api/shopee/auth-url", authMiddleware, getAuthUrl);
 
   const LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "multi_channel_listings.json");
 
@@ -14853,9 +14737,6 @@ async function startServer() {
   };
 
   // --- AI / Gemini API — Phase 2 MVC ---
-  app.post("/api/gemini/optimize", authMiddleware, geminiOptimize);
-  app.post("/api/ai/parse-address", authMiddleware, parseAddress);
-  app.post("/api/ai/generate-description", authMiddleware, generateDescription);
   app.use("/api", aiRoutes);
 
   app.get("/api/multi-channel/listing", authMiddleware, async (_req, res) => {

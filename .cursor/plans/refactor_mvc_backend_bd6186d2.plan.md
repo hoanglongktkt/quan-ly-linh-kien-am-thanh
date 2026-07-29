@@ -4,7 +4,7 @@ overview: Phân tích monolith `server.ts` (~23.675 dòng, ~140 route, ~437 help
 todos:
   - id: phase-0-foundation
     content: "Phase 0: Tách middlewares (auth, cors, dbReady) + utils dùng chung; hợp nhất SSOT DonHoanHuy/connectDB"
-    status: pending
+    status: completed
   - id: phase-1-independent
     content: "Phase 1: Bóc Auth, Health/Config, Vietnam Address, Suppliers, Expenses"
     status: completed
@@ -16,16 +16,16 @@ todos:
     status: completed
   - id: phase-4-catalog
     content: "Phase 4: Bóc Products, Mapping/Auto-link, stock sync queue"
-    status: pending
+    status: completed
   - id: phase-5-orders
     content: "Phase 5: Bóc Orders CRUD/cleanup/hand-over + services/orders"
-    status: pending
+    status: completed
   - id: phase-6-shopee
     content: "Phase 6: Bóc Shopee OAuth/client/sync/ship/print/webhook/publish"
-    status: pending
+    status: completed
   - id: phase-7-thin-server
     content: "Phase 7: Làm mỏng server.ts, đồng bộ build + _lib/handlers"
-    status: pending
+    status: completed
 isProject: false
 ---
 
