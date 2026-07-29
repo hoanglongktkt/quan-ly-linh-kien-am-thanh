@@ -118,6 +118,58 @@ import {
 } from "./controllers/dashboardController.js";
 import productsRoutesImport from "./routes/productsRoutes.js";
 import mappingRoutesImport from "./routes/mappingRoutes.js";
+import ordersRoutesImport from "./routes/ordersRoutes.js";
+import {
+  initOrdersService,
+  loadOrders,
+  saveOrders,
+  loadOrdersForApi,
+  loadOrdersForShipScoped,
+  persistOrdersToDatabase,
+  persistChangedOrdersPatch,
+  queueOrdersJsonMirror,
+  queueOrdersJsonMirrorFromMongo,
+  hydrateTrackingFromMongoToJson,
+  mirrorTrackingFieldsForRead,
+  rebuildOrderLookupIndex,
+  getOrderLookupIndex,
+  normalizeOrderIndexKey,
+  findOrderRecord,
+  resolveOrdersFromRequest,
+  findOrderByScanLookup,
+  handOverOrderToCarrierByIndex,
+  purgeHandedOverGarbageOrdersOnce,
+  purgeClosedOrdersByRetention,
+  archiveStaleReceivedCancelReturnOrders,
+  scheduleClosedOrdersRetentionCleanup,
+  scheduleMongoTempCollectionsCleanup,
+} from "./services/orders.js";
+import {
+  initOrdersController,
+  invalidateOrdersRefreshCache,
+  refreshOrders,
+  queryOrders,
+  getOrderEvents,
+  getSyncJobById,
+  listOrders,
+  cleanupHandedOver,
+  cleanupClosedRetention,
+  cleanupMongoTemp,
+  ensureMongoTtl,
+  cleanupLabelPdfs,
+  cleanupProcessedPickup,
+  lookupOrder,
+  cleanupMockOrders,
+  hydrateTracking,
+  enrichTracking,
+  patchOrder,
+  deleteOrder,
+  handOverCarrierById,
+  handOverCarrierByCode,
+  handOverCarrierBulk,
+  healHandedOver,
+  createManualOrder,
+} from "./controllers/ordersController.js";
 import {
   initStockSyncQueue,
   resolveProductWithShopeeMapping,
@@ -183,6 +235,7 @@ const aiRoutes = asRouter(aiRoutesImport);
 const dashboardRoutes = asRouter(dashboardRoutesImport);
 const productsRoutes = asRouter(productsRoutesImport);
 const mappingRoutes = asRouter(mappingRoutesImport);
+const ordersRoutes = asRouter(ordersRoutesImport);
 import {
   initMongo,
   loadProductsFromStore,
@@ -10300,176 +10353,7 @@ function matchesReceivedCancelReturnTabOrder(order: any): boolean {
   return local === "RETURN_RECEIVED" || local === "CANCELLED_STORED";
 }
 
-/** Dọn tab "Đã nhận đơn hủy, đơn hoàn": gỡ cờ nội bộ sau 14 ngày — KHÔNG xóa đơn. */
-async function archiveStaleReceivedCancelReturnOrders(
-  retentionDays = 14,
-): Promise<{ scanned: number; archived: number }> {
-  const orders = loadOrders();
-  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-  const changed: any[] = [];
-
-  for (let i = 0; i < orders.length; i++) {
-    const order = orders[i];
-    if (!matchesReceivedCancelReturnTabOrder(order)) continue;
-    const updatedAt = resolveLocalStatusUpdatedAt(order);
-    if (!updatedAt || updatedAt >= cutoff) continue;
-
-    const next = { ...order };
-    next.local_status = null;
-    next.localStatus = null;
-    next.is_local_return_archived = true;
-    // Giữ timestamp gốc để audit; không đụng status Shopee.
-    orders[i] = next;
-    changed.push(next);
-  }
-
-  if (changed.length > 0) {
-    await persistOrdersToDatabase(orders, changed);
-  }
-  console.log(
-    `[Local Return Archive] retention=${retentionDays}d scanned=${orders.length} archived=${changed.length}`,
-  );
-  return { scanned: orders.length, archived: changed.length };
-}
-
-/**
- * Xóa đơn đã đóng khỏi Mongo (+ mirror JSON) để giải phóng Atlas free tier.
- * - Hủy/hoàn đã lưu / archived: > 14 ngày
- * - Hoàn tất / đang giao cũ / ĐVVC: > 30 ngày
- * Không xóa đơn chờ lấy / chờ xác nhận.
- */
-async function purgeClosedOrdersByRetention(opts?: {
-  cancelReturnDays?: number;
-  closedDays?: number;
-  dryRun?: boolean;
-}): Promise<{
-  deleted: number;
-  jsonRemoved: number;
-  sns: string[];
-  scanned: number;
-  dryRun: boolean;
-  cancelReturnMatched: number;
-  closedMatched: number;
-  message: string;
-}> {
-  const cancelReturnDays = Math.max(1, Math.floor(opts?.cancelReturnDays ?? 14));
-  const closedDays = Math.max(1, Math.floor(opts?.closedDays ?? 30));
-  const dryRun = Boolean(opts?.dryRun);
-
-  if (!isMongoReady()) {
-    return {
-      deleted: 0,
-      jsonRemoved: 0,
-      sns: [],
-      scanned: 0,
-      dryRun,
-      cancelReturnMatched: 0,
-      closedMatched: 0,
-      message: "Mongo chưa sẵn sàng — bỏ qua retention cleanup.",
-    };
-  }
-
-  const mongoResult = await deleteClosedOrdersByRetention({
-    cancelReturnDays,
-    closedDays,
-    dryRun,
-  });
-
-  let jsonRemoved = 0;
-  if (!dryRun && mongoResult.sns.length > 0) {
-    try {
-      const snSet = new Set(
-        mongoResult.sns.map((s) => String(s || "").replace(/^shopee-/i, "").trim()).filter(Boolean),
-      );
-      const orders = loadOrders();
-      const kept = orders.filter((o: any) => {
-        const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
-        const id = String(o?.id || "").replace(/^shopee-/i, "").trim();
-        return !snSet.has(sn) && !snSet.has(id);
-      });
-      jsonRemoved = orders.length - kept.length;
-      if (jsonRemoved > 0) saveOrders(kept);
-    } catch (err: any) {
-      console.warn("[Orders Retention] JSON mirror cleanup:", err?.message || err);
-    }
-    try {
-      queueOrdersJsonMirrorFromMongo();
-    } catch {
-      /* ignore */
-    }
-  }
-
-  const message = dryRun
-    ? `Dry-run: sẽ xóa ~${mongoResult.sns.length} đơn (hủy/hoàn ${mongoResult.cancelReturnMatched} @${cancelReturnDays}d, đóng ${mongoResult.closedMatched} @${closedDays}d).`
-    : mongoResult.deleted > 0
-      ? `Đã xóa ${mongoResult.deleted} đơn đã đóng (hủy/hoàn>${cancelReturnDays}d / hoàn tất-ĐVVC>${closedDays}d).`
-      : `Không có đơn đã đóng quá hạn để xóa (${cancelReturnDays}/${closedDays} ngày).`;
-
-  console.log(`[Orders Retention] ${message}`);
-  return {
-    deleted: mongoResult.deleted,
-    jsonRemoved,
-    sns: mongoResult.sns,
-    scanned: mongoResult.scanned,
-    dryRun,
-    cancelReturnMatched: mongoResult.cancelReturnMatched,
-    closedMatched: mongoResult.closedMatched,
-    message,
-  };
-}
-
-let closedOrdersRetentionRunning = false;
-let closedOrdersRetentionTimer: ReturnType<typeof setInterval> | undefined;
-
-function scheduleClosedOrdersRetentionCleanup(): void {
-  if (closedOrdersRetentionTimer) return;
-  const run = () => {
-    if (closedOrdersRetentionRunning || !isMongoReady()) return;
-    closedOrdersRetentionRunning = true;
-    void purgeClosedOrdersByRetention()
-      .catch((err) => console.warn("[Orders Retention] schedule error:", err?.message || err))
-      .finally(() => {
-        closedOrdersRetentionRunning = false;
-      });
-  };
-  // Chạy 1 lần sau khi Mongo sẵn sàng (~2 phút), rồi mỗi 24h.
-  setTimeout(run, 2 * 60 * 1000);
-  closedOrdersRetentionTimer = setInterval(run, 24 * 60 * 60 * 1000);
-  if (typeof (closedOrdersRetentionTimer as any).unref === "function") {
-    (closedOrdersRetentionTimer as any).unref();
-  }
-  console.log("[Orders Retention] Scheduled: hủy/hoàn >14d, hoàn tất/ĐVVC >30d, mỗi 24h.");
-}
-
-/** Dọn order_events + sync_jobs (Atlas Free) — chạy ngay sau boot + mỗi 24h. */
-let mongoTempCleanupRunning = false;
-let mongoTempCleanupTimer: ReturnType<typeof setInterval> | undefined;
-
-function scheduleMongoTempCollectionsCleanup(): void {
-  if (mongoTempCleanupTimer) return;
-  const run = () => {
-    if (mongoTempCleanupRunning || !isMongoReady()) return;
-    mongoTempCleanupRunning = true;
-    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14, ensureTtl: true })
-      .then((r) => {
-        console.log(
-          `[Mongo Temp Cleanup] order_events ${r.orderEventsBefore}→${r.orderEventsAfter} (−${r.orderEventsDeleted}),` +
-            ` sync_jobs ${r.syncJobsBefore}→${r.syncJobsAfter} (−${r.syncJobsDeleted})`,
-        );
-      })
-      .catch((err) => console.warn("[Mongo Temp Cleanup] schedule error:", err?.message || err))
-      .finally(() => {
-        mongoTempCleanupRunning = false;
-      });
-  };
-  // Chạy sớm hơn retention đơn (~45s) để giải phóng dung lượng Atlas ngay.
-  setTimeout(run, 45_000);
-  mongoTempCleanupTimer = setInterval(run, 24 * 60 * 60 * 1000);
-  if (typeof (mongoTempCleanupTimer as any).unref === "function") {
-    (mongoTempCleanupTimer as any).unref();
-  }
-  console.log("[Mongo Temp Cleanup] Scheduled: order_events/sync_jobs >14d + TTL 14d, mỗi 24h.");
-}
+// archiveStale / purgeClosed / schedules / persist — services/orders.js (Phase 5)
 
 function isOrderAlreadyScanProcessed(order: any): boolean {
   const local = resolveOrderLocalStatus(order);
@@ -10488,53 +10372,6 @@ function getScanProcessedReason(order: any): string {
   if (local === "CANCELLED_STORED") return "Đơn hủy đã được phân loại trước đó";
   if (local === "RETURN_RECEIVED") return "Đơn đã nhận hàng hoàn trước đó";
   return "Đơn đã được xử lý trước đó";
-}
-
-let ordersJsonMirrorQueued = false;
-let ordersJsonMirrorSnapshot: any[] | null = null;
-
-/** Legacy mirror only: never block a Mongo-backed API response on orders.json. */
-function queueOrdersJsonMirror(orders: any[]): void {
-  ordersJsonMirrorSnapshot = Array.isArray(orders) ? orders : [];
-  if (ordersJsonMirrorQueued) return;
-  ordersJsonMirrorQueued = true;
-  setImmediate(() => {
-    const snapshot = ordersJsonMirrorSnapshot;
-    ordersJsonMirrorSnapshot = null;
-    ordersJsonMirrorQueued = false;
-    if (!snapshot) return;
-    try {
-      saveOrders(snapshot);
-    } catch (err: any) {
-      console.warn("[Orders JSON Mirror] skipped:", err?.message || err);
-    }
-    if (ordersJsonMirrorSnapshot) queueOrdersJsonMirror(ordersJsonMirrorSnapshot);
-  });
-}
-
-function queueOrdersJsonMirrorFromMongo(): void {
-  setImmediate(() => {
-    void loadOrdersFromStore()
-      .then((orders) => queueOrdersJsonMirror(orders))
-      .catch((err: any) =>
-        console.warn("[Orders JSON Mirror] Mongo snapshot skipped:", err?.message || err),
-      );
-  });
-}
-
-/** Mongo is the SSOT. orders.json is an asynchronous legacy mirror only. */
-async function persistOrdersToDatabase(orders: any[], changedOrders: any[]): Promise<number> {
-  if (!changedOrders.length) return 0;
-  if (!isMongoReady()) throw new Error("mongodb_not_ready");
-  try {
-    const n = await bulkUpsertOrdersToStore(changedOrders);
-    queueOrdersJsonMirror(orders);
-    console.log(`[Orders Persist] Mongo bulkWrite OK — upsertedDocs=${n}`);
-    return n;
-  } catch (err: any) {
-    console.error("[Orders Persist] Mongo bulkWrite failed:", err?.message || err);
-    throw err;
-  }
 }
 
 function mergeShopeeOrderOnSync(existing: any | undefined, incoming: any): any {
@@ -11249,64 +11086,7 @@ async function persistShopeeOrderChunk(
  * dù ngoài cửa sổ 24 giờ update_time. Đây là bước chữa cháy GHN không phụ thuộc webhook.
  */
 // Pull orders from every connected Shopee shop — tuần tự + chunk delay, save orders.json sau mỗi chunk.
-const ORDERS_DB_PATH = path.join(APP_ROOT, "data", "orders.json");
-
-// Local JSON-file "database" holding orders synced in from real marketplace webhooks (Shopee, ...).
-
-type OrderLookupIndex = {
-  byId: Map<string, number>;
-  byOrderSn: Map<string, number>;
-  byTracking: Map<string, number>;
-  byReturnTracking: Map<string, number>;
-  byInternal: Map<string, number>;
-  byPackage: Map<string, number>;
-};
-
-let orderLookupIndex: OrderLookupIndex | null = null;
-
-function normalizeOrderIndexKey(raw: string): string {
-  return String(raw || "")
-    .trim()
-    .toUpperCase()
-    .replace(/[\s\-_#./\\|:;,]+/g, "");
-}
-
-function rebuildOrderLookupIndex(orders: any[]): OrderLookupIndex {
-  const byId = new Map<string, number>();
-  const byOrderSn = new Map<string, number>();
-  const byTracking = new Map<string, number>();
-  const byReturnTracking = new Map<string, number>();
-  const byInternal = new Map<string, number>();
-  const byPackage = new Map<string, number>();
-
-  orders.forEach((order, index) => {
-    const put = (map: Map<string, number>, value: unknown) => {
-      const key = normalizeOrderIndexKey(String(value || ""));
-      if (key) map.set(key, index);
-    };
-    // FE có thể gửi id nội bộ, Mongo _id, hoặc order_sn / orderSn.
-    put(byId, order.id);
-    put(byId, order._id);
-    put(byId, String(order.id || "").replace(/^shopee-/i, ""));
-    put(byId, String(order._id || "").replace(/^shopee-/i, ""));
-    put(byOrderSn, order.orderSn);
-    put(byOrderSn, order.order_sn);
-    put(byTracking, order.trackingNumber);
-    put(byTracking, order.tracking_no);
-    put(byReturnTracking, order.return_tracking_no);
-    put(byInternal, order.internalTrackingCode);
-    put(byPackage, order.packageNumber);
-  });
-
-  return { byId, byOrderSn, byTracking, byReturnTracking, byInternal, byPackage };
-}
-
-function getOrderLookupIndex(orders: any[]): OrderLookupIndex {
-  // Luôn build theo đúng mảng `orders` đang lookup — tránh index JSON cũ
-  // trỏ sai index khi nguồn là Mongo (gây "không tìm thấy" / khớp nhầm).
-  orderLookupIndex = rebuildOrderLookupIndex(orders);
-  return orderLookupIndex;
-}
+// ORDERS_DB_PATH / lookup index / loadOrders — services/orders.js (Phase 5)
 
 /**
  * Local DB timeout guard — CHỈ dùng cho các route đọc MongoDB nội bộ
@@ -11322,37 +11102,7 @@ function withLocalDbTimeout<T>(promise: Promise<T>, timeoutMs: number, label: st
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
 }
 
-function loadOrders(): any[] {
-  try {
-    if (!fs.existsSync(ORDERS_DB_PATH)) {
-      orderLookupIndex = rebuildOrderLookupIndex([]);
-      return [];
-    }
-    const raw = fs.readFileSync(ORDERS_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    const orders = Array.isArray(parsed) ? parsed.map(repairMisassignedTracking) : [];
-    orderLookupIndex = rebuildOrderLookupIndex(orders);
-    return orders;
-  } catch (error) {
-    console.error("[Orders DB] Failed to read orders.json:", error);
-    orderLookupIndex = rebuildOrderLookupIndex([]);
-    return [];
-  }
-}
-
-/**
- * Nguồn đơn cho API/UI: JSON ∪ Mongo.
- * - Ưu tiên tracking_no từ Mongo (script sync / webhook).
- * - Đơn chỉ có trên Mongo vẫn hiện (kèm mã vận đơn).
- * - Đơn chỉ có trên JSON (manual / local) vẫn giữ.
- */
-/** Mirror tracking fields for READ — không xóa/sửa mã vận đơn. */
-function mirrorTrackingFieldsForRead(order: any): any {
-  if (!order || typeof order !== "object") return order;
-  if (order.tracking_no && !order.trackingNumber) order.trackingNumber = order.tracking_no;
-  if (order.trackingNumber && !order.tracking_no) order.tracking_no = order.trackingNumber;
-  return order;
-}
+// loadOrdersForApi / saveOrders / purgeHandedOver — services/orders.js (Phase 5)
 
 let lastMongoOrderReconcileAt = 0;
 const MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1000;
@@ -11419,260 +11169,6 @@ async function reconcileMongoOrdersWithShopee(jsonOrders: any[], mongoOrders: an
   return reconciled;
 }
 
-async function loadOrdersForApi(opts?: {
-  readOnly?: boolean;
-}): Promise<{
-  orders: any[];
-  dirty: boolean;
-  handoverMongoSync: any[];
-}> {
-  const normalize = opts?.readOnly ? mirrorTrackingFieldsForRead : repairMisassignedTracking;
-  if (!isMongoReady()) {
-    throw new Error("mongodb_not_ready");
-  }
-  try {
-    const orders = (await loadOrdersFromStore()).filter(isValidOrder).map(normalize);
-    return { orders, dirty: false, handoverMongoSync: [] };
-  } catch (err: any) {
-    console.warn("[Orders] Mongo read failed:", err?.message || err);
-    throw err;
-  }
-}
-
-/**
- * Load CHỈ các đơn cần ship — ưu tiên Mongo $in (không find({}) / không đọc full JSON).
- * Fallback JSON chỉ khi Mongo thiếu đơn.
- */
-async function loadOrdersForShipScoped(
-  orderIds: string[],
-  orderSns: string[],
-): Promise<any[]> {
-  const idSet = new Set(
-    (orderIds || []).map((s) => String(s || "").trim()).filter(Boolean),
-  );
-  const snSet = new Set(
-    (orderSns || [])
-      .map((s) => String(s || "").replace(/^shopee-/i, "").trim())
-      .filter(Boolean),
-  );
-  for (const id of idSet) {
-    const stripped = id.replace(/^shopee-/i, "").trim();
-    if (stripped) snSet.add(stripped);
-  }
-  if (idSet.size === 0 && snSet.size === 0) return [];
-
-  const matchKey = (o: any): boolean => {
-    if (!o || typeof o !== "object") return false;
-    const id = String(o.id || o._id || "").trim();
-    const sn = String(o.orderSn || o.order_sn || "").replace(/^shopee-/i, "").trim();
-    if (id && idSet.has(id)) return true;
-    if (sn && (snSet.has(sn) || idSet.has(sn) || idSet.has(`shopee-${sn}`))) return true;
-    if (id && snSet.has(id.replace(/^shopee-/i, "").trim())) return true;
-    return false;
-  };
-
-  const bySn = new Map<string, any>();
-  const byId = new Map<string, any>();
-  const put = (o: any) => {
-    if (!isValidOrder(o) || !matchKey(o)) return;
-    repairFalseProcessedReadyToShip(o);
-    const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim();
-    const id = String(o.id || "").trim();
-    if (sn) bySn.set(sn, o);
-    if (id) byId.set(id, o);
-  };
-
-  // 1) Mongo $in only — đường nhanh cho bulk ship.
-  if (isMongoReady()) {
-    try {
-      const mongoOrders = (
-        await loadOrdersFromStore({
-          orderSns: [...snSet],
-          ids: [...idSet],
-        })
-      ).map(repairMisassignedTracking);
-      for (const m of mongoOrders) put(m);
-    } catch (err: any) {
-      console.warn("[Orders] loadOrdersForShipScoped mongo skip:", err?.message || err);
-    }
-  }
-
-  const out: any[] = [];
-  const seen = new Set<string>();
-  for (const o of bySn.values()) {
-    const k = String(o.orderSn || o.id || "");
-    if (k && seen.has(k)) continue;
-    if (k) seen.add(k);
-    out.push(o);
-  }
-  for (const o of byId.values()) {
-    const k = String(o.orderSn || o.id || "");
-    if (k && seen.has(k)) continue;
-    if (k) seen.add(k);
-    out.push(o);
-  }
-  return out;
-}
-
-/** Mongo-only patch; JSON is rebuilt from Mongo asynchronously for legacy export. */
-async function persistChangedOrdersPatch(changedOrders: any[]): Promise<number> {
-  const changed = (Array.isArray(changedOrders) ? changedOrders : []).filter(Boolean);
-  if (changed.length === 0) return 0;
-  if (!isMongoReady()) throw new Error("mongodb_not_ready");
-  const written = await bulkUpsertOrdersToStore(changed);
-  queueOrdersJsonMirrorFromMongo();
-  return written;
-}
-
-/** API: ép đổ tracking Mongo → orders.json (cứu mã GHN sau sync script). */
-async function hydrateTrackingFromMongoToJson(): Promise<{
-  mirrored: number;
-  filled: number;
-  total: number;
-}> {
-  let mirrored = 0;
-  try {
-    mirrored = await mirrorTopLevelTrackingIntoData();
-  } catch (err: any) {
-    console.warn("[Orders] mirrorTopLevelTrackingIntoData:", err?.message || err);
-  }
-  const { orders, dirty, handoverMongoSync } = await loadOrdersForApi();
-  if (dirty) {
-    saveOrders(orders);
-    try {
-      const withTn = orders.filter(
-        (o) => String(o.trackingNumber || o.tracking_no || "").trim(),
-      );
-      const toUpsert = [
-        ...withTn,
-        ...handoverMongoSync.filter(
-          (o) => !withTn.some((t) => t.id === o.id || t.orderSn === o.orderSn),
-        ),
-      ];
-      if (toUpsert.length) await bulkUpsertOrdersToStore(toUpsert);
-    } catch (err: any) {
-      console.warn("[Orders] hydrate bulkUpsert:", err?.message || err);
-    }
-  }
-  const filled = orders.filter((o) =>
-    String(o.trackingNumber || o.tracking_no || "").trim(),
-  ).length;
-  return { mirrored, filled, total: orders.length };
-}
-
-function saveOrders(orders: any[]): boolean {
-  try {
-    // MongoDB là SSOT. JSON chỉ là mirror tương thích cho các route legacy còn chưa
-    // được gỡ; mọi lần ghi legacy được đẩy sang Mongo trước khi file mirror được dùng lại.
-    const sanitized = orders.map(repairMisassignedTracking);
-    if (isMongoReady() && sanitized.length > 0) {
-      void bulkUpsertOrdersToStore(sanitized).catch((err: any) =>
-        console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err),
-      );
-    }
-    // Không dùng file lock / exclusive lock — mirror legacy không được dùng để phục vụ UI.
-    fs.mkdirSync(path.dirname(ORDERS_DB_PATH), { recursive: true });
-    fs.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
-    orderLookupIndex = rebuildOrderLookupIndex(sanitized);
-    console.log(
-      `[Orders DB] WRITE OK — path=${ORDERS_DB_PATH} count=${sanitized.length}`,
-    );
-    return true;
-  } catch (error: any) {
-    console.error(
-      "LỖI SYNC SHOPEE: Failed to write orders.json:",
-      error?.message || error,
-      error?.stack || "",
-    );
-    return false;
-  }
-}
-
-/** Đơn đang hiện ở tab ĐÃ GIAO CHO ĐVVC — cùng điều kiện UI (truthy flags). */
-function isHandedOverGarbageOrder(order: any): boolean {
-  return matchesHandedOverCarrierTabOrder(order);
-}
-
-const HANDED_OVER_CLEANUP_MARKER = path.join(APP_ROOT, "data", ".cleanup-handed-over-v2");
-
-/**
- * XÓA HẾT đơn match tab ĐÃ GIAO CHO ĐVVC (JSON bulk + Mongo deleteMany).
- * Không skip nếu vẫn còn đơn match (tránh marker v1 xóa sót).
- */
-async function purgeHandedOverGarbageOrdersOnce(
-  opts?: { force?: boolean },
-): Promise<{ removed: number; sns: string[]; skipped: boolean }> {
-  const force = Boolean(opts?.force);
-  const orders = loadOrders();
-  const garbage = orders.filter(isHandedOverGarbageOrder);
-
-  if (!force && garbage.length === 0 && fs.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
-    return { removed: 0, sns: [], skipped: true };
-  }
-
-  const sns = garbage
-    .map((o) => String(o.orderSn || o.id || "").trim())
-    .filter(Boolean);
-  const ids = garbage.map((o) => String(o.id || "").trim()).filter(Boolean);
-
-  if (garbage.length > 0) {
-    saveOrders(orders.filter((o) => !isHandedOverGarbageOrder(o)));
-    console.log(`Deleted count (JSON): ${garbage.length}`);
-  }
-
-  let mongoDeleted = 0;
-  let mongoSns: string[] = [];
-  if (isMongoReady()) {
-    try {
-      if (ids.length || sns.length) {
-        mongoDeleted += await deleteOrdersFromStore([...ids, ...sns]);
-      }
-      const byFlag = await deleteHandedOverOrdersFromStore();
-      mongoDeleted += byFlag.deleted;
-      mongoSns = byFlag.sns;
-      console.log(`Deleted count (Mongo): ${mongoDeleted}`);
-    } catch (err: any) {
-      console.warn("[Cleanup HandedOver] Mongo delete failed:", err?.message || err);
-    }
-  }
-
-  const allSns = [...new Set([...sns, ...mongoSns])];
-  const removed = Math.max(garbage.length, allSns.length, mongoDeleted);
-  console.log(`Deleted count: ${removed}`);
-
-  const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
-  if (stillLeft === 0) {
-    try {
-      const v1 = path.join(APP_ROOT, "data", ".cleanup-handed-over-v1");
-      if (fs.existsSync(v1)) fs.unlinkSync(v1);
-      fs.mkdirSync(path.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      fs.writeFileSync(
-        HANDED_OVER_CLEANUP_MARKER,
-        JSON.stringify(
-          {
-            at: new Date().toISOString(),
-            removed,
-            jsonRemoved: garbage.length,
-            mongoDeleted,
-            sns: allSns,
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-    } catch {
-      /* ignore */
-    }
-  } else {
-    console.warn(`[Cleanup HandedOver] Vẫn còn ${stillLeft} đơn ĐVVC sau purge — sẽ chạy lại.`);
-  }
-
-  console.log(
-    `[Cleanup HandedOver] ĐÃ XÓA json=${garbage.length} mongo=${mongoDeleted} — ${allSns.join(", ") || "(none)"}`,
-  );
-  return { removed, sns: allSns, skipped: false };
-}
 
 // toDateKey / getDashboardDateRange / buildDashboardChart — utils/dashboard.js (Phase 2)
 
@@ -13548,74 +13044,7 @@ function validateOrderShopForShipment(order: any): {
   };
 }
 
-// Resolve an order row by internal id, Mongo _id, OR Shopee order_sn (bulk UI may send either).
-function findOrderRecord(orders: any[], idOrSn: string): { index: number; order: any } | null {
-  const key = String(idOrSn || "").trim();
-  if (!key) return null;
-  // Luôn rebuild từ mảng đang thao tác (JSON∪Mongo) — không dùng cache JSON cũ.
-  const idx = rebuildOrderLookupIndex(orders);
-  const normalized = normalizeOrderIndexKey(key);
-  const stripped = key.replace(/^shopee-/i, "").trim();
-  let index =
-    idx.byId.get(normalized) ??
-    idx.byOrderSn.get(normalized);
-  if (index === undefined && stripped && stripped !== key) {
-    const strippedNorm = normalizeOrderIndexKey(stripped);
-    index = idx.byId.get(strippedNorm) ?? idx.byOrderSn.get(strippedNorm);
-  }
-  if (index === undefined && !key.toLowerCase().startsWith("shopee-")) {
-    index =
-      idx.byId.get(normalizeOrderIndexKey(`shopee-${key}`)) ??
-      idx.byOrderSn.get(normalizeOrderIndexKey(`shopee-${key}`));
-  }
-  // Fallback tuyến tính — bắt trường hợp id/_id/order_sn lệch format index.
-  if (index === undefined) {
-    const keyLower = key.toLowerCase();
-    const strippedLower = stripped.toLowerCase();
-    index = orders.findIndex((o: any) => {
-      const candidates = [
-        o?.id,
-        o?._id,
-        o?.orderSn,
-        o?.order_sn,
-        o?.id != null ? String(o.id).replace(/^shopee-/i, "") : "",
-        o?._id != null ? String(o._id).replace(/^shopee-/i, "") : "",
-      ];
-      return candidates.some((c) => {
-        const s = String(c || "").trim();
-        if (!s) return false;
-        return (
-          s === key ||
-          s.toLowerCase() === keyLower ||
-          s === stripped ||
-          s.toLowerCase() === strippedLower ||
-          normalizeOrderIndexKey(s) === normalized
-        );
-      });
-    });
-    if (index < 0) index = undefined;
-  }
-  if (index === undefined) return null;
-  return { index, order: orders[index] };
-}
-
-// Build a de-duplicated list of orders to ship from orderIds and/or orderSns arrays.
-function resolveOrdersFromRequest(orders: any[], orderIds?: string[], orderSns?: string[]): { index: number; order: any }[] {
-  const hits: { index: number; order: any }[] = [];
-  const seen = new Set<number>();
-  const tryAdd = (idOrSn: string) => {
-    const raw = String(idOrSn || "").trim();
-    if (!raw) return;
-    const hit = findOrderRecord(orders, raw);
-    if (hit && !seen.has(hit.index)) {
-      seen.add(hit.index);
-      hits.push(hit);
-    }
-  };
-  for (const id of orderIds || []) tryAdd(String(id));
-  for (const sn of orderSns || []) tryAdd(String(sn));
-  return hits;
-}
+// findOrderRecord / resolveOrdersFromRequest — services/orders.js (Phase 5)
 
 // Shopee trả lỗi kiểu "already shipped / order_status_invalid" khi ship_order được
 // gọi lại trên đơn đã chuẩn bị (đặc biệt GHN/J&T đã có mã vận đơn). Coi là thành công.
@@ -15099,172 +14528,115 @@ async function startServer() {
   app.get("/api/dashboard", authMiddleware, getDashboard);
   app.use("/api/dashboard", authMiddleware, dashboardRoutes);
 
-  /**
-   * Gộp các request refresh cùng lúc (click, focus, polling hoặc nhiều tab trình duyệt)
-   * thành một lần đọc MongoDB. Cache rất ngắn chỉ để tránh truy vấn trùng khi response
-   * đang được truyền về client; webhook vẫn được phản ánh gần như ngay lập tức.
-   */
-  let ordersRefreshInFlight: Promise<any[]> | null = null;
-  let ordersRefreshCache: { expiresAt: number; orders: any[] } | null = null;
-
-  async function readOrdersForRefresh(limit?: number): Promise<any[]> {
-    const now = Date.now();
-    if (ordersRefreshCache && ordersRefreshCache.expiresAt > now) {
-      return limit && limit > 0
-        ? ordersRefreshCache.orders.slice(0, limit)
-        : ordersRefreshCache.orders;
-    }
-    // Shallow fetch: query Mongo có .limit — không ghi vào full-list cache / không chung in-flight.
-    if (limit && limit > 0) {
-      const orders = await loadOrdersFromStore({ limit });
-      return orders.filter((order) => Boolean(order?.orderSn || order?.id));
-    }
-    if (!ordersRefreshInFlight) {
-      ordersRefreshInFlight = loadOrdersFromStore()
-        .then((orders) => {
-          // MongoDB là nguồn webhook trực tiếp. `isValidOrder` từng loại các payload
-          // mới nhận nhưng chưa hydrate đủ items/totalAmount, khiến Dashboard có số
-          // liệu còn trang Quản lý đơn hàng lại không thấy đơn.
-          const validOrders = orders.filter((order) => Boolean(order?.orderSn || order?.id));
-          ordersRefreshCache = {
-            orders: validOrders,
-            expiresAt: Date.now() + 1_500,
-          };
-          return validOrders;
-        })
-        .finally(() => {
-          ordersRefreshInFlight = null;
-        });
-    }
-    return ordersRefreshInFlight;
-  }
-
-  /**
-   * Refresh danh sách đơn: chỉ đọc MongoDB, không gọi Shopee và không chạy sync.
-   * Luôn phản hồi JSON nhanh để frontend không bị kẹt trạng thái loading.
-   * Query `?limit=50` = shallow fetch (50 đơn mới nhất) cho FE cache merge.
-   */
-  app.get("/api/orders/refresh", authMiddleware, async (req, res) => {
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    try {
-      if (!isMongoReady()) {
-        return res.status(200).json({
-          success: false,
-          data: [],
-          total: 0,
-          error: "mongodb_not_ready",
-        });
-      }
-      const rawLimit = Number(req.query.limit);
-      const limit =
-        Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5000) : undefined;
-      const rawOrders = await readOrdersForRefresh(limit);
-      // Gộp collection don_hoan_huy — SSOT tab "Đã nhận đơn hủy, đơn hoàn".
-      let mergedOrders = rawOrders;
-      try {
-        mergedOrders = await mergeDonHoanHuyIntoOrders(rawOrders);
-      } catch (mergeErr: any) {
-        console.warn(
-          "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
-          mergeErr?.message || mergeErr,
-        );
-      }
-      // Webhook cũ hoặc payload detail thiếu model_name vẫn được khôi phục từ catalog
-      // trước khi trả về UI; không ghi ngược vào Mongo trong route read-only này.
-      // Catalog lỗi/timeout/chậm KHÔNG được làm hỏng danh sách đơn.
-      // Shallow (?limit=) bỏ enrich hẳn — ưu tiên trả đơn < 2s cho FE lần đầu load.
-      let products: any[] = [];
-      if (!limit) {
-        try {
-          products = await withLocalDbTimeout(
-            loadProductsForOrders(mergedOrders),
-            2500,
-            "orders_refresh_catalog",
-          );
-        } catch (catalogErr) {
-          console.warn(
-            "[GET /api/orders/refresh] Catalog enrich skipped:",
-            catalogErr instanceof Error ? catalogErr.message : catalogErr,
-          );
-        }
-      }
-      const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(mergedOrders, products));
-      console.log(
-        `[FRONTEND FETCHED] GET /api/orders/refresh` +
-          `${limit ? `?limit=${limit}` : ""} — trả về ${orders.length} đơn từ MongoDB.`,
-      );
-      // `total` + shape { data, total } giữ tương thích chuẩn REST cho FE mới, song song
-      // với `success`/`data` cũ để KHÔNG phá vỡ client hiện tại đang đọc payload.data.
-      return res.status(200).json({ success: true, data: orders, total: orders.length });
-    } catch (error: any) {
-      console.error(
-        "[GET /api/orders/refresh] Mongo query failed:",
-        error?.stack || error?.message || error,
-      );
-      return res.status(200).json({
-        success: false,
-        data: [],
-        total: 0,
-        error: "orders_refresh_failed",
-        message: error?.message || "Không thể tải danh sách đơn hàng từ MongoDB.",
-      });
-    }
+  // --- Orders Core — Phase 5 MVC ---
+  initOrdersService({
+    repairMisassignedTracking,
+    repairFalseProcessedReadyToShip,
+    isValidOrder,
+    matchesHandedOverCarrierTabOrder,
+    matchesReceivedCancelReturnTabOrder,
+    resolveLocalStatusUpdatedAt,
+    isShopeeInternalTrackingCode,
+    hasLeftHandedOverCarrierTab,
+    resolveOrderHandoverFlag,
+    isEligibleForHandOverShared,
+    matchesProcessedPickupTabShared,
+    hasOrderTrackingNoShared,
+    getHandOverIneligibleReasonShared,
+    applyHandedOverWrite,
+    HANDED_OVER_SOURCE,
   });
 
-  /** Danh sách đơn phân trang + badge counts do Mongo tính, không lọc toàn bộ ở client. */
-  app.get("/api/orders/query", authMiddleware, async (req, res) => {
-    try {
-      if (!isMongoReady()) {
-        return res.status(503).json({ success: false, error: "mongodb_not_ready", data: [] });
-      }
-      const page = await queryOrdersPageFromStore({
-        page: Number(req.query.page),
-        pageSize: Number(req.query.page_size ?? req.query.pageSize),
-        tab: String(req.query.tab || ""),
-        shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
-        carrier: String(req.query.carrier || ""),
-        query: String(req.query.q ?? req.query.query ?? ""),
-      });
-      const products = await loadProductsForOrders(page.rows);
-      const rows = enrichOrdersWithShopNames(enrichOrdersFromCatalog(page.rows, products));
-      return res.json({
-        success: true,
-        data: rows,
-        total: page.total,
-        page: page.page,
-        page_size: page.pageSize,
-        has_more: page.hasMore,
-        counts: page.counts,
-      });
-    } catch (error: any) {
-      console.error("[Orders Query] failed:", error?.stack || error?.message || error);
-      return res.status(500).json({
-        success: false,
-        error: "orders_query_failed",
-        message: error?.message || "Không thể truy vấn đơn hàng.",
-      });
+  const buildCarrierLogisticsPayload = (
+    carrier: string,
+    customer: { name: string; phone: string },
+    addr: {
+      street: string;
+      province: string;
+      provinceCode: string;
+      district: string;
+      districtCode: string;
+      ward: string;
+      wardCode: string;
+    },
+    extras: { weight: number; note: string; codAmount: number },
+  ) => {
+    if (carrier === "ghn") {
+      return {
+        provider: "ghn",
+        to_name: customer.name,
+        to_phone: customer.phone,
+        to_address: addr.street,
+        to_ward_code: addr.wardCode,
+        to_district_id: Number(addr.districtCode),
+        to_province_id: Number(addr.provinceCode),
+        to_ward_name: addr.ward,
+        to_district_name: addr.district,
+        to_province_name: addr.province,
+        weight: extras.weight,
+        note: extras.note,
+        cod_amount: extras.codAmount,
+      };
     }
-  });
-
-  app.get("/api/orders/:orderSn/events", authMiddleware, async (req, res) => {
-    try {
-      const events = await loadOrderEvents(String(req.params.orderSn || ""), Number(req.query.limit) || 50);
-      return res.json({ success: true, data: events });
-    } catch (error: any) {
-      return res.status(500).json({ success: false, error: "order_events_failed", message: error?.message });
+    if (carrier === "spx") {
+      return {
+        provider: "spx",
+        deliver_info: {
+          deliver_name: customer.name,
+          deliver_phone: customer.phone,
+          deliver_detail_address: addr.street,
+          deliver_ward: addr.ward,
+          deliver_district: addr.district,
+          deliver_province: addr.province,
+          deliver_ward_id: addr.wardCode,
+          deliver_district_id: addr.districtCode,
+          deliver_province_id: addr.provinceCode,
+        },
+        parcel_weight: extras.weight,
+        remark: extras.note,
+        cod_amount: extras.codAmount,
+      };
     }
+    return null;
+  };
+
+  const generateCarrierTracking = (carrier: string) => {
+    if (carrier === "ghn") return `GHN-VN-${Math.floor(100000000 + Math.random() * 900000000)}`;
+    if (carrier === "spx") return `SPX-VN-${Math.floor(100000000 + Math.random() * 900000000)}`;
+    return `DIRECT-${Math.floor(100000 + Math.random() * 900000)}`;
+  };
+
+  initOrdersController({
+    withLocalDbTimeout,
+    loadProductsForOrders,
+    enrichOrdersFromCatalog,
+    enrichOrdersWithShopNames,
+    isValidOrder,
+    matchesProcessedPickupTabShared,
+    matchesUnprocessedPickupTabShared,
+    matchesShippingTabShared,
+    matchesReceivedCancelReturnTabOrder,
+    cleanupExpiredLabelFiles,
+    wipeLegacyPublicPrints,
+    resolveOrderFromShopeeByScanCode,
+    enrichMissingShopeeTracking,
+    repairMissingShopeeTrackingInOrders,
+    repairMisassignedTracking,
+    buildHandedOverWritePatch,
+    buildClearHandedOverPatch,
+    HANDED_OVER_SOURCE,
+    applyShopeeOrderFinanceFields,
+    sumOrderCustomCosts,
+    healInvalidHandedOverFlags,
+    buildCarrierLogisticsPayload,
+    generateCarrierTracking,
   });
 
-  app.get("/api/sync-jobs/:jobId", authMiddleware, async (req, res) => {
-    const job = await getSyncJob(String(req.params.jobId || ""));
-    if (!job) return res.status(404).json({ success: false, error: "sync_job_not_found" });
-    return res.json({ success: true, data: job });
-  });
+  app.get("/api/orders/refresh", authMiddleware, refreshOrders);
+  app.get("/api/orders/query", authMiddleware, queryOrders);
+  app.get("/api/orders/:orderSn/events", authMiddleware, getOrderEvents);
+  app.get("/api/sync-jobs/:jobId", authMiddleware, getSyncJobById);
 
-  /**
-   * Kéo đơn mới từ Shopee (get_order_list → get_order_detail → Mongo).
-   * Body: { lookback_hours?: number, hours?: number } — mặc định 24h, max 15 ngày.
-   */
   app.post("/api/orders/pull", authMiddleware, async (req, res) => {
     let jobId = "";
     const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
@@ -15290,7 +14662,7 @@ async function startServer() {
         shopIds: shopIds?.length ? shopIds : undefined,
       });
       // Invalidate cache refresh để FE thấy đơn mới ngay.
-      ordersRefreshCache = null;
+      invalidateOrdersRefreshCache();
       await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
         pulled: result.pulled,
         added: result.added,
@@ -15346,7 +14718,7 @@ async function startServer() {
         reconcileActive: true,
         shopIds: shopIds?.length ? shopIds : undefined,
       });
-      ordersRefreshCache = null;
+      invalidateOrdersRefreshCache();
       await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
         pulled: result.pulled,
         added: result.added,
@@ -15379,1067 +14751,26 @@ async function startServer() {
     }
   });
 
-  app.get("/api/orders", authMiddleware, async (req, res) => {
-    // GET = READ ONLY — DB/JSON có gì trả nấy; rỗng → []. CẤM sync/pull/fetch ngoài.
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
 
-    let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
-    rawOrders = rawOrders.filter(isValidOrder);
-
-    // Diagnostic: phân bố tab chờ lấy hàng trước khi lọc query.tab
-    const unprocessedPool = rawOrders.filter((o: any) => matchesUnprocessedPickupTabShared(o));
-    const processedPool = rawOrders.filter((o: any) => matchesProcessedPickupTabShared(o));
-    const readyToShipRaw = rawOrders.filter((o: any) => {
-      const raw = String(o?.shopee_order_status || "").toUpperCase();
-      return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
-    });
-    console.log(
-      `[GET /api/orders] tab-diag total=${rawOrders.length}` +
-        ` READY_TO_SHIP|RETRY_SHIP(raw)=${readyToShipRaw.length}` +
-        ` unprocessedTab=${unprocessedPool.length}` +
-        ` processedTab=${processedPool.length}` +
-        ` sampleUnprocessed=${JSON.stringify(
-          unprocessedPool.slice(0, 3).map((o: any) => ({
-            sn: o.orderSn,
-            status: o.status,
-            raw: o.shopee_order_status,
-            tn: o.trackingNumber || o.tracking_no || null,
-            prepared: o.isPrepared,
-            fulfillment: o.fulfillment_type || o.ship_method || null,
-          })),
-        )}`,
-    );
-
-    // ROLLBACK: filter theo raw Shopee — KHÔNG dùng is_handed_over.
-    const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
-    if (tab === "processed" || tab === "da-xu-ly" || tab === "processed_pickup") {
-      rawOrders = rawOrders.filter((o: any) => matchesProcessedPickupTabShared(o));
-      console.log(
-        `[GET /api/orders] query.tab=${tab} filter=matchesProcessedPickupTab → ${rawOrders.length} đơn`,
-      );
-    } else if (
-      tab === "unprocessed" ||
-      tab === "chua-xu-ly" ||
-      tab === "ready_to_ship" ||
-      tab === "cho-lay-hang"
-    ) {
-      rawOrders = rawOrders.filter((o: any) => matchesUnprocessedPickupTabShared(o));
-      console.log(
-        `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab → ${rawOrders.length} đơn` +
-          ` | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound, !isProcessedCondition }`,
-      );
-    } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
-      rawOrders = rawOrders.filter((o: any) => matchesShippingTabShared(o));
-    } else if (
-      tab === "received_cancel_returns" ||
-      tab === "received-cancel-returns" ||
-      tab === "da_nhan_huy_hoan"
-    ) {
-      // SSOT tab: collection don_hoan_huy (TTL 14 ngày) — không lọc local_status trên orders.
-      try {
-        rawOrders = await loadDonHoanHuyAsOrders(
-          Number.isFinite(Number(req.query.limit))
-            ? Math.min(Math.floor(Number(req.query.limit)), 5000)
-            : 2000,
-        );
-        console.log(
-          `[GET /api/orders] query.tab=${tab} source=don_hoan_huy → ${rawOrders.length} đơn`,
-        );
-      } catch (dhhErr: any) {
-        console.error("[GET /api/orders] don_hoan_huy load failed:", dhhErr);
-        rawOrders = rawOrders.filter((o: any) => matchesReceivedCancelReturnTabOrder(o));
-      }
-    } else if (
-      tab === "pending_confirm" ||
-      tab === "pending_verification" ||
-      tab === "cho-xac-nhan" ||
-      tab === "pending_shopee_check" ||
-      tab === "dang_kiem_tra_shopee" ||
-      tab === "shopee_check"
-    ) {
-      // "Chờ xác nhận" = trạng thái Shopee chưa cho phép chuẩn bị hàng
-      // (UNPAID/PENDING/IN_REVIEW/FRAUD_CHECK/INVOICE_PENDING), lấy từ DB nội bộ
-      // (đã có Webhook lo sync) — KHÔNG gọi trực tiếp Shopee API.
-      rawOrders = rawOrders.filter(
-        (o: any) => {
-          const raw = String(o.shopee_order_status || "").toUpperCase();
-          if (raw === "CANCELLED" || raw === "IN_CANCEL" || o.status === "cancelled") {
-            return false;
-          }
-          return (
-            o.status === "pending_confirm" ||
-            o.status === "pending_verification" ||
-            ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw)
-          );
-        },
-      );
-    }
-
-    const rawLimit = Number(req.query.limit);
-    if (Number.isFinite(rawLimit) && rawLimit > 0) {
-      rawOrders = rawOrders.slice(0, Math.min(Math.floor(rawLimit), 5000));
-    }
-
-    const products = await loadProductsForOrders(rawOrders);
-    const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
-    console.log(
-      `[GET /api/orders] READ-ONLY return length=${orders.length} tab=${tab || "(all)"} mongoReady=${isMongoReady()}`,
-    );
-    return res.json(orders);
-  });
-
-  app.post("/api/orders/cleanup-handed-over", authMiddleware, async (_req, res) => {
-    try {
-      // Force: xóa mọi marker để chạy lại deleteMany.
-      for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
-        try {
-          const p = path.join(APP_ROOT, "data", name);
-          if (fs.existsSync(p)) fs.unlinkSync(p);
-        } catch {
-          /* ignore */
-        }
-      }
-      const result = await purgeHandedOverGarbageOrdersOnce({ force: true });
-      console.log(`Deleted count: ${result.removed}`);
-      return res.json({
-        success: true,
-        removed: result.removed,
-        orderSns: result.sns,
-        message:
-          result.removed > 0
-            ? `Đã xóa ${result.removed} đơn kẹt tab ĐÃ GIAO CHO ĐVVC.`
-            : "Không còn đơn HANDED_OVER để xóa.",
-      });
-    } catch (error: any) {
-      console.error("[Cleanup HandedOver] API error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "cleanup_failed",
-      });
-    }
-  });
-
-  /**
-   * Xóa đơn đã đóng theo retention: hủy/hoàn >14 ngày, hoàn tất/ĐVVC/đang giao cũ >30 ngày.
-   * Body: { dry_run?: boolean, cancel_return_days?: number, closed_days?: number }
-   */
-  app.post("/api/orders/cleanup-closed-retention", authMiddleware, async (req, res) => {
-    try {
-      const dryRun =
-        req.body?.dry_run === true ||
-        req.body?.dryRun === true ||
-        String(req.query?.dry_run || "") === "1";
-      const cancelReturnDays = Number(req.body?.cancel_return_days ?? req.body?.cancelReturnDays);
-      const closedDays = Number(req.body?.closed_days ?? req.body?.closedDays);
-      const result = await purgeClosedOrdersByRetention({
-        dryRun,
-        cancelReturnDays: Number.isFinite(cancelReturnDays) && cancelReturnDays > 0
-          ? cancelReturnDays
-          : undefined,
-        closedDays: Number.isFinite(closedDays) && closedDays > 0 ? closedDays : undefined,
-      });
-      return res.json({
-        success: true,
-        ...result,
-        orderSns: result.sns.slice(0, 100),
-      });
-    } catch (error: any) {
-      console.error("[Orders Retention] API error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "cleanup_closed_retention_failed",
-        message: error?.message || "Không thể dọn đơn đã đóng.",
-      });
-    }
-  });
-
-  /**
-   * Dọn log tạm Mongo (Atlas Free 512MB):
-   * - order_events cũ hơn N ngày (mặc định 14)
-   * - sync_jobs đã xong cũ hơn N ngày
-   * - đảm bảo TTL Index 14 ngày (1.209.600s) trên occurred_at / finished_at
-   * Body: { order_event_days?: number, sync_job_days?: number, ensure_ttl?: boolean }
-   */
-  app.post("/api/mongo/cleanup-temp", authMiddleware, async (req, res) => {
-    try {
-      if (!isMongoReady()) {
-        return res.status(503).json({
-          success: false,
-          error: "mongodb_not_ready",
-          message: "MongoDB chưa sẵn sàng.",
-        });
-      }
-      const eventDays = Number(req.body?.order_event_days ?? req.body?.orderEventDays ?? 14);
-      const jobDays = Number(req.body?.sync_job_days ?? req.body?.syncJobDays ?? 14);
-      const ensureTtl = req.body?.ensure_ttl !== false && req.body?.ensureTtl !== false;
-      const result = await purgeMongoTempCollections({
-        orderEventDays: Number.isFinite(eventDays) && eventDays > 0 ? eventDays : 14,
-        syncJobDays: Number.isFinite(jobDays) && jobDays > 0 ? jobDays : 14,
-        ensureTtl,
-      });
-      return res.json({
-        success: true,
-        ...result,
-        message:
-          result.orderEventsDeleted > 0 || result.syncJobsDeleted > 0
-            ? `Đã xóa ${result.orderEventsDeleted} order_events + ${result.syncJobsDeleted} sync_jobs.`
-            : "Không còn bản ghi tạm quá hạn để xóa (TTL vẫn giữ 14 ngày).",
-      });
-    } catch (error: any) {
-      console.error("[Mongo Temp Cleanup] API error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "mongo_temp_cleanup_failed",
-        message: error?.message || "Không thể dọn order_events/sync_jobs.",
-      });
-    }
-  });
-
-  /** Chỉ tạo/sửa TTL Index 14 ngày — không xóa hàng loạt. */
-  app.post("/api/mongo/ensure-ttl", authMiddleware, async (_req, res) => {
-    try {
-      if (!isMongoReady()) {
-        return res.status(503).json({ success: false, error: "mongodb_not_ready" });
-      }
-      const ttl = await ensureRetentionTtlIndexes();
-      return res.json({ success: true, ...ttl });
-    } catch (error: any) {
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "ensure_ttl_failed",
-      });
-    }
-  });
-
-  /** Dọn PDF vận đơn hết hạn trên đĩa (không lưu Mongo). */
-  app.post("/api/orders/cleanup-label-pdfs", authMiddleware, async (_req, res) => {
-    try {
-      const deleted = cleanupExpiredLabelFiles();
-      wipeLegacyPublicPrints();
-      return res.json({
-        success: true,
-        deleted,
-        ttlHours: 24,
-        storage: "disk",
-        mongo: false,
-        message: `Đã dọn PDF vận đơn >24h trên đĩa (không lưu Mongo). Xóa ${deleted} mục.`,
-      });
-    } catch (error: any) {
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "cleanup_label_pdfs_failed",
-      });
-    }
-  });
-
-  /**
-   * Xóa HẾT đơn đang ở tab "Chờ lấy hàng (Đã xử lý)" — deleteMany trên JSON (+ Mongo).
-   * Dùng SSOT matchesProcessedPickupTabShared (State Machine).
-   */
-  app.post("/api/orders/cleanup-processed-pickup", authMiddleware, async (_req, res) => {
-    try {
-      const orders = loadOrders();
-      const garbage = orders.filter((o: any) => matchesProcessedPickupTabShared(o));
-      const kept = orders.filter((o: any) => !matchesProcessedPickupTabShared(o));
-      const sns = garbage
-        .map((o: any) => String(o.orderSn || o.id || "").trim())
-        .filter(Boolean);
-      const ids = garbage.map((o: any) => String(o.id || "").trim()).filter(Boolean);
-
-      if (garbage.length > 0) {
-        saveOrders(kept);
-      }
-
-      let mongoDeleted = 0;
-      if (isMongoReady() && (ids.length || sns.length)) {
-        try {
-          mongoDeleted = await deleteOrdersFromStore([...ids, ...sns]);
-        } catch (err: any) {
-          console.warn("[Cleanup Processed Pickup] Mongo:", err?.message || err);
-        }
-      }
-
-      console.log(`Deleted count (JSON): ${garbage.length}`);
-      console.log(`Deleted count (Mongo): ${mongoDeleted}`);
-      console.log(`Deleted count: ${garbage.length}`);
-
-      return res.json({
-        success: true,
-        removed: garbage.length,
-        mongoDeleted,
-        orderSns: sns,
-        message:
-          garbage.length > 0
-            ? `Đã xóa ${garbage.length} đơn tab Chờ lấy hàng (Đã xử lý).`
-            : "Không còn đơn Đã xử lý để xóa.",
-      });
-    } catch (error: any) {
-      console.error("[Cleanup Processed Pickup] API error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "cleanup_failed",
-      });
-    }
-  });
-
-  async function handOverOrderToCarrierByIndex(
-    orders: any[],
-    index: number,
-    opts?: {
-      persist?: boolean;
-      source?: "qr_scan" | "manual_button";
-      trackingHint?: string;
-    },
-  ): Promise<{ ok: true; order: any; changed: boolean } | { ok: false; status: number; error: string }> {
-    if (index < 0) {
-      return { ok: false, status: 404, error: "Không tìm thấy đơn hàng." };
-    }
-    const order = orders[index];
-
-    // FE gửi mã VĐ đang hiện trên UI → merge trước khi check (tránh JSON thiếu tracking).
-    const hint = String(opts?.trackingHint || "").trim();
-    if (hint && !isShopeeInternalTrackingCode(hint)) {
-      if (!order.trackingNumber) order.trackingNumber = hint;
-      if (!order.tracking_no) order.tracking_no = hint;
-    }
-
-    // EXIT / terminal — không ghi vào tab ĐVVC.
-    if (hasLeftHandedOverCarrierTab(order)) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Đơn ${order?.orderSn || order?.id} đã Đang giao/hoàn tất/hủy — không ghi Đã giao ĐVVC.`,
-      };
-    }
-
-    if (resolveOrderHandoverFlag(order)) {
-      return { ok: true, order, changed: false };
-    }
-
-    // Cho phép nếu khớp Tab Đã xử lý + có mã VĐ (cùng nguồn UI).
-    const eligible =
-      isEligibleForHandOverShared(order) ||
-      (matchesProcessedPickupTabShared(order) && hasOrderTrackingNoShared(order));
-    if (!eligible) {
-      const detail =
-        getHandOverIneligibleReasonShared(order) ||
-        `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}, tn=${order?.trackingNumber || order?.tracking_no || "-"}`;
-      console.warn(
-        `[Orders Handover] REJECT ${order?.orderSn}: ${detail}`,
-      );
-      return {
-        ok: false,
-        status: 400,
-        error: `Đơn ${order?.orderSn || order?.id} không đủ điều kiện bàn giao ĐVVC: ${detail}`,
-      };
-    }
-
-    const source =
-      opts?.source === "qr_scan"
-        ? HANDED_OVER_SOURCE.QR_SCAN
-        : HANDED_OVER_SOURCE.MANUAL_BUTTON;
-    const updated = applyHandedOverWrite({ ...order }, undefined, source);
-    orders[index] = updated;
-    if (opts?.persist !== false) {
-      // JSON local + Mongo CHỈ $set is_handed_over=true (không gọi Shopee, không bulk upsert đè cờ).
-      saveOrders(orders);
-      try {
-        if (isMongoReady()) {
-          await markOrderHandedOverInStore(String(updated.orderSn || ""), {
-            source,
-            handedOverAt: String(updated.handedOverAt || ""),
-            shopId: updated.shopId != null ? String(updated.shopId) : undefined,
-          });
-        }
-      } catch (err: any) {
-        console.error("[Orders Handover] Mongo markOrderHandedOver failed:", err?.message || err);
-      }
-    }
-    console.log(
-      `[Orders Handover] đơn ${updated.orderSn} → is_handed_over=true source=${source} tn=${updated.trackingNumber || updated.tracking_no || "-"}`,
-    );
-    return { ok: true, order: updated, changed: true };
-  }
-
-  function normalizeScanLookupKey(raw: string): string {
-    return String(raw || "")
-      .trim()
-      .toUpperCase()
-      .replace(/[\s\-_#./\\|:;,]+/g, "");
-  }
-
-  async function buildScanLookupKeys(raw: string): string[] {
-    const text = String(raw || "").trim();
-    if (!text) return [];
-    const keys = new Set<string>();
-    const add = (v: unknown) => {
-      const normalized = normalizeScanLookupKey(String(v || ""));
-      if (normalized.length >= 4) keys.add(normalized);
-    };
-    add(text);
-    add(text.replace(/^#+/, ""));
-    if (/^https?:\/\//i.test(text)) {
-      try {
-        const url = new URL(text);
-        [
-          "tracking",
-          "tracking_no",
-          "tracking_number",
-          "tn",
-          "order_sn",
-          "ordersn",
-          "order",
-          "order_id",
-          "package_number",
-          "code",
-          "sn",
-        ].forEach((p) => {
-          const v = url.searchParams.get(p);
-          if (v) add(v);
-        });
-        url.pathname.split("/").filter(Boolean).forEach(add);
-      } catch {
-        /* ignore */
-      }
-    }
-    if (text.startsWith("{") || text.startsWith("[")) {
-      try {
-        const parsed = JSON.parse(text);
-        [
-          "tracking_number",
-          "trackingNumber",
-          "tracking_no",
-          "trackingNo",
-          "order_sn",
-          "orderSn",
-          "package_number",
-          "packageNumber",
-        ].forEach((k) => {
-          if (parsed?.[k]) add(parsed[k]);
-        });
-      } catch {
-        /* ignore */
-      }
-    }
-    return [...keys];
-  }
-
-  function flexibleScanCodeMatch(scanKey: string, fieldKey: string): boolean {
-    if (!scanKey || !fieldKey) return false;
-    if (scanKey === fieldKey) return true;
-    if (scanKey.length >= 10 && fieldKey.length >= 10) {
-      return fieldKey.endsWith(scanKey) || scanKey.endsWith(fieldKey);
-    }
-    return false;
-  }
-
-  /** Flexible OR: orderSn OR outbound/return tracking OR packageNumber — index O(1) first, suffix fallback. */
-  async function findOrderByScanLookup(orders: any[], raw: string): any | null {
-    const scanKeys = await buildScanLookupKeys(raw);
-    if (!scanKeys.length) return null;
-
-    const idx = getOrderLookupIndex(orders);
-    for (const sk of scanKeys) {
-      for (const map of [
-        idx.byTracking,
-        idx.byReturnTracking,
-        idx.byInternal,
-        idx.byOrderSn,
-        idx.byPackage,
-        idx.byId,
-      ]) {
-        const hit = map.get(sk);
-        if (hit !== undefined) return orders[hit];
-      }
-    }
-
-    const trackingLike = /^SPX(VN)?|^GHN|^GHTK|^JNT|^JT|^NINJA|^VTP|^VNPOST/.test(
-      normalizeScanLookupKey(raw)
-    );
-
-    if (trackingLike) {
-      for (const order of orders) {
-        const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
-        const returnTrackingKey = order.return_tracking_no
-          ? normalizeScanLookupKey(order.return_tracking_no)
-          : "";
-        const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
-        if (trackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, trackingKey))) return order;
-        if (returnTrackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, returnTrackingKey))) return order;
-        if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey))) return order;
-      }
-    }
-
-    const internalLike = /^0FG/.test(normalizeScanLookupKey(raw));
-    if (internalLike) {
-      for (const order of orders) {
-        const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
-        if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey))) return order;
-      }
-    }
-
-    for (const order of orders) {
-      const orderSnKey = normalizeScanLookupKey(order.orderSn);
-      const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
-      const returnTrackingKey = order.return_tracking_no
-        ? normalizeScanLookupKey(order.return_tracking_no)
-        : "";
-      const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
-      const packageKey = order.packageNumber ? normalizeScanLookupKey(order.packageNumber) : "";
-      const idKey = normalizeScanLookupKey(String(order.id || "").replace(/^shopee-/i, ""));
-
-      const matched = scanKeys.some(
-        (sk) =>
-          flexibleScanCodeMatch(sk, orderSnKey) ||
-          flexibleScanCodeMatch(sk, trackingKey) ||
-          flexibleScanCodeMatch(sk, returnTrackingKey) ||
-          flexibleScanCodeMatch(sk, internalKey) ||
-          flexibleScanCodeMatch(sk, packageKey) ||
-          flexibleScanCodeMatch(sk, idKey)
-      );
-      if (matched) return order;
-    }
-    return null;
-  }
-
-  // Lookup order by scanned QR/barcode — matches orderSn, outbound/return tracking, internalTrackingCode, or packageNumber.
-  app.get("/api/orders/lookup", authMiddleware, async (req, res) => {
-    const code = String(req.query.code || req.query.q || "").trim();
-    if (!code) {
-      return res.status(400).json({ error: "Thi\u1EBFu m\u00E3 qu\u00E9t (code)." });
-    }
-    // 1) Mongo index lookup (tracking_no / orderSn) — nhanh, không full-dump.
-    let foundRaw: any | null = null;
-    try {
-      foundRaw = await findOrderByScanCodeInStore(code);
-      if (foundRaw && !isValidOrder(foundRaw)) foundRaw = null;
-      if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
-    } catch (err: any) {
-      console.warn("[Orders Lookup] mongo failed:", err?.message || err);
-    }
-
-    // 2) Fallback: loadOrdersForApi + flexible in-memory match (casing / return VĐ / package).
-    if (!foundRaw) {
-      try {
-        const { orders } = await loadOrdersForApi({ readOnly: true });
-        const hit = await findOrderByScanLookup(
-          (Array.isArray(orders) ? orders : []).filter(isValidOrder),
-          code,
-        );
-        if (hit && isValidOrder(hit)) {
-          foundRaw = mirrorTrackingFieldsForRead(hit);
-        }
-      } catch (err: any) {
-        console.warn("[Orders Lookup] fallback failed:", err?.message || err);
-      }
-    }
-
-    // 3) On-demand Shopee: đơn hủy/hoàn có mã VĐ trên sàn nhưng chưa có trong DB local.
-    if (!foundRaw) {
-      try {
-        const fromShopee = await resolveOrderFromShopeeByScanCode(code);
-        if (fromShopee) {
-          foundRaw = mirrorTrackingFieldsForRead(fromShopee);
-          ordersRefreshCache = null;
-        }
-      } catch (err: any) {
-        console.warn("[Orders Lookup] Shopee on-demand failed:", err?.message || err);
-      }
-    }
-
-    if (!foundRaw) {
-      return res.status(404).json({
-        error: "Kh\u00F4ng t\u00ECm th\u1EA5y \u0111\u01A1n h\u00E0ng kh\u1EDBp m\u00E3 qu\u00E9t.",
-        scannedCode: code,
-      });
-    }
-    const products = await loadProductsForOrders([foundRaw]);
-    const found = enrichOrdersFromCatalog([foundRaw], products)[0];
-    return res.json(found);
-  });
-
-  // Cleanup utility: permanently DELETE broken/mock order records (0đ total AND
-  // no items) from the local database so they stop polluting the data file.
-  app.post("/api/orders/cleanup-mock", authMiddleware, async (req, res) => {
-    const orders = loadOrders();
-    const validOrders = orders.filter(isValidOrder);
-    const removedOrders = orders.filter((o: any) => !isValidOrder(o));
-
-    saveOrders(validOrders);
-    console.log(
-      `[Orders Cleanup] \u0110\xE3 x\xF3a ${removedOrders.length} \u0111\u01A1n h\xE0ng l\u1ED7i/mock (0\u0111 v\xE0 kh\xF4ng c\xF3 s\u1EA3n ph\u1EA9m). C\xF2n l\u1EA1i ${validOrders.length} \u0111\u01A1n th\u1EAD t.`,
-      removedOrders.map((o: any) => o.orderSn || o.id)
-    );
-
-    return res.json({
-      removed: removedOrders.length,
-      remaining: validOrders.length,
-      removedOrderSns: removedOrders.map((o: any) => o.orderSn || o.id),
-    });
-  });
-
-  app.post("/api/orders/hydrate-tracking", authMiddleware, async (_req, res) => {
-    try {
-      const result = await hydrateTrackingFromMongoToJson();
-      console.log(
-        `[Orders] hydrate-tracking mirrored=${result.mirrored} filled=${result.filled}/${result.total}`,
-      );
-      return res.json({ success: true, ...result });
-    } catch (err: any) {
-      console.error("[Orders] hydrate-tracking failed:", err?.message || err);
-      return res.status(500).json({
-        success: false,
-        error: err?.message || String(err),
-      });
-    }
-  });
-
-  /**
-   * Bù mã vận đơn từ Shopee (get_tracking_number) cho đơn thiếu tracking_no.
-   * Dùng khi Làm mới / mở Quét mã — pull nhanh thường skipTracking.
-   */
-  app.post("/api/orders/enrich-tracking", authMiddleware, async (req, res) => {
-    try {
-      const maxRaw = Number(req.body?.max ?? req.query?.max ?? 100);
-      const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 100;
-
-      // 1) Scheduler-style enrich (Mongo candidates + return tracking).
-      let enrichResult: Awaited<ReturnType<typeof enrichMissingShopeeTracking>> | null = null;
-      try {
-        enrichResult = await enrichMissingShopeeTracking();
-      } catch (enrichErr: any) {
-        console.warn(
-          "[Orders] enrich-tracking enrichMissingShopeeTracking:",
-          enrichErr?.message || enrichErr,
-        );
-      }
-
-      // 2) Fallback/bổ sung: repair trên pool loadOrdersForApi (ưu tiên PROCESSED/SHIPPED).
-      let repaired = 0;
-      try {
-        const { orders } = await loadOrdersForApi();
-        repaired = await repairMissingShopeeTrackingInOrders(orders, {
-          max,
-          retries: 2,
-        });
-      } catch (repairErr: any) {
-        console.warn(
-          "[Orders] enrich-tracking repairMissing:",
-          repairErr?.message || repairErr,
-        );
-      }
-
-      ordersRefreshCache = null;
-      const filled =
-        Number(enrichResult?.filled || 0) +
-        Number(enrichResult?.returnFilled || 0) +
-        repaired;
-      console.log(
-        `[Orders] enrich-tracking filled=${filled} scheduler=${JSON.stringify(enrichResult)} repaired=${repaired}`,
-      );
-      return res.json({
-        success: true,
-        filled,
-        repaired,
-        scheduler: enrichResult || undefined,
-        message: filled > 0
-          ? `Đã bù ${filled} mã vận đơn từ Shopee.`
-          : "Không có đơn nào cần bù mã (hoặc Shopee chưa trả tracking).",
-      });
-    } catch (err: any) {
-      console.error("[Orders] enrich-tracking failed:", err?.message || err);
-      return res.status(500).json({
-        success: false,
-        error: err?.message || String(err),
-        message: "Không thể bù mã vận đơn từ Shopee.",
-      });
-    }
-  });
-
-  // Update a real order's status/tracking after a warehouse/UI action.
-  app.patch("/api/orders/:id", authMiddleware, async (req, res) => {
-    const orders = loadOrders();
-    const key = String(req.params.id || "").trim();
-    const index = orders.findIndex(
-      (o: any) =>
-        o.id === key ||
-        o.orderSn === key ||
-        o.id === `shopee-${key}` ||
-        String(o.orderSn || "") === key.replace(/^shopee-/i, ""),
-    );
-    if (index === -1) {
-      return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
-    }
-    const patch = { ...req.body };
-    delete patch.id;
-    // Mirror tracking fields — GHN/SPX phải ghi cả tracking_no + trackingNumber.
-    const patchTn = String(patch.tracking_no || patch.trackingNumber || "").trim();
-    if (patchTn && !/^0FG/i.test(patchTn)) {
-      patch.tracking_no = patchTn;
-      patch.trackingNumber = patchTn;
-    }
-    // PATCH không tự clear is_handed_over khi đổi status — chỉ ghi cờ khi client gửi tường minh.
-    const localPatch = String(patch.local_status || patch.localStatus || "").toUpperCase();
-    const wantHanded =
-      patch.is_handed_over === true ||
-      patch.isHandedOverToCarrier === true ||
-      patch.is_handed_over_to_carrier === true ||
-      localPatch === "HANDED_OVER";
-    if (wantHanded) {
-      Object.assign(patch, buildHandedOverWritePatch(
-        undefined,
-        HANDED_OVER_SOURCE.MANUAL_BUTTON,
-      ));
-    }
-    // Chuẩn hóa cờ nội bộ kho nếu client gửi local_status (không phải HANDED_OVER).
-    // Tab received_cancel_returns lọc theo local_status / localStatus / internal_status.
-    const wantLocalStored =
-      localPatch === "CANCELLED_STORED" ||
-      localPatch === "RETURN_RECEIVED" ||
-      localPatch === "NONE";
-    if (wantLocalStored) {
-      const nowIso = new Date().toISOString();
-      patch.local_status = localPatch;
-      patch.localStatus = localPatch;
-      patch.internal_status = localPatch;
-      patch.localStatusAt = patch.localStatusAt || nowIso;
-      patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
-      if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
-        patch.is_local_return_archived = false;
-        Object.assign(patch, buildClearHandedOverPatch(nowIso));
-        // buildClearHandedOverPatch đặt local_status=NONE — ghi đè lại cờ đích.
-        patch.local_status = localPatch;
-        patch.localStatus = localPatch;
-        patch.internal_status = localPatch;
-        patch.localStatusAt = nowIso;
-        patch.local_status_updated_at = nowIso;
-        patch.is_local_return_archived = false;
-      }
-      if (localPatch === "RETURN_RECEIVED") {
-        patch.status = "return_received";
-      }
-    }
-    orders[index] = { ...orders[index], ...patch, id: orders[index].id };
-    // Mirror tracking fields — GHN GYA... phải hiện cả tracking_no + trackingNumber.
-    {
-      const tn = String(
-        orders[index].tracking_no || orders[index].trackingNumber || "",
-      ).trim();
-      if (tn && !/^0FG/i.test(tn)) {
-        orders[index].tracking_no = tn;
-        orders[index].trackingNumber = tn;
-      }
-      repairMisassignedTracking(orders[index]);
-    }
-    if ("custom_costs" in patch || "custom_cost_items" in patch) {
-      applyShopeeOrderFinanceFields(orders[index], {
-        totalAmount: orders[index].totalAmount,
-        itemAmount: orders[index].item_amount,
-        withholdingCitTax: orders[index].withholdingCitTax,
-        escrowAmount: orders[index].escrowAmount,
-        shopeeFees: orders[index].shopee_fees,
-        escrowSynced: orders[index].escrow_synced,
-        customCosts: sumOrderCustomCosts(orders[index]),
-      });
-    }
-    await persistOrdersToDatabase(orders, [orders[index]]);
-    if (wantHanded && isMongoReady()) {
-      try {
-        await markOrderHandedOverInStore(String(orders[index].orderSn || ""), {
-          source: HANDED_OVER_SOURCE.MANUAL_BUTTON,
-          handedOverAt: String(orders[index].handedOverAt || ""),
-          shopId: orders[index].shopId != null ? String(orders[index].shopId) : undefined,
-        });
-      } catch (err: any) {
-        console.error("[Orders PATCH] markOrderHandedOver failed:", err?.message || err);
-      }
-    }
-    // bulkUpsert bỏ INTERNAL_FLAG_KEYS — phải ghi cờ hủy/hoàn bằng API chuyên dụng
-    // để tab received_cancel_returns (lọc local_status) thấy đơn sau refresh.
-    if (
-      isMongoReady() &&
-      (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED")
-    ) {
-      try {
-        await markOrderLocalStatusInStore(
-          String(orders[index].orderSn || ""),
-          localPatch as "CANCELLED_STORED" | "RETURN_RECEIVED",
-          {
-            shopId: orders[index].shopId != null ? String(orders[index].shopId) : undefined,
-            clearHandedOver: true,
-            status:
-              localPatch === "RETURN_RECEIVED"
-                ? "return_received"
-                : String(orders[index].status || "cancelled"),
-          },
-        );
-      } catch (err: any) {
-        console.error("[Orders PATCH] markOrderLocalStatus failed:", err?.message || err);
-      }
-    }
-    return res.json(orders[index]);
-  });
-
-  // Xóa hẳn 1 đơn khỏi JSON + Mongo (dùng cho cleanup tab ĐVVC).
-  app.delete("/api/orders/:id", authMiddleware, async (req, res) => {
-    const key = String(req.params.id || "").trim();
-    if (!key) {
-      return res.status(400).json({ success: false, error: "Thiếu id đơn." });
-    }
-    const orders = loadOrders();
-    const index = orders.findIndex(
-      (o: any) =>
-        o.id === key ||
-        o.orderSn === key ||
-        o.id === `shopee-${key}` ||
-        String(o.orderSn || "") === key.replace(/^shopee-/i, ""),
-    );
-    // MongoDB là SSOT; JSON legacy có thể đã lệch/thiếu bản ghi. Xóa Mongo trước
-    // để DELETE không trả 404 giả và để đơn không quay lại sau refresh.
-    const normalizedKey = key.replace(/^shopee-/i, "");
-    let mongoDeleted = 0;
-    if (isMongoReady()) {
-      try {
-        mongoDeleted = await deleteOrdersFromStore([key, normalizedKey]);
-      } catch (err: any) {
-        console.warn("[Orders DELETE] Mongo:", err?.message || err);
-      }
-    }
-    if (index === -1) {
-      if (mongoDeleted > 0) {
-        console.log(`Deleted count: ${mongoDeleted} (Mongo-only orderSn=${normalizedKey})`);
-        return res.json({
-          success: true,
-          removed: mongoDeleted,
-          orderSn: normalizedKey,
-          mongoDeleted,
-        });
-      }
-      return res.status(404).json({ success: false, error: "Không tìm thấy đơn hàng." });
-    }
-    const removed = orders[index];
-    const sn = String(removed.orderSn || removed.id || "").trim();
-    orders.splice(index, 1);
-    saveOrders(orders);
-    console.log(`Deleted count: 1 (orderSn=${sn}, mongoDeleted=${mongoDeleted})`);
-    return res.json({
-      success: true,
-      removed: 1,
-      orderSn: sn,
-      mongoDeleted,
-    });
-  });
-
-  // Ghi nhận nội bộ: đã bàn giao cho bưu tá/ĐVVC (chưa quét nhập kho Shopee).
-  app.post("/api/orders/:id/hand-over-carrier", authMiddleware, async (req, res) => {
-    try {
-      // Cùng nguồn với GET /api/orders (JSON ∪ Mongo) — không chỉ loadOrders() JSON.
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const hit = findOrderRecord(orders, String(req.params.id || ""));
-      const trackingHint = String(
-        req.body?.trackingNumber ||
-          req.body?.tracking_no ||
-          req.body?.waybill ||
-          req.body?.code ||
-          "",
-      ).trim();
-      const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1, {
-        source: "manual_button",
-        trackingHint,
-      });
-      if (!result.ok) {
-        return res.status(result.status).json({ success: false, error: result.error, message: result.error });
-      }
-      const products = await loadProductsForOrders([result.order]);
-      const enriched = enrichOrdersFromCatalog([result.order], products)[0];
-      return res.json({ success: true, order: enriched });
-    } catch (error: any) {
-      console.error("[Orders Handover] single error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "hand_over_failed",
-        message: error?.message || "Không thể ghi nhận bàn giao ĐVVC.",
-      });
-    }
-  });
-
-  // Quét QR/mã vận đơn → ghi nhận bàn giao ĐVVC.
-  app.post("/api/orders/hand-over-carrier", authMiddleware, async (req, res) => {
-    try {
-      const code = String(req.body?.code || req.body?.scanCode || req.body?.q || "").trim();
-      const orderId = String(
-        req.body?.orderId || req.body?.id || req.body?.orderSn || req.body?.order_sn || "",
-      ).trim();
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-
-      let index = -1;
-      if (orderId) {
-        const hit = findOrderRecord(orders, orderId);
-        index = hit ? hit.index : -1;
-      } else if (code) {
-        const found = await findOrderByScanLookup(orders.filter(isValidOrder), code);
-        if (found) {
-          const hit = findOrderRecord(orders, String(found.id || found.orderSn || ""));
-          index = hit ? hit.index : orders.findIndex((o: any) => o.id === found.id);
-        }
-      } else {
-        return res.status(400).json({
-          success: false,
-          error: "Thiếu orderId hoặc mã quét (code).",
-          message: "Thiếu orderId hoặc mã quét (code).",
-        });
-      }
-
-      const result = await handOverOrderToCarrierByIndex(orders, index, {
-        source: code ? "qr_scan" : "manual_button",
-        trackingHint: code || String(req.body?.trackingNumber || req.body?.tracking_no || "").trim(),
-      });
-      if (!result.ok) {
-        return res.status(result.status).json({ success: false, error: result.error, message: result.error });
-      }
-      const products = await loadProductsForOrders([result.order]);
-      const enriched = enrichOrdersFromCatalog([result.order], products)[0];
-      return res.json({ success: true, order: enriched });
-    } catch (error: any) {
-      console.error("[Orders Handover] by-code error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "hand_over_failed",
-        message: error?.message || "Không thể ghi nhận bàn giao ĐVVC.",
-      });
-    }
-  });
-
-  // Bàn giao ĐVVC hàng loạt — ghi thẳng cùng nguồn Tab ĐVVC đọc (JSON + Mongo).
-  app.post("/api/orders/hand-over-carrier/bulk", authMiddleware, async (req, res) => {
-    try {
-      const rawIds = Array.isArray(req.body?.orderIds)
-        ? req.body.orderIds
-        : Array.isArray(req.body?.ids)
-          ? req.body.ids
-          : [];
-      const rawSns = Array.isArray(req.body?.orderSns) ? req.body.orderSns : [];
-      // Ưu tiên orderIds; tránh đếm trùng khi gửi cả id + orderSn.
-      const keys = [
-        ...new Set(
-          (rawIds.length ? rawIds : rawSns)
-            .map((v: unknown) => String(v || "").trim())
-            .filter(Boolean),
-        ),
-      ];
-      if (!keys.length && rawSns.length) {
-        keys.push(
-          ...new Set(rawSns.map((v: unknown) => String(v || "").trim()).filter(Boolean)),
-        );
-      }
-      if (!keys.length) {
-        return res.status(400).json({
-          success: false,
-          error: "Thiếu danh sách đơn (orderIds / orderSns).",
-          message: "Thiếu danh sách đơn (orderIds / orderSns).",
-        });
-      }
-
-      // Cùng nguồn GET /api/orders — Tab Đã giao ĐVVC đọc từ đây sau F5.
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const updatedOrders: any[] = [];
-      const failed: { key: string; error: string }[] = [];
-      let skipped = 0;
-      const seenIdx = new Set<number>();
-
-      for (const key of keys) {
-        const hit = findOrderRecord(orders, key);
-        if (!hit) {
-          failed.push({ key, error: "Không tìm thấy đơn hàng." });
-          continue;
-        }
-        if (seenIdx.has(hit.index)) {
-          skipped++;
-          continue;
-        }
-        seenIdx.add(hit.index);
-        const result = await handOverOrderToCarrierByIndex(orders, hit.index, {
-          persist: false,
-          source: "manual_button",
-        });
-        if (!result.ok) {
-          failed.push({ key, error: result.error });
-          continue;
-        }
-        if (result.changed) updatedOrders.push(result.order);
-        else skipped++;
-      }
-
-      if (updatedOrders.length) {
-        await persistOrdersToDatabase(orders, updatedOrders);
-      }
-
-      const products = await loadProductsForOrders(updatedOrders);
-      const enriched = enrichOrdersFromCatalog(updatedOrders, products);
-      console.log(
-        `[Orders Handover Bulk] keys=${keys.length} updated=${updatedOrders.length} skipped=${skipped} failed=${failed.length}`,
-      );
-
-      if (updatedOrders.length === 0 && skipped === 0) {
-        return res.status(400).json({
-          success: false,
-          updated: 0,
-          skipped: 0,
-          failed,
-          orders: [],
-          error: failed[0]?.error || "Không bàn giao được đơn nào.",
-          message: failed[0]?.error || "Không bàn giao được đơn nào.",
-        });
-      }
-
-      return res.json({
-        success: true,
-        updated: updatedOrders.length,
-        skipped,
-        failed,
-        orders: enriched,
-      });
-    } catch (error: any) {
-      console.error("[Orders Handover Bulk] error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "hand_over_bulk_failed",
-        message: error?.message || "Không thể bàn giao ĐVVC hàng loạt.",
-      });
-    }
-  });
-
-  // Dọn cờ ĐVVC lưu sai (JSON + Mongo) — gọi tay khi tab bị bẩn.
-  app.post("/api/orders/heal-handed-over", authMiddleware, async (_req, res) => {
-    try {
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const healed = healInvalidHandedOverFlags(orders);
-      if (healed.length) {
-        await persistOrdersToDatabase(orders, healed);
-      }
-      return res.json({
-        success: true,
-        healed: healed.length,
-        orderSns: healed.map((o) => o.orderSn || o.id).filter(Boolean),
-        message:
-          healed.length > 0
-            ? `Đã gỡ ${healed.length} cờ ĐVVC lưu sai.`
-            : "Không còn cờ ĐVVC lưu sai.",
-      });
-    } catch (error: any) {
-      console.error("[Heal HandedOver] error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "heal_failed",
-      });
-    }
-  });
+  app.get("/api/orders", authMiddleware, listOrders);
+  app.post("/api/orders/cleanup-handed-over", authMiddleware, cleanupHandedOver);
+  app.post("/api/orders/cleanup-closed-retention", authMiddleware, cleanupClosedRetention);
+  app.post("/api/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
+  app.post("/api/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
+  app.post("/api/orders/cleanup-label-pdfs", authMiddleware, cleanupLabelPdfs);
+  app.post("/api/orders/cleanup-processed-pickup", authMiddleware, cleanupProcessedPickup);
+  app.get("/api/orders/lookup", authMiddleware, lookupOrder);
+  app.post("/api/orders/cleanup-mock", authMiddleware, cleanupMockOrders);
+  app.post("/api/orders/hydrate-tracking", authMiddleware, hydrateTracking);
+  app.post("/api/orders/enrich-tracking", authMiddleware, enrichTracking);
+  app.patch("/api/orders/:id", authMiddleware, patchOrder);
+  app.delete("/api/orders/:id", authMiddleware, deleteOrder);
+  app.post("/api/orders/:id/hand-over-carrier", authMiddleware, handOverCarrierById);
+  app.post("/api/orders/hand-over-carrier", authMiddleware, handOverCarrierByCode);
+  app.post("/api/orders/hand-over-carrier/bulk", authMiddleware, handOverCarrierBulk);
+  app.post("/api/orders/heal-handed-over", authMiddleware, healHandedOver);
+  app.post("/api/orders/manual", authMiddleware, createManualOrder);
+  app.use("/api/orders", authMiddleware, ordersRoutes);
 
   /** Danh sách tab Đã nhận đơn hủy/hoàn — alias MVC GET /api/scan/don-hoan-huy. */
   app.get("/api/orders/don-hoan-huy", authMiddleware, listDonHoanHuy);
@@ -16484,9 +14815,7 @@ async function startServer() {
     markOrderHandedOverInStore,
     loadProductsForOrders,
     enrichOrdersFromCatalog,
-    invalidateOrdersRefreshCache: () => {
-      ordersRefreshCache = null;
-    },
+    invalidateOrdersRefreshCache,
   });
 
   /** Queue dò ngầm quét mã — Backend worker độc lập FE. */
@@ -16506,181 +14835,7 @@ async function startServer() {
   app.get("/api/vietnam-address/wards/:districtCode", authMiddleware, getWards);
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
 
-  const buildCarrierLogisticsPayload = (
-    carrier: string,
-    customer: { name: string; phone: string },
-    addr: {
-      street: string;
-      province: string;
-      provinceCode: string;
-      district: string;
-      districtCode: string;
-      ward: string;
-      wardCode: string;
-    },
-    extras: { weight: number; note: string; codAmount: number }
-  ) => {
-    if (carrier === "ghn") {
-      return {
-        provider: "ghn",
-        to_name: customer.name,
-        to_phone: customer.phone,
-        to_address: addr.street,
-        to_ward_code: addr.wardCode,
-        to_district_id: Number(addr.districtCode),
-        to_province_id: Number(addr.provinceCode),
-        to_ward_name: addr.ward,
-        to_district_name: addr.district,
-        to_province_name: addr.province,
-        weight: extras.weight,
-        note: extras.note,
-        cod_amount: extras.codAmount,
-      };
-    }
-    if (carrier === "spx") {
-      return {
-        provider: "spx",
-        deliver_info: {
-          deliver_name: customer.name,
-          deliver_phone: customer.phone,
-          deliver_detail_address: addr.street,
-          deliver_ward: addr.ward,
-          deliver_district: addr.district,
-          deliver_province: addr.province,
-          deliver_ward_id: addr.wardCode,
-          deliver_district_id: addr.districtCode,
-          deliver_province_id: addr.provinceCode,
-        },
-        parcel_weight: extras.weight,
-        remark: extras.note,
-        cod_amount: extras.codAmount,
-      };
-    }
-    return null;
-  };
-
-  const generateCarrierTracking = (carrier: string) => {
-    if (carrier === "ghn") return `GHN-VN-${Math.floor(100000000 + Math.random() * 900000000)}`;
-    if (carrier === "spx") return `SPX-VN-${Math.floor(100000000 + Math.random() * 900000000)}`;
-    return `DIRECT-${Math.floor(100000 + Math.random() * 900000)}`;
-  };
-
-  app.post("/api/orders/manual", authMiddleware, async (req, res) => {
-    try {
-      const body = req.body || {};
-      const {
-        shippingAddress,
-        items,
-        carrier = "self",
-        packageWeight = 500,
-        shippingFee = 0,
-        shippingFeePayer = "customer",
-        orderDiscount = 0,
-        carrierNotes = "",
-      } = body;
-
-      const addr = shippingAddress || {};
-      if (!addr.provinceCode || !addr.districtCode || !addr.wardCode || !addr.street?.trim()) {
-        return res.status(400).json({
-          error: "Địa chỉ chưa đầy đủ. Vui lòng chọn Tỉnh, Quận/Huyện, Phường/Xã và nhập địa chỉ chi tiết.",
-        });
-      }
-
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "Đơn hàng cần ít nhất 1 sản phẩm." });
-      }
-
-      const subtotal = items.reduce(
-        (acc: number, it: any) => acc + Number(it.price || 0) * Number(it.quantity || 0),
-        0
-      );
-      const feeToCollect = shippingFeePayer === "customer" ? Number(shippingFee) : 0;
-      const totalAmount = subtotal + feeToCollect - Number(orderDiscount);
-
-      const fullAddress = [addr.street, addr.ward, addr.district, addr.province]
-        .filter(Boolean)
-        .join(", ");
-
-      const trackingNumber = generateCarrierTracking(carrier);
-      const logisticsPayload =
-        carrier !== "self"
-          ? buildCarrierLogisticsPayload(
-              carrier,
-              { name: "Khách sỉ", phone: "0900000000" },
-              {
-                street: addr.street.trim(),
-                province: addr.province,
-                provinceCode: String(addr.provinceCode),
-                district: addr.district,
-                districtCode: String(addr.districtCode),
-                ward: addr.ward,
-                wardCode: String(addr.wardCode),
-              },
-              {
-                weight: Number(packageWeight) || 500,
-                note: carrierNotes || "",
-                codAmount: totalAmount,
-              }
-            )
-          : null;
-
-      if (logisticsPayload) {
-        console.log(
-          `[Logistics ${carrier.toUpperCase()}] Payload đẩy đơn:`,
-          JSON.stringify(logisticsPayload, null, 2)
-        );
-      }
-
-      const newOrder = {
-        id: `order-manual-${Date.now()}`,
-        orderSn: `DON-NGOAI-${Math.floor(100000 + Math.random() * 900000)}`,
-        channel: "manual",
-        shippingAddress: {
-          province: addr.province,
-          provinceCode: String(addr.provinceCode),
-          district: addr.district,
-          districtCode: String(addr.districtCode),
-          ward: addr.ward,
-          wardCode: String(addr.wardCode),
-          street: addr.street.trim(),
-          fullAddress,
-        },
-        carrier,
-        totalAmount,
-        revenue: totalAmount,
-        status: "unprocessed",
-        date: new Date().toISOString(),
-        trackingNumber,
-        isPrepared: carrier !== "self",
-        isPrinted: false,
-        items: items.map((it: any) => ({
-          productId: it.productId,
-          productTitle: it.productTitle,
-          productImage: it.productImage,
-          quantity: Number(it.quantity),
-          price: Number(it.price),
-        })),
-        logisticsPayload,
-      };
-
-      const orders = loadOrders();
-      orders.unshift(newOrder);
-      saveOrders(orders);
-
-      return res.json({
-        success: true,
-        order: newOrder,
-        trackingNumber,
-        logisticsPayload,
-        orders: orders.filter(isValidOrder),
-      });
-    } catch (error: any) {
-      console.error("[Orders manual]", error);
-      return res.status(500).json({ error: error.message || "Tạo đơn thủ công thất bại" });
-    }
-  });
-
-    // GET /api/shopee/diagnostics?shop_id=4127421 — kiểm tra Partner ID/Key, token OAuth, ping Shopee API
+  // GET /api/shopee/diagnostics?shop_id=4127421 — kiểm tra Partner ID/Key, token OAuth, ping Shopee API
   app.get("/api/shopee/diagnostics", authMiddleware, async (req, res) => {
     const shopId = req.query.shop_id ? String(req.query.shop_id) : undefined;
     console.log("[Shopee Diagnostics] Bắt đầu kiểm tra...", shopId ? `shop_id=${shopId}` : "");

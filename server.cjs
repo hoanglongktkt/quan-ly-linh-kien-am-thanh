@@ -1292,8 +1292,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs14 = require("fs");
-          stream2 = new fs14.SyncWriteStream(fd2, { autoClose: false });
+          var fs16 = require("fs");
+          stream2 = new fs16.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -14080,11 +14080,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path13) {
-      if (!path13 || typeof path13 !== "string") {
+    function lookup(path15) {
+      if (!path15 || typeof path15 !== "string") {
         return false;
       }
-      var extension3 = extname("x." + path13).toLowerCase().substr(1);
+      var extension3 = extname("x." + path15).toLowerCase().substr(1);
       if (!extension3) {
         return false;
       }
@@ -17713,8 +17713,8 @@ var require_node2 = __commonJS({
           }
           break;
         case "FILE":
-          var fs14 = require("fs");
-          stream2 = new fs14.SyncWriteStream(fd2, { autoClose: false });
+          var fs16 = require("fs");
+          stream2 = new fs16.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18432,8 +18432,8 @@ var require_node3 = __commonJS({
           }
           break;
         case "FILE":
-          var fs14 = require("fs");
-          stream2 = new fs14.SyncWriteStream(fd2, { autoClose: false });
+          var fs16 = require("fs");
+          stream2 = new fs16.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18521,7 +18521,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path13, keys, options) {
+    function pathToRegexp(path15, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -18535,8 +18535,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m2;
-      if (path13 instanceof RegExp) {
-        while (m2 = MATCHING_GROUP_REGEXP.exec(path13.source)) {
+      if (path15 instanceof RegExp) {
+        while (m2 = MATCHING_GROUP_REGEXP.exec(path15.source)) {
           if (m2[0][0] === "\\") continue;
           keys.push({
             name: m2[1] || name++,
@@ -18544,18 +18544,18 @@ var require_path_to_regexp = __commonJS({
             offset: m2.index
           });
         }
-        return path13;
+        return path15;
       }
-      if (Array.isArray(path13)) {
-        path13 = path13.map(function(value) {
+      if (Array.isArray(path15)) {
+        path15 = path15.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path13.join("|"), flags);
+        return new RegExp(path15.join("|"), flags);
       }
-      if (typeof path13 !== "string") {
+      if (typeof path15 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path13 = path13.replace(
+      path15 = path15.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -18572,7 +18572,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path13.slice(pos, offset);
+            backtrack += path15.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -18602,7 +18602,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m2 = MATCHING_GROUP_REGEXP.exec(path13)) {
+      while (m2 = MATCHING_GROUP_REGEXP.exec(path15)) {
         if (m2[0][0] === "\\") continue;
         if (keysOffset + i2 === keys.length || keys[keysOffset + i2].offset > m2.index) {
           keys.splice(keysOffset + i2, 0, {
@@ -18614,13 +18614,13 @@ var require_path_to_regexp = __commonJS({
         }
         i2++;
       }
-      path13 += strict ? "" : path13[path13.length - 1] === "/" ? "?" : "/?";
+      path15 += strict ? "" : path15[path15.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path13 += "$";
-      } else if (path13[path13.length - 1] !== "/") {
-        path13 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path15 += "$";
+      } else if (path15[path15.length - 1] !== "/") {
+        path15 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path13, flags);
+      return new RegExp("^" + path15, flags);
     }
   }
 });
@@ -18633,19 +18633,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path13, options, fn) {
+    function Layer(path15, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path13, options, fn);
+        return new Layer(path15, options, fn);
       }
-      debug("new %o", path13);
+      debug("new %o", path15);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path13, this.keys = [], opts);
-      this.regexp.fast_star = path13 === "*";
-      this.regexp.fast_slash = path13 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path15, this.keys = [], opts);
+      this.regexp.fast_star = path15 === "*";
+      this.regexp.fast_slash = path15 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -18669,20 +18669,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path13) {
+    Layer.prototype.match = function match2(path15) {
       var match3;
-      if (path13 != null) {
+      if (path15 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path13) };
-          this.path = path13;
+          this.params = { "0": decode_param(path15) };
+          this.path = path15;
           return true;
         }
-        match3 = this.regexp.exec(path13);
+        match3 = this.regexp.exec(path15);
       }
       if (!match3) {
         this.params = void 0;
@@ -18775,10 +18775,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path13) {
-      this.path = path13;
+    function Route(path15) {
+      this.path = path15;
       this.stack = [];
-      debug("new %o", path13);
+      debug("new %o", path15);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18908,17 +18908,17 @@ var require_router = __commonJS({
     var toString = Object.prototype.toString;
     var proto = module2.exports = function(options) {
       var opts = options || {};
-      function router11(req, res, next) {
-        router11.handle(req, res, next);
+      function router14(req, res, next) {
+        router14.handle(req, res, next);
       }
-      setPrototypeOf(router11, proto);
-      router11.params = {};
-      router11._params = [];
-      router11.caseSensitive = opts.caseSensitive;
-      router11.mergeParams = opts.mergeParams;
-      router11.strict = opts.strict;
-      router11.stack = [];
-      return router11;
+      setPrototypeOf(router14, proto);
+      router14.params = {};
+      router14._params = [];
+      router14.caseSensitive = opts.caseSensitive;
+      router14.mergeParams = opts.mergeParams;
+      router14.strict = opts.strict;
+      router14.stack = [];
+      return router14;
     };
     proto.param = function param(name, fn) {
       if (typeof name === "function") {
@@ -18990,8 +18990,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path13 = getPathname(req);
-        if (path13 == null) {
+        var path15 = getPathname(req);
+        if (path15 == null) {
           return done(layerError);
         }
         var layer;
@@ -18999,7 +18999,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path13);
+          match2 = matchLayer(layer, path15);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -19037,18 +19037,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path13);
+            trim_prefix(layer, layerError, layerPath, path15);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path13) {
+      function trim_prefix(layer, layerError, layerPath, path15) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path13.slice(0, layerPath.length)) {
+          if (layerPath !== path15.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path13[layerPath.length];
+          var c = path15[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -19126,7 +19126,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path13 = "/";
+      var path15 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -19134,7 +19134,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path13 = fn;
+          path15 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -19146,8 +19146,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path13, fn.name || "<anonymous>");
-        var layer = new Layer(path13, {
+        debug("use %o %s", path15, fn.name || "<anonymous>");
+        var layer = new Layer(path15, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -19157,9 +19157,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path13) {
-      var route2 = new Route(path13);
-      var layer = new Layer(path13, {
+    proto.route = function route(path15) {
+      var route2 = new Route(path15);
+      var layer = new Layer(path15, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -19169,8 +19169,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path13) {
-        var route = this.route(path13);
+      proto[method] = function(path15) {
+        var route = this.route(path15);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -19206,9 +19206,9 @@ var require_router = __commonJS({
       }
       return toString.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path13) {
+    function matchLayer(layer, path15) {
       try {
-        return layer.match(path13);
+        return layer.match(path15);
       } catch (err) {
         return err;
       }
@@ -19326,13 +19326,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path13 = require("path");
-    var fs14 = require("fs");
-    var dirname = path13.dirname;
-    var basename3 = path13.basename;
-    var extname = path13.extname;
-    var join = path13.join;
-    var resolve = path13.resolve;
+    var path15 = require("path");
+    var fs16 = require("fs");
+    var dirname = path15.dirname;
+    var basename3 = path15.basename;
+    var extname = path15.extname;
+    var join = path15.join;
+    var resolve = path15.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -19361,17 +19361,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path14;
+      var path16;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i2 = 0; i2 < roots.length && !path14; i2++) {
+      for (var i2 = 0; i2 < roots.length && !path16; i2++) {
         var root = roots[i2];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename3(loc);
-        path14 = this.resolve(dir, file);
+        path16 = this.resolve(dir, file);
       }
-      return path14;
+      return path16;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -19379,21 +19379,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path14 = join(dir, file);
-      var stat3 = tryStat(path14);
+      var path16 = join(dir, file);
+      var stat3 = tryStat(path16);
       if (stat3 && stat3.isFile()) {
-        return path14;
+        return path16;
       }
-      path14 = join(dir, basename3(file, ext), "index" + ext);
-      stat3 = tryStat(path14);
+      path16 = join(dir, basename3(file, ext), "index" + ext);
+      stat3 = tryStat(path16);
       if (stat3 && stat3.isFile()) {
-        return path14;
+        return path16;
       }
     };
-    function tryStat(path14) {
-      debug('stat "%s"', path14);
+    function tryStat(path16) {
+      debug('stat "%s"', path16);
       try {
-        return fs14.statSync(path14);
+        return fs16.statSync(path16);
       } catch (e2) {
         return void 0;
       }
@@ -19998,8 +19998,8 @@ var require_node4 = __commonJS({
           }
           break;
         case "FILE":
-          var fs14 = require("fs");
-          stream2 = new fs14.SyncWriteStream(fd2, { autoClose: false });
+          var fs16 = require("fs");
+          stream2 = new fs16.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -20171,8 +20171,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports2, module2) {
-    var path13 = require("path");
-    var fs14 = require("fs");
+    var path15 = require("path");
+    var fs16 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -20193,7 +20193,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs14.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs16.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -20201,8 +20201,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path14, fallback) {
-      var ext = path14.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path16, fallback) {
+      var ext = path16.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -20431,33 +20431,33 @@ var require_send = __commonJS({
     var escapeHtml = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs14 = require("fs");
+    var fs16 = require("fs");
     var mime = require_mime();
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path13 = require("path");
+    var path15 = require("path");
     var statuses = require_statuses();
     var Stream4 = require("stream");
     var util = require("util");
-    var extname = path13.extname;
-    var join = path13.join;
-    var normalize = path13.normalize;
-    var resolve = path13.resolve;
-    var sep = path13.sep;
+    var extname = path15.extname;
+    var join = path15.join;
+    var normalize = path15.normalize;
+    var resolve = path15.resolve;
+    var sep = path15.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path14, options) {
-      return new SendStream(req, path14, options);
+    function send(req, path16, options) {
+      return new SendStream(req, path16, options);
     }
-    function SendStream(req, path14, options) {
+    function SendStream(req, path16, options) {
       Stream4.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path14;
+      this.path = path16;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -20503,8 +20503,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path14) {
-      this._root = resolve(String(path14));
+    SendStream.prototype.root = function root(path16) {
+      this._root = resolve(String(path16));
       debug("root %s", this._root);
       return this;
     };
@@ -20617,10 +20617,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path14) {
+    SendStream.prototype.redirect = function redirect(path16) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path14);
+        this.emit("directory", res, path16);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -20640,42 +20640,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path14 = decode(this.path);
-      if (path14 === -1) {
+      var path16 = decode(this.path);
+      if (path16 === -1) {
         this.error(400);
         return res;
       }
-      if (~path14.indexOf("\0")) {
+      if (~path16.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path14) {
-          path14 = normalize("." + sep + path14);
+        if (path16) {
+          path16 = normalize("." + sep + path16);
         }
-        if (UP_PATH_REGEXP.test(path14)) {
-          debug('malicious path "%s"', path14);
+        if (UP_PATH_REGEXP.test(path16)) {
+          debug('malicious path "%s"', path16);
           this.error(403);
           return res;
         }
-        parts = path14.split(sep);
-        path14 = normalize(join(root, path14));
+        parts = path16.split(sep);
+        path16 = normalize(join(root, path16));
       } else {
-        if (UP_PATH_REGEXP.test(path14)) {
-          debug('malicious path "%s"', path14);
+        if (UP_PATH_REGEXP.test(path16)) {
+          debug('malicious path "%s"', path16);
           this.error(403);
           return res;
         }
-        parts = normalize(path14).split(sep);
-        path14 = resolve(path14);
+        parts = normalize(path16).split(sep);
+        path16 = resolve(path16);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path14);
+        debug('%s dotfile "%s"', access, path16);
         switch (access) {
           case "allow":
             break;
@@ -20689,13 +20689,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path14);
+        this.sendIndex(path16);
         return res;
       }
-      this.sendFile(path14);
+      this.sendFile(path16);
       return res;
     };
-    SendStream.prototype.send = function send2(path14, stat3) {
+    SendStream.prototype.send = function send2(path16, stat3) {
       var len = stat3.size;
       var options = this.options;
       var opts = {};
@@ -20707,9 +20707,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path14);
-      this.setHeader(path14, stat3);
-      this.type(path14);
+      debug('pipe "%s"', path16);
+      this.setHeader(path16, stat3);
+      this.type(path16);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -20758,28 +20758,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path14, opts);
+      this.stream(path16, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path14) {
+    SendStream.prototype.sendFile = function sendFile(path16) {
       var i2 = 0;
       var self2 = this;
-      debug('stat "%s"', path14);
-      fs14.stat(path14, function onstat(err, stat3) {
-        if (err && err.code === "ENOENT" && !extname(path14) && path14[path14.length - 1] !== sep) {
+      debug('stat "%s"', path16);
+      fs16.stat(path16, function onstat(err, stat3) {
+        if (err && err.code === "ENOENT" && !extname(path16) && path16[path16.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat3.isDirectory()) return self2.redirect(path14);
-        self2.emit("file", path14, stat3);
-        self2.send(path14, stat3);
+        if (stat3.isDirectory()) return self2.redirect(path16);
+        self2.emit("file", path16, stat3);
+        self2.send(path16, stat3);
       });
       function next(err) {
         if (self2._extensions.length <= i2) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path14 + "." + self2._extensions[i2++];
+        var p = path16 + "." + self2._extensions[i2++];
         debug('stat "%s"', p);
-        fs14.stat(p, function(err2, stat3) {
+        fs16.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20787,7 +20787,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path14) {
+    SendStream.prototype.sendIndex = function sendIndex(path16) {
       var i2 = -1;
       var self2 = this;
       function next(err) {
@@ -20795,9 +20795,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path14, self2._index[i2]);
+        var p = join(path16, self2._index[i2]);
         debug('stat "%s"', p);
-        fs14.stat(p, function(err2, stat3) {
+        fs16.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20806,10 +20806,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path14, options) {
+    SendStream.prototype.stream = function stream(path16, options) {
       var self2 = this;
       var res = this.res;
-      var stream2 = fs14.createReadStream(path14, options);
+      var stream2 = fs16.createReadStream(path16, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -20824,10 +20824,10 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path14) {
+    SendStream.prototype.type = function type(path16) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path14);
+      var type2 = mime.lookup(path16);
       if (!type2) {
         debug("no content-type");
         return;
@@ -20836,9 +20836,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path14, stat3) {
+    SendStream.prototype.setHeader = function setHeader(path16, stat3) {
       var res = this.res;
-      this.emit("headers", res, path14, stat3);
+      this.emit("headers", res, path16, stat3);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -20897,9 +20897,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path14) {
+    function decode(path16) {
       try {
-        return decodeURIComponent(path14);
+        return decodeURIComponent(path16);
       } catch (err) {
         return -1;
       }
@@ -21808,10 +21808,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path13) {
-      if ("/" === path13[0]) return true;
-      if (":" === path13[1] && ("\\" === path13[2] || "/" === path13[2])) return true;
-      if ("\\\\" === path13.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path15) {
+      if ("/" === path15[0]) return true;
+      if (":" === path15[1] && ("\\" === path15[2] || "/" === path15[2])) return true;
+      if ("\\\\" === path15.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate3.function(
       flatten,
@@ -21935,7 +21935,7 @@ var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports2, module2) {
     "use strict";
     var finalhandler = require_finalhandler();
-    var Router11 = require_router();
+    var Router14 = require_router();
     var methods = require_methods();
     var middleware = require_init();
     var query = require_query();
@@ -22000,7 +22000,7 @@ var require_application = __commonJS({
     };
     app.lazyrouter = function lazyrouter() {
       if (!this._router) {
-        this._router = new Router11({
+        this._router = new Router14({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
@@ -22009,21 +22009,21 @@ var require_application = __commonJS({
       }
     };
     app.handle = function handle(req, res, callback) {
-      var router11 = this._router;
+      var router14 = this._router;
       var done = callback || finalhandler(req, res, {
         env: this.get("env"),
         onerror: logerror.bind(this)
       });
-      if (!router11) {
+      if (!router14) {
         debug("no routes defined on app");
         done();
         return;
       }
-      router11.handle(req, res, done);
+      router14.handle(req, res, done);
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path13 = "/";
+      var path15 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22031,7 +22031,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path13 = fn;
+          path15 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -22039,15 +22039,15 @@ var require_application = __commonJS({
         throw new TypeError("app.use() requires a middleware function");
       }
       this.lazyrouter();
-      var router11 = this._router;
+      var router14 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router11.use(path13, fn2);
+          return router14.use(path15, fn2);
         }
-        debug(".use app under %s", path13);
-        fn2.mountpath = path13;
+        debug(".use app under %s", path15);
+        fn2.mountpath = path15;
         fn2.parent = this;
-        router11.use(path13, function mounted_app(req, res, next) {
+        router14.use(path15, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -22059,9 +22059,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path13) {
+    app.route = function route(path15) {
       this.lazyrouter();
-      return this._router.route(path13);
+      return this._router.route(path15);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -22112,7 +22112,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path13() {
+    app.path = function path15() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -22128,19 +22128,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path13) {
+      app[method] = function(path15) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path13);
+          return this.set(path15);
         }
         this.lazyrouter();
-        var route = this._router.route(path13);
+        var route = this._router.route(path15);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path13) {
+    app.all = function all(path15) {
       this.lazyrouter();
-      var route = this._router.route(path13);
+      var route = this._router.route(path15);
       var args = slice.call(arguments, 1);
       for (var i2 = 0; i2 < methods.length; i2++) {
         route[methods[i2]].apply(route, args);
@@ -22899,7 +22899,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP2(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path13() {
+    defineGetter(req, "path", function path15() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -23221,7 +23221,7 @@ var require_response = __commonJS({
     var http3 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path13 = require("path");
+    var path15 = require("path");
     var statuses = require_statuses();
     var merge = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -23230,9 +23230,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path13.extname;
+    var extname = path15.extname;
     var mime = send.mime;
-    var resolve = path13.resolve;
+    var resolve = path15.resolve;
     var vary = require_vary();
     var res = Object.create(http3.ServerResponse.prototype);
     module2.exports = res;
@@ -23409,26 +23409,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path14, options, callback) {
+    res.sendFile = function sendFile(path16, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path14) {
+      if (!path16) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path14 !== "string") {
+      if (typeof path16 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path14)) {
+      if (!opts.root && !isAbsolute(path16)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path14);
+      var pathname = encodeURI(path16);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -23438,7 +23438,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path14, options, callback) {
+    res.sendfile = function(path16, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -23448,7 +23448,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path14, opts);
+      var file = send(req, path16, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -23461,7 +23461,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path14, filename, options, callback) {
+    res.download = function download(path16, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23478,7 +23478,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path14)
+        "Content-Disposition": contentDisposition(name || path16)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23491,7 +23491,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path14) : path14;
+      var fullPath = !opts.root ? resolve(path16) : path16;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23792,11 +23792,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path13 = parseUrl(req).pathname;
-        if (path13 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path13 = "";
+        var path15 = parseUrl(req).pathname;
+        if (path15 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path15 = "";
         }
-        var stream = send(req, path13, opts);
+        var stream = send(req, path15, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -23864,7 +23864,7 @@ var require_express = __commonJS({
     var mixin = require_merge_descriptors();
     var proto = require_application();
     var Route = require_route();
-    var Router11 = require_router();
+    var Router14 = require_router();
     var req = require_request();
     var res = require_response();
     exports2 = module2.exports = createApplication;
@@ -23887,7 +23887,7 @@ var require_express = __commonJS({
     exports2.request = req;
     exports2.response = res;
     exports2.Route = Route;
-    exports2.Router = Router11;
+    exports2.Router = Router14;
     exports2.json = bodyParser.json;
     exports2.query = require_query();
     exports2.raw = bodyParser.raw;
@@ -40569,14 +40569,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path13) {
+    var parse = function(path15) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path13; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path15; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -40890,8 +40890,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path13) {
-      return apply(parse(path13));
+    exports2.svgPathToOperators = function(path15) {
+      return apply(parse(path15));
     };
   }
 });
@@ -41074,7 +41074,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path13, options) {
+    exports2.drawSvgPath = function(path15, options) {
       var _a2, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -41088,7 +41088,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path13), [
+      ], svgPath_1.svgPathToOperators(path15), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -45386,12 +45386,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path13, options) {
+        PDFPage2.prototype.drawSvgPath = function(path15, options) {
           var _a2, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path13, "path", ["string"]);
+          utils_1.assertIs(path15, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -45420,7 +45420,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path13, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path15, {
             x: (_a2 = options.x) !== null && _a2 !== void 0 ? _a2 : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -45916,8 +45916,8 @@ var require_cjs = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs14 = require("fs");
-    var path13 = require("path");
+    var fs16 = require("fs");
+    var path15 = require("path");
     var os = require("os");
     var crypto4 = require("crypto");
     var TIPS = [
@@ -46048,7 +46048,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs14.existsSync(filepath)) {
+            if (fs16.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -46056,15 +46056,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path13.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path15.resolve(process.cwd(), ".env.vault");
       }
-      if (fs14.existsSync(possibleVaultPath)) {
+      if (fs16.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path13.join(os.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path15.join(os.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -46081,7 +46081,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path13.resolve(process.cwd(), ".env");
+      const dotenvPath = path15.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -46109,13 +46109,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path14 of optionPaths) {
+      for (const path16 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs14.readFileSync(path14, { encoding }));
+          const parsed = DotenvModule.parse(fs16.readFileSync(path16, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e2) {
           if (debug) {
-            _debug(`failed to load ${path14} ${e2.message}`);
+            _debug(`failed to load ${path16} ${e2.message}`);
           }
           lastError = e2;
         }
@@ -46128,7 +46128,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path13.relative(process.cwd(), filePath);
+            const relative = path15.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e2) {
             if (debug) {
@@ -56672,22 +56672,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path13, type) => fromBlob((0, import_node_fs.statSync)(path13), path13, type);
-    blobFrom = (path13, type) => stat(path13).then((stat3) => fromBlob(stat3, path13, type));
-    fileFrom = (path13, type) => stat(path13).then((stat3) => fromFile(stat3, path13, type));
-    fileFromSync = (path13, type) => fromFile((0, import_node_fs.statSync)(path13), path13, type);
-    fromBlob = (stat3, path13, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path13,
+    blobFromSync = (path15, type) => fromBlob((0, import_node_fs.statSync)(path15), path15, type);
+    blobFrom = (path15, type) => stat(path15).then((stat3) => fromBlob(stat3, path15, type));
+    fileFrom = (path15, type) => stat(path15).then((stat3) => fromFile(stat3, path15, type));
+    fileFromSync = (path15, type) => fromFile((0, import_node_fs.statSync)(path15), path15, type);
+    fromBlob = (stat3, path15, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path15,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path13, type = "") => new file_default([new BlobDataItem({
-      path: path13,
+    fromFile = (stat3, path15, type = "") => new file_default([new BlobDataItem({
+      path: path15,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path13), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path15), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -61644,9 +61644,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs14 = require("fs");
+    var fs16 = require("fs");
     var os = require("os");
-    var path13 = require("path");
+    var path15 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -61732,15 +61732,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs14.promises.lstat(filePath);
+        const stats = await fs16.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path13.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path13.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path13.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path15.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path15.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path15.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os.platform().startsWith("win");
@@ -63143,11 +63143,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path13 = require("path");
-    var fs14 = require("fs");
+    var path15 = require("path");
+    var fs16 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs14.readFile ? (0, util_1.promisify)(fs14.readFile) : async () => {
+    var readFile = fs16.readFile ? (0, util_1.promisify)(fs16.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -63215,7 +63215,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path13.extname(keyFilePath);
+        const keyFileExtension = path15.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -64824,12 +64824,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs14 = require("fs");
-    var readFile = (0, util_1.promisify)(fs14.readFile ?? (() => {
+    var fs16 = require("fs");
+    var readFile = (0, util_1.promisify)(fs16.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs14.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs16.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs14.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs16.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -64947,7 +64947,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs14 = require("fs");
+    var fs16 = require("fs");
     var crypto_1 = require("crypto");
     var https2 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -65041,7 +65041,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs14.promises.readFile(configPath, "utf8");
+          fileContents = await fs16.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -65066,14 +65066,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs14.promises.readFile(certPath);
+          cert = await fs16.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs14.promises.readFile(keyPath);
+          key = await fs16.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -65092,7 +65092,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs14.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs16.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index) => {
             try {
@@ -65794,7 +65794,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs14 = require("fs");
+    var fs16 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -65879,14 +65879,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs14.promises.realpath(this.outputFile);
+          filePath = await fs16.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs14.promises.lstat(filePath)).isFile()) {
+        if (!(await fs16.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs14.promises.readFile(filePath, {
+        const responseString = await fs16.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -66297,7 +66297,7 @@ var require_gdchclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
     var crypto4 = require("crypto");
-    var fs14 = require("fs");
+    var fs16 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -66520,7 +66520,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs14.promises.readFile(currentPath);
+            const ca = await fs16.promises.readFile(currentPath);
             return new https2.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -66580,11 +66580,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs14 = require("fs");
+    var fs16 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
     var os = require("os");
-    var path13 = require("path");
+    var path15 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -66871,12 +66871,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location = path13.join(home, ".config");
+            location = path15.join(home, ".config");
           }
         }
         if (location) {
-          location = path13.join(location, "gcloud", "application_default_credentials.json");
-          if (!fs14.existsSync(location)) {
+          location = path15.join(location, "gcloud", "application_default_credentials.json");
+          if (!fs16.existsSync(location)) {
             location = null;
           }
         }
@@ -66897,8 +66897,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs14.realpathSync(filePath);
-          if (!fs14.lstatSync(filePath).isFile()) {
+          filePath = fs16.realpathSync(filePath);
+          if (!fs16.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -66907,7 +66907,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream = fs14.createReadStream(filePath);
+        const readStream = fs16.createReadStream(filePath);
         return this.fromStream(readStream, options);
       }
       /**
@@ -67234,8 +67234,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path13.resolve(this.keyFilename);
-          const stream = fs14.createReadStream(filePath);
+          const filePath = path15.resolve(this.keyFilename);
+          const stream = fs16.createReadStream(filePath);
           return await this.fromStreamAsync(stream, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -71461,9 +71461,9 @@ var require_websocket_server = __commonJS({
 });
 
 // server.ts
-var import_express12 = __toESM(require_express2(), 1);
-var import_path11 = __toESM(require("path"), 1);
-var import_fs12 = __toESM(require("fs"), 1);
+var import_express15 = __toESM(require_express2(), 1);
+var import_path13 = __toESM(require("path"), 1);
+var import_fs14 = __toESM(require("fs"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 var import_node_module = require("node:module");
 var import_pdf_lib = __toESM(require_cjs(), 1);
@@ -71592,11 +71592,11 @@ function createBoundedQueue(processPayload) {
 }
 function createShopeeWebhookRouter(processPayload) {
   const queue = createBoundedQueue(processPayload);
-  const router11 = import_express.default.Router();
-  router11.get("/shopee", (_req, res) => {
+  const router14 = import_express.default.Router();
+  router14.get("/shopee", (_req, res) => {
     res.status(200).type("text/plain").send("success");
   });
-  router11.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+  router14.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     const bodyPreview = rawBody.toString("utf8").slice(0, 4e3);
     console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee \u2014 headers:", {
@@ -71660,7 +71660,7 @@ function createShopeeWebhookRouter(processPayload) {
       if (!res.headersSent) return res.status(500).type("text/plain").send("Internal Server Error");
     }
   });
-  return router11;
+  return router14;
 }
 
 // src/utils/orderItemVariation.ts
@@ -76926,7 +76926,7 @@ var Batches = class extends BaseModule {
       params
     );
     const urlParams = body["_url"];
-    const path13 = formatMap("{model}:batchGenerateContent", urlParams);
+    const path15 = formatMap("{model}:batchGenerateContent", urlParams);
     const batch = body["batch"];
     const inputConfig = batch["inputConfig"];
     const requestsWrapper = inputConfig["requests"];
@@ -76947,7 +76947,7 @@ var Batches = class extends BaseModule {
     delete body["config"];
     delete body["_url"];
     delete body["_query"];
-    return { path: path13, body };
+    return { path: path15, body };
   }
   // Helper function to get the first GCS URI
   getGcsUri(src) {
@@ -77003,16 +77003,16 @@ var Batches = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createBatchJobParametersToVertex(this.apiClient, params);
-      path13 = formatMap("batchPredictionJobs", body["_url"]);
+      path15 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77027,12 +77027,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = createBatchJobParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{model}:batchGenerateContent", body["_url"]);
+      path15 = formatMap("{model}:batchGenerateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77057,18 +77057,18 @@ var Batches = class extends BaseModule {
   async createEmbeddingsInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+      path15 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77097,16 +77097,16 @@ var Batches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getBatchJobParametersToVertex(this.apiClient, params);
-      path13 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path15 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77121,12 +77121,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = getBatchJobParametersToMldev(this.apiClient, params);
-      path13 = formatMap("batches/{name}", body["_url"]);
+      path15 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77154,16 +77154,16 @@ var Batches = class extends BaseModule {
    */
   async cancel(params) {
     var _a2, _b, _c, _d;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-      path13 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+      path15 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77172,12 +77172,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-      path13 = formatMap("batches/{name}:cancel", body["_url"]);
+      path15 = formatMap("batches/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77189,16 +77189,16 @@ var Batches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listBatchJobsParametersToVertex(params);
-      path13 = formatMap("batchPredictionJobs", body["_url"]);
+      path15 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77221,12 +77221,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = listBatchJobsParametersToMldev(params);
-      path13 = formatMap("batches", body["_url"]);
+      path15 = formatMap("batches", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77263,16 +77263,16 @@ var Batches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-      path13 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path15 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -77293,12 +77293,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-      path13 = formatMap("batches/{name}", body["_url"]);
+      path15 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -78222,16 +78222,16 @@ var Caches = class extends BaseModule {
   async create(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createCachedContentParametersToVertex(this.apiClient, params);
-      path13 = formatMap("cachedContents", body["_url"]);
+      path15 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -78245,12 +78245,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = createCachedContentParametersToMldev(this.apiClient, params);
-      path13 = formatMap("cachedContents", body["_url"]);
+      path15 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -78278,16 +78278,16 @@ var Caches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getCachedContentParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -78301,12 +78301,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = getCachedContentParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -78334,16 +78334,16 @@ var Caches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -78366,12 +78366,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -78411,16 +78411,16 @@ var Caches = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateCachedContentParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -78434,12 +78434,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = updateCachedContentParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -78456,16 +78456,16 @@ var Caches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listCachedContentsParametersToVertex(params);
-      path13 = formatMap("cachedContents", body["_url"]);
+      path15 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -78488,12 +78488,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = listCachedContentsParametersToMldev(params);
-      path13 = formatMap("cachedContents", body["_url"]);
+      path15 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -79089,18 +79089,18 @@ var Files = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFilesParametersToMldev(params);
-      path13 = formatMap("files", body["_url"]);
+      path15 = formatMap("files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -79126,18 +79126,18 @@ var Files = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileParametersToMldev(params);
-      path13 = formatMap("upload/v1beta/files", body["_url"]);
+      path15 = formatMap("upload/v1beta/files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -79172,18 +79172,18 @@ var Files = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileParametersToMldev(params);
-      path13 = formatMap("files/{file}", body["_url"]);
+      path15 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -79213,18 +79213,18 @@ var Files = class extends BaseModule {
   async delete(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileParametersToMldev(params);
-      path13 = formatMap("files/{file}", body["_url"]);
+      path15 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -79250,18 +79250,18 @@ var Files = class extends BaseModule {
   async registerFilesInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = internalRegisterFilesParametersToMldev(params);
-      path13 = formatMap("files:register", body["_url"]);
+      path15 = formatMap("files:register", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84515,13 +84515,13 @@ var ApiClient = class {
       throw new Error("HTTP options are not correctly set.");
     }
   }
-  constructUrl(path13, httpOptions, prependProjectLocation) {
+  constructUrl(path15, httpOptions, prependProjectLocation) {
     const urlElement = [this.getRequestUrlInternal(httpOptions)];
     if (prependProjectLocation) {
       urlElement.push(this.getBaseResourcePath());
     }
-    if (path13 !== "") {
-      urlElement.push(path13);
+    if (path15 !== "") {
+      urlElement.push(path15);
     }
     const url = new URL(`${urlElement.join("/")}`);
     return url;
@@ -84820,8 +84820,8 @@ var ApiClient = class {
       file: fileToUpload
     };
     const fileName = this.getFileName(file);
-    const path13 = formatMap("upload/v1beta/files", body["_url"]);
-    const uploadUrl = await this.fetchUploadUrl(path13, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const path15 = formatMap("upload/v1beta/files", body["_url"]);
+    const uploadUrl = await this.fetchUploadUrl(path15, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.upload(file, uploadUrl, this);
   }
   /**
@@ -84845,13 +84845,13 @@ var ApiClient = class {
     if (mimeType === void 0 || mimeType === "") {
       throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
     }
-    const path13 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+    const path15 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
     const fileName = this.getFileName(file);
     const body = {};
     if (config != null) {
       uploadToFileSearchStoreConfigToMldev(config, body);
     }
-    const uploadUrl = await this.fetchUploadUrl(path13, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const uploadUrl = await this.fetchUploadUrl(path15, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);
   }
   /**
@@ -84864,7 +84864,7 @@ var ApiClient = class {
     const downloader = this.clientOptions.downloader;
     await downloader.download(params, this);
   }
-  async fetchUploadUrl(path13, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+  async fetchUploadUrl(path15, sizeBytes, mimeType, fileName, body, configHttpOptions) {
     var _a2;
     let httpOptions = {};
     if (configHttpOptions) {
@@ -84877,7 +84877,7 @@ var ApiClient = class {
       };
     }
     const httpResponse = await this.request({
-      path: path13,
+      path: path15,
       body: JSON.stringify(body),
       httpMethod: "POST",
       httpOptions
@@ -86073,16 +86073,16 @@ var Models = class extends BaseModule {
   async generateContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:generateContent", body["_url"]);
+      path15 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86105,12 +86105,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{model}:generateContent", body["_url"]);
+      path15 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86136,17 +86136,17 @@ var Models = class extends BaseModule {
   async generateContentStreamInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path15 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86182,13 +86182,13 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path15 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86248,17 +86248,17 @@ var Models = class extends BaseModule {
   async embedContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
       const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-      path13 = formatMap(endpointUrl, body["_url"]);
+      path15 = formatMap(endpointUrl, body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86281,12 +86281,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-      path13 = formatMap("{model}:batchEmbedContents", body["_url"]);
+      path15 = formatMap("{model}:batchEmbedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86315,16 +86315,16 @@ var Models = class extends BaseModule {
   async generateImagesInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateImagesParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:predict", body["_url"]);
+      path15 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86347,12 +86347,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateImagesParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{model}:predict", body["_url"]);
+      path15 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86381,16 +86381,16 @@ var Models = class extends BaseModule {
   async editImageInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = editImageParametersInternalToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:predict", body["_url"]);
+      path15 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86421,16 +86421,16 @@ var Models = class extends BaseModule {
   async upscaleImageInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:predict", body["_url"]);
+      path15 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86482,16 +86482,16 @@ var Models = class extends BaseModule {
   async recontextImage(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = recontextImageParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:predict", body["_url"]);
+      path15 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86533,16 +86533,16 @@ var Models = class extends BaseModule {
   async segmentImage(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = segmentImageParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:predict", body["_url"]);
+      path15 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86572,16 +86572,16 @@ var Models = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getModelParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86596,12 +86596,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = getModelParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86619,16 +86619,16 @@ var Models = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listModelsParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{models_url}", body["_url"]);
+      path15 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86651,12 +86651,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = listModelsParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{models_url}", body["_url"]);
+      path15 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86699,16 +86699,16 @@ var Models = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateModelParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{model}", body["_url"]);
+      path15 = formatMap("{model}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -86723,12 +86723,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = updateModelParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -86757,16 +86757,16 @@ var Models = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteModelParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86789,12 +86789,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = deleteModelParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86836,16 +86836,16 @@ var Models = class extends BaseModule {
   async countTokens(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = countTokensParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:countTokens", body["_url"]);
+      path15 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86868,12 +86868,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = countTokensParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{model}:countTokens", body["_url"]);
+      path15 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86917,16 +86917,16 @@ var Models = class extends BaseModule {
   async computeTokens(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = computeTokensParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:computeTokens", body["_url"]);
+      path15 = formatMap("{model}:computeTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86957,16 +86957,16 @@ var Models = class extends BaseModule {
   async generateVideosInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateVideosParametersToVertex(this.apiClient, params);
-      path13 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path15 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86983,12 +86983,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateVideosParametersToMldev(this.apiClient, params);
-      path13 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path15 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87090,16 +87090,16 @@ var Operations = class extends BaseModule {
   async getVideosOperationInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getOperationParametersToVertex(params);
-      path13 = formatMap("{operationName}", body["_url"]);
+      path15 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87111,12 +87111,12 @@ var Operations = class extends BaseModule {
       return response;
     } else {
       const body = getOperationParametersToMldev(params);
-      path13 = formatMap("{operationName}", body["_url"]);
+      path15 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87131,16 +87131,16 @@ var Operations = class extends BaseModule {
   async fetchPredictVideosOperationInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = fetchPredictOperationParametersToVertex(params);
-      path13 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+      path15 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87828,20 +87828,20 @@ var Tokens = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
     } else {
       const body = createAuthTokenParametersToMldev(this.apiClient, params);
-      path13 = formatMap("auth_tokens", body["_url"]);
+      path15 = formatMap("auth_tokens", body["_url"]);
       queryParams = body["_query"];
       delete body["config"];
       delete body["_url"];
       delete body["_query"];
       const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(transformedBody),
         httpMethod: "POST",
@@ -87951,18 +87951,18 @@ var Documents = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getDocumentParametersToMldev(params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87983,18 +87983,18 @@ var Documents = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteDocumentParametersToMldev(params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -88006,18 +88006,18 @@ var Documents = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listDocumentsParametersToMldev(params);
-      path13 = formatMap("{parent}/documents", body["_url"]);
+      path15 = formatMap("{parent}/documents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88134,18 +88134,18 @@ var FileSearchStores = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-      path13 = formatMap("fileSearchStores", body["_url"]);
+      path15 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -88168,18 +88168,18 @@ var FileSearchStores = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileSearchStoreParametersToMldev(params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88200,18 +88200,18 @@ var FileSearchStores = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileSearchStoreParametersToMldev(params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -88223,18 +88223,18 @@ var FileSearchStores = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFileSearchStoresParametersToMldev(params);
-      path13 = formatMap("fileSearchStores", body["_url"]);
+      path15 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88254,18 +88254,18 @@ var FileSearchStores = class extends BaseModule {
   async uploadToFileSearchStoreInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = uploadToFileSearchStoreParametersToMldev(params);
-      path13 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+      path15 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -88293,18 +88293,18 @@ var FileSearchStores = class extends BaseModule {
   async importFile(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = importFileParametersToMldev(params);
-      path13 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+      path15 = formatMap("{file_search_store_name}:importFile", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -89440,16 +89440,16 @@ var ClientSDK = class {
   }
   _createRequest(context, conf, options) {
     var _a2, _b, _c, _d, _e;
-    const { method, path: path13, query, headers: opHeaders, security } = conf;
+    const { method, path: path15, query, headers: opHeaders, security } = conf;
     const base = (_a2 = conf.baseURL) !== null && _a2 !== void 0 ? _a2 : this._baseURL;
     if (!base) {
       return ERR(new InvalidRequestError("No base URL provided for operation"));
     }
     const baseURL = new URL(base);
     let reqURL;
-    if (path13) {
+    if (path15) {
       baseURL.pathname = baseURL.pathname.replace(/\/+$/, "") + "/";
-      reqURL = new URL(path13, baseURL);
+      reqURL = new URL(path15, baseURL);
       if (!reqURL.search && baseURL.search) {
         reqURL.search = baseURL.search;
       }
@@ -90265,7 +90265,7 @@ async function $do$e(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path13 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path15 = pathToFunc("/{api_version}/agents")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -90296,7 +90296,7 @@ async function $do$e(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -90340,7 +90340,7 @@ async function $do$d(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path15 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90370,7 +90370,7 @@ async function $do$d(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90414,7 +90414,7 @@ async function $do$c(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path15 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90444,7 +90444,7 @@ async function $do$c(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90486,7 +90486,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path13 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path15 = pathToFunc("/{api_version}/agents")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token,
@@ -90521,7 +90521,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     query,
     body,
@@ -90673,7 +90673,7 @@ async function $do$a(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
+  const path15 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90703,7 +90703,7 @@ async function $do$a(client, id, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90746,7 +90746,7 @@ async function $do$9(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path13 = pathToFunc("/{api_version}/interactions")(pathParams);
+  const path15 = pathToFunc("/{api_version}/interactions")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: ((_b = input === null || input === void 0 ? void 0 : input.body) === null || _b === void 0 ? void 0 : _b.stream) ? "text/event-stream" : "application/json"
@@ -90777,7 +90777,7 @@ async function $do$9(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -90827,7 +90827,7 @@ async function $do$8(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path15 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90857,7 +90857,7 @@ async function $do$8(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90907,7 +90907,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path15 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const query = encodeFormQuery({
     "include_input": payload.include_input,
     "last_event_id": payload.last_event_id,
@@ -90942,7 +90942,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     query,
     body,
@@ -91016,7 +91016,7 @@ async function $do$6(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path13 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path15 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -91047,7 +91047,7 @@ async function $do$6(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -91091,7 +91091,7 @@ async function $do$5(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path15 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -91121,7 +91121,7 @@ async function $do$5(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -91165,7 +91165,7 @@ async function $do$4(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path15 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -91195,7 +91195,7 @@ async function $do$4(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -91236,7 +91236,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path13 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path15 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token
@@ -91270,7 +91270,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     query,
     body,
@@ -91316,7 +91316,7 @@ async function $do$2(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
+  const path15 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -91347,7 +91347,7 @@ async function $do$2(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -91392,7 +91392,7 @@ async function $do$1(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
+  const path15 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -91423,7 +91423,7 @@ async function $do$1(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -91469,7 +91469,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
       charEncoding: "percent"
     })
   };
-  const path13 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path15 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const query = encodeFormQuery({
     "update_mask": payload.update_mask
   });
@@ -91503,7 +91503,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
     security: requestSecurity,
     method: "PATCH",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path13,
+    path: path15,
     headers,
     query,
     body: body$,
@@ -93519,16 +93519,16 @@ var Tunings = class extends BaseModule {
   async getInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getTuningJobParametersToVertex(params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93549,12 +93549,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = getTuningJobParametersToMldev(params);
-      path13 = formatMap("{name}", body["_url"]);
+      path15 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93578,16 +93578,16 @@ var Tunings = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listTuningJobsParametersToVertex(params);
-      path13 = formatMap("tuningJobs", body["_url"]);
+      path15 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93626,16 +93626,16 @@ var Tunings = class extends BaseModule {
   async cancel(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelTuningJobParametersToVertex(params);
-      path13 = formatMap("{name}:cancel", body["_url"]);
+      path15 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93658,12 +93658,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = cancelTuningJobParametersToMldev(params);
-      path13 = formatMap("{name}:cancel", body["_url"]);
+      path15 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93689,16 +93689,16 @@ var Tunings = class extends BaseModule {
   async tuneInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createTuningJobParametersPrivateToVertex(params, params);
-      path13 = formatMap("tuningJobs", body["_url"]);
+      path15 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93724,18 +93724,18 @@ var Tunings = class extends BaseModule {
   async tuneMldevInternal(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createTuningJobParametersPrivateToMldev(params);
-      path13 = formatMap("tunedModels", body["_url"]);
+      path15 = formatMap("tunedModels", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93759,16 +93759,16 @@ var Tunings = class extends BaseModule {
   async validateReward(params) {
     var _a2, _b;
     let response;
-    let path13 = "";
+    let path15 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = validateRewardParametersToVertex(params);
-      path13 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
+      path15 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path13,
+        path: path15,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -95756,29 +95756,8 @@ async function scanBulkUpdate(req, res) {
   }
 }
 
-// utils/apiError.js
-function extractHttpClientError(err) {
-  const anyErr = err;
-  const shopeeData = anyErr?.response?.data;
-  const message = shopeeData?.message || shopeeData?.error || (err instanceof Error ? err.message : String(err)) || "L\u1ED7i m\xE1y ch\u1EE7 n\u1ED9i b\u1ED9";
-  const details = shopeeData ? JSON.stringify(shopeeData) : err instanceof Error ? err.toString() : String(err);
-  return { message, details, shopeeDetail: shopeeData };
-}
-function sendApiErrorJson(res, err, status = 500) {
-  if (res.headersSent) return;
-  const { message, details, shopeeDetail } = extractHttpClientError(err);
-  return res.status(status).json({
-    success: false,
-    error: message || "Internal Server Error",
-    message,
-    details,
-    ...shopeeDetail ? { shopee: shopeeDetail } : {}
-  });
-}
-function sendStrictApiErrorJson(res, err) {
-  const message = err && typeof err === "object" && "message" in err && typeof err.message === "string" ? err.message : "Internal Server Error";
-  return res.status(500).json({ success: false, error: message || "Internal Server Error" });
-}
+// routes/productsRoutes.js
+var import_express12 = __toESM(require_express2(), 1);
 
 // utils/concurrency.js
 var DEFAULT_DELAY_MS = 1e3;
@@ -95827,33 +95806,1587 @@ async function withOperationTimeout(work, ms, label) {
   }
 }
 
-// utils/heavyJob.js
-var HEAVY_JOB_LOCK_MAX_MS = 12e4;
-var cpanelHeavyJobActive = null;
-function tryAcquireHeavyJob(name) {
-  if (cpanelHeavyJobActive) {
-    const elapsedMs = Date.now() - cpanelHeavyJobActive.startedAt;
-    if (elapsedMs > HEAVY_JOB_LOCK_MAX_MS) {
-      console.error(
-        `[Heavy Job] Watchdog gi\u1EA3i ph\xF3ng lock k\u1EB9t "${cpanelHeavyJobActive.name}" sau ${elapsedMs}ms`
-      );
-      cpanelHeavyJobActive = null;
-    } else {
-      console.warn(
-        `[Heavy Job] T\u1EEB ch\u1ED1i "${name}" \u2014 "${cpanelHeavyJobActive.name}" \u0111ang ch\u1EA1y (${elapsedMs}ms)`
-      );
-      return false;
+// services/stockSyncQueue.js
+var SHOPEE_SYNC_QUEUE_GAP_MS = 750;
+var SHOPEE_SYNC_QUEUE_MAX_RETRY = 3;
+var shopeeSyncQueue = [];
+var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
+var shopeeSyncQueueRunning = false;
+var deps7 = {
+  getProductChildrenList: () => [],
+  inheritShopeeLinkFromParent: (child) => child,
+  getShopeeItemIdForStockPush: () => null,
+  resolveShopeeModelIdForStockPush: () => null,
+  applyShopeeLinkFieldsToProduct: (product) => product,
+  readChannelListingsDb: async () => [],
+  resolveShopeeTokenShopId: () => null,
+  getValidShopeeAccessToken: async () => null,
+  productRequiresShopeeModelId: () => false,
+  resolveShopeeModelIdFromApi: async () => ({ hasModel: false, modelId: null }),
+  appendShopeeSyncErrorToDb: async () => {
+  },
+  resolveShopeeStockLocationId: async () => null,
+  buildShopeeUpdateStockEntry: () => ({}),
+  shopeeUpdateStock: async () => ({}),
+  parseShopeeApiResult: () => ({ success: false, message: "" }),
+  extractShopeeStockPushErrorMessage: (_err, fallback) => fallback || "",
+  buildShopeeUpdatePriceEntry: () => ({}),
+  shopeeUpdatePrice: async () => ({}),
+  loadProductById: async () => null
+};
+function initStockSyncQueue(partial) {
+  deps7 = { ...deps7, ...partial };
+}
+function detectStockPriceChanges(before, after) {
+  const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
+  const stockAfter = Math.max(0, Math.round(Number(after?.stock) || 0));
+  const priceBefore = Math.max(0, Math.round(Number(before?.sellingPrice) || 0));
+  const priceAfter = Math.max(0, Math.round(Number(after?.sellingPrice) || 0));
+  return {
+    stock: stockBefore !== stockAfter,
+    price: priceBefore !== priceAfter
+  };
+}
+function findProductRowById(products, productId) {
+  const id = String(productId || "").trim();
+  if (!id) return null;
+  for (const p of Array.isArray(products) ? products : []) {
+    if (String(p?.id || "").trim() === id) return p;
+    for (const child of deps7.getProductChildrenList(p)) {
+      if (String(child?.id || "").trim() === id) {
+        return deps7.inheritShopeeLinkFromParent(child, p);
+      }
     }
   }
-  cpanelHeavyJobActive = { name, startedAt: Date.now() };
-  return true;
+  return null;
 }
-function releaseHeavyJob(name) {
-  if (cpanelHeavyJobActive?.name === name) cpanelHeavyJobActive = null;
+async function resolveProductWithShopeeMapping(product) {
+  if (!product || typeof product !== "object") return null;
+  let current = product;
+  const hasItemId = () => deps7.getShopeeItemIdForStockPush(current) != null;
+  const hasModelId = () => deps7.resolveShopeeModelIdForStockPush(current) != null;
+  if (!hasItemId() || !hasModelId()) {
+    let listings = [];
+    try {
+      listings = await deps7.readChannelListingsDb();
+    } catch (err) {
+      console.error("[Shopee Sync Queue] Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c channel_listings:", err);
+      if (!hasItemId()) return null;
+    }
+    const productId = String(product.id || "").trim();
+    if (productId && listings.length > 0) {
+      const match2 = listings.find((row) => {
+        if (!row || typeof row !== "object") return false;
+        const platform = String(row.platform || "shopee").trim().toLowerCase();
+        if (platform && platform !== "shopee") return false;
+        const linkedId = row.linkedProductId != null && String(row.linkedProductId).trim() !== "" ? String(row.linkedProductId).trim() : row.linkedProduct?.id != null ? String(row.linkedProduct.id).trim() : "";
+        if (!linkedId || linkedId !== productId) return false;
+        const status = String(row.status || "").trim().toLowerCase();
+        return status === "success";
+      });
+      if (match2) {
+        const channelId = String(match2.channelId || match2.itemId || "").trim();
+        if (channelId || match2.itemId != null) {
+          current = deps7.applyShopeeLinkFieldsToProduct(current, channelId || String(match2.itemId), {
+            modelId: match2.modelId ?? match2.shopeeModelId ?? current.shopeeModelId,
+            itemId: match2.itemId ?? deps7.getShopeeItemIdForStockPush(current)
+          });
+        }
+      }
+    }
+  }
+  if (deps7.getShopeeItemIdForStockPush(current) == null) return null;
+  return current;
 }
-function resetHeavyJob() {
-  cpanelHeavyJobActive = null;
+async function executeShopeeStockPriceSyncJob(product, opts) {
+  const mapped = await resolveProductWithShopeeMapping(product);
+  if (!mapped) {
+    return { ok: false, message: "Ch\u01B0a li\xEAn k\u1EBFt Mapping Shopee \u2014 b\u1ECF qua sync." };
+  }
+  const shopId = deps7.resolveShopeeTokenShopId(opts.shopId);
+  if (!shopId) {
+    return { ok: false, message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n." };
+  }
+  const accessToken = await deps7.getValidShopeeAccessToken(shopId);
+  if (!accessToken) {
+    return { ok: false, message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId}.` };
+  }
+  const itemId = deps7.getShopeeItemIdForStockPush(mapped);
+  let modelId = deps7.resolveShopeeModelIdForStockPush(mapped);
+  if (itemId == null) {
+    return { ok: false, message: "Thi\u1EBFu Shopee item_id sau khi resolve Mapping." };
+  }
+  let itemHasModel = deps7.productRequiresShopeeModelId(mapped, 1);
+  if (modelId == null) {
+    const fromApi = await deps7.resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
+    if (fromApi.hasModel) itemHasModel = true;
+    if (fromApi.modelId != null) {
+      modelId = fromApi.modelId;
+      mapped.shopeeModelId = String(fromApi.modelId);
+    }
+  }
+  if (itemHasModel && modelId == null) {
+    const msg = "Ph\xE2n lo\u1EA1i (variant) thi\u1EBFu model_id \u2014 b\u1EAFt bu\u1ED9c truy\u1EC1n item_id + model_id khi update_stock";
+    await deps7.appendShopeeSyncErrorToDb({
+      itemId,
+      modelId: void 0,
+      sku: mapped.sku,
+      shopId,
+      action: "update_stock",
+      error: msg,
+      productId: mapped.id
+    });
+    return { ok: false, message: msg };
+  }
+  const locationId = opts.syncStock ? await deps7.resolveShopeeStockLocationId(shopId, accessToken) : null;
+  const lines = [];
+  if (opts.syncStock) {
+    const stockEntry = deps7.buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
+    try {
+      const stockResult = await deps7.shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
+      const parsed = deps7.parseShopeeApiResult(stockResult, mapped, "update_stock");
+      lines.push(parsed.message);
+      if (!parsed.success) {
+        await deps7.appendShopeeSyncErrorToDb({
+          itemId,
+          modelId: modelId ?? mapped.shopeeModelId,
+          sku: mapped.sku,
+          shopId,
+          action: "update_stock",
+          error: parsed.message,
+          productId: mapped.id
+        });
+        return { ok: false, message: parsed.message };
+      }
+    } catch (err) {
+      const msg = deps7.extractShopeeStockPushErrorMessage(
+        err,
+        err instanceof Error ? err.message : String(err)
+      );
+      await deps7.appendShopeeSyncErrorToDb({
+        itemId,
+        modelId: modelId ?? mapped.shopeeModelId,
+        sku: mapped.sku,
+        shopId,
+        action: "update_stock",
+        error: msg,
+        productId: mapped.id
+      });
+      return { ok: false, message: msg };
+    }
+  }
+  if (opts.syncPrice) {
+    await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+    const priceEntry = deps7.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
+    try {
+      const priceResult = await deps7.shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
+      const parsed = deps7.parseShopeeApiResult(priceResult, mapped, "update_price");
+      lines.push(parsed.message);
+      if (!parsed.success) {
+        await deps7.appendShopeeSyncErrorToDb({
+          itemId,
+          modelId: modelId ?? mapped.shopeeModelId,
+          sku: mapped.sku,
+          shopId,
+          action: "update_price",
+          error: parsed.message,
+          productId: mapped.id
+        });
+        return { ok: false, message: parsed.message };
+      }
+    } catch (err) {
+      const msg = deps7.extractShopeeStockPushErrorMessage(
+        err,
+        err instanceof Error ? err.message : String(err)
+      );
+      await deps7.appendShopeeSyncErrorToDb({
+        itemId,
+        modelId: modelId ?? mapped.shopeeModelId,
+        sku: mapped.sku,
+        shopId,
+        action: "update_price",
+        error: msg,
+        productId: mapped.id
+      });
+      return { ok: false, message: msg };
+    }
+  }
+  return { ok: true, message: lines.join(" | ") || "Sync Shopee OK" };
 }
+async function pushProductStockPriceToShopeeImmediate(product, opts) {
+  if (!opts.syncStock && !opts.syncPrice) {
+    return { ok: true, skipped: true, message: "Kh\xF4ng c\xF3 thay \u0111\u1ED5i t\u1ED3n/gi\xE1 c\u1EA7n \u0111\u1ED3ng b\u1ED9 Shopee." };
+  }
+  const mapped = await resolveProductWithShopeeMapping(product);
+  if (!mapped) {
+    return {
+      ok: true,
+      skipped: true,
+      message: "Ch\u01B0a li\xEAn k\u1EBFt Mapping Shopee \u2014 ch\u1EC9 l\u01B0u kho n\u1ED9i b\u1ED9."
+    };
+  }
+  return executeShopeeStockPriceSyncJob(mapped, {
+    syncStock: opts.syncStock,
+    syncPrice: opts.syncPrice
+  });
+}
+async function processShopeeSyncQueue() {
+  if (shopeeSyncQueueRunning) return;
+  shopeeSyncQueueRunning = true;
+  try {
+    while (shopeeSyncQueue.length > 0) {
+      const job = shopeeSyncQueue.shift();
+      shopeeSyncQueueKeys.delete(job.key);
+      try {
+        const row = await deps7.loadProductById(job.productId);
+        if (!row) {
+          console.warn(`[Shopee Sync Queue] B\u1ECF qua \u2014 kh\xF4ng th\u1EA5y productId=${job.productId}`);
+          await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+          continue;
+        }
+        const mapped = await resolveProductWithShopeeMapping(row);
+        if (!mapped) {
+          console.log(
+            `[Shopee Sync Queue] Skip SKU=${row.sku || job.productId} \u2014 ch\u01B0a Mapping Shopee`
+          );
+          await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+          continue;
+        }
+        const result = await executeShopeeStockPriceSyncJob(mapped, {
+          syncStock: job.syncStock,
+          syncPrice: job.syncPrice,
+          shopId: job.shopId
+        });
+        if (result.ok) {
+          console.log(
+            `[Shopee Sync Queue] OK productId=${job.productId} sku=${mapped.sku} stock=${job.syncStock} price=${job.syncPrice} \u2014 ${result.message}`
+          );
+        } else {
+          job.attempts += 1;
+          console.error(
+            `[Shopee Sync Queue] FAIL attempt ${job.attempts}/${SHOPEE_SYNC_QUEUE_MAX_RETRY} productId=${job.productId} sku=${mapped.sku}: ${result.message}`
+          );
+          if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
+            const retryKey = `${job.productId}|stock=${job.syncStock}|price=${job.syncPrice}|shop=${job.shopId || ""}`;
+            job.key = retryKey;
+            if (!shopeeSyncQueueKeys.has(retryKey)) {
+              shopeeSyncQueueKeys.add(retryKey);
+              shopeeSyncQueue.push(job);
+            }
+          } else {
+            console.error(
+              `[Shopee Sync Queue] DROPPED sau ${SHOPEE_SYNC_QUEUE_MAX_RETRY} l\u1EA7n \u2014 productId=${job.productId} sku=${mapped.sku}: ${result.message}`
+            );
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[Shopee Sync Queue] Exception job=${job.productId}:`, err);
+        job.attempts += 1;
+        if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
+          if (!shopeeSyncQueueKeys.has(job.key)) {
+            shopeeSyncQueueKeys.add(job.key);
+            shopeeSyncQueue.push(job);
+          }
+        } else {
+          console.error(`[Shopee Sync Queue] DROPPED exception \u2014 ${job.productId}: ${msg}`);
+        }
+      }
+      await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+    }
+  } finally {
+    shopeeSyncQueueRunning = false;
+    if (shopeeSyncQueue.length > 0) {
+      setTimeout(() => {
+        void processShopeeSyncQueue();
+      }, SHOPEE_SYNC_QUEUE_GAP_MS);
+    }
+  }
+}
+async function enqueueShopeeStockPriceSync(products, opts) {
+  const syncStock2 = opts.syncStock === true;
+  const syncPrice = opts.syncPrice === true;
+  if (!syncStock2 && !syncPrice) return 0;
+  const preferredShopId = String(opts.shopId || "").trim() || void 0;
+  let enqueued = 0;
+  for (const raw of Array.isArray(products) ? products : []) {
+    if (!raw || typeof raw !== "object") continue;
+    const productId = String(raw.id || "").trim();
+    if (!productId) continue;
+    const mapped = await resolveProductWithShopeeMapping(raw);
+    if (!mapped) continue;
+    const key = `${productId}|stock=${syncStock2}|price=${syncPrice}|shop=${preferredShopId || ""}`;
+    if (shopeeSyncQueueKeys.has(key)) {
+      continue;
+    }
+    shopeeSyncQueueKeys.add(key);
+    shopeeSyncQueue.push({
+      key,
+      productId,
+      syncStock: syncStock2,
+      syncPrice,
+      shopId: preferredShopId,
+      attempts: 0,
+      enqueuedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    enqueued += 1;
+  }
+  if (enqueued > 0) {
+    console.log(
+      `[Shopee Sync Queue] Enqueued ${enqueued} job(s) \u2014 queue size=${shopeeSyncQueue.length} (gap=${SHOPEE_SYNC_QUEUE_GAP_MS}ms)`
+    );
+    void processShopeeSyncQueue();
+  }
+  return enqueued;
+}
+
+// controllers/productsController.js
+var PRODUCTS_PAGE_SIZE_DEFAULT = 50;
+var PRODUCTS_PAGE_SIZE_MAX = 50;
+var deps8 = {
+  loadProducts: async () => [],
+  saveProducts: async () => {
+  },
+  getProductChildrenList: () => [],
+  inheritShopeeLinkFromParent: (child) => child,
+  mergeProductPatch: (p, patch) => ({ ...p, ...patch }),
+  applyBulkProductUpdate: (p, opts) => p,
+  flattenProductsForStockSync: (products) => products,
+  upsertProductsToStoreAsync: async () => {
+  },
+  deleteProductsByIdsFromStore: async () => {
+  },
+  loadProductsPageFromStore: async () => ({
+    products: [],
+    page: 1,
+    pageSize: PRODUCTS_PAGE_SIZE_DEFAULT,
+    total: 0,
+    totalPages: 0,
+    hasMore: false
+  }),
+  searchProductsFromStore: async () => [],
+  withLocalDbTimeout: async (p) => p,
+  isProductsDiskMode: () => false,
+  isMongoReady: () => false,
+  getProductsDiskPath: () => "",
+  reloadCachesFromDb: async () => {
+  },
+  loadLocalInventoryCache: async () => ({ products: [], listings: [], updatedAt: "" }),
+  refreshCache: async () => ({ updatedAt: "" }),
+  enrichChannelListingsWithMaster: (listings) => listings,
+  backupInventoryBeforeDestructiveAction: async () => "",
+  writeInventoryAudit: () => {
+  },
+  writeChannelListingsDb: async () => {
+  },
+  writeProductListingsDb: () => {
+  },
+  pushStockUpdatesToShopee: async () => ({
+    ok: true,
+    pushed: 0,
+    errors: [],
+    warnings: [],
+    staleSkus: []
+  }),
+  resolveShopeeTokenShopId: () => null,
+  isShopeeConfigValid: () => false,
+  isStaleShopeeItemErrorText: () => false,
+  sendApiErrorJson: (res, err, status) => res.status(status).json({ success: false, message: err?.message || String(err) }),
+  getValidShopeeAccessToken: async () => null,
+  syncProductToShopee: async () => [],
+  syncProductToWoo: async () => [],
+  syncProductToTikTok: async () => []
+};
+function initProductsController(partial) {
+  deps8 = { ...deps8, ...partial };
+}
+async function listProducts(req, res) {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  try {
+    const diskMode = deps8.isProductsDiskMode();
+    if (!diskMode && !deps8.isMongoReady()) {
+      return res.status(503).json({
+        success: false,
+        products: [],
+        error: "mongodb_not_ready",
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 th\u1EED l\u1EA1i sau v\xE0i gi\xE2y."
+      });
+    }
+    const rawPage = Number(req.query?.page);
+    const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
+    const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
+    const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize)) : PRODUCTS_PAGE_SIZE_DEFAULT;
+    const paged = await deps8.withLocalDbTimeout(
+      deps8.loadProductsPageFromStore(page, pageSize),
+      diskMode ? 15e3 : 3e4,
+      "products_page_load"
+    );
+    return res.status(200).json({
+      success: true,
+      products: paged.products,
+      page: paged.page,
+      pageSize: paged.pageSize,
+      total: paged.total,
+      totalPages: paged.totalPages,
+      hasMore: paged.hasMore,
+      grouped: false,
+      source: diskMode ? "disk" : "mongodb",
+      storage: diskMode ? deps8.getProductsDiskPath() : "mongodb.products"
+    });
+  } catch (err) {
+    console.error("[Products API] GET /api/products failed:", err);
+    return res.status(503).json({
+      success: false,
+      error: "products_unavailable",
+      message: err instanceof Error ? err.message : "products_read_error"
+    });
+  }
+}
+async function searchProducts(req, res) {
+  const q = String(req.query?.q ?? req.query?.query ?? "").trim();
+  const limit = Number(req.query?.limit ?? 40);
+  const mapRow = (p) => ({
+    ...p,
+    id: p.id,
+    sku: p.sku || "",
+    name: p.name || p.title || "",
+    title: p.title || p.name || "",
+    image: p.image || p.avatarUrl || p.imageUrl || "",
+    current_stock: p.current_stock ?? p.stock ?? 0,
+    stock: p.stock ?? p.current_stock ?? 0,
+    last_import_price: p.last_import_price ?? p.importPrice ?? 0,
+    importPrice: p.importPrice ?? p.last_import_price ?? 0
+  });
+  try {
+    let raw = [];
+    let source = "mongodb";
+    try {
+      raw = await deps8.searchProductsFromStore(q, limit);
+    } catch (mongoErr) {
+      console.warn("[Products API] searchProductsFromStore failed, fallback loadProducts:", mongoErr);
+      const all = await deps8.loadProducts();
+      const qLower = q.toLowerCase();
+      const flat = [];
+      const seen = /* @__PURE__ */ new Set();
+      const push = (row) => {
+        const id = String(row?.id || "").trim();
+        if (!id || seen.has(id)) return;
+        seen.add(id);
+        flat.push(row);
+      };
+      const match2 = (row, extra = "") => {
+        if (!q) return true;
+        const hay = `${row?.sku || ""} ${row?.title || ""} ${row?.name || ""} ${row?.modelName || ""} ${extra}`.toLowerCase();
+        return hay.includes(qLower);
+      };
+      for (const p of Array.isArray(all) ? all : []) {
+        const children = Array.isArray(p?.children) && p.children.length ? p.children : Array.isArray(p?.children_models) ? p.children_models : [];
+        if (children.length > 0) {
+          let n = 0;
+          for (const c of children) {
+            if (!match2(c, `${p.title || ""} ${p.sku || ""}`)) continue;
+            push({
+              ...c,
+              title: c.title || p.title,
+              imageUrl: c.imageUrl || p.imageUrl,
+              avatarUrl: c.avatarUrl || p.avatarUrl
+            });
+            n += 1;
+          }
+          if (n === 0 && match2(p)) push(p);
+        } else if (match2(p)) {
+          push(p);
+        }
+      }
+      raw = flat.slice(0, Math.min(100, Math.max(1, Math.floor(limit) || 40)));
+      source = "products_memory_fallback";
+    }
+    const products = raw.map(mapRow);
+    console.log("[Products API] /api/products/search", {
+      q,
+      limit,
+      total: products.length,
+      source,
+      sample: products.slice(0, 5).map((p) => ({
+        id: p.id,
+        sku: p.sku,
+        name: p.name,
+        current_stock: p.current_stock,
+        last_import_price: p.last_import_price
+      }))
+    });
+    return res.json({
+      success: true,
+      products,
+      total: products.length,
+      source
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] GET /api/products/search failed:", err);
+    return res.status(500).json({ success: false, error: message || "search_failed", products: [] });
+  }
+}
+async function handleProductSyncShopee(req, res) {
+  console.log("B\u1EAFt \u0111\u1EA7u \u0111\u1ED3ng b\u1ED9 Shopee", req.body);
+  try {
+    const requestedIds = Array.isArray(req.body?.productIds) ? req.body.productIds : [req.params?.id || req.body?.id || req.body?.productId];
+    const productIds = [
+      ...new Set(requestedIds.map((id) => String(id || "").trim()).filter(Boolean))
+    ];
+    if (productIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "Thi\u1EBFu product id. G\u1EEDi body { id }, { productId } ho\u1EB7c { productIds: [...] }."
+      });
+    }
+    const products = await deps8.loadProducts();
+    const results = [];
+    for (const productId of productIds) {
+      const row = findProductRowById(products, productId);
+      if (!row) {
+        results.push({
+          productId,
+          success: false,
+          message: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m trong kho."
+        });
+        continue;
+      }
+      const shopee = await pushProductStockPriceToShopeeImmediate(row, {
+        syncStock: true,
+        syncPrice: true
+      });
+      if (shopee.skipped || !shopee.ok) {
+        results.push({
+          productId,
+          success: false,
+          message: shopee.message || (shopee.skipped ? "Ch\u01B0a li\xEAn k\u1EBFt Mapping Shopee." : "Shopee t\u1EEB ch\u1ED1i \u0111\u1ED3ng b\u1ED9 t\u1ED3n/gi\xE1")
+        });
+        continue;
+      }
+      row.lastSynced = (/* @__PURE__ */ new Date()).toISOString();
+      results.push({
+        productId,
+        success: true,
+        message: shopee.message
+      });
+    }
+    const succeeded = results.filter((result) => result.success);
+    if (succeeded.length > 0) {
+      await deps8.saveProducts(products);
+    }
+    const failed = results.filter((result) => !result.success);
+    if (failed.length > 0) {
+      const detail = failed.map((result) => `${result.productId}: ${result.message}`).join(" | ");
+      return res.status(400).json({
+        success: false,
+        message: `Shopee b\xE1o l\u1ED7i: ${detail}`,
+        error: `Shopee b\xE1o l\u1ED7i: ${detail}`,
+        shopeeSynced: succeeded.length > 0,
+        results
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      shopeeSynced: true,
+      shopeeMessage: results.map((result) => result.message).join(" | "),
+      message: "\u0110\u1ED3ng b\u1ED9 th\xE0nh c\xF4ng",
+      results
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] sync-shopee failed:", err);
+    return res.status(500).json({
+      success: false,
+      message: message || "Internal Server Error",
+      error: message || "Internal Server Error"
+    });
+  }
+}
+async function createProduct(req, res) {
+  const body = req.body || {};
+  if (!body.title || !body.sku) {
+    return res.status(400).json({ error: "title_and_sku_required" });
+  }
+  const product = {
+    id: body.id || `prod-${Date.now()}`,
+    title: String(body.title),
+    sku: String(body.sku),
+    stock: Math.max(0, Math.round(Number(body.stock) || 0)),
+    importPrice: Math.max(0, Math.round(Number(body.importPrice) || 0)),
+    sellingPrice: Math.max(0, Math.round(Number(body.sellingPrice) || 0)),
+    channels: Array.isArray(body.channels) ? body.channels : ["shopee"],
+    category: body.category || "Ch\u01B0a ph\xE2n lo\u1EA1i",
+    description: body.description || "",
+    imageUrl: body.imageUrl || void 0,
+    status: body.status || "active",
+    shopeeId: body.shopeeId,
+    shopeeItemId: body.shopeeItemId,
+    shopeeModelId: body.shopeeModelId,
+    modelName: body.modelName,
+    weight: body.weight != null ? Number(body.weight) : void 0,
+    tiktokId: body.tiktokId,
+    wooId: body.wooId,
+    lastSynced: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await deps8.upsertProductsToStoreAsync([product]);
+  const cache = await deps8.loadLocalInventoryCache();
+  return res.status(201).json({
+    ...product,
+    localInventory: cache.products,
+    cacheUpdatedAt: cache.updatedAt
+  });
+}
+async function getLocalInventory(_req, res) {
+  try {
+    await deps8.reloadCachesFromDb();
+    const cache = await deps8.loadLocalInventoryCache();
+    return res.status(200).json({
+      success: true,
+      updatedAt: cache.updatedAt,
+      products: cache.products,
+      listings: deps8.enrichChannelListingsWithMaster(cache.listings, cache.products),
+      count: {
+        products: cache.products.length,
+        listings: cache.listings.length
+      },
+      source: deps8.isMongoReady() ? "mongodb" : "json_fallback"
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error?.message || String(error)
+    });
+  }
+}
+async function refreshLocalInventory(_req, res) {
+  try {
+    const cache = await deps8.refreshCache();
+    return res.status(200).json({
+      success: true,
+      updatedAt: cache.updatedAt,
+      products: cache.products,
+      listingsCount: cache.listings.length
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error?.message || String(error)
+    });
+  }
+}
+async function replaceProducts(req, res) {
+  const incoming = req.body?.products;
+  if (!Array.isArray(incoming)) {
+    return res.status(400).json({ error: "products_array_required" });
+  }
+  await deps8.saveProducts(incoming);
+  return res.json({ count: incoming.length, products: incoming });
+}
+async function patchProduct(req, res) {
+  try {
+    const products = await deps8.loadProducts();
+    const patch = req.body || {};
+    const topIndex = products.findIndex((p) => p.id === req.params.id);
+    if (topIndex !== -1) {
+      const before = products[topIndex];
+      const merged = deps8.mergeProductPatch(before, patch);
+      products[topIndex] = merged;
+      await deps8.upsertProductsToStoreAsync([merged]);
+      const changes = detectStockPriceChanges(before, merged);
+      const shopee = await pushProductStockPriceToShopeeImmediate(merged, {
+        syncStock: changes.stock,
+        syncPrice: changes.price
+      });
+      if (!shopee.ok) {
+        return res.status(400).json({
+          success: false,
+          error: shopee.message || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt t\u1ED3n/gi\xE1",
+          product: merged,
+          shopeeSynced: false,
+          shopeeMessage: shopee.message
+        });
+      }
+      return res.json({
+        ...merged,
+        success: true,
+        shopeeSynced: !shopee.skipped,
+        shopeeMessage: shopee.message
+      });
+    }
+    for (let i2 = 0; i2 < products.length; i2++) {
+      const children = deps8.getProductChildrenList(products[i2]);
+      const childIdx = children.findIndex((c) => c.id === req.params.id);
+      if (childIdx === -1) continue;
+      const beforeChild = children[childIdx];
+      const mergedChild = deps8.mergeProductPatch(beforeChild, patch);
+      const nextChildren = [...children];
+      nextChildren[childIdx] = mergedChild;
+      const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
+      products[i2] = { ...products[i2], children: nextChildren, stock: totalStock };
+      await deps8.upsertProductsToStoreAsync([products[i2]]);
+      const changes = detectStockPriceChanges(beforeChild, mergedChild);
+      const shopee = await pushProductStockPriceToShopeeImmediate(
+        deps8.inheritShopeeLinkFromParent(mergedChild, products[i2]),
+        {
+          syncStock: changes.stock,
+          syncPrice: changes.price
+        }
+      );
+      if (!shopee.ok) {
+        return res.status(400).json({
+          success: false,
+          error: shopee.message || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt t\u1ED3n/gi\xE1",
+          product: mergedChild,
+          shopeeSynced: false,
+          shopeeMessage: shopee.message
+        });
+      }
+      return res.json({
+        ...mergedChild,
+        success: true,
+        shopeeSynced: !shopee.skipped,
+        shopeeMessage: shopee.message
+      });
+    }
+    return res.status(404).json({ success: false, error: "product_not_found" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Products API] PATCH /api/products/:id failed:", err);
+    return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+  }
+}
+async function inventoryBalance(req, res) {
+  try {
+    const items = req.body?.items;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, message: "Ch\u01B0a c\xF3 d\xF2ng t\u1ED3n kho n\xE0o \u0111\u1EC3 c\xE2n b\u1EB1ng." });
+    }
+    const preferredShopId = String(req.body?.shopId || "").trim() || void 0;
+    const skuStockMap = /* @__PURE__ */ new Map();
+    for (const item of items) {
+      const sku = String(item?.sku || "").trim();
+      if (!sku) continue;
+      const rawStock = item?.actual_stock;
+      if (rawStock === "" || rawStock == null) continue;
+      const parsed = Number(rawStock);
+      if (!Number.isFinite(parsed)) continue;
+      const actual = Math.max(0, Math.round(parsed));
+      skuStockMap.set(sku, actual);
+    }
+    if (skuStockMap.size === 0) {
+      return res.status(400).json({ success: false, message: "D\u1EEF li\u1EC7u c\xE2n b\u1EB1ng kho kh\xF4ng h\u1EE3p l\u1EC7." });
+    }
+    const products = await deps8.loadProducts();
+    let updatedCount = 0;
+    const next = products.map((p) => {
+      const children = deps8.getProductChildrenList(p);
+      if (children.length > 0) {
+        let changed = false;
+        const nextChildren = children.map((c) => {
+          const sku2 = String(c.sku || "").trim();
+          if (!skuStockMap.has(sku2)) return c;
+          updatedCount++;
+          changed = true;
+          return deps8.mergeProductPatch(c, { stock: skuStockMap.get(sku2) });
+        });
+        if (!changed) return p;
+        const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
+        return { ...p, children: nextChildren, stock: totalStock };
+      }
+      const sku = String(p.sku || "").trim();
+      if (!skuStockMap.has(sku)) return p;
+      updatedCount++;
+      return deps8.mergeProductPatch(p, { stock: skuStockMap.get(sku) });
+    });
+    if (updatedCount === 0) {
+      return res.status(404).json({ success: false, message: "Kh\xF4ng t\xECm th\u1EA5y SKU n\xE0o trong kho g\u1ED1c \u0111\u1EC3 c\u1EADp nh\u1EADt." });
+    }
+    const updatedProducts = deps8.flattenProductsForStockSync(next).filter((p) => skuStockMap.has(String(p.sku || "").trim()));
+    await deps8.upsertProductsToStoreAsync(
+      next.filter((product, index) => product !== products[index])
+    );
+    console.log(`[Inventory Balance] C\u1EADp nh\u1EADt kho g\u1ED1c ${updatedCount} SKU`);
+    const pushResult = await deps8.pushStockUpdatesToShopee(updatedProducts, preferredShopId);
+    const parts = [];
+    parts.push("kho g\u1ED1c \u0111\xE3 c\u1EADp nh\u1EADt");
+    if (pushResult.pushed > 0) {
+      parts.push(`\u0111\xE3 \u0111\u1EA9y t\u1ED3n ${pushResult.pushed} SKU l\xEAn Shopee`);
+    } else if (pushResult.errors.length === 0 && pushResult.warnings.length === 0) {
+      parts.push("kh\xF4ng c\xF3 SKU Mapping Shopee \u0111\u1EC3 \u0111\u1ED3ng b\u1ED9 (ho\u1EB7c ch\u01B0a li\xEAn k\u1EBFt)");
+    }
+    const msg = `C\xE2n b\u1EB1ng kho th\xE0nh c\xF4ng (${parts.join(", ")}).`;
+    console.log(`[Inventory Balance] ${msg}`);
+    if (pushResult.errors.length > 0) {
+      return res.status(200).json({
+        success: true,
+        message: msg,
+        shopeeQueued: 0,
+        shopeePushed: pushResult.pushed,
+        shopeeErrors: pushResult.errors,
+        shopeeWarnings: pushResult.warnings,
+        staleSkus: pushResult.staleSkus
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      message: msg,
+      shopeeQueued: 0,
+      shopeePushed: pushResult.pushed,
+      shopeeErrors: [],
+      shopeeWarnings: pushResult.warnings,
+      staleSkus: pushResult.staleSkus
+    });
+  } catch (err) {
+    console.error("[Inventory Balance] Exception:", err);
+    return deps8.sendApiErrorJson(res, err, 500);
+  }
+}
+async function syncStock(req, res) {
+  try {
+    const products = await deps8.loadProducts();
+    const shopId = deps8.resolveShopeeTokenShopId(req.body?.shopId);
+    const warnings = [];
+    if (!deps8.isShopeeConfigValid()) {
+      return res.status(400).json({
+        success: false,
+        message: "Shopee: c\u1EA5u h\xECnh Partner ch\u01B0a h\u1EE3p l\u1EC7."
+      });
+    }
+    if (!shopId) {
+      return res.status(400).json({
+        success: false,
+        message: "Shopee: ch\u01B0a c\xF3 shop \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n."
+      });
+    }
+    const shopeeResult = await deps8.pushStockUpdatesToShopee(products, shopId);
+    if (shopeeResult.warnings?.length) warnings.push(...shopeeResult.warnings);
+    if (!shopeeResult.ok && shopeeResult.errors.length > 0) {
+      const onlyStale = shopeeResult.errors.every((e2) => deps8.isStaleShopeeItemErrorText(e2));
+      if (!onlyStale) {
+        const detailMsg = shopeeResult.errors.join(" | ");
+        return res.status(400).json({
+          success: false,
+          message: `\u0110\u1EA9y t\u1ED3n Kho g\u1ED1c \u2192 Shopee th\u1EA5t b\u1EA1i: ${detailMsg}`,
+          error: detailMsg,
+          shopeeErrors: shopeeResult.errors,
+          shopeeWarnings: warnings
+        });
+      }
+      warnings.push(...shopeeResult.errors);
+    }
+    const message = shopeeResult.pushed > 0 ? `\u0110\xE3 \u0111\u1EA9y ${shopeeResult.pushed} SKU t\u1EEB Kho g\u1ED1c l\xEAn Shopee (\u0111\u1ED3ng b\u1ED9 1 chi\u1EC1u).` : "Kh\xF4ng c\xF3 SKU n\xE0o c\u1EA7n \u0111\u1EA9y l\xEAn Shopee (\u0111\xE3 kh\u1EDBp ho\u1EB7c ch\u01B0a li\xEAn k\u1EBFt).";
+    return res.json({
+      success: true,
+      message,
+      direction: "warehouse_to_channel",
+      shopee: {
+        pushed: shopeeResult.pushed,
+        staleSkus: shopeeResult.staleSkus,
+        warnings
+      },
+      tiktok: { updated: 0, message: "TikTok Shop API ch\u01B0a \u0111\u01B0\u1EE3c t\xEDch h\u1EE3p tr\xEAn server." },
+      warnings,
+      products: await deps8.loadProducts()
+    });
+  } catch (err) {
+    console.error("[Sync Stock]", err);
+    return deps8.sendApiErrorJson(res, err, 500);
+  }
+}
+async function bulkSaveProducts(req, res) {
+  const updates = req.body?.updates;
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return res.status(400).json({ error: "updates_required" });
+  }
+  const patchMap = /* @__PURE__ */ new Map();
+  for (const u of updates) {
+    if (u?.id) patchMap.set(String(u.id), u);
+  }
+  const products = await deps8.loadProducts();
+  const beforeFlat = deps8.flattenProductsForStockSync(products);
+  let updatedCount = 0;
+  const changedRows = [];
+  const next = products.map((p) => {
+    const patch = patchMap.get(String(p.id));
+    if (patch) {
+      updatedCount++;
+      patchMap.delete(String(p.id));
+      const merged = deps8.mergeProductPatch(p, patch);
+      const before = beforeFlat.find((b) => String(b.id) === String(p.id));
+      const changes = detectStockPriceChanges(before || p, merged);
+      if (changes.stock || changes.price) changedRows.push(merged);
+      return merged;
+    }
+    const children = deps8.getProductChildrenList(p);
+    if (children.length === 0) return p;
+    let childChanged = false;
+    const nextChildren = children.map((c) => {
+      const childPatch = patchMap.get(String(c.id));
+      if (!childPatch) return c;
+      updatedCount++;
+      patchMap.delete(String(c.id));
+      childChanged = true;
+      const mergedChild = deps8.mergeProductPatch(c, childPatch);
+      const beforeChild = beforeFlat.find((b) => String(b.id) === String(c.id));
+      const changes = detectStockPriceChanges(beforeChild || c, mergedChild);
+      if (changes.stock || changes.price) changedRows.push(mergedChild);
+      return mergedChild;
+    });
+    if (!childChanged) return p;
+    const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
+    return { ...p, children: nextChildren, stock: totalStock };
+  });
+  await deps8.upsertProductsToStoreAsync(
+    next.filter((product, index) => product !== products[index])
+  );
+  if (changedRows.length > 0) {
+    const anyStock = changedRows.some((row) => {
+      const before = beforeFlat.find((b) => String(b.id) === String(row.id));
+      return detectStockPriceChanges(before || {}, row).stock;
+    });
+    const anyPrice = changedRows.some((row) => {
+      const before = beforeFlat.find((b) => String(b.id) === String(row.id));
+      return detectStockPriceChanges(before || {}, row).price;
+    });
+    await enqueueShopeeStockPriceSync(changedRows, { syncStock: anyStock, syncPrice: anyPrice });
+  }
+  return res.json({ updated: updatedCount, products: next });
+}
+async function deleteProduct(req, res) {
+  try {
+    const id = String(req.params.id);
+    const products = await deps8.loadProducts();
+    let found = false;
+    const next = [];
+    for (const p of products) {
+      if (p.id === id) {
+        found = true;
+        continue;
+      }
+      const children = deps8.getProductChildrenList(p);
+      if (children.length > 0) {
+        const filteredChildren = children.filter((c) => c.id !== id);
+        if (filteredChildren.length !== children.length) {
+          found = true;
+          if (filteredChildren.length === 0) continue;
+          const totalStock = filteredChildren.reduce(
+            (s2, c) => s2 + (Number(c.stock) || 0),
+            0
+          );
+          next.push({ ...p, children: filteredChildren, stock: totalStock });
+          continue;
+        }
+      }
+      next.push(p);
+    }
+    if (!found) {
+      return res.status(404).json({ error: "product_not_found" });
+    }
+    const nextIds = new Set(next.map((product) => String(product.id)));
+    await deps8.deleteProductsByIdsFromStore(
+      products.filter((product) => !nextIds.has(String(product.id))).map((product) => String(product.id))
+    );
+    await deps8.upsertProductsToStoreAsync(
+      next.filter(
+        (product) => products.find((before) => before.id === product.id) !== product
+      )
+    );
+    return res.json({ deleted: id, success: true });
+  } catch (err) {
+    console.error("[Products] DELETE failed:", err);
+    return res.status(500).json({
+      error: "delete_failed",
+      message: err instanceof Error ? err.message : "X\xF3a s\u1EA3n ph\u1EA9m th\u1EA5t b\u1EA1i"
+    });
+  }
+}
+async function clearAllProducts(req, res) {
+  if (req.body?.confirmation !== "CLEAR_INVENTORY") {
+    return res.status(400).json({ success: false, error: "explicit_confirmation_required" });
+  }
+  const backupFile = await deps8.backupInventoryBeforeDestructiveAction("products-clear");
+  await deps8.saveProducts([]);
+  deps8.writeInventoryAudit("products_cleared", {
+    requestedBy: req.user?.username || null,
+    backupFile
+  });
+  return res.json({ success: true, cleared: true, backupFile, products: [] });
+}
+async function handleInventoryClearAll(req, res) {
+  try {
+    if (req.body?.confirmation !== "CLEAR_INVENTORY") {
+      return res.status(400).json({
+        success: false,
+        error: "explicit_confirmation_required",
+        message: "X\xF3a kho y\xEAu c\u1EA7u confirmation: CLEAR_INVENTORY."
+      });
+    }
+    const backupFile = await deps8.backupInventoryBeforeDestructiveAction("inventory-clear");
+    await deps8.saveProducts([]);
+    let listingsCleared = false;
+    let listingsError = null;
+    try {
+      await deps8.writeChannelListingsDb([]);
+      listingsCleared = true;
+    } catch (listErr) {
+      listingsError = listErr?.message || String(listErr);
+      console.warn("[Inventory] clear listings failed (Atlas?):", listingsError);
+    }
+    try {
+      deps8.writeProductListingsDb([]);
+    } catch {
+    }
+    try {
+      await deps8.refreshCache();
+    } catch (cacheErr) {
+      console.warn("[Inventory] refreshCache after clear:", cacheErr?.message || cacheErr);
+    }
+    deps8.writeInventoryAudit("inventory_cleared", {
+      requestedBy: req.user?.username || null,
+      backupFile,
+      productsCleared: true,
+      listingsCleared,
+      listingsError,
+      storage: deps8.isProductsDiskMode() ? "disk" : "mongo"
+    });
+    console.log(
+      `[Inventory] \u0110\xE3 x\xF3a Kho g\u1ED1c (products=${deps8.isProductsDiskMode() ? "disk" : "mongo"}) listingsCleared=${listingsCleared}.`
+    );
+    return res.status(200).json({
+      success: true,
+      message: listingsCleared ? "\u0110\xE3 x\xF3a to\xE0n b\u1ED9 Kho g\u1ED1c v\xE0 d\u1EEF li\u1EC7u Li\xEAn k\u1EBFt (Mapping)." : `\u0110\xE3 x\xF3a Kho g\u1ED1c. Mapping ch\u01B0a x\xF3a \u0111\u01B0\u1EE3c (Mongo \u0111\u1EA7y/l\u1ED7i): ${listingsError || "unknown"}`,
+      backupFile,
+      cleared: true,
+      productsCleared: true,
+      listingsCleared,
+      listingsError,
+      products: [],
+      channelListings: listingsCleared ? [] : void 0
+    });
+  } catch (error) {
+    const errObj = error instanceof Error ? error : new Error(String(error));
+    console.error("[Inventory] clear-all failed:", errObj);
+    return res.status(500).json({
+      success: false,
+      message: errObj.message,
+      error: errObj.toString()
+    });
+  }
+}
+async function bulkUpdateProducts(req, res) {
+  const { productIds, stock, price } = req.body || {};
+  if (!Array.isArray(productIds) || productIds.length === 0) {
+    return res.status(400).json({ error: "productIds_required" });
+  }
+  if (!stock && !price) {
+    return res.status(400).json({ error: "stock_or_price_required" });
+  }
+  const idSet = new Set(productIds.map(String));
+  const products = await deps8.loadProducts();
+  let updatedCount = 0;
+  const changedRows = [];
+  const next = products.map((p) => {
+    const children = deps8.getProductChildrenList(p);
+    if (children.length > 0) {
+      let changed = false;
+      const nextChildren = children.map((c) => {
+        if (!idSet.has(c.id)) return c;
+        updatedCount++;
+        changed = true;
+        const merged2 = deps8.applyBulkProductUpdate(c, { stock, price });
+        changedRows.push(merged2);
+        return merged2;
+      });
+      if (!changed && !idSet.has(p.id)) return p;
+      if (idSet.has(p.id)) {
+        updatedCount++;
+        const parentPatched = deps8.applyBulkProductUpdate(p, { stock, price });
+        changedRows.push(parentPatched);
+        const totalStock2 = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
+        return { ...parentPatched, children: nextChildren, stock: totalStock2 };
+      }
+      const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
+      return { ...p, children: nextChildren, stock: totalStock };
+    }
+    if (!idSet.has(p.id)) return p;
+    updatedCount++;
+    const merged = deps8.applyBulkProductUpdate(p, { stock, price });
+    changedRows.push(merged);
+    return merged;
+  });
+  await deps8.saveProducts(next);
+  if (changedRows.length > 0) {
+    await enqueueShopeeStockPriceSync(changedRows, {
+      syncStock: !!stock,
+      syncPrice: !!price
+    });
+  }
+  return res.json({ updated: updatedCount, products: next });
+}
+async function bulkChannelSync(req, res) {
+  try {
+    const { productIds, channels, shopId, shops } = req.body || {};
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({ error: "productIds_required" });
+    }
+    const channelList = Array.isArray(channels) && channels.length ? channels : ["shopee"];
+    const idSet = new Set(productIds.map(String));
+    const products = deps8.flattenProductsForStockSync(await deps8.loadProducts()).filter((p) => idSet.has(p.id));
+    if (products.length === 0) {
+      return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m n\xE0o trong kho." });
+    }
+    const shopList = Array.isArray(shops) ? shops : [];
+    const wooShop = shopList.find((s2) => s2.platform === "woocommerce" && s2.connected !== false);
+    const shopeeShopId = deps8.resolveShopeeTokenShopId(
+      shopId || shopList.find((s2) => s2.platform === "shopee")?.shopId
+    );
+    let shopeeToken = null;
+    if (channelList.includes("shopee")) {
+      if (!shopeeShopId) {
+        return res.status(400).json({
+          error: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n.",
+          logs: products.flatMap((p) => [
+            {
+              productId: p.id,
+              sku: p.sku,
+              channel: "shopee",
+              action: "auth",
+              success: false,
+              message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n"
+            }
+          ])
+        });
+      }
+      shopeeToken = await deps8.getValidShopeeAccessToken(shopeeShopId);
+      if (!shopeeToken) {
+        return res.status(400).json({
+          error: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopeeShopId}.`,
+          logs: products.flatMap((p) => [
+            {
+              productId: p.id,
+              sku: p.sku,
+              channel: "shopee",
+              action: "auth",
+              success: false,
+              message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopeeShopId}`
+            }
+          ])
+        });
+      }
+    }
+    const logs = [];
+    for (const product of products) {
+      for (const channel of channelList) {
+        if (channel === "shopee" && shopeeShopId && shopeeToken) {
+          const lines = await deps8.syncProductToShopee(product, shopeeShopId, shopeeToken);
+          logs.push(...lines);
+          await new Promise((r2) => setTimeout(r2, 150));
+        } else if (channel === "woocommerce") {
+          const lines = await deps8.syncProductToWoo(product, wooShop);
+          logs.push(...lines);
+          await new Promise((r2) => setTimeout(r2, 100));
+        } else if (channel === "tiktok") {
+          const lines = await deps8.syncProductToTikTok(product);
+          logs.push(...lines);
+        }
+      }
+    }
+    const successCount = logs.filter((l) => l.success).length;
+    const failCount = logs.filter((l) => !l.success).length;
+    const syncedProductIds = new Set(logs.filter((l) => l.success).map((l) => l.productId));
+    if (syncedProductIds.size > 0) {
+      const allProducts = await deps8.loadProducts();
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const next = allProducts.map(
+        (p) => syncedProductIds.has(p.id) ? { ...p, lastSynced: now } : p
+      );
+      await deps8.saveProducts(next);
+    }
+    return res.status(failCount === 0 ? 200 : 400).json({
+      success: failCount === 0,
+      message: failCount === 0 ? "\u0110\u1ED3ng b\u1ED9 th\xE0nh c\xF4ng" : `L\u1ED7i t\u1EEB Shopee: ${logs.filter((l) => !l.success).map((l) => l.message).filter(Boolean).join(" | ") || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1/t\u1ED3n kho"}`,
+      error: failCount === 0 ? void 0 : `L\u1ED7i t\u1EEB Shopee: ${logs.filter((l) => !l.success).map((l) => l.message).filter(Boolean).join(" | ") || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1/t\u1ED3n kho"}`,
+      logs,
+      successCount,
+      failCount,
+      total: logs.length,
+      products: await deps8.loadProducts()
+    });
+  } catch (error) {
+    console.error("[Bulk Channel Sync]", error);
+    return res.status(500).json({
+      error: error?.message || "\u0110\u1ED3ng b\u1ED9 \u0111a k\xEAnh th\u1EA5t b\u1EA1i",
+      logs: []
+    });
+  }
+}
+
+// routes/productsRoutes.js
+var router11 = (0, import_express12.Router)();
+router11.get("/search", searchProducts);
+router11.post("/sync-shopee", handleProductSyncShopee);
+router11.post("/:id/sync-shopee", handleProductSyncShopee);
+router11.put("/replace", replaceProducts);
+router11.post("/inventory-balance", inventoryBalance);
+router11.post("/bulk-save", bulkSaveProducts);
+router11.post("/clear-all", clearAllProducts);
+router11.post("/bulk-update", bulkUpdateProducts);
+router11.post("/bulk-channel-sync", bulkChannelSync);
+router11.get("/", listProducts);
+router11.post("/", createProduct);
+router11.patch("/:id", patchProduct);
+router11.delete("/:id", deleteProduct);
+var productsRoutes_default = router11;
+
+// routes/mappingRoutes.js
+var import_express13 = __toESM(require_express2(), 1);
+
+// controllers/mappingController.js
+var deps9 = {
+  reloadCachesFromDb: async () => ({ listings: [], products: [], updatedAt: "" }),
+  enrichChannelListingsWithMaster: (listings) => listings,
+  isMongoReady: () => false,
+  readChannelListingsForGet: async () => [],
+  sanitizeChannelListingRow: (row) => row,
+  bulkUpsertChannelListingsToStore: async () => {
+  },
+  flushDbWrites: async () => {
+  },
+  sleep: (ms) => new Promise((r2) => setTimeout(r2, ms)),
+  loadProducts: async () => [],
+  persistHealedBrokenMappingLinks: async () => 0,
+  readChannelListingsDb: async () => [],
+  batchAutoLinkFromDatabase: async () => ({
+    linkedCount: 0,
+    alreadyLinked: 0,
+    unlinkedRemaining: 0,
+    listings: [],
+    cacheUpdatedAt: "",
+    masterProductCount: 0,
+    skuIndexSize: 0,
+    scannedCount: 0,
+    requestedLimit: 0,
+    nextCursor: null,
+    hasMore: false
+  }),
+  autoLinkSingleListingFromDatabase: async () => ({
+    success: false,
+    listing: null,
+    matchedProductId: null,
+    message: ""
+  }),
+  bulkAutoLinkAllPending: async () => ({
+    linkedCount: 0,
+    processed: 0
+  }),
+  bulkAutoLinkListingsByIds: async () => ({
+    linkedCount: 0
+  }),
+  normalizeSkuKey: (sku) => String(sku || "").trim(),
+  getProductChildrenList: () => [],
+  isProductsDiskMode: () => false,
+  loadLocalInventoryCache: async () => ({ listings: [], products: [], updatedAt: "" }),
+  buildMasterProductLookupById: () => /* @__PURE__ */ new Map(),
+  writeChannelListingsDb: async () => {
+  },
+  refreshCache: async () => ({ updatedAt: "" })
+};
+function initMappingController(partial) {
+  deps9 = { ...deps9, ...partial };
+}
+async function handleMappingProductsGet(_req, res) {
+  try {
+    const cache = await deps9.reloadCachesFromDb();
+    const rawListings = cache.listings;
+    const listings = deps9.enrichChannelListingsWithMaster(rawListings, cache.products);
+    const successWithProduct = listings.filter(
+      (l) => l?.status === "success" && l?.linkedProduct && (l?.linkedProductTitle || l?.linkedProductSku || l?.linkedProduct?.title)
+    ).length;
+    const broken = listings.filter((l) => l?.linkBroken).length;
+    console.log(
+      `[Mapping Products] GET db \u2014 ${listings.length} d\xF2ng (success+product=${successWithProduct}, broken=${broken}) mongo=${deps9.isMongoReady()}`
+    );
+    return res.status(200).json({
+      success: true,
+      listings,
+      count: listings.length,
+      cacheUpdatedAt: cache.updatedAt,
+      source: deps9.isMongoReady() ? "mongodb" : "json_fallback"
+    });
+  } catch (error) {
+    console.error("[Mapping Products] GET l\u1ED7i:", error?.message || error);
+    try {
+      const raw = await deps9.readChannelListingsForGet();
+      const safe = (Array.isArray(raw) ? raw : []).map((r2) => deps9.sanitizeChannelListingRow(r2));
+      return res.status(200).json({
+        success: true,
+        listings: safe,
+        count: safe.length,
+        source: "mongodb_retry",
+        message: error?.message || String(error)
+      });
+    } catch (fallbackErr) {
+      return res.status(500).json({
+        success: false,
+        error: fallbackErr?.message || error?.message || String(error)
+      });
+    }
+  }
+}
+async function handleMappingProductsUpsert(req, res) {
+  try {
+    const incoming = req.body?.listings;
+    if (!Array.isArray(incoming)) {
+      return res.status(400).json({
+        success: false,
+        message: "Thi\u1EBFu m\u1EA3ng listings trong request body.",
+        hint: "PUT/POST /api/mapping-products c\u1EA7n body { listings: [...] }. Li\xEAn k\u1EBFt t\u1EF1 \u0111\u1ED9ng d\xF9ng POST /api/shopee/channel-products/auto-link (kh\xF4ng c\u1EA7n listings)."
+      });
+    }
+    console.log(`[Mapping Save] UPSERT nh\u1EADn ${incoming.length} d\xF2ng (${req.method})`);
+    const sanitized = incoming.map((row) => deps9.sanitizeChannelListingRow(row));
+    await deps9.bulkUpsertChannelListingsToStore(sanitized);
+    await deps9.flushDbWrites();
+    await deps9.sleep(200);
+    const verified = deps9.enrichChannelListingsWithMaster(sanitized, await deps9.loadProducts());
+    console.log(`\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 mapping bulkWrite ${sanitized.length} d\xF2ng`);
+    return res.status(200).json({
+      success: true,
+      count: verified.length,
+      listings: verified,
+      cacheUpdatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      source: deps9.isMongoReady() ? "mongodb" : "json_fallback"
+    });
+  } catch (error) {
+    const errMsg = error?.message || String(error);
+    console.error("[Mapping Save] UPSERT l\u1ED7i:", errMsg);
+    return res.status(500).json({
+      success: false,
+      message: `L\u1ED7i l\u01B0u Database: ${errMsg}`,
+      error: errMsg
+    });
+  }
+}
+async function handleMappingProductsHeal(_req, res) {
+  try {
+    const products = await deps9.loadProducts();
+    const enriched = deps9.enrichChannelListingsWithMaster(
+      await deps9.readChannelListingsDb(),
+      products
+    );
+    const healed = await deps9.persistHealedBrokenMappingLinks(enriched);
+    const listings = deps9.enrichChannelListingsWithMaster(
+      await deps9.readChannelListingsDb(),
+      products
+    );
+    console.log(`[Mapping Products] HEAL xong: healed=${healed}, total=${listings.length}`);
+    return res.status(200).json({
+      success: true,
+      healed,
+      count: listings.length,
+      listings
+    });
+  } catch (error) {
+    const errMsg = error?.message || String(error);
+    console.error("[Mapping Products] HEAL l\u1ED7i:", errMsg);
+    return res.status(500).json({
+      success: false,
+      message: `L\u1ED7i heal Database: ${errMsg}`,
+      error: errMsg
+    });
+  }
+}
+async function handleBatchAutoLink(req, res) {
+  try {
+    const body = req?.body && typeof req.body === "object" ? req.body : {};
+    const result = await deps9.batchAutoLinkFromDatabase({
+      cursor: body.cursor,
+      limit: body.limit
+    });
+    const data = {
+      linkedCount: result.linkedCount,
+      alreadyLinked: result.alreadyLinked,
+      unlinkedRemaining: result.unlinkedRemaining,
+      listings: result.listings,
+      cacheUpdatedAt: result.cacheUpdatedAt,
+      masterProductCount: result.masterProductCount,
+      skuIndexSize: result.skuIndexSize,
+      scannedCount: result.scannedCount,
+      limit: result.requestedLimit,
+      nextCursor: result.nextCursor,
+      hasMore: result.hasMore,
+      source: "database"
+    };
+    console.log(
+      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 batch-auto-link linked=${result.linkedCount}, scanned=${result.scannedCount}, remaining=${result.unlinkedRemaining}, nextCursor=${result.nextCursor}`
+    );
+    return res.status(200).json({
+      success: true,
+      data,
+      message: result.linkedCount > 0 ? `\u0110\xE3 li\xEAn k\u1EBFt th\xE0nh c\xF4ng ${result.linkedCount} s\u1EA3n ph\u1EA9m` : "Kh\xF4ng t\xECm th\u1EA5y SKU tr\xF9ng kh\u1EDBp trong Database hi\u1EC7n t\u1EA1i",
+      ...data
+    });
+  } catch (error) {
+    console.error("[Batch Auto-link] Exception:", error);
+    if (!res.headersSent) {
+      const message = error instanceof Error ? error.message : String(error);
+      return res.status(500).json({ success: false, error: message });
+    }
+  }
+}
+async function handleSingleAutoLink(req, res) {
+  try {
+    const body = req?.body && typeof req.body === "object" ? req.body : {};
+    const result = await deps9.autoLinkSingleListingFromDatabase({
+      id: body.id,
+      listingId: body.listingId,
+      channelId: body.channelId,
+      platform: body.platform
+    });
+    return res.status(200).json({
+      success: result.success,
+      listing: result.listing,
+      matchedProductId: result.matchedProductId,
+      message: result.message
+    });
+  } catch (error) {
+    console.error("[Auto-link Single] Exception:", error);
+    const message = error instanceof Error ? error.message : String(error);
+    return res.status(500).json({ success: false, error: message });
+  }
+}
+async function handleMappingSkuIndex(_req, res) {
+  try {
+    const masterProducts = await deps9.loadProducts();
+    const items = [];
+    const seen = /* @__PURE__ */ new Set();
+    const addOne = (row) => {
+      if (!row || typeof row !== "object") return;
+      const rawSku = String(row.sku || "").trim();
+      const key = deps9.normalizeSkuKey(rawSku);
+      const id = row.id != null ? String(row.id).trim() : "";
+      if (!key || !id || seen.has(key)) return;
+      seen.add(key);
+      items.push({
+        sku: rawSku || key,
+        id,
+        title: String(row.title || "").trim()
+      });
+    };
+    for (const masterItem of Array.isArray(masterProducts) ? masterProducts : []) {
+      if (!masterItem) continue;
+      addOne(masterItem);
+      for (const child of deps9.getProductChildrenList(masterItem)) addOne(child);
+      if (Array.isArray(masterItem.variants)) {
+        for (const v of masterItem.variants) addOne(v);
+      }
+      if (Array.isArray(masterItem.models)) {
+        for (const m2 of masterItem.models) addOne(m2);
+      }
+    }
+    console.log(`[SKU Index] Kho g\u1ED1c products \u2192 ${items.length} SKU (Map-ready)`);
+    return res.status(200).json({
+      success: true,
+      count: items.length,
+      items,
+      source: deps9.isProductsDiskMode() ? "disk" : deps9.isMongoReady() ? "mongodb" : "json_fallback"
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[SKU Index] L\u1ED7i:", message);
+    return res.status(500).json({ success: false, message });
+  }
+}
+async function handleBulkAutoLinkByIds(req, res) {
+  try {
+    const body = req?.body && typeof req.body === "object" ? req.body : {};
+    const mode = String(body.mode || "").trim().toLowerCase();
+    if (mode === "all-pending" || mode === "all_pending" || body.allPending === true) {
+      const result2 = await deps9.bulkAutoLinkAllPending({
+        limit: Number.isFinite(Number(body.limit)) ? Number(body.limit) : void 0
+      });
+      return res.status(200).json({
+        success: true,
+        ...result2,
+        message: result2.linkedCount > 0 ? `\u0110\xE3 li\xEAn k\u1EBFt th\xE0nh c\xF4ng ${result2.linkedCount}/${result2.processed} s\u1EA3n ph\u1EA9m pending` : "Kh\xF4ng c\xF3 s\u1EA3n ph\u1EA9m n\xE0o li\xEAn k\u1EBFt th\xE0nh c\xF4ng trong l\xF4 pending"
+      });
+    }
+    const rawIds = Array.isArray(body.ids) ? body.ids : Array.isArray(body.listingIds) ? body.listingIds : Array.isArray(body.listings) ? body.listings.map((row) => row?.id) : [];
+    const result = await deps9.bulkAutoLinkListingsByIds(rawIds);
+    return res.status(200).json({
+      success: true,
+      ...result,
+      message: result.linkedCount > 0 ? `\u0110\xE3 li\xEAn k\u1EBFt th\xE0nh c\xF4ng ${result.linkedCount}/${rawIds.length} s\u1EA3n ph\u1EA9m trong l\xF4` : "Kh\xF4ng c\xF3 s\u1EA3n ph\u1EA9m n\xE0o li\xEAn k\u1EBFt th\xE0nh c\xF4ng trong l\xF4 n\xE0y"
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[Bulk Auto-link] Exception:", message);
+    return res.status(500).json({ success: false, message, error: message });
+  }
+}
+async function handleMappingPurgeBroken(_req, res) {
+  try {
+    const cache = await deps9.loadLocalInventoryCache();
+    const listings = Array.isArray(cache.listings) && cache.listings.length > 0 ? cache.listings : await deps9.readChannelListingsDb();
+    const masterLookup = deps9.buildMasterProductLookupById(cache.products);
+    const kept = [];
+    let deletedCount = 0;
+    for (const row of Array.isArray(listings) ? listings : []) {
+      if (!row || typeof row !== "object") {
+        deletedCount += 1;
+        continue;
+      }
+      const linkedId = row?.linkedProductId != null && String(row.linkedProductId).trim() !== "" ? String(row.linkedProductId).trim() : row?.linkedProduct?.id != null && String(row.linkedProduct.id).trim() !== "" ? String(row.linkedProduct.id).trim() : "";
+      const linkedProductMissing = row?.linkedProduct == null || typeof row.linkedProduct !== "object" || row?.linkedProduct?.id == null || String(row.linkedProduct.id).trim() === "";
+      const claimsLink = row?.status === "success" || linkedId !== "";
+      const isBroken = claimsLink && (!linkedId && linkedProductMissing || linkedId !== "" && !masterLookup.has(linkedId));
+      if (isBroken) {
+        deletedCount += 1;
+        continue;
+      }
+      kept.push(row);
+    }
+    if (deletedCount > 0) {
+      await deps9.writeChannelListingsDb(kept);
+    }
+    const nextCache = await deps9.refreshCache();
+    return res.json({
+      success: true,
+      deletedCount,
+      cacheUpdatedAt: nextCache.updatedAt
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error?.message || String(error)
+    });
+  }
+}
+
+// routes/mappingRoutes.js
+var router12 = (0, import_express13.Router)();
+router12.get("/sku-index", handleMappingSkuIndex);
+router12.post("/auto-link-single", handleSingleAutoLink);
+router12.post("/batch-auto-link", handleBatchAutoLink);
+router12.post("/bulk-auto-link", handleBulkAutoLinkByIds);
+router12.post("/purge-broken", handleMappingPurgeBroken);
+router12.post("/heal", handleMappingProductsHeal);
+router12.get("/", handleMappingProductsGet);
+router12.put("/", handleMappingProductsUpsert);
+router12.post("/", handleMappingProductsUpsert);
+var mappingRoutes_default = router12;
+
+// routes/ordersRoutes.js
+var import_express14 = __toESM(require_express2(), 1);
+
+// controllers/ordersController.js
+var import_fs13 = __toESM(require("fs"), 1);
+var import_path12 = __toESM(require("path"), 1);
+
+// services/orders.js
+var import_fs12 = __toESM(require("fs"), 1);
+var import_path11 = __toESM(require("path"), 1);
 
 // src/db/mongoStore.ts
 var import_mongoose4 = __toESM(require("mongoose"), 1);
@@ -98987,6 +100520,1652 @@ async function seedStoreFromArrays(products, listings) {
   await saveChannelListingsToStoreAsync(listings);
 }
 
+// services/orders.js
+var APP_ROOT7 = resolveAppRoot();
+var ORDERS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "orders.json");
+var HANDED_OVER_CLEANUP_MARKER = import_path11.default.join(APP_ROOT7, "data", ".cleanup-handed-over-v2");
+var deps10 = {
+  repairMisassignedTracking: (o) => o,
+  repairFalseProcessedReadyToShip: (o) => o,
+  isValidOrder: () => true,
+  matchesHandedOverCarrierTabOrder: () => false,
+  matchesReceivedCancelReturnTabOrder: () => false,
+  resolveLocalStatusUpdatedAt: () => 0,
+  isShopeeInternalTrackingCode: () => false,
+  hasLeftHandedOverCarrierTab: () => false,
+  resolveOrderHandoverFlag: () => false,
+  isEligibleForHandOverShared: () => false,
+  matchesProcessedPickupTabShared: () => false,
+  hasOrderTrackingNoShared: () => false,
+  getHandOverIneligibleReasonShared: () => "",
+  applyHandedOverWrite: (o) => o,
+  HANDED_OVER_SOURCE: { QR_SCAN: "qr_scan", MANUAL_BUTTON: "manual_button" }
+};
+function initOrdersService(partial) {
+  deps10 = { ...deps10, ...partial };
+}
+var orderLookupIndex = null;
+var ordersJsonMirrorQueued = false;
+var ordersJsonMirrorSnapshot = null;
+var closedOrdersRetentionRunning = false;
+var closedOrdersRetentionTimer;
+var mongoTempCleanupRunning = false;
+var mongoTempCleanupTimer;
+function normalizeOrderIndexKey(raw) {
+  return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+}
+function rebuildOrderLookupIndex(orders) {
+  const byId = /* @__PURE__ */ new Map();
+  const byOrderSn = /* @__PURE__ */ new Map();
+  const byTracking = /* @__PURE__ */ new Map();
+  const byReturnTracking = /* @__PURE__ */ new Map();
+  const byInternal = /* @__PURE__ */ new Map();
+  const byPackage = /* @__PURE__ */ new Map();
+  (Array.isArray(orders) ? orders : []).forEach((order, index) => {
+    const put = (map, value) => {
+      const key = normalizeOrderIndexKey(String(value || ""));
+      if (key) map.set(key, index);
+    };
+    put(byId, order.id);
+    put(byId, order._id);
+    put(byId, String(order.id || "").replace(/^shopee-/i, ""));
+    put(byId, String(order._id || "").replace(/^shopee-/i, ""));
+    put(byOrderSn, order.orderSn);
+    put(byOrderSn, order.order_sn);
+    put(byTracking, order.trackingNumber);
+    put(byTracking, order.tracking_no);
+    put(byReturnTracking, order.return_tracking_no);
+    put(byInternal, order.internalTrackingCode);
+    put(byPackage, order.packageNumber);
+  });
+  return { byId, byOrderSn, byTracking, byReturnTracking, byInternal, byPackage };
+}
+function getOrderLookupIndex(orders) {
+  orderLookupIndex = rebuildOrderLookupIndex(orders);
+  return orderLookupIndex;
+}
+function loadOrders() {
+  try {
+    if (!import_fs12.default.existsSync(ORDERS_DB_PATH)) {
+      orderLookupIndex = rebuildOrderLookupIndex([]);
+      return [];
+    }
+    const raw = import_fs12.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    const orders = Array.isArray(parsed) ? parsed.map(deps10.repairMisassignedTracking) : [];
+    orderLookupIndex = rebuildOrderLookupIndex(orders);
+    return orders;
+  } catch (error) {
+    console.error("[Orders DB] Failed to read orders.json:", error);
+    orderLookupIndex = rebuildOrderLookupIndex([]);
+    return [];
+  }
+}
+function mirrorTrackingFieldsForRead(order) {
+  if (!order || typeof order !== "object") return order;
+  if (order.tracking_no && !order.trackingNumber) order.trackingNumber = order.tracking_no;
+  if (order.trackingNumber && !order.tracking_no) order.tracking_no = order.trackingNumber;
+  return order;
+}
+function queueOrdersJsonMirror(orders) {
+  ordersJsonMirrorSnapshot = Array.isArray(orders) ? orders : [];
+  if (ordersJsonMirrorQueued) return;
+  ordersJsonMirrorQueued = true;
+  setImmediate(() => {
+    const snapshot = ordersJsonMirrorSnapshot;
+    ordersJsonMirrorSnapshot = null;
+    ordersJsonMirrorQueued = false;
+    if (!snapshot) return;
+    try {
+      saveOrders(snapshot);
+    } catch (err) {
+      console.warn("[Orders JSON Mirror] skipped:", err?.message || err);
+    }
+    if (ordersJsonMirrorSnapshot) queueOrdersJsonMirror(ordersJsonMirrorSnapshot);
+  });
+}
+function queueOrdersJsonMirrorFromMongo() {
+  setImmediate(() => {
+    void loadOrdersFromStore().then((orders) => queueOrdersJsonMirror(orders)).catch(
+      (err) => console.warn("[Orders JSON Mirror] Mongo snapshot skipped:", err?.message || err)
+    );
+  });
+}
+async function persistOrdersToDatabase(orders, changedOrders) {
+  if (!changedOrders.length) return 0;
+  if (!isMongoReady()) throw new Error("mongodb_not_ready");
+  try {
+    const n = await bulkUpsertOrdersToStore(changedOrders);
+    queueOrdersJsonMirror(orders);
+    console.log(`[Orders Persist] Mongo bulkWrite OK \u2014 upsertedDocs=${n}`);
+    return n;
+  } catch (err) {
+    console.error("[Orders Persist] Mongo bulkWrite failed:", err?.message || err);
+    throw err;
+  }
+}
+async function loadOrdersForApi(opts) {
+  const normalize = opts?.readOnly ? mirrorTrackingFieldsForRead : deps10.repairMisassignedTracking;
+  if (!isMongoReady()) {
+    throw new Error("mongodb_not_ready");
+  }
+  try {
+    const orders = (await loadOrdersFromStore()).filter(deps10.isValidOrder).map(normalize);
+    return { orders, dirty: false, handoverMongoSync: [] };
+  } catch (err) {
+    console.warn("[Orders] Mongo read failed:", err?.message || err);
+    throw err;
+  }
+}
+async function loadOrdersForShipScoped(orderIds, orderSns) {
+  const idSet = new Set(
+    (orderIds || []).map((s2) => String(s2 || "").trim()).filter(Boolean)
+  );
+  const snSet = new Set(
+    (orderSns || []).map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+  );
+  for (const id of idSet) {
+    const stripped = id.replace(/^shopee-/i, "").trim();
+    if (stripped) snSet.add(stripped);
+  }
+  if (idSet.size === 0 && snSet.size === 0) return [];
+  const matchKey = (o) => {
+    if (!o || typeof o !== "object") return false;
+    const id = String(o.id || o._id || "").trim();
+    const sn = String(o.orderSn || o.order_sn || "").replace(/^shopee-/i, "").trim();
+    if (id && idSet.has(id)) return true;
+    if (sn && (snSet.has(sn) || idSet.has(sn) || idSet.has(`shopee-${sn}`))) return true;
+    if (id && snSet.has(id.replace(/^shopee-/i, "").trim())) return true;
+    return false;
+  };
+  const bySn = /* @__PURE__ */ new Map();
+  const byId = /* @__PURE__ */ new Map();
+  const put = (o) => {
+    if (!deps10.isValidOrder(o) || !matchKey(o)) return;
+    deps10.repairFalseProcessedReadyToShip(o);
+    const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim();
+    const id = String(o.id || "").trim();
+    if (sn) bySn.set(sn, o);
+    if (id) byId.set(id, o);
+  };
+  if (isMongoReady()) {
+    try {
+      const mongoOrders = (await loadOrdersFromStore({
+        orderSns: [...snSet],
+        ids: [...idSet]
+      })).map(deps10.repairMisassignedTracking);
+      for (const m2 of mongoOrders) put(m2);
+    } catch (err) {
+      console.warn("[Orders] loadOrdersForShipScoped mongo skip:", err?.message || err);
+    }
+  }
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const o of bySn.values()) {
+    const k = String(o.orderSn || o.id || "");
+    if (k && seen.has(k)) continue;
+    if (k) seen.add(k);
+    out.push(o);
+  }
+  for (const o of byId.values()) {
+    const k = String(o.orderSn || o.id || "");
+    if (k && seen.has(k)) continue;
+    if (k) seen.add(k);
+    out.push(o);
+  }
+  return out;
+}
+async function persistChangedOrdersPatch(changedOrders) {
+  const changed = (Array.isArray(changedOrders) ? changedOrders : []).filter(Boolean);
+  if (changed.length === 0) return 0;
+  if (!isMongoReady()) throw new Error("mongodb_not_ready");
+  const written = await bulkUpsertOrdersToStore(changed);
+  queueOrdersJsonMirrorFromMongo();
+  return written;
+}
+async function hydrateTrackingFromMongoToJson() {
+  let mirrored = 0;
+  try {
+    mirrored = await mirrorTopLevelTrackingIntoData();
+  } catch (err) {
+    console.warn("[Orders] mirrorTopLevelTrackingIntoData:", err?.message || err);
+  }
+  const { orders, dirty, handoverMongoSync } = await loadOrdersForApi();
+  if (dirty) {
+    saveOrders(orders);
+    try {
+      const withTn = orders.filter(
+        (o) => String(o.trackingNumber || o.tracking_no || "").trim()
+      );
+      const toUpsert = [
+        ...withTn,
+        ...handoverMongoSync.filter(
+          (o) => !withTn.some((t2) => t2.id === o.id || t2.orderSn === o.orderSn)
+        )
+      ];
+      if (toUpsert.length) await bulkUpsertOrdersToStore(toUpsert);
+    } catch (err) {
+      console.warn("[Orders] hydrate bulkUpsert:", err?.message || err);
+    }
+  }
+  const filled = orders.filter(
+    (o) => String(o.trackingNumber || o.tracking_no || "").trim()
+  ).length;
+  return { mirrored, filled, total: orders.length };
+}
+function saveOrders(orders) {
+  try {
+    const sanitized = orders.map(deps10.repairMisassignedTracking);
+    if (isMongoReady() && sanitized.length > 0) {
+      void bulkUpsertOrdersToStore(sanitized).catch(
+        (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
+      );
+    }
+    import_fs12.default.mkdirSync(import_path11.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs12.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    orderLookupIndex = rebuildOrderLookupIndex(sanitized);
+    console.log(
+      `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
+    );
+    return true;
+  } catch (error) {
+    console.error(
+      "L\u1ED6I SYNC SHOPEE: Failed to write orders.json:",
+      error?.message || error,
+      error?.stack || ""
+    );
+    return false;
+  }
+}
+function isHandedOverGarbageOrder(order) {
+  return deps10.matchesHandedOverCarrierTabOrder(order);
+}
+async function purgeHandedOverGarbageOrdersOnce(opts) {
+  const force = Boolean(opts?.force);
+  const orders = loadOrders();
+  const garbage = orders.filter(isHandedOverGarbageOrder);
+  if (!force && garbage.length === 0 && import_fs12.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+    return { removed: 0, sns: [], skipped: true };
+  }
+  const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
+  const ids = garbage.map((o) => String(o.id || "").trim()).filter(Boolean);
+  if (garbage.length > 0) {
+    saveOrders(orders.filter((o) => !isHandedOverGarbageOrder(o)));
+    console.log(`Deleted count (JSON): ${garbage.length}`);
+  }
+  let mongoDeleted = 0;
+  let mongoSns = [];
+  if (isMongoReady()) {
+    try {
+      if (ids.length || sns.length) {
+        mongoDeleted += await deleteOrdersFromStore([...ids, ...sns]);
+      }
+      const byFlag = await deleteHandedOverOrdersFromStore();
+      mongoDeleted += byFlag.deleted;
+      mongoSns = byFlag.sns;
+      console.log(`Deleted count (Mongo): ${mongoDeleted}`);
+    } catch (err) {
+      console.warn("[Cleanup HandedOver] Mongo delete failed:", err?.message || err);
+    }
+  }
+  const allSns = [.../* @__PURE__ */ new Set([...sns, ...mongoSns])];
+  const removed = Math.max(garbage.length, allSns.length, mongoDeleted);
+  console.log(`Deleted count: ${removed}`);
+  const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
+  if (stillLeft === 0) {
+    try {
+      const v1 = import_path11.default.join(APP_ROOT7, "data", ".cleanup-handed-over-v1");
+      if (import_fs12.default.existsSync(v1)) import_fs12.default.unlinkSync(v1);
+      import_fs12.default.mkdirSync(import_path11.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs12.default.writeFileSync(
+        HANDED_OVER_CLEANUP_MARKER,
+        JSON.stringify(
+          {
+            at: (/* @__PURE__ */ new Date()).toISOString(),
+            removed,
+            jsonRemoved: garbage.length,
+            mongoDeleted,
+            sns: allSns
+          },
+          null,
+          2
+        ),
+        "utf-8"
+      );
+    } catch {
+    }
+  } else {
+    console.warn(`[Cleanup HandedOver] V\u1EABn c\xF2n ${stillLeft} \u0111\u01A1n \u0110VVC sau purge \u2014 s\u1EBD ch\u1EA1y l\u1EA1i.`);
+  }
+  console.log(
+    `[Cleanup HandedOver] \u0110\xC3 X\xD3A json=${garbage.length} mongo=${mongoDeleted} \u2014 ${allSns.join(", ") || "(none)"}`
+  );
+  return { removed, sns: allSns, skipped: false };
+}
+async function purgeClosedOrdersByRetention(opts) {
+  const cancelReturnDays = Math.max(1, Math.floor(opts?.cancelReturnDays ?? 14));
+  const closedDays = Math.max(1, Math.floor(opts?.closedDays ?? 30));
+  const dryRun = Boolean(opts?.dryRun);
+  if (!isMongoReady()) {
+    return {
+      deleted: 0,
+      jsonRemoved: 0,
+      sns: [],
+      scanned: 0,
+      dryRun,
+      cancelReturnMatched: 0,
+      closedMatched: 0,
+      message: "Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua retention cleanup."
+    };
+  }
+  const mongoResult = await deleteClosedOrdersByRetention({
+    cancelReturnDays,
+    closedDays,
+    dryRun
+  });
+  let jsonRemoved = 0;
+  if (!dryRun && mongoResult.sns.length > 0) {
+    try {
+      const snSet = new Set(
+        mongoResult.sns.map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+      );
+      const orders = loadOrders();
+      const kept = orders.filter((o) => {
+        const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+        const id = String(o?.id || "").replace(/^shopee-/i, "").trim();
+        return !snSet.has(sn) && !snSet.has(id);
+      });
+      jsonRemoved = orders.length - kept.length;
+      if (jsonRemoved > 0) saveOrders(kept);
+    } catch (err) {
+      console.warn("[Orders Retention] JSON mirror cleanup:", err?.message || err);
+    }
+    try {
+      queueOrdersJsonMirrorFromMongo();
+    } catch {
+    }
+  }
+  const message = dryRun ? `Dry-run: s\u1EBD x\xF3a ~${mongoResult.sns.length} \u0111\u01A1n (h\u1EE7y/ho\xE0n ${mongoResult.cancelReturnMatched} @${cancelReturnDays}d, \u0111\xF3ng ${mongoResult.closedMatched} @${closedDays}d).` : mongoResult.deleted > 0 ? `\u0110\xE3 x\xF3a ${mongoResult.deleted} \u0111\u01A1n \u0111\xE3 \u0111\xF3ng (h\u1EE7y/ho\xE0n>${cancelReturnDays}d / ho\xE0n t\u1EA5t-\u0110VVC>${closedDays}d).` : `Kh\xF4ng c\xF3 \u0111\u01A1n \u0111\xE3 \u0111\xF3ng qu\xE1 h\u1EA1n \u0111\u1EC3 x\xF3a (${cancelReturnDays}/${closedDays} ng\xE0y).`;
+  console.log(`[Orders Retention] ${message}`);
+  return {
+    deleted: mongoResult.deleted,
+    jsonRemoved,
+    sns: mongoResult.sns,
+    scanned: mongoResult.scanned,
+    dryRun,
+    cancelReturnMatched: mongoResult.cancelReturnMatched,
+    closedMatched: mongoResult.closedMatched,
+    message
+  };
+}
+function scheduleClosedOrdersRetentionCleanup() {
+  if (closedOrdersRetentionTimer) return;
+  const run = () => {
+    if (closedOrdersRetentionRunning || !isMongoReady()) return;
+    closedOrdersRetentionRunning = true;
+    void purgeClosedOrdersByRetention().catch((err) => console.warn("[Orders Retention] schedule error:", err?.message || err)).finally(() => {
+      closedOrdersRetentionRunning = false;
+    });
+  };
+  setTimeout(run, 2 * 60 * 1e3);
+  closedOrdersRetentionTimer = setInterval(run, 24 * 60 * 60 * 1e3);
+  if (typeof closedOrdersRetentionTimer.unref === "function") {
+    closedOrdersRetentionTimer.unref();
+  }
+  console.log("[Orders Retention] Scheduled: h\u1EE7y/ho\xE0n >14d, ho\xE0n t\u1EA5t/\u0110VVC >30d, m\u1ED7i 24h.");
+}
+function scheduleMongoTempCollectionsCleanup() {
+  if (mongoTempCleanupTimer) return;
+  const run = () => {
+    if (mongoTempCleanupRunning || !isMongoReady()) return;
+    mongoTempCleanupRunning = true;
+    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14, ensureTtl: true }).then((r2) => {
+      console.log(
+        `[Mongo Temp Cleanup] order_events ${r2.orderEventsBefore}\u2192${r2.orderEventsAfter} (\u2212${r2.orderEventsDeleted}), sync_jobs ${r2.syncJobsBefore}\u2192${r2.syncJobsAfter} (\u2212${r2.syncJobsDeleted})`
+      );
+    }).catch((err) => console.warn("[Mongo Temp Cleanup] schedule error:", err?.message || err)).finally(() => {
+      mongoTempCleanupRunning = false;
+    });
+  };
+  setTimeout(run, 45e3);
+  mongoTempCleanupTimer = setInterval(run, 24 * 60 * 60 * 1e3);
+  if (typeof mongoTempCleanupTimer.unref === "function") {
+    mongoTempCleanupTimer.unref();
+  }
+  console.log("[Mongo Temp Cleanup] Scheduled: order_events/sync_jobs >14d + TTL 14d, m\u1ED7i 24h.");
+}
+function findOrderRecord(orders, idOrSn) {
+  const key = String(idOrSn || "").trim();
+  if (!key) return null;
+  const idx = rebuildOrderLookupIndex(orders);
+  const normalized = normalizeOrderIndexKey(key);
+  const stripped = key.replace(/^shopee-/i, "").trim();
+  let index = idx.byId.get(normalized) ?? idx.byOrderSn.get(normalized);
+  if (index === void 0 && stripped && stripped !== key) {
+    const strippedNorm = normalizeOrderIndexKey(stripped);
+    index = idx.byId.get(strippedNorm) ?? idx.byOrderSn.get(strippedNorm);
+  }
+  if (index === void 0 && !key.toLowerCase().startsWith("shopee-")) {
+    index = idx.byId.get(normalizeOrderIndexKey(`shopee-${key}`)) ?? idx.byOrderSn.get(normalizeOrderIndexKey(`shopee-${key}`));
+  }
+  if (index === void 0) {
+    const keyLower = key.toLowerCase();
+    const strippedLower = stripped.toLowerCase();
+    index = orders.findIndex((o) => {
+      const candidates = [
+        o?.id,
+        o?._id,
+        o?.orderSn,
+        o?.order_sn,
+        o?.id != null ? String(o.id).replace(/^shopee-/i, "") : "",
+        o?._id != null ? String(o._id).replace(/^shopee-/i, "") : ""
+      ];
+      return candidates.some((c) => {
+        const s2 = String(c || "").trim();
+        if (!s2) return false;
+        return s2 === key || s2.toLowerCase() === keyLower || s2 === stripped || s2.toLowerCase() === strippedLower || normalizeOrderIndexKey(s2) === normalized;
+      });
+    });
+    if (index < 0) index = void 0;
+  }
+  if (index === void 0) return null;
+  return { index, order: orders[index] };
+}
+function resolveOrdersFromRequest(orders, orderIds, orderSns) {
+  const hits = [];
+  const seen = /* @__PURE__ */ new Set();
+  const tryAdd = (idOrSn) => {
+    const raw = String(idOrSn || "").trim();
+    if (!raw) return;
+    const hit = findOrderRecord(orders, raw);
+    if (hit && !seen.has(hit.index)) {
+      seen.add(hit.index);
+      hits.push(hit);
+    }
+  };
+  for (const id of orderIds || []) tryAdd(String(id));
+  for (const sn of orderSns || []) tryAdd(String(sn));
+  return hits;
+}
+function normalizeScanLookupKey(raw) {
+  return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+}
+async function buildScanLookupKeys(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return [];
+  const keys = /* @__PURE__ */ new Set();
+  const add = (v) => {
+    const normalized = normalizeScanLookupKey(String(v || ""));
+    if (normalized.length >= 4) keys.add(normalized);
+  };
+  add(text);
+  add(text.replace(/^#+/, ""));
+  if (/^https?:\/\//i.test(text)) {
+    try {
+      const url = new URL(text);
+      [
+        "tracking",
+        "tracking_no",
+        "tracking_number",
+        "tn",
+        "order_sn",
+        "ordersn",
+        "order",
+        "order_id",
+        "package_number",
+        "code",
+        "sn"
+      ].forEach((p) => {
+        const v = url.searchParams.get(p);
+        if (v) add(v);
+      });
+      url.pathname.split("/").filter(Boolean).forEach(add);
+    } catch {
+    }
+  }
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      [
+        "tracking_number",
+        "trackingNumber",
+        "tracking_no",
+        "trackingNo",
+        "order_sn",
+        "orderSn",
+        "package_number",
+        "packageNumber"
+      ].forEach((k) => {
+        if (parsed?.[k]) add(parsed[k]);
+      });
+    } catch {
+    }
+  }
+  return [...keys];
+}
+function flexibleScanCodeMatch(scanKey, fieldKey) {
+  if (!scanKey || !fieldKey) return false;
+  if (scanKey === fieldKey) return true;
+  if (scanKey.length >= 10 && fieldKey.length >= 10) {
+    return fieldKey.endsWith(scanKey) || scanKey.endsWith(fieldKey);
+  }
+  return false;
+}
+async function findOrderByScanLookup(orders, raw) {
+  const scanKeys = await buildScanLookupKeys(raw);
+  if (!scanKeys.length) return null;
+  const idx = getOrderLookupIndex(orders);
+  for (const sk of scanKeys) {
+    for (const map of [
+      idx.byTracking,
+      idx.byReturnTracking,
+      idx.byInternal,
+      idx.byOrderSn,
+      idx.byPackage,
+      idx.byId
+    ]) {
+      const hit = map.get(sk);
+      if (hit !== void 0) return orders[hit];
+    }
+  }
+  const trackingLike = /^SPX(VN)?|^GHN|^GHTK|^JNT|^JT|^NINJA|^VTP|^VNPOST/.test(
+    normalizeScanLookupKey(raw)
+  );
+  if (trackingLike) {
+    for (const order of orders) {
+      const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
+      const returnTrackingKey = order.return_tracking_no ? normalizeScanLookupKey(order.return_tracking_no) : "";
+      const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
+      if (trackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, trackingKey)))
+        return order;
+      if (returnTrackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, returnTrackingKey)))
+        return order;
+      if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey)))
+        return order;
+    }
+  }
+  const internalLike = /^0FG/.test(normalizeScanLookupKey(raw));
+  if (internalLike) {
+    for (const order of orders) {
+      const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
+      if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey)))
+        return order;
+    }
+  }
+  for (const order of orders) {
+    const orderSnKey = normalizeScanLookupKey(order.orderSn);
+    const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
+    const returnTrackingKey = order.return_tracking_no ? normalizeScanLookupKey(order.return_tracking_no) : "";
+    const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
+    const packageKey = order.packageNumber ? normalizeScanLookupKey(order.packageNumber) : "";
+    const idKey = normalizeScanLookupKey(String(order.id || "").replace(/^shopee-/i, ""));
+    const matched = scanKeys.some(
+      (sk) => flexibleScanCodeMatch(sk, orderSnKey) || flexibleScanCodeMatch(sk, trackingKey) || flexibleScanCodeMatch(sk, returnTrackingKey) || flexibleScanCodeMatch(sk, internalKey) || flexibleScanCodeMatch(sk, packageKey) || flexibleScanCodeMatch(sk, idKey)
+    );
+    if (matched) return order;
+  }
+  return null;
+}
+async function handOverOrderToCarrierByIndex(orders, index, opts) {
+  if (index < 0) {
+    return { ok: false, status: 404, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." };
+  }
+  const order = orders[index];
+  const hint = String(opts?.trackingHint || "").trim();
+  if (hint && !deps10.isShopeeInternalTrackingCode(hint)) {
+    if (!order.trackingNumber) order.trackingNumber = hint;
+    if (!order.tracking_no) order.tracking_no = hint;
+  }
+  if (deps10.hasLeftHandedOverCarrierTab(order)) {
+    return {
+      ok: false,
+      status: 400,
+      error: `\u0110\u01A1n ${order?.orderSn || order?.id} \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y \u2014 kh\xF4ng ghi \u0110\xE3 giao \u0110VVC.`
+    };
+  }
+  if (deps10.resolveOrderHandoverFlag(order)) {
+    return { ok: true, order, changed: false };
+  }
+  const eligible = deps10.isEligibleForHandOverShared(order) || deps10.matchesProcessedPickupTabShared(order) && deps10.hasOrderTrackingNoShared(order);
+  if (!eligible) {
+    const detail = deps10.getHandOverIneligibleReasonShared(order) || `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}, tn=${order?.trackingNumber || order?.tracking_no || "-"}`;
+    console.warn(`[Orders Handover] REJECT ${order?.orderSn}: ${detail}`);
+    return {
+      ok: false,
+      status: 400,
+      error: `\u0110\u01A1n ${order?.orderSn || order?.id} kh\xF4ng \u0111\u1EE7 \u0111i\u1EC1u ki\u1EC7n b\xE0n giao \u0110VVC: ${detail}`
+    };
+  }
+  const source = opts?.source === "qr_scan" ? deps10.HANDED_OVER_SOURCE.QR_SCAN : deps10.HANDED_OVER_SOURCE.MANUAL_BUTTON;
+  const updated = deps10.applyHandedOverWrite({ ...order }, void 0, source);
+  orders[index] = updated;
+  if (opts?.persist !== false) {
+    saveOrders(orders);
+    try {
+      if (isMongoReady()) {
+        await markOrderHandedOverInStore(String(updated.orderSn || ""), {
+          source,
+          handedOverAt: String(updated.handedOverAt || ""),
+          shopId: updated.shopId != null ? String(updated.shopId) : void 0
+        });
+      }
+    } catch (err) {
+      console.error("[Orders Handover] Mongo markOrderHandedOver failed:", err?.message || err);
+    }
+  }
+  console.log(
+    `[Orders Handover] \u0111\u01A1n ${updated.orderSn} \u2192 is_handed_over=true source=${source} tn=${updated.trackingNumber || updated.tracking_no || "-"}`
+  );
+  return { ok: true, order: updated, changed: true };
+}
+
+// controllers/ordersController.js
+var APP_ROOT8 = resolveAppRoot();
+var deps11 = {
+  withLocalDbTimeout: async (p) => p,
+  loadProductsForOrders: async () => [],
+  enrichOrdersFromCatalog: (orders) => orders,
+  enrichOrdersWithShopNames: (orders) => orders,
+  isValidOrder: () => true,
+  matchesProcessedPickupTabShared: () => false,
+  matchesUnprocessedPickupTabShared: () => false,
+  matchesShippingTabShared: () => false,
+  matchesReceivedCancelReturnTabOrder: () => false,
+  cleanupExpiredLabelFiles: () => 0,
+  wipeLegacyPublicPrints: () => {
+  },
+  resolveOrderFromShopeeByScanCode: async () => null,
+  enrichMissingShopeeTracking: async () => null,
+  repairMissingShopeeTrackingInOrders: async () => 0,
+  repairMisassignedTracking: (o) => o,
+  buildHandedOverWritePatch: () => ({}),
+  buildClearHandedOverPatch: () => ({}),
+  HANDED_OVER_SOURCE: { MANUAL_BUTTON: "manual_button", QR_SCAN: "qr_scan" },
+  applyShopeeOrderFinanceFields: () => {
+  },
+  sumOrderCustomCosts: () => 0,
+  healInvalidHandedOverFlags: () => [],
+  buildCarrierLogisticsPayload: () => null,
+  generateCarrierTracking: () => ""
+};
+var ordersRefreshInFlight = null;
+var ordersRefreshCache = null;
+function initOrdersController(partial) {
+  deps11 = { ...deps11, ...partial };
+}
+function invalidateOrdersRefreshCache() {
+  ordersRefreshCache = null;
+}
+async function readOrdersForRefresh(limit) {
+  const now = Date.now();
+  if (ordersRefreshCache && ordersRefreshCache.expiresAt > now) {
+    return limit && limit > 0 ? ordersRefreshCache.orders.slice(0, limit) : ordersRefreshCache.orders;
+  }
+  if (limit && limit > 0) {
+    const orders = await loadOrdersFromStore({ limit });
+    return orders.filter((order) => Boolean(order?.orderSn || order?.id));
+  }
+  if (!ordersRefreshInFlight) {
+    ordersRefreshInFlight = loadOrdersFromStore().then((orders) => {
+      const validOrders = orders.filter((order) => Boolean(order?.orderSn || order?.id));
+      ordersRefreshCache = {
+        orders: validOrders,
+        expiresAt: Date.now() + 1500
+      };
+      return validOrders;
+    }).finally(() => {
+      ordersRefreshInFlight = null;
+    });
+  }
+  return ordersRefreshInFlight;
+}
+async function refreshOrders(req, res) {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  try {
+    if (!isMongoReady()) {
+      return res.status(200).json({
+        success: false,
+        data: [],
+        total: 0,
+        error: "mongodb_not_ready"
+      });
+    }
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : void 0;
+    const rawOrders = await readOrdersForRefresh(limit);
+    let mergedOrders = rawOrders;
+    try {
+      mergedOrders = await mergeDonHoanHuyIntoOrders(rawOrders);
+    } catch (mergeErr) {
+      console.warn(
+        "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
+        mergeErr?.message || mergeErr
+      );
+    }
+    let products = [];
+    if (!limit) {
+      try {
+        products = await deps11.withLocalDbTimeout(
+          deps11.loadProductsForOrders(mergedOrders),
+          2500,
+          "orders_refresh_catalog"
+        );
+      } catch (catalogErr) {
+        console.warn(
+          "[GET /api/orders/refresh] Catalog enrich skipped:",
+          catalogErr instanceof Error ? catalogErr.message : catalogErr
+        );
+      }
+    }
+    const orders = deps11.enrichOrdersWithShopNames(
+      deps11.enrichOrdersFromCatalog(mergedOrders, products)
+    );
+    console.log(
+      `[FRONTEND FETCHED] GET /api/orders/refresh${limit ? `?limit=${limit}` : ""} \u2014 tr\u1EA3 v\u1EC1 ${orders.length} \u0111\u01A1n t\u1EEB MongoDB.`
+    );
+    return res.status(200).json({ success: true, data: orders, total: orders.length });
+  } catch (error) {
+    console.error(
+      "[GET /api/orders/refresh] Mongo query failed:",
+      error?.stack || error?.message || error
+    );
+    return res.status(200).json({
+      success: false,
+      data: [],
+      total: 0,
+      error: "orders_refresh_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 t\u1EA3i danh s\xE1ch \u0111\u01A1n h\xE0ng t\u1EEB MongoDB."
+    });
+  }
+}
+async function queryOrders(req, res) {
+  try {
+    if (!isMongoReady()) {
+      return res.status(503).json({ success: false, error: "mongodb_not_ready", data: [] });
+    }
+    const page = await queryOrdersPageFromStore({
+      page: Number(req.query.page),
+      pageSize: Number(req.query.page_size ?? req.query.pageSize),
+      tab: String(req.query.tab || ""),
+      shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
+      carrier: String(req.query.carrier || ""),
+      query: String(req.query.q ?? req.query.query ?? "")
+    });
+    const products = await deps11.loadProductsForOrders(page.rows);
+    const rows = deps11.enrichOrdersWithShopNames(
+      deps11.enrichOrdersFromCatalog(page.rows, products)
+    );
+    return res.json({
+      success: true,
+      data: rows,
+      total: page.total,
+      page: page.page,
+      page_size: page.pageSize,
+      has_more: page.hasMore,
+      counts: page.counts
+    });
+  } catch (error) {
+    console.error("[Orders Query] failed:", error?.stack || error?.message || error);
+    return res.status(500).json({
+      success: false,
+      error: "orders_query_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 truy v\u1EA5n \u0111\u01A1n h\xE0ng."
+    });
+  }
+}
+async function getOrderEvents(req, res) {
+  try {
+    const events = await loadOrderEvents(
+      String(req.params.orderSn || ""),
+      Number(req.query.limit) || 50
+    );
+    return res.json({ success: true, data: events });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: "order_events_failed", message: error?.message });
+  }
+}
+async function getSyncJobById(req, res) {
+  const job = await getSyncJob(String(req.params.jobId || ""));
+  if (!job) return res.status(404).json({ success: false, error: "sync_job_not_found" });
+  return res.json({ success: true, data: job });
+}
+async function listOrders(req, res) {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
+  rawOrders = rawOrders.filter(deps11.isValidOrder);
+  const unprocessedPool = rawOrders.filter((o) => deps11.matchesUnprocessedPickupTabShared(o));
+  const processedPool = rawOrders.filter((o) => deps11.matchesProcessedPickupTabShared(o));
+  const readyToShipRaw = rawOrders.filter((o) => {
+    const raw = String(o?.shopee_order_status || "").toUpperCase();
+    return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
+  });
+  console.log(
+    `[GET /api/orders] tab-diag total=${rawOrders.length} READY_TO_SHIP|RETRY_SHIP(raw)=${readyToShipRaw.length} unprocessedTab=${unprocessedPool.length} processedTab=${processedPool.length} sampleUnprocessed=${JSON.stringify(
+      unprocessedPool.slice(0, 3).map((o) => ({
+        sn: o.orderSn,
+        status: o.status,
+        raw: o.shopee_order_status,
+        tn: o.trackingNumber || o.tracking_no || null,
+        prepared: o.isPrepared,
+        fulfillment: o.fulfillment_type || o.ship_method || null
+      }))
+    )}`
+  );
+  const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
+  if (tab === "processed" || tab === "da-xu-ly" || tab === "processed_pickup") {
+    rawOrders = rawOrders.filter((o) => deps11.matchesProcessedPickupTabShared(o));
+    console.log(
+      `[GET /api/orders] query.tab=${tab} filter=matchesProcessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n`
+    );
+  } else if (tab === "unprocessed" || tab === "chua-xu-ly" || tab === "ready_to_ship" || tab === "cho-lay-hang") {
+    rawOrders = rawOrders.filter((o) => deps11.matchesUnprocessedPickupTabShared(o));
+    console.log(
+      `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound, !isProcessedCondition }`
+    );
+  } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
+    rawOrders = rawOrders.filter((o) => deps11.matchesShippingTabShared(o));
+  } else if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
+    try {
+      rawOrders = await loadDonHoanHuyAsOrders(
+        Number.isFinite(Number(req.query.limit)) ? Math.min(Math.floor(Number(req.query.limit)), 5e3) : 2e3
+      );
+      console.log(
+        `[GET /api/orders] query.tab=${tab} source=don_hoan_huy \u2192 ${rawOrders.length} \u0111\u01A1n`
+      );
+    } catch (dhhErr) {
+      console.error("[GET /api/orders] don_hoan_huy load failed:", dhhErr);
+      rawOrders = rawOrders.filter((o) => deps11.matchesReceivedCancelReturnTabOrder(o));
+    }
+  } else if (tab === "pending_confirm" || tab === "pending_verification" || tab === "cho-xac-nhan" || tab === "pending_shopee_check" || tab === "dang_kiem_tra_shopee" || tab === "shopee_check") {
+    rawOrders = rawOrders.filter((o) => {
+      const raw = String(o.shopee_order_status || "").toUpperCase();
+      if (raw === "CANCELLED" || raw === "IN_CANCEL" || o.status === "cancelled") {
+        return false;
+      }
+      return o.status === "pending_confirm" || o.status === "pending_verification" || ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw);
+    });
+  }
+  const rawLimit = Number(req.query.limit);
+  if (Number.isFinite(rawLimit) && rawLimit > 0) {
+    rawOrders = rawOrders.slice(0, Math.min(Math.floor(rawLimit), 5e3));
+  }
+  const products = await deps11.loadProductsForOrders(rawOrders);
+  const orders = deps11.enrichOrdersWithShopNames(
+    deps11.enrichOrdersFromCatalog(rawOrders, products)
+  );
+  console.log(
+    `[GET /api/orders] READ-ONLY return length=${orders.length} tab=${tab || "(all)"} mongoReady=${isMongoReady()}`
+  );
+  return res.json(orders);
+}
+async function cleanupHandedOver(req, res) {
+  try {
+    for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
+      try {
+        const p = import_path12.default.join(APP_ROOT8, "data", name);
+        if (import_fs13.default.existsSync(p)) import_fs13.default.unlinkSync(p);
+      } catch {
+      }
+    }
+    const result = await purgeHandedOverGarbageOrdersOnce({ force: true });
+    console.log(`Deleted count: ${result.removed}`);
+    return res.json({
+      success: true,
+      removed: result.removed,
+      orderSns: result.sns,
+      message: result.removed > 0 ? `\u0110\xE3 x\xF3a ${result.removed} \u0111\u01A1n k\u1EB9t tab \u0110\xC3 GIAO CHO \u0110VVC.` : "Kh\xF4ng c\xF2n \u0111\u01A1n HANDED_OVER \u0111\u1EC3 x\xF3a."
+    });
+  } catch (error) {
+    console.error("[Cleanup HandedOver] API error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "cleanup_failed"
+    });
+  }
+}
+async function cleanupClosedRetention(req, res) {
+  try {
+    const dryRun = req.body?.dry_run === true || req.body?.dryRun === true || String(req.query?.dry_run || "") === "1";
+    const cancelReturnDays = Number(req.body?.cancel_return_days ?? req.body?.cancelReturnDays);
+    const closedDays = Number(req.body?.closed_days ?? req.body?.closedDays);
+    const result = await purgeClosedOrdersByRetention({
+      dryRun,
+      cancelReturnDays: Number.isFinite(cancelReturnDays) && cancelReturnDays > 0 ? cancelReturnDays : void 0,
+      closedDays: Number.isFinite(closedDays) && closedDays > 0 ? closedDays : void 0
+    });
+    return res.json({
+      success: true,
+      ...result,
+      orderSns: result.sns.slice(0, 100)
+    });
+  } catch (error) {
+    console.error("[Orders Retention] API error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "cleanup_closed_retention_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 d\u1ECDn \u0111\u01A1n \u0111\xE3 \u0111\xF3ng."
+    });
+  }
+}
+async function cleanupMongoTemp(req, res) {
+  try {
+    if (!isMongoReady()) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng."
+      });
+    }
+    const eventDays = Number(req.body?.order_event_days ?? req.body?.orderEventDays ?? 14);
+    const jobDays = Number(req.body?.sync_job_days ?? req.body?.syncJobDays ?? 14);
+    const ensureTtl = req.body?.ensure_ttl !== false && req.body?.ensureTtl !== false;
+    const result = await purgeMongoTempCollections({
+      orderEventDays: Number.isFinite(eventDays) && eventDays > 0 ? eventDays : 14,
+      syncJobDays: Number.isFinite(jobDays) && jobDays > 0 ? jobDays : 14,
+      ensureTtl
+    });
+    return res.json({
+      success: true,
+      ...result,
+      message: result.orderEventsDeleted > 0 || result.syncJobsDeleted > 0 ? `\u0110\xE3 x\xF3a ${result.orderEventsDeleted} order_events + ${result.syncJobsDeleted} sync_jobs.` : "Kh\xF4ng c\xF2n b\u1EA3n ghi t\u1EA1m qu\xE1 h\u1EA1n \u0111\u1EC3 x\xF3a (TTL v\u1EABn gi\u1EEF 14 ng\xE0y)."
+    });
+  } catch (error) {
+    console.error("[Mongo Temp Cleanup] API error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "mongo_temp_cleanup_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 d\u1ECDn order_events/sync_jobs."
+    });
+  }
+}
+async function ensureMongoTtl(_req, res) {
+  try {
+    if (!isMongoReady()) {
+      return res.status(503).json({ success: false, error: "mongodb_not_ready" });
+    }
+    const ttl = await ensureRetentionTtlIndexes();
+    return res.json({ success: true, ...ttl });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "ensure_ttl_failed"
+    });
+  }
+}
+async function cleanupLabelPdfs(_req, res) {
+  try {
+    const deleted = deps11.cleanupExpiredLabelFiles();
+    deps11.wipeLegacyPublicPrints();
+    return res.json({
+      success: true,
+      deleted,
+      ttlHours: 24,
+      storage: "disk",
+      mongo: false,
+      message: `\u0110\xE3 d\u1ECDn PDF v\u1EADn \u0111\u01A1n >24h tr\xEAn \u0111\u0129a (kh\xF4ng l\u01B0u Mongo). X\xF3a ${deleted} m\u1EE5c.`
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "cleanup_label_pdfs_failed"
+    });
+  }
+}
+async function cleanupProcessedPickup(_req, res) {
+  try {
+    const orders = loadOrders();
+    const garbage = orders.filter((o) => deps11.matchesProcessedPickupTabShared(o));
+    const kept = orders.filter((o) => !deps11.matchesProcessedPickupTabShared(o));
+    const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
+    const ids = garbage.map((o) => String(o.id || "").trim()).filter(Boolean);
+    if (garbage.length > 0) {
+      saveOrders(kept);
+    }
+    let mongoDeleted = 0;
+    if (isMongoReady() && (ids.length || sns.length)) {
+      try {
+        mongoDeleted = await deleteOrdersFromStore([...ids, ...sns]);
+      } catch (err) {
+        console.warn("[Cleanup Processed Pickup] Mongo:", err?.message || err);
+      }
+    }
+    console.log(`Deleted count (JSON): ${garbage.length}`);
+    console.log(`Deleted count (Mongo): ${mongoDeleted}`);
+    console.log(`Deleted count: ${garbage.length}`);
+    return res.json({
+      success: true,
+      removed: garbage.length,
+      mongoDeleted,
+      orderSns: sns,
+      message: garbage.length > 0 ? `\u0110\xE3 x\xF3a ${garbage.length} \u0111\u01A1n tab Ch\u1EDD l\u1EA5y h\xE0ng (\u0110\xE3 x\u1EED l\xFD).` : "Kh\xF4ng c\xF2n \u0111\u01A1n \u0110\xE3 x\u1EED l\xFD \u0111\u1EC3 x\xF3a."
+    });
+  } catch (error) {
+    console.error("[Cleanup Processed Pickup] API error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "cleanup_failed"
+    });
+  }
+}
+async function lookupOrder(req, res) {
+  const code = String(req.query.code || req.query.q || "").trim();
+  if (!code) {
+    return res.status(400).json({ error: "Thi\u1EBFu m\xE3 qu\xE9t (code)." });
+  }
+  let foundRaw = null;
+  try {
+    foundRaw = await findOrderByScanCodeInStore(code);
+    if (foundRaw && !deps11.isValidOrder(foundRaw)) foundRaw = null;
+    if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
+  } catch (err) {
+    console.warn("[Orders Lookup] mongo failed:", err?.message || err);
+  }
+  if (!foundRaw) {
+    try {
+      const { orders } = await loadOrdersForApi({ readOnly: true });
+      const hit = await findOrderByScanLookup(
+        (Array.isArray(orders) ? orders : []).filter(deps11.isValidOrder),
+        code
+      );
+      if (hit && deps11.isValidOrder(hit)) {
+        foundRaw = mirrorTrackingFieldsForRead(hit);
+      }
+    } catch (err) {
+      console.warn("[Orders Lookup] fallback failed:", err?.message || err);
+    }
+  }
+  if (!foundRaw) {
+    try {
+      const fromShopee = await deps11.resolveOrderFromShopeeByScanCode(code);
+      if (fromShopee) {
+        foundRaw = mirrorTrackingFieldsForRead(fromShopee);
+        ordersRefreshCache = null;
+      }
+    } catch (err) {
+      console.warn("[Orders Lookup] Shopee on-demand failed:", err?.message || err);
+    }
+  }
+  if (!foundRaw) {
+    return res.status(404).json({
+      error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng kh\u1EDBp m\xE3 qu\xE9t.",
+      scannedCode: code
+    });
+  }
+  const products = await deps11.loadProductsForOrders([foundRaw]);
+  const found = deps11.enrichOrdersFromCatalog([foundRaw], products)[0];
+  return res.json(found);
+}
+async function cleanupMockOrders(_req, res) {
+  const orders = loadOrders();
+  const validOrders = orders.filter(deps11.isValidOrder);
+  const removedOrders = orders.filter((o) => !deps11.isValidOrder(o));
+  saveOrders(validOrders);
+  console.log(
+    `[Orders Cleanup] \u0110\xE3 x\xF3a ${removedOrders.length} \u0111\u01A1n h\xE0ng l\u1ED7i/mock (0\u0111 v\xE0 kh\xF4ng c\xF3 s\u1EA3n ph\u1EA9m). C\xF2n l\u1EA1i ${validOrders.length} \u0111\u01A1n th\u1EADt.`,
+    removedOrders.map((o) => o.orderSn || o.id)
+  );
+  return res.json({
+    removed: removedOrders.length,
+    remaining: validOrders.length,
+    removedOrderSns: removedOrders.map((o) => o.orderSn || o.id)
+  });
+}
+async function hydrateTracking(_req, res) {
+  try {
+    const result = await hydrateTrackingFromMongoToJson();
+    console.log(
+      `[Orders] hydrate-tracking mirrored=${result.mirrored} filled=${result.filled}/${result.total}`
+    );
+    return res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[Orders] hydrate-tracking failed:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err)
+    });
+  }
+}
+async function enrichTracking(req, res) {
+  try {
+    const maxRaw = Number(req.body?.max ?? req.query?.max ?? 100);
+    const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 100;
+    let enrichResult = null;
+    try {
+      enrichResult = await deps11.enrichMissingShopeeTracking();
+    } catch (enrichErr) {
+      console.warn(
+        "[Orders] enrich-tracking enrichMissingShopeeTracking:",
+        enrichErr?.message || enrichErr
+      );
+    }
+    let repaired = 0;
+    try {
+      const { orders } = await loadOrdersForApi();
+      repaired = await deps11.repairMissingShopeeTrackingInOrders(orders, {
+        max,
+        retries: 2
+      });
+    } catch (repairErr) {
+      console.warn(
+        "[Orders] enrich-tracking repairMissing:",
+        repairErr?.message || repairErr
+      );
+    }
+    ordersRefreshCache = null;
+    const filled = Number(enrichResult?.filled || 0) + Number(enrichResult?.returnFilled || 0) + repaired;
+    console.log(
+      `[Orders] enrich-tracking filled=${filled} scheduler=${JSON.stringify(enrichResult)} repaired=${repaired}`
+    );
+    return res.json({
+      success: true,
+      filled,
+      repaired,
+      scheduler: enrichResult || void 0,
+      message: filled > 0 ? `\u0110\xE3 b\xF9 ${filled} m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee.` : "Kh\xF4ng c\xF3 \u0111\u01A1n n\xE0o c\u1EA7n b\xF9 m\xE3 (ho\u1EB7c Shopee ch\u01B0a tr\u1EA3 tracking)."
+    });
+  } catch (err) {
+    console.error("[Orders] enrich-tracking failed:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err),
+      message: "Kh\xF4ng th\u1EC3 b\xF9 m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee."
+    });
+  }
+}
+async function patchOrder(req, res) {
+  const orders = loadOrders();
+  const key = String(req.params.id || "").trim();
+  const index = orders.findIndex(
+    (o) => o.id === key || o.orderSn === key || o.id === `shopee-${key}` || String(o.orderSn || "") === key.replace(/^shopee-/i, "")
+  );
+  if (index === -1) {
+    return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
+  }
+  const patch = { ...req.body };
+  delete patch.id;
+  const patchTn = String(patch.tracking_no || patch.trackingNumber || "").trim();
+  if (patchTn && !/^0FG/i.test(patchTn)) {
+    patch.tracking_no = patchTn;
+    patch.trackingNumber = patchTn;
+  }
+  const localPatch = String(patch.local_status || patch.localStatus || "").toUpperCase();
+  const wantHanded = patch.is_handed_over === true || patch.isHandedOverToCarrier === true || patch.is_handed_over_to_carrier === true || localPatch === "HANDED_OVER";
+  if (wantHanded) {
+    Object.assign(
+      patch,
+      deps11.buildHandedOverWritePatch(void 0, deps11.HANDED_OVER_SOURCE.MANUAL_BUTTON)
+    );
+  }
+  const wantLocalStored = localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED" || localPatch === "NONE";
+  if (wantLocalStored) {
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    patch.local_status = localPatch;
+    patch.localStatus = localPatch;
+    patch.internal_status = localPatch;
+    patch.localStatusAt = patch.localStatusAt || nowIso;
+    patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
+    if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
+      patch.is_local_return_archived = false;
+      Object.assign(patch, deps11.buildClearHandedOverPatch(nowIso));
+      patch.local_status = localPatch;
+      patch.localStatus = localPatch;
+      patch.internal_status = localPatch;
+      patch.localStatusAt = nowIso;
+      patch.local_status_updated_at = nowIso;
+      patch.is_local_return_archived = false;
+    }
+    if (localPatch === "RETURN_RECEIVED") {
+      patch.status = "return_received";
+    }
+  }
+  orders[index] = { ...orders[index], ...patch, id: orders[index].id };
+  {
+    const tn = String(
+      orders[index].tracking_no || orders[index].trackingNumber || ""
+    ).trim();
+    if (tn && !/^0FG/i.test(tn)) {
+      orders[index].tracking_no = tn;
+      orders[index].trackingNumber = tn;
+    }
+    deps11.repairMisassignedTracking(orders[index]);
+  }
+  if ("custom_costs" in patch || "custom_cost_items" in patch) {
+    deps11.applyShopeeOrderFinanceFields(orders[index], {
+      totalAmount: orders[index].totalAmount,
+      itemAmount: orders[index].item_amount,
+      withholdingCitTax: orders[index].withholdingCitTax,
+      escrowAmount: orders[index].escrowAmount,
+      shopeeFees: orders[index].shopee_fees,
+      escrowSynced: orders[index].escrow_synced,
+      customCosts: deps11.sumOrderCustomCosts(orders[index])
+    });
+  }
+  await persistOrdersToDatabase(orders, [orders[index]]);
+  if (wantHanded && isMongoReady()) {
+    try {
+      await markOrderHandedOverInStore(String(orders[index].orderSn || ""), {
+        source: deps11.HANDED_OVER_SOURCE.MANUAL_BUTTON,
+        handedOverAt: String(orders[index].handedOverAt || ""),
+        shopId: orders[index].shopId != null ? String(orders[index].shopId) : void 0
+      });
+    } catch (err) {
+      console.error("[Orders PATCH] markOrderHandedOver failed:", err?.message || err);
+    }
+  }
+  if (isMongoReady() && (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED")) {
+    try {
+      await markOrderLocalStatusInStore(
+        String(orders[index].orderSn || ""),
+        localPatch,
+        {
+          shopId: orders[index].shopId != null ? String(orders[index].shopId) : void 0,
+          clearHandedOver: true,
+          status: localPatch === "RETURN_RECEIVED" ? "return_received" : String(orders[index].status || "cancelled")
+        }
+      );
+    } catch (err) {
+      console.error("[Orders PATCH] markOrderLocalStatus failed:", err?.message || err);
+    }
+  }
+  return res.json(orders[index]);
+}
+async function deleteOrder(req, res) {
+  const key = String(req.params.id || "").trim();
+  if (!key) {
+    return res.status(400).json({ success: false, error: "Thi\u1EBFu id \u0111\u01A1n." });
+  }
+  const orders = loadOrders();
+  const index = orders.findIndex(
+    (o) => o.id === key || o.orderSn === key || o.id === `shopee-${key}` || String(o.orderSn || "") === key.replace(/^shopee-/i, "")
+  );
+  const normalizedKey = key.replace(/^shopee-/i, "");
+  let mongoDeleted = 0;
+  if (isMongoReady()) {
+    try {
+      mongoDeleted = await deleteOrdersFromStore([key, normalizedKey]);
+    } catch (err) {
+      console.warn("[Orders DELETE] Mongo:", err?.message || err);
+    }
+  }
+  if (index === -1) {
+    if (mongoDeleted > 0) {
+      console.log(`Deleted count: ${mongoDeleted} (Mongo-only orderSn=${normalizedKey})`);
+      return res.json({
+        success: true,
+        removed: mongoDeleted,
+        orderSn: normalizedKey,
+        mongoDeleted
+      });
+    }
+    return res.status(404).json({ success: false, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
+  }
+  const removed = orders[index];
+  const sn = String(removed.orderSn || removed.id || "").trim();
+  orders.splice(index, 1);
+  saveOrders(orders);
+  console.log(`Deleted count: 1 (orderSn=${sn}, mongoDeleted=${mongoDeleted})`);
+  return res.json({
+    success: true,
+    removed: 1,
+    orderSn: sn,
+    mongoDeleted
+  });
+}
+async function handOverCarrierById(req, res) {
+  try {
+    const loaded = await loadOrdersForApi();
+    const orders = loaded.orders;
+    const hit = findOrderRecord(orders, String(req.params.id || ""));
+    const trackingHint = String(
+      req.body?.trackingNumber || req.body?.tracking_no || req.body?.waybill || req.body?.code || ""
+    ).trim();
+    const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1, {
+      source: "manual_button",
+      trackingHint
+    });
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+    }
+    const products = await deps11.loadProductsForOrders([result.order]);
+    const enriched = deps11.enrichOrdersFromCatalog([result.order], products)[0];
+    return res.json({ success: true, order: enriched });
+  } catch (error) {
+    console.error("[Orders Handover] single error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "hand_over_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 ghi nh\u1EADn b\xE0n giao \u0110VVC."
+    });
+  }
+}
+async function handOverCarrierByCode(req, res) {
+  try {
+    const code = String(req.body?.code || req.body?.scanCode || req.body?.q || "").trim();
+    const orderId = String(
+      req.body?.orderId || req.body?.id || req.body?.orderSn || req.body?.order_sn || ""
+    ).trim();
+    const loaded = await loadOrdersForApi();
+    const orders = loaded.orders;
+    let index = -1;
+    if (orderId) {
+      const hit = findOrderRecord(orders, orderId);
+      index = hit ? hit.index : -1;
+    } else if (code) {
+      const found = await findOrderByScanLookup(orders.filter(deps11.isValidOrder), code);
+      if (found) {
+        const hit = findOrderRecord(orders, String(found.id || found.orderSn || ""));
+        index = hit ? hit.index : orders.findIndex((o) => o.id === found.id);
+      }
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: "Thi\u1EBFu orderId ho\u1EB7c m\xE3 qu\xE9t (code).",
+        message: "Thi\u1EBFu orderId ho\u1EB7c m\xE3 qu\xE9t (code)."
+      });
+    }
+    const result = await handOverOrderToCarrierByIndex(orders, index, {
+      source: code ? "qr_scan" : "manual_button",
+      trackingHint: code || String(req.body?.trackingNumber || req.body?.tracking_no || "").trim()
+    });
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+    }
+    const products = await deps11.loadProductsForOrders([result.order]);
+    const enriched = deps11.enrichOrdersFromCatalog([result.order], products)[0];
+    return res.json({ success: true, order: enriched });
+  } catch (error) {
+    console.error("[Orders Handover] by-code error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "hand_over_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 ghi nh\u1EADn b\xE0n giao \u0110VVC."
+    });
+  }
+}
+async function handOverCarrierBulk(req, res) {
+  try {
+    const rawIds = Array.isArray(req.body?.orderIds) ? req.body.orderIds : Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const rawSns = Array.isArray(req.body?.orderSns) ? req.body.orderSns : [];
+    const keys = [
+      ...new Set(
+        (rawIds.length ? rawIds : rawSns).map((v) => String(v || "").trim()).filter(Boolean)
+      )
+    ];
+    if (!keys.length && rawSns.length) {
+      keys.push(
+        ...new Set(rawSns.map((v) => String(v || "").trim()).filter(Boolean))
+      );
+    }
+    if (!keys.length) {
+      return res.status(400).json({
+        success: false,
+        error: "Thi\u1EBFu danh s\xE1ch \u0111\u01A1n (orderIds / orderSns).",
+        message: "Thi\u1EBFu danh s\xE1ch \u0111\u01A1n (orderIds / orderSns)."
+      });
+    }
+    const loaded = await loadOrdersForApi();
+    const orders = loaded.orders;
+    const updatedOrders = [];
+    const failed = [];
+    let skipped = 0;
+    const seenIdx = /* @__PURE__ */ new Set();
+    for (const key of keys) {
+      const hit = findOrderRecord(orders, key);
+      if (!hit) {
+        failed.push({ key, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
+        continue;
+      }
+      if (seenIdx.has(hit.index)) {
+        skipped++;
+        continue;
+      }
+      seenIdx.add(hit.index);
+      const result = await handOverOrderToCarrierByIndex(orders, hit.index, {
+        persist: false,
+        source: "manual_button"
+      });
+      if (!result.ok) {
+        failed.push({ key, error: result.error });
+        continue;
+      }
+      if (result.changed) updatedOrders.push(result.order);
+      else skipped++;
+    }
+    if (updatedOrders.length) {
+      await persistOrdersToDatabase(orders, updatedOrders);
+    }
+    const products = await deps11.loadProductsForOrders(updatedOrders);
+    const enriched = deps11.enrichOrdersFromCatalog(updatedOrders, products);
+    console.log(
+      `[Orders Handover Bulk] keys=${keys.length} updated=${updatedOrders.length} skipped=${skipped} failed=${failed.length}`
+    );
+    if (updatedOrders.length === 0 && skipped === 0) {
+      return res.status(400).json({
+        success: false,
+        updated: 0,
+        skipped: 0,
+        failed,
+        orders: [],
+        error: failed[0]?.error || "Kh\xF4ng b\xE0n giao \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o.",
+        message: failed[0]?.error || "Kh\xF4ng b\xE0n giao \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o."
+      });
+    }
+    return res.json({
+      success: true,
+      updated: updatedOrders.length,
+      skipped,
+      failed,
+      orders: enriched
+    });
+  } catch (error) {
+    console.error("[Orders Handover Bulk] error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "hand_over_bulk_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 b\xE0n giao \u0110VVC h\xE0ng lo\u1EA1t."
+    });
+  }
+}
+async function healHandedOver(_req, res) {
+  try {
+    const loaded = await loadOrdersForApi();
+    const orders = loaded.orders;
+    const healed = deps11.healInvalidHandedOverFlags(orders);
+    if (healed.length) {
+      await persistOrdersToDatabase(orders, healed);
+    }
+    return res.json({
+      success: true,
+      healed: healed.length,
+      orderSns: healed.map((o) => o.orderSn || o.id).filter(Boolean),
+      message: healed.length > 0 ? `\u0110\xE3 g\u1EE1 ${healed.length} c\u1EDD \u0110VVC l\u01B0u sai.` : "Kh\xF4ng c\xF2n c\u1EDD \u0110VVC l\u01B0u sai."
+    });
+  } catch (error) {
+    console.error("[Heal HandedOver] error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "heal_failed"
+    });
+  }
+}
+async function createManualOrder(req, res) {
+  try {
+    const body = req.body || {};
+    const {
+      shippingAddress,
+      items,
+      carrier = "self",
+      packageWeight = 500,
+      shippingFee = 0,
+      shippingFeePayer = "customer",
+      orderDiscount = 0,
+      carrierNotes = ""
+    } = body;
+    const addr = shippingAddress || {};
+    if (!addr.provinceCode || !addr.districtCode || !addr.wardCode || !addr.street?.trim()) {
+      return res.status(400).json({
+        error: "\u0110\u1ECBa ch\u1EC9 ch\u01B0a \u0111\u1EA7y \u0111\u1EE7. Vui l\xF2ng ch\u1ECDn T\u1EC9nh, Qu\u1EADn/Huy\u1EC7n, Ph\u01B0\u1EDDng/X\xE3 v\xE0 nh\u1EADp \u0111\u1ECBa ch\u1EC9 chi ti\u1EBFt."
+      });
+    }
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "\u0110\u01A1n h\xE0ng c\u1EA7n \xEDt nh\u1EA5t 1 s\u1EA3n ph\u1EA9m." });
+    }
+    const subtotal = items.reduce(
+      (acc, it) => acc + Number(it.price || 0) * Number(it.quantity || 0),
+      0
+    );
+    const feeToCollect = shippingFeePayer === "customer" ? Number(shippingFee) : 0;
+    const totalAmount = subtotal + feeToCollect - Number(orderDiscount);
+    const fullAddress = [addr.street, addr.ward, addr.district, addr.province].filter(Boolean).join(", ");
+    const trackingNumber = deps11.generateCarrierTracking(carrier);
+    const logisticsPayload = carrier !== "self" ? deps11.buildCarrierLogisticsPayload(
+      carrier,
+      { name: "Kh\xE1ch s\u1EC9", phone: "0900000000" },
+      {
+        street: addr.street.trim(),
+        province: addr.province,
+        provinceCode: String(addr.provinceCode),
+        district: addr.district,
+        districtCode: String(addr.districtCode),
+        ward: addr.ward,
+        wardCode: String(addr.wardCode)
+      },
+      {
+        weight: Number(packageWeight) || 500,
+        note: carrierNotes || "",
+        codAmount: totalAmount
+      }
+    ) : null;
+    if (logisticsPayload) {
+      console.log(
+        `[Logistics ${carrier.toUpperCase()}] Payload \u0111\u1EA9y \u0111\u01A1n:`,
+        JSON.stringify(logisticsPayload, null, 2)
+      );
+    }
+    const newOrder = {
+      id: `order-manual-${Date.now()}`,
+      orderSn: `DON-NGOAI-${Math.floor(1e5 + Math.random() * 9e5)}`,
+      channel: "manual",
+      shippingAddress: {
+        province: addr.province,
+        provinceCode: String(addr.provinceCode),
+        district: addr.district,
+        districtCode: String(addr.districtCode),
+        ward: addr.ward,
+        wardCode: String(addr.wardCode),
+        street: addr.street.trim(),
+        fullAddress
+      },
+      carrier,
+      totalAmount,
+      revenue: totalAmount,
+      status: "unprocessed",
+      date: (/* @__PURE__ */ new Date()).toISOString(),
+      trackingNumber,
+      isPrepared: carrier !== "self",
+      isPrinted: false,
+      items: items.map((it) => ({
+        productId: it.productId,
+        productTitle: it.productTitle,
+        productImage: it.productImage,
+        quantity: Number(it.quantity),
+        price: Number(it.price)
+      })),
+      logisticsPayload
+    };
+    const orders = loadOrders();
+    orders.unshift(newOrder);
+    saveOrders(orders);
+    return res.json({
+      success: true,
+      order: newOrder,
+      trackingNumber,
+      logisticsPayload,
+      orders: orders.filter(deps11.isValidOrder)
+    });
+  } catch (error) {
+    console.error("[Orders manual]", error);
+    return res.status(500).json({ error: error.message || "T\u1EA1o \u0111\u01A1n th\u1EE7 c\xF4ng th\u1EA5t b\u1EA1i" });
+  }
+}
+
+// routes/ordersRoutes.js
+var router13 = (0, import_express14.Router)();
+router13.get("/refresh", refreshOrders);
+router13.get("/query", queryOrders);
+router13.get("/lookup", lookupOrder);
+router13.post("/cleanup-handed-over", cleanupHandedOver);
+router13.post("/cleanup-closed-retention", cleanupClosedRetention);
+router13.post("/cleanup-label-pdfs", cleanupLabelPdfs);
+router13.post("/cleanup-processed-pickup", cleanupProcessedPickup);
+router13.post("/cleanup-mock", cleanupMockOrders);
+router13.post("/hydrate-tracking", hydrateTracking);
+router13.post("/enrich-tracking", enrichTracking);
+router13.post("/hand-over-carrier/bulk", handOverCarrierBulk);
+router13.post("/hand-over-carrier", handOverCarrierByCode);
+router13.post("/heal-handed-over", healHandedOver);
+router13.post("/manual", createManualOrder);
+router13.get("/:orderSn/events", getOrderEvents);
+router13.post("/:id/hand-over-carrier", handOverCarrierById);
+router13.get("/", listOrders);
+router13.patch("/:id", patchOrder);
+router13.delete("/:id", deleteOrder);
+var ordersRoutes_default = router13;
+
+// utils/apiError.js
+function extractHttpClientError(err) {
+  const anyErr = err;
+  const shopeeData = anyErr?.response?.data;
+  const message = shopeeData?.message || shopeeData?.error || (err instanceof Error ? err.message : String(err)) || "L\u1ED7i m\xE1y ch\u1EE7 n\u1ED9i b\u1ED9";
+  const details = shopeeData ? JSON.stringify(shopeeData) : err instanceof Error ? err.toString() : String(err);
+  return { message, details, shopeeDetail: shopeeData };
+}
+function sendApiErrorJson(res, err, status = 500) {
+  if (res.headersSent) return;
+  const { message, details, shopeeDetail } = extractHttpClientError(err);
+  return res.status(status).json({
+    success: false,
+    error: message || "Internal Server Error",
+    message,
+    details,
+    ...shopeeDetail ? { shopee: shopeeDetail } : {}
+  });
+}
+function sendStrictApiErrorJson(res, err) {
+  const message = err && typeof err === "object" && "message" in err && typeof err.message === "string" ? err.message : "Internal Server Error";
+  return res.status(500).json({ success: false, error: message || "Internal Server Error" });
+}
+
+// utils/heavyJob.js
+var HEAVY_JOB_LOCK_MAX_MS = 12e4;
+var cpanelHeavyJobActive = null;
+function tryAcquireHeavyJob(name) {
+  if (cpanelHeavyJobActive) {
+    const elapsedMs = Date.now() - cpanelHeavyJobActive.startedAt;
+    if (elapsedMs > HEAVY_JOB_LOCK_MAX_MS) {
+      console.error(
+        `[Heavy Job] Watchdog gi\u1EA3i ph\xF3ng lock k\u1EB9t "${cpanelHeavyJobActive.name}" sau ${elapsedMs}ms`
+      );
+      cpanelHeavyJobActive = null;
+    } else {
+      console.warn(
+        `[Heavy Job] T\u1EEB ch\u1ED1i "${name}" \u2014 "${cpanelHeavyJobActive.name}" \u0111ang ch\u1EA1y (${elapsedMs}ms)`
+      );
+      return false;
+    }
+  }
+  cpanelHeavyJobActive = { name, startedAt: Date.now() };
+  return true;
+}
+function releaseHeavyJob(name) {
+  if (cpanelHeavyJobActive?.name === name) cpanelHeavyJobActive = null;
+}
+function resetHeavyJob() {
+  cpanelHeavyJobActive = null;
+}
+
 // server.ts
 var import_meta = {};
 function asRouter(mod) {
@@ -99002,6 +102181,9 @@ var importsRoutes = asRouter(importsRoutes_default);
 var settingsRoutes = asRouter(settingsRoutes_default);
 var aiRoutes = asRouter(aiRoutes_default);
 var dashboardRoutes = asRouter(dashboardRoutes_default);
+var productsRoutes = asRouter(productsRoutes_default);
+var mappingRoutes = asRouter(mappingRoutes_default);
+var ordersRoutes = asRouter(ordersRoutes_default);
 function writeCpanelCrashLog(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
@@ -99010,12 +102192,12 @@ function writeCpanelCrashLog(kind, err) {
 ${(/* @__PURE__ */ new Date()).toISOString()}
 `;
     const targets = [
-      import_path11.default.join(process.cwd(), "cpanel_error_log.txt"),
-      typeof __dirname !== "undefined" ? import_path11.default.join(__dirname, "cpanel_error_log.txt") : ""
+      import_path13.default.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? import_path13.default.join(__dirname, "cpanel_error_log.txt") : ""
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs12.default.writeFileSync(file, line);
+        import_fs14.default.writeFileSync(file, line);
       } catch {
       }
     }
@@ -99029,7 +102211,7 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (err) => {
   writeCpanelCrashLog("Rejection", err);
 });
-var APP_ROOT7 = resolveAppRoot();
+var APP_ROOT9 = resolveAppRoot();
 var isCpanelPassengerRuntime = Boolean(
   String(
     process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
@@ -99040,12 +102222,12 @@ if (isCpanelPassengerRuntime) {
   console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
 }
 var dotenvCandidates = [
-  import_path11.default.join(APP_ROOT7, ".env"),
-  import_path11.default.join(process.cwd(), ".env"),
-  import_path11.default.resolve(".env")
+  import_path13.default.join(APP_ROOT9, ".env"),
+  import_path13.default.join(process.cwd(), ".env"),
+  import_path13.default.resolve(".env")
 ];
 for (const envPath of dotenvCandidates) {
-  if (import_fs12.default.existsSync(envPath)) {
+  if (import_fs14.default.existsSync(envPath)) {
     const loaded = import_dotenv2.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
@@ -99056,17 +102238,17 @@ for (const envPath of dotenvCandidates) {
 }
 import_dotenv2.default.config();
 console.log(
-  `[Config] APP_ROOT=${APP_ROOT7} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
+  `[Config] APP_ROOT=${APP_ROOT9} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
 );
-setProductsDiskAppRoot(APP_ROOT7);
+setProductsDiskAppRoot(APP_ROOT9);
 console.log(
   `[Products] storage=${isProductsDiskMode() ? "disk" : "mongo"} path=${getProductsDiskPath()}`
 );
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs12.default.writeFileSync(
-      import_path11.default.join(APP_ROOT7, "cpanel_error_log.txt"),
+    import_fs14.default.writeFileSync(
+      import_path13.default.join(APP_ROOT9, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
 ${(/* @__PURE__ */ new Date()).toISOString()}
@@ -99077,10 +102259,10 @@ ${(/* @__PURE__ */ new Date()).toISOString()}
 }
 process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
 process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
-var WAYBILLS_DIR = import_path11.default.join(APP_ROOT7, "storage", "waybills");
-var LEGACY_PUBLIC_PRINTS_DIR = import_path11.default.join(APP_ROOT7, "public", "prints");
+var WAYBILLS_DIR = import_path13.default.join(APP_ROOT9, "storage", "waybills");
+var LEGACY_PUBLIC_PRINTS_DIR = import_path13.default.join(APP_ROOT9, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
-var LABELS_DIR = import_path11.default.join(APP_ROOT7, "storage", "labels");
+var LABELS_DIR = import_path13.default.join(APP_ROOT9, "storage", "labels");
 var LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
 var labelMemCache = /* @__PURE__ */ new Map();
@@ -99088,24 +102270,24 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs12.default.existsSync(LABELS_DIR)) import_fs12.default.mkdirSync(LABELS_DIR, { recursive: true });
+    if (!import_fs14.default.existsSync(LABELS_DIR)) import_fs14.default.mkdirSync(LABELS_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path11.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
+  const probe = import_path13.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
   try {
-    import_fs12.default.writeFileSync(probe, "ok");
-    import_fs12.default.unlinkSync(probe);
+    import_fs14.default.writeFileSync(probe, "ok");
+    import_fs14.default.unlinkSync(probe);
   } catch (err) {
     console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
 function safeLabelFilename(raw) {
-  const base = import_path11.default.basename(String(raw || "").trim());
+  const base = import_path13.default.basename(String(raw || "").trim());
   if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
   return base;
 }
@@ -99142,14 +102324,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs12.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs14.default.readdirSync(LABELS_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs12.default.unlinkSync(import_path11.default.join(LABELS_DIR, name));
+        import_fs14.default.unlinkSync(import_path13.default.join(LABELS_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -99187,16 +102369,16 @@ function putLabelMem(filename, buffer, contentType) {
     cleanupExpiredLabelFiles();
     const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
     if (snMatch?.[1]) removeExistingLabelFilesForOrderSns([snMatch[1]]);
-    const dest = import_path11.default.join(LABELS_DIR, safe);
+    const dest = import_path13.default.join(LABELS_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
-    import_fs12.default.writeFileSync(dest, buffer);
-    if (!import_fs12.default.existsSync(dest)) {
+    import_fs14.default.writeFileSync(dest, buffer);
+    if (!import_fs14.default.existsSync(dest)) {
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file kh\xF4ng t\u1ED3n t\u1EA1i sau writeFileSync: ${dest}`);
     }
-    const st = import_fs12.default.statSync(dest);
+    const st = import_fs14.default.statSync(dest);
     if (!st.isFile() || st.size <= 0) {
       try {
-        import_fs12.default.unlinkSync(dest);
+        import_fs14.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file tr\xEAn \u0111\u0129a r\u1ED7ng: ${dest}`);
@@ -99205,15 +102387,15 @@ function putLabelMem(filename, buffer, contentType) {
       console.warn(`[Labels] C\u1EA3nh b\xE1o size l\u1EC7ch: buffer=${buffer.length} disk=${st.size} \u2192 ${dest}`);
     }
     const head = Buffer.alloc(5);
-    const fd = import_fs12.default.openSync(dest, "r");
+    const fd = import_fs14.default.openSync(dest, "r");
     try {
-      import_fs12.default.readSync(fd, head, 0, 5, 0);
+      import_fs14.default.readSync(fd, head, 0, 5, 0);
     } finally {
-      import_fs12.default.closeSync(fd);
+      import_fs14.default.closeSync(fd);
     }
     if (head.toString("utf8", 0, 4) !== "%PDF") {
       try {
-        import_fs12.default.unlinkSync(dest);
+        import_fs14.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`File ghi ra kh\xF4ng c\xF2n l\xE0 PDF h\u1EE3p l\u1EC7: ${safe}`);
@@ -99241,19 +102423,19 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path11.default.join(LABELS_DIR, safe);
+  const filePath = import_path13.default.join(LABELS_DIR, safe);
   try {
-    if (!import_fs12.default.existsSync(filePath)) return null;
-    const st = import_fs12.default.statSync(filePath);
+    if (!import_fs14.default.existsSync(filePath)) return null;
+    const st = import_fs14.default.statSync(filePath);
     if (!st.isFile() || st.size <= 0) {
       console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
       try {
-        import_fs12.default.unlinkSync(filePath);
+        import_fs14.default.unlinkSync(filePath);
       } catch {
       }
       return null;
     }
-    const buf = import_fs12.default.readFileSync(filePath);
+    const buf = import_fs14.default.readFileSync(filePath);
     if (!buf.length || !isPdfBuffer(buf)) return null;
     labelMemCache.set(safe, {
       buf,
@@ -99280,9 +102462,9 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path11.default.join(LABELS_DIR, safe);
-  if (import_fs12.default.existsSync(diskPath)) {
-    const st = import_fs12.default.statSync(diskPath);
+  const diskPath = import_path13.default.join(LABELS_DIR, safe);
+  if (import_fs14.default.existsSync(diskPath)) {
+    const st = import_fs14.default.statSync(diskPath);
     if (st.size <= 0) {
       throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
     }
@@ -99301,13 +102483,13 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs12.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs14.default.readdirSync(LABELS_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path11.default.join(LABELS_DIR, name);
+      const full = import_path13.default.join(LABELS_DIR, name);
       try {
-        const st = import_fs12.default.statSync(full);
+        const st = import_fs14.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs12.default.unlinkSync(full);
+          import_fs14.default.unlinkSync(full);
           labelMemCache.delete(name);
           deleted += 1;
         }
@@ -99329,11 +102511,11 @@ function wipeLegacyPublicPrints() {
   let deleted = 0;
   for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
     try {
-      if (!import_fs12.default.existsSync(dir)) continue;
-      for (const name of import_fs12.default.readdirSync(dir)) {
+      if (!import_fs14.default.existsSync(dir)) continue;
+      for (const name of import_fs14.default.readdirSync(dir)) {
         if (!WAYBILL_FILE_RE.test(name)) continue;
         try {
-          import_fs12.default.unlinkSync(import_path11.default.join(dir, name));
+          import_fs14.default.unlinkSync(import_path13.default.join(dir, name));
           deleted += 1;
         } catch {
         }
@@ -99443,7 +102625,7 @@ function absoluteLabelUrl(relativePath) {
   } else {
     const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
     const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || import_path11.default.basename(p));
+    fn = decodeURIComponent(fnMatch?.[1] || import_path13.default.basename(p));
   }
   if (!safeLabelFilename(fn)) return null;
   try {
@@ -99479,19 +102661,19 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path11.default.resolve(APP_ROOT7, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path11.default.resolve(APP_ROOT7, "data", "shopee_oauth_last.json");
+var SHOPEE_TOKENS_PATH = import_path13.default.resolve(APP_ROOT9, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path13.default.resolve(APP_ROOT9, "data", "shopee_oauth_last.json");
 function ensureDataDirs() {
-  const dataDir = import_path11.default.join(APP_ROOT7, "data");
-  import_fs12.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs12.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs12.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  const dataDir = import_path13.default.join(APP_ROOT9, "data");
+  import_fs14.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs14.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs12.default.writeFileSync(
+    import_fs14.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -99502,8 +102684,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs12.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs12.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs14.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs14.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -99519,12 +102701,12 @@ try {
   console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
 }
 console.log(
-  `[Boot] APP_ROOT=${APP_ROOT7} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs12.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
+  `[Boot] APP_ROOT=${APP_ROOT9} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
 );
 function loadShopeeTokens() {
   try {
-    if (!import_fs12.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs12.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs14.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -99558,7 +102740,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path11.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path13.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -99590,15 +102772,15 @@ function saveShopeeTokens(tokensToWrite) {
       JSON.stringify({
         absPath,
         SHOPEE_TOKENS_PATH,
-        APP_ROOT: APP_ROOT7,
+        APP_ROOT: APP_ROOT9,
         keys: keysAfter,
         byteLength: Buffer.byteLength(payload, "utf-8")
       })
     );
-    import_fs12.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs14.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs12.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs14.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -99828,7 +103010,7 @@ async function completeShopeeOAuthFlow(code, params) {
     shopee_shop_id_list: tokenResult.shop_id_list || [],
     file_keys_after: Object.keys(loadShopeeTokens()),
     tokens_path: SHOPEE_TOKENS_PATH,
-    app_root: APP_ROOT7
+    app_root: APP_ROOT9
   });
   return {
     success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
@@ -100423,8 +103605,7 @@ var SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var ordersPullInFlight = false;
 var SHOPEE_PRODUCT_API_DELAY_MS = 1e3;
-var SHOPEE_SYNC_QUEUE_GAP_MS = 750;
-var SHOPEE_SYNC_QUEUE_MAX_RETRY = 3;
+var SHOPEE_SYNC_QUEUE_MAX_RETRY2 = 3;
 var SHOPEE_ITEM_LIST_PAGE_SIZE = 10;
 var SHOPEE_PRODUCT_BATCH_SIZE = 10;
 var SHOPEE_PRODUCT_BATCH_PAUSE_MS = 2500;
@@ -100450,7 +103631,7 @@ function resolveCreateRequireFilename() {
     if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
-  return import_path11.default.resolve(process.cwd(), "server.cjs");
+  return import_path13.default.resolve(process.cwd(), "server.cjs");
 }
 var shopeeHttpDispatcher = void 0;
 try {
@@ -101566,7 +104747,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
   }
   ordersPullInFlight = true;
   const startedAt = Date.now();
-  const enrichTracking = opts?.enrichTracking === true;
+  const enrichTracking2 = opts?.enrichTracking === true;
   ensureShopeeLinkedShopTokenKeys();
   const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => normalizeShopIdKey(id)).filter(Boolean);
   const singleShopPull = shopIds.length === 1;
@@ -101604,7 +104785,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
     );
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking} longLookback=${longLookback}`
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking2} longLookback=${longLookback}`
     );
     for (const shopId of shopIds) {
       if (Date.now() >= deadlineAt) {
@@ -101733,7 +104914,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               const upsert = await persistShopeeOrderChunk(orders, normalized, {
                 apiShopId: shopId,
                 accessToken,
-                skipTracking: !enrichTracking
+                skipTracking: !enrichTracking2
               });
               added += upsert.added;
               updated += upsert.updated;
@@ -102139,7 +105320,7 @@ async function shopeeUpdatePrice(shopId, accessToken, itemId, priceList) {
   const body = { item_id: numericItemId, price_list: normalizedPriceList };
   console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${numericItemId}:`, JSON.stringify(body));
   const { json: json2, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${numericItemId}`, {
-    maxAttempts: SHOPEE_SYNC_QUEUE_MAX_RETRY
+    maxAttempts: SHOPEE_SYNC_QUEUE_MAX_RETRY2
   });
   console.log(
     `[Shopee API] POST ${apiPath} RESPONSE item_id=${numericItemId} HTTP ${httpStatus}:`,
@@ -102214,9 +105395,9 @@ async function resolvePublishImageBuffer(src) {
   }
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
-    const filePath = import_path11.default.join(APP_ROOT7, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs12.default.existsSync(filePath)) {
-      return { buf: import_fs12.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    const filePath = import_path13.default.join(APP_ROOT9, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (import_fs14.default.existsSync(filePath)) {
+      return { buf: import_fs14.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
@@ -103176,308 +106357,6 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
     }
   }
   return { ok: errors.length === 0, errors, warnings, pushed, staleSkus: [...new Set(staleSkus)] };
-}
-var shopeeSyncQueue = [];
-var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
-var shopeeSyncQueueRunning = false;
-function detectStockPriceChanges(before, after) {
-  const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
-  const stockAfter = Math.max(0, Math.round(Number(after?.stock) || 0));
-  const priceBefore = Math.max(0, Math.round(Number(before?.sellingPrice) || 0));
-  const priceAfter = Math.max(0, Math.round(Number(after?.sellingPrice) || 0));
-  return {
-    stock: stockBefore !== stockAfter,
-    price: priceBefore !== priceAfter
-  };
-}
-function findProductRowById(products, productId) {
-  const id = String(productId || "").trim();
-  if (!id) return null;
-  for (const p of Array.isArray(products) ? products : []) {
-    if (String(p?.id || "").trim() === id) return p;
-    for (const child of getProductChildrenList(p)) {
-      if (String(child?.id || "").trim() === id) {
-        return inheritShopeeLinkFromParent(child, p);
-      }
-    }
-  }
-  return null;
-}
-async function resolveProductWithShopeeMapping(product) {
-  if (!product || typeof product !== "object") return null;
-  let current = product;
-  const hasItemId = () => getShopeeItemIdForStockPush(current) != null;
-  const hasModelId = () => resolveShopeeModelIdForStockPush(current) != null;
-  if (!hasItemId() || !hasModelId()) {
-    let listings = [];
-    try {
-      listings = await readChannelListingsDb();
-    } catch (err) {
-      console.error("[Shopee Sync Queue] Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c channel_listings:", err);
-      if (!hasItemId()) return null;
-    }
-    const productId = String(product.id || "").trim();
-    if (productId && listings.length > 0) {
-      const match2 = listings.find((row) => {
-        if (!row || typeof row !== "object") return false;
-        const platform = String(row.platform || "shopee").trim().toLowerCase();
-        if (platform && platform !== "shopee") return false;
-        const linkedId = row.linkedProductId != null && String(row.linkedProductId).trim() !== "" ? String(row.linkedProductId).trim() : row.linkedProduct?.id != null ? String(row.linkedProduct.id).trim() : "";
-        if (!linkedId || linkedId !== productId) return false;
-        const status = String(row.status || "").trim().toLowerCase();
-        return status === "success";
-      });
-      if (match2) {
-        const channelId = String(match2.channelId || match2.itemId || "").trim();
-        if (channelId || match2.itemId != null) {
-          current = applyShopeeLinkFieldsToProduct(current, channelId || String(match2.itemId), {
-            modelId: match2.modelId ?? match2.shopeeModelId ?? current.shopeeModelId,
-            itemId: match2.itemId ?? getShopeeItemIdForStockPush(current)
-          });
-        }
-      }
-    }
-  }
-  if (getShopeeItemIdForStockPush(current) == null) return null;
-  return current;
-}
-async function executeShopeeStockPriceSyncJob(product, opts) {
-  const mapped = await resolveProductWithShopeeMapping(product);
-  if (!mapped) {
-    return { ok: false, message: "Ch\u01B0a li\xEAn k\u1EBFt Mapping Shopee \u2014 b\u1ECF qua sync." };
-  }
-  const shopId = resolveShopeeTokenShopId(opts.shopId);
-  if (!shopId) {
-    return { ok: false, message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n." };
-  }
-  const accessToken = await getValidShopeeAccessToken(shopId);
-  if (!accessToken) {
-    return { ok: false, message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId}.` };
-  }
-  const itemId = getShopeeItemIdForStockPush(mapped);
-  let modelId = resolveShopeeModelIdForStockPush(mapped);
-  if (itemId == null) {
-    return { ok: false, message: "Thi\u1EBFu Shopee item_id sau khi resolve Mapping." };
-  }
-  let itemHasModel = productRequiresShopeeModelId(mapped, 1);
-  if (modelId == null) {
-    const fromApi = await resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
-    if (fromApi.hasModel) itemHasModel = true;
-    if (fromApi.modelId != null) {
-      modelId = fromApi.modelId;
-      mapped.shopeeModelId = String(fromApi.modelId);
-    }
-  }
-  if (itemHasModel && modelId == null) {
-    const msg = "Ph\xE2n lo\u1EA1i (variant) thi\u1EBFu model_id \u2014 b\u1EAFt bu\u1ED9c truy\u1EC1n item_id + model_id khi update_stock";
-    await appendShopeeSyncErrorToDb({
-      itemId,
-      modelId: void 0,
-      sku: mapped.sku,
-      shopId,
-      action: "update_stock",
-      error: msg,
-      productId: mapped.id
-    });
-    return { ok: false, message: msg };
-  }
-  const locationId = opts.syncStock ? await resolveShopeeStockLocationId(shopId, accessToken) : null;
-  const lines = [];
-  if (opts.syncStock) {
-    const stockEntry = buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
-    try {
-      const stockResult = await shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
-      const parsed = parseShopeeApiResult(stockResult, mapped, "update_stock");
-      lines.push(parsed.message);
-      if (!parsed.success) {
-        await appendShopeeSyncErrorToDb({
-          itemId,
-          modelId: modelId ?? mapped.shopeeModelId,
-          sku: mapped.sku,
-          shopId,
-          action: "update_stock",
-          error: parsed.message,
-          productId: mapped.id
-        });
-        return { ok: false, message: parsed.message };
-      }
-    } catch (err) {
-      const msg = extractShopeeStockPushErrorMessage(err, err instanceof Error ? err.message : String(err));
-      await appendShopeeSyncErrorToDb({
-        itemId,
-        modelId: modelId ?? mapped.shopeeModelId,
-        sku: mapped.sku,
-        shopId,
-        action: "update_stock",
-        error: msg,
-        productId: mapped.id
-      });
-      return { ok: false, message: msg };
-    }
-  }
-  if (opts.syncPrice) {
-    await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
-    const priceEntry = buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
-    try {
-      const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
-      const parsed = parseShopeeApiResult(priceResult, mapped, "update_price");
-      lines.push(parsed.message);
-      if (!parsed.success) {
-        await appendShopeeSyncErrorToDb({
-          itemId,
-          modelId: modelId ?? mapped.shopeeModelId,
-          sku: mapped.sku,
-          shopId,
-          action: "update_price",
-          error: parsed.message,
-          productId: mapped.id
-        });
-        return { ok: false, message: parsed.message };
-      }
-    } catch (err) {
-      const msg = extractShopeeStockPushErrorMessage(
-        err,
-        err instanceof Error ? err.message : String(err)
-      );
-      await appendShopeeSyncErrorToDb({
-        itemId,
-        modelId: modelId ?? mapped.shopeeModelId,
-        sku: mapped.sku,
-        shopId,
-        action: "update_price",
-        error: msg,
-        productId: mapped.id
-      });
-      return { ok: false, message: msg };
-    }
-  }
-  return { ok: true, message: lines.join(" | ") || "Sync Shopee OK" };
-}
-async function pushProductStockPriceToShopeeImmediate(product, opts) {
-  if (!opts.syncStock && !opts.syncPrice) {
-    return { ok: true, skipped: true, message: "Kh\xF4ng c\xF3 thay \u0111\u1ED5i t\u1ED3n/gi\xE1 c\u1EA7n \u0111\u1ED3ng b\u1ED9 Shopee." };
-  }
-  const mapped = await resolveProductWithShopeeMapping(product);
-  if (!mapped) {
-    return {
-      ok: true,
-      skipped: true,
-      message: "Ch\u01B0a li\xEAn k\u1EBFt Mapping Shopee \u2014 ch\u1EC9 l\u01B0u kho n\u1ED9i b\u1ED9."
-    };
-  }
-  return executeShopeeStockPriceSyncJob(mapped, {
-    syncStock: opts.syncStock,
-    syncPrice: opts.syncPrice
-  });
-}
-async function processShopeeSyncQueue() {
-  if (shopeeSyncQueueRunning) return;
-  shopeeSyncQueueRunning = true;
-  try {
-    while (shopeeSyncQueue.length > 0) {
-      const job = shopeeSyncQueue.shift();
-      shopeeSyncQueueKeys.delete(job.key);
-      try {
-        const row = await loadProductById(job.productId);
-        if (!row) {
-          console.warn(`[Shopee Sync Queue] B\u1ECF qua \u2014 kh\xF4ng th\u1EA5y productId=${job.productId}`);
-          await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
-          continue;
-        }
-        const mapped = await resolveProductWithShopeeMapping(row);
-        if (!mapped) {
-          console.log(
-            `[Shopee Sync Queue] Skip SKU=${row.sku || job.productId} \u2014 ch\u01B0a Mapping Shopee`
-          );
-          await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
-          continue;
-        }
-        const result = await executeShopeeStockPriceSyncJob(mapped, {
-          syncStock: job.syncStock,
-          syncPrice: job.syncPrice,
-          shopId: job.shopId
-        });
-        if (result.ok) {
-          console.log(
-            `[Shopee Sync Queue] OK productId=${job.productId} sku=${mapped.sku} stock=${job.syncStock} price=${job.syncPrice} \u2014 ${result.message}`
-          );
-        } else {
-          job.attempts += 1;
-          console.error(
-            `[Shopee Sync Queue] FAIL attempt ${job.attempts}/${SHOPEE_SYNC_QUEUE_MAX_RETRY} productId=${job.productId} sku=${mapped.sku}: ${result.message}`
-          );
-          if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
-            const retryKey = `${job.productId}|stock=${job.syncStock}|price=${job.syncPrice}|shop=${job.shopId || ""}`;
-            job.key = retryKey;
-            if (!shopeeSyncQueueKeys.has(retryKey)) {
-              shopeeSyncQueueKeys.add(retryKey);
-              shopeeSyncQueue.push(job);
-            }
-          } else {
-            console.error(
-              `[Shopee Sync Queue] DROPPED sau ${SHOPEE_SYNC_QUEUE_MAX_RETRY} l\u1EA7n \u2014 productId=${job.productId} sku=${mapped.sku}: ${result.message}`
-            );
-          }
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[Shopee Sync Queue] Exception job=${job.productId}:`, err);
-        job.attempts += 1;
-        if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
-          if (!shopeeSyncQueueKeys.has(job.key)) {
-            shopeeSyncQueueKeys.add(job.key);
-            shopeeSyncQueue.push(job);
-          }
-        } else {
-          console.error(`[Shopee Sync Queue] DROPPED exception \u2014 ${job.productId}: ${msg}`);
-        }
-      }
-      await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
-    }
-  } finally {
-    shopeeSyncQueueRunning = false;
-    if (shopeeSyncQueue.length > 0) {
-      setTimeout(() => {
-        void processShopeeSyncQueue();
-      }, SHOPEE_SYNC_QUEUE_GAP_MS);
-    }
-  }
-}
-async function enqueueShopeeStockPriceSync(products, opts) {
-  const syncStock = opts.syncStock === true;
-  const syncPrice = opts.syncPrice === true;
-  if (!syncStock && !syncPrice) return 0;
-  const preferredShopId = String(opts.shopId || "").trim() || void 0;
-  let enqueued = 0;
-  for (const raw of Array.isArray(products) ? products : []) {
-    if (!raw || typeof raw !== "object") continue;
-    const productId = String(raw.id || "").trim();
-    if (!productId) continue;
-    const mapped = await resolveProductWithShopeeMapping(raw);
-    if (!mapped) continue;
-    const key = `${productId}|stock=${syncStock}|price=${syncPrice}|shop=${preferredShopId || ""}`;
-    if (shopeeSyncQueueKeys.has(key)) {
-      continue;
-    }
-    shopeeSyncQueueKeys.add(key);
-    shopeeSyncQueue.push({
-      key,
-      productId,
-      syncStock,
-      syncPrice,
-      shopId: preferredShopId,
-      attempts: 0,
-      enqueuedAt: (/* @__PURE__ */ new Date()).toISOString()
-    });
-    enqueued += 1;
-  }
-  if (enqueued > 0) {
-    console.log(
-      `[Shopee Sync Queue] Enqueued ${enqueued} job(s) \u2014 queue size=${shopeeSyncQueue.length} (gap=${SHOPEE_SYNC_QUEUE_GAP_MS}ms)`
-    );
-    void processShopeeSyncQueue();
-  }
-  return enqueued;
 }
 function getItemAvatarUrl(item) {
   const list = item?.image?.image_url_list;
@@ -105368,7 +108247,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
   const sources = [];
   let carrier;
   let internal;
-  const consider = (key, value, path13) => {
+  const consider = (key, value, path15) => {
     if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
@@ -105378,7 +108257,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
         internal = s2;
-        sources.push(`${path13}=${s2}(internal)`);
+        sources.push(`${path15}=${s2}(internal)`);
       }
       return;
     }
@@ -105386,20 +108265,20 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (!carrier || isCarrierTrackingCode(s2)) {
       if (!carrier || isCarrierTrackingCode(s2) && !isCarrierTrackingCode(carrier)) {
         carrier = s2;
-        sources.push(`${path13}=${s2}`);
+        sources.push(`${path15}=${s2}`);
       } else if (!carrier) {
         carrier = s2;
-        sources.push(`${path13}=${s2}`);
+        sources.push(`${path15}=${s2}`);
       }
     } else if (!carrier && s2.length >= 6) {
       carrier = s2;
-      sources.push(`${path13}=${s2}`);
+      sources.push(`${path15}=${s2}`);
     }
   };
-  const walk = (node, path13, depth) => {
+  const walk = (node, path15, depth) => {
     if (node == null || depth > 8) return;
     if (Array.isArray(node)) {
-      node.forEach((item, i2) => walk(item, `${path13}[${i2}]`, depth + 1));
+      node.forEach((item, i2) => walk(item, `${path15}[${i2}]`, depth + 1));
       return;
     }
     if (typeof node !== "object") return;
@@ -105408,7 +108287,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (nodeSn && nodeSn !== wantSn) return;
     }
     for (const [k, v] of Object.entries(node)) {
-      const childPath = path13 ? `${path13}.${k}` : k;
+      const childPath = path15 ? `${path15}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
         consider(k, v, childPath);
       } else {
@@ -106366,7 +109245,7 @@ function agentDebugLogAc966f(payload) {
     timestamp: Date.now()
   };
   try {
-    import_fs12.default.appendFileSync(import_path11.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
+    import_fs14.default.appendFileSync(import_path13.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
   } catch {
   }
   fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
@@ -106693,106 +109572,15 @@ function healInvalidHandedOverFlags(_orders) {
 function matchesHandedOverCarrierTabOrder(order) {
   return matchesHandedOverCarrierTab(order);
 }
+function resolveLocalStatusUpdatedAt(order) {
+  const raw = order?.local_status_updated_at || order?.localStatusAt || order?.handedOverAt;
+  const t2 = raw ? Date.parse(String(raw)) : NaN;
+  return Number.isFinite(t2) ? t2 : 0;
+}
 function matchesReceivedCancelReturnTabOrder(order) {
   if (order?.is_local_return_archived) return false;
   const local = resolveOrderLocalStatus2(order);
   return local === "RETURN_RECEIVED" || local === "CANCELLED_STORED";
-}
-async function purgeClosedOrdersByRetention(opts) {
-  const cancelReturnDays = Math.max(1, Math.floor(opts?.cancelReturnDays ?? 14));
-  const closedDays = Math.max(1, Math.floor(opts?.closedDays ?? 30));
-  const dryRun = Boolean(opts?.dryRun);
-  if (!isMongoReady()) {
-    return {
-      deleted: 0,
-      jsonRemoved: 0,
-      sns: [],
-      scanned: 0,
-      dryRun,
-      cancelReturnMatched: 0,
-      closedMatched: 0,
-      message: "Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua retention cleanup."
-    };
-  }
-  const mongoResult = await deleteClosedOrdersByRetention({
-    cancelReturnDays,
-    closedDays,
-    dryRun
-  });
-  let jsonRemoved = 0;
-  if (!dryRun && mongoResult.sns.length > 0) {
-    try {
-      const snSet = new Set(
-        mongoResult.sns.map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-      );
-      const orders = loadOrders();
-      const kept = orders.filter((o) => {
-        const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
-        const id = String(o?.id || "").replace(/^shopee-/i, "").trim();
-        return !snSet.has(sn) && !snSet.has(id);
-      });
-      jsonRemoved = orders.length - kept.length;
-      if (jsonRemoved > 0) saveOrders(kept);
-    } catch (err) {
-      console.warn("[Orders Retention] JSON mirror cleanup:", err?.message || err);
-    }
-    try {
-      queueOrdersJsonMirrorFromMongo();
-    } catch {
-    }
-  }
-  const message = dryRun ? `Dry-run: s\u1EBD x\xF3a ~${mongoResult.sns.length} \u0111\u01A1n (h\u1EE7y/ho\xE0n ${mongoResult.cancelReturnMatched} @${cancelReturnDays}d, \u0111\xF3ng ${mongoResult.closedMatched} @${closedDays}d).` : mongoResult.deleted > 0 ? `\u0110\xE3 x\xF3a ${mongoResult.deleted} \u0111\u01A1n \u0111\xE3 \u0111\xF3ng (h\u1EE7y/ho\xE0n>${cancelReturnDays}d / ho\xE0n t\u1EA5t-\u0110VVC>${closedDays}d).` : `Kh\xF4ng c\xF3 \u0111\u01A1n \u0111\xE3 \u0111\xF3ng qu\xE1 h\u1EA1n \u0111\u1EC3 x\xF3a (${cancelReturnDays}/${closedDays} ng\xE0y).`;
-  console.log(`[Orders Retention] ${message}`);
-  return {
-    deleted: mongoResult.deleted,
-    jsonRemoved,
-    sns: mongoResult.sns,
-    scanned: mongoResult.scanned,
-    dryRun,
-    cancelReturnMatched: mongoResult.cancelReturnMatched,
-    closedMatched: mongoResult.closedMatched,
-    message
-  };
-}
-var closedOrdersRetentionRunning = false;
-var closedOrdersRetentionTimer;
-function scheduleClosedOrdersRetentionCleanup() {
-  if (closedOrdersRetentionTimer) return;
-  const run = () => {
-    if (closedOrdersRetentionRunning || !isMongoReady()) return;
-    closedOrdersRetentionRunning = true;
-    void purgeClosedOrdersByRetention().catch((err) => console.warn("[Orders Retention] schedule error:", err?.message || err)).finally(() => {
-      closedOrdersRetentionRunning = false;
-    });
-  };
-  setTimeout(run, 2 * 60 * 1e3);
-  closedOrdersRetentionTimer = setInterval(run, 24 * 60 * 60 * 1e3);
-  if (typeof closedOrdersRetentionTimer.unref === "function") {
-    closedOrdersRetentionTimer.unref();
-  }
-  console.log("[Orders Retention] Scheduled: h\u1EE7y/ho\xE0n >14d, ho\xE0n t\u1EA5t/\u0110VVC >30d, m\u1ED7i 24h.");
-}
-var mongoTempCleanupRunning = false;
-var mongoTempCleanupTimer;
-function scheduleMongoTempCollectionsCleanup() {
-  if (mongoTempCleanupTimer) return;
-  const run = () => {
-    if (mongoTempCleanupRunning || !isMongoReady()) return;
-    mongoTempCleanupRunning = true;
-    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14, ensureTtl: true }).then((r2) => {
-      console.log(
-        `[Mongo Temp Cleanup] order_events ${r2.orderEventsBefore}\u2192${r2.orderEventsAfter} (\u2212${r2.orderEventsDeleted}), sync_jobs ${r2.syncJobsBefore}\u2192${r2.syncJobsAfter} (\u2212${r2.syncJobsDeleted})`
-      );
-    }).catch((err) => console.warn("[Mongo Temp Cleanup] schedule error:", err?.message || err)).finally(() => {
-      mongoTempCleanupRunning = false;
-    });
-  };
-  setTimeout(run, 45e3);
-  mongoTempCleanupTimer = setInterval(run, 24 * 60 * 60 * 1e3);
-  if (typeof mongoTempCleanupTimer.unref === "function") {
-    mongoTempCleanupTimer.unref();
-  }
-  console.log("[Mongo Temp Cleanup] Scheduled: order_events/sync_jobs >14d + TTL 14d, m\u1ED7i 24h.");
 }
 function isOrderAlreadyScanProcessed(order) {
   const local = resolveOrderLocalStatus2(order);
@@ -106809,45 +109597,6 @@ function getScanProcessedReason(order) {
   if (local === "CANCELLED_STORED") return "\u0110\u01A1n h\u1EE7y \u0111\xE3 \u0111\u01B0\u1EE3c ph\xE2n lo\u1EA1i tr\u01B0\u1EDBc \u0111\xF3";
   if (local === "RETURN_RECEIVED") return "\u0110\u01A1n \u0111\xE3 nh\u1EADn h\xE0ng ho\xE0n tr\u01B0\u1EDBc \u0111\xF3";
   return "\u0110\u01A1n \u0111\xE3 \u0111\u01B0\u1EE3c x\u1EED l\xFD tr\u01B0\u1EDBc \u0111\xF3";
-}
-var ordersJsonMirrorQueued = false;
-var ordersJsonMirrorSnapshot = null;
-function queueOrdersJsonMirror(orders) {
-  ordersJsonMirrorSnapshot = Array.isArray(orders) ? orders : [];
-  if (ordersJsonMirrorQueued) return;
-  ordersJsonMirrorQueued = true;
-  setImmediate(() => {
-    const snapshot = ordersJsonMirrorSnapshot;
-    ordersJsonMirrorSnapshot = null;
-    ordersJsonMirrorQueued = false;
-    if (!snapshot) return;
-    try {
-      saveOrders(snapshot);
-    } catch (err) {
-      console.warn("[Orders JSON Mirror] skipped:", err?.message || err);
-    }
-    if (ordersJsonMirrorSnapshot) queueOrdersJsonMirror(ordersJsonMirrorSnapshot);
-  });
-}
-function queueOrdersJsonMirrorFromMongo() {
-  setImmediate(() => {
-    void loadOrdersFromStore().then((orders) => queueOrdersJsonMirror(orders)).catch(
-      (err) => console.warn("[Orders JSON Mirror] Mongo snapshot skipped:", err?.message || err)
-    );
-  });
-}
-async function persistOrdersToDatabase(orders, changedOrders) {
-  if (!changedOrders.length) return 0;
-  if (!isMongoReady()) throw new Error("mongodb_not_ready");
-  try {
-    const n = await bulkUpsertOrdersToStore(changedOrders);
-    queueOrdersJsonMirror(orders);
-    console.log(`[Orders Persist] Mongo bulkWrite OK \u2014 upsertedDocs=${n}`);
-    return n;
-  } catch (err) {
-    console.error("[Orders Persist] Mongo bulkWrite failed:", err?.message || err);
-    throw err;
-  }
 }
 function mergeShopeeOrderOnSync(existing, incoming) {
   if (!existing) {
@@ -107091,8 +109840,8 @@ var SHIPPING_CARRIER_BACKFILL_COOLDOWN_MS = 60 * 1e3;
 async function fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, orderSns, opts) {
   const normalized = [];
   const errors = [];
-  const enrichTracking = opts?.enrichTracking !== false;
-  void enrichTracking;
+  const enrichTracking2 = opts?.enrichTracking !== false;
+  void enrichTracking2;
   const skipEscrow = opts?.skipEscrow === true;
   const snList = orderSns.map((sn) => String(sn || "").trim()).filter(Boolean);
   if (snList.length === 0) return { normalized, errors };
@@ -107318,41 +110067,6 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
   }
   return { added, updated };
 }
-var ORDERS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "orders.json");
-var orderLookupIndex = null;
-function normalizeOrderIndexKey(raw) {
-  return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
-}
-function rebuildOrderLookupIndex(orders) {
-  const byId = /* @__PURE__ */ new Map();
-  const byOrderSn = /* @__PURE__ */ new Map();
-  const byTracking = /* @__PURE__ */ new Map();
-  const byReturnTracking = /* @__PURE__ */ new Map();
-  const byInternal = /* @__PURE__ */ new Map();
-  const byPackage = /* @__PURE__ */ new Map();
-  orders.forEach((order, index) => {
-    const put = (map, value) => {
-      const key = normalizeOrderIndexKey(String(value || ""));
-      if (key) map.set(key, index);
-    };
-    put(byId, order.id);
-    put(byId, order._id);
-    put(byId, String(order.id || "").replace(/^shopee-/i, ""));
-    put(byId, String(order._id || "").replace(/^shopee-/i, ""));
-    put(byOrderSn, order.orderSn);
-    put(byOrderSn, order.order_sn);
-    put(byTracking, order.trackingNumber);
-    put(byTracking, order.tracking_no);
-    put(byReturnTracking, order.return_tracking_no);
-    put(byInternal, order.internalTrackingCode);
-    put(byPackage, order.packageNumber);
-  });
-  return { byId, byOrderSn, byTracking, byReturnTracking, byInternal, byPackage };
-}
-function getOrderLookupIndex(orders) {
-  orderLookupIndex = rebuildOrderLookupIndex(orders);
-  return orderLookupIndex;
-}
 function withLocalDbTimeout(promise, timeoutMs, label) {
   let timer;
   const timeoutPromise = new Promise((_, reject) => {
@@ -107360,232 +110074,10 @@ function withLocalDbTimeout(promise, timeoutMs, label) {
   });
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
 }
-function loadOrders() {
-  try {
-    if (!import_fs12.default.existsSync(ORDERS_DB_PATH)) {
-      orderLookupIndex = rebuildOrderLookupIndex([]);
-      return [];
-    }
-    const raw = import_fs12.default.readFileSync(ORDERS_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    const orders = Array.isArray(parsed) ? parsed.map(repairMisassignedTracking) : [];
-    orderLookupIndex = rebuildOrderLookupIndex(orders);
-    return orders;
-  } catch (error) {
-    console.error("[Orders DB] Failed to read orders.json:", error);
-    orderLookupIndex = rebuildOrderLookupIndex([]);
-    return [];
-  }
-}
-function mirrorTrackingFieldsForRead(order) {
-  if (!order || typeof order !== "object") return order;
-  if (order.tracking_no && !order.trackingNumber) order.trackingNumber = order.tracking_no;
-  if (order.trackingNumber && !order.tracking_no) order.tracking_no = order.trackingNumber;
-  return order;
-}
 var MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1e3;
-async function loadOrdersForApi(opts) {
-  const normalize = opts?.readOnly ? mirrorTrackingFieldsForRead : repairMisassignedTracking;
-  if (!isMongoReady()) {
-    throw new Error("mongodb_not_ready");
-  }
-  try {
-    const orders = (await loadOrdersFromStore()).filter(isValidOrder).map(normalize);
-    return { orders, dirty: false, handoverMongoSync: [] };
-  } catch (err) {
-    console.warn("[Orders] Mongo read failed:", err?.message || err);
-    throw err;
-  }
-}
-async function loadOrdersForShipScoped(orderIds, orderSns) {
-  const idSet = new Set(
-    (orderIds || []).map((s2) => String(s2 || "").trim()).filter(Boolean)
-  );
-  const snSet = new Set(
-    (orderSns || []).map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-  );
-  for (const id of idSet) {
-    const stripped = id.replace(/^shopee-/i, "").trim();
-    if (stripped) snSet.add(stripped);
-  }
-  if (idSet.size === 0 && snSet.size === 0) return [];
-  const matchKey = (o) => {
-    if (!o || typeof o !== "object") return false;
-    const id = String(o.id || o._id || "").trim();
-    const sn = String(o.orderSn || o.order_sn || "").replace(/^shopee-/i, "").trim();
-    if (id && idSet.has(id)) return true;
-    if (sn && (snSet.has(sn) || idSet.has(sn) || idSet.has(`shopee-${sn}`))) return true;
-    if (id && snSet.has(id.replace(/^shopee-/i, "").trim())) return true;
-    return false;
-  };
-  const bySn = /* @__PURE__ */ new Map();
-  const byId = /* @__PURE__ */ new Map();
-  const put = (o) => {
-    if (!isValidOrder(o) || !matchKey(o)) return;
-    repairFalseProcessedReadyToShip(o);
-    const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim();
-    const id = String(o.id || "").trim();
-    if (sn) bySn.set(sn, o);
-    if (id) byId.set(id, o);
-  };
-  if (isMongoReady()) {
-    try {
-      const mongoOrders = (await loadOrdersFromStore({
-        orderSns: [...snSet],
-        ids: [...idSet]
-      })).map(repairMisassignedTracking);
-      for (const m2 of mongoOrders) put(m2);
-    } catch (err) {
-      console.warn("[Orders] loadOrdersForShipScoped mongo skip:", err?.message || err);
-    }
-  }
-  const out = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const o of bySn.values()) {
-    const k = String(o.orderSn || o.id || "");
-    if (k && seen.has(k)) continue;
-    if (k) seen.add(k);
-    out.push(o);
-  }
-  for (const o of byId.values()) {
-    const k = String(o.orderSn || o.id || "");
-    if (k && seen.has(k)) continue;
-    if (k) seen.add(k);
-    out.push(o);
-  }
-  return out;
-}
-async function persistChangedOrdersPatch(changedOrders) {
-  const changed = (Array.isArray(changedOrders) ? changedOrders : []).filter(Boolean);
-  if (changed.length === 0) return 0;
-  if (!isMongoReady()) throw new Error("mongodb_not_ready");
-  const written = await bulkUpsertOrdersToStore(changed);
-  queueOrdersJsonMirrorFromMongo();
-  return written;
-}
-async function hydrateTrackingFromMongoToJson() {
-  let mirrored = 0;
-  try {
-    mirrored = await mirrorTopLevelTrackingIntoData();
-  } catch (err) {
-    console.warn("[Orders] mirrorTopLevelTrackingIntoData:", err?.message || err);
-  }
-  const { orders, dirty, handoverMongoSync } = await loadOrdersForApi();
-  if (dirty) {
-    saveOrders(orders);
-    try {
-      const withTn = orders.filter(
-        (o) => String(o.trackingNumber || o.tracking_no || "").trim()
-      );
-      const toUpsert = [
-        ...withTn,
-        ...handoverMongoSync.filter(
-          (o) => !withTn.some((t2) => t2.id === o.id || t2.orderSn === o.orderSn)
-        )
-      ];
-      if (toUpsert.length) await bulkUpsertOrdersToStore(toUpsert);
-    } catch (err) {
-      console.warn("[Orders] hydrate bulkUpsert:", err?.message || err);
-    }
-  }
-  const filled = orders.filter(
-    (o) => String(o.trackingNumber || o.tracking_no || "").trim()
-  ).length;
-  return { mirrored, filled, total: orders.length };
-}
-function saveOrders(orders) {
-  try {
-    const sanitized = orders.map(repairMisassignedTracking);
-    if (isMongoReady() && sanitized.length > 0) {
-      void bulkUpsertOrdersToStore(sanitized).catch(
-        (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
-      );
-    }
-    import_fs12.default.mkdirSync(import_path11.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs12.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
-    orderLookupIndex = rebuildOrderLookupIndex(sanitized);
-    console.log(
-      `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
-    );
-    return true;
-  } catch (error) {
-    console.error(
-      "L\u1ED6I SYNC SHOPEE: Failed to write orders.json:",
-      error?.message || error,
-      error?.stack || ""
-    );
-    return false;
-  }
-}
-function isHandedOverGarbageOrder(order) {
-  return matchesHandedOverCarrierTabOrder(order);
-}
-var HANDED_OVER_CLEANUP_MARKER = import_path11.default.join(APP_ROOT7, "data", ".cleanup-handed-over-v2");
-async function purgeHandedOverGarbageOrdersOnce(opts) {
-  const force = Boolean(opts?.force);
-  const orders = loadOrders();
-  const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs12.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
-    return { removed: 0, sns: [], skipped: true };
-  }
-  const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
-  const ids = garbage.map((o) => String(o.id || "").trim()).filter(Boolean);
-  if (garbage.length > 0) {
-    saveOrders(orders.filter((o) => !isHandedOverGarbageOrder(o)));
-    console.log(`Deleted count (JSON): ${garbage.length}`);
-  }
-  let mongoDeleted = 0;
-  let mongoSns = [];
-  if (isMongoReady()) {
-    try {
-      if (ids.length || sns.length) {
-        mongoDeleted += await deleteOrdersFromStore([...ids, ...sns]);
-      }
-      const byFlag = await deleteHandedOverOrdersFromStore();
-      mongoDeleted += byFlag.deleted;
-      mongoSns = byFlag.sns;
-      console.log(`Deleted count (Mongo): ${mongoDeleted}`);
-    } catch (err) {
-      console.warn("[Cleanup HandedOver] Mongo delete failed:", err?.message || err);
-    }
-  }
-  const allSns = [.../* @__PURE__ */ new Set([...sns, ...mongoSns])];
-  const removed = Math.max(garbage.length, allSns.length, mongoDeleted);
-  console.log(`Deleted count: ${removed}`);
-  const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
-  if (stillLeft === 0) {
-    try {
-      const v1 = import_path11.default.join(APP_ROOT7, "data", ".cleanup-handed-over-v1");
-      if (import_fs12.default.existsSync(v1)) import_fs12.default.unlinkSync(v1);
-      import_fs12.default.mkdirSync(import_path11.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs12.default.writeFileSync(
-        HANDED_OVER_CLEANUP_MARKER,
-        JSON.stringify(
-          {
-            at: (/* @__PURE__ */ new Date()).toISOString(),
-            removed,
-            jsonRemoved: garbage.length,
-            mongoDeleted,
-            sns: allSns
-          },
-          null,
-          2
-        ),
-        "utf-8"
-      );
-    } catch {
-    }
-  } else {
-    console.warn(`[Cleanup HandedOver] V\u1EABn c\xF2n ${stillLeft} \u0111\u01A1n \u0110VVC sau purge \u2014 s\u1EBD ch\u1EA1y l\u1EA1i.`);
-  }
-  console.log(
-    `[Cleanup HandedOver] \u0110\xC3 X\xD3A json=${garbage.length} mongo=${mongoDeleted} \u2014 ${allSns.join(", ") || "(none)"}`
-  );
-  return { removed, sns: allSns, skipped: false };
-}
-var PRODUCTS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "products.json");
-var LOCAL_INVENTORY_CACHE_PATH = import_path11.default.join(APP_ROOT7, "data", "local_inventory.json");
-var SQLITE_LEGACY_PATH = import_path11.default.join(APP_ROOT7, "database.sqlite");
+var PRODUCTS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "products.json");
+var LOCAL_INVENTORY_CACHE_PATH = import_path13.default.join(APP_ROOT9, "data", "local_inventory.json");
+var SQLITE_LEGACY_PATH = import_path13.default.join(APP_ROOT9, "database.sqlite");
 function getProductChildrenList(p) {
   try {
     if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
@@ -107681,18 +110173,18 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
-var INVENTORY_AUDIT_PATH = import_path11.default.join(APP_ROOT7, "data", "inventory_audit.json");
-var INVENTORY_BACKUP_DIR = import_path11.default.join(APP_ROOT7, "data", "inventory_backups");
+var INVENTORY_AUDIT_PATH = import_path13.default.join(APP_ROOT9, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path13.default.join(APP_ROOT9, "data", "inventory_backups");
 function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs12.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs12.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs14.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs14.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs12.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs14.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -107700,36 +110192,36 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs12.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs14.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs12.default.writeFileSync(
-    import_path11.default.join(INVENTORY_BACKUP_DIR, fileName),
+  import_fs14.default.writeFileSync(
+    import_path13.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
   );
   writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
   return fileName;
 }
-var CHANNEL_LISTINGS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "channel_listings.json");
-var SHOPEE_SYNC_ERRORS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "shopee_sync_errors.json");
+var CHANNEL_LISTINGS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "channel_listings.json");
+var SHOPEE_SYNC_ERRORS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs12.default.existsSync(filePath)) return;
+  if (!import_fs14.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs12.default.renameSync(filePath, dest);
-    console.log(`[Mongo Migrate] Renamed ${import_path11.default.basename(filePath)} \u2192 ${import_path11.default.basename(dest)}`);
+    import_fs14.default.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${import_path13.default.basename(filePath)} \u2192 ${import_path13.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
   }
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs12.default.existsSync(filePath)) return [];
-    const raw = import_fs12.default.readFileSync(filePath, "utf-8");
+    if (!import_fs14.default.existsSync(filePath)) return [];
+    const raw = import_fs14.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -107738,26 +110230,26 @@ function readLegacyJsonArray(filePath) {
   }
 }
 function findLatestMigratedJson(baseName) {
-  const dataDir = import_path11.default.join(APP_ROOT7, "data");
-  if (!import_fs12.default.existsSync(dataDir)) return null;
+  const dataDir = import_path13.default.join(APP_ROOT9, "data");
+  if (!import_fs14.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs12.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs14.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
-  return import_path11.default.join(dataDir, matches[matches.length - 1]);
+  return import_path13.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   if (isProductsDiskMode()) {
     try {
-      const existing = import_fs12.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs12.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      const existing = import_fs14.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs14.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
       if (!Array.isArray(existing) || existing.length === 0) {
-        const dataDir = import_path11.default.join(APP_ROOT7, "data");
-        if (import_fs12.default.existsSync(dataDir)) {
-          const migrated = import_fs12.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+        const dataDir = import_path13.default.join(APP_ROOT9, "data");
+        if (import_fs14.default.existsSync(dataDir)) {
+          const migrated = import_fs14.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
           const latest = migrated[migrated.length - 1];
           if (latest) {
-            const src = import_path11.default.join(dataDir, latest);
+            const src = import_path13.default.join(dataDir, latest);
             const dest = getProductsDiskPath();
-            import_fs12.default.copyFileSync(src, dest);
+            import_fs14.default.copyFileSync(src, dest);
             console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
           }
         }
@@ -107774,9 +110266,9 @@ async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs12.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs12.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs12.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs14.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs14.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs14.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -107795,10 +110287,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs12.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs14.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs12.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs14.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -107824,10 +110316,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs12.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs14.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs12.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs14.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -107838,8 +110330,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs12.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs12.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs14.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs14.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -107863,8 +110355,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs12.default.mkdirSync(import_path11.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs12.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs14.default.mkdirSync(import_path13.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs14.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -108542,7 +111034,7 @@ async function bulkAutoLinkAllPending(opts) {
     masterProductCount
   };
 }
-var CHANNEL_SETTINGS_PATH = import_path11.default.join(APP_ROOT7, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH = import_path13.default.join(APP_ROOT9, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -108693,8 +111185,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs12.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs12.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs14.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs14.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -108716,7 +111208,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs12.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs14.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -108866,59 +111358,6 @@ function validateOrderShopForShipment(order) {
     error: "shop_id_mismatch",
     message: "\u0110\u01A1n h\xE0ng thu\u1ED9c Shop kh\xE1c, kh\xF4ng th\u1EC3 thao t\xE1c."
   };
-}
-function findOrderRecord(orders, idOrSn) {
-  const key = String(idOrSn || "").trim();
-  if (!key) return null;
-  const idx = rebuildOrderLookupIndex(orders);
-  const normalized = normalizeOrderIndexKey(key);
-  const stripped = key.replace(/^shopee-/i, "").trim();
-  let index = idx.byId.get(normalized) ?? idx.byOrderSn.get(normalized);
-  if (index === void 0 && stripped && stripped !== key) {
-    const strippedNorm = normalizeOrderIndexKey(stripped);
-    index = idx.byId.get(strippedNorm) ?? idx.byOrderSn.get(strippedNorm);
-  }
-  if (index === void 0 && !key.toLowerCase().startsWith("shopee-")) {
-    index = idx.byId.get(normalizeOrderIndexKey(`shopee-${key}`)) ?? idx.byOrderSn.get(normalizeOrderIndexKey(`shopee-${key}`));
-  }
-  if (index === void 0) {
-    const keyLower = key.toLowerCase();
-    const strippedLower = stripped.toLowerCase();
-    index = orders.findIndex((o) => {
-      const candidates = [
-        o?.id,
-        o?._id,
-        o?.orderSn,
-        o?.order_sn,
-        o?.id != null ? String(o.id).replace(/^shopee-/i, "") : "",
-        o?._id != null ? String(o._id).replace(/^shopee-/i, "") : ""
-      ];
-      return candidates.some((c) => {
-        const s2 = String(c || "").trim();
-        if (!s2) return false;
-        return s2 === key || s2.toLowerCase() === keyLower || s2 === stripped || s2.toLowerCase() === strippedLower || normalizeOrderIndexKey(s2) === normalized;
-      });
-    });
-    if (index < 0) index = void 0;
-  }
-  if (index === void 0) return null;
-  return { index, order: orders[index] };
-}
-function resolveOrdersFromRequest(orders, orderIds, orderSns) {
-  const hits = [];
-  const seen = /* @__PURE__ */ new Set();
-  const tryAdd = (idOrSn) => {
-    const raw = String(idOrSn || "").trim();
-    if (!raw) return;
-    const hit = findOrderRecord(orders, raw);
-    if (hit && !seen.has(hit.index)) {
-      seen.add(hit.index);
-      hits.push(hit);
-    }
-  };
-  for (const id of orderIds || []) tryAdd(String(id));
-  for (const sn of orderSns || []) tryAdd(String(sn));
-  return hits;
 }
 function isAlreadyShippedError(result) {
   const error = String(result?.error || "").toLowerCase();
@@ -109610,7 +112049,7 @@ async function processShopeeWebhookPayload(body) {
   }
 }
 async function startServer() {
-  const app = (0, import_express12.default)();
+  const app = (0, import_express15.default)();
   const PORT = process.env.PORT || 3e3;
   const appWithRouteMethods = app;
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -109640,8 +112079,8 @@ async function startServer() {
   }
   app.use(cors_default);
   app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload));
-  app.use(import_express12.default.json({ limit: "50mb" }));
-  app.use(import_express12.default.urlencoded({ limit: "50mb", extended: true }));
+  app.use(import_express15.default.json({ limit: "50mb" }));
+  app.use(import_express15.default.urlencoded({ limit: "50mb", extended: true }));
   try {
     ensureLabelsDir();
   } catch (err) {
@@ -109664,7 +112103,7 @@ async function startServer() {
     listShopeeOAuthShopIds,
     loadLastOAuthAudit,
     tokensPath: SHOPEE_TOKENS_PATH,
-    appRoot: APP_ROOT7,
+    appRoot: APP_ROOT9,
     appBaseUrl: APP_BASE_URL2,
     shopeeCallbackUrl: SHOPEE_CALLBACK_URL2,
     shopeeWebhookUrl: SHOPEE_WEBHOOK_URL2
@@ -109680,276 +112119,44 @@ async function startServer() {
   app.get("/api/debug/client-log", authMiddleware, getClientLog);
   app.get("/api/health", getHealth);
   app.use("/api", healthRoutes);
-  const handleMappingProductsGet = async (_req, res) => {
-    try {
-      const cache = await reloadCachesFromDb();
-      const rawListings = cache.listings;
-      const listings = enrichChannelListingsWithMaster(rawListings, cache.products);
-      const successWithProduct = listings.filter(
-        (l) => l?.status === "success" && l?.linkedProduct && (l?.linkedProductTitle || l?.linkedProductSku || l?.linkedProduct?.title)
-      ).length;
-      const broken = listings.filter((l) => l?.linkBroken).length;
-      console.log(
-        `[Mapping Products] GET db \u2014 ${listings.length} d\xF2ng (success+product=${successWithProduct}, broken=${broken}) mongo=${isMongoReady()}`
-      );
-      return res.status(200).json({
-        success: true,
-        listings,
-        count: listings.length,
-        cacheUpdatedAt: cache.updatedAt,
-        source: isMongoReady() ? "mongodb" : "json_fallback"
-      });
-    } catch (error) {
-      console.error("[Mapping Products] GET l\u1ED7i:", error?.message || error);
-      try {
-        const raw = await readChannelListingsForGet();
-        const safe = (Array.isArray(raw) ? raw : []).map((r2) => sanitizeChannelListingRow(r2));
-        return res.status(200).json({
-          success: true,
-          listings: safe,
-          count: safe.length,
-          source: "mongodb_retry",
-          message: error?.message || String(error)
-        });
-      } catch (fallbackErr) {
-        return res.status(500).json({
-          success: false,
-          error: fallbackErr?.message || error?.message || String(error)
-        });
-      }
-    }
-  };
-  const handleMappingProductsUpsert = async (req, res) => {
-    try {
-      const incoming = req.body?.listings;
-      if (!Array.isArray(incoming)) {
-        return res.status(400).json({
-          success: false,
-          message: "Thi\u1EBFu m\u1EA3ng listings trong request body.",
-          hint: "PUT/POST /api/mapping-products c\u1EA7n body { listings: [...] }. Li\xEAn k\u1EBFt t\u1EF1 \u0111\u1ED9ng d\xF9ng POST /api/shopee/channel-products/auto-link (kh\xF4ng c\u1EA7n listings)."
-        });
-      }
-      console.log(`[Mapping Save] UPSERT nh\u1EADn ${incoming.length} d\xF2ng (${req.method})`);
-      const sanitized = incoming.map((row) => sanitizeChannelListingRow(row));
-      await bulkUpsertChannelListingsToStore(sanitized);
-      await flushDbWrites();
-      await sleep2(200);
-      const verified = enrichChannelListingsWithMaster(sanitized, await loadProducts());
-      console.log(`\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 mapping bulkWrite ${sanitized.length} d\xF2ng`);
-      return res.status(200).json({
-        success: true,
-        count: verified.length,
-        listings: verified,
-        cacheUpdatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        source: isMongoReady() ? "mongodb" : "json_fallback"
-      });
-    } catch (error) {
-      const errMsg = error?.message || String(error);
-      console.error("[Mapping Save] UPSERT l\u1ED7i:", errMsg);
-      return res.status(500).json({
-        success: false,
-        message: `L\u1ED7i l\u01B0u Database: ${errMsg}`,
-        error: errMsg
-      });
-    }
-  };
-  const handleMappingProductsHeal = async (_req, res) => {
-    try {
-      const products = await loadProducts();
-      const enriched = enrichChannelListingsWithMaster(await readChannelListingsDb(), products);
-      const healed = await persistHealedBrokenMappingLinks(enriched);
-      const listings = enrichChannelListingsWithMaster(await readChannelListingsDb(), products);
-      console.log(`[Mapping Products] HEAL xong: healed=${healed}, total=${listings.length}`);
-      return res.status(200).json({
-        success: true,
-        healed,
-        count: listings.length,
-        listings
-      });
-    } catch (error) {
-      const errMsg = error?.message || String(error);
-      console.error("[Mapping Products] HEAL l\u1ED7i:", errMsg);
-      return res.status(500).json({
-        success: false,
-        message: `L\u1ED7i heal Database: ${errMsg}`,
-        error: errMsg
-      });
-    }
-  };
-  const handleBatchAutoLink = async (req, res) => {
-    try {
-      const body = req?.body && typeof req.body === "object" ? req.body : {};
-      const result = await batchAutoLinkFromDatabase({
-        cursor: body.cursor,
-        limit: body.limit
-      });
-      const data = {
-        linkedCount: result.linkedCount,
-        alreadyLinked: result.alreadyLinked,
-        unlinkedRemaining: result.unlinkedRemaining,
-        listings: result.listings,
-        cacheUpdatedAt: result.cacheUpdatedAt,
-        masterProductCount: result.masterProductCount,
-        skuIndexSize: result.skuIndexSize,
-        scannedCount: result.scannedCount,
-        limit: result.requestedLimit,
-        nextCursor: result.nextCursor,
-        hasMore: result.hasMore,
-        source: "database"
-      };
-      console.log(
-        `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 batch-auto-link linked=${result.linkedCount}, scanned=${result.scannedCount}, remaining=${result.unlinkedRemaining}, nextCursor=${result.nextCursor}`
-      );
-      return res.status(200).json({
-        success: true,
-        data,
-        message: result.linkedCount > 0 ? `\u0110\xE3 li\xEAn k\u1EBFt th\xE0nh c\xF4ng ${result.linkedCount} s\u1EA3n ph\u1EA9m` : "Kh\xF4ng t\xECm th\u1EA5y SKU tr\xF9ng kh\u1EDBp trong Database hi\u1EC7n t\u1EA1i",
-        ...data
-      });
-    } catch (error) {
-      console.error("[Batch Auto-link] Exception:", error);
-      if (!res.headersSent) {
-        const message = error instanceof Error ? error.message : String(error);
-        return res.status(500).json({ success: false, error: message });
-      }
-    }
-  };
-  const handleSingleAutoLink = async (req, res) => {
-    try {
-      const body = req?.body && typeof req.body === "object" ? req.body : {};
-      const result = await autoLinkSingleListingFromDatabase({
-        id: body.id,
-        listingId: body.listingId,
-        channelId: body.channelId,
-        platform: body.platform
-      });
-      return res.status(200).json({
-        success: result.success,
-        listing: result.listing,
-        matchedProductId: result.matchedProductId,
-        message: result.message
-      });
-    } catch (error) {
-      console.error("[Auto-link Single] Exception:", error);
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ success: false, error: message });
-    }
-  };
-  app.get("/api/mapping-products/sku-index", authMiddleware, async (_req, res) => {
-    try {
-      const masterProducts = await loadProducts();
-      const items = [];
-      const seen = /* @__PURE__ */ new Set();
-      const addOne = (row) => {
-        if (!row || typeof row !== "object") return;
-        const rawSku = String(row.sku || "").trim();
-        const key = normalizeSkuKey(rawSku);
-        const id = row.id != null ? String(row.id).trim() : "";
-        if (!key || !id || seen.has(key)) return;
-        seen.add(key);
-        items.push({
-          sku: rawSku || key,
-          id,
-          title: String(row.title || "").trim()
-        });
-      };
-      for (const masterItem of Array.isArray(masterProducts) ? masterProducts : []) {
-        if (!masterItem) continue;
-        addOne(masterItem);
-        for (const child of getProductChildrenList(masterItem)) addOne(child);
-        if (Array.isArray(masterItem.variants)) {
-          for (const v of masterItem.variants) addOne(v);
-        }
-        if (Array.isArray(masterItem.models)) {
-          for (const m2 of masterItem.models) addOne(m2);
-        }
-      }
-      console.log(`[SKU Index] Kho g\u1ED1c products \u2192 ${items.length} SKU (Map-ready)`);
-      return res.status(200).json({
-        success: true,
-        count: items.length,
-        items,
-        source: isProductsDiskMode() ? "disk" : isMongoReady() ? "mongodb" : "json_fallback"
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[SKU Index] L\u1ED7i:", message);
-      return res.status(500).json({ success: false, message });
-    }
+  initMappingController({
+    reloadCachesFromDb,
+    enrichChannelListingsWithMaster,
+    isMongoReady,
+    readChannelListingsForGet,
+    sanitizeChannelListingRow,
+    bulkUpsertChannelListingsToStore,
+    flushDbWrites,
+    sleep: sleep2,
+    loadProducts,
+    persistHealedBrokenMappingLinks,
+    readChannelListingsDb,
+    batchAutoLinkFromDatabase,
+    autoLinkSingleListingFromDatabase,
+    bulkAutoLinkAllPending,
+    bulkAutoLinkListingsByIds,
+    normalizeSkuKey,
+    getProductChildrenList,
+    isProductsDiskMode,
+    loadLocalInventoryCache,
+    buildMasterProductLookupById,
+    writeChannelListingsDb,
+    refreshCache
   });
-  const handleBulkAutoLinkByIds = async (req, res) => {
-    try {
-      const body = req?.body && typeof req.body === "object" ? req.body : {};
-      const mode = String(body.mode || "").trim().toLowerCase();
-      if (mode === "all-pending" || mode === "all_pending" || body.allPending === true) {
-        const result2 = await bulkAutoLinkAllPending({
-          limit: Number.isFinite(Number(body.limit)) ? Number(body.limit) : void 0
-        });
-        return res.status(200).json({
-          success: true,
-          ...result2,
-          message: result2.linkedCount > 0 ? `\u0110\xE3 li\xEAn k\u1EBFt th\xE0nh c\xF4ng ${result2.linkedCount}/${result2.processed} s\u1EA3n ph\u1EA9m pending` : "Kh\xF4ng c\xF3 s\u1EA3n ph\u1EA9m n\xE0o li\xEAn k\u1EBFt th\xE0nh c\xF4ng trong l\xF4 pending"
-        });
-      }
-      const rawIds = Array.isArray(body.ids) ? body.ids : Array.isArray(body.listingIds) ? body.listingIds : Array.isArray(body.listings) ? body.listings.map((row) => row?.id) : [];
-      const result = await bulkAutoLinkListingsByIds(rawIds);
-      return res.status(200).json({
-        success: true,
-        ...result,
-        message: result.linkedCount > 0 ? `\u0110\xE3 li\xEAn k\u1EBFt th\xE0nh c\xF4ng ${result.linkedCount}/${rawIds.length} s\u1EA3n ph\u1EA9m trong l\xF4` : "Kh\xF4ng c\xF3 s\u1EA3n ph\u1EA9m n\xE0o li\xEAn k\u1EBFt th\xE0nh c\xF4ng trong l\xF4 n\xE0y"
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[Bulk Auto-link] Exception:", message);
-      return res.status(500).json({ success: false, message, error: message });
-    }
-  };
+  app.get("/api/mapping-products/sku-index", authMiddleware, handleMappingSkuIndex);
   app.post("/api/mapping-products/auto-link-single", authMiddleware, handleSingleAutoLink);
   app.post("/api/mapping-products/batch-auto-link", authMiddleware, handleBatchAutoLink);
   app.post("/api/mapping-products/bulk-auto-link", authMiddleware, handleBulkAutoLinkByIds);
   app.post("/api/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
-  app.post("/api/mapping-products/purge-broken", authMiddleware, async (_req, res) => {
-    try {
-      const cache = await loadLocalInventoryCache();
-      const listings = Array.isArray(cache.listings) && cache.listings.length > 0 ? cache.listings : await readChannelListingsDb();
-      const masterLookup = buildMasterProductLookupById(cache.products);
-      const kept = [];
-      let deletedCount = 0;
-      for (const row of Array.isArray(listings) ? listings : []) {
-        if (!row || typeof row !== "object") {
-          deletedCount += 1;
-          continue;
-        }
-        const linkedId = row?.linkedProductId != null && String(row.linkedProductId).trim() !== "" ? String(row.linkedProductId).trim() : row?.linkedProduct?.id != null && String(row.linkedProduct.id).trim() !== "" ? String(row.linkedProduct.id).trim() : "";
-        const linkedProductMissing = row?.linkedProduct == null || typeof row.linkedProduct !== "object" || row?.linkedProduct?.id == null || String(row.linkedProduct.id).trim() === "";
-        const claimsLink = row?.status === "success" || linkedId !== "";
-        const isBroken = claimsLink && (!linkedId && linkedProductMissing || linkedId !== "" && !masterLookup.has(linkedId));
-        if (isBroken) {
-          deletedCount += 1;
-          continue;
-        }
-        kept.push(row);
-      }
-      if (deletedCount > 0) {
-        await writeChannelListingsDb(kept);
-      }
-      const nextCache = await refreshCache();
-      return res.json({
-        success: true,
-        deletedCount,
-        cacheUpdatedAt: nextCache.updatedAt
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: error?.message || String(error)
-      });
-    }
-  });
+  app.post("/api/mapping-products/purge-broken", authMiddleware, handleMappingPurgeBroken);
   app.post("/api/mapping-products/heal", authMiddleware, handleMappingProductsHeal);
   app.get("/api/mapping-products", authMiddleware, handleMappingProductsGet);
   app.put("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
   app.post("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
+  app.use("/api/mapping-products", authMiddleware, mappingRoutes);
+  app.post("/api/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+  app.post("/api/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+  app.post("/api/auto-link", authMiddleware, handleBatchAutoLink);
   const handlePublicLabelGet = (req, res) => {
     const result = serveLabelPdfFromMem(req.params.filename, res);
     if (result === "not_found") {
@@ -110034,7 +112241,7 @@ async function startServer() {
         query: req.query || {},
         SHOPEE_TOKENS_PATH,
         SHOPEE_CALLBACK_URL: SHOPEE_CALLBACK_URL2,
-        APP_ROOT: APP_ROOT7,
+        APP_ROOT: APP_ROOT9,
         cwd: process.cwd()
       })
     );
@@ -110090,7 +112297,7 @@ async function startServer() {
         success: false,
         error: error?.message || "unknown_error",
         tokens_path: SHOPEE_TOKENS_PATH,
-        app_root: APP_ROOT7
+        app_root: APP_ROOT9
       });
       const failResult = {
         success: false,
@@ -110112,829 +112319,85 @@ async function startServer() {
     console.log("[Shopee Webhook] GET verification probe \u2014 200 success");
     res.status(200).type("text/plain; charset=utf-8").send("success");
   });
-  const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
-  const PRODUCTS_PAGE_SIZE_MAX = 50;
-  app.get("/api/products", authMiddleware, async (req, res) => {
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    try {
-      const diskMode = isProductsDiskMode();
-      if (!diskMode && !isMongoReady()) {
-        return res.status(503).json({
-          success: false,
-          products: [],
-          error: "mongodb_not_ready",
-          message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 th\u1EED l\u1EA1i sau v\xE0i gi\xE2y."
-        });
-      }
-      const rawPage = Number(req.query?.page);
-      const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
-      const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
-      const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize)) : PRODUCTS_PAGE_SIZE_DEFAULT;
-      const paged = await withLocalDbTimeout(
-        loadProductsPageFromStore(page, pageSize),
-        diskMode ? 15e3 : 3e4,
-        "products_page_load"
-      );
-      return res.status(200).json({
-        success: true,
-        products: paged.products,
-        page: paged.page,
-        pageSize: paged.pageSize,
-        total: paged.total,
-        totalPages: paged.totalPages,
-        hasMore: paged.hasMore,
-        grouped: false,
-        source: diskMode ? "disk" : "mongodb",
-        storage: diskMode ? getProductsDiskPath() : "mongodb.products"
-      });
-    } catch (err) {
-      console.error("[Products API] GET /api/products failed:", err);
-      return res.status(503).json({
-        success: false,
-        error: "products_unavailable",
-        message: err instanceof Error ? err.message : "products_read_error"
-      });
-    }
+  initStockSyncQueue({
+    getProductChildrenList,
+    inheritShopeeLinkFromParent,
+    getShopeeItemIdForStockPush,
+    resolveShopeeModelIdForStockPush,
+    applyShopeeLinkFieldsToProduct,
+    readChannelListingsDb,
+    resolveShopeeTokenShopId,
+    getValidShopeeAccessToken,
+    productRequiresShopeeModelId,
+    resolveShopeeModelIdFromApi,
+    appendShopeeSyncErrorToDb,
+    resolveShopeeStockLocationId,
+    buildShopeeUpdateStockEntry,
+    shopeeUpdateStock,
+    parseShopeeApiResult,
+    extractShopeeStockPushErrorMessage,
+    buildShopeeUpdatePriceEntry,
+    shopeeUpdatePrice,
+    loadProductById
   });
-  app.get("/api/products/search", authMiddleware, async (req, res) => {
-    const q = String(req.query?.q ?? req.query?.query ?? "").trim();
-    const limit = Number(req.query?.limit ?? 40);
-    const mapRow = (p) => ({
-      ...p,
-      id: p.id,
-      sku: p.sku || "",
-      name: p.name || p.title || "",
-      title: p.title || p.name || "",
-      image: p.image || p.avatarUrl || p.imageUrl || "",
-      current_stock: p.current_stock ?? p.stock ?? 0,
-      stock: p.stock ?? p.current_stock ?? 0,
-      last_import_price: p.last_import_price ?? p.importPrice ?? 0,
-      importPrice: p.importPrice ?? p.last_import_price ?? 0
-    });
-    try {
-      let raw = [];
-      let source = "mongodb";
-      try {
-        raw = await searchProductsFromStore(q, limit);
-      } catch (mongoErr) {
-        console.warn("[Products API] searchProductsFromStore failed, fallback loadProducts:", mongoErr);
-        const all = await loadProducts();
-        const qLower = q.toLowerCase();
-        const flat = [];
-        const seen = /* @__PURE__ */ new Set();
-        const push = (row) => {
-          const id = String(row?.id || "").trim();
-          if (!id || seen.has(id)) return;
-          seen.add(id);
-          flat.push(row);
-        };
-        const match2 = (row, extra = "") => {
-          if (!q) return true;
-          const hay = `${row?.sku || ""} ${row?.title || ""} ${row?.name || ""} ${row?.modelName || ""} ${extra}`.toLowerCase();
-          return hay.includes(qLower);
-        };
-        for (const p of Array.isArray(all) ? all : []) {
-          const children = Array.isArray(p?.children) && p.children.length ? p.children : Array.isArray(p?.children_models) ? p.children_models : [];
-          if (children.length > 0) {
-            let n = 0;
-            for (const c of children) {
-              if (!match2(c, `${p.title || ""} ${p.sku || ""}`)) continue;
-              push({
-                ...c,
-                title: c.title || p.title,
-                imageUrl: c.imageUrl || p.imageUrl,
-                avatarUrl: c.avatarUrl || p.avatarUrl
-              });
-              n += 1;
-            }
-            if (n === 0 && match2(p)) push(p);
-          } else if (match2(p)) {
-            push(p);
-          }
-        }
-        raw = flat.slice(0, Math.min(100, Math.max(1, Math.floor(limit) || 40)));
-        source = "products_memory_fallback";
-      }
-      const products = raw.map(mapRow);
-      console.log("[Products API] /api/products/search", {
-        q,
-        limit,
-        total: products.length,
-        source,
-        sample: products.slice(0, 5).map((p) => ({
-          id: p.id,
-          sku: p.sku,
-          name: p.name,
-          current_stock: p.current_stock,
-          last_import_price: p.last_import_price
-        }))
-      });
-      return res.json({
-        success: true,
-        products,
-        total: products.length,
-        source
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Products API] GET /api/products/search failed:", err);
-      return res.status(500).json({ success: false, error: message || "search_failed", products: [] });
-    }
+  initProductsController({
+    loadProducts,
+    saveProducts,
+    getProductChildrenList,
+    inheritShopeeLinkFromParent,
+    mergeProductPatch,
+    applyBulkProductUpdate,
+    flattenProductsForStockSync,
+    upsertProductsToStoreAsync,
+    deleteProductsByIdsFromStore,
+    loadProductsPageFromStore,
+    searchProductsFromStore,
+    withLocalDbTimeout,
+    isProductsDiskMode,
+    isMongoReady,
+    getProductsDiskPath,
+    reloadCachesFromDb,
+    loadLocalInventoryCache,
+    refreshCache,
+    enrichChannelListingsWithMaster,
+    backupInventoryBeforeDestructiveAction,
+    writeInventoryAudit,
+    writeChannelListingsDb,
+    writeProductListingsDb: (rows) => {
+      const dest = import_path13.default.join(APP_ROOT9, "data", "product_listings.json");
+      const dir = import_path13.default.dirname(dest);
+      if (!import_fs14.default.existsSync(dir)) import_fs14.default.mkdirSync(dir, { recursive: true });
+      import_fs14.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
+    },
+    pushStockUpdatesToShopee,
+    resolveShopeeTokenShopId,
+    isShopeeConfigValid,
+    isStaleShopeeItemErrorText,
+    sendApiErrorJson,
+    getValidShopeeAccessToken,
+    syncProductToShopee,
+    syncProductToWoo,
+    syncProductToTikTok
   });
-  const handleProductSyncShopee = async (req, res) => {
-    console.log("B\u1EAFt \u0111\u1EA7u \u0111\u1ED3ng b\u1ED9 Shopee", req.body);
-    try {
-      const requestedIds = Array.isArray(req.body?.productIds) ? req.body.productIds : [req.params?.id || req.body?.id || req.body?.productId];
-      const productIds = [
-        ...new Set(requestedIds.map((id) => String(id || "").trim()).filter(Boolean))
-      ];
-      if (productIds.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "Thi\u1EBFu product id. G\u1EEDi body { id }, { productId } ho\u1EB7c { productIds: [...] }."
-        });
-      }
-      const products = await loadProducts();
-      const results = [];
-      for (const productId of productIds) {
-        const row = findProductRowById(products, productId);
-        if (!row) {
-          results.push({
-            productId,
-            success: false,
-            message: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m trong kho."
-          });
-          continue;
-        }
-        const shopee = await pushProductStockPriceToShopeeImmediate(row, {
-          syncStock: true,
-          syncPrice: true
-        });
-        if (shopee.skipped || !shopee.ok) {
-          results.push({
-            productId,
-            success: false,
-            message: shopee.message || (shopee.skipped ? "Ch\u01B0a li\xEAn k\u1EBFt Mapping Shopee." : "Shopee t\u1EEB ch\u1ED1i \u0111\u1ED3ng b\u1ED9 t\u1ED3n/gi\xE1")
-          });
-          continue;
-        }
-        row.lastSynced = (/* @__PURE__ */ new Date()).toISOString();
-        results.push({
-          productId,
-          success: true,
-          message: shopee.message
-        });
-      }
-      const succeeded = results.filter((result) => result.success);
-      if (succeeded.length > 0) {
-        await saveProducts(products);
-      }
-      const failed = results.filter((result) => !result.success);
-      if (failed.length > 0) {
-        const detail = failed.map((result) => `${result.productId}: ${result.message}`).join(" | ");
-        return res.status(400).json({
-          success: false,
-          message: `Shopee b\xE1o l\u1ED7i: ${detail}`,
-          error: `Shopee b\xE1o l\u1ED7i: ${detail}`,
-          shopeeSynced: succeeded.length > 0,
-          results
-        });
-      }
-      return res.status(200).json({
-        success: true,
-        shopeeSynced: true,
-        shopeeMessage: results.map((result) => result.message).join(" | "),
-        message: "\u0110\u1ED3ng b\u1ED9 th\xE0nh c\xF4ng",
-        results
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Products API] sync-shopee failed:", err);
-      return res.status(500).json({
-        success: false,
-        message: message || "Internal Server Error",
-        error: message || "Internal Server Error"
-      });
-    }
-  };
+  app.get("/api/products", authMiddleware, listProducts);
+  app.get("/api/products/search", authMiddleware, searchProducts);
   app.post("/api/products/sync-shopee", authMiddleware, handleProductSyncShopee);
   app.post("/api/products/:id/sync-shopee", authMiddleware, handleProductSyncShopee);
-  app.post("/api/products", authMiddleware, async (req, res) => {
-    const body = req.body || {};
-    if (!body.title || !body.sku) {
-      return res.status(400).json({ error: "title_and_sku_required" });
-    }
-    const product = {
-      id: body.id || `prod-${Date.now()}`,
-      title: String(body.title),
-      sku: String(body.sku),
-      stock: Math.max(0, Math.round(Number(body.stock) || 0)),
-      importPrice: Math.max(0, Math.round(Number(body.importPrice) || 0)),
-      sellingPrice: Math.max(0, Math.round(Number(body.sellingPrice) || 0)),
-      channels: Array.isArray(body.channels) ? body.channels : ["shopee"],
-      category: body.category || "Ch\u01B0a ph\xE2n lo\u1EA1i",
-      description: body.description || "",
-      imageUrl: body.imageUrl || void 0,
-      status: body.status || "active",
-      shopeeId: body.shopeeId,
-      shopeeItemId: body.shopeeItemId,
-      shopeeModelId: body.shopeeModelId,
-      modelName: body.modelName,
-      weight: body.weight != null ? Number(body.weight) : void 0,
-      tiktokId: body.tiktokId,
-      wooId: body.wooId,
-      lastSynced: (/* @__PURE__ */ new Date()).toISOString()
-    };
-    await upsertProductsToStoreAsync([product]);
-    const cache = await loadLocalInventoryCache();
-    return res.status(201).json({
-      ...product,
-      localInventory: cache.products,
-      cacheUpdatedAt: cache.updatedAt
-    });
-  });
-  app.get("/api/local-inventory", authMiddleware, async (_req, res) => {
-    try {
-      await reloadCachesFromDb();
-      const cache = await loadLocalInventoryCache();
-      return res.status(200).json({
-        success: true,
-        updatedAt: cache.updatedAt,
-        products: cache.products,
-        listings: enrichChannelListingsWithMaster(cache.listings, cache.products),
-        count: {
-          products: cache.products.length,
-          listings: cache.listings.length
-        },
-        source: isMongoReady() ? "mongodb" : "json_fallback"
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: error?.message || String(error)
-      });
-    }
-  });
-  app.post("/api/local-inventory/refresh", authMiddleware, async (_req, res) => {
-    try {
-      const cache = await refreshCache();
-      return res.status(200).json({
-        success: true,
-        updatedAt: cache.updatedAt,
-        products: cache.products,
-        listingsCount: cache.listings.length
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        message: error?.message || String(error)
-      });
-    }
-  });
-  app.put("/api/products/replace", authMiddleware, async (req, res) => {
-    const incoming = req.body?.products;
-    if (!Array.isArray(incoming)) {
-      return res.status(400).json({ error: "products_array_required" });
-    }
-    await saveProducts(incoming);
-    return res.json({ count: incoming.length, products: incoming });
-  });
-  app.patch("/api/products/:id", authMiddleware, async (req, res) => {
-    try {
-      const products = await loadProducts();
-      const patch = req.body || {};
-      const topIndex = products.findIndex((p) => p.id === req.params.id);
-      if (topIndex !== -1) {
-        const before = products[topIndex];
-        const merged = mergeProductPatch(before, patch);
-        products[topIndex] = merged;
-        await upsertProductsToStoreAsync([merged]);
-        const changes = detectStockPriceChanges(before, merged);
-        const shopee = await pushProductStockPriceToShopeeImmediate(merged, {
-          syncStock: changes.stock,
-          syncPrice: changes.price
-        });
-        if (!shopee.ok) {
-          return res.status(400).json({
-            success: false,
-            error: shopee.message || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt t\u1ED3n/gi\xE1",
-            product: merged,
-            shopeeSynced: false,
-            shopeeMessage: shopee.message
-          });
-        }
-        return res.json({
-          ...merged,
-          success: true,
-          shopeeSynced: !shopee.skipped,
-          shopeeMessage: shopee.message
-        });
-      }
-      for (let i2 = 0; i2 < products.length; i2++) {
-        const children = getProductChildrenList(products[i2]);
-        const childIdx = children.findIndex((c) => c.id === req.params.id);
-        if (childIdx === -1) continue;
-        const beforeChild = children[childIdx];
-        const mergedChild = mergeProductPatch(beforeChild, patch);
-        const nextChildren = [...children];
-        nextChildren[childIdx] = mergedChild;
-        const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
-        products[i2] = { ...products[i2], children: nextChildren, stock: totalStock };
-        await upsertProductsToStoreAsync([products[i2]]);
-        const changes = detectStockPriceChanges(beforeChild, mergedChild);
-        const shopee = await pushProductStockPriceToShopeeImmediate(
-          inheritShopeeLinkFromParent(mergedChild, products[i2]),
-          {
-            syncStock: changes.stock,
-            syncPrice: changes.price
-          }
-        );
-        if (!shopee.ok) {
-          return res.status(400).json({
-            success: false,
-            error: shopee.message || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt t\u1ED3n/gi\xE1",
-            product: mergedChild,
-            shopeeSynced: false,
-            shopeeMessage: shopee.message
-          });
-        }
-        return res.json({
-          ...mergedChild,
-          success: true,
-          shopeeSynced: !shopee.skipped,
-          shopeeMessage: shopee.message
-        });
-      }
-      return res.status(404).json({ success: false, error: "product_not_found" });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Products API] PATCH /api/products/:id failed:", err);
-      return res.status(500).json({ success: false, error: message || "Internal Server Error" });
-    }
-  });
-  app.post("/api/products/inventory-balance", authMiddleware, async (req, res) => {
-    try {
-      const items = req.body?.items;
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ success: false, message: "Ch\u01B0a c\xF3 d\xF2ng t\u1ED3n kho n\xE0o \u0111\u1EC3 c\xE2n b\u1EB1ng." });
-      }
-      const preferredShopId = String(req.body?.shopId || "").trim() || void 0;
-      const skuStockMap = /* @__PURE__ */ new Map();
-      for (const item of items) {
-        const sku = String(item?.sku || "").trim();
-        if (!sku) continue;
-        const rawStock = item?.actual_stock;
-        if (rawStock === "" || rawStock == null) continue;
-        const parsed = Number(rawStock);
-        if (!Number.isFinite(parsed)) continue;
-        const actual = Math.max(0, Math.round(parsed));
-        skuStockMap.set(sku, actual);
-      }
-      if (skuStockMap.size === 0) {
-        return res.status(400).json({ success: false, message: "D\u1EEF li\u1EC7u c\xE2n b\u1EB1ng kho kh\xF4ng h\u1EE3p l\u1EC7." });
-      }
-      const products = await loadProducts();
-      let updatedCount = 0;
-      const next = products.map((p) => {
-        const children = getProductChildrenList(p);
-        if (children.length > 0) {
-          let changed = false;
-          const nextChildren = children.map((c) => {
-            const sku2 = String(c.sku || "").trim();
-            if (!skuStockMap.has(sku2)) return c;
-            updatedCount++;
-            changed = true;
-            return mergeProductPatch(c, { stock: skuStockMap.get(sku2) });
-          });
-          if (!changed) return p;
-          const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
-          return { ...p, children: nextChildren, stock: totalStock };
-        }
-        const sku = String(p.sku || "").trim();
-        if (!skuStockMap.has(sku)) return p;
-        updatedCount++;
-        return mergeProductPatch(p, { stock: skuStockMap.get(sku) });
-      });
-      if (updatedCount === 0) {
-        return res.status(404).json({ success: false, message: "Kh\xF4ng t\xECm th\u1EA5y SKU n\xE0o trong kho g\u1ED1c \u0111\u1EC3 c\u1EADp nh\u1EADt." });
-      }
-      const updatedProducts = flattenProductsForStockSync(next).filter(
-        (p) => skuStockMap.has(String(p.sku || "").trim())
-      );
-      await upsertProductsToStoreAsync(next.filter((product, index) => product !== products[index]));
-      console.log(`[Inventory Balance] C\u1EADp nh\u1EADt kho g\u1ED1c ${updatedCount} SKU`);
-      const pushResult = await pushStockUpdatesToShopee(updatedProducts, preferredShopId);
-      const parts = [];
-      parts.push("kho g\u1ED1c \u0111\xE3 c\u1EADp nh\u1EADt");
-      if (pushResult.pushed > 0) {
-        parts.push(`\u0111\xE3 \u0111\u1EA9y t\u1ED3n ${pushResult.pushed} SKU l\xEAn Shopee`);
-      } else if (pushResult.errors.length === 0 && pushResult.warnings.length === 0) {
-        parts.push("kh\xF4ng c\xF3 SKU Mapping Shopee \u0111\u1EC3 \u0111\u1ED3ng b\u1ED9 (ho\u1EB7c ch\u01B0a li\xEAn k\u1EBFt)");
-      }
-      const msg = `C\xE2n b\u1EB1ng kho th\xE0nh c\xF4ng (${parts.join(", ")}).`;
-      console.log(`[Inventory Balance] ${msg}`);
-      if (pushResult.errors.length > 0) {
-        return res.status(200).json({
-          success: true,
-          message: msg,
-          shopeeQueued: 0,
-          shopeePushed: pushResult.pushed,
-          shopeeErrors: pushResult.errors,
-          shopeeWarnings: pushResult.warnings,
-          staleSkus: pushResult.staleSkus
-        });
-      }
-      return res.status(200).json({
-        success: true,
-        message: msg,
-        shopeeQueued: 0,
-        shopeePushed: pushResult.pushed,
-        shopeeErrors: [],
-        shopeeWarnings: pushResult.warnings,
-        staleSkus: pushResult.staleSkus
-      });
-    } catch (err) {
-      console.error("[Inventory Balance] Exception:", err);
-      return sendApiErrorJson(res, err, 500);
-    }
-  });
-  app.post("/api/sync-stock", authMiddleware, async (req, res) => {
-    try {
-      const products = await loadProducts();
-      const shopId = resolveShopeeTokenShopId(req.body?.shopId);
-      const warnings = [];
-      if (!isShopeeConfigValid()) {
-        return res.status(400).json({
-          success: false,
-          message: "Shopee: c\u1EA5u h\xECnh Partner ch\u01B0a h\u1EE3p l\u1EC7."
-        });
-      }
-      if (!shopId) {
-        return res.status(400).json({
-          success: false,
-          message: "Shopee: ch\u01B0a c\xF3 shop \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n."
-        });
-      }
-      const shopeeResult = await pushStockUpdatesToShopee(products, shopId);
-      if (shopeeResult.warnings?.length) warnings.push(...shopeeResult.warnings);
-      if (!shopeeResult.ok && shopeeResult.errors.length > 0) {
-        const onlyStale = shopeeResult.errors.every((e2) => isStaleShopeeItemErrorText(e2));
-        if (!onlyStale) {
-          const detailMsg = shopeeResult.errors.join(" | ");
-          return res.status(400).json({
-            success: false,
-            message: `\u0110\u1EA9y t\u1ED3n Kho g\u1ED1c \u2192 Shopee th\u1EA5t b\u1EA1i: ${detailMsg}`,
-            error: detailMsg,
-            shopeeErrors: shopeeResult.errors,
-            shopeeWarnings: warnings
-          });
-        }
-        warnings.push(...shopeeResult.errors);
-      }
-      const message = shopeeResult.pushed > 0 ? `\u0110\xE3 \u0111\u1EA9y ${shopeeResult.pushed} SKU t\u1EEB Kho g\u1ED1c l\xEAn Shopee (\u0111\u1ED3ng b\u1ED9 1 chi\u1EC1u).` : "Kh\xF4ng c\xF3 SKU n\xE0o c\u1EA7n \u0111\u1EA9y l\xEAn Shopee (\u0111\xE3 kh\u1EDBp ho\u1EB7c ch\u01B0a li\xEAn k\u1EBFt).";
-      return res.json({
-        success: true,
-        message,
-        direction: "warehouse_to_channel",
-        shopee: {
-          pushed: shopeeResult.pushed,
-          staleSkus: shopeeResult.staleSkus,
-          warnings
-        },
-        tiktok: { updated: 0, message: "TikTok Shop API ch\u01B0a \u0111\u01B0\u1EE3c t\xEDch h\u1EE3p tr\xEAn server." },
-        warnings,
-        products: await loadProducts()
-      });
-    } catch (err) {
-      console.error("[Sync Stock]", err);
-      return sendApiErrorJson(res, err, 500);
-    }
-  });
-  app.post("/api/products/bulk-save", authMiddleware, async (req, res) => {
-    const updates = req.body?.updates;
-    if (!Array.isArray(updates) || updates.length === 0) {
-      return res.status(400).json({ error: "updates_required" });
-    }
-    const patchMap = /* @__PURE__ */ new Map();
-    for (const u of updates) {
-      if (u?.id) patchMap.set(String(u.id), u);
-    }
-    const products = await loadProducts();
-    const beforeFlat = flattenProductsForStockSync(products);
-    let updatedCount = 0;
-    const changedRows = [];
-    const next = products.map((p) => {
-      const patch = patchMap.get(String(p.id));
-      if (patch) {
-        updatedCount++;
-        patchMap.delete(String(p.id));
-        const merged = mergeProductPatch(p, patch);
-        const before = beforeFlat.find((b) => String(b.id) === String(p.id));
-        const changes = detectStockPriceChanges(before || p, merged);
-        if (changes.stock || changes.price) changedRows.push(merged);
-        return merged;
-      }
-      const children = getProductChildrenList(p);
-      if (children.length === 0) return p;
-      let childChanged = false;
-      const nextChildren = children.map((c) => {
-        const childPatch = patchMap.get(String(c.id));
-        if (!childPatch) return c;
-        updatedCount++;
-        patchMap.delete(String(c.id));
-        childChanged = true;
-        const mergedChild = mergeProductPatch(c, childPatch);
-        const beforeChild = beforeFlat.find((b) => String(b.id) === String(c.id));
-        const changes = detectStockPriceChanges(beforeChild || c, mergedChild);
-        if (changes.stock || changes.price) changedRows.push(mergedChild);
-        return mergedChild;
-      });
-      if (!childChanged) return p;
-      const totalStock = nextChildren.reduce(
-        (s2, c) => s2 + (Number(c.stock) || 0),
-        0
-      );
-      return { ...p, children: nextChildren, stock: totalStock };
-    });
-    await upsertProductsToStoreAsync(next.filter((product, index) => product !== products[index]));
-    if (changedRows.length > 0) {
-      const anyStock = changedRows.some((row) => {
-        const before = beforeFlat.find((b) => String(b.id) === String(row.id));
-        return detectStockPriceChanges(before || {}, row).stock;
-      });
-      const anyPrice = changedRows.some((row) => {
-        const before = beforeFlat.find((b) => String(b.id) === String(row.id));
-        return detectStockPriceChanges(before || {}, row).price;
-      });
-      await enqueueShopeeStockPriceSync(changedRows, { syncStock: anyStock, syncPrice: anyPrice });
-    }
-    return res.json({ updated: updatedCount, products: next });
-  });
-  app.delete("/api/products/:id", authMiddleware, async (req, res) => {
-    try {
-      const id = String(req.params.id);
-      const products = await loadProducts();
-      let found = false;
-      const next = [];
-      for (const p of products) {
-        if (p.id === id) {
-          found = true;
-          continue;
-        }
-        const children = getProductChildrenList(p);
-        if (children.length > 0) {
-          const filteredChildren = children.filter((c) => c.id !== id);
-          if (filteredChildren.length !== children.length) {
-            found = true;
-            if (filteredChildren.length === 0) continue;
-            const totalStock = filteredChildren.reduce(
-              (s2, c) => s2 + (Number(c.stock) || 0),
-              0
-            );
-            next.push({ ...p, children: filteredChildren, stock: totalStock });
-            continue;
-          }
-        }
-        next.push(p);
-      }
-      if (!found) {
-        return res.status(404).json({ error: "product_not_found" });
-      }
-      const nextIds = new Set(next.map((product) => String(product.id)));
-      await deleteProductsByIdsFromStore(
-        products.filter((product) => !nextIds.has(String(product.id))).map((product) => String(product.id))
-      );
-      await upsertProductsToStoreAsync(
-        next.filter((product) => products.find((before) => before.id === product.id) !== product)
-      );
-      return res.json({ deleted: id, success: true });
-    } catch (err) {
-      console.error("[Products] DELETE failed:", err);
-      return res.status(500).json({
-        error: "delete_failed",
-        message: err instanceof Error ? err.message : "X\xF3a s\u1EA3n ph\u1EA9m th\u1EA5t b\u1EA1i"
-      });
-    }
-  });
-  app.post("/api/products/clear-all", authMiddleware, async (req, res) => {
-    if (req.body?.confirmation !== "CLEAR_INVENTORY") {
-      return res.status(400).json({ success: false, error: "explicit_confirmation_required" });
-    }
-    const backupFile = await backupInventoryBeforeDestructiveAction("products-clear");
-    await saveProducts([]);
-    writeInventoryAudit("products_cleared", { requestedBy: req.user?.username || null, backupFile });
-    return res.json({ success: true, cleared: true, backupFile, products: [] });
-  });
-  const handleInventoryClearAll = async (req, res) => {
-    try {
-      if (req.body?.confirmation !== "CLEAR_INVENTORY") {
-        return res.status(400).json({
-          success: false,
-          error: "explicit_confirmation_required",
-          message: "X\xF3a kho y\xEAu c\u1EA7u confirmation: CLEAR_INVENTORY."
-        });
-      }
-      const backupFile = await backupInventoryBeforeDestructiveAction("inventory-clear");
-      await saveProducts([]);
-      let listingsCleared = false;
-      let listingsError = null;
-      try {
-        await writeChannelListingsDb([]);
-        listingsCleared = true;
-      } catch (listErr) {
-        listingsError = listErr?.message || String(listErr);
-        console.warn("[Inventory] clear listings failed (Atlas?):", listingsError);
-      }
-      try {
-        writeProductListingsDb([]);
-      } catch {
-      }
-      try {
-        await refreshCache();
-      } catch (cacheErr) {
-        console.warn("[Inventory] refreshCache after clear:", cacheErr?.message || cacheErr);
-      }
-      writeInventoryAudit("inventory_cleared", {
-        requestedBy: req.user?.username || null,
-        backupFile,
-        productsCleared: true,
-        listingsCleared,
-        listingsError,
-        storage: isProductsDiskMode() ? "disk" : "mongo"
-      });
-      console.log(
-        `[Inventory] \u0110\xE3 x\xF3a Kho g\u1ED1c (products=${isProductsDiskMode() ? "disk" : "mongo"}) listingsCleared=${listingsCleared}.`
-      );
-      return res.status(200).json({
-        success: true,
-        message: listingsCleared ? "\u0110\xE3 x\xF3a to\xE0n b\u1ED9 Kho g\u1ED1c v\xE0 d\u1EEF li\u1EC7u Li\xEAn k\u1EBFt (Mapping)." : `\u0110\xE3 x\xF3a Kho g\u1ED1c. Mapping ch\u01B0a x\xF3a \u0111\u01B0\u1EE3c (Mongo \u0111\u1EA7y/l\u1ED7i): ${listingsError || "unknown"}`,
-        backupFile,
-        cleared: true,
-        productsCleared: true,
-        listingsCleared,
-        listingsError,
-        products: [],
-        channelListings: listingsCleared ? [] : void 0
-      });
-    } catch (error) {
-      const errObj = error instanceof Error ? error : new Error(String(error));
-      console.error("[Inventory] clear-all failed:", errObj);
-      return res.status(500).json({
-        success: false,
-        message: errObj.message,
-        error: errObj.toString()
-      });
-    }
-  };
+  app.post("/api/products", authMiddleware, createProduct);
+  app.get("/api/local-inventory", authMiddleware, getLocalInventory);
+  app.post("/api/local-inventory/refresh", authMiddleware, refreshLocalInventory);
+  app.put("/api/products/replace", authMiddleware, replaceProducts);
+  app.patch("/api/products/:id", authMiddleware, patchProduct);
+  app.post("/api/products/inventory-balance", authMiddleware, inventoryBalance);
+  app.post("/api/sync-stock", authMiddleware, syncStock);
+  app.post("/api/products/bulk-save", authMiddleware, bulkSaveProducts);
+  app.delete("/api/products/:id", authMiddleware, deleteProduct);
+  app.post("/api/products/clear-all", authMiddleware, clearAllProducts);
   app.delete("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
   app.post("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-  app.post("/api/products/bulk-update", authMiddleware, async (req, res) => {
-    const { productIds, stock, price } = req.body || {};
-    if (!Array.isArray(productIds) || productIds.length === 0) {
-      return res.status(400).json({ error: "productIds_required" });
-    }
-    if (!stock && !price) {
-      return res.status(400).json({ error: "stock_or_price_required" });
-    }
-    const idSet = new Set(productIds.map(String));
-    const products = await loadProducts();
-    let updatedCount = 0;
-    const changedRows = [];
-    const next = products.map((p) => {
-      const children = getProductChildrenList(p);
-      if (children.length > 0) {
-        let changed = false;
-        const nextChildren = children.map((c) => {
-          if (!idSet.has(c.id)) return c;
-          updatedCount++;
-          changed = true;
-          const merged2 = applyBulkProductUpdate(c, { stock, price });
-          changedRows.push(merged2);
-          return merged2;
-        });
-        if (!changed && !idSet.has(p.id)) return p;
-        if (idSet.has(p.id)) {
-          updatedCount++;
-          const parentPatched = applyBulkProductUpdate(p, { stock, price });
-          changedRows.push(parentPatched);
-          const totalStock2 = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
-          return { ...parentPatched, children: nextChildren, stock: totalStock2 };
-        }
-        const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
-        return { ...p, children: nextChildren, stock: totalStock };
-      }
-      if (!idSet.has(p.id)) return p;
-      updatedCount++;
-      const merged = applyBulkProductUpdate(p, { stock, price });
-      changedRows.push(merged);
-      return merged;
-    });
-    await saveProducts(next);
-    if (changedRows.length > 0) {
-      await enqueueShopeeStockPriceSync(changedRows, {
-        syncStock: !!stock,
-        syncPrice: !!price
-      });
-    }
-    return res.json({ updated: updatedCount, products: next });
-  });
-  app.post("/api/products/bulk-channel-sync", authMiddleware, async (req, res) => {
-    try {
-      const { productIds, channels, shopId, shops } = req.body || {};
-      if (!Array.isArray(productIds) || productIds.length === 0) {
-        return res.status(400).json({ error: "productIds_required" });
-      }
-      const channelList = Array.isArray(channels) && channels.length ? channels : ["shopee"];
-      const idSet = new Set(productIds.map(String));
-      const products = flattenProductsForStockSync(await loadProducts()).filter((p) => idSet.has(p.id));
-      if (products.length === 0) {
-        return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m n\xE0o trong kho." });
-      }
-      const shopList = Array.isArray(shops) ? shops : [];
-      const wooShop = shopList.find((s2) => s2.platform === "woocommerce" && s2.connected !== false);
-      const shopeeShopId = resolveShopeeTokenShopId(shopId || shopList.find((s2) => s2.platform === "shopee")?.shopId);
-      let shopeeToken = null;
-      if (channelList.includes("shopee")) {
-        if (!shopeeShopId) {
-          return res.status(400).json({
-            error: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n.",
-            logs: products.flatMap((p) => [
-              {
-                productId: p.id,
-                sku: p.sku,
-                channel: "shopee",
-                action: "auth",
-                success: false,
-                message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n"
-              }
-            ])
-          });
-        }
-        shopeeToken = await getValidShopeeAccessToken(shopeeShopId);
-        if (!shopeeToken) {
-          return res.status(400).json({
-            error: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopeeShopId}.`,
-            logs: products.flatMap((p) => [
-              {
-                productId: p.id,
-                sku: p.sku,
-                channel: "shopee",
-                action: "auth",
-                success: false,
-                message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopeeShopId}`
-              }
-            ])
-          });
-        }
-      }
-      const logs = [];
-      for (const product of products) {
-        for (const channel of channelList) {
-          if (channel === "shopee" && shopeeShopId && shopeeToken) {
-            const lines = await syncProductToShopee(product, shopeeShopId, shopeeToken);
-            logs.push(...lines);
-            await new Promise((r2) => setTimeout(r2, 150));
-          } else if (channel === "woocommerce") {
-            const lines = await syncProductToWoo(product, wooShop);
-            logs.push(...lines);
-            await new Promise((r2) => setTimeout(r2, 100));
-          } else if (channel === "tiktok") {
-            const lines = await syncProductToTikTok(product);
-            logs.push(...lines);
-          }
-        }
-      }
-      const successCount = logs.filter((l) => l.success).length;
-      const failCount = logs.filter((l) => !l.success).length;
-      const syncedProductIds = new Set(
-        logs.filter((l) => l.success).map((l) => l.productId)
-      );
-      if (syncedProductIds.size > 0) {
-        const allProducts = await loadProducts();
-        const now = (/* @__PURE__ */ new Date()).toISOString();
-        const next = allProducts.map(
-          (p) => syncedProductIds.has(p.id) ? { ...p, lastSynced: now } : p
-        );
-        await saveProducts(next);
-      }
-      return res.status(failCount === 0 ? 200 : 400).json({
-        success: failCount === 0,
-        message: failCount === 0 ? "\u0110\u1ED3ng b\u1ED9 th\xE0nh c\xF4ng" : `L\u1ED7i t\u1EEB Shopee: ${logs.filter((l) => !l.success).map((l) => l.message).filter(Boolean).join(" | ") || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1/t\u1ED3n kho"}`,
-        error: failCount === 0 ? void 0 : `L\u1ED7i t\u1EEB Shopee: ${logs.filter((l) => !l.success).map((l) => l.message).filter(Boolean).join(" | ") || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt gi\xE1/t\u1ED3n kho"}`,
-        logs,
-        successCount,
-        failCount,
-        total: logs.length,
-        products: await loadProducts()
-      });
-    } catch (error) {
-      console.error("[Bulk Channel Sync]", error);
-      return res.status(500).json({
-        error: error?.message || "\u0110\u1ED3ng b\u1ED9 \u0111a k\xEAnh th\u1EA5t b\u1EA1i",
-        logs: []
-      });
-    }
-  });
+  app.post("/api/products/bulk-update", authMiddleware, bulkUpdateProducts);
+  app.post("/api/products/bulk-channel-sync", authMiddleware, bulkChannelSync);
+  app.use("/api/products", authMiddleware, productsRoutes);
   app.get("/api/suppliers", authMiddleware, listSuppliers);
   app.post("/api/suppliers", authMiddleware, createSupplier);
   app.put("/api/suppliers/:id", authMiddleware, updateSupplier);
@@ -110966,134 +112429,96 @@ async function startServer() {
   });
   app.get("/api/dashboard", authMiddleware, getDashboard);
   app.use("/api/dashboard", authMiddleware, dashboardRoutes);
-  let ordersRefreshInFlight = null;
-  let ordersRefreshCache = null;
-  async function readOrdersForRefresh(limit) {
-    const now = Date.now();
-    if (ordersRefreshCache && ordersRefreshCache.expiresAt > now) {
-      return limit && limit > 0 ? ordersRefreshCache.orders.slice(0, limit) : ordersRefreshCache.orders;
-    }
-    if (limit && limit > 0) {
-      const orders = await loadOrdersFromStore({ limit });
-      return orders.filter((order) => Boolean(order?.orderSn || order?.id));
-    }
-    if (!ordersRefreshInFlight) {
-      ordersRefreshInFlight = loadOrdersFromStore().then((orders) => {
-        const validOrders = orders.filter((order) => Boolean(order?.orderSn || order?.id));
-        ordersRefreshCache = {
-          orders: validOrders,
-          expiresAt: Date.now() + 1500
-        };
-        return validOrders;
-      }).finally(() => {
-        ordersRefreshInFlight = null;
-      });
-    }
-    return ordersRefreshInFlight;
-  }
-  app.get("/api/orders/refresh", authMiddleware, async (req, res) => {
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    try {
-      if (!isMongoReady()) {
-        return res.status(200).json({
-          success: false,
-          data: [],
-          total: 0,
-          error: "mongodb_not_ready"
-        });
-      }
-      const rawLimit = Number(req.query.limit);
-      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : void 0;
-      const rawOrders = await readOrdersForRefresh(limit);
-      let mergedOrders = rawOrders;
-      try {
-        mergedOrders = await mergeDonHoanHuyIntoOrders(rawOrders);
-      } catch (mergeErr) {
-        console.warn(
-          "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
-          mergeErr?.message || mergeErr
-        );
-      }
-      let products = [];
-      if (!limit) {
-        try {
-          products = await withLocalDbTimeout(
-            loadProductsForOrders(mergedOrders),
-            2500,
-            "orders_refresh_catalog"
-          );
-        } catch (catalogErr) {
-          console.warn(
-            "[GET /api/orders/refresh] Catalog enrich skipped:",
-            catalogErr instanceof Error ? catalogErr.message : catalogErr
-          );
-        }
-      }
-      const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(mergedOrders, products));
-      console.log(
-        `[FRONTEND FETCHED] GET /api/orders/refresh${limit ? `?limit=${limit}` : ""} \u2014 tr\u1EA3 v\u1EC1 ${orders.length} \u0111\u01A1n t\u1EEB MongoDB.`
-      );
-      return res.status(200).json({ success: true, data: orders, total: orders.length });
-    } catch (error) {
-      console.error(
-        "[GET /api/orders/refresh] Mongo query failed:",
-        error?.stack || error?.message || error
-      );
-      return res.status(200).json({
-        success: false,
-        data: [],
-        total: 0,
-        error: "orders_refresh_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 t\u1EA3i danh s\xE1ch \u0111\u01A1n h\xE0ng t\u1EEB MongoDB."
-      });
-    }
+  initOrdersService({
+    repairMisassignedTracking,
+    repairFalseProcessedReadyToShip,
+    isValidOrder,
+    matchesHandedOverCarrierTabOrder,
+    matchesReceivedCancelReturnTabOrder,
+    resolveLocalStatusUpdatedAt,
+    isShopeeInternalTrackingCode: isShopeeInternalTrackingCode2,
+    hasLeftHandedOverCarrierTab,
+    resolveOrderHandoverFlag,
+    isEligibleForHandOverShared: isEligibleForHandOverToCarrier,
+    matchesProcessedPickupTabShared: matchesProcessedPickupTab,
+    hasOrderTrackingNoShared: hasOrderTrackingNo,
+    getHandOverIneligibleReasonShared: getHandOverIneligibleReason,
+    applyHandedOverWrite,
+    HANDED_OVER_SOURCE
   });
-  app.get("/api/orders/query", authMiddleware, async (req, res) => {
-    try {
-      if (!isMongoReady()) {
-        return res.status(503).json({ success: false, error: "mongodb_not_ready", data: [] });
-      }
-      const page = await queryOrdersPageFromStore({
-        page: Number(req.query.page),
-        pageSize: Number(req.query.page_size ?? req.query.pageSize),
-        tab: String(req.query.tab || ""),
-        shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
-        carrier: String(req.query.carrier || ""),
-        query: String(req.query.q ?? req.query.query ?? "")
-      });
-      const products = await loadProductsForOrders(page.rows);
-      const rows = enrichOrdersWithShopNames(enrichOrdersFromCatalog(page.rows, products));
-      return res.json({
-        success: true,
-        data: rows,
-        total: page.total,
-        page: page.page,
-        page_size: page.pageSize,
-        has_more: page.hasMore,
-        counts: page.counts
-      });
-    } catch (error) {
-      console.error("[Orders Query] failed:", error?.stack || error?.message || error);
-      return res.status(500).json({
-        success: false,
-        error: "orders_query_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 truy v\u1EA5n \u0111\u01A1n h\xE0ng."
-      });
+  const buildCarrierLogisticsPayload = (carrier, customer, addr, extras) => {
+    if (carrier === "ghn") {
+      return {
+        provider: "ghn",
+        to_name: customer.name,
+        to_phone: customer.phone,
+        to_address: addr.street,
+        to_ward_code: addr.wardCode,
+        to_district_id: Number(addr.districtCode),
+        to_province_id: Number(addr.provinceCode),
+        to_ward_name: addr.ward,
+        to_district_name: addr.district,
+        to_province_name: addr.province,
+        weight: extras.weight,
+        note: extras.note,
+        cod_amount: extras.codAmount
+      };
     }
-  });
-  app.get("/api/orders/:orderSn/events", authMiddleware, async (req, res) => {
-    try {
-      const events = await loadOrderEvents(String(req.params.orderSn || ""), Number(req.query.limit) || 50);
-      return res.json({ success: true, data: events });
-    } catch (error) {
-      return res.status(500).json({ success: false, error: "order_events_failed", message: error?.message });
+    if (carrier === "spx") {
+      return {
+        provider: "spx",
+        deliver_info: {
+          deliver_name: customer.name,
+          deliver_phone: customer.phone,
+          deliver_detail_address: addr.street,
+          deliver_ward: addr.ward,
+          deliver_district: addr.district,
+          deliver_province: addr.province,
+          deliver_ward_id: addr.wardCode,
+          deliver_district_id: addr.districtCode,
+          deliver_province_id: addr.provinceCode
+        },
+        parcel_weight: extras.weight,
+        remark: extras.note,
+        cod_amount: extras.codAmount
+      };
     }
+    return null;
+  };
+  const generateCarrierTracking = (carrier) => {
+    if (carrier === "ghn") return `GHN-VN-${Math.floor(1e8 + Math.random() * 9e8)}`;
+    if (carrier === "spx") return `SPX-VN-${Math.floor(1e8 + Math.random() * 9e8)}`;
+    return `DIRECT-${Math.floor(1e5 + Math.random() * 9e5)}`;
+  };
+  initOrdersController({
+    withLocalDbTimeout,
+    loadProductsForOrders,
+    enrichOrdersFromCatalog,
+    enrichOrdersWithShopNames,
+    isValidOrder,
+    matchesProcessedPickupTabShared: matchesProcessedPickupTab,
+    matchesUnprocessedPickupTabShared: matchesUnprocessedPickupTab,
+    matchesShippingTabShared: matchesShippingTab,
+    matchesReceivedCancelReturnTabOrder,
+    cleanupExpiredLabelFiles,
+    wipeLegacyPublicPrints,
+    resolveOrderFromShopeeByScanCode,
+    enrichMissingShopeeTracking,
+    repairMissingShopeeTrackingInOrders,
+    repairMisassignedTracking,
+    buildHandedOverWritePatch,
+    buildClearHandedOverPatch,
+    HANDED_OVER_SOURCE,
+    applyShopeeOrderFinanceFields,
+    sumOrderCustomCosts,
+    healInvalidHandedOverFlags,
+    buildCarrierLogisticsPayload,
+    generateCarrierTracking
   });
-  app.get("/api/sync-jobs/:jobId", authMiddleware, async (req, res) => {
-    const job = await getSyncJob(String(req.params.jobId || ""));
-    if (!job) return res.status(404).json({ success: false, error: "sync_job_not_found" });
-    return res.json({ success: true, data: job });
-  });
+  app.get("/api/orders/refresh", authMiddleware, refreshOrders);
+  app.get("/api/orders/query", authMiddleware, queryOrders);
+  app.get("/api/orders/:orderSn/events", authMiddleware, getOrderEvents);
+  app.get("/api/sync-jobs/:jobId", authMiddleware, getSyncJobById);
   app.post("/api/orders/pull", authMiddleware, async (req, res) => {
     let jobId = "";
     const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
@@ -111113,7 +112538,7 @@ async function startServer() {
         reconcileActive: true,
         shopIds: shopIds?.length ? shopIds : void 0
       });
-      ordersRefreshCache = null;
+      invalidateOrdersRefreshCache();
       await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
         pulled: result.pulled,
         added: result.added,
@@ -111165,7 +112590,7 @@ async function startServer() {
         reconcileActive: true,
         shopIds: shopIds?.length ? shopIds : void 0
       });
-      ordersRefreshCache = null;
+      invalidateOrdersRefreshCache();
       await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
         pulled: result.pulled,
         added: result.added,
@@ -111197,836 +112622,25 @@ async function startServer() {
       });
     }
   });
-  app.get("/api/orders", authMiddleware, async (req, res) => {
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-    let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
-    rawOrders = rawOrders.filter(isValidOrder);
-    const unprocessedPool = rawOrders.filter((o) => matchesUnprocessedPickupTab(o));
-    const processedPool = rawOrders.filter((o) => matchesProcessedPickupTab(o));
-    const readyToShipRaw = rawOrders.filter((o) => {
-      const raw = String(o?.shopee_order_status || "").toUpperCase();
-      return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
-    });
-    console.log(
-      `[GET /api/orders] tab-diag total=${rawOrders.length} READY_TO_SHIP|RETRY_SHIP(raw)=${readyToShipRaw.length} unprocessedTab=${unprocessedPool.length} processedTab=${processedPool.length} sampleUnprocessed=${JSON.stringify(
-        unprocessedPool.slice(0, 3).map((o) => ({
-          sn: o.orderSn,
-          status: o.status,
-          raw: o.shopee_order_status,
-          tn: o.trackingNumber || o.tracking_no || null,
-          prepared: o.isPrepared,
-          fulfillment: o.fulfillment_type || o.ship_method || null
-        }))
-      )}`
-    );
-    const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
-    if (tab === "processed" || tab === "da-xu-ly" || tab === "processed_pickup") {
-      rawOrders = rawOrders.filter((o) => matchesProcessedPickupTab(o));
-      console.log(
-        `[GET /api/orders] query.tab=${tab} filter=matchesProcessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n`
-      );
-    } else if (tab === "unprocessed" || tab === "chua-xu-ly" || tab === "ready_to_ship" || tab === "cho-lay-hang") {
-      rawOrders = rawOrders.filter((o) => matchesUnprocessedPickupTab(o));
-      console.log(
-        `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound, !isProcessedCondition }`
-      );
-    } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
-      rawOrders = rawOrders.filter((o) => matchesShippingTab(o));
-    } else if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
-      try {
-        rawOrders = await loadDonHoanHuyAsOrders(
-          Number.isFinite(Number(req.query.limit)) ? Math.min(Math.floor(Number(req.query.limit)), 5e3) : 2e3
-        );
-        console.log(
-          `[GET /api/orders] query.tab=${tab} source=don_hoan_huy \u2192 ${rawOrders.length} \u0111\u01A1n`
-        );
-      } catch (dhhErr) {
-        console.error("[GET /api/orders] don_hoan_huy load failed:", dhhErr);
-        rawOrders = rawOrders.filter((o) => matchesReceivedCancelReturnTabOrder(o));
-      }
-    } else if (tab === "pending_confirm" || tab === "pending_verification" || tab === "cho-xac-nhan" || tab === "pending_shopee_check" || tab === "dang_kiem_tra_shopee" || tab === "shopee_check") {
-      rawOrders = rawOrders.filter(
-        (o) => {
-          const raw = String(o.shopee_order_status || "").toUpperCase();
-          if (raw === "CANCELLED" || raw === "IN_CANCEL" || o.status === "cancelled") {
-            return false;
-          }
-          return o.status === "pending_confirm" || o.status === "pending_verification" || ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw);
-        }
-      );
-    }
-    const rawLimit = Number(req.query.limit);
-    if (Number.isFinite(rawLimit) && rawLimit > 0) {
-      rawOrders = rawOrders.slice(0, Math.min(Math.floor(rawLimit), 5e3));
-    }
-    const products = await loadProductsForOrders(rawOrders);
-    const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
-    console.log(
-      `[GET /api/orders] READ-ONLY return length=${orders.length} tab=${tab || "(all)"} mongoReady=${isMongoReady()}`
-    );
-    return res.json(orders);
-  });
-  app.post("/api/orders/cleanup-handed-over", authMiddleware, async (_req, res) => {
-    try {
-      for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
-        try {
-          const p = import_path11.default.join(APP_ROOT7, "data", name);
-          if (import_fs12.default.existsSync(p)) import_fs12.default.unlinkSync(p);
-        } catch {
-        }
-      }
-      const result = await purgeHandedOverGarbageOrdersOnce({ force: true });
-      console.log(`Deleted count: ${result.removed}`);
-      return res.json({
-        success: true,
-        removed: result.removed,
-        orderSns: result.sns,
-        message: result.removed > 0 ? `\u0110\xE3 x\xF3a ${result.removed} \u0111\u01A1n k\u1EB9t tab \u0110\xC3 GIAO CHO \u0110VVC.` : "Kh\xF4ng c\xF2n \u0111\u01A1n HANDED_OVER \u0111\u1EC3 x\xF3a."
-      });
-    } catch (error) {
-      console.error("[Cleanup HandedOver] API error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "cleanup_failed"
-      });
-    }
-  });
-  app.post("/api/orders/cleanup-closed-retention", authMiddleware, async (req, res) => {
-    try {
-      const dryRun = req.body?.dry_run === true || req.body?.dryRun === true || String(req.query?.dry_run || "") === "1";
-      const cancelReturnDays = Number(req.body?.cancel_return_days ?? req.body?.cancelReturnDays);
-      const closedDays = Number(req.body?.closed_days ?? req.body?.closedDays);
-      const result = await purgeClosedOrdersByRetention({
-        dryRun,
-        cancelReturnDays: Number.isFinite(cancelReturnDays) && cancelReturnDays > 0 ? cancelReturnDays : void 0,
-        closedDays: Number.isFinite(closedDays) && closedDays > 0 ? closedDays : void 0
-      });
-      return res.json({
-        success: true,
-        ...result,
-        orderSns: result.sns.slice(0, 100)
-      });
-    } catch (error) {
-      console.error("[Orders Retention] API error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "cleanup_closed_retention_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 d\u1ECDn \u0111\u01A1n \u0111\xE3 \u0111\xF3ng."
-      });
-    }
-  });
-  app.post("/api/mongo/cleanup-temp", authMiddleware, async (req, res) => {
-    try {
-      if (!isMongoReady()) {
-        return res.status(503).json({
-          success: false,
-          error: "mongodb_not_ready",
-          message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng."
-        });
-      }
-      const eventDays = Number(req.body?.order_event_days ?? req.body?.orderEventDays ?? 14);
-      const jobDays = Number(req.body?.sync_job_days ?? req.body?.syncJobDays ?? 14);
-      const ensureTtl = req.body?.ensure_ttl !== false && req.body?.ensureTtl !== false;
-      const result = await purgeMongoTempCollections({
-        orderEventDays: Number.isFinite(eventDays) && eventDays > 0 ? eventDays : 14,
-        syncJobDays: Number.isFinite(jobDays) && jobDays > 0 ? jobDays : 14,
-        ensureTtl
-      });
-      return res.json({
-        success: true,
-        ...result,
-        message: result.orderEventsDeleted > 0 || result.syncJobsDeleted > 0 ? `\u0110\xE3 x\xF3a ${result.orderEventsDeleted} order_events + ${result.syncJobsDeleted} sync_jobs.` : "Kh\xF4ng c\xF2n b\u1EA3n ghi t\u1EA1m qu\xE1 h\u1EA1n \u0111\u1EC3 x\xF3a (TTL v\u1EABn gi\u1EEF 14 ng\xE0y)."
-      });
-    } catch (error) {
-      console.error("[Mongo Temp Cleanup] API error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "mongo_temp_cleanup_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 d\u1ECDn order_events/sync_jobs."
-      });
-    }
-  });
-  app.post("/api/mongo/ensure-ttl", authMiddleware, async (_req, res) => {
-    try {
-      if (!isMongoReady()) {
-        return res.status(503).json({ success: false, error: "mongodb_not_ready" });
-      }
-      const ttl = await ensureRetentionTtlIndexes();
-      return res.json({ success: true, ...ttl });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "ensure_ttl_failed"
-      });
-    }
-  });
-  app.post("/api/orders/cleanup-label-pdfs", authMiddleware, async (_req, res) => {
-    try {
-      const deleted = cleanupExpiredLabelFiles();
-      wipeLegacyPublicPrints();
-      return res.json({
-        success: true,
-        deleted,
-        ttlHours: 24,
-        storage: "disk",
-        mongo: false,
-        message: `\u0110\xE3 d\u1ECDn PDF v\u1EADn \u0111\u01A1n >24h tr\xEAn \u0111\u0129a (kh\xF4ng l\u01B0u Mongo). X\xF3a ${deleted} m\u1EE5c.`
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "cleanup_label_pdfs_failed"
-      });
-    }
-  });
-  app.post("/api/orders/cleanup-processed-pickup", authMiddleware, async (_req, res) => {
-    try {
-      const orders = loadOrders();
-      const garbage = orders.filter((o) => matchesProcessedPickupTab(o));
-      const kept = orders.filter((o) => !matchesProcessedPickupTab(o));
-      const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
-      const ids = garbage.map((o) => String(o.id || "").trim()).filter(Boolean);
-      if (garbage.length > 0) {
-        saveOrders(kept);
-      }
-      let mongoDeleted = 0;
-      if (isMongoReady() && (ids.length || sns.length)) {
-        try {
-          mongoDeleted = await deleteOrdersFromStore([...ids, ...sns]);
-        } catch (err) {
-          console.warn("[Cleanup Processed Pickup] Mongo:", err?.message || err);
-        }
-      }
-      console.log(`Deleted count (JSON): ${garbage.length}`);
-      console.log(`Deleted count (Mongo): ${mongoDeleted}`);
-      console.log(`Deleted count: ${garbage.length}`);
-      return res.json({
-        success: true,
-        removed: garbage.length,
-        mongoDeleted,
-        orderSns: sns,
-        message: garbage.length > 0 ? `\u0110\xE3 x\xF3a ${garbage.length} \u0111\u01A1n tab Ch\u1EDD l\u1EA5y h\xE0ng (\u0110\xE3 x\u1EED l\xFD).` : "Kh\xF4ng c\xF2n \u0111\u01A1n \u0110\xE3 x\u1EED l\xFD \u0111\u1EC3 x\xF3a."
-      });
-    } catch (error) {
-      console.error("[Cleanup Processed Pickup] API error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "cleanup_failed"
-      });
-    }
-  });
-  async function handOverOrderToCarrierByIndex(orders, index, opts) {
-    if (index < 0) {
-      return { ok: false, status: 404, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." };
-    }
-    const order = orders[index];
-    const hint = String(opts?.trackingHint || "").trim();
-    if (hint && !isShopeeInternalTrackingCode2(hint)) {
-      if (!order.trackingNumber) order.trackingNumber = hint;
-      if (!order.tracking_no) order.tracking_no = hint;
-    }
-    if (hasLeftHandedOverCarrierTab(order)) {
-      return {
-        ok: false,
-        status: 400,
-        error: `\u0110\u01A1n ${order?.orderSn || order?.id} \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y \u2014 kh\xF4ng ghi \u0110\xE3 giao \u0110VVC.`
-      };
-    }
-    if (resolveOrderHandoverFlag(order)) {
-      return { ok: true, order, changed: false };
-    }
-    const eligible = isEligibleForHandOverToCarrier(order) || matchesProcessedPickupTab(order) && hasOrderTrackingNo(order);
-    if (!eligible) {
-      const detail = getHandOverIneligibleReason(order) || `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}, tn=${order?.trackingNumber || order?.tracking_no || "-"}`;
-      console.warn(
-        `[Orders Handover] REJECT ${order?.orderSn}: ${detail}`
-      );
-      return {
-        ok: false,
-        status: 400,
-        error: `\u0110\u01A1n ${order?.orderSn || order?.id} kh\xF4ng \u0111\u1EE7 \u0111i\u1EC1u ki\u1EC7n b\xE0n giao \u0110VVC: ${detail}`
-      };
-    }
-    const source = opts?.source === "qr_scan" ? HANDED_OVER_SOURCE.QR_SCAN : HANDED_OVER_SOURCE.MANUAL_BUTTON;
-    const updated = applyHandedOverWrite({ ...order }, void 0, source);
-    orders[index] = updated;
-    if (opts?.persist !== false) {
-      saveOrders(orders);
-      try {
-        if (isMongoReady()) {
-          await markOrderHandedOverInStore(String(updated.orderSn || ""), {
-            source,
-            handedOverAt: String(updated.handedOverAt || ""),
-            shopId: updated.shopId != null ? String(updated.shopId) : void 0
-          });
-        }
-      } catch (err) {
-        console.error("[Orders Handover] Mongo markOrderHandedOver failed:", err?.message || err);
-      }
-    }
-    console.log(
-      `[Orders Handover] \u0111\u01A1n ${updated.orderSn} \u2192 is_handed_over=true source=${source} tn=${updated.trackingNumber || updated.tracking_no || "-"}`
-    );
-    return { ok: true, order: updated, changed: true };
-  }
-  function normalizeScanLookupKey(raw) {
-    return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
-  }
-  async function buildScanLookupKeys(raw) {
-    const text = String(raw || "").trim();
-    if (!text) return [];
-    const keys = /* @__PURE__ */ new Set();
-    const add = (v) => {
-      const normalized = normalizeScanLookupKey(String(v || ""));
-      if (normalized.length >= 4) keys.add(normalized);
-    };
-    add(text);
-    add(text.replace(/^#+/, ""));
-    if (/^https?:\/\//i.test(text)) {
-      try {
-        const url = new URL(text);
-        [
-          "tracking",
-          "tracking_no",
-          "tracking_number",
-          "tn",
-          "order_sn",
-          "ordersn",
-          "order",
-          "order_id",
-          "package_number",
-          "code",
-          "sn"
-        ].forEach((p) => {
-          const v = url.searchParams.get(p);
-          if (v) add(v);
-        });
-        url.pathname.split("/").filter(Boolean).forEach(add);
-      } catch {
-      }
-    }
-    if (text.startsWith("{") || text.startsWith("[")) {
-      try {
-        const parsed = JSON.parse(text);
-        [
-          "tracking_number",
-          "trackingNumber",
-          "tracking_no",
-          "trackingNo",
-          "order_sn",
-          "orderSn",
-          "package_number",
-          "packageNumber"
-        ].forEach((k) => {
-          if (parsed?.[k]) add(parsed[k]);
-        });
-      } catch {
-      }
-    }
-    return [...keys];
-  }
-  function flexibleScanCodeMatch(scanKey, fieldKey) {
-    if (!scanKey || !fieldKey) return false;
-    if (scanKey === fieldKey) return true;
-    if (scanKey.length >= 10 && fieldKey.length >= 10) {
-      return fieldKey.endsWith(scanKey) || scanKey.endsWith(fieldKey);
-    }
-    return false;
-  }
-  async function findOrderByScanLookup(orders, raw) {
-    const scanKeys = await buildScanLookupKeys(raw);
-    if (!scanKeys.length) return null;
-    const idx = getOrderLookupIndex(orders);
-    for (const sk of scanKeys) {
-      for (const map of [
-        idx.byTracking,
-        idx.byReturnTracking,
-        idx.byInternal,
-        idx.byOrderSn,
-        idx.byPackage,
-        idx.byId
-      ]) {
-        const hit = map.get(sk);
-        if (hit !== void 0) return orders[hit];
-      }
-    }
-    const trackingLike = /^SPX(VN)?|^GHN|^GHTK|^JNT|^JT|^NINJA|^VTP|^VNPOST/.test(
-      normalizeScanLookupKey(raw)
-    );
-    if (trackingLike) {
-      for (const order of orders) {
-        const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
-        const returnTrackingKey = order.return_tracking_no ? normalizeScanLookupKey(order.return_tracking_no) : "";
-        const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
-        if (trackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, trackingKey))) return order;
-        if (returnTrackingKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, returnTrackingKey))) return order;
-        if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey))) return order;
-      }
-    }
-    const internalLike = /^0FG/.test(normalizeScanLookupKey(raw));
-    if (internalLike) {
-      for (const order of orders) {
-        const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
-        if (internalKey && scanKeys.some((sk) => flexibleScanCodeMatch(sk, internalKey))) return order;
-      }
-    }
-    for (const order of orders) {
-      const orderSnKey = normalizeScanLookupKey(order.orderSn);
-      const trackingKey = order.trackingNumber ? normalizeScanLookupKey(order.trackingNumber) : "";
-      const returnTrackingKey = order.return_tracking_no ? normalizeScanLookupKey(order.return_tracking_no) : "";
-      const internalKey = order.internalTrackingCode ? normalizeScanLookupKey(order.internalTrackingCode) : "";
-      const packageKey = order.packageNumber ? normalizeScanLookupKey(order.packageNumber) : "";
-      const idKey = normalizeScanLookupKey(String(order.id || "").replace(/^shopee-/i, ""));
-      const matched = scanKeys.some(
-        (sk) => flexibleScanCodeMatch(sk, orderSnKey) || flexibleScanCodeMatch(sk, trackingKey) || flexibleScanCodeMatch(sk, returnTrackingKey) || flexibleScanCodeMatch(sk, internalKey) || flexibleScanCodeMatch(sk, packageKey) || flexibleScanCodeMatch(sk, idKey)
-      );
-      if (matched) return order;
-    }
-    return null;
-  }
-  app.get("/api/orders/lookup", authMiddleware, async (req, res) => {
-    const code = String(req.query.code || req.query.q || "").trim();
-    if (!code) {
-      return res.status(400).json({ error: "Thi\u1EBFu m\xE3 qu\xE9t (code)." });
-    }
-    let foundRaw = null;
-    try {
-      foundRaw = await findOrderByScanCodeInStore(code);
-      if (foundRaw && !isValidOrder(foundRaw)) foundRaw = null;
-      if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
-    } catch (err) {
-      console.warn("[Orders Lookup] mongo failed:", err?.message || err);
-    }
-    if (!foundRaw) {
-      try {
-        const { orders } = await loadOrdersForApi({ readOnly: true });
-        const hit = await findOrderByScanLookup(
-          (Array.isArray(orders) ? orders : []).filter(isValidOrder),
-          code
-        );
-        if (hit && isValidOrder(hit)) {
-          foundRaw = mirrorTrackingFieldsForRead(hit);
-        }
-      } catch (err) {
-        console.warn("[Orders Lookup] fallback failed:", err?.message || err);
-      }
-    }
-    if (!foundRaw) {
-      try {
-        const fromShopee = await resolveOrderFromShopeeByScanCode(code);
-        if (fromShopee) {
-          foundRaw = mirrorTrackingFieldsForRead(fromShopee);
-          ordersRefreshCache = null;
-        }
-      } catch (err) {
-        console.warn("[Orders Lookup] Shopee on-demand failed:", err?.message || err);
-      }
-    }
-    if (!foundRaw) {
-      return res.status(404).json({
-        error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng kh\u1EDBp m\xE3 qu\xE9t.",
-        scannedCode: code
-      });
-    }
-    const products = await loadProductsForOrders([foundRaw]);
-    const found = enrichOrdersFromCatalog([foundRaw], products)[0];
-    return res.json(found);
-  });
-  app.post("/api/orders/cleanup-mock", authMiddleware, async (req, res) => {
-    const orders = loadOrders();
-    const validOrders = orders.filter(isValidOrder);
-    const removedOrders = orders.filter((o) => !isValidOrder(o));
-    saveOrders(validOrders);
-    console.log(
-      `[Orders Cleanup] \u0110\xE3 x\xF3a ${removedOrders.length} \u0111\u01A1n h\xE0ng l\u1ED7i/mock (0\u0111 v\xE0 kh\xF4ng c\xF3 s\u1EA3n ph\u1EA9m). C\xF2n l\u1EA1i ${validOrders.length} \u0111\u01A1n th\u1EAD t.`,
-      removedOrders.map((o) => o.orderSn || o.id)
-    );
-    return res.json({
-      removed: removedOrders.length,
-      remaining: validOrders.length,
-      removedOrderSns: removedOrders.map((o) => o.orderSn || o.id)
-    });
-  });
-  app.post("/api/orders/hydrate-tracking", authMiddleware, async (_req, res) => {
-    try {
-      const result = await hydrateTrackingFromMongoToJson();
-      console.log(
-        `[Orders] hydrate-tracking mirrored=${result.mirrored} filled=${result.filled}/${result.total}`
-      );
-      return res.json({ success: true, ...result });
-    } catch (err) {
-      console.error("[Orders] hydrate-tracking failed:", err?.message || err);
-      return res.status(500).json({
-        success: false,
-        error: err?.message || String(err)
-      });
-    }
-  });
-  app.post("/api/orders/enrich-tracking", authMiddleware, async (req, res) => {
-    try {
-      const maxRaw = Number(req.body?.max ?? req.query?.max ?? 100);
-      const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 100;
-      let enrichResult = null;
-      try {
-        enrichResult = await enrichMissingShopeeTracking();
-      } catch (enrichErr) {
-        console.warn(
-          "[Orders] enrich-tracking enrichMissingShopeeTracking:",
-          enrichErr?.message || enrichErr
-        );
-      }
-      let repaired = 0;
-      try {
-        const { orders } = await loadOrdersForApi();
-        repaired = await repairMissingShopeeTrackingInOrders(orders, {
-          max,
-          retries: 2
-        });
-      } catch (repairErr) {
-        console.warn(
-          "[Orders] enrich-tracking repairMissing:",
-          repairErr?.message || repairErr
-        );
-      }
-      ordersRefreshCache = null;
-      const filled = Number(enrichResult?.filled || 0) + Number(enrichResult?.returnFilled || 0) + repaired;
-      console.log(
-        `[Orders] enrich-tracking filled=${filled} scheduler=${JSON.stringify(enrichResult)} repaired=${repaired}`
-      );
-      return res.json({
-        success: true,
-        filled,
-        repaired,
-        scheduler: enrichResult || void 0,
-        message: filled > 0 ? `\u0110\xE3 b\xF9 ${filled} m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee.` : "Kh\xF4ng c\xF3 \u0111\u01A1n n\xE0o c\u1EA7n b\xF9 m\xE3 (ho\u1EB7c Shopee ch\u01B0a tr\u1EA3 tracking)."
-      });
-    } catch (err) {
-      console.error("[Orders] enrich-tracking failed:", err?.message || err);
-      return res.status(500).json({
-        success: false,
-        error: err?.message || String(err),
-        message: "Kh\xF4ng th\u1EC3 b\xF9 m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee."
-      });
-    }
-  });
-  app.patch("/api/orders/:id", authMiddleware, async (req, res) => {
-    const orders = loadOrders();
-    const key = String(req.params.id || "").trim();
-    const index = orders.findIndex(
-      (o) => o.id === key || o.orderSn === key || o.id === `shopee-${key}` || String(o.orderSn || "") === key.replace(/^shopee-/i, "")
-    );
-    if (index === -1) {
-      return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
-    }
-    const patch = { ...req.body };
-    delete patch.id;
-    const patchTn = String(patch.tracking_no || patch.trackingNumber || "").trim();
-    if (patchTn && !/^0FG/i.test(patchTn)) {
-      patch.tracking_no = patchTn;
-      patch.trackingNumber = patchTn;
-    }
-    const localPatch = String(patch.local_status || patch.localStatus || "").toUpperCase();
-    const wantHanded = patch.is_handed_over === true || patch.isHandedOverToCarrier === true || patch.is_handed_over_to_carrier === true || localPatch === "HANDED_OVER";
-    if (wantHanded) {
-      Object.assign(patch, buildHandedOverWritePatch(
-        void 0,
-        HANDED_OVER_SOURCE.MANUAL_BUTTON
-      ));
-    }
-    const wantLocalStored = localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED" || localPatch === "NONE";
-    if (wantLocalStored) {
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      patch.local_status = localPatch;
-      patch.localStatus = localPatch;
-      patch.internal_status = localPatch;
-      patch.localStatusAt = patch.localStatusAt || nowIso;
-      patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
-      if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
-        patch.is_local_return_archived = false;
-        Object.assign(patch, buildClearHandedOverPatch(nowIso));
-        patch.local_status = localPatch;
-        patch.localStatus = localPatch;
-        patch.internal_status = localPatch;
-        patch.localStatusAt = nowIso;
-        patch.local_status_updated_at = nowIso;
-        patch.is_local_return_archived = false;
-      }
-      if (localPatch === "RETURN_RECEIVED") {
-        patch.status = "return_received";
-      }
-    }
-    orders[index] = { ...orders[index], ...patch, id: orders[index].id };
-    {
-      const tn = String(
-        orders[index].tracking_no || orders[index].trackingNumber || ""
-      ).trim();
-      if (tn && !/^0FG/i.test(tn)) {
-        orders[index].tracking_no = tn;
-        orders[index].trackingNumber = tn;
-      }
-      repairMisassignedTracking(orders[index]);
-    }
-    if ("custom_costs" in patch || "custom_cost_items" in patch) {
-      applyShopeeOrderFinanceFields(orders[index], {
-        totalAmount: orders[index].totalAmount,
-        itemAmount: orders[index].item_amount,
-        withholdingCitTax: orders[index].withholdingCitTax,
-        escrowAmount: orders[index].escrowAmount,
-        shopeeFees: orders[index].shopee_fees,
-        escrowSynced: orders[index].escrow_synced,
-        customCosts: sumOrderCustomCosts(orders[index])
-      });
-    }
-    await persistOrdersToDatabase(orders, [orders[index]]);
-    if (wantHanded && isMongoReady()) {
-      try {
-        await markOrderHandedOverInStore(String(orders[index].orderSn || ""), {
-          source: HANDED_OVER_SOURCE.MANUAL_BUTTON,
-          handedOverAt: String(orders[index].handedOverAt || ""),
-          shopId: orders[index].shopId != null ? String(orders[index].shopId) : void 0
-        });
-      } catch (err) {
-        console.error("[Orders PATCH] markOrderHandedOver failed:", err?.message || err);
-      }
-    }
-    if (isMongoReady() && (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED")) {
-      try {
-        await markOrderLocalStatusInStore(
-          String(orders[index].orderSn || ""),
-          localPatch,
-          {
-            shopId: orders[index].shopId != null ? String(orders[index].shopId) : void 0,
-            clearHandedOver: true,
-            status: localPatch === "RETURN_RECEIVED" ? "return_received" : String(orders[index].status || "cancelled")
-          }
-        );
-      } catch (err) {
-        console.error("[Orders PATCH] markOrderLocalStatus failed:", err?.message || err);
-      }
-    }
-    return res.json(orders[index]);
-  });
-  app.delete("/api/orders/:id", authMiddleware, async (req, res) => {
-    const key = String(req.params.id || "").trim();
-    if (!key) {
-      return res.status(400).json({ success: false, error: "Thi\u1EBFu id \u0111\u01A1n." });
-    }
-    const orders = loadOrders();
-    const index = orders.findIndex(
-      (o) => o.id === key || o.orderSn === key || o.id === `shopee-${key}` || String(o.orderSn || "") === key.replace(/^shopee-/i, "")
-    );
-    const normalizedKey = key.replace(/^shopee-/i, "");
-    let mongoDeleted = 0;
-    if (isMongoReady()) {
-      try {
-        mongoDeleted = await deleteOrdersFromStore([key, normalizedKey]);
-      } catch (err) {
-        console.warn("[Orders DELETE] Mongo:", err?.message || err);
-      }
-    }
-    if (index === -1) {
-      if (mongoDeleted > 0) {
-        console.log(`Deleted count: ${mongoDeleted} (Mongo-only orderSn=${normalizedKey})`);
-        return res.json({
-          success: true,
-          removed: mongoDeleted,
-          orderSn: normalizedKey,
-          mongoDeleted
-        });
-      }
-      return res.status(404).json({ success: false, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
-    }
-    const removed = orders[index];
-    const sn = String(removed.orderSn || removed.id || "").trim();
-    orders.splice(index, 1);
-    saveOrders(orders);
-    console.log(`Deleted count: 1 (orderSn=${sn}, mongoDeleted=${mongoDeleted})`);
-    return res.json({
-      success: true,
-      removed: 1,
-      orderSn: sn,
-      mongoDeleted
-    });
-  });
-  app.post("/api/orders/:id/hand-over-carrier", authMiddleware, async (req, res) => {
-    try {
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const hit = findOrderRecord(orders, String(req.params.id || ""));
-      const trackingHint = String(
-        req.body?.trackingNumber || req.body?.tracking_no || req.body?.waybill || req.body?.code || ""
-      ).trim();
-      const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1, {
-        source: "manual_button",
-        trackingHint
-      });
-      if (!result.ok) {
-        return res.status(result.status).json({ success: false, error: result.error, message: result.error });
-      }
-      const products = await loadProductsForOrders([result.order]);
-      const enriched = enrichOrdersFromCatalog([result.order], products)[0];
-      return res.json({ success: true, order: enriched });
-    } catch (error) {
-      console.error("[Orders Handover] single error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "hand_over_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 ghi nh\u1EADn b\xE0n giao \u0110VVC."
-      });
-    }
-  });
-  app.post("/api/orders/hand-over-carrier", authMiddleware, async (req, res) => {
-    try {
-      const code = String(req.body?.code || req.body?.scanCode || req.body?.q || "").trim();
-      const orderId = String(
-        req.body?.orderId || req.body?.id || req.body?.orderSn || req.body?.order_sn || ""
-      ).trim();
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      let index = -1;
-      if (orderId) {
-        const hit = findOrderRecord(orders, orderId);
-        index = hit ? hit.index : -1;
-      } else if (code) {
-        const found = await findOrderByScanLookup(orders.filter(isValidOrder), code);
-        if (found) {
-          const hit = findOrderRecord(orders, String(found.id || found.orderSn || ""));
-          index = hit ? hit.index : orders.findIndex((o) => o.id === found.id);
-        }
-      } else {
-        return res.status(400).json({
-          success: false,
-          error: "Thi\u1EBFu orderId ho\u1EB7c m\xE3 qu\xE9t (code).",
-          message: "Thi\u1EBFu orderId ho\u1EB7c m\xE3 qu\xE9t (code)."
-        });
-      }
-      const result = await handOverOrderToCarrierByIndex(orders, index, {
-        source: code ? "qr_scan" : "manual_button",
-        trackingHint: code || String(req.body?.trackingNumber || req.body?.tracking_no || "").trim()
-      });
-      if (!result.ok) {
-        return res.status(result.status).json({ success: false, error: result.error, message: result.error });
-      }
-      const products = await loadProductsForOrders([result.order]);
-      const enriched = enrichOrdersFromCatalog([result.order], products)[0];
-      return res.json({ success: true, order: enriched });
-    } catch (error) {
-      console.error("[Orders Handover] by-code error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "hand_over_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 ghi nh\u1EADn b\xE0n giao \u0110VVC."
-      });
-    }
-  });
-  app.post("/api/orders/hand-over-carrier/bulk", authMiddleware, async (req, res) => {
-    try {
-      const rawIds = Array.isArray(req.body?.orderIds) ? req.body.orderIds : Array.isArray(req.body?.ids) ? req.body.ids : [];
-      const rawSns = Array.isArray(req.body?.orderSns) ? req.body.orderSns : [];
-      const keys = [
-        ...new Set(
-          (rawIds.length ? rawIds : rawSns).map((v) => String(v || "").trim()).filter(Boolean)
-        )
-      ];
-      if (!keys.length && rawSns.length) {
-        keys.push(
-          ...new Set(rawSns.map((v) => String(v || "").trim()).filter(Boolean))
-        );
-      }
-      if (!keys.length) {
-        return res.status(400).json({
-          success: false,
-          error: "Thi\u1EBFu danh s\xE1ch \u0111\u01A1n (orderIds / orderSns).",
-          message: "Thi\u1EBFu danh s\xE1ch \u0111\u01A1n (orderIds / orderSns)."
-        });
-      }
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const updatedOrders = [];
-      const failed = [];
-      let skipped = 0;
-      const seenIdx = /* @__PURE__ */ new Set();
-      for (const key of keys) {
-        const hit = findOrderRecord(orders, key);
-        if (!hit) {
-          failed.push({ key, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
-          continue;
-        }
-        if (seenIdx.has(hit.index)) {
-          skipped++;
-          continue;
-        }
-        seenIdx.add(hit.index);
-        const result = await handOverOrderToCarrierByIndex(orders, hit.index, {
-          persist: false,
-          source: "manual_button"
-        });
-        if (!result.ok) {
-          failed.push({ key, error: result.error });
-          continue;
-        }
-        if (result.changed) updatedOrders.push(result.order);
-        else skipped++;
-      }
-      if (updatedOrders.length) {
-        await persistOrdersToDatabase(orders, updatedOrders);
-      }
-      const products = await loadProductsForOrders(updatedOrders);
-      const enriched = enrichOrdersFromCatalog(updatedOrders, products);
-      console.log(
-        `[Orders Handover Bulk] keys=${keys.length} updated=${updatedOrders.length} skipped=${skipped} failed=${failed.length}`
-      );
-      if (updatedOrders.length === 0 && skipped === 0) {
-        return res.status(400).json({
-          success: false,
-          updated: 0,
-          skipped: 0,
-          failed,
-          orders: [],
-          error: failed[0]?.error || "Kh\xF4ng b\xE0n giao \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o.",
-          message: failed[0]?.error || "Kh\xF4ng b\xE0n giao \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o."
-        });
-      }
-      return res.json({
-        success: true,
-        updated: updatedOrders.length,
-        skipped,
-        failed,
-        orders: enriched
-      });
-    } catch (error) {
-      console.error("[Orders Handover Bulk] error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "hand_over_bulk_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 b\xE0n giao \u0110VVC h\xE0ng lo\u1EA1t."
-      });
-    }
-  });
-  app.post("/api/orders/heal-handed-over", authMiddleware, async (_req, res) => {
-    try {
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const healed = healInvalidHandedOverFlags(orders);
-      if (healed.length) {
-        await persistOrdersToDatabase(orders, healed);
-      }
-      return res.json({
-        success: true,
-        healed: healed.length,
-        orderSns: healed.map((o) => o.orderSn || o.id).filter(Boolean),
-        message: healed.length > 0 ? `\u0110\xE3 g\u1EE1 ${healed.length} c\u1EDD \u0110VVC l\u01B0u sai.` : "Kh\xF4ng c\xF2n c\u1EDD \u0110VVC l\u01B0u sai."
-      });
-    } catch (error) {
-      console.error("[Heal HandedOver] error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "heal_failed"
-      });
-    }
-  });
+  app.get("/api/orders", authMiddleware, listOrders);
+  app.post("/api/orders/cleanup-handed-over", authMiddleware, cleanupHandedOver);
+  app.post("/api/orders/cleanup-closed-retention", authMiddleware, cleanupClosedRetention);
+  app.post("/api/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
+  app.post("/api/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
+  app.post("/api/orders/cleanup-label-pdfs", authMiddleware, cleanupLabelPdfs);
+  app.post("/api/orders/cleanup-processed-pickup", authMiddleware, cleanupProcessedPickup);
+  app.get("/api/orders/lookup", authMiddleware, lookupOrder);
+  app.post("/api/orders/cleanup-mock", authMiddleware, cleanupMockOrders);
+  app.post("/api/orders/hydrate-tracking", authMiddleware, hydrateTracking);
+  app.post("/api/orders/enrich-tracking", authMiddleware, enrichTracking);
+  app.patch("/api/orders/:id", authMiddleware, patchOrder);
+  app.delete("/api/orders/:id", authMiddleware, deleteOrder);
+  app.post("/api/orders/:id/hand-over-carrier", authMiddleware, handOverCarrierById);
+  app.post("/api/orders/hand-over-carrier", authMiddleware, handOverCarrierByCode);
+  app.post("/api/orders/hand-over-carrier/bulk", authMiddleware, handOverCarrierBulk);
+  app.post("/api/orders/heal-handed-over", authMiddleware, healHandedOver);
+  app.post("/api/orders/manual", authMiddleware, createManualOrder);
+  app.use("/api/orders", authMiddleware, ordersRoutes);
   app.get("/api/orders/don-hoan-huy", authMiddleware, listDonHoanHuy);
   app.post("/api/orders/don-hoan-huy", authMiddleware, saveScanOrders);
   initScanBgQueue({
@@ -112065,9 +112679,7 @@ async function startServer() {
     markOrderHandedOverInStore,
     loadProductsForOrders,
     enrichOrdersFromCatalog,
-    invalidateOrdersRefreshCache: () => {
-      ordersRefreshCache = null;
-    }
+    invalidateOrdersRefreshCache
   });
   app.post("/api/orders/scan-bg-enqueue", authMiddleware, enqueueScanBg);
   app.get("/api/orders/scan-bg-status", authMiddleware, getScanBgStatus);
@@ -112077,150 +112689,6 @@ async function startServer() {
   app.get("/api/vietnam-address/districts/:provinceCode", authMiddleware, getDistricts);
   app.get("/api/vietnam-address/wards/:districtCode", authMiddleware, getWards);
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
-  const buildCarrierLogisticsPayload = (carrier, customer, addr, extras) => {
-    if (carrier === "ghn") {
-      return {
-        provider: "ghn",
-        to_name: customer.name,
-        to_phone: customer.phone,
-        to_address: addr.street,
-        to_ward_code: addr.wardCode,
-        to_district_id: Number(addr.districtCode),
-        to_province_id: Number(addr.provinceCode),
-        to_ward_name: addr.ward,
-        to_district_name: addr.district,
-        to_province_name: addr.province,
-        weight: extras.weight,
-        note: extras.note,
-        cod_amount: extras.codAmount
-      };
-    }
-    if (carrier === "spx") {
-      return {
-        provider: "spx",
-        deliver_info: {
-          deliver_name: customer.name,
-          deliver_phone: customer.phone,
-          deliver_detail_address: addr.street,
-          deliver_ward: addr.ward,
-          deliver_district: addr.district,
-          deliver_province: addr.province,
-          deliver_ward_id: addr.wardCode,
-          deliver_district_id: addr.districtCode,
-          deliver_province_id: addr.provinceCode
-        },
-        parcel_weight: extras.weight,
-        remark: extras.note,
-        cod_amount: extras.codAmount
-      };
-    }
-    return null;
-  };
-  const generateCarrierTracking = (carrier) => {
-    if (carrier === "ghn") return `GHN-VN-${Math.floor(1e8 + Math.random() * 9e8)}`;
-    if (carrier === "spx") return `SPX-VN-${Math.floor(1e8 + Math.random() * 9e8)}`;
-    return `DIRECT-${Math.floor(1e5 + Math.random() * 9e5)}`;
-  };
-  app.post("/api/orders/manual", authMiddleware, async (req, res) => {
-    try {
-      const body = req.body || {};
-      const {
-        shippingAddress,
-        items,
-        carrier = "self",
-        packageWeight = 500,
-        shippingFee = 0,
-        shippingFeePayer = "customer",
-        orderDiscount = 0,
-        carrierNotes = ""
-      } = body;
-      const addr = shippingAddress || {};
-      if (!addr.provinceCode || !addr.districtCode || !addr.wardCode || !addr.street?.trim()) {
-        return res.status(400).json({
-          error: "\u0110\u1ECBa ch\u1EC9 ch\u01B0a \u0111\u1EA7y \u0111\u1EE7. Vui l\xF2ng ch\u1ECDn T\u1EC9nh, Qu\u1EADn/Huy\u1EC7n, Ph\u01B0\u1EDDng/X\xE3 v\xE0 nh\u1EADp \u0111\u1ECBa ch\u1EC9 chi ti\u1EBFt."
-        });
-      }
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "\u0110\u01A1n h\xE0ng c\u1EA7n \xEDt nh\u1EA5t 1 s\u1EA3n ph\u1EA9m." });
-      }
-      const subtotal = items.reduce(
-        (acc, it) => acc + Number(it.price || 0) * Number(it.quantity || 0),
-        0
-      );
-      const feeToCollect = shippingFeePayer === "customer" ? Number(shippingFee) : 0;
-      const totalAmount = subtotal + feeToCollect - Number(orderDiscount);
-      const fullAddress = [addr.street, addr.ward, addr.district, addr.province].filter(Boolean).join(", ");
-      const trackingNumber = generateCarrierTracking(carrier);
-      const logisticsPayload = carrier !== "self" ? buildCarrierLogisticsPayload(
-        carrier,
-        { name: "Kh\xE1ch s\u1EC9", phone: "0900000000" },
-        {
-          street: addr.street.trim(),
-          province: addr.province,
-          provinceCode: String(addr.provinceCode),
-          district: addr.district,
-          districtCode: String(addr.districtCode),
-          ward: addr.ward,
-          wardCode: String(addr.wardCode)
-        },
-        {
-          weight: Number(packageWeight) || 500,
-          note: carrierNotes || "",
-          codAmount: totalAmount
-        }
-      ) : null;
-      if (logisticsPayload) {
-        console.log(
-          `[Logistics ${carrier.toUpperCase()}] Payload \u0111\u1EA9y \u0111\u01A1n:`,
-          JSON.stringify(logisticsPayload, null, 2)
-        );
-      }
-      const newOrder = {
-        id: `order-manual-${Date.now()}`,
-        orderSn: `DON-NGOAI-${Math.floor(1e5 + Math.random() * 9e5)}`,
-        channel: "manual",
-        shippingAddress: {
-          province: addr.province,
-          provinceCode: String(addr.provinceCode),
-          district: addr.district,
-          districtCode: String(addr.districtCode),
-          ward: addr.ward,
-          wardCode: String(addr.wardCode),
-          street: addr.street.trim(),
-          fullAddress
-        },
-        carrier,
-        totalAmount,
-        revenue: totalAmount,
-        status: "unprocessed",
-        date: (/* @__PURE__ */ new Date()).toISOString(),
-        trackingNumber,
-        isPrepared: carrier !== "self",
-        isPrinted: false,
-        items: items.map((it) => ({
-          productId: it.productId,
-          productTitle: it.productTitle,
-          productImage: it.productImage,
-          quantity: Number(it.quantity),
-          price: Number(it.price)
-        })),
-        logisticsPayload
-      };
-      const orders = loadOrders();
-      orders.unshift(newOrder);
-      saveOrders(orders);
-      return res.json({
-        success: true,
-        order: newOrder,
-        trackingNumber,
-        logisticsPayload,
-        orders: orders.filter(isValidOrder)
-      });
-    } catch (error) {
-      console.error("[Orders manual]", error);
-      return res.status(500).json({ error: error.message || "T\u1EA1o \u0111\u01A1n th\u1EE7 c\xF4ng th\u1EA5t b\u1EA1i" });
-    }
-  });
   app.get("/api/shopee/diagnostics", authMiddleware, async (req, res) => {
     const shopId = req.query.shop_id ? String(req.query.shop_id) : void 0;
     console.log("[Shopee Diagnostics] B\u1EAFt \u0111\u1EA7u ki\u1EC3m tra...", shopId ? `shop_id=${shopId}` : "");
@@ -112473,9 +112941,6 @@ async function startServer() {
       }
     }
   });
-  app.post("/api/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-  app.post("/api/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-  app.post("/api/auto-link", authMiddleware, handleBatchAutoLink);
   app.post("/api/shopee/products/sync", authMiddleware, async (req, res) => {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     try {
@@ -112964,11 +113429,11 @@ async function startServer() {
     if (!sn) return null;
     try {
       ensureLabelsDir();
-      const matches = import_fs12.default.readdirSync(LABELS_DIR).filter(
+      const matches = import_fs14.default.readdirSync(LABELS_DIR).filter(
         (name) => /\.pdf$/i.test(name) && (name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`))
       ).map((name) => {
-        const full = import_path11.default.join(LABELS_DIR, name);
-        return { name, mtime: import_fs12.default.statSync(full).mtimeMs, size: import_fs12.default.statSync(full).size };
+        const full = import_path13.default.join(LABELS_DIR, name);
+        return { name, mtime: import_fs14.default.statSync(full).mtimeMs, size: import_fs14.default.statSync(full).size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
       if (!newest) return null;
@@ -113432,7 +113897,7 @@ async function startServer() {
     const savedFromDownload = "savedFiles" in downloadResult && Array.isArray(downloadResult.savedFiles) ? downloadResult.savedFiles.filter((n) => safeLabelFilename(n) && hasLabelMem(n)) : [];
     let filename = savedFromDownload[savedFromDownload.length - 1] || (ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`);
     console.log(`[Shopee Print] B\u1EAFt \u0111\u1EA7u in cho \u0111\u01A1n ${orderSns.join(",")}`);
-    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path11.default.join(LABELS_DIR, filename)}`);
+    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path13.default.join(LABELS_DIR, filename)}`);
     if (!hasLabelMem(filename)) {
       filename = saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
@@ -113562,7 +114027,7 @@ async function startServer() {
     } else if (savedFilenames.length > 0) {
       const relative = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
       if (relative) {
-        const fn = import_path11.default.basename(relative);
+        const fn = import_path13.default.basename(relative);
         assertLabelFileReady(fn);
         primaryUrl = absoluteLabelUrl(relative);
         pdfFilename = fn;
@@ -114412,7 +114877,7 @@ async function startServer() {
       shopIds,
       details,
       tokensPath: SHOPEE_TOKENS_PATH,
-      appRoot: APP_ROOT7,
+      appRoot: APP_ROOT9,
       lastOAuth,
       count: shopIds.length
     });
@@ -114440,11 +114905,11 @@ async function startServer() {
       callback: SHOPEE_CALLBACK_URL2
     });
   });
-  const LISTINGS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "multi_channel_listings.json");
+  const LISTINGS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs12.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs12.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs14.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs14.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -114452,9 +114917,9 @@ async function startServer() {
     }
   };
   const writeListingsDb = (listings) => {
-    const dir = import_path11.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs12.default.existsSync(dir)) import_fs12.default.mkdirSync(dir, { recursive: true });
-    import_fs12.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    const dir = import_path13.default.dirname(LISTINGS_DB_PATH);
+    if (!import_fs14.default.existsSync(dir)) import_fs14.default.mkdirSync(dir, { recursive: true });
+    import_fs14.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
   app.post("/api/gemini/optimize", authMiddleware, geminiOptimize);
   app.post("/api/ai/parse-address", authMiddleware, parseAddress);
@@ -114479,11 +114944,11 @@ async function startServer() {
       return res.status(500).json({ success: false, error: error.message || "L\u01B0u th\u1EA5t b\u1EA1i" });
     }
   });
-  const PRODUCT_LISTINGS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs12.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs12.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs14.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs14.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -114491,9 +114956,9 @@ async function startServer() {
     }
   };
   const writeProductListingsDb = (rows) => {
-    const dir = import_path11.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs12.default.existsSync(dir)) import_fs12.default.mkdirSync(dir, { recursive: true });
-    import_fs12.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    const dir = import_path13.default.dirname(PRODUCT_LISTINGS_DB_PATH);
+    if (!import_fs14.default.existsSync(dir)) import_fs14.default.mkdirSync(dir, { recursive: true });
+    import_fs14.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -114750,12 +115215,12 @@ async function startServer() {
       });
     }
   });
-  const PUBLISH_EDIT_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = import_path11.default.join(APP_ROOT7, "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = import_path13.default.join(APP_ROOT9, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs12.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs12.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs14.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs14.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -114763,9 +115228,9 @@ async function startServer() {
     }
   };
   const writePublishEditDb = (data) => {
-    const dir = import_path11.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs12.default.existsSync(dir)) import_fs12.default.mkdirSync(dir, { recursive: true });
-    import_fs12.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    const dir = import_path13.default.dirname(PUBLISH_EDIT_DB_PATH);
+    if (!import_fs14.default.existsSync(dir)) import_fs14.default.mkdirSync(dir, { recursive: true });
+    import_fs14.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -114806,11 +115271,11 @@ async function startServer() {
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs12.default.existsSync(FRAMED_IMAGES_DIR)) import_fs12.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs14.default.existsSync(FRAMED_IMAGES_DIR)) import_fs14.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs12.default.writeFileSync(import_path11.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs14.default.writeFileSync(import_path13.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -114832,12 +115297,12 @@ async function startServer() {
     }
   });
   app.get("/api/framed-images/:productId", (req, res) => {
-    const filePath = import_path11.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs12.default.existsSync(filePath)) {
+    const filePath = import_path13.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
+    if (!import_fs14.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs12.default.readFileSync(filePath));
+    return res.send(import_fs14.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -114855,8 +115320,8 @@ async function startServer() {
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
-    const distPath = import_path11.default.join(APP_ROOT7, "dist");
-    app.use(import_express12.default.static(distPath, {
+    const distPath = import_path13.default.join(APP_ROOT9, "dist");
+    app.use(import_express15.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -114881,12 +115346,12 @@ async function startServer() {
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.sendFile(import_path11.default.join(distPath, "index.html"));
+      return res.sendFile(import_path13.default.join(distPath, "index.html"));
     });
   }
   async function connectDB2() {
     try {
-      const ok = await initMongo(APP_ROOT7);
+      const ok = await initMongo(APP_ROOT9);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
