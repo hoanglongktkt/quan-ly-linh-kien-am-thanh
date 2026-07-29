@@ -833,6 +833,7 @@ export default function OrderManager({
   const [isBulkHandingOver, setIsBulkHandingOver] = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [isFlushingQueue, setIsFlushingQueue] = useState(false);
+  const [flushingDbCount, setFlushingDbCount] = useState(0);
   const [isVerifyingScan, setIsVerifyingScan] = useState(false);
 
   const ordersRef = React.useRef(orders);
@@ -1712,7 +1713,7 @@ export default function OrderManager({
     let isMounted = true;
 
     if (focusScanner) {
-      // Tránh restart camera khi đang graceful teardown (finish scan).
+      // Tránh restart camera khi đang graceful teardown / đang ghi DB.
       if (isTearingDownScannerRef.current) {
         return () => {
           isMounted = false;
@@ -1725,12 +1726,13 @@ export default function OrderManager({
       lastQrScanRef.current = { key: '', at: 0 };
       pendingScanQueueRef.current = [];
       isScanBusyRef.current = false;
-      setIsFlushingQueue(false);
       setCameraScanResult((prev) =>
         prev.includes('Xuất kho') ||
         prev.includes('ĐƠN HỦY') ||
         prev.includes('Nhận hoàn') ||
-        prev.includes('sẵn sàng quét tiếp')
+        prev.includes('sẵn sàng quét tiếp') ||
+        prev.includes('Đã lưu') ||
+        prev.includes('Lưu thất bại')
           ? prev
           : 'Quét realtime QR + mã vạch — dò trạng thái ngay mỗi mã',
       );
@@ -3524,7 +3526,7 @@ export default function OrderManager({
     closeScannerUiOnly();
   };
 
-  /** Kết thúc: ghi DB 1 lần từ 3 list đã verify realtime — clear list, ở lại màn quét. */
+  /** Kết thúc: tắt camera → ghi DB (timeout 10s) → reset list → bật lại camera. */
   const handleFinishContinuousScan = async () => {
     setShowEndConfirm(false);
 
@@ -3537,9 +3539,11 @@ export default function OrderManager({
       ...returned.map((i) => i.code),
     ];
 
-    // Không có mã đã verify → thoát phiên (đóng UI quét, vẫn ở tab Đơn hàng).
-    if (codes.length === 0) {
+    const stopCameraHard = async () => {
       isTearingDownScannerRef.current = true;
+      pendingScanQueueRef.current = [];
+      isScanBusyRef.current = false;
+      stopTapToFocusAssist(CAMERA_TAP_LAYER_ID);
       try {
         const handle = liveScannerRef.current;
         liveScannerRef.current = null;
@@ -3547,13 +3551,38 @@ export default function OrderManager({
       } catch {
         /* ignore */
       }
+      try {
+        await stopLiveQrScanner('camera-reader');
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const resumeCameraAfterSave = () => {
+      setIsFlushingQueue(false);
+      setFlushingDbCount(0);
+      isTearingDownScannerRef.current = false;
+      window.setTimeout(() => {
+        setCameraRestartKey((k) => k + 1);
+      }, 80);
+    };
+
+    // Không có mã đã verify → thoát phiên (đóng UI quét, vẫn ở tab Đơn hàng).
+    if (codes.length === 0) {
+      await stopCameraHard();
       isTearingDownScannerRef.current = false;
       closeScannerUiOnly();
       return;
     }
 
+    // 1) Tắt camera ngay để giải phóng RAM/CPU khi ghi DB.
+    setFlushingDbCount(codes.length);
     setIsFlushingQueue(true);
     setCameraScanResult(`Đang ghi DB ${codes.length} đơn đã phân loại...`);
+    await stopCameraHard();
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 10_000);
 
     try {
       const token = localStorage.getItem('admin_token');
@@ -3561,23 +3590,49 @@ export default function OrderManager({
         throw new Error('Chưa đăng nhập — không thể cập nhật đơn đã quét.');
       }
 
-      const res = await fetch('/api/orders/scan-bulk-update', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          codes,
-          scannedCodes: codes,
-          daXuatKhoCodes: shipped.map((i) => i.code),
-          donHuyCodes: cancelled.map((i) => i.code),
-          daNhanHoanCodes: returned.map((i) => i.code),
-        }),
-      });
-      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      let res: Response;
+      try {
+        res = await fetch('/api/orders/scan-bulk-update', {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            codes,
+            scannedCodes: codes,
+            daXuatKhoCodes: shipped.map((i) => i.code),
+            donHuyCodes: cancelled.map((i) => i.code),
+            daNhanHoanCodes: returned.map((i) => i.code),
+          }),
+        });
+      } catch (fetchErr: unknown) {
+        const aborted =
+          (fetchErr instanceof DOMException && fetchErr.name === 'AbortError') ||
+          (fetchErr instanceof Error && fetchErr.name === 'AbortError') ||
+          /aborted|AbortError|timeout|timed?\s*out/i.test(
+            fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+          );
+        throw new Error(
+          aborted
+            ? 'Lưu thất bại, vui lòng thử lại'
+            : fetchErr instanceof Error
+              ? fetchErr.message
+              : 'Lưu thất bại, vui lòng thử lại',
+        );
+      }
+
+      let data: Record<string, unknown> = {};
+      try {
+        data = (await res.json()) as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
       if (!res.ok || data?.success === false) {
-        throw new Error(String(data?.message || data?.error || `HTTP ${res.status}`));
+        throw new Error(
+          String(data?.message || data?.error || 'Lưu thất bại, vui lòng thử lại'),
+        );
       }
 
       const summaryRaw = (data?.summary || {}) as {
@@ -3585,7 +3640,6 @@ export default function OrderManager({
         donHuy?: number;
         daNhanHoan?: number;
       };
-      // NO FAKE SUCCESS: 0 là số thật — không fallback sang codes.length.
       const daXuatKho = Number(summaryRaw.daXuatKho);
       const donHuy = Number(summaryRaw.donHuy);
       const daNhanHoan = Number(summaryRaw.daNhanHoan);
@@ -3597,6 +3651,7 @@ export default function OrderManager({
         ? processedRaw
         : safeXuat + safeHuy + safeHoan;
 
+      // Cập nhật cờ nội bộ RETURN_RECEIVED / CANCELLED_STORED / HANDED_OVER từ API.
       const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
       if (updatedOrders.length > 0) {
         const byId = new Map(updatedOrders.map((o) => [o.id, o]));
@@ -3611,7 +3666,6 @@ export default function OrderManager({
         onUpdateOrders(merged, { persist: false });
       }
 
-      // Reload từ Mongo (SSOT) — đảm bảo máy khác / Làm mới thấy cờ ĐVVC / nhận hoàn.
       void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
 
       if (safeXuat > 0) openHandedOverCarrierTab();
@@ -3630,9 +3684,10 @@ export default function OrderManager({
 
       const failedScans = Array.isArray(data?.failed_scans) ? data.failed_scans : [];
       clearVerifiedScanLists();
+
       if (processedCount > 0) {
         showScanToast(
-          `Xuất kho ${safeXuat} / Hủy ${safeHuy} / Nhận hoàn ${safeHoan}${
+          `Đã lưu thành công — Xuất kho ${safeXuat} / Hủy ${safeHuy} / Nhận hoàn ${safeHoan}${
             failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
           }`,
           'success',
@@ -3640,8 +3695,8 @@ export default function OrderManager({
       } else {
         showScanToast(
           failedScans.length > 0
-            ? String(failedScans[0]?.reason || 'Xuất kho 0 — không có đơn nào được ghi DB')
-            : 'Xuất kho 0 — Database không ghi nhận đơn nào',
+            ? String(failedScans[0]?.reason || 'Lưu thất bại, vui lòng thử lại')
+            : 'Lưu thất bại, vui lòng thử lại',
           'error',
         );
       }
@@ -3654,33 +3709,27 @@ export default function OrderManager({
         }, 1600);
       }
       setCameraScanResult(
-        `✓ DB: Xuất kho ${safeXuat} · Hủy ${safeHuy} · Nhận hoàn ${safeHoan}${
-          failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
-        }. Sẵn sàng quét tiếp`,
+        processedCount > 0
+          ? `✓ Đã lưu DB: Xuất kho ${safeXuat} · Hủy ${safeHuy} · Nhận hoàn ${safeHoan}${
+              failedScans.length ? ` · Bỏ qua ${failedScans.length}` : ''
+            }. Sẵn sàng quét tiếp`
+          : 'Lưu thất bại, vui lòng thử lại',
       );
-      setIsFlushingQueue(false);
 
-      // Một lần refresh SSOT — tránh race với silent shallow limit=500.
+      // 2) Reset list xong → bật lại camera.
+      resumeCameraAfterSave();
     } catch (err: unknown) {
-      // Giữ 3 list đã verify khi abort/timeout — cho phép bấm lại GHI DB.
+      // Giữ 3 list đã verify — cho phép bấm lại GHI DB.
       const msg = err instanceof Error ? err.message : String(err);
-      const aborted =
-        /aborted|AbortError|timeout|quá lâu|timed?\s*out/i.test(msg) ||
-        (err instanceof DOMException && err.name === 'AbortError') ||
-        (err instanceof Error && err.name === 'AbortError');
-      showScanToast(
-        aborted
-          ? `Ghi DB bị hủy/timeout — giữ ${codes.length} mã đã quét. Bấm GHI DB lại.`
-          : `Lỗi ghi DB hàng loạt: ${msg}`,
-        'error',
-      );
-      setCameraScanResult(
-        aborted
-          ? `Timeout — còn ${codes.length} mã. Bấm GHI DB để thử lại`
-          : `Lỗi: ${msg}`,
-      );
-      setIsFlushingQueue(false);
-      isTearingDownScannerRef.current = false;
+      const failMsg =
+        /Lưu thất bại|timeout|aborted|AbortError|timed?\s*out|quá lâu/i.test(msg)
+          ? 'Lưu thất bại, vui lòng thử lại'
+          : msg || 'Lưu thất bại, vui lòng thử lại';
+      showScanToast(failMsg, 'error');
+      setCameraScanResult(`${failMsg} — còn ${codes.length} mã. Bấm GHI DB để thử lại`);
+      resumeCameraAfterSave();
+    } finally {
+      window.clearTimeout(timeoutId);
     }
   };
 
@@ -3813,13 +3862,11 @@ export default function OrderManager({
                 )}
               </div>
             )}
-            {(isFlushingQueue || isVerifyingScan) && (
+            {(isVerifyingScan && !isFlushingQueue) && (
               <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3 z-10">
                 <Loader2 className="w-9 h-9 text-blue-400 animate-spin" />
                 <p className="text-xs font-bold text-white/90 px-4 text-center">
-                  {isFlushingQueue
-                    ? `Đang ghi DB ${totalVerifiedScans} đơn...`
-                    : 'Đang kiểm tra mã...'}
+                  Đang kiểm tra mã...
                 </p>
               </div>
             )}
@@ -3894,6 +3941,19 @@ export default function OrderManager({
                 </button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Full overlay khi đang ghi DB — camera đã tắt, giải phóng RAM/CPU. */}
+        {isFlushingQueue && (
+          <div className="fixed inset-0 z-[90] bg-zinc-950/95 flex flex-col items-center justify-center gap-4 p-6">
+            <Loader2 className="w-12 h-12 text-blue-400 animate-spin" />
+            <p className="text-white font-black text-base text-center">
+              Đang ghi DB {flushingDbCount || totalVerifiedScans || 1} đơn...
+            </p>
+            <p className="text-zinc-400 text-xs text-center font-semibold max-w-xs leading-relaxed">
+              Camera đã tắt để giải phóng máy. Vui lòng chờ — tối đa 10 giây.
+            </p>
           </div>
         )}
 
