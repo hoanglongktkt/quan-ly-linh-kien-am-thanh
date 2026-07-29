@@ -8,6 +8,11 @@ import mongoose, { Schema, type Model } from "mongoose";
 import fs from "fs";
 import path from "path";
 import {
+  connectDB as connectMongoShared,
+  getMongoUri,
+} from "../../config/db.js";
+import DonHoanHuyModelImport from "../../models/DonHoanHuy.js";
+import {
   isProductsDiskMode,
   setProductsDiskAppRoot,
   getProductsDiskPath,
@@ -254,7 +259,7 @@ SyncJobSchema.index(
   { expireAfterSeconds: SYNC_JOB_TTL_SECONDS, name: "sync_jobs_ttl" },
 );
 
-/** Tab "Đã nhận đơn hủy, đơn hoàn" — schema chuẩn MVC (TTL 14 ngày trên scannedAt). */
+/** Tab "Đã nhận đơn hủy, đơn hoàn" — type + model SSOT từ models/DonHoanHuy.js. */
 type DonHoanHuyDoc = {
   _id?: string;
   orderSn: string;
@@ -274,17 +279,6 @@ type DonHoanHuyDoc = {
   data?: any;
 };
 
-const DonHoanHuySchema = new Schema<DonHoanHuyDoc>(
-  {
-    orderSn: { type: String, required: true, index: true, trim: true },
-    status: { type: String, default: "scanned" },
-    scannedAt: { type: Date, default: Date.now, expires: 1209600 },
-    note: { type: String, default: "" },
-  },
-  { collection: "don_hoan_huy", versionKey: false, strict: false },
-);
-DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
-
 let ProductModel: Model<ProductDoc>;
 let ChannelListingModel: Model<ListingDoc>;
 let MetaModel: Model<MetaDoc>;
@@ -297,10 +291,6 @@ let mongoReady = false;
 let appRootResolved = "";
 /** Serialize writes to avoid concurrent replace races. */
 let writeChain: Promise<void> = Promise.resolve();
-
-function getMongoUri(): string {
-  return String(process.env.MONGODB_URI || process.env.MONGO_URL || "").trim();
-}
 
 function ensureModels(): void {
   ProductModel =
@@ -321,9 +311,10 @@ function ensureModels(): void {
   SyncJobModel =
     (mongoose.models.SyncJob as Model<SyncJobDoc>) ||
     mongoose.model<SyncJobDoc>("SyncJob", SyncJobSchema);
+  // SSOT: schema chỉ định nghĩa tại models/DonHoanHuy.js
   DonHoanHuyModel =
     (mongoose.models.DonHoanHuy as Model<DonHoanHuyDoc>) ||
-    mongoose.model<DonHoanHuyDoc>("DonHoanHuy", DonHoanHuySchema);
+    (DonHoanHuyModelImport as Model<DonHoanHuyDoc>);
 }
 
 function requireMongo(): void {
@@ -452,28 +443,17 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
 
   try {
     ensureModels();
+    // SSOT kết nối: config/db.js → connectDB (cùng options pool/timeout).
     if (mongoose.connection.readyState === 0) {
-      await mongoose.connect(uri, {
-        // Fail nhanh 5s — API không được im lặng chờ tới khi client timeout.
-        serverSelectionTimeoutMS: 5000,
-        connectTimeoutMS: 5000,
-        socketTimeoutMS: 15000,
-        // Tăng 5→15: pool 5 quá nhỏ khi Dashboard/Products/Orders + Webhook cùng chạy
-        // song song — hết pool khiến query MỚI phải XẾP HÀNG chờ connection (không lỗi
-        // ngay) và có thể "treo" tới khi client-side timeout bắn, dù bản thân query rất
-        // nhẹ. Đây là driver Node (I/O bất đồng bộ, dùng chung 1 process) — KHÔNG tạo
-        // thêm OS process nên an toàn với giới hạn NPROC hosting nhỏ.
-        maxPoolSize: 15,
-        minPoolSize: 1,
-        // Nếu pool vẫn hết, THẤT BẠI NHANH thay vì chờ vô thời hạn — trả lỗi rõ ràng
-        // để route trả response ngay (tránh cộng dồn request treo → cPanel tăng process).
-        waitQueueTimeoutMS: 5000,
-        maxIdleTimeMS: 30000,
-      });
-      fs.writeFileSync(
-        path.join(appRootResolved, "db_status.txt"),
-        "KET_NOI_THANH_CONG_LUC: " + new Date().toISOString()
-      );
+      await connectMongoShared();
+      try {
+        fs.writeFileSync(
+          path.join(appRootResolved, "db_status.txt"),
+          "KET_NOI_THANH_CONG_LUC: " + new Date().toISOString()
+        );
+      } catch {
+        /* ignore write status file */
+      }
     }
 
     mongoReady = mongoose.connection.readyState === 1;

@@ -6,8 +6,6 @@ import { createRequire } from "node:module";
 import { PDFDocument } from "pdf-lib";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
-import jwt from "jsonwebtoken";
-import mongoose from "mongoose";
 import { createShopeeWebhookRouter } from "./src/webhooks/shopeeWebhookHandler.ts";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
@@ -42,7 +40,25 @@ import {
 } from "./src/services/redis.ts";
 import scanRoutesImport from "./routes/scanRoutes.js";
 import errorHandler from "./middlewares/errorHandler.js";
+import { authMiddleware, signAdminToken } from "./middlewares/auth.js";
+import corsMiddleware from "./middlewares/cors.js";
+import dbReadyMiddleware from "./middlewares/dbReady.js";
 import { saveScanOrders, listDonHoanHuy } from "./controllers/scanController.js";
+import {
+  extractHttpClientError,
+  sendApiErrorJson,
+  sendStrictApiErrorJson,
+} from "./utils/apiError.js";
+import {
+  sleep,
+  delay,
+  yieldEventLoop,
+  mapWithConcurrency,
+  runInBatches,
+  withOperationTimeout,
+} from "./utils/concurrency.js";
+import { tryAcquireHeavyJob, releaseHeavyJob, resetHeavyJob } from "./utils/heavyJob.js";
+import { resolveAppRoot, resolveAppBaseUrl } from "./utils/appPaths.js";
 
 /** ESM/CJS interop — luôn lấy Router thật. */
 const scanRoutes =
@@ -141,30 +157,6 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (err) => {
   writeCpanelCrashLog("Rejection", err);
 });
-
-/** Thư mục gốc app — Passenger/cPanel có thể khác process.cwd(). */
-function resolveAppRoot(): string {
-  const candidates = [
-    process.env.PASSENGER_APP_ROOT,
-    typeof __dirname !== "undefined" ? __dirname : "",
-    process.cwd(),
-  ]
-    .map((c) => String(c || "").trim())
-    .filter(Boolean);
-
-  for (const candidate of candidates) {
-    const abs = path.resolve(candidate);
-    if (
-      fs.existsSync(path.join(abs, "server.cjs")) ||
-      fs.existsSync(path.join(abs, "data")) ||
-      fs.existsSync(path.join(abs, ".htaccess")) ||
-      fs.existsSync(path.join(abs, ".env"))
-    ) {
-      return abs;
-    }
-  }
-  return path.resolve(candidates[0] || process.cwd());
-}
 
 const APP_ROOT = resolveAppRoot();
 const isCpanelPassengerRuntime = Boolean(
@@ -640,17 +632,7 @@ function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
   }
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || "omnisales-vn-super-secret-key-2026";
 const ENV_PATH = path.join(APP_ROOT, ".env");
-
-const PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
-
-function resolveAppBaseUrl(): string {
-  const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
-  if (process.env.NODE_ENV === "production") return PRODUCTION_APP_URL;
-  return PRODUCTION_APP_URL;
-}
 
 const APP_BASE_URL = resolveAppBaseUrl();
 
@@ -689,27 +671,6 @@ function absoluteLabelUrl(relativePath: string | null | undefined): string | nul
   const url = `${resolveLabelsPublicBaseUrl()}/api/public/labels/${encodeURIComponent(fn)}`;
   console.log(`[Labels] URL trả về cho FE: ${url}`);
   return url;
-}
-
-async function runInBatches<T>(
-  items: T[],
-  batchSize: number,
-  worker: (item: T) => Promise<void>,
-  opts?: { itemDelayMs?: number; batchPauseMs?: number },
-): Promise<void> {
-  const size = Math.max(1, batchSize);
-  const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
-  const batchPauseMs = opts?.batchPauseMs ?? SHOPEE_PRODUCT_BATCH_PAUSE_MS;
-  for (let i = 0; i < items.length; i += size) {
-    const batch = items.slice(i, i + size);
-    for (const item of batch) {
-      await worker(item);
-      await sleep(itemDelayMs);
-    }
-    if (i + size < items.length) {
-      await sleep(batchPauseMs);
-    }
-  }
 }
 
 /** Shopee console khai báo domain quanly — redirect_uri phải cùng domain đó. */
@@ -2132,40 +2093,6 @@ try {
   shopeeHttpDispatcher = undefined;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-/**
- * Chạy async tasks song song với giới hạn concurrency (tránh rate-limit Shopee
- * khi Promise.all toàn bộ cùng lúc). Giữ thứ tự kết quả theo input.
- */
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const n = items.length;
-  if (n === 0) return [];
-  const limit = Math.max(1, Math.min(concurrency, n));
-  const results = new Array<R>(n);
-  let next = 0;
-  const runners = Array.from({ length: limit }, async () => {
-    while (true) {
-      const i = next++;
-      if (i >= n) return;
-      results[i] = await worker(items[i], i);
-    }
-  });
-  await Promise.all(runners);
-  return results;
-}
-
-/** Nghỉ giữa các batch sync (mặc định 1s) — GC / chống spike process cPanel. */
-function delay(ms: number = ORDER_SYNC_SAVE_DELAY_MS): Promise<void> {
-  return sleep(ms);
-}
-
 async function fetchWithTimeout(
   url: string,
   init: RequestInit = {},
@@ -2204,11 +2131,6 @@ async function fetchWithTimeout(
     clearTimeout(timer);
     if (hardTimer) clearTimeout(hardTimer);
   }
-}
-
-/** Nhường CPU cho OS (Event Loop Yielding) — bắt buộc trên cPanel/CloudLinux. */
-async function yieldEventLoop(ms: number = CHANNEL_FETCH_YIELD_MS): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 function shopeeExponentialBackoffMs(attempt: number, baseMs = SHOPEE_API_RETRY_BASE_MS): number {
@@ -2329,44 +2251,6 @@ function formatShopeeApiError(json: any, httpStatus?: number): string {
   if (parts.length > 0) return parts.join(" — ");
   if (status && status >= 400) return `Shopee API lỗi HTTP ${status}`;
   return "Lỗi Shopee API không xác định";
-}
-
-/** Trích lỗi từ fetch/axios — ưu tiên error.response.data từ Shopee. */
-function extractHttpClientError(err: unknown): { message: string; details: string; shopeeDetail?: unknown } {
-  const anyErr = err as { response?: { data?: { message?: string; error?: string } }; message?: string };
-  const shopeeData = anyErr?.response?.data;
-  const message =
-    shopeeData?.message ||
-    shopeeData?.error ||
-    (err instanceof Error ? err.message : String(err)) ||
-    "Lỗi máy chủ nội bộ";
-  const details = shopeeData
-    ? JSON.stringify(shopeeData)
-    : err instanceof Error
-      ? err.toString()
-      : String(err);
-  return { message, details, shopeeDetail: shopeeData };
-}
-
-/** Luôn trả JSON lỗi — không để response treo hoặc crash process. */
-function sendApiErrorJson(res: any, err: unknown, status = 500) {
-  if (res.headersSent) return;
-  const { message, details, shopeeDetail } = extractHttpClientError(err);
-  return res.status(status).json({
-    success: false,
-    error: message || "Internal Server Error",
-    message,
-    details,
-    ...(shopeeDetail ? { shopee: shopeeDetail } : {}),
-  });
-}
-
-function sendStrictApiErrorJson(res: any, err: unknown) {
-  const message =
-    err && typeof err === "object" && "message" in err && typeof err.message === "string"
-      ? err.message
-      : "Internal Server Error";
-  return res.status(500).json({ success: false, error: message || "Internal Server Error" });
 }
 
 function isShopeeRateLimited(httpStatus: number, json?: any): boolean {
@@ -5628,35 +5512,6 @@ type ShopeeSyncQueueJob = {
 const shopeeSyncQueue: ShopeeSyncQueueJob[] = [];
 const shopeeSyncQueueKeys = new Set<string>();
 let shopeeSyncQueueRunning = false;
-/** Chỉ 1 tác vụ nặng (ship-order, in vận đơn) chạy cùng lúc — tránh NPROC 100% trên cPanel. */
-const HEAVY_JOB_LOCK_MAX_MS = 120_000;
-let cpanelHeavyJobActive: { name: string; startedAt: number } | null = null;
-
-function tryAcquireHeavyJob(name: string): boolean {
-  if (cpanelHeavyJobActive) {
-    const elapsedMs = Date.now() - cpanelHeavyJobActive.startedAt;
-    // ship_order là fast path; lock quá 2 phút nghĩa là process/job trước đã treo.
-    // Không chặn vĩnh viễn các đơn tiếp theo chỉ vì một Promise không bao giờ resolve.
-    if (elapsedMs > HEAVY_JOB_LOCK_MAX_MS) {
-      console.error(
-        `[Heavy Job] Watchdog giải phóng lock kẹt "${cpanelHeavyJobActive.name}" sau ${elapsedMs}ms`,
-      );
-      cpanelHeavyJobActive = null;
-    } else {
-      console.warn(
-        `[Heavy Job] Từ chối "${name}" — "${cpanelHeavyJobActive.name}" đang chạy (${elapsedMs}ms)`,
-      );
-      return false;
-    }
-  }
-  cpanelHeavyJobActive = { name, startedAt: Date.now() };
-  return true;
-}
-
-function releaseHeavyJob(name: string): void {
-  if (cpanelHeavyJobActive?.name === name) cpanelHeavyJobActive = null;
-}
-
 /** ——— Queue dò ngầm quét mã (độc lập FE — sống sót khi tắt màn quét) ——— */
 type ScanBgJobStatus = "pending" | "running" | "done" | "failed" | "skipped";
 type ScanBgJobAction =
@@ -7708,29 +7563,6 @@ async function getShopeeAddressListCached(
   });
   shopeeAddressListInflight.set(sid, run);
   return run;
-}
-
-async function withOperationTimeout<T>(
-  work: Promise<T> | ((signal: AbortSignal) => Promise<T>),
-  ms: number,
-  label: string,
-): Promise<T> {
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const promise = typeof work === "function" ? work(controller.signal) : work;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => {
-          controller.abort();
-          reject(new Error(`${label} timeout sau ${ms / 1000} giây.`));
-        }, ms);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
 
 async function fetchShopeeLogisticsJson(
@@ -15674,25 +15506,6 @@ async function processShopeeWebhookPayload(body: any): Promise<void> {
   }
 }
 
-const authMiddleware = (req: any, res: any, next: any) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ success: false, error: "Yêu cầu cung cấp Token xác thực hợp lệ.", message: "Yêu cầu cung cấp Token xác thực hợp lệ." });
-  }
-  const token = authHeader.split(" ")[1];
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (error) {
-    return res.status(401).json({
-      success: false,
-      error: "Phiên đăng nhập admin đã hết hạn — vui lòng đăng nhập lại.",
-      message: "Phiên đăng nhập admin đã hết hạn — vui lòng đăng nhập lại.",
-    });
-  }
-};
-
 async function startServer() {
   const app = express();
   const PORT = process.env.PORT || 3000;
@@ -15723,24 +15536,7 @@ async function startServer() {
     };
   }
 
-  app.use((req, res, next) => {
-    const origin = req.headers.origin as string | undefined;
-    const allowedOrigin =
-      origin &&
-      (/^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin) ||
-        /^https:\/\/([a-z0-9-]+\.)*linhkienamthanh\.net$/i.test(origin) ||
-        /^http:\/\/localhost(:\d+)?$/i.test(origin));
-    if (allowedOrigin) {
-      res.setHeader('Access-Control-Allow-Origin', origin!);
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-    }
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    if (req.method === 'OPTIONS') {
-      return res.status(204).end();
-    }
-    next();
-  });
+  app.use(corsMiddleware);
 
   /**
    * Dùng express.raw CHỈ cho webhook để HMAC đúng bytes Shopee gửi.
@@ -15775,39 +15571,14 @@ async function startServer() {
   );
 
   /** DB chưa sẵn sàng → trả 503 NGAY (sync, không await/chờ). Auth/health/oauth/ship-order vẫn chạy. */
-  app.use((req, res, next) => {
-    const pathName = String(req.path || req.originalUrl || "").split("?")[0];
-    if (!pathName.startsWith("/api/")) return next();
-    const allowWithoutDb =
-      pathName === "/api/login" ||
-      pathName.startsWith("/api/health") ||
-      pathName.startsWith("/api/auth/") ||
-      pathName === "/api/shopee/callback" ||
-      pathName === "/api/auth/shopee/callback" ||
-      pathName === "/api/shopee/oauth/complete" ||
-      pathName === "/api/shopee/webhook" ||
-      pathName === "/api/webhook/shopee" ||
-      pathName.startsWith("/api/public/") ||
-      pathName.startsWith("/api/shopee/ship-order") ||
-      pathName === "/api/shopee/print-document";
-    if (allowWithoutDb) return next();
-    if (mongoose.connection.readyState !== 1) {
-      return res.status(503).json({
-        success: false,
-        message: "Database đang kết nối, vui lòng thử lại sau",
-        error: "database_connecting",
-        readyState: mongoose.connection.readyState,
-      });
-    }
-    return next();
-  });
+  app.use(dbReadyMiddleware);
 
   app.post("/api/login", (req, res) => {
     const { username, password } = req.body;
     const expectedUsername = process.env.ADMIN_USERNAME || "admin";
     const expectedPassword = process.env.ADMIN_PASSWORD || "password123";
     if (username === expectedUsername && password === expectedPassword) {
-      const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "24h" });
+      const token = signAdminToken(username);
       return res.json({ token, username });
     } else {
       return res.status(401).json({ error: "T\xEAn \u0111\u0103ng nh\u1EADp ho\u1EB7c m\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c." });
@@ -23603,7 +23374,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     console.log("[Orders] Đồng bộ trạng thái chỉ nhận từ Shopee Webhook.");
 
     const onReady = () => {
-      cpanelHeavyJobActive = null;
+      resetHeavyJob();
       console.log("[Boot] Heavy-job lock reset.");
 
       console.log(
