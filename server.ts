@@ -5857,21 +5857,15 @@ async function processOneScanBgJob(job: ScanBgJob): Promise<void> {
     } catch {
       alreadyDhh = false;
     }
-    if (
-      existingLocal === "CANCELLED_STORED" ||
-      existingLocal === "RETURN_RECEIVED" ||
-      alreadyDhh
-    ) {
+    // Chỉ coi đã xong khi CÓ BẢN GHI thật trong don_hoan_huy (không tin status sàn).
+    if (alreadyDhh) {
       job.status = "done";
       job.action = "duplicate";
-      job.local_status = alreadyDhh
-        ? existingLocal === "RETURN_RECEIVED"
+      job.local_status =
+        existingLocal === "RETURN_RECEIVED"
           ? "RETURN_RECEIVED"
-          : existingLocal === "CANCELLED_STORED"
-            ? "CANCELLED_STORED"
-            : "CANCELLED_STORED"
-        : existingLocal;
-      job.message = `Đơn #${found.orderSn} đã có trong don_hoan_huy / cờ nội bộ`;
+          : "CANCELLED_STORED";
+      job.message = `Đơn #${found.orderSn} đã có trong don_hoan_huy`;
       job.finishedAt = new Date().toISOString();
       scanBgJobKeys.delete(job.codeKey);
       return;
@@ -19134,6 +19128,103 @@ async function startServer() {
   });
 
   /**
+   * Ghi trực tiếp collection don_hoan_huy (tab hủy/hoàn).
+   * Body: { items: [{ orderSn|orderId|code, type: 'cancelled'|'return' }] } hoặc { orders: Order[], type }
+   */
+  app.post("/api/orders/don-hoan-huy", authMiddleware, async (req, res) => {
+    try {
+      if (!isMongoReady()) {
+        return res.status(503).json({
+          success: false,
+          message: "Lỗi kết nối MongoDB",
+          error: "mongodb_not_ready",
+        });
+      }
+      const body = req.body || {};
+      const rows: Array<{ order: any; type: "cancelled" | "return"; scanCode?: string }> = [];
+      const items = Array.isArray(body.items) ? body.items : [];
+      const ordersIn = Array.isArray(body.orders) ? body.orders : [];
+      const defaultType =
+        body.type === "cancelled" || body.type === "cancel"
+          ? ("cancelled" as const)
+          : body.type === "return"
+            ? ("return" as const)
+            : null;
+
+      for (const o of ordersIn) {
+        if (!o || typeof o !== "object") continue;
+        const local = String(
+          o.local_status || o.localStatus || o.internal_status || "",
+        ).toUpperCase();
+        const t: "cancelled" | "return" =
+          defaultType ||
+          (local === "CANCELLED_STORED" ? "cancelled" : "return");
+        rows.push({ order: o, type: t });
+      }
+
+      for (const it of items) {
+        const code = String(it?.orderSn || it?.orderId || it?.code || "").trim();
+        if (!code) continue;
+        const t: "cancelled" | "return" =
+          it?.type === "cancelled" || it?.type === "cancel"
+            ? "cancelled"
+            : "return";
+        let found: any = null;
+        try {
+          found = await findOrderByScanCodeInStore(code);
+        } catch {
+          found = null;
+        }
+        if (!found) {
+          found = {
+            id: `dhh-${code}`,
+            orderSn: code,
+            status: t === "cancelled" ? "cancelled" : "return_received",
+          };
+        }
+        rows.push({ order: found, type: t, scanCode: String(it?.code || code) });
+      }
+
+      if (!rows.length) {
+        return res.status(400).json({
+          success: false,
+          message: "Thiếu items/orders để ghi don_hoan_huy.",
+        });
+      }
+
+      const write = await upsertDonHoanHuyBatch(
+        rows.map((r) => ({
+          order: r.order,
+          type: r.type,
+          scanCode: r.scanCode,
+          source: "api_don_hoan_huy",
+        })),
+      );
+      if (write.failed > 0 && write.ok === 0) {
+        return res.status(500).json({
+          success: false,
+          message: write.errors[0] || "Không ghi được don_hoan_huy",
+          donHoanHuy: write,
+        });
+      }
+      ordersRefreshCache = null;
+      return res.json({
+        success: true,
+        donHoanHuy: { ...write, already: 0, ensured: write.ok },
+        processedCount: write.ok,
+      });
+    } catch (error: any) {
+      console.error("[POST /api/orders/don-hoan-huy]", error);
+      return res.status(500).json({
+        success: false,
+        message: isMongoConnectionError(error)
+          ? "Lỗi kết nối MongoDB"
+          : describeMongoWriteError(error),
+      });
+    }
+  });
+
+  /**
    * Queue dò ngầm quét mã — Backend worker độc lập FE.
    * POST body: { codes: string[] } — đẩy vào queue, trả về ngay.
    * Worker tự lookup / kéo Shopee / ghi CANCELLED_STORED | RETURN_RECEIVED.
@@ -19312,6 +19403,8 @@ async function startServer() {
       const updatedById = new Map<string, any>();
       /** Chỉ đếm record THỰC SỰ vừa UPDATE thành công trong DB. */
       const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
+      /** Số đơn hủy/hoàn đã có sẵn trong don_hoan_huy (idempotent). */
+      let donHoanHuyAlready = 0;
 
       const norm = (c: string) => String(c || "").trim().toUpperCase();
 
@@ -19365,43 +19458,48 @@ async function startServer() {
             rawShopee === "IN_CANCEL" ||
             isShopeeCancelOrReturnLikeOrder(order));
 
-        // Chặn quét trùng — trừ forceCancel/forceReturn ghi đè HANDED_OVER → hủy/hoàn.
-        // Idempotent: force cùng cờ đích đã có → coi như thành công (đã ghi DB trước đó).
-        const alreadySameCancel =
-          (forceCancel && existingLocal === "CANCELLED_STORED") ||
-          (forceCancel && alreadyInDonHoanHuy);
-        const alreadySameReturn =
-          (forceReturn && existingLocal === "RETURN_RECEIVED") ||
-          (forceReturn && alreadyInDonHoanHuy);
-        if (alreadySameCancel) {
+        // Idempotent CHỈ khi đã có bản ghi thật trong don_hoan_huy.
+        // KHÔNG dùng existingLocal (status cancelled/return_received trên sàn) — gây bỏ qua ghi DB.
+        if (forceCancel && alreadyInDonHoanHuy) {
           summary.donHuy += 1;
+          donHoanHuyAlready += 1;
           results.push({
             code,
             action: "cancelled",
             orderId: order.id,
             orderSn: order.orderSn,
-            message: `Đơn hủy #${order.orderSn} đã có CANCELLED_STORED`,
+            message: `Đơn hủy #${order.orderSn} đã có trong don_hoan_huy`,
             local_status: "CANCELLED_STORED",
           });
           continue;
         }
-        if (alreadySameReturn) {
+        if (forceReturn && alreadyInDonHoanHuy) {
           summary.daNhanHoan += 1;
+          donHoanHuyAlready += 1;
           results.push({
             code,
             action: "return_received",
             orderId: order.id,
             orderSn: order.orderSn,
-            message: `Đơn #${order.orderSn} đã có RETURN_RECEIVED`,
+            message: `Đơn #${order.orderSn} đã có trong don_hoan_huy`,
             local_status: "RETURN_RECEIVED",
           });
           continue;
         }
         const allowForceCancelReturnOverride =
           (forceCancel || forceReturn) &&
-          existingLocal === "HANDED_OVER" &&
-          (isCancelLike || isReturnLike || forceCancel || forceReturn);
-        if (isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride) {
+          (existingLocal === "HANDED_OVER" ||
+            existingLocal === "CANCELLED_STORED" ||
+            existingLocal === "RETURN_RECEIVED" ||
+            isCancelLike ||
+            isReturnLike);
+        // Đã xử lý ĐVVC thuần — chặn; còn force hủy/hoàn thì vẫn ghi don_hoan_huy.
+        if (
+          isOrderAlreadyScanProcessed(order) &&
+          !allowForceCancelReturnOverride &&
+          !forceCancel &&
+          !forceReturn
+        ) {
           const reason = getScanProcessedReason(order);
           results.push({
             code,
@@ -19695,7 +19793,11 @@ async function startServer() {
         success: true,
         processedCount,
         persistedCount: changedOrders.length,
-        donHoanHuy: donHoanHuyWrite,
+        donHoanHuy: {
+          ...donHoanHuyWrite,
+          already: donHoanHuyAlready,
+          ensured: donHoanHuyWrite.ok + donHoanHuyAlready,
+        },
         summary,
         stats: {
           handedOver: summary.daXuatKho,

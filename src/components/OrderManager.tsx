@@ -3592,13 +3592,23 @@ export default function OrderManager({
     await stopCameraHard();
 
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 10_000);
+    const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
 
     try {
       const token = localStorage.getItem('admin_token');
       if (!token) {
         throw new Error('Chưa đăng nhập — không thể cập nhật đơn đã quét.');
       }
+
+      const pickCodes = (items: ScanVerifiedItem[]) =>
+        [
+          ...new Set(
+            items
+              .flatMap((i) => [i.code, i.orderSn, i.trackingNumber, i.orderId])
+              .map((c) => String(c || '').trim())
+              .filter(Boolean),
+          ),
+        ];
 
       let res: Response;
       try {
@@ -3612,9 +3622,9 @@ export default function OrderManager({
           body: JSON.stringify({
             codes,
             scannedCodes: codes,
-            daXuatKhoCodes: shipped.map((i) => i.code),
-            donHuyCodes: cancelled.map((i) => i.code),
-            daNhanHoanCodes: returned.map((i) => i.code),
+            daXuatKhoCodes: pickCodes(shipped),
+            donHuyCodes: pickCodes(cancelled),
+            daNhanHoanCodes: pickCodes(returned),
           }),
         });
       } catch (fetchErr: unknown) {
@@ -3626,7 +3636,7 @@ export default function OrderManager({
           );
         throw new Error(
           aborted
-            ? 'Hết thời gian chờ 10 giây — server chưa phản hồi. Kiểm tra MongoDB / mạng rồi thử lại.'
+            ? 'Hết thời gian chờ 30 giây — server chưa phản hồi. Kiểm tra MongoDB / mạng rồi thử lại.'
             : fetchErr instanceof Error
               ? fetchErr.message
               : 'Không kết nối được API lưu đơn.',
@@ -3661,6 +3671,35 @@ export default function OrderManager({
       const processedCount = Number.isFinite(processedRaw)
         ? processedRaw
         : safeXuat + safeHuy + safeHoan;
+
+      // Hủy/hoàn bắt buộc phải có bản ghi don_hoan_huy (ok hoặc already).
+      const needDonHoanHuy = cancelled.length + returned.length > 0;
+      if (needDonHoanHuy) {
+        const dhh = (data?.donHoanHuy || null) as {
+          ok?: number;
+          failed?: number;
+          already?: number;
+          ensured?: number;
+          errors?: string[];
+        } | null;
+        if (!dhh) {
+          throw new Error(
+            'Backend chưa ghi collection don_hoan_huy — dữ liệu hủy/hoàn không được lưu. Kiểm tra server Mongo.',
+          );
+        }
+        const ensured = Number(
+          dhh.ensured ?? Number(dhh.ok || 0) + Number(dhh.already || 0),
+        );
+        if (!Number.isFinite(ensured) || ensured < 1) {
+          throw new Error(
+            String(
+              dhh.errors?.[0] ||
+                data?.message ||
+                'Không ghi được đơn hủy/hoàn vào don_hoan_huy. Thử lại.',
+            ),
+          );
+        }
+      }
 
       // Cập nhật cờ nội bộ RETURN_RECEIVED / CANCELLED_STORED / HANDED_OVER từ API.
       const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];

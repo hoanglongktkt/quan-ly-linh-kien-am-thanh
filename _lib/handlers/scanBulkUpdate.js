@@ -1,6 +1,6 @@
 /**
  * POST orders/scan-bulk-update — Vercel local handler.
- * Ưu tiên proxy cPanel (persist JSON+Mongo). Fallback: PATCH từng đơn với local_status.
+ * Ưu tiên proxy cPanel (persist JSON+Mongo). Fallback: ghi don_hoan_huy + PATCH local_status.
  * KHÔNG gọi Shopee API.
  */
 import { buildCpanelTarget, resolveProxyTimeoutMs } from '../cpanelProxy.js';
@@ -22,7 +22,6 @@ function resolveLocalStatus(order) {
   if (order?.is_handed_over || order?.isHandedOverToCarrier || order?.is_handed_over_to_carrier) {
     return 'HANDED_OVER';
   }
-  if (String(order?.status || '') === 'return_received') return 'RETURN_RECEIVED';
   return 'NONE';
 }
 
@@ -179,12 +178,12 @@ export async function handleScanBulkUpdate(req, res) {
           message: msg || 'scan_bulk_update_failed',
         });
       }
-      console.warn('[Scan Bulk Update] cPanel chưa có route — fallback PATCH local_status');
+      console.warn('[Scan Bulk Update] cPanel chưa có route — fallback PATCH + don_hoan_huy');
     } catch (directErr) {
       console.warn('[Scan Bulk Update] direct proxy failed, fallback:', directErr?.message || directErr);
     }
 
-    // 2) Fallback: lookup + PATCH local_status từng đơn (vẫn chỉ DB nội bộ).
+    // 2) Fallback: lookup + ghi don_hoan_huy (hủy/hoàn) + PATCH local_status.
     const toSet = (arr) =>
       new Set(
         (Array.isArray(arr) ? arr : [])
@@ -199,6 +198,7 @@ export async function handleScanBulkUpdate(req, res) {
     const results = [];
     const failed_scans = [];
     const updatedOrders = [];
+    const dhhItems = [];
     const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
 
     for (const code of codes) {
@@ -218,7 +218,22 @@ export async function handleScanBulkUpdate(req, res) {
         continue;
       }
 
-      if (isAlreadyProcessed(order)) {
+      const forcedCancel =
+        forceCancel.has(codeKey) ||
+        forceCancel.has(norm(order.orderSn)) ||
+        forceCancel.has(norm(order.trackingNumber || order.tracking_no));
+      const forcedReturn =
+        forceReturn.has(codeKey) ||
+        forceReturn.has(norm(order.orderSn)) ||
+        forceReturn.has(norm(order.trackingNumber || order.tracking_no)) ||
+        forceReturn.has(norm(order.return_tracking_no));
+      const forcedHand =
+        forceHandOver.has(codeKey) ||
+        forceHandOver.has(norm(order.orderSn)) ||
+        forceHandOver.has(norm(order.trackingNumber || order.tracking_no));
+
+      // Chỉ chặn trùng ĐVVC thuần — hủy/hoàn vẫn ghi don_hoan_huy.
+      if (isAlreadyProcessed(order) && !forcedCancel && !forcedReturn) {
         const reason = processedReason(order);
         results.push({
           code,
@@ -234,15 +249,11 @@ export async function handleScanBulkUpdate(req, res) {
 
       const status = String(order.status || '');
       let target = null;
-      if (
-        forceHandOver.has(codeKey) ||
-        forceHandOver.has(norm(order.orderSn)) ||
-        forceHandOver.has(norm(order.trackingNumber || order.tracking_no))
-      ) {
+      if (forcedHand) {
         target = 'HANDED_OVER';
-      } else if (forceCancel.has(codeKey) || forceCancel.has(norm(order.orderSn))) {
+      } else if (forcedCancel) {
         target = 'CANCELLED_STORED';
-      } else if (forceReturn.has(codeKey) || forceReturn.has(norm(order.orderSn))) {
+      } else if (forcedReturn) {
         target = 'RETURN_RECEIVED';
       } else if (status === 'unprocessed' || status === 'processed') {
         target = 'HANDED_OVER';
@@ -269,12 +280,21 @@ export async function handleScanBulkUpdate(req, res) {
         continue;
       }
 
+      if (target === 'CANCELLED_STORED' || target === 'RETURN_RECEIVED') {
+        dhhItems.push({
+          orderSn: order.orderSn,
+          orderId: order.id,
+          code,
+          type: target === 'CANCELLED_STORED' ? 'cancelled' : 'return',
+        });
+      }
+
       const patched = await fetchJson(backend.url, req, `orders/${encodeURIComponent(order.id)}`, {
         method: 'PATCH',
         body: JSON.stringify(buildLocalPatch(target)),
       });
 
-      if (!patched.ok) {
+      if (!patched.ok && target === 'HANDED_OVER') {
         const reason = patched.data?.message || patched.data?.error || 'PATCH thất bại';
         results.push({
           code,
@@ -287,7 +307,9 @@ export async function handleScanBulkUpdate(req, res) {
         continue;
       }
 
-      const saved = patched.data?.id ? patched.data : { ...order, ...buildLocalPatch(target) };
+      const saved = patched.data?.id
+        ? patched.data
+        : { ...order, ...buildLocalPatch(target) };
       updatedOrders.push(saved);
       if (target === 'HANDED_OVER') {
         summary.daXuatKho += 1;
@@ -322,13 +344,47 @@ export async function handleScanBulkUpdate(req, res) {
       }
     }
 
+    let donHoanHuy = { ok: 0, failed: 0, errors: [], already: 0, ensured: 0 };
+    if (dhhItems.length > 0) {
+      const dhhRes = await fetchJson(backend.url, req, 'orders/don-hoan-huy', {
+        method: 'POST',
+        body: JSON.stringify({ items: dhhItems }),
+      });
+      if (!dhhRes.ok || dhhRes.data?.success === false) {
+        return res.status(dhhRes.status || 500).json({
+          success: false,
+          message:
+            dhhRes.data?.message ||
+            dhhRes.data?.error ||
+            'Không ghi được collection don_hoan_huy',
+          donHoanHuy: dhhRes.data?.donHoanHuy || donHoanHuy,
+        });
+      }
+      const w = dhhRes.data?.donHoanHuy || {};
+      donHoanHuy = {
+        ok: Number(w.ok || 0),
+        failed: Number(w.failed || 0),
+        errors: Array.isArray(w.errors) ? w.errors : [],
+        already: Number(w.already || 0),
+        ensured: Number(w.ensured ?? Number(w.ok || 0) + Number(w.already || 0)),
+      };
+      if (donHoanHuy.ensured < 1) {
+        return res.status(500).json({
+          success: false,
+          message: donHoanHuy.errors[0] || 'Không ghi được collection don_hoan_huy',
+          donHoanHuy,
+        });
+      }
+    }
+
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
-    console.log('[Scan Bulk Update] fallback persisted summary=', summary, 'failed=', failed_scans.length);
+    console.log('[Scan Bulk Update] fallback persisted summary=', summary, 'dhh=', donHoanHuy);
 
     return res.status(200).json({
       success: true,
       processedCount,
       persistedCount: updatedOrders.length,
+      donHoanHuy,
       summary,
       stats: {
         handedOver: summary.daXuatKho,
