@@ -4,12 +4,13 @@ import {
   getDistricts,
   getWards,
 } from "../controllers/vietnamAddressController.js";
+import { asyncHandler } from "../middlewares/errorHandler.js";
 
 const router = Router();
 
-router.get("/provinces", getProvinces);
-router.get("/districts/:provinceCode", getDistricts);
-router.get("/wards/:districtCode", getWards);
+router.get("/provinces", asyncHandler(getProvinces));
+router.get("/districts/:provinceCode", asyncHandler(getDistricts));
+router.get("/wards/:districtCode", asyncHandler(getWards));
 
 export default router;
 export { router };

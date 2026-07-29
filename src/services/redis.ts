@@ -63,6 +63,7 @@ async function ensureConnected(client: Redis): Promise<boolean> {
       await client.connect();
     } else if (client.status === "connecting") {
       await new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
         const onReady = () => {
           cleanup();
           resolve();
@@ -74,10 +75,11 @@ async function ensureConnected(client: Redis): Promise<boolean> {
         const cleanup = () => {
           client.off("ready", onReady);
           client.off("error", onError);
+          if (timer) clearTimeout(timer);
         };
         client.once("ready", onReady);
         client.once("error", onError);
-        setTimeout(() => {
+        timer = setTimeout(() => {
           cleanup();
           reject(new Error("connect timeout"));
         }, 3_000);

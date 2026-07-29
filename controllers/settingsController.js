@@ -166,12 +166,22 @@ export async function postShopConnectionStatus(req, res) {
     for (const shop of shops) {
       if (!shop?.id) continue;
       try {
-        statuses[shop.id] = await Promise.race([
-          deps.checkShopConnectionStatus(shop),
-          new Promise((_, reject) => {
-            setTimeout(() => reject(new Error("Timeout kiểm tra kết nối (15s)")), 15_000);
-          }),
-        ]);
+        statuses[shop.id] = await new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("Timeout kiểm tra kết nối (15s)")),
+            15_000,
+          );
+          Promise.resolve(deps.checkShopConnectionStatus(shop)).then(
+            (v) => {
+              clearTimeout(timer);
+              resolve(v);
+            },
+            (e) => {
+              clearTimeout(timer);
+              reject(e);
+            },
+          );
+        });
       } catch (shopErr) {
         console.error("[Shop connection-status] shop failed:", shop?.id, shopErr);
         statuses[shop.id] = {

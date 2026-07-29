@@ -443,17 +443,15 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
 
   try {
     ensureModels();
-    // SSOT kết nối: config/db.js → connectDB (cùng options pool/timeout).
-    if (mongoose.connection.readyState === 0) {
-      await connectMongoShared();
-      try {
-        fs.writeFileSync(
-          path.join(appRootResolved, "db_status.txt"),
-          "KET_NOI_THANH_CONG_LUC: " + new Date().toISOString()
-        );
-      } catch {
-        /* ignore write status file */
-      }
+    // SSOT singleton: luôn await connectDB (mutex nội bộ) — không bỏ qua khi readyState=2.
+    await connectMongoShared();
+    try {
+      fs.writeFileSync(
+        path.join(appRootResolved, "db_status.txt"),
+        "KET_NOI_THANH_CONG_LUC: " + new Date().toISOString()
+      );
+    } catch {
+      /* ignore write status file */
     }
 
     mongoReady = mongoose.connection.readyState === 1;

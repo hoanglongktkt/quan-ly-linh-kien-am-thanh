@@ -27,35 +27,37 @@ import {
   ackScanBg,
 } from "../controllers/scanBgController.js";
 import { scanBulkUpdate } from "../controllers/scanBulkController.js";
+import { asyncHandler } from "../middlewares/errorHandler.js";
 
 const router = Router();
+const h = asyncHandler;
 
 // Static paths trước :id / :orderSn
-router.get("/refresh", refreshOrders);
-router.get("/query", queryOrders);
-router.get("/lookup", lookupOrder);
-router.post("/cleanup-handed-over", cleanupHandedOver);
-router.post("/cleanup-closed-retention", cleanupClosedRetention);
-router.post("/cleanup-label-pdfs", cleanupLabelPdfs);
-router.post("/cleanup-processed-pickup", cleanupProcessedPickup);
-router.post("/cleanup-mock", cleanupMockOrders);
-router.post("/hydrate-tracking", hydrateTracking);
-router.post("/enrich-tracking", enrichTracking);
-router.post("/hand-over-carrier/bulk", handOverCarrierBulk);
-router.post("/hand-over-carrier", handOverCarrierByCode);
-router.post("/heal-handed-over", healHandedOver);
-router.post("/manual", createManualOrder);
-router.get("/don-hoan-huy", listDonHoanHuy);
-router.post("/don-hoan-huy", saveScanOrders);
-router.post("/scan-bg-enqueue", enqueueScanBg);
-router.get("/scan-bg-status", getScanBgStatus);
-router.post("/scan-bg-ack", ackScanBg);
-router.post("/scan-bulk-update", scanBulkUpdate);
-router.get("/:orderSn/events", getOrderEvents);
-router.post("/:id/hand-over-carrier", handOverCarrierById);
-router.get("/", listOrders);
-router.patch("/:id", patchOrder);
-router.delete("/:id", deleteOrder);
+router.get("/refresh", h(refreshOrders));
+router.get("/query", h(queryOrders));
+router.get("/lookup", h(lookupOrder));
+router.post("/cleanup-handed-over", h(cleanupHandedOver));
+router.post("/cleanup-closed-retention", h(cleanupClosedRetention));
+router.post("/cleanup-label-pdfs", h(cleanupLabelPdfs));
+router.post("/cleanup-processed-pickup", h(cleanupProcessedPickup));
+router.post("/cleanup-mock", h(cleanupMockOrders));
+router.post("/hydrate-tracking", h(hydrateTracking));
+router.post("/enrich-tracking", h(enrichTracking));
+router.post("/hand-over-carrier/bulk", h(handOverCarrierBulk));
+router.post("/hand-over-carrier", h(handOverCarrierByCode));
+router.post("/heal-handed-over", h(healHandedOver));
+router.post("/manual", h(createManualOrder));
+router.get("/don-hoan-huy", h(listDonHoanHuy));
+router.post("/don-hoan-huy", h(saveScanOrders));
+router.post("/scan-bg-enqueue", h(enqueueScanBg));
+router.get("/scan-bg-status", h(getScanBgStatus));
+router.post("/scan-bg-ack", h(ackScanBg));
+router.post("/scan-bulk-update", h(scanBulkUpdate));
+router.get("/:orderSn/events", h(getOrderEvents));
+router.post("/:id/hand-over-carrier", h(handOverCarrierById));
+router.get("/", h(listOrders));
+router.patch("/:id", h(patchOrder));
+router.delete("/:id", h(deleteOrder));
 
 export default router;
 export { router };

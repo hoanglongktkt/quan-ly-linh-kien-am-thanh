@@ -1,13 +1,28 @@
 const VN_ADDRESS_API = "https://provinces.open-api.vn/api";
+const VN_ADDRESS_TIMEOUT_MS = 10_000;
 
 let vnProvincesCache = null;
 const vnDistrictsCache = new Map();
 const vnWardsCache = new Map();
 
 async function fetchVnJson(url) {
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) throw new Error(`VN address API ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), VN_ADDRESS_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`VN address API ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`VN address API timeout sau ${VN_ADDRESS_TIMEOUT_MS / 1000}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

@@ -66,7 +66,12 @@ try {
     },
     connections: 3,
     pipelining: 0,
-    keepAliveTimeout: 30_000,
+    keepAliveTimeout: 10_000,
+    keepAliveMaxTimeout: 15_000,
+    // Chặn socket treo vô hạn khi Shopee không trả headers/body.
+    headersTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2_000,
+    bodyTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2_000,
+    connectTimeout: 8_000,
   });
   console.log("[Shopee HTTP] undici Agent OK — TLS dispatcher sẵn sàng cho sync Shopee.");
 } catch (undiciErr) {
@@ -89,10 +94,14 @@ export async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_T
     if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
     const fetchPromise = fetch(url, fetchInit);
     const hardTimeoutPromise = new Promise((_, reject) => {
-      hardTimer = setTimeout(
-        () => reject(new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`)),
-        timeoutMs + 1000,
-      );
+      hardTimer = setTimeout(() => {
+        try {
+          controller.abort();
+        } catch {
+          /* ignore */
+        }
+        reject(new Error(`Shopee API timeout sau ${timeoutMs / 1000}s`));
+      }, timeoutMs + 1000);
     });
     return await Promise.race([fetchPromise, hardTimeoutPromise]);
   } catch (error) {

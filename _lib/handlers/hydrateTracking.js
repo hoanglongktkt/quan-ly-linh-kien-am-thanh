@@ -4,13 +4,10 @@
  * Không cần deploy lại server.cjs trên cPanel.
  */
 import mongoose from 'mongoose';
+import { connectDB, getMongoUri } from '../../config/db.js';
 import { buildCpanelTarget } from '../cpanelProxy.js';
 import { resolveCpanelBackend } from '../cpanelBackend.js';
 import { fetchWithDiagnostics } from '../fetchDiagnostics.js';
-
-function getMongoUri() {
-  return String(process.env.MONGODB_URI || process.env.MONGO_URL || '').trim();
-}
 
 function usableTn(v) {
   const tn = String(v || '').trim();
@@ -110,14 +107,10 @@ export async function handleHydrateTracking(req, res) {
     return res.status(503).json({ success: false, error: backend.error });
   }
 
-  let conn = null;
   try {
-    conn = await mongoose.createConnection(uri, {
-      serverSelectionTimeoutMS: 12000,
-      maxPoolSize: 2,
-    }).asPromise();
-
-    const col = conn.collection('orders');
+    // Singleton pool (config/db) — KHÔNG createConnection mỗi request (rò pool/process).
+    await connectDB();
+    const col = mongoose.connection.collection('orders');
 
     // Mirror top-level tracking_no → data.*
     const needMirror = await col
@@ -226,11 +219,5 @@ export async function handleHydrateTracking(req, res) {
       success: false,
       error: err?.message || String(err),
     });
-  } finally {
-    try {
-      if (conn) await conn.close();
-    } catch {
-      /* ignore */
-    }
   }
 }

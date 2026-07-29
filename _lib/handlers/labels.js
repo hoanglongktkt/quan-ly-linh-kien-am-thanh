@@ -40,8 +40,10 @@ export async function handleLabelProxy(req, res, routeFile = '') {
 
   const target = `${backend.url}/api/public/labels/${encodeURIComponent(filename)}`;
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
   try {
-    const upstream = await fetch(target, { method: req.method });
+    const upstream = await fetch(target, { method: req.method, signal: controller.signal });
     if (!upstream.ok) {
       const errText = await upstream.text().catch(() => '');
       console.error('[Labels Proxy] upstream fail', upstream.status, target, errText.slice(0, 120));
@@ -86,5 +88,7 @@ export async function handleLabelProxy(req, res, routeFile = '') {
       error: 'Không lấy được file vận đơn từ backend',
       detail: err?.message || String(err),
     });
+  } finally {
+    clearTimeout(timer);
   }
 }

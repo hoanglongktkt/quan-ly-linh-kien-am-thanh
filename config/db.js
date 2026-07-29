@@ -22,6 +22,9 @@ export const MONGO_CONNECT_OPTIONS = {
   maxIdleTimeMS: 30000,
 };
 
+/** Mutex singleton — tránh gọi mongoose.connect song song khi readyState=2 (connecting). */
+let connectPromise = null;
+
 /**
  * Kết nối MongoDB Atlas.
  * serverSelectionTimeoutMS: 5000 — fail nhanh, không treo boot/request.
@@ -41,25 +44,38 @@ export async function connectDB() {
     throw new Error("Thiếu MONGODB_URI / MONGO_URL trong biến môi trường.");
   }
 
+  // Đã connected → trả connection hiện có (không tạo pool mới).
   if (mongoose.connection.readyState === 1) {
     return mongoose.connection;
   }
 
-  mongoose.set("strictQuery", true);
-
-  try {
-    await mongoose.connect(uri, MONGO_CONNECT_OPTIONS);
-  } catch (err) {
-    const msg = err?.message || String(err);
-    throw new Error(
-      /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|MongoNetwork/i.test(msg)
-        ? "Lỗi kết nối MongoDB / mạng. Kiểm tra Atlas và biến MONGODB_URI."
-        : msg || "Không kết nối được MongoDB.",
-    );
+  // Đang connecting / lần gọi trước chưa xong → chờ cùng 1 promise.
+  if (connectPromise) {
+    return connectPromise;
   }
 
-  console.log("[DB] MongoDB Connected Successfully");
-  return mongoose.connection;
+  mongoose.set("strictQuery", true);
+
+  connectPromise = (async () => {
+    try {
+      // readyState 2 = connecting — mongoose.connect() sẽ await cùng handshake.
+      if (mongoose.connection.readyState !== 1) {
+        await mongoose.connect(uri, MONGO_CONNECT_OPTIONS);
+      }
+      console.log("[DB] MongoDB Connected Successfully");
+      return mongoose.connection;
+    } catch (err) {
+      connectPromise = null; // Cho phép retry lần sau
+      const msg = err?.message || String(err);
+      throw new Error(
+        /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|MongoNetwork/i.test(msg)
+          ? "Lỗi kết nối MongoDB / mạng. Kiểm tra Atlas và biến MONGODB_URI."
+          : msg || "Không kết nối được MongoDB.",
+      );
+    }
+  })();
+
+  return connectPromise;
 }
 
 export function isDBReady() {

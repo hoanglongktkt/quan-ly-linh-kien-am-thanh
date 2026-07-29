@@ -13,6 +13,7 @@ const scanBgJobs = [];
 const scanBgJobKeys = new Set();
 let scanBgWorkerRunning = false;
 let scanBgPersistTimer = null;
+let scanBgDrainKickTimer = null;
 
 /** Deps từ server.ts (order helpers / mongoStore chưa tách hết). */
 let deps = {
@@ -32,10 +33,15 @@ let deps = {
 
 export function initScanBgQueue(partial) {
   deps = { ...deps, ...partial };
-  if (scanBgJobs.some((j) => j.status === "pending")) {
-    setTimeout(() => {
-      void drainScanBgQueue();
-    }, 1500);
+  if (!scanBgJobs.some((j) => j.status === "pending")) return;
+  // Chỉ kick 1 lần — tránh spawn setTimeout chồng khi init gọi lại.
+  if (scanBgDrainKickTimer || scanBgWorkerRunning) return;
+  scanBgDrainKickTimer = setTimeout(() => {
+    scanBgDrainKickTimer = null;
+    void drainScanBgQueue();
+  }, 1500);
+  if (typeof scanBgDrainKickTimer.unref === "function") {
+    scanBgDrainKickTimer.unref();
   }
 }
 
@@ -118,6 +124,9 @@ function persistScanBgQueueSoon() {
       console.warn("[Scan BG] persist failed:", err?.message || err);
     }
   }, 250);
+  if (typeof scanBgPersistTimer.unref === "function") {
+    scanBgPersistTimer.unref();
+  }
 }
 
 function classifyScanBgCancelReturn(order) {

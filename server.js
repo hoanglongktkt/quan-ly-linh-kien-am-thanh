@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { connectDB } from "./config/db.js";
 import scanRoutes from "./routes/scanRoutes.js";
-import errorHandler from "./middlewares/errorHandler.js";
+import errorHandler, { asyncHandler } from "./middlewares/errorHandler.js";
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -47,22 +47,20 @@ async function start() {
     });
   });
 
-  app.post("/api/scan/save", async (req, res, next) => {
-    try {
+  app.post(
+    "/api/scan/save",
+    asyncHandler(async (req, res) => {
       const { saveScanOrders } = await import("./controllers/scanController.js");
       return saveScanOrders(req, res);
-    } catch (err) {
-      return next(err);
-    }
-  });
-  app.get("/api/scan/don-hoan-huy", async (req, res, next) => {
-    try {
+    }),
+  );
+  app.get(
+    "/api/scan/don-hoan-huy",
+    asyncHandler(async (req, res) => {
       const { listDonHoanHuy } = await import("./controllers/scanController.js");
       return listDonHoanHuy(req, res);
-    } catch (err) {
-      return next(err);
-    }
-  });
+    }),
+  );
   app.use("/api/scan", scanRoutes);
 
   app.use(errorHandler);

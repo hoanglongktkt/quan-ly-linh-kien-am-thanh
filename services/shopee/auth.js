@@ -949,21 +949,22 @@ export async function getShopeeAccessTokenForApi(shopKey, opts) {
 export async function verifyShopeeShopToken(shopId, accessToken) {
   const key = normalizeShopIdKey(shopId);
   if (!key || !accessToken) return { ok: false, error: "missing_shop_or_token" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
   try {
     const apiPath = "/api/v2/shop/get_shop_info";
     const timestamp = Math.floor(Date.now() / 1000);
     const sign = shopeeSign(apiPath, timestamp, accessToken, key);
     const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${key}&sign=${sign}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
     const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
     const json = await res.json();
     const err = String(json?.error || "").trim();
     if (err) return { ok: false, error: err };
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error?.message || String(error) };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -337,9 +337,10 @@ export async function processShopeeSyncQueue() {
   } finally {
     shopeeSyncQueueRunning = false;
     if (shopeeSyncQueue.length > 0) {
-      setTimeout(() => {
+      const kick = setTimeout(() => {
         void processShopeeSyncQueue();
       }, SHOPEE_SYNC_QUEUE_GAP_MS);
+      if (typeof kick.unref === "function") kick.unref();
     }
   }
 }
