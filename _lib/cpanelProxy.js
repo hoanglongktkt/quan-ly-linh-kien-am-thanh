@@ -24,6 +24,7 @@ const LONG_RUNNING_PREFIXES = [
   'mapping-products/batch-auto-link',
   'shopee/debug/return-by-order',
   'shopee/products/sync-item-variants',
+  'shopee/products/item-preview',
   'products/bulk-save',
   'products/bulk-channel-sync',
   'catalog/wipe-all',

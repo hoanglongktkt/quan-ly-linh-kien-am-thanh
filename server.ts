@@ -4182,13 +4182,25 @@ function parseModelPrice(model: any): number {
   return Math.max(0, Number(model?.price) || 0);
 }
 
+/** Shopee weight thường là kg → FE form dùng gram. */
+function parseShopeeWeightGrams(item: any): number {
+  const raw = Number(item?.weight ?? item?.package_weight ?? item?.dimension?.weight ?? 0);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  // > 30 coi như đã là gram; ngược lại là kg.
+  return raw > 30 ? Math.round(raw) : Math.round(raw * 1000);
+}
+
 function buildSingleWarehouseRow(item: any): any {
   const itemId = item?.item_id;
   const avatarUrl = getItemAvatarUrl(item);
   const sku = String(item?.item_sku || "").trim() || String(itemId);
-  const stock = Number(item?.stock_info_v2?.summary_info?.total_available_stock) || 0;
+  const stock = parseModelStock(item);
   const priceInfo = asShopeeArray(item?.price_info);
-  const price = Number(priceInfo[0]?.current_price ?? priceInfo[0]?.original_price) || 0;
+  const price =
+    Number(priceInfo[0]?.current_price ?? priceInfo[0]?.original_price) ||
+    parseModelPrice(item) ||
+    0;
+  const weight = parseShopeeWeightGrams(item);
 
   return {
     id: `shopee-item-${itemId}`,
@@ -4199,6 +4211,7 @@ function buildSingleWarehouseRow(item: any): any {
     stock,
     importPrice: 0,
     sellingPrice: price,
+    weight,
     channels: ["shopee"],
     imageUrl: avatarUrl,
     avatarUrl,
@@ -4220,6 +4233,7 @@ function buildParentWarehouseRow(item: any, children: any[]): any {
   const totalStock = safeChildren.reduce((sum, c) => sum + (Number(c?.stock) || 0), 0);
   const prices = safeChildren.map((c) => Number(c?.sellingPrice) || 0).filter((n) => n > 0);
   const price = prices.length ? Math.min(...prices) : 0;
+  const weight = parseShopeeWeightGrams(item);
   const baseName = item?.item_name || `Sản phẩm Shopee ${itemId}`;
 
   return {
@@ -4231,6 +4245,7 @@ function buildParentWarehouseRow(item: any, children: any[]): any {
     stock: totalStock,
     importPrice: 0,
     sellingPrice: price,
+    weight,
     channels: ["shopee"],
     imageUrl: avatarUrl,
     avatarUrl,
@@ -4283,6 +4298,7 @@ function buildVariantWarehouseRow(item: any, model: any, tierVariations: any[], 
   const sku = String(safeModel.model_sku || "").trim() || `${itemId}-M${modelId}`;
   const stock = parseModelStock(safeModel);
   const price = parseModelPrice(safeModel);
+  const weight = parseShopeeWeightGrams(item);
   const tierIndex = asShopeeArray<number>(safeModel.tier_index);
 
   return {
@@ -4296,6 +4312,7 @@ function buildVariantWarehouseRow(item: any, model: any, tierVariations: any[], 
     stock,
     importPrice: 0,
     sellingPrice: price,
+    weight,
     channels: ["shopee"],
     imageUrl: avatarUrl,
     avatarUrl,
@@ -4569,6 +4586,9 @@ async function upsertChannelListingsBatch(
             shopId: shopId != null ? String(shopId) : undefined,
             modelId: ids.modelId || prev?.modelId,
             itemId: ids.itemId,
+            price: Math.max(0, Math.round(Number(item?.sellingPrice ?? item?.price) || 0)),
+            weight: Math.max(0, Number(item?.weight) || 0),
+            stock: Math.max(0, Math.round(Number(item?.stock) || 0)),
             status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
             linkedProductId: keepExistingLink ? prev.linkedProductId : undefined,
           })
@@ -10063,6 +10083,9 @@ function sanitizeChannelListingRow(row: any): any {
         : undefined,
     itemId: row?.itemId != null && String(row.itemId).trim() !== "" ? String(row.itemId) : undefined,
     modelId: row?.modelId != null && String(row.modelId).trim() !== "" ? String(row.modelId) : undefined,
+    price: Math.max(0, Math.round(Number(row?.price ?? row?.sellingPrice) || 0)),
+    weight: Math.max(0, Number(row?.weight) || 0),
+    stock: Math.max(0, Math.round(Number(row?.stock) || 0)),
     syncError: row?.syncError ? String(row.syncError).slice(0, 500) : undefined,
     updatedAt: String(row?.updatedAt || new Date().toISOString()),
   };
@@ -12693,6 +12716,7 @@ async function startServer() {
     fetchShopeeItemVariants,
     loadProducts,
     replaceProductsForShopeeItem,
+    getProductChildrenList,
     extractHttpClientError,
   });
 

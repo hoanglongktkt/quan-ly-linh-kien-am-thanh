@@ -104301,6 +104301,7 @@ var deps15 = {
   fetchShopeeItemVariants: async () => ({ variantProducts: [], error: "not_initialized", modelCount: 0 }),
   loadProducts: async () => [],
   replaceProductsForShopeeItem: (all, _itemId, variants) => variants,
+  getProductChildrenList: (p) => Array.isArray(p?.children) && p.children.length ? p.children : Array.isArray(p?.children_models) ? p.children_models : [],
   extractHttpClientError: (err) => ({
     message: err?.message || String(err),
     details: ""
@@ -104500,11 +104501,103 @@ async function syncItemVariants(req, res) {
     return sendApiErrorJson(res, err, 500);
   }
 }
+function flattenShopeeRowsForInitForm(variantProducts) {
+  const out = [];
+  for (const row of Array.isArray(variantProducts) ? variantProducts : []) {
+    if (!row || typeof row !== "object") continue;
+    const children = deps15.getProductChildrenList(row);
+    const parentWeight = Math.max(0, Number(row.weight) || 0);
+    if (children.length > 0) {
+      children.forEach((child, idx) => {
+        out.push({
+          label: String(child?.modelName || child?.title?.split(" - ").pop() || `Phi\xEAn b\u1EA3n ${idx + 1}`),
+          sku: String(child?.sku || ""),
+          price: Math.max(0, Math.round(Number(child?.sellingPrice ?? child?.price) || 0)),
+          weight: Math.max(0, Number(child?.weight) || parentWeight),
+          stock: Math.max(0, Math.round(Number(child?.stock) || 0)),
+          modelId: child?.shopeeModelId != null ? String(child.shopeeModelId) : void 0,
+          itemId: child?.shopeeItemId != null ? String(child.shopeeItemId) : String(row.shopeeItemId || "")
+        });
+      });
+      continue;
+    }
+    out.push({
+      label: String(row?.modelName || "Phi\xEAn b\u1EA3n 1"),
+      sku: String(row?.sku || ""),
+      price: Math.max(0, Math.round(Number(row?.sellingPrice ?? row?.price) || 0)),
+      weight: parentWeight,
+      stock: Math.max(0, Math.round(Number(row?.stock) || 0)),
+      modelId: row?.shopeeModelId != null ? String(row.shopeeModelId) : void 0,
+      itemId: row?.shopeeItemId != null ? String(row.shopeeItemId) : void 0
+    });
+  }
+  return out;
+}
+async function previewItemVariants(req, res) {
+  try {
+    if (!isShopeeConfigValid()) {
+      return res.status(500).json({
+        success: false,
+        error: "invalid_partner_config",
+        message: "C\u1EA5u h\xECnh Shopee Partner kh\xF4ng h\u1EE3p l\u1EC7."
+      });
+    }
+    const rawItemId = String(
+      req.body?.itemId || req.body?.shopeeItemId || req.body?.channelId || req.query?.itemId || ""
+    );
+    const itemIdMatch = rawItemId.match(/(\d{6,})/);
+    if (!itemIdMatch) {
+      return res.status(400).json({
+        success: false,
+        error: "itemId_required",
+        message: "Kh\xF4ng x\xE1c \u0111\u1ECBnh \u0111\u01B0\u1EE3c item_id Shopee."
+      });
+    }
+    const itemId = Number(itemIdMatch[1]);
+    const shopId = resolveShopeeTokenShopId(req.body?.shopId || req.query?.shopId);
+    if (!shopId) {
+      return res.status(404).json({
+        success: false,
+        error: "no_shopee_shop",
+        message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n."
+      });
+    }
+    const accessToken = await getValidShopeeAccessToken(shopId);
+    if (!accessToken) {
+      return res.status(401).json({
+        success: false,
+        error: "no_valid_access_token",
+        message: "Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7."
+      });
+    }
+    const { item, variantProducts, error, modelCount } = await deps15.fetchShopeeItemVariants(
+      shopId,
+      accessToken,
+      itemId
+    );
+    if (error && (!Array.isArray(variantProducts) || variantProducts.length === 0)) {
+      return res.status(400).json({ success: false, error, message: error });
+    }
+    const variants = flattenShopeeRowsForInitForm(variantProducts);
+    return res.json({
+      success: true,
+      itemId: String(itemId),
+      title: String(item?.item_name || variantProducts?.[0]?.title || ""),
+      modelCount,
+      variants
+    });
+  } catch (err) {
+    console.error("[Shopee Item Preview] Exception:", err);
+    return sendApiErrorJson(res, err, 500);
+  }
+}
 
 // routes/shopeeProductsRoutes.js
 var router16 = (0, import_express17.Router)();
 router16.post("/products/sync", syncProducts);
 router16.post("/products/sync-item-variants", syncItemVariants);
+router16.post("/products/item-preview", previewItemVariants);
+router16.get("/products/item-preview", previewItemVariants);
 var shopeeProductsRoutes_default = router16;
 
 // routes/shopeeShipRoutes.js
@@ -108056,13 +108149,19 @@ function parseModelPrice(model) {
   }
   return Math.max(0, Number(model?.price) || 0);
 }
+function parseShopeeWeightGrams(item) {
+  const raw = Number(item?.weight ?? item?.package_weight ?? item?.dimension?.weight ?? 0);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return raw > 30 ? Math.round(raw) : Math.round(raw * 1e3);
+}
 function buildSingleWarehouseRow(item) {
   const itemId = item?.item_id;
   const avatarUrl = getItemAvatarUrl(item);
   const sku = String(item?.item_sku || "").trim() || String(itemId);
-  const stock = Number(item?.stock_info_v2?.summary_info?.total_available_stock) || 0;
+  const stock = parseModelStock(item);
   const priceInfo = asShopeeArray(item?.price_info);
-  const price = Number(priceInfo[0]?.current_price ?? priceInfo[0]?.original_price) || 0;
+  const price = Number(priceInfo[0]?.current_price ?? priceInfo[0]?.original_price) || parseModelPrice(item) || 0;
+  const weight = parseShopeeWeightGrams(item);
   return {
     id: `shopee-item-${itemId}`,
     title: item?.item_name || `S\u1EA3n ph\u1EA9m Shopee ${itemId}`,
@@ -108072,6 +108171,7 @@ function buildSingleWarehouseRow(item) {
     stock,
     importPrice: 0,
     sellingPrice: price,
+    weight,
     channels: ["shopee"],
     imageUrl: avatarUrl,
     avatarUrl,
@@ -108091,6 +108191,7 @@ function buildParentWarehouseRow(item, children) {
   const totalStock = safeChildren.reduce((sum, c) => sum + (Number(c?.stock) || 0), 0);
   const prices = safeChildren.map((c) => Number(c?.sellingPrice) || 0).filter((n) => n > 0);
   const price = prices.length ? Math.min(...prices) : 0;
+  const weight = parseShopeeWeightGrams(item);
   const baseName = item?.item_name || `S\u1EA3n ph\u1EA9m Shopee ${itemId}`;
   return {
     id: `shopee-item-${itemId}`,
@@ -108101,6 +108202,7 @@ function buildParentWarehouseRow(item, children) {
     stock: totalStock,
     importPrice: 0,
     sellingPrice: price,
+    weight,
     channels: ["shopee"],
     imageUrl: avatarUrl,
     avatarUrl,
@@ -108149,6 +108251,7 @@ function buildVariantWarehouseRow(item, model, tierVariations, modelIndex) {
   const sku = String(safeModel.model_sku || "").trim() || `${itemId}-M${modelId}`;
   const stock = parseModelStock(safeModel);
   const price = parseModelPrice(safeModel);
+  const weight = parseShopeeWeightGrams(item);
   const tierIndex = asShopeeArray(safeModel.tier_index);
   return {
     id: `shopee-item-${itemId}-model-${modelId}`,
@@ -108161,6 +108264,7 @@ function buildVariantWarehouseRow(item, model, tierVariations, modelIndex) {
     stock,
     importPrice: 0,
     sellingPrice: price,
+    weight,
     channels: ["shopee"],
     imageUrl: avatarUrl,
     avatarUrl,
@@ -108319,6 +108423,9 @@ async function upsertChannelListingsBatch(batchRows, shopId, shopName) {
             shopId: shopId != null ? String(shopId) : void 0,
             modelId: ids.modelId || prev?.modelId,
             itemId: ids.itemId,
+            price: Math.max(0, Math.round(Number(item?.sellingPrice ?? item?.price) || 0)),
+            weight: Math.max(0, Number(item?.weight) || 0),
+            stock: Math.max(0, Math.round(Number(item?.stock) || 0)),
             status: keepExistingLink ? "success" : prev?.status === "failed" ? "failed" : "unlinked",
             linkedProductId: keepExistingLink ? prev.linkedProductId : void 0
           })
@@ -112039,6 +112146,9 @@ function sanitizeChannelListingRow(row) {
     linkedProductSku: row?.linkedProductSku != null && String(row.linkedProductSku).trim() !== "" ? String(row.linkedProductSku).trim() : void 0,
     itemId: row?.itemId != null && String(row.itemId).trim() !== "" ? String(row.itemId) : void 0,
     modelId: row?.modelId != null && String(row.modelId).trim() !== "" ? String(row.modelId) : void 0,
+    price: Math.max(0, Math.round(Number(row?.price ?? row?.sellingPrice) || 0)),
+    weight: Math.max(0, Number(row?.weight) || 0),
+    stock: Math.max(0, Math.round(Number(row?.stock) || 0)),
     syncError: row?.syncError ? String(row.syncError).slice(0, 500) : void 0,
     updatedAt: String(row?.updatedAt || (/* @__PURE__ */ new Date()).toISOString())
   };
@@ -113817,6 +113927,7 @@ async function startServer() {
     fetchShopeeItemVariants,
     loadProducts,
     replaceProductsForShopeeItem,
+    getProductChildrenList,
     extractHttpClientError
   });
   initScanBgQueue({

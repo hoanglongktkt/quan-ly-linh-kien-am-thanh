@@ -36,6 +36,7 @@ interface ChannelListing {
   channelId: string;
   platform: 'shopee' | 'tiktok' | 'woocommerce' | 'lazada';
   shopName: string;
+  shopId?: string;
   status: 'success' | 'unlinked' | 'failed' | 'invalid';
   linkedProductId?: string;
   /** Populate từ API JOIN kho gốc — nguồn sự thật cho UI, không lấy từ DOM */
@@ -46,6 +47,9 @@ interface ChannelListing {
   linkBroken?: boolean;
   itemId?: string;
   modelId?: string;
+  price?: number;
+  weight?: number;
+  stock?: number;
 }
 
 /** Chuẩn hóa SKU — trim + toUpperCase để so khớp chính xác. */
@@ -101,6 +105,7 @@ function normalizeListingRecord(raw: any): ChannelListing | null {
     channelId: channelId || id,
     platform,
     shopName: String(raw.shopName ?? ''),
+    shopId: raw.shopId != null && String(raw.shopId).trim() !== '' ? String(raw.shopId) : undefined,
     status,
     linkedProductId,
     linkedProductTitle:
@@ -126,6 +131,9 @@ function normalizeListingRecord(raw: any): ChannelListing | null {
     linkBroken: !!raw.linkBroken,
     itemId: raw.itemId != null ? String(raw.itemId) : undefined,
     modelId: raw.modelId != null ? String(raw.modelId) : undefined,
+    price: Math.max(0, Math.round(Number(raw.price ?? raw.sellingPrice) || 0)),
+    weight: Math.max(0, Number(raw.weight) || 0),
+    stock: Math.max(0, Math.round(Number(raw.stock) || 0)),
   };
 }
 
@@ -196,6 +204,8 @@ interface InitVariantRow {
   price: number;
   weight: number;
   stock: number;
+  modelId?: string;
+  itemId?: string;
 }
 
 interface ProductLinkingProps {
@@ -759,36 +769,103 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   const [initTitle, setInitTitle] = useState('');
   const [initAutoLink, setInitAutoLink] = useState(true);
   const [initVariants, setInitVariants] = useState<InitVariantRow[]>([]);
+  const [initLoading, setInitLoading] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
 
-  const buildInitVariants = (item: ChannelListing): InitVariantRow[] => {
+  const buildInitVariantsFromListing = (item: ChannelListing): InitVariantRow[] => {
     const fromWarehouse = products.filter(
-      (p) => p.shopeeItemId === item.channelId || String(p.shopeeId || '').startsWith(item.channelId)
+      (p) => p.shopeeItemId === item.channelId || String(p.shopeeId || '').startsWith(String(item.itemId || item.channelId).split(':')[0])
     );
     if (fromWarehouse.length > 0) {
       return fromWarehouse.map((p, i) => ({
         id: `row-${i}`,
         label: p.modelName || p.title.split(' - ').pop() || `Phiên bản ${i + 1}`,
         sku: p.sku,
-        price: p.sellingPrice || 0,
-        weight: p.weight || 0,
-        stock: p.stock || 0,
+        price: Math.max(0, Math.round(Number(p.sellingPrice) || 0)),
+        weight: Math.max(0, Number(p.weight) || 0),
+        stock: Math.max(0, Math.round(Number(p.stock) || 0)),
+        modelId: p.shopeeModelId,
+        itemId: p.shopeeItemId,
       }));
     }
+    // Fallback từ snapshot listing (sau sync-from-shop) — không hardcode.
     return [{
       id: 'row-0',
       label: 'Phiên bản 1',
       sku: item.sku || `SP-${item.channelId}`,
-      price: 100000,
-      weight: 0,
-      stock: 100,
+      price: Math.max(0, Math.round(Number(item.price) || 0)),
+      weight: Math.max(0, Number(item.weight) || 0),
+      stock: Math.max(0, Math.round(Number(item.stock) || 0)),
+      modelId: item.modelId,
+      itemId: item.itemId,
     }];
   };
 
-  const handleOpenInitModal = (item: ChannelListing) => {
+  const mapShopeePreviewToInitRows = (variants: any[]): InitVariantRow[] => {
+    return (Array.isArray(variants) ? variants : []).map((v, i) => ({
+      id: `row-${i}`,
+      label: String(v?.label || `Phiên bản ${i + 1}`),
+      sku: String(v?.sku || ''),
+      price: Math.max(0, Math.round(Number(v?.price) || 0)),
+      weight: Math.max(0, Number(v?.weight) || 0),
+      stock: Math.max(0, Math.round(Number(v?.stock) || 0)),
+      modelId: v?.modelId != null ? String(v.modelId) : undefined,
+      itemId: v?.itemId != null ? String(v.itemId) : undefined,
+    }));
+  };
+
+  const resolveInitShopId = (item: ChannelListing): string | undefined => {
+    if (item.shopId) return String(item.shopId);
+    const byName = shops.find(
+      (s) => s.platform === 'shopee' && s.connected && s.shopName === item.shopName,
+    );
+    if (byName?.shopId) return String(byName.shopId);
+    return shops.find((s) => s.platform === 'shopee' && s.connected)?.shopId;
+  };
+
+  const handleOpenInitModal = async (item: ChannelListing) => {
     setInitListing(item);
     setInitTitle(item.title);
     setInitAutoLink(true);
-    setInitVariants(buildInitVariants(item));
+    setInitError(null);
+    setInitVariants(buildInitVariantsFromListing(item));
+
+    if (item.platform !== 'shopee') return;
+
+    const itemId =
+      String(item.itemId || '').trim() ||
+      (String(item.channelId || '').match(/(\d{6,})/) || [])[1] ||
+      '';
+    if (!itemId) return;
+
+    setInitLoading(true);
+    try {
+      const token = localStorage.getItem('admin_token');
+      const shopId = resolveInitShopId(item);
+      const res = await apiFetch('/api/shopee/products/item-preview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ itemId, shopId, channelId: item.channelId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.message || data?.error || 'Không lấy được dữ liệu Shopee');
+      }
+      const rows = mapShopeePreviewToInitRows(data?.variants);
+      if (rows.length > 0) {
+        setInitVariants(rows);
+        if (data?.title) setInitTitle(String(data.title));
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setInitError(message);
+      console.warn('[ProductLinking] item-preview failed, dùng snapshot listing:', message);
+    } finally {
+      setInitLoading(false);
+    }
   };
 
   const updateInitVariant = (id: string, patch: Partial<InitVariantRow>) => {
@@ -1004,15 +1081,16 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       let shopeeModelId: string | undefined;
       if (initListing.platform === 'shopee') {
         const cid = String(initListing.channelId || '').trim();
-        if (cid.includes(':')) {
-          const [itemPart, modelPart] = cid.split(':');
-          shopeeItemId = (itemPart.match(/(\d{6,})/) || [])[1] || itemPart;
-          shopeeModelId = (String(modelPart).match(/(\d+)/) || [])[1] || modelPart;
-          shopeeId = shopeeModelId ? `${shopeeItemId}:${shopeeModelId}` : cid;
-        } else {
-          shopeeId = cid;
-          shopeeItemId = cid;
+        const itemFromCid = (cid.match(/(\d{6,})/) || [])[1] || '';
+        shopeeItemId = String(row.itemId || initListing.itemId || itemFromCid || '').trim() || undefined;
+        shopeeModelId = String(row.modelId || '').trim() || undefined;
+        if (!shopeeModelId && cid.includes(':')) {
+          const modelPart = cid.split(':')[1];
+          shopeeModelId = (String(modelPart).match(/(\d+)/) || [])[1] || modelPart || undefined;
         }
+        shopeeId = shopeeModelId && shopeeItemId
+          ? `${shopeeItemId}:${shopeeModelId}`
+          : shopeeItemId || cid;
       }
       return {
         id: `prod-imported-${Date.now()}-${idx}`,
@@ -1912,7 +1990,19 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               </div>
 
               <div className="space-y-2">
-                <h4 className="text-xs font-black text-gray-700 uppercase tracking-wide">Phiên bản sản phẩm</h4>
+                <h4 className="text-xs font-black text-gray-700 uppercase tracking-wide flex items-center gap-2">
+                  Phiên bản sản phẩm
+                  {initLoading && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 normal-case tracking-normal">
+                      <RefreshCw className="w-3 h-3 animate-spin" /> Đang lấy giá/tồn từ Shopee…
+                    </span>
+                  )}
+                </h4>
+                {initError && (
+                  <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                    Không tải được chi tiết Shopee ({initError}). Đang hiển thị dữ liệu đã lưu trên listing.
+                  </p>
+                )}
                 <div className="border border-gray-100 rounded-xl overflow-hidden">
                   <table className="w-full text-left text-xs">
                     <thead>
@@ -1990,7 +2080,7 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
               <button
                 type="button"
                 onClick={handleConfirmInitToWarehouse}
-                disabled={!initTitle.trim()}
+                disabled={!initTitle.trim() || initLoading || initVariants.length === 0}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white font-extrabold text-xs rounded-xl flex items-center gap-1.5"
               >
                 <ArrowDownToLine className="w-3.5 h-3.5" />
