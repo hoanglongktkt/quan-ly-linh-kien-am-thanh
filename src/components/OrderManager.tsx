@@ -44,6 +44,14 @@ import {
   getScanProcessedReason,
   matchesReceivedCancelReturnTab,
 } from '../utils/orderLocalStatus';
+import {
+  enqueueScanBgCodes,
+  fetchScanBgStatus,
+  ackScanBgNotifications,
+  buildScanBgPendingKeySet,
+  orderMatchesScanBgPending,
+  formatScanBgToast,
+} from '../utils/scanBgQueue';
 import { 
   Search, 
   ShoppingBag, 
@@ -842,10 +850,10 @@ export default function OrderManager({
   const isScanBusyRef = React.useRef(false);
   /** Hàng đợi mã quét khi đang verify — không bỏ mã khi quét liên tục. */
   const pendingScanQueueRef = React.useRef<string[]>([]);
-  /** Hàng đợi dò ngầm khi mã không có trong local DB (không block camera). */
-  const backgroundLookupQueueRef = React.useRef<string[]>([]);
-  const backgroundLookupBusyRef = React.useRef(false);
-  const backgroundLookupSeenRef = React.useRef<Set<string>>(new Set());
+  /** Hàng đợi dò ngầm đã chuyển lên Backend — FE chỉ enqueue + poll badge. */
+  const [scanBgPendingKeys, setScanBgPendingKeys] = useState<Set<string>>(() => new Set());
+  const [scanBgPendingCount, setScanBgPendingCount] = useState(0);
+  const scanBgPollBusyRef = React.useRef(false);
   const prevFocusScannerRef = React.useRef(focusScanner);
   const isHandingOverRef = React.useRef(false);
   const daXuatKhoListRef = React.useRef(daXuatKhoList);
@@ -1376,82 +1384,84 @@ export default function OrderManager({
     [onUpdateOrders],
   );
 
-  /** Real-time: quét → dò trạng thái ngay (chưa ghi DB). Local miss → queue dò ngầm, không block. */
-  const drainBackgroundLookupQueue = React.useCallback(async () => {
-    if (backgroundLookupBusyRef.current) return;
-    backgroundLookupBusyRef.current = true;
-    try {
-      while (backgroundLookupQueueRef.current.length > 0) {
-        const code = backgroundLookupQueueRef.current.shift();
-        if (!code) continue;
-        const key = normalizeOrderScanKey(code);
-        const token = localStorage.getItem('admin_token');
-        if (!token) continue;
-
-        let order: Order | null = null;
-        try {
-          order = await lookupOrderByScanCode(code, [], token, undefined);
-        } catch (err) {
-          console.warn('[Scan BG lookup] failed:', err);
-          continue;
-        }
-        if (!order) continue;
-
-        // Merge vào local cache (không PATCH full — DB ghi bằng scan-bulk-update bên dưới).
-        const idx = ordersRef.current.findIndex((o) => o.id === order!.id);
-        if (idx >= 0) {
-          const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
-          ordersRef.current = merged;
-          onUpdateOrders(merged, { persist: false });
-        } else {
-          const merged = [order, ...ordersRef.current];
-          ordersRef.current = merged;
-          onUpdateOrders(merged, { persist: false });
-        }
-
-        const { isReturnBucket, isCancelBucket } = classifyScanCancelReturnBuckets(order);
-        if (!isReturnBucket && !isCancelBucket) continue;
-
-        // Âm thầm ghi cờ CANCELLED_STORED / RETURN_RECEIVED vào DB (field tab lọc).
-        try {
-          await persistCancelReturnScanFlag(code, isReturnBucket ? 'return' : 'cancel');
-          if (!isTearingDownScannerRef.current) {
-            showScanToast(
-              isReturnBucket
-                ? `Dò ngầm: nhận hoàn #${order.orderSn}`
-                : `Dò ngầm: đơn hủy #${order.orderSn}`,
-              'success',
-            );
-          }
-        } catch (err) {
-          console.warn('[Scan BG lookup] silent update error:', err);
-        } finally {
-          backgroundLookupSeenRef.current.delete(key);
-        }
-      }
-    } finally {
-      backgroundLookupBusyRef.current = false;
-      if (backgroundLookupQueueRef.current.length > 0) {
-        queueMicrotask(() => {
-          void drainBackgroundLookupQueue();
-        });
-      }
-    }
-  }, [onUpdateOrders, persistCancelReturnScanFlag]);
-
+  /** Đẩy mã miss lên Backend queue — worker dò Shopee + ghi cờ độc lập FE. */
   const enqueueBackgroundLookup = React.useCallback(
     (rawCode: string) => {
       const trimmed = String(rawCode || '').trim();
       const key = normalizeOrderScanKey(trimmed);
       if (!trimmed || !key) return;
-      if (backgroundLookupSeenRef.current.has(key)) return;
-      if (backgroundLookupQueueRef.current.some((c) => normalizeOrderScanKey(c) === key)) return;
-      backgroundLookupSeenRef.current.add(key);
-      backgroundLookupQueueRef.current.push(trimmed);
-      void drainBackgroundLookupQueue();
+      if (scanBgPendingKeys.has(key)) return;
+      setScanBgPendingKeys((prev) => {
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+      setScanBgPendingCount((c) => c + 1);
+      void (async () => {
+        const result = await enqueueScanBgCodes([trimmed]);
+        if (!result.ok) {
+          showScanToast(
+            result.message || 'Không xếp được hàng đợi dò ngầm',
+            'error',
+          );
+          return;
+        }
+        if (!isTearingDownScannerRef.current) {
+          showScanToast(
+            result.queued > 0
+              ? `Đã xếp dò ngầm Backend (${result.pending} mã đang chờ)`
+              : `Mã đã có trong hàng đợi dò ngầm (${result.pending} đang chờ)`,
+            'success',
+          );
+        }
+      })();
     },
-    [drainBackgroundLookupQueue],
+    [scanBgPendingKeys],
   );
+
+  /** Poll trạng thái worker Backend — badge + toast + refresh tab hủy/hoàn. */
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      if (scanBgPollBusyRef.current) return;
+      scanBgPollBusyRef.current = true;
+      try {
+        const status = await fetchScanBgStatus();
+        if (cancelled || !status) return;
+        const keys = buildScanBgPendingKeySet(status);
+        setScanBgPendingKeys(keys);
+        setScanBgPendingCount(status.pendingCount || 0);
+
+        const unnotified = status.unnotified || [];
+        if (unnotified.length > 0) {
+          const toast = formatScanBgToast(status.summary);
+          if (toast) {
+            if (focusScanner) showScanToast(toast, 'success');
+            else {
+              // Ngoài màn quét: dùng scanToast nếu còn mount, không thì bỏ qua (App toast lo).
+              showScanToast(toast, 'success');
+            }
+          }
+          await ackScanBgNotifications(unnotified.map((j) => j.id));
+          const saved =
+            (status.summary?.cancelled || 0) + (status.summary?.returnReceived || 0);
+          if (saved > 0) {
+            void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
+          }
+        }
+      } finally {
+        scanBgPollBusyRef.current = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [focusScanner, onFetchOrders]);
 
   const verifySingleOrder = React.useCallback(
     async (rawQuery: string) => {
@@ -1495,7 +1505,7 @@ export default function OrderManager({
         vibrateScan('pending');
         flashViewfinder('error', 400);
         setCameraScanResult(`Chưa có data, đang dò ngầm: ${trimmed}`);
-        showScanToast('Chưa có data, đang dò ngầm', 'error');
+        showScanToast('Chưa có data — đã xếp hàng đợi dò ngầm Backend', 'error');
         enqueueBackgroundLookup(trimmed);
         return;
       }
@@ -4465,6 +4475,16 @@ export default function OrderManager({
         </div>
       )}
 
+      {scanBgPendingCount > 0 && (
+        <div className="bg-sky-50 border border-sky-200 rounded-2xl px-4 py-3 text-xs text-sky-900 font-semibold leading-relaxed flex items-center gap-2">
+          <Loader2 className="w-4 h-4 animate-spin shrink-0 text-sky-600" />
+          <span>
+            Đang dò ngầm Backend <strong>{scanBgPendingCount}</strong> mã — tiếp tục chạy kể cả khi tắt màn quét.
+            Xong sẽ tự ghi cờ hủy/hoàn và cập nhật tab.
+          </span>
+        </div>
+      )}
+
       {activeSubTab === 'received_cancel_returns' && (
         <div className="bg-teal-50/80 border border-teal-100 rounded-2xl px-4 py-3 text-xs text-teal-900 font-semibold leading-relaxed">
           Đối soát kiện hủy/hoàn đã quét nhận về kho (cờ nội bộ{' '}
@@ -4774,8 +4794,13 @@ export default function OrderManager({
                 {filteredOrders.map(order => {
                   const isChecked = selectedOrderIds.includes(order.id);
                   const badgeBase = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
-                  const badge =
-                    matchesHandedOverCarrierTab(order)
+                  const isBgLooking = orderMatchesScanBgPending(order, scanBgPendingKeys);
+                  const badge = isBgLooking
+                    ? {
+                        text: 'Đang dò ngầm...',
+                        color: 'bg-sky-50 text-sky-700 border-sky-200/60 font-semibold animate-pulse',
+                      }
+                    : matchesHandedOverCarrierTab(order)
                       ? {
                           text: 'Đã quét QR - Chờ ĐVVC nhận',
                           color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',
@@ -5035,8 +5060,13 @@ export default function OrderManager({
             {filteredOrders.map(order => {
               const isChecked = selectedOrderIds.includes(order.id);
               const badgeBase = getStatusBadge(resolveOrderBadgeStatus(order)) || { text: order.status, color: '' };
-              const badge =
-                matchesHandedOverCarrierTab(order)
+              const isBgLooking = orderMatchesScanBgPending(order, scanBgPendingKeys);
+              const badge = isBgLooking
+                ? {
+                    text: 'Đang dò ngầm...',
+                    color: 'bg-sky-50 text-sky-700 border-sky-200/60 font-semibold animate-pulse',
+                  }
+                : matchesHandedOverCarrierTab(order)
                   ? {
                       text: 'Đã quét QR - Chờ ĐVVC nhận',
                       color: 'bg-violet-50 text-violet-700 border-violet-200/60 font-semibold',

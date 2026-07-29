@@ -5639,6 +5639,350 @@ function releaseHeavyJob(name: string): void {
   if (cpanelHeavyJobActive?.name === name) cpanelHeavyJobActive = null;
 }
 
+/** ——— Queue dò ngầm quét mã (độc lập FE — sống sót khi tắt màn quét) ——— */
+type ScanBgJobStatus = "pending" | "running" | "done" | "failed" | "skipped";
+type ScanBgJobAction =
+  | "cancelled"
+  | "return_received"
+  | "found_other"
+  | "not_found"
+  | "duplicate"
+  | "error";
+
+type ScanBgJob = {
+  id: string;
+  code: string;
+  codeKey: string;
+  status: ScanBgJobStatus;
+  enqueuedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  orderId?: string;
+  orderSn?: string;
+  action?: ScanBgJobAction;
+  local_status?: string;
+  message?: string;
+  notified?: boolean;
+};
+
+const SCAN_BG_QUEUE_PATH = path.join(APP_ROOT, "data", "scan-bg-queue.json");
+const scanBgJobs: ScanBgJob[] = [];
+const scanBgJobKeys = new Set<string>();
+let scanBgWorkerRunning = false;
+let scanBgPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+function normalizeScanBgKey(code: string): string {
+  return String(code || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\-_#./\\|:;,]+/g, "");
+}
+
+function loadScanBgQueueFromDisk(): void {
+  try {
+    if (!fs.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(fs.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
+    for (const j of list) {
+      const code = String(j?.code || "").trim();
+      const codeKey = normalizeScanBgKey(code || j?.codeKey || "");
+      if (!code || !codeKey || scanBgJobKeys.has(codeKey)) continue;
+      const rawStatus = String(j?.status || "pending");
+      // Job đang running khi process chết → đưa lại pending.
+      let status: ScanBgJobStatus =
+        rawStatus === "running" || rawStatus === "pending"
+          ? "pending"
+          : rawStatus === "failed"
+            ? "failed"
+            : rawStatus === "skipped"
+              ? "skipped"
+              : "done";
+      if (status !== "pending") {
+        // Giữ recent done/failed chưa notify.
+        if (j?.notified) continue;
+      }
+      const job: ScanBgJob = {
+        id: String(j?.id || `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+        code,
+        codeKey,
+        status,
+        enqueuedAt: String(j?.enqueuedAt || new Date().toISOString()),
+        startedAt: j?.startedAt ? String(j.startedAt) : undefined,
+        finishedAt: j?.finishedAt ? String(j.finishedAt) : undefined,
+        orderId: j?.orderId ? String(j.orderId) : undefined,
+        orderSn: j?.orderSn ? String(j.orderSn) : undefined,
+        action: j?.action,
+        local_status: j?.local_status ? String(j.local_status) : undefined,
+        message: j?.message ? String(j.message) : undefined,
+        notified: Boolean(j?.notified),
+      };
+      scanBgJobs.push(job);
+      if (job.status === "pending") {
+        scanBgJobKeys.add(codeKey);
+      }
+    }
+    console.log(
+      `[Scan BG] loaded disk jobs=${scanBgJobs.length} pending=${scanBgJobs.filter((j) => j.status === "pending").length}`,
+    );
+  } catch (err: any) {
+    console.warn("[Scan BG] load disk failed:", err?.message || err);
+  }
+}
+
+function persistScanBgQueueSoon(): void {
+  if (scanBgPersistTimer) return;
+  scanBgPersistTimer = setTimeout(() => {
+    scanBgPersistTimer = null;
+    try {
+      fs.mkdirSync(path.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      // Giữ pending + 80 kết quả gần nhất.
+      const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
+      const recent = scanBgJobs
+        .filter((j) => j.status !== "pending" && j.status !== "running")
+        .slice(-80);
+      const jobs = [...pending, ...recent];
+      fs.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+    } catch (err: any) {
+      console.warn("[Scan BG] persist failed:", err?.message || err);
+    }
+  }, 250);
+}
+
+function classifyScanBgCancelReturn(order: any): {
+  isReturn: boolean;
+  isCancel: boolean;
+} {
+  const status = String(order?.status || "");
+  const raw = String(order?.shopee_order_status || "").toUpperCase();
+  const kind = String(order?.shopee_cancel_return_kind || "");
+  const isReturn =
+    kind === "refund_return" ||
+    status === "return_pending" ||
+    status === "return_received" ||
+    raw === "TO_RETURN" ||
+    Boolean(order?.return_sn);
+  const isCancel =
+    !isReturn &&
+    (kind === "cancelled" ||
+      kind === "failed_delivery" ||
+      status === "cancelled" ||
+      raw === "CANCELLED" ||
+      raw === "IN_CANCEL" ||
+      isShopeeCancelOrReturnLikeOrder(order));
+  return { isReturn, isCancel };
+}
+
+function enqueueScanBgCodes(codes: string[]): { queued: number; pending: number; jobs: ScanBgJob[] } {
+  const added: ScanBgJob[] = [];
+  for (const raw of codes) {
+    const code = String(raw || "").trim();
+    const codeKey = normalizeScanBgKey(code);
+    if (!code || !codeKey) continue;
+    if (scanBgJobKeys.has(codeKey)) continue;
+    // Đã có job pending/running cùng key?
+    const existing = scanBgJobs.find(
+      (j) => j.codeKey === codeKey && (j.status === "pending" || j.status === "running"),
+    );
+    if (existing) continue;
+    const job: ScanBgJob = {
+      id: `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      code,
+      codeKey,
+      status: "pending",
+      enqueuedAt: new Date().toISOString(),
+      notified: false,
+    };
+    scanBgJobs.push(job);
+    scanBgJobKeys.add(codeKey);
+    added.push(job);
+  }
+  if (added.length) {
+    persistScanBgQueueSoon();
+    void drainScanBgQueue();
+  }
+  const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running").length;
+  return { queued: added.length, pending, jobs: added };
+}
+
+async function processOneScanBgJob(job: ScanBgJob): Promise<void> {
+  job.status = "running";
+  job.startedAt = new Date().toISOString();
+  persistScanBgQueueSoon();
+
+  try {
+    let found: any | null = null;
+    try {
+      found = await findOrderByScanCodeInStore(job.code);
+      if (found && !isValidOrder(found)) found = null;
+      if (found) found = mirrorTrackingFieldsForRead(found);
+    } catch {
+      found = null;
+    }
+    if (!found) {
+      try {
+        found = await resolveOrderFromShopeeByScanCode(job.code);
+        if (found) {
+          found = mirrorTrackingFieldsForRead(found);
+        }
+      } catch (err: any) {
+        console.warn(`[Scan BG] Shopee resolve code=${job.code}:`, err?.message || err);
+      }
+    }
+
+    if (!found) {
+      job.status = "done";
+      job.action = "not_found";
+      job.message = `Không tìm thấy đơn khớp mã "${job.code}"`;
+      job.finishedAt = new Date().toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+
+    job.orderId = found.id ? String(found.id) : undefined;
+    job.orderSn = found.orderSn ? String(found.orderSn) : undefined;
+
+    const existingLocal = resolveOrderLocalStatusShared(found);
+    if (existingLocal === "CANCELLED_STORED" || existingLocal === "RETURN_RECEIVED") {
+      job.status = "done";
+      job.action = "duplicate";
+      job.local_status = existingLocal;
+      job.message = `Đơn #${found.orderSn} đã có cờ ${existingLocal}`;
+      job.finishedAt = new Date().toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+
+    const { isReturn, isCancel } = classifyScanBgCancelReturn(found);
+    if (!isReturn && !isCancel) {
+      job.status = "done";
+      job.action = "found_other";
+      job.message = `Đơn #${found.orderSn} không phải hủy/hoàn — bỏ qua ghi cờ`;
+      job.finishedAt = new Date().toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+
+    const target = isReturn
+      ? ORDER_LOCAL_STATUS.RETURN_RECEIVED
+      : ORDER_LOCAL_STATUS.CANCELLED_STORED;
+    clearHandedOverLocalForCancelReturn(found);
+    setOrderLocalStatus(found, target);
+
+    try {
+      await persistChangedOrdersPatch([found]);
+    } catch (persistErr: any) {
+      console.warn("[Scan BG] persistChangedOrdersPatch:", persistErr?.message || persistErr);
+    }
+
+    const sn = String(found.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (sn && isMongoReady()) {
+      const ok = await markOrderLocalStatusInStore(sn, target, {
+        shopId: found.shopId != null ? String(found.shopId) : undefined,
+        clearHandedOver: true,
+        status: isReturn ? "return_received" : String(found.status || "cancelled"),
+      });
+      console.log(`[Scan BG] markOrderLocalStatus=${target} sn=${sn} ok=${ok}`);
+    }
+
+    job.status = "done";
+    job.action = isReturn ? "return_received" : "cancelled";
+    job.local_status = target;
+    job.message = isReturn
+      ? `Đã dò ngầm nhận hoàn #${found.orderSn} → RETURN_RECEIVED`
+      : `Đã dò ngầm đơn hủy #${found.orderSn} → CANCELLED_STORED`;
+    job.finishedAt = new Date().toISOString();
+    scanBgJobKeys.delete(job.codeKey);
+  } catch (err: any) {
+    job.status = "failed";
+    job.action = "error";
+    job.message = err?.message || String(err);
+    job.finishedAt = new Date().toISOString();
+    scanBgJobKeys.delete(job.codeKey);
+    console.error(`[Scan BG] job fail code=${job.code}:`, err?.message || err);
+  } finally {
+    persistScanBgQueueSoon();
+  }
+}
+
+async function drainScanBgQueue(): Promise<void> {
+  if (scanBgWorkerRunning) return;
+  scanBgWorkerRunning = true;
+  try {
+    while (true) {
+      const next = scanBgJobs.find((j) => j.status === "pending");
+      if (!next) break;
+      await processOneScanBgJob(next);
+      // Nghỉ ngắn giữa các mã — tránh rate-limit Shopee.
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  } finally {
+    scanBgWorkerRunning = false;
+    const stillPending = scanBgJobs.some((j) => j.status === "pending");
+    if (stillPending) {
+      queueMicrotask(() => {
+        void drainScanBgQueue();
+      });
+    }
+  }
+}
+
+function getScanBgStatusSnapshot(): {
+  pending: ScanBgJob[];
+  running: ScanBgJob[];
+  recent: ScanBgJob[];
+  unnotified: ScanBgJob[];
+  pendingCount: number;
+  summary: { cancelled: number; returnReceived: number; notFound: number; failed: number };
+} {
+  const pending = scanBgJobs.filter((j) => j.status === "pending");
+  const running = scanBgJobs.filter((j) => j.status === "running");
+  const recent = scanBgJobs
+    .filter((j) => j.status === "done" || j.status === "failed" || j.status === "skipped")
+    .slice(-40);
+  const unnotified = recent.filter((j) => !j.notified);
+  const summary = { cancelled: 0, returnReceived: 0, notFound: 0, failed: 0 };
+  for (const j of unnotified) {
+    if (j.action === "cancelled") summary.cancelled += 1;
+    else if (j.action === "return_received") summary.returnReceived += 1;
+    else if (j.action === "not_found") summary.notFound += 1;
+    else if (j.action === "error" || j.status === "failed") summary.failed += 1;
+  }
+  return {
+    pending,
+    running,
+    recent,
+    unnotified,
+    pendingCount: pending.length + running.length,
+    summary,
+  };
+}
+
+function ackScanBgNotifications(ids?: string[]): number {
+  const idSet = Array.isArray(ids) && ids.length > 0 ? new Set(ids.map(String)) : null;
+  let n = 0;
+  for (const j of scanBgJobs) {
+    if (j.status !== "done" && j.status !== "failed" && j.status !== "skipped") continue;
+    if (j.notified) continue;
+    if (idSet && !idSet.has(j.id)) continue;
+    j.notified = true;
+    n += 1;
+  }
+  if (n) persistScanBgQueueSoon();
+  return n;
+}
+
+// Khởi động lại worker nếu còn job pending sau boot.
+try {
+  loadScanBgQueueFromDisk();
+  if (scanBgJobs.some((j) => j.status === "pending")) {
+    setTimeout(() => {
+      void drainScanBgQueue();
+    }, 1500);
+  }
+} catch {
+  /* ignore boot */
+}
+
 function detectStockPriceChanges(
   before: any,
   after: any
@@ -18626,6 +18970,90 @@ async function startServer() {
       return res.status(500).json({
         success: false,
         error: error?.message || "heal_failed",
+      });
+    }
+  });
+
+  /**
+   * Queue dò ngầm quét mã — Backend worker độc lập FE.
+   * POST body: { codes: string[] } — đẩy vào queue, trả về ngay.
+   * Worker tự lookup / kéo Shopee / ghi CANCELLED_STORED | RETURN_RECEIVED.
+   */
+  app.post("/api/orders/scan-bg-enqueue", authMiddleware, async (req, res) => {
+    try {
+      const rawCodes = Array.isArray(req.body?.codes)
+        ? req.body.codes
+        : Array.isArray(req.body?.scannedCodes)
+          ? req.body.scannedCodes
+          : req.body?.code
+            ? [req.body.code]
+            : [];
+      const codes = [
+        ...new Set(rawCodes.map((c: unknown) => String(c || "").trim()).filter(Boolean)),
+      ];
+      if (!codes.length) {
+        return res.status(400).json({
+          success: false,
+          error: "missing_codes",
+          message: "Thiếu mã quét (codes).",
+        });
+      }
+      const result = enqueueScanBgCodes(codes);
+      console.log(
+        `[Scan BG] enqueue queued=${result.queued} pending=${result.pending} codes=${codes.length}`,
+      );
+      return res.json({
+        success: true,
+        queued: result.queued,
+        pending: result.pending,
+        jobs: result.jobs,
+        message:
+          result.queued > 0
+            ? `Đã xếp ${result.queued} mã vào hàng đợi dò ngầm.`
+            : "Các mã đã có trong hàng đợi dò ngầm.",
+      });
+    } catch (error: any) {
+      console.error("[Scan BG] enqueue error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "scan_bg_enqueue_failed",
+        message: error?.message || "Không thể xếp hàng đợi dò ngầm.",
+      });
+    }
+  });
+
+  /** Trạng thái queue dò ngầm + kết quả chưa thông báo. */
+  app.get("/api/orders/scan-bg-status", authMiddleware, async (_req, res) => {
+    try {
+      const snap = getScanBgStatusSnapshot();
+      return res.json({
+        success: true,
+        pendingCount: snap.pendingCount,
+        pending: snap.pending,
+        running: snap.running,
+        recent: snap.recent,
+        unnotified: snap.unnotified,
+        summary: snap.summary,
+        workerRunning: scanBgWorkerRunning,
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "scan_bg_status_failed",
+      });
+    }
+  });
+
+  /** FE ack đã hiển thị toast kết quả. */
+  app.post("/api/orders/scan-bg-ack", authMiddleware, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : undefined;
+      const acked = ackScanBgNotifications(ids);
+      return res.json({ success: true, acked });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "scan_bg_ack_failed",
       });
     }
   });

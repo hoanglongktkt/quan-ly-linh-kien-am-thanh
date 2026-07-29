@@ -44,8 +44,15 @@ import {
   ShoppingBasket,
   Scale,
   PackageCheck,
+  CheckCircle2,
+  Loader2,
 } from 'lucide-react';
 import type { OrdersSubTabId } from './components/OrderManager';
+import {
+  fetchScanBgStatus,
+  ackScanBgNotifications,
+  formatScanBgToast,
+} from './utils/scanBgQueue';
 
 /** Gộp shallow fetch (50 đơn mới) vào cache: cập nhật đơn cũ, prepend đơn mới. */
 function mergeShallowOrders(cached: Order[], fresh: Order[]): Order[] {
@@ -251,6 +258,11 @@ export default function App() {
    * trạng thái rỗng giả trong lúc chờ token verify + bootstrap chạy). */
   const [hasLoadedOrdersOnce, setHasLoadedOrdersOnce] = useState<boolean>(false);
   const [productsLoading, setProductsLoading] = useState<boolean>(false);
+  /** Toast kết quả dò ngầm Backend (sống sót khi rời tab Đơn hàng). */
+  const [scanBgToast, setScanBgToast] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [scanBgPendingCount, setScanBgPendingCount] = useState(0);
+  const scanBgPollBusyRef = useRef(false);
+  const scanBgToastTimerRef = useRef<number | null>(null);
   /** Làm mới ngầm khi quay lại tab trình duyệt — không trigger Shopee sync. */
   const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const lastFocusRefreshAtRef = useRef(0);
@@ -684,6 +696,50 @@ export default function App() {
     return () => {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [isAuthenticated, activeTab]);
+
+  // Poll hàng đợi dò ngầm Backend — toast toàn app kể cả khi tắt màn quét / đổi tab.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    const poll = async () => {
+      if (scanBgPollBusyRef.current) return;
+      scanBgPollBusyRef.current = true;
+      try {
+        const status = await fetchScanBgStatus();
+        if (cancelled || !status) return;
+        setScanBgPendingCount(status.pendingCount || 0);
+        const unnotified = status.unnotified || [];
+        if (unnotified.length === 0) return;
+        // OrderManager lo toast+ack khi đang ở tab Đơn hàng — tránh double toast.
+        if (activeTab === 'orders') return;
+        const toast = formatScanBgToast(status.summary);
+        if (toast) {
+          if (scanBgToastTimerRef.current) window.clearTimeout(scanBgToastTimerRef.current);
+          setScanBgToast({
+            text: toast,
+            type: status.summary.cancelled + status.summary.returnReceived > 0 ? 'success' : 'error',
+          });
+          scanBgToastTimerRef.current = window.setTimeout(() => setScanBgToast(null), 5000);
+        }
+        await ackScanBgNotifications(unnotified.map((j) => j.id));
+        const saved =
+          (status.summary?.cancelled || 0) + (status.summary?.returnReceived || 0);
+        if (saved > 0) {
+          void fetchOrders({ silent: true, bustCache: true });
+        }
+      } finally {
+        scanBgPollBusyRef.current = false;
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
     };
   }, [isAuthenticated, activeTab]);
 
@@ -1549,6 +1605,27 @@ export default function App() {
           <span className="text-[11px] font-semibold tracking-wide">Đang làm mới...</span>
         </div>
       )}
+      {scanBgPendingCount > 0 && activeTab !== 'orders' && (
+        <div
+          className="fixed top-16 left-3 right-3 md:left-auto md:right-3 md:max-w-sm z-[100] flex items-center gap-2 rounded-xl bg-sky-600 text-white px-3 py-2 shadow-lg"
+          role="status"
+        >
+          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+          <span className="text-[11px] font-bold">
+            Đang dò ngầm {scanBgPendingCount} mã...
+          </span>
+        </div>
+      )}
+      {scanBgToast && (
+        <div
+          className={`fixed top-16 left-3 right-3 md:left-auto md:right-3 md:max-w-md z-[110] text-xs font-bold px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 ${
+            scanBgToast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'
+          }`}
+        >
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span className="flex-1">{scanBgToast.text}</span>
+        </div>
+      )}
       {/* Sidebar Navigation */}
       <aside className="sidebar-panel max-md:hidden md:flex md:w-64 md:flex-col shrink-0 sticky top-0 h-screen overflow-y-auto bg-slate-900 text-slate-300 border-r border-slate-800" id="sidebar-panel">
         {/* Brand Header */}
@@ -1595,6 +1672,11 @@ export default function App() {
             }`}
           >
             <PackageCheck className="w-4 h-4 shrink-0" /> Đã nhận đơn hủy, đơn hoàn
+            {scanBgPendingCount > 0 && (
+              <span className="ml-auto text-[9px] font-black bg-sky-500 text-white px-1.5 py-0.5 rounded-full tabular-nums">
+                {scanBgPendingCount}
+              </span>
+            )}
           </button>
 
           <button
@@ -1700,6 +1782,11 @@ export default function App() {
                 }`}
               >
                 <PackageCheck className="w-4 h-4 shrink-0" /> Đã nhận đơn hủy, đơn hoàn
+                {scanBgPendingCount > 0 && (
+                  <span className="ml-auto text-[9px] font-black bg-sky-500 text-white px-1.5 py-0.5 rounded-full tabular-nums">
+                    {scanBgPendingCount}
+                  </span>
+                )}
               </button>
               <button onClick={() => navigateTab('orders', { openScanner: true })} className={`w-full flex items-center gap-3 px-4 py-3 min-h-11 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${activeTab === 'orders' && focusScanner ? 'bg-blue-600 text-white' : 'hover:bg-slate-800 hover:text-white text-slate-400'}`}>
                 <Barcode className="w-4 h-4 shrink-0" /> Quét mã vạch

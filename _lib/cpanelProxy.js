@@ -34,6 +34,7 @@ const LONG_RUNNING_PREFIXES = [
   'shopee/category-attributes',
   'orders/pull',
   'orders/scan-bulk-update',
+  'orders/scan-bg-enqueue',
   'orders/enrich-tracking',
   'orders/hydrate-tracking',
   'orders/lookup',
