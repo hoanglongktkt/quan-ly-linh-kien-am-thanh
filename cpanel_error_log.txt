@@ -1,13 +1,14 @@
-Exception: Error: EPIPE: broken pipe, write
-    at Socket._write (node:internal/net:75:18)
-    at writeOrBuffer (node:internal/streams/writable:570:12)
-    at _write (node:internal/streams/writable:499:10)
-    at Writable.write (node:internal/streams/writable:508:10)
-    at console.value (node:internal/console/constructor:313:16)
-    at console.error (node:internal/console/constructor:444:26)
-    at writeCpanelCrashLog (F:\web ban hang\web goc\server.ts:87:13)
-    at process.<anonymous> (F:\web ban hang\web goc\server.ts:93:3)
-    at process.emit (node:events:521:24)
-    at process.emit (F:\web ban hang\web goc\node_modules\tsx\dist\suppress-warnings.cjs:1:472)
+Exception: Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'F:\web ban hang\web goc\dist\devServer.ts' imported from F:\web ban hang\web goc\dist\server.cjs
+Did you mean to import "../devServer.ts"?
+    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
+    at moduleResolve (node:internal/modules/esm/resolve:865:10)
+    at defaultResolve (node:internal/modules/esm/resolve:992:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:701:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:721:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:759:56)
+    at #resolve (node:internal/modules/esm/loader:683:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:603:35)
+    at node:internal/modules/esm/loader:632:32
+    at TracingChannel.tracePromise (node:diagnostics_channel:362:14)
 ---
-2026-07-24T16:08:41.962Z
+2026-07-29T06:39:11.915Z

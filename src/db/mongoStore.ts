@@ -468,7 +468,10 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     ensureModels();
     if (mongoose.connection.readyState === 0) {
       await mongoose.connect(uri, {
-        serverSelectionTimeoutMS: 10000,
+        // Fail nhanh 5s — API không được im lặng chờ tới khi client timeout.
+        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 5000,
+        socketTimeoutMS: 15000,
         // Tăng 5→15: pool 5 quá nhỏ khi Dashboard/Products/Orders + Webhook cùng chạy
         // song song — hết pool khiến query MỚI phải XẾP HÀNG chờ connection (không lỗi
         // ngay) và có thể "treo" tới khi client-side timeout bắn, dù bản thân query rất
@@ -478,7 +481,7 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
         minPoolSize: 1,
         // Nếu pool vẫn hết, THẤT BẠI NHANH thay vì chờ vô thời hạn — trả lỗi rõ ràng
         // để route trả response ngay (tránh cộng dồn request treo → cPanel tăng process).
-        waitQueueTimeoutMS: 8000,
+        waitQueueTimeoutMS: 5000,
         maxIdleTimeMS: 30000,
       });
       fs.writeFileSync(
@@ -1749,7 +1752,13 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           return true;
         });
         const ops = accepted.map((item) => item.op);
-        const events = accepted.flatMap((item) => (item.event ? [item.event] : []));
+        // order_events từng làm đầy Atlas Free 512MB — mặc định TẮT.
+        // Bật lại chỉ khi ORDER_EVENTS_ENABLED=1.
+        const eventsEnabled =
+          String(process.env.ORDER_EVENTS_ENABLED || "").trim() === "1";
+        const events = eventsEnabled
+          ? accepted.flatMap((item) => (item.event ? [item.event] : []))
+          : [];
         if (ops.length === 0) return;
         const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
         await setMeta("orders_updated_at", new Date().toISOString());
@@ -3090,6 +3099,13 @@ export function describeMongoWriteError(err: unknown): string {
   const msg = String(anyErr?.message || err || "");
   const code = String(anyErr?.code ?? anyErr?.codeName ?? "");
   const name = String(anyErr?.name || "");
+  if (
+    /server selection|ServerSelectionError|timed out after|maxTimeMS|ExceededTimeLimit|MongoServerSelectionError|MongoNetworkTimeoutError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|MongoNetworkError|topology was destroyed|connection.*closed|mongodb_not_ready|Chưa kết nối được Database/i.test(
+      msg + name + code,
+    )
+  ) {
+    return "Lỗi kết nối MongoDB";
+  }
   if (/quota|space|exceeded|8000|AtlasError/i.test(msg + code) || code === "8000") {
     return "Quota MongoDB chưa nhả đủ dung lượng (Atlas Over space quota). Hãy dọn order_events hoặc nâng gói.";
   }
@@ -3100,20 +3116,14 @@ export function describeMongoWriteError(err: unknown): string {
   ) {
     return "Sai quyền tài khoản DB — cần user ReadWrite (không dùng tài khoản chỉ đọc như dev_test).";
   }
-  if (
-    /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|MongoNetworkError|ServerSelectionError|topology was destroyed|connection.*closed/i.test(
-      msg + name,
-    )
-  ) {
-    return "Mất kết nối MongoDB. Kiểm tra mạng, IP whitelist Atlas hoặc chuỗi MONGODB_URI.";
-  }
-  if (/mongodb_not_ready|Chưa kết nối được Database/i.test(msg)) {
-    return "MongoDB chưa sẵn sàng trên server. Xem App Logs / khởi động lại backend.";
-  }
   if (/duplicate key|E11000/i.test(msg)) {
     return "Trùng mã đơn trong don_hoan_huy (đã lưu trước đó).";
   }
   return msg || "Lỗi ghi MongoDB không xác định.";
+}
+
+export function isMongoConnectionError(err: unknown): boolean {
+  return describeMongoWriteError(err) === "Lỗi kết nối MongoDB";
 }
 
 function donHoanHuyDocToOrder(doc: any): any {
@@ -3166,6 +3176,7 @@ export async function loadDonHoanHuyAsOrders(limit = 2000): Promise<any[]> {
   const docs = await DonHoanHuyModel.find({})
     .sort({ scannedAt: -1 })
     .limit(safeLimit)
+    .maxTimeMS(5000)
     .lean();
   return (docs || []).map(donHoanHuyDocToOrder);
 }
@@ -3175,13 +3186,16 @@ export async function existsDonHoanHuy(orderSn: string): Promise<boolean> {
   requireMongo();
   const sn = String(orderSn).replace(/^shopee-/i, "").trim();
   if (!sn) return false;
-  const hit = await DonHoanHuyModel.findById(`dhh-${sn}`).select({ _id: 1 }).lean();
+  const hit = await DonHoanHuyModel.findById(`dhh-${sn}`)
+    .select({ _id: 1 })
+    .maxTimeMS(5000)
+    .lean();
   return Boolean(hit);
 }
 
 /**
  * Upsert đơn hủy/hoàn vào collection don_hoan_huy (SSOT cho tab).
- * TTL 14 ngày tự xóa theo scannedAt.
+ * TTL 14 ngày tự xóa theo scannedAt. maxTimeMS 5s — fail nhanh.
  */
 export async function upsertDonHoanHuy(
   order: any,
@@ -3192,7 +3206,13 @@ export async function upsertDonHoanHuy(
     scannedAt?: string | Date;
   },
 ): Promise<{ ok: boolean; orderSn: string; error?: string }> {
-  requireMongo();
+  try {
+    requireMongo();
+  } catch (readyErr) {
+    console.error("[MongoDB] upsertDonHoanHuy requireMongo:", readyErr);
+    return { ok: false, orderSn: "", error: "Lỗi kết nối MongoDB" };
+  }
+
   const sn = String(order?.orderSn || order?.order_sn || "")
     .replace(/^shopee-/i, "")
     .trim();
@@ -3214,9 +3234,11 @@ export async function upsertDonHoanHuy(
 
   const tn = String(order?.tracking_no || order?.trackingNumber || "").trim() || null;
   const rtn = String(order?.return_tracking_no || "").trim() || null;
+  const DON_HOAN_HUY_MAX_MS = 5000;
 
   try {
-    await DonHoanHuyModel.findOneAndUpdate(
+    // Collection don_hoan_huy tự tạo khi upsert lần đầu (Mongoose + Atlas).
+    const writePromise = DonHoanHuyModel.findOneAndUpdate(
       { _id },
       {
         $set: {
@@ -3250,16 +3272,29 @@ export async function upsertDonHoanHuy(
           createdAt: scannedAt,
         },
       },
-      { upsert: true, new: true },
+      { upsert: true, new: true, maxTimeMS: DON_HOAN_HUY_MAX_MS },
     );
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error("MongoDB maxTimeMS/serverSelection timeout 5000ms")),
+        DON_HOAN_HUY_MAX_MS + 500,
+      );
+    });
+
+    await Promise.race([writePromise, timeoutPromise]);
     console.log(
       `[MongoDB] upsert don_hoan_huy ok order_sn=${sn} type=${type} local_status=${local_status}`,
     );
     return { ok: true, orderSn: sn };
   } catch (err) {
+    console.error("[MongoDB] upsert don_hoan_huy FAIL order_sn=" + sn + ":", err);
     const detail = describeMongoWriteError(err);
-    console.error(`[MongoDB] upsert don_hoan_huy FAIL order_sn=${sn}:`, detail, err);
-    return { ok: false, orderSn: sn, error: detail };
+    return {
+      ok: false,
+      orderSn: sn,
+      error: isMongoConnectionError(err) ? "Lỗi kết nối MongoDB" : detail,
+    };
   }
 }
 

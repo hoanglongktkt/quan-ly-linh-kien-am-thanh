@@ -93,6 +93,7 @@ import {
   mergeDonHoanHuyIntoOrders,
   existsDonHoanHuy,
   describeMongoWriteError,
+  isMongoConnectionError,
   mirrorTopLevelTrackingIntoData,
   getDashboardStatsFromStore,
   getLowStockProductsFromStore,
@@ -5913,10 +5914,10 @@ async function processOneScanBgJob(job: ScanBgJob): Promise<void> {
   } catch (err: any) {
     job.status = "failed";
     job.action = "error";
-    job.message = err?.message || String(err);
+    job.message = describeMongoWriteError(err);
     job.finishedAt = new Date().toISOString();
     scanBgJobKeys.delete(job.codeKey);
-    console.error(`[Scan BG] job fail code=${job.code}:`, err?.message || err);
+    console.error(`[Scan BG] job fail code=${job.code}:`, err);
   } finally {
     persistScanBgQueueSoon();
   }
@@ -19581,10 +19582,10 @@ async function startServer() {
       if (cancelReturnRows.length > 0) {
         if (!isMongoReady()) {
           console.error("[Orders Scan Bulk] Mongo not ready — không ghi được don_hoan_huy");
-          return res.status(503).json({
+          return res.status(500).json({
             success: false,
+            message: "Lỗi kết nối MongoDB",
             error: "mongodb_not_ready",
-            message: "MongoDB chưa sẵn sàng trên server. Xem App Logs / khởi động lại backend.",
           });
         }
         try {
@@ -19597,12 +19598,12 @@ async function startServer() {
             })),
           );
         } catch (dhhErr: any) {
+          console.error("[Orders Scan Bulk] don_hoan_huy batch FAIL:", dhhErr);
           const detail = describeMongoWriteError(dhhErr);
-          console.error("[Orders Scan Bulk] don_hoan_huy batch FAIL:", detail, dhhErr);
           return res.status(500).json({
             success: false,
+            message: isMongoConnectionError(dhhErr) ? "Lỗi kết nối MongoDB" : detail,
             error: "don_hoan_huy_write_failed",
-            message: detail,
           });
         }
         if (donHoanHuyWrite.failed > 0 && donHoanHuyWrite.ok === 0) {
@@ -19610,10 +19611,11 @@ async function startServer() {
             donHoanHuyWrite.errors[0] ||
             "Không ghi được đơn nào vào collection don_hoan_huy.";
           console.error("[Orders Scan Bulk] don_hoan_huy all failed:", donHoanHuyWrite.errors);
+          const connFail = /Lỗi kết nối MongoDB/i.test(detail);
           return res.status(500).json({
             success: false,
+            message: connFail ? "Lỗi kết nối MongoDB" : detail,
             error: "don_hoan_huy_write_failed",
-            message: detail,
             errors: donHoanHuyWrite.errors.slice(0, 10),
           });
         }
@@ -19708,12 +19710,12 @@ async function startServer() {
         orders: enriched,
       });
     } catch (error: any) {
+      console.error("[Orders Scan Bulk] Error:", error);
       const detail = describeMongoWriteError(error);
-      console.error("[Orders Scan Bulk] Error:", detail, error?.stack || error);
       return res.status(500).json({
         success: false,
+        message: isMongoConnectionError(error) ? "Lỗi kết nối MongoDB" : detail || "Không thể cập nhật hàng loạt đơn đã quét.",
         error: error?.message || "scan_bulk_update_failed",
-        message: detail || "Không thể cập nhật hàng loạt đơn đã quét.",
       });
     }
   });
