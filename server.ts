@@ -116,6 +116,42 @@ import {
   initDashboardController,
   getDashboard,
 } from "./controllers/dashboardController.js";
+import productsRoutesImport from "./routes/productsRoutes.js";
+import mappingRoutesImport from "./routes/mappingRoutes.js";
+import {
+  initStockSyncQueue,
+  resolveProductWithShopeeMapping,
+} from "./services/stockSyncQueue.js";
+import {
+  initProductsController,
+  listProducts,
+  searchProducts,
+  handleProductSyncShopee,
+  createProduct,
+  getLocalInventory,
+  refreshLocalInventory,
+  replaceProducts,
+  patchProduct,
+  inventoryBalance,
+  syncStock,
+  bulkSaveProducts,
+  deleteProduct,
+  clearAllProducts,
+  handleInventoryClearAll,
+  bulkUpdateProducts,
+  bulkChannelSync,
+} from "./controllers/productsController.js";
+import {
+  initMappingController,
+  handleMappingProductsGet,
+  handleMappingProductsUpsert,
+  handleMappingProductsHeal,
+  handleBatchAutoLink,
+  handleSingleAutoLink,
+  handleBulkAutoLinkByIds,
+  handleMappingSkuIndex,
+  handleMappingPurgeBroken,
+} from "./controllers/mappingController.js";
 import {
   extractHttpClientError,
   sendApiErrorJson,
@@ -145,6 +181,8 @@ const importsRoutes = asRouter(importsRoutesImport);
 const settingsRoutes = asRouter(settingsRoutesImport);
 const aiRoutes = asRouter(aiRoutesImport);
 const dashboardRoutes = asRouter(dashboardRoutesImport);
+const productsRoutes = asRouter(productsRoutesImport);
+const mappingRoutes = asRouter(mappingRoutesImport);
 import {
   initMongo,
   loadProductsFromStore,
@@ -5554,409 +5592,8 @@ async function pushStockUpdatesToShopee(
   return { ok: errors.length === 0, errors, warnings, pushed, staleSkus: [...new Set(staleSkus)] };
 }
 
-// ---------------------------------------------------------------------------
-// Shopee Sync Queue — rate-limit (750ms) + retry (tối đa 3) cho stock/price
-// ---------------------------------------------------------------------------
-
-type ShopeeSyncQueueJob = {
-  key: string;
-  productId: string;
-  syncStock: boolean;
-  syncPrice: boolean;
-  shopId?: string;
-  attempts: number;
-  enqueuedAt: string;
-};
-
-const shopeeSyncQueue: ShopeeSyncQueueJob[] = [];
-const shopeeSyncQueueKeys = new Set<string>();
-let shopeeSyncQueueRunning = false;
-// Scan BG queue → services/scanBgQueue.js (Phase 3)
-
-function detectStockPriceChanges(
-  before: any,
-  after: any
-): { stock: boolean; price: boolean } {
-  const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
-  const stockAfter = Math.max(0, Math.round(Number(after?.stock) || 0));
-  const priceBefore = Math.max(0, Math.round(Number(before?.sellingPrice) || 0));
-  const priceAfter = Math.max(0, Math.round(Number(after?.sellingPrice) || 0));
-  return {
-    stock: stockBefore !== stockAfter,
-    price: priceBefore !== priceAfter,
-  };
-}
-
-function findProductRowById(products: any[], productId: string): any | null {
-  const id = String(productId || "").trim();
-  if (!id) return null;
-  for (const p of Array.isArray(products) ? products : []) {
-    if (String(p?.id || "").trim() === id) return p;
-    for (const child of getProductChildrenList(p)) {
-      if (String(child?.id || "").trim() === id) {
-        return inheritShopeeLinkFromParent(child, p);
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * Gắn Shopee item/model từ DB Mapping (channel_listings) nếu sản phẩm kho đã liên kết.
- * Luôn cố bổ sung model_id kể cả khi đã có item_id.
- */
-async function resolveProductWithShopeeMapping(product: any): any | null {
-  if (!product || typeof product !== "object") return null;
-
-  let current: any = product;
-  const hasItemId = () => getShopeeItemIdForStockPush(current) != null;
-  const hasModelId = () => resolveShopeeModelIdForStockPush(current) != null;
-
-  if (!hasItemId() || !hasModelId()) {
-    let listings: any[] = [];
-    try {
-      listings = await readChannelListingsDb();
-    } catch (err) {
-      console.error("[Shopee Sync Queue] Không đọc được channel_listings:", err);
-      if (!hasItemId()) return null;
-    }
-
-    const productId = String(product.id || "").trim();
-    if (productId && listings.length > 0) {
-      const match = listings.find((row) => {
-        if (!row || typeof row !== "object") return false;
-        const platform = String(row.platform || "shopee").trim().toLowerCase();
-        if (platform && platform !== "shopee") return false;
-        const linkedId =
-          row.linkedProductId != null && String(row.linkedProductId).trim() !== ""
-            ? String(row.linkedProductId).trim()
-            : row.linkedProduct?.id != null
-              ? String(row.linkedProduct.id).trim()
-              : "";
-        if (!linkedId || linkedId !== productId) return false;
-        const status = String(row.status || "").trim().toLowerCase();
-        return status === "success";
-      });
-
-      if (match) {
-        const channelId = String(match.channelId || match.itemId || "").trim();
-        if (channelId || match.itemId != null) {
-          current = applyShopeeLinkFieldsToProduct(current, channelId || String(match.itemId), {
-            modelId: match.modelId ?? match.shopeeModelId ?? current.shopeeModelId,
-            itemId: match.itemId ?? getShopeeItemIdForStockPush(current),
-          });
-        }
-      }
-    }
-  }
-
-  if (getShopeeItemIdForStockPush(current) == null) return null;
-  return current;
-}
-
-async function executeShopeeStockPriceSyncJob(
-  product: any,
-  opts: { syncStock: boolean; syncPrice: boolean; shopId?: string }
-): Promise<{ ok: boolean; message: string }> {
-  const mapped = await resolveProductWithShopeeMapping(product);
-  if (!mapped) {
-    return { ok: false, message: "Chưa liên kết Mapping Shopee — bỏ qua sync." };
-  }
-
-  const shopId = resolveShopeeTokenShopId(opts.shopId);
-  if (!shopId) {
-    return { ok: false, message: "Chưa có shop Shopee được ủy quyền." };
-  }
-  const accessToken = await getValidShopeeAccessToken(shopId);
-  if (!accessToken) {
-    return { ok: false, message: `Chưa có access_token hợp lệ cho shop_id=${shopId}.` };
-  }
-
-  const itemId = getShopeeItemIdForStockPush(mapped);
-  let modelId = resolveShopeeModelIdForStockPush(mapped);
-  if (itemId == null) {
-    return { ok: false, message: "Thiếu Shopee item_id sau khi resolve Mapping." };
-  }
-
-  // Fallback: lấy model_id từ get_model_list nếu thiếu (item has_model).
-  let itemHasModel = productRequiresShopeeModelId(mapped, 1);
-  if (modelId == null) {
-    const fromApi = await resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
-    if (fromApi.hasModel) itemHasModel = true;
-    if (fromApi.modelId != null) {
-      modelId = fromApi.modelId;
-      mapped.shopeeModelId = String(fromApi.modelId);
-    }
-  }
-
-  if (itemHasModel && modelId == null) {
-    const msg =
-      "Phân loại (variant) thiếu model_id — bắt buộc truyền item_id + model_id khi update_stock";
-    await appendShopeeSyncErrorToDb({
-      itemId,
-      modelId: undefined,
-      sku: mapped.sku,
-      shopId,
-      action: "update_stock",
-      error: msg,
-      productId: mapped.id,
-    });
-    return { ok: false, message: msg };
-  }
-
-  const locationId = opts.syncStock
-    ? await resolveShopeeStockLocationId(shopId, accessToken)
-    : null;
-
-  const lines: string[] = [];
-
-  if (opts.syncStock) {
-    const stockEntry = buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
-    try {
-      const stockResult = await shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
-      const parsed = parseShopeeApiResult(stockResult, mapped, "update_stock");
-      lines.push(parsed.message);
-      if (!parsed.success) {
-        await appendShopeeSyncErrorToDb({
-          itemId,
-          modelId: modelId ?? mapped.shopeeModelId,
-          sku: mapped.sku,
-          shopId,
-          action: "update_stock",
-          error: parsed.message,
-          productId: mapped.id,
-        });
-        return { ok: false, message: parsed.message };
-      }
-    } catch (err: unknown) {
-      const msg = extractShopeeStockPushErrorMessage(err, err instanceof Error ? err.message : String(err));
-      await appendShopeeSyncErrorToDb({
-        itemId,
-        modelId: modelId ?? mapped.shopeeModelId,
-        sku: mapped.sku,
-        shopId,
-        action: "update_stock",
-        error: msg,
-        productId: mapped.id,
-      });
-      return { ok: false, message: msg };
-    }
-  }
-
-  if (opts.syncPrice) {
-    await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
-    const priceEntry = buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
-    try {
-      const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
-      const parsed = parseShopeeApiResult(priceResult, mapped, "update_price");
-      lines.push(parsed.message);
-      if (!parsed.success) {
-        await appendShopeeSyncErrorToDb({
-          itemId,
-          modelId: modelId ?? mapped.shopeeModelId,
-          sku: mapped.sku,
-          shopId,
-          action: "update_price",
-          error: parsed.message,
-          productId: mapped.id,
-        });
-        return { ok: false, message: parsed.message };
-      }
-    } catch (err: unknown) {
-      const msg = extractShopeeStockPushErrorMessage(
-        err,
-        err instanceof Error ? err.message : String(err)
-      );
-      await appendShopeeSyncErrorToDb({
-        itemId,
-        modelId: modelId ?? mapped.shopeeModelId,
-        sku: mapped.sku,
-        shopId,
-        action: "update_price",
-        error: msg,
-        productId: mapped.id,
-      });
-      return { ok: false, message: msg };
-    }
-  }
-
-  return { ok: true, message: lines.join(" | ") || "Sync Shopee OK" };
-}
-
-/** Đẩy stock/price lên Shopee ngay (không qua queue) — dùng cho PATCH sản phẩm / nút sync nhanh. */
-async function pushProductStockPriceToShopeeImmediate(
-  product: any,
-  opts: { syncStock: boolean; syncPrice: boolean }
-): Promise<{ ok: boolean; skipped?: boolean; message: string }> {
-  if (!opts.syncStock && !opts.syncPrice) {
-    return { ok: true, skipped: true, message: "Không có thay đổi tồn/giá cần đồng bộ Shopee." };
-  }
-  const mapped = await resolveProductWithShopeeMapping(product);
-  if (!mapped) {
-    return {
-      ok: true,
-      skipped: true,
-      message: "Chưa liên kết Mapping Shopee — chỉ lưu kho nội bộ.",
-    };
-  }
-  return executeShopeeStockPriceSyncJob(mapped, {
-    syncStock: opts.syncStock,
-    syncPrice: opts.syncPrice,
-  });
-}
-
-async function processShopeeSyncQueue(): Promise<void> {
-  if (shopeeSyncQueueRunning) return;
-  shopeeSyncQueueRunning = true;
-
-  try {
-    while (shopeeSyncQueue.length > 0) {
-      const job = shopeeSyncQueue.shift()!;
-      shopeeSyncQueueKeys.delete(job.key);
-
-      try {
-        const row = await loadProductById(job.productId);
-        if (!row) {
-          console.warn(`[Shopee Sync Queue] Bỏ qua — không thấy productId=${job.productId}`);
-          await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
-          continue;
-        }
-
-        const mapped = await resolveProductWithShopeeMapping(row);
-        if (!mapped) {
-          console.log(
-            `[Shopee Sync Queue] Skip SKU=${row.sku || job.productId} — chưa Mapping Shopee`
-          );
-          await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
-          continue;
-        }
-
-        const result = await executeShopeeStockPriceSyncJob(mapped, {
-          syncStock: job.syncStock,
-          syncPrice: job.syncPrice,
-          shopId: job.shopId,
-        });
-
-        if (result.ok) {
-          console.log(
-            `[Shopee Sync Queue] OK productId=${job.productId} sku=${mapped.sku} stock=${job.syncStock} price=${job.syncPrice} — ${result.message}`
-          );
-        } else {
-          job.attempts += 1;
-          console.error(
-            `[Shopee Sync Queue] FAIL attempt ${job.attempts}/${SHOPEE_SYNC_QUEUE_MAX_RETRY} productId=${job.productId} sku=${mapped.sku}: ${result.message}`
-          );
-          if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
-            const retryKey = `${job.productId}|stock=${job.syncStock}|price=${job.syncPrice}|shop=${job.shopId || ""}`;
-            job.key = retryKey;
-            if (!shopeeSyncQueueKeys.has(retryKey)) {
-              shopeeSyncQueueKeys.add(retryKey);
-              shopeeSyncQueue.push(job);
-            }
-          } else {
-            console.error(
-              `[Shopee Sync Queue] DROPPED sau ${SHOPEE_SYNC_QUEUE_MAX_RETRY} lần — productId=${job.productId} sku=${mapped.sku}: ${result.message}`
-            );
-          }
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`[Shopee Sync Queue] Exception job=${job.productId}:`, err);
-        job.attempts += 1;
-        if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
-          if (!shopeeSyncQueueKeys.has(job.key)) {
-            shopeeSyncQueueKeys.add(job.key);
-            shopeeSyncQueue.push(job);
-          }
-        } else {
-          console.error(`[Shopee Sync Queue] DROPPED exception — ${job.productId}: ${msg}`);
-        }
-      }
-
-      await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
-    }
-  } finally {
-    shopeeSyncQueueRunning = false;
-    if (shopeeSyncQueue.length > 0) {
-      setTimeout(() => {
-        void processShopeeSyncQueue();
-      }, SHOPEE_SYNC_QUEUE_GAP_MS);
-    }
-  }
-}
-
-/** Đưa sync stock/price vào hàng đợi (chỉ khi đã Mapping + có thay đổi thật). */
-async function enqueueShopeeStockPriceSync(
-  products: any[],
-  opts: { syncStock?: boolean; syncPrice?: boolean; shopId?: string }
-): Promise<number> {
-  const syncStock = opts.syncStock === true;
-  const syncPrice = opts.syncPrice === true;
-  if (!syncStock && !syncPrice) return 0;
-  const preferredShopId = String(opts.shopId || "").trim() || undefined;
-
-  let enqueued = 0;
-  for (const raw of Array.isArray(products) ? products : []) {
-    if (!raw || typeof raw !== "object") continue;
-    const productId = String(raw.id || "").trim();
-    if (!productId) continue;
-
-    const mapped = await resolveProductWithShopeeMapping(raw);
-    if (!mapped) continue;
-
-    const key = `${productId}|stock=${syncStock}|price=${syncPrice}|shop=${preferredShopId || ""}`;
-    if (shopeeSyncQueueKeys.has(key)) {
-      // Merge: nếu job cũ đang chờ, giữ nguyên (đã cùng flags)
-      continue;
-    }
-
-    shopeeSyncQueueKeys.add(key);
-    shopeeSyncQueue.push({
-      key,
-      productId,
-      syncStock,
-      syncPrice,
-      shopId: preferredShopId,
-      attempts: 0,
-      enqueuedAt: new Date().toISOString(),
-    });
-    enqueued += 1;
-  }
-
-  if (enqueued > 0) {
-    console.log(
-      `[Shopee Sync Queue] Enqueued ${enqueued} job(s) — queue size=${shopeeSyncQueue.length} (gap=${SHOPEE_SYNC_QUEUE_GAP_MS}ms)`
-    );
-    void processShopeeSyncQueue();
-  }
-  return enqueued;
-}
-
-/** Sau khi lưu kho: so sánh trước/sau, enqueue sync nếu Mapping Shopee. */
-async function enqueueShopeeSyncAfterProductChange(
-  beforeRows: any[],
-  afterRows: any[]
-): number {
-  let stockChanged = false;
-  let priceChanged = false;
-  const changedProducts: any[] = [];
-
-  for (const after of afterRows) {
-    if (!after?.id) continue;
-    const before = beforeRows.find((b) => String(b?.id) === String(after.id));
-    const changes = detectStockPriceChanges(before || {}, after);
-    if (!changes.stock && !changes.price) continue;
-    if (changes.stock) stockChanged = true;
-    if (changes.price) priceChanged = true;
-    changedProducts.push(after);
-  }
-
-  if (changedProducts.length === 0) return 0;
-  return await enqueueShopeeStockPriceSync(changedProducts, {
-    syncStock: stockChanged,
-    syncPrice: priceChanged,
-  });
-}
+// Shopee Sync Queue → services/stockSyncQueue.js (Phase 4)
+// resolveProductWithShopeeMapping imported from stockSyncQueue (init trong startServer).
 
 function getItemAvatarUrl(item: any): string | undefined {
   const list = item?.image?.image_url_list;
@@ -15116,339 +14753,46 @@ async function startServer() {
   app.get("/api/health", getHealth);
   app.use("/api", healthRoutes);
 
-  // ─── Mapping products — ĐẶT SỚM, TRƯỚC static / SPA catch-all ───
-  const handleMappingProductsGet = async (_req: any, res: any) => {
-    try {
-      // BẮT BUỘC đọc TRỰC TIẾP từ MongoDB — không dùng cache/mảng RAM sau restart.
-      const cache = await reloadCachesFromDb();
-      const rawListings = cache.listings;
-      const listings = enrichChannelListingsWithMaster(rawListings, cache.products);
-      const successWithProduct = listings.filter(
-        (l) =>
-          l?.status === "success" &&
-          l?.linkedProduct &&
-          (l?.linkedProductTitle || l?.linkedProductSku || l?.linkedProduct?.title)
-      ).length;
-      const broken = listings.filter((l) => l?.linkBroken).length;
-      console.log(
-        `[Mapping Products] GET db — ${listings.length} dòng (success+product=${successWithProduct}, broken=${broken}) mongo=${isMongoReady()}`
-      );
-      return res.status(200).json({
-        success: true,
-        listings,
-        count: listings.length,
-        cacheUpdatedAt: cache.updatedAt,
-        source: isMongoReady() ? "mongodb" : "json_fallback",
-      });
-    } catch (error: any) {
-      console.error("[Mapping Products] GET lỗi:", error?.message || error);
-      // Thử lại truy vấn MongoDB một lần — không fallback sang mảng RAM.
-      try {
-        const raw = await readChannelListingsForGet();
-        const safe = (Array.isArray(raw) ? raw : []).map((r) => sanitizeChannelListingRow(r));
-        return res.status(200).json({
-          success: true,
-          listings: safe,
-          count: safe.length,
-          source: "mongodb_retry",
-          message: error?.message || String(error),
-        });
-      } catch (fallbackErr: any) {
-        return res.status(500).json({
-          success: false,
-          error: fallbackErr?.message || error?.message || String(error),
-        });
-      }
-    }
-  };
-
-  const handleMappingProductsUpsert = async (req: any, res: any) => {
-    try {
-      const incoming = req.body?.listings;
-      if (!Array.isArray(incoming)) {
-        return res.status(400).json({
-          success: false,
-          message: "Thiếu mảng listings trong request body.",
-          hint: "PUT/POST /api/mapping-products cần body { listings: [...] }. Liên kết tự động dùng POST /api/shopee/channel-products/auto-link (không cần listings).",
-        });
-      }
-      console.log(`[Mapping Save] UPSERT nhận ${incoming.length} dòng (${req.method})`);
-      const sanitized = incoming.map((row: any) => sanitizeChannelListingRow(row));
-      // bulkWrite 1 lệnh — cấm vòng await upsert từng dòng (NPROC AZDIGI).
-      await bulkUpsertChannelListingsToStore(sanitized);
-      await flushDbWrites();
-      await sleep(200);
-      const verified = enrichChannelListingsWithMaster(sanitized, await loadProducts());
-      console.log(`Đã lưu DB thành công — mapping bulkWrite ${sanitized.length} dòng`);
-      return res.status(200).json({
-        success: true,
-        count: verified.length,
-        listings: verified,
-        cacheUpdatedAt: new Date().toISOString(),
-        source: isMongoReady() ? "mongodb" : "json_fallback",
-      });
-    } catch (error: any) {
-      const errMsg = error?.message || String(error);
-      console.error("[Mapping Save] UPSERT lỗi:", errMsg);
-      return res.status(500).json({
-        success: false,
-        message: `Lỗi lưu Database: ${errMsg}`,
-        error: errMsg,
-      });
-    }
-  };
-
-  /** Heal chủ động — tách biệt hoàn toàn khỏi GET (không auto-ghi trên đọc). */
-  const handleMappingProductsHeal = async (_req: any, res: any) => {
-    try {
-      const products = await loadProducts();
-      const enriched = enrichChannelListingsWithMaster(await readChannelListingsDb(), products);
-      const healed = await persistHealedBrokenMappingLinks(enriched);
-      const listings = enrichChannelListingsWithMaster(await readChannelListingsDb(), products);
-      console.log(`[Mapping Products] HEAL xong: healed=${healed}, total=${listings.length}`);
-      return res.status(200).json({
-        success: true,
-        healed,
-        count: listings.length,
-        listings,
-      });
-    } catch (error: any) {
-      const errMsg = error?.message || String(error);
-      console.error("[Mapping Products] HEAL lỗi:", errMsg);
-      return res.status(500).json({
-        success: false,
-        message: `Lỗi heal Database: ${errMsg}`,
-        error: errMsg,
-      });
-    }
-  };
-
-  // Batch Auto-link — mọi thao tác đọc file và DB nằm trong try/catch của API.
-  const handleBatchAutoLink = async (req: any, res: any) => {
-    try {
-      const body = req?.body && typeof req.body === "object" ? req.body : {};
-      const result = await batchAutoLinkFromDatabase({
-        cursor: body.cursor,
-        limit: body.limit,
-      });
-      const data = {
-        linkedCount: result.linkedCount,
-        alreadyLinked: result.alreadyLinked,
-        unlinkedRemaining: result.unlinkedRemaining,
-        listings: result.listings,
-        cacheUpdatedAt: result.cacheUpdatedAt,
-        masterProductCount: result.masterProductCount,
-        skuIndexSize: result.skuIndexSize,
-        scannedCount: result.scannedCount,
-        limit: result.requestedLimit,
-        nextCursor: result.nextCursor,
-        hasMore: result.hasMore,
-        source: "database",
-      };
-      console.log(
-        `Đã lưu DB thành công — batch-auto-link linked=${result.linkedCount}, scanned=${result.scannedCount}, remaining=${result.unlinkedRemaining}, nextCursor=${result.nextCursor}`
-      );
-      return res.status(200).json({
-        success: true,
-        data,
-        message:
-          result.linkedCount > 0
-            ? `Đã liên kết thành công ${result.linkedCount} sản phẩm`
-            : "Không tìm thấy SKU trùng khớp trong Database hiện tại",
-        ...data,
-      });
-    } catch (error: unknown) {
-      console.error("[Batch Auto-link] Exception:", error);
-      if (!res.headersSent) {
-        const message = error instanceof Error ? error.message : String(error);
-        return res.status(500).json({ success: false, error: message });
-      }
-    }
-  };
-  const handleSingleAutoLink = async (req: any, res: any) => {
-    try {
-      const body = req?.body && typeof req.body === "object" ? req.body : {};
-      const result = await autoLinkSingleListingFromDatabase({
-        id: body.id,
-        listingId: body.listingId,
-        channelId: body.channelId,
-        platform: body.platform,
-      });
-
-      return res.status(200).json({
-        success: result.success,
-        listing: result.listing,
-        matchedProductId: result.matchedProductId,
-        message: result.message,
-      });
-    } catch (error: unknown) {
-      console.error("[Auto-link Single] Exception:", error);
-      const message = error instanceof Error ? error.message : String(error);
-      return res.status(500).json({ success: false, error: message });
-    }
-  };
-  /** Index SKU Kho gốc (products) — payload nhẹ cho frontend Hash Map. */
-  app.get("/api/mapping-products/sku-index", authMiddleware, async (_req, res) => {
-    try {
-      const masterProducts = await loadProducts();
-      const items: Array<{ sku: string; id: string; title: string }> = [];
-      const seen = new Set<string>();
-
-      const addOne = (row: any) => {
-        if (!row || typeof row !== "object") return;
-        // Index mọi SKU trong Kho Gốc — kể cả id shopee-item-* (cần để Mapping trang 2+).
-        const rawSku = String(row.sku || "").trim();
-        const key = normalizeSkuKey(rawSku);
-        const id = row.id != null ? String(row.id).trim() : "";
-        if (!key || !id || seen.has(key)) return;
-        seen.add(key);
-        items.push({
-          sku: rawSku || key,
-          id,
-          title: String(row.title || "").trim(),
-        });
-      };
-
-      for (const masterItem of Array.isArray(masterProducts) ? masterProducts : []) {
-        if (!masterItem) continue;
-        addOne(masterItem);
-        for (const child of getProductChildrenList(masterItem)) addOne(child);
-        if (Array.isArray(masterItem.variants)) {
-          for (const v of masterItem.variants) addOne(v);
-        }
-        if (Array.isArray(masterItem.models)) {
-          for (const m of masterItem.models) addOne(m);
-        }
-      }
-
-      console.log(`[SKU Index] Kho gốc products → ${items.length} SKU (Map-ready)`);
-      return res.status(200).json({
-        success: true,
-        count: items.length,
-        items,
-        source: isProductsDiskMode() ? "disk" : isMongoReady() ? "mongodb" : "json_fallback",
-      });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[SKU Index] Lỗi:", message);
-      return res.status(500).json({ success: false, message });
-    }
+  // ─── Mapping products — Phase 4 MVC (ĐẶT SỚM, TRƯỚC static / SPA catch-all) ───
+  initMappingController({
+    reloadCachesFromDb,
+    enrichChannelListingsWithMaster,
+    isMongoReady,
+    readChannelListingsForGet,
+    sanitizeChannelListingRow,
+    bulkUpsertChannelListingsToStore,
+    flushDbWrites,
+    sleep,
+    loadProducts,
+    persistHealedBrokenMappingLinks,
+    readChannelListingsDb,
+    batchAutoLinkFromDatabase,
+    autoLinkSingleListingFromDatabase,
+    bulkAutoLinkAllPending,
+    bulkAutoLinkListingsByIds,
+    normalizeSkuKey,
+    getProductChildrenList,
+    isProductsDiskMode,
+    loadLocalInventoryCache,
+    buildMasterProductLookupById,
+    writeChannelListingsDb,
+    refreshCache,
   });
-
-  /** Auto-link theo lô ≤50 id — Hash Map cache + bulkWrite (FE đã có gap giữa chunk). */
-  const handleBulkAutoLinkByIds = async (req: any, res: any) => {
-    try {
-      const body = req?.body && typeof req.body === "object" ? req.body : {};
-      const mode = String(body.mode || "").trim().toLowerCase();
-
-      if (mode === "all-pending" || mode === "all_pending" || body.allPending === true) {
-        const result = await bulkAutoLinkAllPending({
-          limit: Number.isFinite(Number(body.limit)) ? Number(body.limit) : undefined,
-        });
-        return res.status(200).json({
-          success: true,
-          ...result,
-          message:
-            result.linkedCount > 0
-              ? `Đã liên kết thành công ${result.linkedCount}/${result.processed} sản phẩm pending`
-              : "Không có sản phẩm nào liên kết thành công trong lô pending",
-        });
-      }
-
-      const rawIds = Array.isArray(body.ids)
-        ? body.ids
-        : Array.isArray(body.listingIds)
-          ? body.listingIds
-          : Array.isArray(body.listings)
-            ? body.listings.map((row: any) => row?.id)
-            : [];
-      const result = await bulkAutoLinkListingsByIds(rawIds);
-      return res.status(200).json({
-        success: true,
-        ...result,
-        message:
-          result.linkedCount > 0
-            ? `Đã liên kết thành công ${result.linkedCount}/${rawIds.length} sản phẩm trong lô`
-            : "Không có sản phẩm nào liên kết thành công trong lô này",
-      });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[Bulk Auto-link] Exception:", message);
-      return res.status(500).json({ success: false, message, error: message });
-    }
-  };
-
+  app.get("/api/mapping-products/sku-index", authMiddleware, handleMappingSkuIndex);
   app.post("/api/mapping-products/auto-link-single", authMiddleware, handleSingleAutoLink);
   app.post("/api/mapping-products/batch-auto-link", authMiddleware, handleBatchAutoLink);
   app.post("/api/mapping-products/bulk-auto-link", authMiddleware, handleBulkAutoLinkByIds);
   app.post("/api/mapping/bulk-update", authMiddleware, handleBulkAutoLinkByIds);
-
-  // BẮT BUỘC: đăng ký purge-broken (MongoDB channel_listings).
-  app.post("/api/mapping-products/purge-broken", authMiddleware, async (_req, res) => {
-    try {
-      // 1) Tìm kiếm: mapping linkedProduct null/undefined hoặc ID không còn trong Kho gốc
-      const cache = await loadLocalInventoryCache();
-      const listings =
-        Array.isArray(cache.listings) && cache.listings.length > 0
-          ? cache.listings
-          : await readChannelListingsDb();
-      const masterLookup = buildMasterProductLookupById(cache.products);
-      const kept: any[] = [];
-      let deletedCount = 0;
-
-      for (const row of Array.isArray(listings) ? listings : []) {
-        if (!row || typeof row !== "object") {
-          deletedCount += 1;
-          continue;
-        }
-
-        const linkedId =
-          row?.linkedProductId != null && String(row.linkedProductId).trim() !== ""
-            ? String(row.linkedProductId).trim()
-            : row?.linkedProduct?.id != null && String(row.linkedProduct.id).trim() !== ""
-              ? String(row.linkedProduct.id).trim()
-              : "";
-
-        const linkedProductMissing =
-          row?.linkedProduct == null ||
-          typeof row.linkedProduct !== "object" ||
-          row?.linkedProduct?.id == null ||
-          String(row.linkedProduct.id).trim() === "";
-
-        const claimsLink = row?.status === "success" || linkedId !== "";
-        const isBroken =
-          claimsLink &&
-          ((!linkedId && linkedProductMissing) || (linkedId !== "" && !masterLookup.has(linkedId)));
-
-        if (isBroken) {
-          deletedCount += 1;
-          continue;
-        }
-
-        kept.push(row);
-      }
-
-      if (deletedCount > 0) {
-        await writeChannelListingsDb(kept);
-      }
-      const nextCache = await refreshCache();
-
-      return res.json({
-        success: true,
-        deletedCount,
-        cacheUpdatedAt: nextCache.updatedAt,
-      });
-    } catch (error: any) {
-      return res.status(500).json({
-        success: false,
-        message: error?.message || String(error),
-      });
-    }
-  });
+  app.post("/api/mapping-products/purge-broken", authMiddleware, handleMappingPurgeBroken);
   app.post("/api/mapping-products/heal", authMiddleware, handleMappingProductsHeal);
   app.get("/api/mapping-products", authMiddleware, handleMappingProductsGet);
   app.put("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
   app.post("/api/mapping-products", authMiddleware, handleMappingProductsUpsert);
+  app.use("/api/mapping-products", authMiddleware, mappingRoutes);
+  // Alias auto-link (gom về cùng handler)
+  app.post("/api/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+  app.post("/api/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
+  app.post("/api/auto-link", authMiddleware, handleBatchAutoLink);
 
     // PDF vận đơn — chuẩn /api/public/labels + alias /api/labels|/labels|/prints → cùng handler.
     const handlePublicLabelGet = (req: any, res: any) => {
@@ -15634,941 +14978,86 @@ async function startServer() {
   });
 
   // Real synced orders list — this is what the Order Management UI reads from.
-  // --- Products warehouse API (MongoDB products) ---
-  // Phân trang nhẹ — trả flat list ổn định (gom nhóm UI ở Frontend).
-  const PRODUCTS_PAGE_SIZE_DEFAULT = 50;
-  const PRODUCTS_PAGE_SIZE_MAX = 50;
-
-  // Kho Gốc: disk (mặc định) hoặc Mongo — TUYỆT ĐỐI không gọi Shopee API ở đây.
-  app.get("/api/products", authMiddleware, async (req, res) => {
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-    try {
-      const diskMode = isProductsDiskMode();
-      if (!diskMode && !isMongoReady()) {
-        return res.status(503).json({
-          success: false,
-          products: [],
-          error: "mongodb_not_ready",
-          message: "MongoDB chưa sẵn sàng — thử lại sau vài giây.",
-        });
-      }
-
-      const rawPage = Number(req.query?.page);
-      const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
-      const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
-      const pageSize = Number.isFinite(rawSize) && rawSize > 0
-        ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize))
-        : PRODUCTS_PAGE_SIZE_DEFAULT;
-
-      // Chỉ đọc 1 trang (mặc định 50) — cấm fallback loadProducts()/find({}) toàn kho.
-      const paged = await withLocalDbTimeout(
-        loadProductsPageFromStore(page, pageSize),
-        diskMode ? 15_000 : 30_000,
-        "products_page_load",
-      );
-
-      return res.status(200).json({
-        success: true,
-        products: paged.products,
-        page: paged.page,
-        pageSize: paged.pageSize,
-        total: paged.total,
-        totalPages: paged.totalPages,
-        hasMore: paged.hasMore,
-        grouped: false,
-        source: diskMode ? "disk" : "mongodb",
-        storage: diskMode ? getProductsDiskPath() : "mongodb.products",
-      });
-    } catch (err: unknown) {
-      console.error("[Products API] GET /api/products failed:", err);
-      return res.status(503).json({
-        success: false,
-        error: "products_unavailable",
-        message: err instanceof Error ? err.message : "products_read_error",
-      });
-    }
+  // --- Products warehouse API — Phase 4 MVC ---
+  initStockSyncQueue({
+    getProductChildrenList,
+    inheritShopeeLinkFromParent,
+    getShopeeItemIdForStockPush,
+    resolveShopeeModelIdForStockPush,
+    applyShopeeLinkFieldsToProduct,
+    readChannelListingsDb,
+    resolveShopeeTokenShopId,
+    getValidShopeeAccessToken,
+    productRequiresShopeeModelId,
+    resolveShopeeModelIdFromApi,
+    appendShopeeSyncErrorToDb,
+    resolveShopeeStockLocationId,
+    buildShopeeUpdateStockEntry,
+    shopeeUpdateStock,
+    parseShopeeApiResult,
+    extractShopeeStockPushErrorMessage,
+    buildShopeeUpdatePriceEntry,
+    shopeeUpdatePrice,
+    loadProductById,
   });
-
-  /** Tìm SP kho gốc cho Tab Nhập hàng — query Mongo find() trả mảng (SKU OR tên). */
-  app.get("/api/products/search", authMiddleware, async (req, res) => {
-    const q = String(req.query?.q ?? req.query?.query ?? "").trim();
-    const limit = Number(req.query?.limit ?? 40);
-    const mapRow = (p: any) => ({
-      ...p,
-      id: p.id,
-      sku: p.sku || "",
-      name: p.name || p.title || "",
-      title: p.title || p.name || "",
-      image: p.image || p.avatarUrl || p.imageUrl || "",
-      current_stock: p.current_stock ?? p.stock ?? 0,
-      stock: p.stock ?? p.current_stock ?? 0,
-      last_import_price: p.last_import_price ?? p.importPrice ?? 0,
-      importPrice: p.importPrice ?? p.last_import_price ?? 0,
-    });
-
-    try {
-      let raw: any[] = [];
-      let source = "mongodb";
-      try {
-        raw = await searchProductsFromStore(q, limit);
-      } catch (mongoErr) {
-        console.warn("[Products API] searchProductsFromStore failed, fallback loadProducts:", mongoErr);
-        const all = await loadProducts();
-        const qLower = q.toLowerCase();
-        const flat: any[] = [];
-        const seen = new Set<string>();
-        const push = (row: any) => {
-          const id = String(row?.id || "").trim();
-          if (!id || seen.has(id)) return;
-          seen.add(id);
-          flat.push(row);
-        };
-        const match = (row: any, extra = "") => {
-          if (!q) return true;
-          const hay = `${row?.sku || ""} ${row?.title || ""} ${row?.name || ""} ${row?.modelName || ""} ${extra}`.toLowerCase();
-          return hay.includes(qLower);
-        };
-        for (const p of Array.isArray(all) ? all : []) {
-          const children = Array.isArray(p?.children) && p.children.length
-            ? p.children
-            : Array.isArray(p?.children_models)
-              ? p.children_models
-              : [];
-          if (children.length > 0) {
-            let n = 0;
-            for (const c of children) {
-              if (!match(c, `${p.title || ""} ${p.sku || ""}`)) continue;
-              push({
-                ...c,
-                title: c.title || p.title,
-                imageUrl: c.imageUrl || p.imageUrl,
-                avatarUrl: c.avatarUrl || p.avatarUrl,
-              });
-              n += 1;
-            }
-            if (n === 0 && match(p)) push(p);
-          } else if (match(p)) {
-            push(p);
-          }
-        }
-        raw = flat.slice(0, Math.min(100, Math.max(1, Math.floor(limit) || 40)));
-        source = "products_memory_fallback";
-      }
-
-      const products = raw.map(mapRow);
-      console.log("[Products API] /api/products/search", {
-        q,
-        limit,
-        total: products.length,
-        source,
-        sample: products.slice(0, 5).map((p: any) => ({
-          id: p.id,
-          sku: p.sku,
-          name: p.name,
-          current_stock: p.current_stock,
-          last_import_price: p.last_import_price,
-        })),
-      });
-      return res.json({
-        success: true,
-        products,
-        total: products.length,
-        source,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Products API] GET /api/products/search failed:", err);
-      return res.status(500).json({ success: false, error: message || "search_failed", products: [] });
-    }
+  initProductsController({
+    loadProducts,
+    saveProducts,
+    getProductChildrenList,
+    inheritShopeeLinkFromParent,
+    mergeProductPatch,
+    applyBulkProductUpdate,
+    flattenProductsForStockSync,
+    upsertProductsToStoreAsync,
+    deleteProductsByIdsFromStore,
+    loadProductsPageFromStore,
+    searchProductsFromStore,
+    withLocalDbTimeout,
+    isProductsDiskMode,
+    isMongoReady,
+    getProductsDiskPath,
+    reloadCachesFromDb,
+    loadLocalInventoryCache,
+    refreshCache,
+    enrichChannelListingsWithMaster,
+    backupInventoryBeforeDestructiveAction,
+    writeInventoryAudit,
+    writeChannelListingsDb,
+    writeProductListingsDb: (rows: any[]) => {
+      const dest = path.join(APP_ROOT, "data", "product_listings.json");
+      const dir = path.dirname(dest);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
+    },
+    pushStockUpdatesToShopee,
+    resolveShopeeTokenShopId,
+    isShopeeConfigValid,
+    isStaleShopeeItemErrorText,
+    sendApiErrorJson,
+    getValidShopeeAccessToken,
+    syncProductToShopee,
+    syncProductToWoo,
+    syncProductToTikTok,
   });
-
-  // Đồng bộ nhanh tồn/giá lên Shopee — đăng ký SỚM (trước mọi route :id) để tránh 404.
-  const handleProductSyncShopee = async (req: any, res: any) => {
-    console.log("Bắt đầu đồng bộ Shopee", req.body);
-    try {
-      const requestedIds = Array.isArray(req.body?.productIds)
-        ? req.body.productIds
-        : [req.params?.id || req.body?.id || req.body?.productId];
-      const productIds = [
-        ...new Set(requestedIds.map((id: unknown) => String(id || "").trim()).filter(Boolean)),
-      ];
-      if (productIds.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error:
-            "Thiếu product id. Gửi body { id }, { productId } hoặc { productIds: [...] }.",
-        });
-      }
-      const products = await loadProducts();
-      const results: Array<{
-        productId: string;
-        success: boolean;
-        message: string;
-      }> = [];
-
-      for (const productId of productIds) {
-        const row = findProductRowById(products, productId);
-        if (!row) {
-          results.push({
-            productId,
-            success: false,
-            message: "Không tìm thấy sản phẩm trong kho.",
-          });
-          continue;
-        }
-        const shopee = await pushProductStockPriceToShopeeImmediate(row, {
-          syncStock: true,
-          syncPrice: true,
-        });
-        if (shopee.skipped || !shopee.ok) {
-          results.push({
-            productId,
-            success: false,
-            message:
-              shopee.message ||
-              (shopee.skipped
-                ? "Chưa liên kết Mapping Shopee."
-                : "Shopee từ chối đồng bộ tồn/giá"),
-          });
-          continue;
-        }
-
-        row.lastSynced = new Date().toISOString();
-        results.push({
-          productId,
-          success: true,
-          message: shopee.message,
-        });
-      }
-
-      const succeeded = results.filter((result) => result.success);
-      if (succeeded.length > 0) {
-        await saveProducts(products);
-      }
-      const failed = results.filter((result) => !result.success);
-      if (failed.length > 0) {
-        const detail = failed
-          .map((result) => `${result.productId}: ${result.message}`)
-          .join(" | ");
-        return res.status(400).json({
-          success: false,
-          message: `Shopee báo lỗi: ${detail}`,
-          error: `Shopee báo lỗi: ${detail}`,
-          shopeeSynced: succeeded.length > 0,
-          results,
-        });
-      }
-      return res.status(200).json({
-        success: true,
-        shopeeSynced: true,
-        shopeeMessage: results.map((result) => result.message).join(" | "),
-        message: "Đồng bộ thành công",
-        results,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Products API] sync-shopee failed:", err);
-      return res.status(500).json({
-        success: false,
-        message: message || "Internal Server Error",
-        error: message || "Internal Server Error",
-      });
-    }
-  };
+  app.get("/api/products", authMiddleware, listProducts);
+  app.get("/api/products/search", authMiddleware, searchProducts);
   app.post("/api/products/sync-shopee", authMiddleware, handleProductSyncShopee);
   app.post("/api/products/:id/sync-shopee", authMiddleware, handleProductSyncShopee);
-
-  app.post("/api/products", authMiddleware, async (req, res) => {
-    const body = req.body || {};
-    if (!body.title || !body.sku) {
-      return res.status(400).json({ error: "title_and_sku_required" });
-    }
-    const product = {
-      id: body.id || `prod-${Date.now()}`,
-      title: String(body.title),
-      sku: String(body.sku),
-      stock: Math.max(0, Math.round(Number(body.stock) || 0)),
-      importPrice: Math.max(0, Math.round(Number(body.importPrice) || 0)),
-      sellingPrice: Math.max(0, Math.round(Number(body.sellingPrice) || 0)),
-      channels: Array.isArray(body.channels) ? body.channels : ["shopee"],
-      category: body.category || "Chưa phân loại",
-      description: body.description || "",
-      imageUrl: body.imageUrl || undefined,
-      status: body.status || "active",
-      shopeeId: body.shopeeId,
-      shopeeItemId: body.shopeeItemId,
-      shopeeModelId: body.shopeeModelId,
-      modelName: body.modelName,
-      weight: body.weight != null ? Number(body.weight) : undefined,
-      tiktokId: body.tiktokId,
-      wooId: body.wooId,
-      lastSynced: new Date().toISOString(),
-    };
-    // Thêm một dòng bằng upsert, không đọc-rồi-ghi đè toàn bộ Kho gốc.
-    await upsertProductsToStoreAsync([product]);
-    const cache = await loadLocalInventoryCache();
-    // b+c) Trả product + inventory từ Local Cache để UI hiển thị ngay, không reload trang tổng.
-    return res.status(201).json({
-      ...product,
-      localInventory: cache.products,
-      cacheUpdatedAt: cache.updatedAt,
-    });
-  });
-
-  app.get("/api/local-inventory", authMiddleware, async (_req, res) => {
-    try {
-      await reloadCachesFromDb();
-      const cache = await loadLocalInventoryCache();
-      return res.status(200).json({
-        success: true,
-        updatedAt: cache.updatedAt,
-        products: cache.products,
-        listings: enrichChannelListingsWithMaster(cache.listings, cache.products),
-        count: {
-          products: cache.products.length,
-          listings: cache.listings.length,
-        },
-        source: isMongoReady() ? "mongodb" : "json_fallback",
-      });
-    } catch (error: any) {
-      return res.status(500).json({
-        success: false,
-        message: error?.message || String(error),
-      });
-    }
-  });
-
-  app.post("/api/local-inventory/refresh", authMiddleware, async (_req, res) => {
-    try {
-      const cache = await refreshCache();
-      return res.status(200).json({
-        success: true,
-        updatedAt: cache.updatedAt,
-        products: cache.products,
-        listingsCount: cache.listings.length,
-      });
-    } catch (error: any) {
-      return res.status(500).json({
-        success: false,
-        message: error?.message || String(error),
-      });
-    }
-  });
-
-  app.put("/api/products/replace", authMiddleware, async (req, res) => {
-    const incoming = req.body?.products;
-    if (!Array.isArray(incoming)) {
-      return res.status(400).json({ error: "products_array_required" });
-    }
-    await saveProducts(incoming);
-    return res.json({ count: incoming.length, products: incoming });
-  });
-
-  app.patch("/api/products/:id", authMiddleware, async (req, res) => {
-    try {
-      const products = await loadProducts();
-      const patch = req.body || {};
-      const topIndex = products.findIndex((p: any) => p.id === req.params.id);
-      if (topIndex !== -1) {
-        const before = products[topIndex];
-        const merged = mergeProductPatch(before, patch);
-        products[topIndex] = merged;
-        await upsertProductsToStoreAsync([merged]);
-        const changes = detectStockPriceChanges(before, merged);
-        const shopee = await pushProductStockPriceToShopeeImmediate(merged, {
-          syncStock: changes.stock,
-          syncPrice: changes.price,
-        });
-        if (!shopee.ok) {
-          return res.status(400).json({
-            success: false,
-            error: shopee.message || "Shopee từ chối cập nhật tồn/giá",
-            product: merged,
-            shopeeSynced: false,
-            shopeeMessage: shopee.message,
-          });
-        }
-        return res.json({
-          ...merged,
-          success: true,
-          shopeeSynced: !shopee.skipped,
-          shopeeMessage: shopee.message,
-        });
-      }
-
-      // Cập nhật Child SKU nằm trong children
-      for (let i = 0; i < products.length; i++) {
-        const children = getProductChildrenList(products[i]);
-        const childIdx = children.findIndex((c: any) => c.id === req.params.id);
-        if (childIdx === -1) continue;
-        const beforeChild = children[childIdx];
-        const mergedChild = mergeProductPatch(beforeChild, patch);
-        const nextChildren = [...children];
-        nextChildren[childIdx] = mergedChild;
-        const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-        products[i] = { ...products[i], children: nextChildren, stock: totalStock };
-        await upsertProductsToStoreAsync([products[i]]);
-        const changes = detectStockPriceChanges(beforeChild, mergedChild);
-        const shopee = await pushProductStockPriceToShopeeImmediate(
-          inheritShopeeLinkFromParent(mergedChild, products[i]),
-          {
-            syncStock: changes.stock,
-            syncPrice: changes.price,
-          }
-        );
-        if (!shopee.ok) {
-          return res.status(400).json({
-            success: false,
-            error: shopee.message || "Shopee từ chối cập nhật tồn/giá",
-            product: mergedChild,
-            shopeeSynced: false,
-            shopeeMessage: shopee.message,
-          });
-        }
-        return res.json({
-          ...mergedChild,
-          success: true,
-          shopeeSynced: !shopee.skipped,
-          shopeeMessage: shopee.message,
-        });
-      }
-
-      return res.status(404).json({ success: false, error: "product_not_found" });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Products API] PATCH /api/products/:id failed:", err);
-      return res.status(500).json({ success: false, error: message || "Internal Server Error" });
-    }
-  });
-
-  app.post("/api/products/inventory-balance", authMiddleware, async (req, res) => {
-    try {
-      const items = req.body?.items;
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ success: false, message: "Chưa có dòng tồn kho nào để cân bằng." });
-      }
-
-      const preferredShopId = String(req.body?.shopId || "").trim() || undefined;
-
-      const skuStockMap = new Map<string, number>();
-      for (const item of items) {
-        const sku = String(item?.sku || "").trim();
-        if (!sku) continue;
-        const rawStock = item?.actual_stock;
-        if (rawStock === "" || rawStock == null) continue;
-        const parsed = Number(rawStock);
-        if (!Number.isFinite(parsed)) continue;
-        const actual = Math.max(0, Math.round(parsed));
-        skuStockMap.set(sku, actual);
-      }
-
-      if (skuStockMap.size === 0) {
-        return res.status(400).json({ success: false, message: "Dữ liệu cân bằng kho không hợp lệ." });
-      }
-
-      const products = await loadProducts();
-      let updatedCount = 0;
-      const next = products.map((p: any) => {
-        const children = getProductChildrenList(p);
-        if (children.length > 0) {
-          let changed = false;
-          const nextChildren = children.map((c: any) => {
-            const sku = String(c.sku || "").trim();
-            if (!skuStockMap.has(sku)) return c;
-            updatedCount++;
-            changed = true;
-            return mergeProductPatch(c, { stock: skuStockMap.get(sku) });
-          });
-          if (!changed) return p;
-          const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-          return { ...p, children: nextChildren, stock: totalStock };
-        }
-        const sku = String(p.sku || "").trim();
-        if (!skuStockMap.has(sku)) return p;
-        updatedCount++;
-        return mergeProductPatch(p, { stock: skuStockMap.get(sku) });
-      });
-
-      if (updatedCount === 0) {
-        return res.status(404).json({ success: false, message: "Không tìm thấy SKU nào trong kho gốc để cập nhật." });
-      }
-
-      const updatedProducts = flattenProductsForStockSync(next).filter((p: any) =>
-        skuStockMap.has(String(p.sku || "").trim())
-      );
-
-      await upsertProductsToStoreAsync(next.filter((product: any, index: number) => product !== products[index]));
-      console.log(`[Inventory Balance] Cập nhật kho gốc ${updatedCount} SKU`);
-
-      // Đồng bộ Shopee đồng bộ (trả lỗi thật) — chỉ SKU đã Mapping / có item_id.
-      const pushResult = await pushStockUpdatesToShopee(updatedProducts, preferredShopId);
-
-      const parts: string[] = [];
-      parts.push("kho gốc đã cập nhật");
-      if (pushResult.pushed > 0) {
-        parts.push(`đã đẩy tồn ${pushResult.pushed} SKU lên Shopee`);
-      } else if (pushResult.errors.length === 0 && pushResult.warnings.length === 0) {
-        parts.push("không có SKU Mapping Shopee để đồng bộ (hoặc chưa liên kết)");
-      }
-
-      const msg = `Cân bằng kho thành công (${parts.join(", ")}).`;
-      console.log(`[Inventory Balance] ${msg}`);
-
-      if (pushResult.errors.length > 0) {
-        return res.status(200).json({
-          success: true,
-          message: msg,
-          shopeeQueued: 0,
-          shopeePushed: pushResult.pushed,
-          shopeeErrors: pushResult.errors,
-          shopeeWarnings: pushResult.warnings,
-          staleSkus: pushResult.staleSkus,
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: msg,
-        shopeeQueued: 0,
-        shopeePushed: pushResult.pushed,
-        shopeeErrors: [],
-        shopeeWarnings: pushResult.warnings,
-        staleSkus: pushResult.staleSkus,
-      });
-    } catch (err: unknown) {
-      console.error("[Inventory Balance] Exception:", err);
-      return sendApiErrorJson(res, err, 500);
-    }
-  });
-
-  app.post("/api/sync-stock", authMiddleware, async (req, res) => {
-    try {
-      // Đồng bộ 1 CHIỀU: Kho gốc (Master) → Sàn. Không kéo tồn từ Sàn đè Kho gốc.
-      const products = await loadProducts();
-      const shopId = resolveShopeeTokenShopId(req.body?.shopId);
-      const warnings: string[] = [];
-
-      if (!isShopeeConfigValid()) {
-        return res.status(400).json({
-          success: false,
-          message: "Shopee: cấu hình Partner chưa hợp lệ.",
-        });
-      }
-      if (!shopId) {
-        return res.status(400).json({
-          success: false,
-          message: "Shopee: chưa có shop được ủy quyền.",
-        });
-      }
-
-      const shopeeResult = await pushStockUpdatesToShopee(products, shopId);
-      if (shopeeResult.warnings?.length) warnings.push(...shopeeResult.warnings);
-      if (!shopeeResult.ok && shopeeResult.errors.length > 0) {
-        const onlyStale = shopeeResult.errors.every((e) => isStaleShopeeItemErrorText(e));
-        if (!onlyStale) {
-          const detailMsg = shopeeResult.errors.join(" | ");
-          return res.status(400).json({
-            success: false,
-            message: `Đẩy tồn Kho gốc → Shopee thất bại: ${detailMsg}`,
-            error: detailMsg,
-            shopeeErrors: shopeeResult.errors,
-            shopeeWarnings: warnings,
-          });
-        }
-        warnings.push(...shopeeResult.errors);
-      }
-
-      const message =
-        shopeeResult.pushed > 0
-          ? `Đã đẩy ${shopeeResult.pushed} SKU từ Kho gốc lên Shopee (đồng bộ 1 chiều).`
-          : "Không có SKU nào cần đẩy lên Shopee (đã khớp hoặc chưa liên kết).";
-
-      return res.json({
-        success: true,
-        message,
-        direction: "warehouse_to_channel",
-        shopee: {
-          pushed: shopeeResult.pushed,
-          staleSkus: shopeeResult.staleSkus,
-          warnings,
-        },
-        tiktok: { updated: 0, message: "TikTok Shop API chưa được tích hợp trên server." },
-        warnings,
-        products: await loadProducts(),
-      });
-    } catch (err: unknown) {
-      console.error("[Sync Stock]", err);
-      return sendApiErrorJson(res, err, 500);
-    }
-  });
-
-  app.post("/api/products/bulk-save", authMiddleware, async (req, res) => {
-    const updates = req.body?.updates;
-    if (!Array.isArray(updates) || updates.length === 0) {
-      return res.status(400).json({ error: "updates_required" });
-    }
-    const patchMap = new Map<string, any>();
-    for (const u of updates) {
-      if (u?.id) patchMap.set(String(u.id), u);
-    }
-    const products = await loadProducts();
-    const beforeFlat = flattenProductsForStockSync(products);
-    let updatedCount = 0;
-    const changedRows: any[] = [];
-    const next = products.map((p: any) => {
-      const patch = patchMap.get(String(p.id));
-      if (patch) {
-        updatedCount++;
-        patchMap.delete(String(p.id));
-        const merged = mergeProductPatch(p, patch);
-        const before = beforeFlat.find((b: any) => String(b.id) === String(p.id));
-        const changes = detectStockPriceChanges(before || p, merged);
-        if (changes.stock || changes.price) changedRows.push(merged);
-        return merged;
-      }
-
-      const children = getProductChildrenList(p);
-      if (children.length === 0) return p;
-
-      let childChanged = false;
-      const nextChildren = children.map((c: any) => {
-        const childPatch = patchMap.get(String(c.id));
-        if (!childPatch) return c;
-        updatedCount++;
-        patchMap.delete(String(c.id));
-        childChanged = true;
-        const mergedChild = mergeProductPatch(c, childPatch);
-        const beforeChild = beforeFlat.find((b: any) => String(b.id) === String(c.id));
-        const changes = detectStockPriceChanges(beforeChild || c, mergedChild);
-        if (changes.stock || changes.price) changedRows.push(mergedChild);
-        return mergedChild;
-      });
-      if (!childChanged) return p;
-
-      const totalStock = nextChildren.reduce(
-        (s: number, c: any) => s + (Number(c.stock) || 0),
-        0
-      );
-      return { ...p, children: nextChildren, stock: totalStock };
-    });
-    await upsertProductsToStoreAsync(next.filter((product: any, index: number) => product !== products[index]));
-    if (changedRows.length > 0) {
-      const anyStock = changedRows.some((row) => {
-        const before = beforeFlat.find((b: any) => String(b.id) === String(row.id));
-        return detectStockPriceChanges(before || {}, row).stock;
-      });
-      const anyPrice = changedRows.some((row) => {
-        const before = beforeFlat.find((b: any) => String(b.id) === String(row.id));
-        return detectStockPriceChanges(before || {}, row).price;
-      });
-      await enqueueShopeeStockPriceSync(changedRows, { syncStock: anyStock, syncPrice: anyPrice });
-    }
-    return res.json({ updated: updatedCount, products: next });
-  });
-
-  app.delete("/api/products/:id", authMiddleware, async (req, res) => {
-    try {
-      const id = String(req.params.id);
-      const products = await loadProducts();
-      let found = false;
-      const next: any[] = [];
-
-      for (const p of products) {
-        if (p.id === id) {
-          found = true;
-          continue; // xóa parent / dòng flat
-        }
-        const children = getProductChildrenList(p);
-        if (children.length > 0) {
-          const filteredChildren = children.filter((c: any) => c.id !== id);
-          if (filteredChildren.length !== children.length) {
-            found = true;
-            if (filteredChildren.length === 0) continue; // không còn child → bỏ parent rỗng
-            const totalStock = filteredChildren.reduce(
-              (s: number, c: any) => s + (Number(c.stock) || 0),
-              0
-            );
-            next.push({ ...p, children: filteredChildren, stock: totalStock });
-            continue;
-          }
-        }
-        next.push(p);
-      }
-
-      if (!found) {
-        return res.status(404).json({ error: "product_not_found" });
-      }
-      const nextIds = new Set(next.map((product: any) => String(product.id)));
-      await deleteProductsByIdsFromStore(
-        products
-          .filter((product: any) => !nextIds.has(String(product.id)))
-          .map((product: any) => String(product.id)),
-      );
-      await upsertProductsToStoreAsync(
-        next.filter((product: any) => products.find((before: any) => before.id === product.id) !== product),
-      );
-      return res.json({ deleted: id, success: true });
-    } catch (err: unknown) {
-      console.error("[Products] DELETE failed:", err);
-      return res.status(500).json({
-        error: "delete_failed",
-        message: err instanceof Error ? err.message : "Xóa sản phẩm thất bại",
-      });
-    }
-  });
-
-  app.post("/api/products/clear-all", authMiddleware, async (req: any, res) => {
-    if (req.body?.confirmation !== "CLEAR_INVENTORY") {
-      return res.status(400).json({ success: false, error: "explicit_confirmation_required" });
-    }
-    const backupFile = await backupInventoryBeforeDestructiveAction("products-clear");
-    await saveProducts([]);
-    writeInventoryAudit("products_cleared", { requestedBy: req.user?.username || null, backupFile });
-    return res.json({ success: true, cleared: true, backupFile, products: [] });
-  });
-
-  /** Xóa sạch Kho gốc + Mapping (để test sync sạch). */
-  const handleInventoryClearAll = async (req: any, res: any) => {
-    try {
-      if (req.body?.confirmation !== "CLEAR_INVENTORY") {
-        return res.status(400).json({
-          success: false,
-          error: "explicit_confirmation_required",
-          message: "Xóa kho yêu cầu confirmation: CLEAR_INVENTORY.",
-        });
-      }
-      const backupFile = await backupInventoryBeforeDestructiveAction("inventory-clear");
-      // 1) Xóa Kho Gốc trước (disk hoặc mongo) — không phụ thuộc Atlas quota.
-      await saveProducts([]);
-      let listingsCleared = false;
-      let listingsError: string | null = null;
-      try {
-        await writeChannelListingsDb([]);
-        listingsCleared = true;
-      } catch (listErr: any) {
-        listingsError = listErr?.message || String(listErr);
-        console.warn("[Inventory] clear listings failed (Atlas?):", listingsError);
-      }
-      try {
-        writeProductListingsDb([]);
-      } catch {
-        /* optional */
-      }
-      try {
-        await refreshCache();
-      } catch (cacheErr: any) {
-        console.warn("[Inventory] refreshCache after clear:", cacheErr?.message || cacheErr);
-      }
-      writeInventoryAudit("inventory_cleared", {
-        requestedBy: req.user?.username || null,
-        backupFile,
-        productsCleared: true,
-        listingsCleared,
-        listingsError,
-        storage: isProductsDiskMode() ? "disk" : "mongo",
-      });
-      console.log(
-        `[Inventory] Đã xóa Kho gốc (products=${isProductsDiskMode() ? "disk" : "mongo"}) listingsCleared=${listingsCleared}.`,
-      );
-      return res.status(200).json({
-        success: true,
-        message: listingsCleared
-          ? "Đã xóa toàn bộ Kho gốc và dữ liệu Liên kết (Mapping)."
-          : `Đã xóa Kho gốc. Mapping chưa xóa được (Mongo đầy/lỗi): ${listingsError || "unknown"}`,
-        backupFile,
-        cleared: true,
-        productsCleared: true,
-        listingsCleared,
-        listingsError,
-        products: [],
-        channelListings: listingsCleared ? [] : undefined,
-      });
-    } catch (error: unknown) {
-      const errObj = error instanceof Error ? error : new Error(String(error));
-      console.error("[Inventory] clear-all failed:", errObj);
-      return res.status(500).json({
-        success: false,
-        message: errObj.message,
-        error: errObj.toString(),
-      });
-    }
-  };
+  app.post("/api/products", authMiddleware, createProduct);
+  app.get("/api/local-inventory", authMiddleware, getLocalInventory);
+  app.post("/api/local-inventory/refresh", authMiddleware, refreshLocalInventory);
+  app.put("/api/products/replace", authMiddleware, replaceProducts);
+  app.patch("/api/products/:id", authMiddleware, patchProduct);
+  app.post("/api/products/inventory-balance", authMiddleware, inventoryBalance);
+  app.post("/api/sync-stock", authMiddleware, syncStock);
+  app.post("/api/products/bulk-save", authMiddleware, bulkSaveProducts);
+  app.delete("/api/products/:id", authMiddleware, deleteProduct);
+  app.post("/api/products/clear-all", authMiddleware, clearAllProducts);
   app.delete("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
   app.post("/api/inventory/clear-all", authMiddleware, handleInventoryClearAll);
-
-  app.post("/api/products/bulk-update", authMiddleware, async (req, res) => {
-    const { productIds, stock, price } = req.body || {};
-    if (!Array.isArray(productIds) || productIds.length === 0) {
-      return res.status(400).json({ error: "productIds_required" });
-    }
-    if (!stock && !price) {
-      return res.status(400).json({ error: "stock_or_price_required" });
-    }
-    const idSet = new Set(productIds.map(String));
-    const products = await loadProducts();
-    let updatedCount = 0;
-    const changedRows: any[] = [];
-    const next = products.map((p: any) => {
-      const children = getProductChildrenList(p);
-      if (children.length > 0) {
-        let changed = false;
-        const nextChildren = children.map((c: any) => {
-          if (!idSet.has(c.id)) return c;
-          updatedCount++;
-          changed = true;
-          const merged = applyBulkProductUpdate(c, { stock, price });
-          changedRows.push(merged);
-          return merged;
-        });
-        if (!changed && !idSet.has(p.id)) return p;
-        if (idSet.has(p.id)) {
-          updatedCount++;
-          const parentPatched = applyBulkProductUpdate(p, { stock, price });
-          changedRows.push(parentPatched);
-          const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-          return { ...parentPatched, children: nextChildren, stock: totalStock };
-        }
-        const totalStock = nextChildren.reduce((s: number, c: any) => s + (Number(c.stock) || 0), 0);
-        return { ...p, children: nextChildren, stock: totalStock };
-      }
-      if (!idSet.has(p.id)) return p;
-      updatedCount++;
-      const merged = applyBulkProductUpdate(p, { stock, price });
-      changedRows.push(merged);
-      return merged;
-    });
-    await saveProducts(next);
-    if (changedRows.length > 0) {
-      await enqueueShopeeStockPriceSync(changedRows, {
-        syncStock: !!stock,
-        syncPrice: !!price,
-      });
-    }
-    return res.json({ updated: updatedCount, products: next });
-  });
-
-  app.post("/api/products/bulk-channel-sync", authMiddleware, async (req, res) => {
-    try {
-      const { productIds, channels, shopId, shops } = req.body || {};
-      if (!Array.isArray(productIds) || productIds.length === 0) {
-        return res.status(400).json({ error: "productIds_required" });
-      }
-
-      const channelList: string[] = Array.isArray(channels) && channels.length
-        ? channels
-        : ["shopee"];
-
-      const idSet = new Set(productIds.map(String));
-      const products = flattenProductsForStockSync(await loadProducts()).filter((p: any) => idSet.has(p.id));
-      if (products.length === 0) {
-        return res.status(404).json({ error: "Không tìm thấy sản phẩm nào trong kho." });
-      }
-
-      const shopList: any[] = Array.isArray(shops) ? shops : [];
-      const wooShop = shopList.find((s) => s.platform === "woocommerce" && s.connected !== false);
-
-      const shopeeShopId = resolveShopeeTokenShopId(shopId || shopList.find((s) => s.platform === "shopee")?.shopId);
-      let shopeeToken: string | null = null;
-      if (channelList.includes("shopee")) {
-        if (!shopeeShopId) {
-          return res.status(400).json({
-            error: "Chưa có shop Shopee được ủy quyền.",
-            logs: products.flatMap((p: any) => [
-              {
-                productId: p.id,
-                sku: p.sku,
-                channel: "shopee",
-                action: "auth",
-                success: false,
-                message: "Chưa có shop Shopee được ủy quyền",
-              },
-            ]),
-          });
-        }
-        shopeeToken = await getValidShopeeAccessToken(shopeeShopId);
-        if (!shopeeToken) {
-          return res.status(400).json({
-            error: `Chưa có access_token hợp lệ cho shop_id=${shopeeShopId}.`,
-            logs: products.flatMap((p: any) => [
-              {
-                productId: p.id,
-                sku: p.sku,
-                channel: "shopee",
-                action: "auth",
-                success: false,
-                message: `Chưa có access_token hợp lệ cho shop_id=${shopeeShopId}`,
-              },
-            ]),
-          });
-        }
-      }
-
-      const logs: ChannelSyncLine[] = [];
-
-      for (const product of products) {
-        for (const channel of channelList) {
-          if (channel === "shopee" && shopeeShopId && shopeeToken) {
-            const lines = await syncProductToShopee(product, shopeeShopId, shopeeToken);
-            logs.push(...lines);
-            await new Promise((r) => setTimeout(r, 150));
-          } else if (channel === "woocommerce") {
-            const lines = await syncProductToWoo(product, wooShop);
-            logs.push(...lines);
-            await new Promise((r) => setTimeout(r, 100));
-          } else if (channel === "tiktok") {
-            const lines = await syncProductToTikTok(product);
-            logs.push(...lines);
-          }
-        }
-      }
-
-      const successCount = logs.filter((l) => l.success).length;
-      const failCount = logs.filter((l) => !l.success).length;
-      const syncedProductIds = new Set(
-        logs.filter((l) => l.success).map((l) => l.productId)
-      );
-
-      if (syncedProductIds.size > 0) {
-        const allProducts = await loadProducts();
-        const now = new Date().toISOString();
-        const next = allProducts.map((p: any) =>
-          syncedProductIds.has(p.id) ? { ...p, lastSynced: now } : p
-        );
-        await saveProducts(next);
-      }
-
-      return res.status(failCount === 0 ? 200 : 400).json({
-        success: failCount === 0,
-        message:
-          failCount === 0
-            ? "Đồng bộ thành công"
-            : `Lỗi từ Shopee: ${logs
-                .filter((l) => !l.success)
-                .map((l) => l.message)
-                .filter(Boolean)
-                .join(" | ") || "Shopee từ chối cập nhật giá/tồn kho"}`,
-        error:
-          failCount === 0
-            ? undefined
-            : `Lỗi từ Shopee: ${logs
-                .filter((l) => !l.success)
-                .map((l) => l.message)
-                .filter(Boolean)
-                .join(" | ") || "Shopee từ chối cập nhật giá/tồn kho"}`,
-        logs,
-        successCount,
-        failCount,
-        total: logs.length,
-        products: await loadProducts(),
-      });
-    } catch (error: any) {
-      console.error("[Bulk Channel Sync]", error);
-      return res.status(500).json({
-        error: error?.message || "Đồng bộ đa kênh thất bại",
-        logs: [],
-      });
-    }
-  });
+  app.post("/api/products/bulk-update", authMiddleware, bulkUpdateProducts);
+  app.post("/api/products/bulk-channel-sync", authMiddleware, bulkChannelSync);
+  app.use("/api/products", authMiddleware, productsRoutes);
 
   // --- Suppliers API (data/suppliers.json) — Phase 1 MVC ---
   app.get("/api/suppliers", authMiddleware, listSuppliers);
@@ -18492,10 +16981,7 @@ async function startServer() {
     }
   });
 
-  // Các alias dùng chung handler đã bọc try/catch và luôn phản hồi JSON khi lỗi.
-  app.post("/api/shopee/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-  app.post("/api/channel-products/auto-link", authMiddleware, handleBatchAutoLink);
-  app.post("/api/auto-link", authMiddleware, handleBatchAutoLink);
+  // Alias auto-link đã mount sớm cùng Mapping (Phase 4).
 
   // Real product sync — "Khởi tạo kho chính từ Shopee API": pulls the shop's
   // REAL listed items (v2.product.get_item_list -> get_item_base_info, plus
