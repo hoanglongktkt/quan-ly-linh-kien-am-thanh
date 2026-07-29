@@ -196,7 +196,9 @@ export async function syncItemVariants(req, res) {
       });
     }
 
-    const rawItemId = String(req.body?.itemId || req.body?.shopeeItemId || req.body?.productId || "");
+    const rawItemId = String(
+      req.body?.itemId || req.body?.shopeeItemId || req.body?.productId || req.body?.channelId || "",
+    );
     const itemIdMatch = rawItemId.match(/(\d{6,})/);
     if (!itemIdMatch) {
       return res.status(400).json({
@@ -207,10 +209,11 @@ export async function syncItemVariants(req, res) {
       });
     }
     const itemId = Number(itemIdMatch[1]);
+    const previewOnly = req.body?.previewOnly === true || req.body?.preview === true || req.query?.previewOnly === "1";
 
     const shopId = resolveShopeeTokenShopId(req.body?.shopId);
     if (!shopId) {
-      return res.status(404).json({
+      return res.status(400).json({
         success: false,
         error: "no_shopee_shop",
         message: "Chưa có shop Shopee được ủy quyền.",
@@ -228,7 +231,7 @@ export async function syncItemVariants(req, res) {
       });
     }
 
-    const { variantProducts, error, modelCount } = await deps.fetchShopeeItemVariants(
+    const { item, variantProducts, error, modelCount } = await deps.fetchShopeeItemVariants(
       shopId,
       accessToken,
       itemId,
@@ -245,6 +248,21 @@ export async function syncItemVariants(req, res) {
       });
     }
 
+    const initVariants = flattenShopeeRowsForInitForm(variantProducts);
+
+    // Modal khởi tạo kho chỉ cần đọc — không ghi Kho Gốc.
+    if (previewOnly) {
+      return res.json({
+        success: true,
+        previewOnly: true,
+        itemId: String(itemId),
+        title: String(item?.item_name || variantProducts?.[0]?.title || ""),
+        variantCount: initVariants.length,
+        modelCount,
+        variants: initVariants,
+      });
+    }
+
     const allProducts = await deps.loadProducts();
     const merged = deps.replaceProductsForShopeeItem(allProducts, String(itemId), variantProducts);
     await deps.saveProducts(merged);
@@ -257,7 +275,7 @@ export async function syncItemVariants(req, res) {
       itemId: String(itemId),
       variantCount: variantProducts.length,
       modelCount,
-      variants: variantProducts,
+      variants: initVariants.length > 0 ? initVariants : variantProducts,
       products: merged,
     });
   } catch (err) {
@@ -329,7 +347,7 @@ export async function previewItemVariants(req, res) {
 
     const shopId = resolveShopeeTokenShopId(req.body?.shopId || req.query?.shopId);
     if (!shopId) {
-      return res.status(404).json({
+      return res.status(400).json({
         success: false,
         error: "no_shopee_shop",
         message: "Chưa có shop Shopee được ủy quyền.",

@@ -98405,7 +98405,9 @@ async function syncItemVariants(req, res) {
         details: "invalid_partner_config"
       });
     }
-    const rawItemId = String(req.body?.itemId || req.body?.shopeeItemId || req.body?.productId || "");
+    const rawItemId = String(
+      req.body?.itemId || req.body?.shopeeItemId || req.body?.productId || req.body?.channelId || ""
+    );
     const itemIdMatch = rawItemId.match(/(\d{6,})/);
     if (!itemIdMatch) {
       return res.status(400).json({
@@ -98416,9 +98418,10 @@ async function syncItemVariants(req, res) {
       });
     }
     const itemId = Number(itemIdMatch[1]);
+    const previewOnly = req.body?.previewOnly === true || req.body?.preview === true || req.query?.previewOnly === "1";
     const shopId = resolveShopeeTokenShopId(req.body?.shopId);
     if (!shopId) {
-      return res.status(404).json({
+      return res.status(400).json({
         success: false,
         error: "no_shopee_shop",
         message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n.",
@@ -98434,7 +98437,7 @@ async function syncItemVariants(req, res) {
         details: "no_valid_access_token"
       });
     }
-    const { variantProducts, error, modelCount } = await deps10.fetchShopeeItemVariants(
+    const { item, variantProducts, error, modelCount } = await deps10.fetchShopeeItemVariants(
       shopId,
       accessToken,
       itemId
@@ -98450,6 +98453,18 @@ async function syncItemVariants(req, res) {
         details: "no_variants_found"
       });
     }
+    const initVariants = flattenShopeeRowsForInitForm(variantProducts);
+    if (previewOnly) {
+      return res.json({
+        success: true,
+        previewOnly: true,
+        itemId: String(itemId),
+        title: String(item?.item_name || variantProducts?.[0]?.title || ""),
+        variantCount: initVariants.length,
+        modelCount,
+        variants: initVariants
+      });
+    }
     const allProducts = await deps10.loadProducts();
     const merged = deps10.replaceProductsForShopeeItem(allProducts, String(itemId), variantProducts);
     await deps10.saveProducts(merged);
@@ -98461,7 +98476,7 @@ async function syncItemVariants(req, res) {
       itemId: String(itemId),
       variantCount: variantProducts.length,
       modelCount,
-      variants: variantProducts,
+      variants: initVariants.length > 0 ? initVariants : variantProducts,
       products: merged
     });
   } catch (err) {
@@ -98524,7 +98539,7 @@ async function previewItemVariants(req, res) {
     const itemId = Number(itemIdMatch[1]);
     const shopId = resolveShopeeTokenShopId(req.body?.shopId || req.query?.shopId);
     if (!shopId) {
-      return res.status(404).json({
+      return res.status(400).json({
         success: false,
         error: "no_shopee_shop",
         message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n."

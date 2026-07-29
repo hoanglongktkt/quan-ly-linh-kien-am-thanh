@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Product, SyncLog, ConnectedShop } from '../types';
-import { parseJsonResponse, apiFetch, PRODUCTION_API_BASE } from '../utils/apiClient';
+import { parseJsonResponse, apiFetch } from '../utils/apiClient';
 import { 
   Check, 
   AlertCircle, 
@@ -802,16 +802,36 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
   };
 
   const mapShopeePreviewToInitRows = (variants: any[]): InitVariantRow[] => {
-    return (Array.isArray(variants) ? variants : []).map((v, i) => ({
-      id: `row-${i}`,
-      label: String(v?.label || `Phiên bản ${i + 1}`),
-      sku: String(v?.sku || ''),
-      price: Math.max(0, Math.round(Number(v?.price) || 0)),
-      weight: Math.max(0, Number(v?.weight) || 0),
-      stock: Math.max(0, Math.round(Number(v?.stock) || 0)),
-      modelId: v?.modelId != null ? String(v.modelId) : undefined,
-      itemId: v?.itemId != null ? String(v.itemId) : undefined,
-    }));
+    const out: InitVariantRow[] = [];
+    const pushRow = (v: any, i: number, parentWeight = 0) => {
+      out.push({
+        id: `row-${out.length}`,
+        label: String(v?.label || v?.modelName || v?.title?.split?.(' - ')?.pop() || `Phiên bản ${i + 1}`),
+        sku: String(v?.sku || ''),
+        price: Math.max(0, Math.round(Number(v?.price ?? v?.sellingPrice) || 0)),
+        weight: Math.max(0, Number(v?.weight) || parentWeight || 0),
+        stock: Math.max(0, Math.round(Number(v?.stock) || 0)),
+        modelId: v?.modelId != null ? String(v.modelId) : v?.shopeeModelId != null ? String(v.shopeeModelId) : undefined,
+        itemId: v?.itemId != null ? String(v.itemId) : v?.shopeeItemId != null ? String(v.shopeeItemId) : undefined,
+      });
+    };
+
+    (Array.isArray(variants) ? variants : []).forEach((row, i) => {
+      if (!row || typeof row !== 'object') return;
+      const children = Array.isArray(row.children)
+        ? row.children
+        : Array.isArray(row.children_models)
+          ? row.children_models
+          : [];
+      const parentWeight = Math.max(0, Number(row.weight) || 0);
+      if (children.length > 0) {
+        children.forEach((c: any, idx: number) => pushRow(c, idx, parentWeight));
+        return;
+      }
+      // Flat preview row (đã có price/label) hoặc sản phẩm 1 phiên bản
+      pushRow(row, i, parentWeight);
+    });
+    return out;
   };
 
   const resolveInitShopId = (item: ChannelListing): string | undefined => {
@@ -820,6 +840,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       (s) => s.platform === 'shopee' && s.connected && s.shopName === item.shopName,
     );
     if (byName?.shopId) return String(byName.shopId);
+    const byNameLoose = shops.find(
+      (s) =>
+        s.platform === 'shopee' &&
+        s.connected &&
+        String(s.shopName || '').toLowerCase().includes(String(item.shopName || '').toLowerCase()),
+    );
+    if (byNameLoose?.shopId) return String(byNameLoose.shopId);
     return shops.find((s) => s.platform === 'shopee' && s.connected)?.shopId;
   };
 
@@ -842,17 +869,24 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     try {
       const token = localStorage.getItem('admin_token');
       const shopId = resolveInitShopId(item);
-      const payload = { itemId, shopId, channelId: item.channelId, shopeeItemId: itemId };
+      const payload = {
+        itemId,
+        shopId,
+        channelId: item.channelId,
+        shopeeItemId: itemId,
+        previewOnly: true,
+      };
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       };
-      // Nhiều đường dẫn: shopee route → products alias → gọi thẳng API cPanel (bypass proxy cũ).
+
+      // Ưu tiên endpoint ĐÃ TỒN TẠI trên prod (sync-item-variants + previewOnly).
+      // Không gọi cross-origin (tránh Failed to fetch / CORS).
       const endpoints = [
+        '/api/shopee/products/sync-item-variants',
         '/api/shopee/products/item-preview',
         '/api/products/shopee-item-preview',
-        `${PRODUCTION_API_BASE}/api/shopee/products/item-preview`,
-        `${PRODUCTION_API_BASE}/api/products/shopee-item-preview`,
       ];
 
       let data: any = null;
@@ -866,18 +900,22 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
           });
           const json = await res.json().catch(() => ({}));
           const msg = String(json?.message || json?.error || '');
-          if (res.status === 404 || /không tồn tại|not_found|not found/i.test(msg)) {
+          // Chỉ coi là "route thiếu" khi đúng message 404 API không tồn tại.
+          if (res.status === 404 && /API không tồn tại|not_found/i.test(msg) && !/no_variants/i.test(msg)) {
             lastMessage = msg || `HTTP ${res.status}`;
             continue;
           }
           if (!res.ok || json?.success === false) {
+            lastMessage = msg || `HTTP ${res.status}`;
+            // Thử endpoint khác nếu route thiếu; còn lỗi nghiệp vụ thì dừng.
+            if (res.status === 404) continue;
             throw new Error(msg || 'Không lấy được dữ liệu Shopee');
           }
           data = json;
           break;
         } catch (inner: unknown) {
           const message = inner instanceof Error ? inner.message : String(inner);
-          if (/không tồn tại|not_found|not found|Failed to fetch|NetworkError/i.test(message)) {
+          if (/API không tồn tại|Failed to fetch|NetworkError/i.test(message)) {
             lastMessage = message;
             continue;
           }
