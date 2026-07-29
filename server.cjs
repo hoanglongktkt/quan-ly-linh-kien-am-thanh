@@ -1292,8 +1292,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs8 = require("fs");
-          stream2 = new fs8.SyncWriteStream(fd2, { autoClose: false });
+          var fs11 = require("fs");
+          stream2 = new fs11.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -14080,11 +14080,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path7) {
-      if (!path7 || typeof path7 !== "string") {
+    function lookup(path10) {
+      if (!path10 || typeof path10 !== "string") {
         return false;
       }
-      var extension3 = extname("x." + path7).toLowerCase().substr(1);
+      var extension3 = extname("x." + path10).toLowerCase().substr(1);
       if (!extension3) {
         return false;
       }
@@ -17713,8 +17713,8 @@ var require_node2 = __commonJS({
           }
           break;
         case "FILE":
-          var fs8 = require("fs");
-          stream2 = new fs8.SyncWriteStream(fd2, { autoClose: false });
+          var fs11 = require("fs");
+          stream2 = new fs11.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18432,8 +18432,8 @@ var require_node3 = __commonJS({
           }
           break;
         case "FILE":
-          var fs8 = require("fs");
-          stream2 = new fs8.SyncWriteStream(fd2, { autoClose: false });
+          var fs11 = require("fs");
+          stream2 = new fs11.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18521,7 +18521,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path7, keys, options) {
+    function pathToRegexp(path10, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -18535,8 +18535,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m2;
-      if (path7 instanceof RegExp) {
-        while (m2 = MATCHING_GROUP_REGEXP.exec(path7.source)) {
+      if (path10 instanceof RegExp) {
+        while (m2 = MATCHING_GROUP_REGEXP.exec(path10.source)) {
           if (m2[0][0] === "\\") continue;
           keys.push({
             name: m2[1] || name++,
@@ -18544,18 +18544,18 @@ var require_path_to_regexp = __commonJS({
             offset: m2.index
           });
         }
-        return path7;
+        return path10;
       }
-      if (Array.isArray(path7)) {
-        path7 = path7.map(function(value) {
+      if (Array.isArray(path10)) {
+        path10 = path10.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path7.join("|"), flags);
+        return new RegExp(path10.join("|"), flags);
       }
-      if (typeof path7 !== "string") {
+      if (typeof path10 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path7 = path7.replace(
+      path10 = path10.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -18572,7 +18572,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path7.slice(pos, offset);
+            backtrack += path10.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -18602,7 +18602,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m2 = MATCHING_GROUP_REGEXP.exec(path7)) {
+      while (m2 = MATCHING_GROUP_REGEXP.exec(path10)) {
         if (m2[0][0] === "\\") continue;
         if (keysOffset + i2 === keys.length || keys[keysOffset + i2].offset > m2.index) {
           keys.splice(keysOffset + i2, 0, {
@@ -18614,13 +18614,13 @@ var require_path_to_regexp = __commonJS({
         }
         i2++;
       }
-      path7 += strict ? "" : path7[path7.length - 1] === "/" ? "?" : "/?";
+      path10 += strict ? "" : path10[path10.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path7 += "$";
-      } else if (path7[path7.length - 1] !== "/") {
-        path7 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path10 += "$";
+      } else if (path10[path10.length - 1] !== "/") {
+        path10 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path7, flags);
+      return new RegExp("^" + path10, flags);
     }
   }
 });
@@ -18633,19 +18633,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path7, options, fn) {
+    function Layer(path10, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path7, options, fn);
+        return new Layer(path10, options, fn);
       }
-      debug("new %o", path7);
+      debug("new %o", path10);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path7, this.keys = [], opts);
-      this.regexp.fast_star = path7 === "*";
-      this.regexp.fast_slash = path7 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path10, this.keys = [], opts);
+      this.regexp.fast_star = path10 === "*";
+      this.regexp.fast_slash = path10 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -18669,20 +18669,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path7) {
+    Layer.prototype.match = function match2(path10) {
       var match3;
-      if (path7 != null) {
+      if (path10 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path7) };
-          this.path = path7;
+          this.params = { "0": decode_param(path10) };
+          this.path = path10;
           return true;
         }
-        match3 = this.regexp.exec(path7);
+        match3 = this.regexp.exec(path10);
       }
       if (!match3) {
         this.params = void 0;
@@ -18775,10 +18775,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path7) {
-      this.path = path7;
+    function Route(path10) {
+      this.path = path10;
       this.stack = [];
-      debug("new %o", path7);
+      debug("new %o", path10);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18908,17 +18908,17 @@ var require_router = __commonJS({
     var toString = Object.prototype.toString;
     var proto = module2.exports = function(options) {
       var opts = options || {};
-      function router2(req, res, next) {
-        router2.handle(req, res, next);
+      function router7(req, res, next) {
+        router7.handle(req, res, next);
       }
-      setPrototypeOf(router2, proto);
-      router2.params = {};
-      router2._params = [];
-      router2.caseSensitive = opts.caseSensitive;
-      router2.mergeParams = opts.mergeParams;
-      router2.strict = opts.strict;
-      router2.stack = [];
-      return router2;
+      setPrototypeOf(router7, proto);
+      router7.params = {};
+      router7._params = [];
+      router7.caseSensitive = opts.caseSensitive;
+      router7.mergeParams = opts.mergeParams;
+      router7.strict = opts.strict;
+      router7.stack = [];
+      return router7;
     };
     proto.param = function param(name, fn) {
       if (typeof name === "function") {
@@ -18990,8 +18990,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path7 = getPathname(req);
-        if (path7 == null) {
+        var path10 = getPathname(req);
+        if (path10 == null) {
           return done(layerError);
         }
         var layer;
@@ -18999,7 +18999,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path7);
+          match2 = matchLayer(layer, path10);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -19037,18 +19037,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path7);
+            trim_prefix(layer, layerError, layerPath, path10);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path7) {
+      function trim_prefix(layer, layerError, layerPath, path10) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path7.slice(0, layerPath.length)) {
+          if (layerPath !== path10.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path7[layerPath.length];
+          var c = path10[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -19126,7 +19126,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path7 = "/";
+      var path10 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -19134,7 +19134,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path7 = fn;
+          path10 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -19146,8 +19146,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path7, fn.name || "<anonymous>");
-        var layer = new Layer(path7, {
+        debug("use %o %s", path10, fn.name || "<anonymous>");
+        var layer = new Layer(path10, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -19157,9 +19157,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path7) {
-      var route2 = new Route(path7);
-      var layer = new Layer(path7, {
+    proto.route = function route(path10) {
+      var route2 = new Route(path10);
+      var layer = new Layer(path10, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -19169,8 +19169,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path7) {
-        var route = this.route(path7);
+      proto[method] = function(path10) {
+        var route = this.route(path10);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -19206,9 +19206,9 @@ var require_router = __commonJS({
       }
       return toString.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path7) {
+    function matchLayer(layer, path10) {
       try {
-        return layer.match(path7);
+        return layer.match(path10);
       } catch (err) {
         return err;
       }
@@ -19326,13 +19326,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path7 = require("path");
-    var fs8 = require("fs");
-    var dirname = path7.dirname;
-    var basename3 = path7.basename;
-    var extname = path7.extname;
-    var join = path7.join;
-    var resolve = path7.resolve;
+    var path10 = require("path");
+    var fs11 = require("fs");
+    var dirname = path10.dirname;
+    var basename3 = path10.basename;
+    var extname = path10.extname;
+    var join = path10.join;
+    var resolve = path10.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -19361,17 +19361,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path8;
+      var path11;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i2 = 0; i2 < roots.length && !path8; i2++) {
+      for (var i2 = 0; i2 < roots.length && !path11; i2++) {
         var root = roots[i2];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename3(loc);
-        path8 = this.resolve(dir, file);
+        path11 = this.resolve(dir, file);
       }
-      return path8;
+      return path11;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -19379,21 +19379,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path8 = join(dir, file);
-      var stat3 = tryStat(path8);
+      var path11 = join(dir, file);
+      var stat3 = tryStat(path11);
       if (stat3 && stat3.isFile()) {
-        return path8;
+        return path11;
       }
-      path8 = join(dir, basename3(file, ext), "index" + ext);
-      stat3 = tryStat(path8);
+      path11 = join(dir, basename3(file, ext), "index" + ext);
+      stat3 = tryStat(path11);
       if (stat3 && stat3.isFile()) {
-        return path8;
+        return path11;
       }
     };
-    function tryStat(path8) {
-      debug('stat "%s"', path8);
+    function tryStat(path11) {
+      debug('stat "%s"', path11);
       try {
-        return fs8.statSync(path8);
+        return fs11.statSync(path11);
       } catch (e2) {
         return void 0;
       }
@@ -19998,8 +19998,8 @@ var require_node4 = __commonJS({
           }
           break;
         case "FILE":
-          var fs8 = require("fs");
-          stream2 = new fs8.SyncWriteStream(fd2, { autoClose: false });
+          var fs11 = require("fs");
+          stream2 = new fs11.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -20171,8 +20171,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports2, module2) {
-    var path7 = require("path");
-    var fs8 = require("fs");
+    var path10 = require("path");
+    var fs11 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -20193,7 +20193,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs8.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs11.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -20201,8 +20201,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path8, fallback) {
-      var ext = path8.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path11, fallback) {
+      var ext = path11.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -20431,33 +20431,33 @@ var require_send = __commonJS({
     var escapeHtml = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs8 = require("fs");
+    var fs11 = require("fs");
     var mime = require_mime();
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path7 = require("path");
+    var path10 = require("path");
     var statuses = require_statuses();
     var Stream4 = require("stream");
     var util = require("util");
-    var extname = path7.extname;
-    var join = path7.join;
-    var normalize = path7.normalize;
-    var resolve = path7.resolve;
-    var sep = path7.sep;
+    var extname = path10.extname;
+    var join = path10.join;
+    var normalize = path10.normalize;
+    var resolve = path10.resolve;
+    var sep = path10.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path8, options) {
-      return new SendStream(req, path8, options);
+    function send(req, path11, options) {
+      return new SendStream(req, path11, options);
     }
-    function SendStream(req, path8, options) {
+    function SendStream(req, path11, options) {
       Stream4.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path8;
+      this.path = path11;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -20503,8 +20503,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path8) {
-      this._root = resolve(String(path8));
+    SendStream.prototype.root = function root(path11) {
+      this._root = resolve(String(path11));
       debug("root %s", this._root);
       return this;
     };
@@ -20617,10 +20617,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path8) {
+    SendStream.prototype.redirect = function redirect(path11) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path8);
+        this.emit("directory", res, path11);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -20640,42 +20640,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path8 = decode(this.path);
-      if (path8 === -1) {
+      var path11 = decode(this.path);
+      if (path11 === -1) {
         this.error(400);
         return res;
       }
-      if (~path8.indexOf("\0")) {
+      if (~path11.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path8) {
-          path8 = normalize("." + sep + path8);
+        if (path11) {
+          path11 = normalize("." + sep + path11);
         }
-        if (UP_PATH_REGEXP.test(path8)) {
-          debug('malicious path "%s"', path8);
+        if (UP_PATH_REGEXP.test(path11)) {
+          debug('malicious path "%s"', path11);
           this.error(403);
           return res;
         }
-        parts = path8.split(sep);
-        path8 = normalize(join(root, path8));
+        parts = path11.split(sep);
+        path11 = normalize(join(root, path11));
       } else {
-        if (UP_PATH_REGEXP.test(path8)) {
-          debug('malicious path "%s"', path8);
+        if (UP_PATH_REGEXP.test(path11)) {
+          debug('malicious path "%s"', path11);
           this.error(403);
           return res;
         }
-        parts = normalize(path8).split(sep);
-        path8 = resolve(path8);
+        parts = normalize(path11).split(sep);
+        path11 = resolve(path11);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path8);
+        debug('%s dotfile "%s"', access, path11);
         switch (access) {
           case "allow":
             break;
@@ -20689,13 +20689,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path8);
+        this.sendIndex(path11);
         return res;
       }
-      this.sendFile(path8);
+      this.sendFile(path11);
       return res;
     };
-    SendStream.prototype.send = function send2(path8, stat3) {
+    SendStream.prototype.send = function send2(path11, stat3) {
       var len = stat3.size;
       var options = this.options;
       var opts = {};
@@ -20707,9 +20707,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path8);
-      this.setHeader(path8, stat3);
-      this.type(path8);
+      debug('pipe "%s"', path11);
+      this.setHeader(path11, stat3);
+      this.type(path11);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -20758,28 +20758,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path8, opts);
+      this.stream(path11, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path8) {
+    SendStream.prototype.sendFile = function sendFile(path11) {
       var i2 = 0;
       var self2 = this;
-      debug('stat "%s"', path8);
-      fs8.stat(path8, function onstat(err, stat3) {
-        if (err && err.code === "ENOENT" && !extname(path8) && path8[path8.length - 1] !== sep) {
+      debug('stat "%s"', path11);
+      fs11.stat(path11, function onstat(err, stat3) {
+        if (err && err.code === "ENOENT" && !extname(path11) && path11[path11.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat3.isDirectory()) return self2.redirect(path8);
-        self2.emit("file", path8, stat3);
-        self2.send(path8, stat3);
+        if (stat3.isDirectory()) return self2.redirect(path11);
+        self2.emit("file", path11, stat3);
+        self2.send(path11, stat3);
       });
       function next(err) {
         if (self2._extensions.length <= i2) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path8 + "." + self2._extensions[i2++];
+        var p = path11 + "." + self2._extensions[i2++];
         debug('stat "%s"', p);
-        fs8.stat(p, function(err2, stat3) {
+        fs11.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20787,7 +20787,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path8) {
+    SendStream.prototype.sendIndex = function sendIndex(path11) {
       var i2 = -1;
       var self2 = this;
       function next(err) {
@@ -20795,9 +20795,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path8, self2._index[i2]);
+        var p = join(path11, self2._index[i2]);
         debug('stat "%s"', p);
-        fs8.stat(p, function(err2, stat3) {
+        fs11.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20806,10 +20806,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path8, options) {
+    SendStream.prototype.stream = function stream(path11, options) {
       var self2 = this;
       var res = this.res;
-      var stream2 = fs8.createReadStream(path8, options);
+      var stream2 = fs11.createReadStream(path11, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -20824,10 +20824,10 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path8) {
+    SendStream.prototype.type = function type(path11) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path8);
+      var type2 = mime.lookup(path11);
       if (!type2) {
         debug("no content-type");
         return;
@@ -20836,9 +20836,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path8, stat3) {
+    SendStream.prototype.setHeader = function setHeader(path11, stat3) {
       var res = this.res;
-      this.emit("headers", res, path8, stat3);
+      this.emit("headers", res, path11, stat3);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -20897,9 +20897,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path8) {
+    function decode(path11) {
       try {
-        return decodeURIComponent(path8);
+        return decodeURIComponent(path11);
       } catch (err) {
         return -1;
       }
@@ -21808,10 +21808,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path7) {
-      if ("/" === path7[0]) return true;
-      if (":" === path7[1] && ("\\" === path7[2] || "/" === path7[2])) return true;
-      if ("\\\\" === path7.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path10) {
+      if ("/" === path10[0]) return true;
+      if (":" === path10[1] && ("\\" === path10[2] || "/" === path10[2])) return true;
+      if ("\\\\" === path10.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate3.function(
       flatten,
@@ -21935,7 +21935,7 @@ var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports2, module2) {
     "use strict";
     var finalhandler = require_finalhandler();
-    var Router2 = require_router();
+    var Router7 = require_router();
     var methods = require_methods();
     var middleware = require_init();
     var query = require_query();
@@ -22000,7 +22000,7 @@ var require_application = __commonJS({
     };
     app.lazyrouter = function lazyrouter() {
       if (!this._router) {
-        this._router = new Router2({
+        this._router = new Router7({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
@@ -22009,21 +22009,21 @@ var require_application = __commonJS({
       }
     };
     app.handle = function handle(req, res, callback) {
-      var router2 = this._router;
+      var router7 = this._router;
       var done = callback || finalhandler(req, res, {
         env: this.get("env"),
         onerror: logerror.bind(this)
       });
-      if (!router2) {
+      if (!router7) {
         debug("no routes defined on app");
         done();
         return;
       }
-      router2.handle(req, res, done);
+      router7.handle(req, res, done);
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path7 = "/";
+      var path10 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22031,7 +22031,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path7 = fn;
+          path10 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -22039,15 +22039,15 @@ var require_application = __commonJS({
         throw new TypeError("app.use() requires a middleware function");
       }
       this.lazyrouter();
-      var router2 = this._router;
+      var router7 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router2.use(path7, fn2);
+          return router7.use(path10, fn2);
         }
-        debug(".use app under %s", path7);
-        fn2.mountpath = path7;
+        debug(".use app under %s", path10);
+        fn2.mountpath = path10;
         fn2.parent = this;
-        router2.use(path7, function mounted_app(req, res, next) {
+        router7.use(path10, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -22059,9 +22059,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path7) {
+    app.route = function route(path10) {
       this.lazyrouter();
-      return this._router.route(path7);
+      return this._router.route(path10);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -22112,7 +22112,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path7() {
+    app.path = function path10() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -22128,19 +22128,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path7) {
+      app[method] = function(path10) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path7);
+          return this.set(path10);
         }
         this.lazyrouter();
-        var route = this._router.route(path7);
+        var route = this._router.route(path10);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path7) {
+    app.all = function all(path10) {
       this.lazyrouter();
-      var route = this._router.route(path7);
+      var route = this._router.route(path10);
       var args = slice.call(arguments, 1);
       for (var i2 = 0; i2 < methods.length; i2++) {
         route[methods[i2]].apply(route, args);
@@ -22899,7 +22899,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP2(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path7() {
+    defineGetter(req, "path", function path10() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -23221,7 +23221,7 @@ var require_response = __commonJS({
     var http3 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path7 = require("path");
+    var path10 = require("path");
     var statuses = require_statuses();
     var merge = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -23230,9 +23230,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path7.extname;
+    var extname = path10.extname;
     var mime = send.mime;
-    var resolve = path7.resolve;
+    var resolve = path10.resolve;
     var vary = require_vary();
     var res = Object.create(http3.ServerResponse.prototype);
     module2.exports = res;
@@ -23409,26 +23409,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path8, options, callback) {
+    res.sendFile = function sendFile(path11, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path8) {
+      if (!path11) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path8 !== "string") {
+      if (typeof path11 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path8)) {
+      if (!opts.root && !isAbsolute(path11)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path8);
+      var pathname = encodeURI(path11);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -23438,7 +23438,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path8, options, callback) {
+    res.sendfile = function(path11, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -23448,7 +23448,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path8, opts);
+      var file = send(req, path11, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -23461,7 +23461,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path8, filename, options, callback) {
+    res.download = function download(path11, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23478,7 +23478,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path8)
+        "Content-Disposition": contentDisposition(name || path11)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23491,7 +23491,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path8) : path8;
+      var fullPath = !opts.root ? resolve(path11) : path11;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23792,11 +23792,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path7 = parseUrl(req).pathname;
-        if (path7 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path7 = "";
+        var path10 = parseUrl(req).pathname;
+        if (path10 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path10 = "";
         }
-        var stream = send(req, path7, opts);
+        var stream = send(req, path10, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -23864,7 +23864,7 @@ var require_express = __commonJS({
     var mixin = require_merge_descriptors();
     var proto = require_application();
     var Route = require_route();
-    var Router2 = require_router();
+    var Router7 = require_router();
     var req = require_request();
     var res = require_response();
     exports2 = module2.exports = createApplication;
@@ -23887,7 +23887,7 @@ var require_express = __commonJS({
     exports2.request = req;
     exports2.response = res;
     exports2.Route = Route;
-    exports2.Router = Router2;
+    exports2.Router = Router7;
     exports2.json = bodyParser.json;
     exports2.query = require_query();
     exports2.raw = bodyParser.raw;
@@ -40569,14 +40569,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path7) {
+    var parse = function(path10) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path7; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path10; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -40890,8 +40890,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path7) {
-      return apply(parse(path7));
+    exports2.svgPathToOperators = function(path10) {
+      return apply(parse(path10));
     };
   }
 });
@@ -41074,7 +41074,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path7, options) {
+    exports2.drawSvgPath = function(path10, options) {
       var _a2, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -41088,7 +41088,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path7), [
+      ], svgPath_1.svgPathToOperators(path10), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -45386,12 +45386,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path7, options) {
+        PDFPage2.prototype.drawSvgPath = function(path10, options) {
           var _a2, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path7, "path", ["string"]);
+          utils_1.assertIs(path10, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -45420,7 +45420,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path7, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path10, {
             x: (_a2 = options.x) !== null && _a2 !== void 0 ? _a2 : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -52598,22 +52598,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path7, type) => fromBlob((0, import_node_fs.statSync)(path7), path7, type);
-    blobFrom = (path7, type) => stat(path7).then((stat3) => fromBlob(stat3, path7, type));
-    fileFrom = (path7, type) => stat(path7).then((stat3) => fromFile(stat3, path7, type));
-    fileFromSync = (path7, type) => fromFile((0, import_node_fs.statSync)(path7), path7, type);
-    fromBlob = (stat3, path7, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path7,
+    blobFromSync = (path10, type) => fromBlob((0, import_node_fs.statSync)(path10), path10, type);
+    blobFrom = (path10, type) => stat(path10).then((stat3) => fromBlob(stat3, path10, type));
+    fileFrom = (path10, type) => stat(path10).then((stat3) => fromFile(stat3, path10, type));
+    fileFromSync = (path10, type) => fromFile((0, import_node_fs.statSync)(path10), path10, type);
+    fromBlob = (stat3, path10, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path10,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path7, type = "") => new file_default([new BlobDataItem({
-      path: path7,
+    fromFile = (stat3, path10, type = "") => new file_default([new BlobDataItem({
+      path: path10,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path7), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path10), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -57734,9 +57734,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs8 = require("fs");
+    var fs11 = require("fs");
     var os = require("os");
-    var path7 = require("path");
+    var path10 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -57822,15 +57822,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs8.promises.lstat(filePath);
+        const stats = await fs11.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path7.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path7.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path7.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path10.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path10.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path10.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os.platform().startsWith("win");
@@ -58670,8 +58670,8 @@ var require_oauth2client = __commonJS({
           throw new Error("The verifyIdToken method requires an ID Token");
         }
         const response = await this.getFederatedSignonCertsAsync();
-        const login = await this.verifySignedJwtWithCertsAsync(options.idToken, response.certs, options.audience, this.issuers, options.maxExpiry);
-        return login;
+        const login2 = await this.verifySignedJwtWithCertsAsync(options.idToken, response.certs, options.audience, this.issuers, options.maxExpiry);
+        return login2;
       }
       /**
        * Obtains information about the provisioned access token.  Especially useful
@@ -59776,11 +59776,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path7 = require("path");
-    var fs8 = require("fs");
+    var path10 = require("path");
+    var fs11 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs8.readFile ? (0, util_1.promisify)(fs8.readFile) : async () => {
+    var readFile = fs11.readFile ? (0, util_1.promisify)(fs11.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -59848,7 +59848,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path7.extname(keyFilePath);
+        const keyFileExtension = path10.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -61457,12 +61457,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs8 = require("fs");
-    var readFile = (0, util_1.promisify)(fs8.readFile ?? (() => {
+    var fs11 = require("fs");
+    var readFile = (0, util_1.promisify)(fs11.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs8.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs11.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs8.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs11.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -61580,7 +61580,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs8 = require("fs");
+    var fs11 = require("fs");
     var crypto_1 = require("crypto");
     var https2 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -61674,7 +61674,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs8.promises.readFile(configPath, "utf8");
+          fileContents = await fs11.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -61699,14 +61699,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs8.promises.readFile(certPath);
+          cert = await fs11.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs8.promises.readFile(keyPath);
+          key = await fs11.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -61725,7 +61725,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs8.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs11.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index) => {
             try {
@@ -62427,7 +62427,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs8 = require("fs");
+    var fs11 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -62512,14 +62512,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs8.promises.realpath(this.outputFile);
+          filePath = await fs11.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs8.promises.lstat(filePath)).isFile()) {
+        if (!(await fs11.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs8.promises.readFile(filePath, {
+        const responseString = await fs11.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -62930,7 +62930,7 @@ var require_gdchclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
     var crypto4 = require("crypto");
-    var fs8 = require("fs");
+    var fs11 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -63153,7 +63153,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs8.promises.readFile(currentPath);
+            const ca = await fs11.promises.readFile(currentPath);
             return new https2.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -63213,11 +63213,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs8 = require("fs");
+    var fs11 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
     var os = require("os");
-    var path7 = require("path");
+    var path10 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -63504,12 +63504,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location = path7.join(home, ".config");
+            location = path10.join(home, ".config");
           }
         }
         if (location) {
-          location = path7.join(location, "gcloud", "application_default_credentials.json");
-          if (!fs8.existsSync(location)) {
+          location = path10.join(location, "gcloud", "application_default_credentials.json");
+          if (!fs11.existsSync(location)) {
             location = null;
           }
         }
@@ -63530,8 +63530,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs8.realpathSync(filePath);
-          if (!fs8.lstatSync(filePath).isFile()) {
+          filePath = fs11.realpathSync(filePath);
+          if (!fs11.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -63540,7 +63540,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream = fs8.createReadStream(filePath);
+        const readStream = fs11.createReadStream(filePath);
         return this.fromStream(readStream, options);
       }
       /**
@@ -63867,8 +63867,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path7.resolve(this.keyFilename);
-          const stream = fs8.createReadStream(filePath);
+          const filePath = path10.resolve(this.keyFilename);
+          const stream = fs11.createReadStream(filePath);
           return await this.fromStreamAsync(stream, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -68096,8 +68096,8 @@ var require_websocket_server = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs8 = require("fs");
-    var path7 = require("path");
+    var fs11 = require("fs");
+    var path10 = require("path");
     var os = require("os");
     var crypto4 = require("crypto");
     var TIPS = [
@@ -68228,7 +68228,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs8.existsSync(filepath)) {
+            if (fs11.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -68236,15 +68236,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path7.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path10.resolve(process.cwd(), ".env.vault");
       }
-      if (fs8.existsSync(possibleVaultPath)) {
+      if (fs11.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path7.join(os.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path10.join(os.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -68261,7 +68261,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path7.resolve(process.cwd(), ".env");
+      const dotenvPath = path10.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -68289,13 +68289,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path8 of optionPaths) {
+      for (const path11 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs8.readFileSync(path8, { encoding }));
+          const parsed = DotenvModule.parse(fs11.readFileSync(path11, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e2) {
           if (debug) {
-            _debug(`failed to load ${path8} ${e2.message}`);
+            _debug(`failed to load ${path11} ${e2.message}`);
           }
           lastError = e2;
         }
@@ -68308,7 +68308,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path7.relative(process.cwd(), filePath);
+            const relative = path10.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e2) {
             if (debug) {
@@ -71461,9 +71461,9 @@ var require_jsonwebtoken = __commonJS({
 });
 
 // server.ts
-var import_express3 = __toESM(require_express2(), 1);
-var import_path5 = __toESM(require("path"), 1);
-var import_fs6 = __toESM(require("fs"), 1);
+var import_express8 = __toESM(require_express2(), 1);
+var import_path8 = __toESM(require("path"), 1);
+var import_fs9 = __toESM(require("fs"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 var import_node_module = require("node:module");
 var import_pdf_lib = __toESM(require_cjs(), 1);
@@ -75078,7 +75078,7 @@ var Batches = class extends BaseModule {
       params
     );
     const urlParams = body["_url"];
-    const path7 = formatMap("{model}:batchGenerateContent", urlParams);
+    const path10 = formatMap("{model}:batchGenerateContent", urlParams);
     const batch = body["batch"];
     const inputConfig = batch["inputConfig"];
     const requestsWrapper = inputConfig["requests"];
@@ -75099,7 +75099,7 @@ var Batches = class extends BaseModule {
     delete body["config"];
     delete body["_url"];
     delete body["_query"];
-    return { path: path7, body };
+    return { path: path10, body };
   }
   // Helper function to get the first GCS URI
   getGcsUri(src) {
@@ -75155,16 +75155,16 @@ var Batches = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createBatchJobParametersToVertex(this.apiClient, params);
-      path7 = formatMap("batchPredictionJobs", body["_url"]);
+      path10 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75179,12 +75179,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = createBatchJobParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{model}:batchGenerateContent", body["_url"]);
+      path10 = formatMap("{model}:batchGenerateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75209,18 +75209,18 @@ var Batches = class extends BaseModule {
   async createEmbeddingsInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+      path10 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75249,16 +75249,16 @@ var Batches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getBatchJobParametersToVertex(this.apiClient, params);
-      path7 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path10 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75273,12 +75273,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = getBatchJobParametersToMldev(this.apiClient, params);
-      path7 = formatMap("batches/{name}", body["_url"]);
+      path10 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75306,16 +75306,16 @@ var Batches = class extends BaseModule {
    */
   async cancel(params) {
     var _a2, _b, _c, _d;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-      path7 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+      path10 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75324,12 +75324,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-      path7 = formatMap("batches/{name}:cancel", body["_url"]);
+      path10 = formatMap("batches/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75341,16 +75341,16 @@ var Batches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listBatchJobsParametersToVertex(params);
-      path7 = formatMap("batchPredictionJobs", body["_url"]);
+      path10 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75373,12 +75373,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = listBatchJobsParametersToMldev(params);
-      path7 = formatMap("batches", body["_url"]);
+      path10 = formatMap("batches", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75415,16 +75415,16 @@ var Batches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-      path7 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path10 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -75445,12 +75445,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-      path7 = formatMap("batches/{name}", body["_url"]);
+      path10 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -76374,16 +76374,16 @@ var Caches = class extends BaseModule {
   async create(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createCachedContentParametersToVertex(this.apiClient, params);
-      path7 = formatMap("cachedContents", body["_url"]);
+      path10 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -76397,12 +76397,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = createCachedContentParametersToMldev(this.apiClient, params);
-      path7 = formatMap("cachedContents", body["_url"]);
+      path10 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -76430,16 +76430,16 @@ var Caches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getCachedContentParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -76453,12 +76453,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = getCachedContentParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -76486,16 +76486,16 @@ var Caches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -76518,12 +76518,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -76563,16 +76563,16 @@ var Caches = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateCachedContentParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -76586,12 +76586,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = updateCachedContentParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -76608,16 +76608,16 @@ var Caches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listCachedContentsParametersToVertex(params);
-      path7 = formatMap("cachedContents", body["_url"]);
+      path10 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -76640,12 +76640,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = listCachedContentsParametersToMldev(params);
-      path7 = formatMap("cachedContents", body["_url"]);
+      path10 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77241,18 +77241,18 @@ var Files = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFilesParametersToMldev(params);
-      path7 = formatMap("files", body["_url"]);
+      path10 = formatMap("files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77278,18 +77278,18 @@ var Files = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileParametersToMldev(params);
-      path7 = formatMap("upload/v1beta/files", body["_url"]);
+      path10 = formatMap("upload/v1beta/files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77324,18 +77324,18 @@ var Files = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileParametersToMldev(params);
-      path7 = formatMap("files/{file}", body["_url"]);
+      path10 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77365,18 +77365,18 @@ var Files = class extends BaseModule {
   async delete(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileParametersToMldev(params);
-      path7 = formatMap("files/{file}", body["_url"]);
+      path10 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -77402,18 +77402,18 @@ var Files = class extends BaseModule {
   async registerFilesInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = internalRegisterFilesParametersToMldev(params);
-      path7 = formatMap("files:register", body["_url"]);
+      path10 = formatMap("files:register", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -82667,13 +82667,13 @@ var ApiClient = class {
       throw new Error("HTTP options are not correctly set.");
     }
   }
-  constructUrl(path7, httpOptions, prependProjectLocation) {
+  constructUrl(path10, httpOptions, prependProjectLocation) {
     const urlElement = [this.getRequestUrlInternal(httpOptions)];
     if (prependProjectLocation) {
       urlElement.push(this.getBaseResourcePath());
     }
-    if (path7 !== "") {
-      urlElement.push(path7);
+    if (path10 !== "") {
+      urlElement.push(path10);
     }
     const url = new URL(`${urlElement.join("/")}`);
     return url;
@@ -82972,8 +82972,8 @@ var ApiClient = class {
       file: fileToUpload
     };
     const fileName = this.getFileName(file);
-    const path7 = formatMap("upload/v1beta/files", body["_url"]);
-    const uploadUrl = await this.fetchUploadUrl(path7, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const path10 = formatMap("upload/v1beta/files", body["_url"]);
+    const uploadUrl = await this.fetchUploadUrl(path10, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.upload(file, uploadUrl, this);
   }
   /**
@@ -82997,13 +82997,13 @@ var ApiClient = class {
     if (mimeType === void 0 || mimeType === "") {
       throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
     }
-    const path7 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+    const path10 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
     const fileName = this.getFileName(file);
     const body = {};
     if (config != null) {
       uploadToFileSearchStoreConfigToMldev(config, body);
     }
-    const uploadUrl = await this.fetchUploadUrl(path7, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const uploadUrl = await this.fetchUploadUrl(path10, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);
   }
   /**
@@ -83016,7 +83016,7 @@ var ApiClient = class {
     const downloader = this.clientOptions.downloader;
     await downloader.download(params, this);
   }
-  async fetchUploadUrl(path7, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+  async fetchUploadUrl(path10, sizeBytes, mimeType, fileName, body, configHttpOptions) {
     var _a2;
     let httpOptions = {};
     if (configHttpOptions) {
@@ -83029,7 +83029,7 @@ var ApiClient = class {
       };
     }
     const httpResponse = await this.request({
-      path: path7,
+      path: path10,
       body: JSON.stringify(body),
       httpMethod: "POST",
       httpOptions
@@ -84225,16 +84225,16 @@ var Models = class extends BaseModule {
   async generateContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:generateContent", body["_url"]);
+      path10 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84257,12 +84257,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{model}:generateContent", body["_url"]);
+      path10 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84288,17 +84288,17 @@ var Models = class extends BaseModule {
   async generateContentStreamInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path10 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84334,13 +84334,13 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path10 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84400,17 +84400,17 @@ var Models = class extends BaseModule {
   async embedContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
       const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-      path7 = formatMap(endpointUrl, body["_url"]);
+      path10 = formatMap(endpointUrl, body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84433,12 +84433,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-      path7 = formatMap("{model}:batchEmbedContents", body["_url"]);
+      path10 = formatMap("{model}:batchEmbedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84467,16 +84467,16 @@ var Models = class extends BaseModule {
   async generateImagesInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateImagesParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:predict", body["_url"]);
+      path10 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84499,12 +84499,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateImagesParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{model}:predict", body["_url"]);
+      path10 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84533,16 +84533,16 @@ var Models = class extends BaseModule {
   async editImageInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = editImageParametersInternalToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:predict", body["_url"]);
+      path10 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84573,16 +84573,16 @@ var Models = class extends BaseModule {
   async upscaleImageInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:predict", body["_url"]);
+      path10 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84634,16 +84634,16 @@ var Models = class extends BaseModule {
   async recontextImage(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = recontextImageParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:predict", body["_url"]);
+      path10 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84685,16 +84685,16 @@ var Models = class extends BaseModule {
   async segmentImage(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = segmentImageParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:predict", body["_url"]);
+      path10 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84724,16 +84724,16 @@ var Models = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getModelParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84748,12 +84748,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = getModelParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84771,16 +84771,16 @@ var Models = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listModelsParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{models_url}", body["_url"]);
+      path10 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84803,12 +84803,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = listModelsParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{models_url}", body["_url"]);
+      path10 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84851,16 +84851,16 @@ var Models = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateModelParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{model}", body["_url"]);
+      path10 = formatMap("{model}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -84875,12 +84875,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = updateModelParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -84909,16 +84909,16 @@ var Models = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteModelParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -84941,12 +84941,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = deleteModelParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -84988,16 +84988,16 @@ var Models = class extends BaseModule {
   async countTokens(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = countTokensParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:countTokens", body["_url"]);
+      path10 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85020,12 +85020,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = countTokensParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{model}:countTokens", body["_url"]);
+      path10 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85069,16 +85069,16 @@ var Models = class extends BaseModule {
   async computeTokens(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = computeTokensParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:computeTokens", body["_url"]);
+      path10 = formatMap("{model}:computeTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85109,16 +85109,16 @@ var Models = class extends BaseModule {
   async generateVideosInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateVideosParametersToVertex(this.apiClient, params);
-      path7 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path10 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85135,12 +85135,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateVideosParametersToMldev(this.apiClient, params);
-      path7 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path10 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85242,16 +85242,16 @@ var Operations = class extends BaseModule {
   async getVideosOperationInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getOperationParametersToVertex(params);
-      path7 = formatMap("{operationName}", body["_url"]);
+      path10 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -85263,12 +85263,12 @@ var Operations = class extends BaseModule {
       return response;
     } else {
       const body = getOperationParametersToMldev(params);
-      path7 = formatMap("{operationName}", body["_url"]);
+      path10 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -85283,16 +85283,16 @@ var Operations = class extends BaseModule {
   async fetchPredictVideosOperationInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = fetchPredictOperationParametersToVertex(params);
-      path7 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+      path10 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85980,20 +85980,20 @@ var Tokens = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
     } else {
       const body = createAuthTokenParametersToMldev(this.apiClient, params);
-      path7 = formatMap("auth_tokens", body["_url"]);
+      path10 = formatMap("auth_tokens", body["_url"]);
       queryParams = body["_query"];
       delete body["config"];
       delete body["_url"];
       delete body["_query"];
       const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(transformedBody),
         httpMethod: "POST",
@@ -86103,18 +86103,18 @@ var Documents = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getDocumentParametersToMldev(params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86135,18 +86135,18 @@ var Documents = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteDocumentParametersToMldev(params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86158,18 +86158,18 @@ var Documents = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listDocumentsParametersToMldev(params);
-      path7 = formatMap("{parent}/documents", body["_url"]);
+      path10 = formatMap("{parent}/documents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86286,18 +86286,18 @@ var FileSearchStores = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-      path7 = formatMap("fileSearchStores", body["_url"]);
+      path10 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86320,18 +86320,18 @@ var FileSearchStores = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileSearchStoreParametersToMldev(params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86352,18 +86352,18 @@ var FileSearchStores = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileSearchStoreParametersToMldev(params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86375,18 +86375,18 @@ var FileSearchStores = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFileSearchStoresParametersToMldev(params);
-      path7 = formatMap("fileSearchStores", body["_url"]);
+      path10 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86406,18 +86406,18 @@ var FileSearchStores = class extends BaseModule {
   async uploadToFileSearchStoreInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = uploadToFileSearchStoreParametersToMldev(params);
-      path7 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+      path10 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86445,18 +86445,18 @@ var FileSearchStores = class extends BaseModule {
   async importFile(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = importFileParametersToMldev(params);
-      path7 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+      path10 = formatMap("{file_search_store_name}:importFile", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87592,16 +87592,16 @@ var ClientSDK = class {
   }
   _createRequest(context, conf, options) {
     var _a2, _b, _c, _d, _e;
-    const { method, path: path7, query, headers: opHeaders, security } = conf;
+    const { method, path: path10, query, headers: opHeaders, security } = conf;
     const base = (_a2 = conf.baseURL) !== null && _a2 !== void 0 ? _a2 : this._baseURL;
     if (!base) {
       return ERR(new InvalidRequestError("No base URL provided for operation"));
     }
     const baseURL = new URL(base);
     let reqURL;
-    if (path7) {
+    if (path10) {
       baseURL.pathname = baseURL.pathname.replace(/\/+$/, "") + "/";
-      reqURL = new URL(path7, baseURL);
+      reqURL = new URL(path10, baseURL);
       if (!reqURL.search && baseURL.search) {
         reqURL.search = baseURL.search;
       }
@@ -88417,7 +88417,7 @@ async function $do$e(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path7 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path10 = pathToFunc("/{api_version}/agents")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -88448,7 +88448,7 @@ async function $do$e(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -88492,7 +88492,7 @@ async function $do$d(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path10 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -88522,7 +88522,7 @@ async function $do$d(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -88566,7 +88566,7 @@ async function $do$c(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path10 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -88596,7 +88596,7 @@ async function $do$c(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -88638,7 +88638,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path7 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path10 = pathToFunc("/{api_version}/agents")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token,
@@ -88673,7 +88673,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     query,
     body,
@@ -88825,7 +88825,7 @@ async function $do$a(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
+  const path10 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -88855,7 +88855,7 @@ async function $do$a(client, id, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -88898,7 +88898,7 @@ async function $do$9(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path7 = pathToFunc("/{api_version}/interactions")(pathParams);
+  const path10 = pathToFunc("/{api_version}/interactions")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: ((_b = input === null || input === void 0 ? void 0 : input.body) === null || _b === void 0 ? void 0 : _b.stream) ? "text/event-stream" : "application/json"
@@ -88929,7 +88929,7 @@ async function $do$9(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -88979,7 +88979,7 @@ async function $do$8(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path10 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -89009,7 +89009,7 @@ async function $do$8(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -89059,7 +89059,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path10 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const query = encodeFormQuery({
     "include_input": payload.include_input,
     "last_event_id": payload.last_event_id,
@@ -89094,7 +89094,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     query,
     body,
@@ -89168,7 +89168,7 @@ async function $do$6(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path7 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path10 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -89199,7 +89199,7 @@ async function $do$6(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -89243,7 +89243,7 @@ async function $do$5(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path10 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -89273,7 +89273,7 @@ async function $do$5(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -89317,7 +89317,7 @@ async function $do$4(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path10 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -89347,7 +89347,7 @@ async function $do$4(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -89388,7 +89388,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path7 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path10 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token
@@ -89422,7 +89422,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     query,
     body,
@@ -89468,7 +89468,7 @@ async function $do$2(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
+  const path10 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -89499,7 +89499,7 @@ async function $do$2(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -89544,7 +89544,7 @@ async function $do$1(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
+  const path10 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -89575,7 +89575,7 @@ async function $do$1(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -89621,7 +89621,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
       charEncoding: "percent"
     })
   };
-  const path7 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path10 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const query = encodeFormQuery({
     "update_mask": payload.update_mask
   });
@@ -89655,7 +89655,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
     security: requestSecurity,
     method: "PATCH",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path7,
+    path: path10,
     headers,
     query,
     body: body$,
@@ -91671,16 +91671,16 @@ var Tunings = class extends BaseModule {
   async getInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getTuningJobParametersToVertex(params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91701,12 +91701,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = getTuningJobParametersToMldev(params);
-      path7 = formatMap("{name}", body["_url"]);
+      path10 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91730,16 +91730,16 @@ var Tunings = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listTuningJobsParametersToVertex(params);
-      path7 = formatMap("tuningJobs", body["_url"]);
+      path10 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91778,16 +91778,16 @@ var Tunings = class extends BaseModule {
   async cancel(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelTuningJobParametersToVertex(params);
-      path7 = formatMap("{name}:cancel", body["_url"]);
+      path10 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91810,12 +91810,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = cancelTuningJobParametersToMldev(params);
-      path7 = formatMap("{name}:cancel", body["_url"]);
+      path10 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91841,16 +91841,16 @@ var Tunings = class extends BaseModule {
   async tuneInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createTuningJobParametersPrivateToVertex(params, params);
-      path7 = formatMap("tuningJobs", body["_url"]);
+      path10 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91876,18 +91876,18 @@ var Tunings = class extends BaseModule {
   async tuneMldevInternal(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createTuningJobParametersPrivateToMldev(params);
-      path7 = formatMap("tunedModels", body["_url"]);
+      path10 = formatMap("tunedModels", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91911,16 +91911,16 @@ var Tunings = class extends BaseModule {
   async validateReward(params) {
     var _a2, _b;
     let response;
-    let path7 = "";
+    let path10 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = validateRewardParametersToVertex(params);
-      path7 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
+      path10 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path7,
+        path: path10,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -92538,11 +92538,11 @@ function createBoundedQueue(processPayload) {
 }
 function createShopeeWebhookRouter(processPayload) {
   const queue = createBoundedQueue(processPayload);
-  const router2 = import_express.default.Router();
-  router2.get("/shopee", (_req, res) => {
+  const router7 = import_express.default.Router();
+  router7.get("/shopee", (_req, res) => {
     res.status(200).type("text/plain").send("success");
   });
-  router2.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+  router7.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     const bodyPreview = rawBody.toString("utf8").slice(0, 4e3);
     console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee \u2014 headers:", {
@@ -92606,7 +92606,7 @@ function createShopeeWebhookRouter(processPayload) {
       if (!res.headersSent) return res.status(500).type("text/plain").send("Internal Server Error");
     }
   });
-  return router2;
+  return router7;
 }
 
 // src/utils/orderItemVariation.ts
@@ -93583,26 +93583,8 @@ router.post("/save", saveScanOrders);
 router.get("/don-hoan-huy", listDonHoanHuy);
 var scanRoutes_default = router;
 
-// middlewares/errorHandler.js
-function errorHandler(err, req, res, next) {
-  if (res.headersSent) {
-    return next(err);
-  }
-  if (err instanceof SyntaxError && err && typeof err === "object" && "body" in err) {
-    return res.status(400).json({
-      success: false,
-      message: "JSON body kh\xF4ng h\u1EE3p l\u1EC7"
-    });
-  }
-  const status = Number(err?.status || err?.statusCode) || 500;
-  const message = String(err?.message || "").trim() || "L\u1ED7i m\xE1y ch\u1EE7 n\u1ED9i b\u1ED9.";
-  console.error(`[ErrorHandler] ${req.method} ${req.originalUrl}:`, message);
-  return res.status(status).json({
-    success: false,
-    message
-  });
-}
-var errorHandler_default = errorHandler;
+// routes/authRoutes.js
+var import_express3 = __toESM(require_express2(), 1);
 
 // middlewares/auth.js
 var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
@@ -93642,6 +93624,469 @@ function authMiddleware(req, res, next) {
 function signAdminToken(username) {
   return import_jsonwebtoken.default.sign({ username }, getJwtSecret(), { expiresIn: "24h" });
 }
+
+// controllers/authController.js
+function login(req, res) {
+  const { username, password } = req.body;
+  const expectedUsername = process.env.ADMIN_USERNAME || "admin";
+  const expectedPassword = process.env.ADMIN_PASSWORD || "password123";
+  if (username === expectedUsername && password === expectedPassword) {
+    const token = signAdminToken(username);
+    return res.json({ token, username });
+  } else {
+    return res.status(401).json({
+      error: "T\xEAn \u0111\u0103ng nh\u1EADp ho\u1EB7c m\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c."
+    });
+  }
+}
+async function verifyAuth(req, res) {
+  res.json({ valid: true, username: req.user.username });
+}
+
+// routes/authRoutes.js
+var router2 = (0, import_express3.Router)();
+router2.post("/login", login);
+router2.get("/auth/verify", authMiddleware, verifyAuth);
+var authRoutes_default = router2;
+
+// routes/healthRoutes.js
+var import_express4 = __toESM(require_express2(), 1);
+
+// controllers/healthController.js
+var import_fs3 = __toESM(require("fs"), 1);
+var import_path2 = __toESM(require("path"), 1);
+
+// utils/appPaths.js
+var import_path = __toESM(require("path"), 1);
+var import_fs2 = __toESM(require("fs"), 1);
+function resolveAppRoot() {
+  const candidates = [
+    process.env.PASSENGER_APP_ROOT,
+    typeof __dirname !== "undefined" ? __dirname : "",
+    process.cwd()
+  ].map((c) => String(c || "").trim()).filter(Boolean);
+  for (const candidate of candidates) {
+    const abs = import_path.default.resolve(candidate);
+    if (import_fs2.default.existsSync(import_path.default.join(abs, "server.cjs")) || import_fs2.default.existsSync(import_path.default.join(abs, "data")) || import_fs2.default.existsSync(import_path.default.join(abs, ".htaccess")) || import_fs2.default.existsSync(import_path.default.join(abs, ".env"))) {
+      return abs;
+    }
+  }
+  return import_path.default.resolve(candidates[0] || process.cwd());
+}
+var PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
+function resolveAppBaseUrl() {
+  const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  if (process.env.NODE_ENV === "production") return PRODUCTION_APP_URL;
+  return PRODUCTION_APP_URL;
+}
+
+// controllers/healthController.js
+var APP_ROOT = resolveAppRoot();
+var APP_BASE_URL = resolveAppBaseUrl();
+function resolveShopeeCallbackUrl() {
+  const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
+  if (explicit) return explicit;
+  return `${APP_BASE_URL}/api/shopee/callback`;
+}
+var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
+var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
+var deps = {
+  ensureDataDirs: () => {
+    import_fs3.default.mkdirSync(import_path2.default.join(APP_ROOT, "data"), { recursive: true });
+  },
+  listShopeeOAuthShopIds: () => [],
+  loadLastOAuthAudit: () => null,
+  tokensPath: import_path2.default.resolve(APP_ROOT, "data", "shopee_tokens.json"),
+  appRoot: APP_ROOT,
+  appBaseUrl: APP_BASE_URL,
+  shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
+  shopeeWebhookUrl: SHOPEE_WEBHOOK_URL
+};
+function initHealthController(partial) {
+  deps = { ...deps, ...partial };
+}
+function getPublicConfig(_req, res) {
+  res.json({
+    appUrl: deps.appBaseUrl,
+    apiBaseUrl: deps.appBaseUrl,
+    shopeeCallbackUrl: deps.shopeeCallbackUrl,
+    shopeeWebhookUrl: deps.shopeeWebhookUrl
+  });
+}
+function postClientLog(req, res) {
+  try {
+    deps.ensureDataDirs();
+    const logPath = import_path2.default.join(deps.appRoot, "data", "debug-556dce.ndjson");
+    const payload = {
+      sessionId: "556dce",
+      runId: req.body?.runId || "post-fix",
+      hypothesisId: req.body?.hypothesisId || null,
+      location: req.body?.location || "client",
+      message: req.body?.message || "",
+      data: req.body?.data || {},
+      timestamp: Date.now()
+    };
+    import_fs3.default.appendFileSync(logPath, `${JSON.stringify(payload)}
+`, "utf-8");
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+function getClientLog(_req, res) {
+  try {
+    const logPath = import_path2.default.join(deps.appRoot, "data", "debug-556dce.ndjson");
+    if (!import_fs3.default.existsSync(logPath)) return res.json({ ok: true, lines: [] });
+    const lines = import_fs3.default.readFileSync(logPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(-80).map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return { raw: line };
+      }
+    });
+    return res.json({ ok: true, lines });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+function getHealth(_req, res) {
+  const shopIds = deps.listShopeeOAuthShopIds();
+  let dataDirWritable = false;
+  try {
+    deps.ensureDataDirs();
+    import_fs3.default.accessSync(import_path2.default.join(deps.appRoot, "data"), import_fs3.default.constants.W_OK);
+    dataDirWritable = true;
+  } catch {
+    dataDirWritable = false;
+  }
+  res.status(200).json({
+    ok: true,
+    service: "cpanel-backend",
+    host: deps.appBaseUrl,
+    appRoot: deps.appRoot,
+    tokensPath: deps.tokensPath,
+    tokensFileExists: import_fs3.default.existsSync(deps.tokensPath),
+    dataDirWritable,
+    shopeeOAuthShopIds: shopIds,
+    lastOAuth: deps.loadLastOAuthAudit(),
+    oauthHint: shopIds.length > 0 ? "V\xE0o C\xE0i \u0111\u1EB7t \u2192 shop Shopee \u2192 b\u1EA5m OAuth (shop_id ph\u1EA3i kh\u1EDBp). Sau OAuth ki\u1EC3m tra lastOAuth.success=true." : "Ch\u01B0a c\xF3 shop OAuth \u2014 b\u1EA5m n\xFAt OAuth trong C\xE0i \u0111\u1EB7t.",
+    checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    routes: {
+      mappingProducts: true
+    }
+  });
+}
+
+// routes/healthRoutes.js
+var router3 = (0, import_express4.Router)();
+router3.get("/health", getHealth);
+router3.get("/config/public", getPublicConfig);
+router3.post("/debug/client-log", authMiddleware, postClientLog);
+router3.get("/debug/client-log", authMiddleware, getClientLog);
+var healthRoutes_default = router3;
+
+// routes/vietnamAddressRoutes.js
+var import_express5 = __toESM(require_express2(), 1);
+
+// controllers/vietnamAddressController.js
+var VN_ADDRESS_API = "https://provinces.open-api.vn/api";
+var vnProvincesCache = null;
+var vnDistrictsCache = /* @__PURE__ */ new Map();
+var vnWardsCache = /* @__PURE__ */ new Map();
+async function fetchVnJson(url) {
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`VN address API ${res.status}`);
+  return res.json();
+}
+async function getProvinces(_req, res) {
+  try {
+    if (!vnProvincesCache) {
+      vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
+    }
+    const list = (vnProvincesCache || []).map((p) => ({
+      name: p.name,
+      code: p.code
+    }));
+    return res.json(list);
+  } catch (error) {
+    console.error("[VN Address] provinces:", error);
+    return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch T\u1EC9nh/Th\xE0nh" });
+  }
+}
+async function getDistricts(req, res) {
+  try {
+    const provinceCode = Number(req.params.provinceCode);
+    if (!provinceCode) return res.json([]);
+    if (!vnDistrictsCache.has(provinceCode)) {
+      const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${provinceCode}?depth=2`);
+      const districts = Array.isArray(data?.districts) ? data.districts : [];
+      vnDistrictsCache.set(
+        provinceCode,
+        districts.map((d) => ({ name: d.name, code: d.code }))
+      );
+    }
+    return res.json(vnDistrictsCache.get(provinceCode) || []);
+  } catch (error) {
+    console.error("[VN Address] districts:", error);
+    return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Qu\u1EADn/Huy\u1EC7n" });
+  }
+}
+async function getWards(req, res) {
+  try {
+    const districtCode = Number(req.params.districtCode);
+    if (!districtCode) return res.json([]);
+    if (!vnWardsCache.has(districtCode)) {
+      const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${districtCode}?depth=2`);
+      const wards = Array.isArray(data?.wards) ? data.wards : [];
+      vnWardsCache.set(
+        districtCode,
+        wards.map((w) => ({ name: w.name, code: w.code }))
+      );
+    }
+    return res.json(vnWardsCache.get(districtCode) || []);
+  } catch (error) {
+    console.error("[VN Address] wards:", error);
+    return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Ph\u01B0\u1EDDng/X\xE3" });
+  }
+}
+
+// routes/vietnamAddressRoutes.js
+var router4 = (0, import_express5.Router)();
+router4.get("/provinces", getProvinces);
+router4.get("/districts/:provinceCode", getDistricts);
+router4.get("/wards/:districtCode", getWards);
+var vietnamAddressRoutes_default = router4;
+
+// routes/suppliersRoutes.js
+var import_express6 = __toESM(require_express2(), 1);
+
+// controllers/suppliersController.js
+var import_fs4 = __toESM(require("fs"), 1);
+var import_path3 = __toESM(require("path"), 1);
+var APP_ROOT2 = resolveAppRoot();
+var SUPPLIERS_DB_PATH = import_path3.default.join(APP_ROOT2, "data", "suppliers.json");
+function normalizeSupplier(raw) {
+  const totalOrderValue = Number(raw?.totalOrderValue) || 0;
+  const totalPaid = Number(raw?.totalPaid) || 0;
+  return {
+    id: String(raw?.id || `sup-${Date.now()}`),
+    name: String(raw?.name || "").trim(),
+    supplierCode: String(raw?.supplierCode || raw?.supplier_code || "").trim().toUpperCase(),
+    totalOrderValue,
+    totalPaid,
+    totalDebt: Number(raw?.totalDebt ?? totalOrderValue - totalPaid) || 0,
+    status: raw?.status === "inactive" ? "inactive" : "active"
+  };
+}
+function loadSuppliers() {
+  try {
+    if (!import_fs4.default.existsSync(SUPPLIERS_DB_PATH)) return [];
+    const raw = import_fs4.default.readFileSync(SUPPLIERS_DB_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map(normalizeSupplier) : [];
+  } catch (error) {
+    console.error("[Suppliers DB] Failed to read suppliers.json:", error);
+    return [];
+  }
+}
+function saveSuppliers(suppliers) {
+  try {
+    import_fs4.default.mkdirSync(import_path3.default.dirname(SUPPLIERS_DB_PATH), { recursive: true });
+    import_fs4.default.writeFileSync(SUPPLIERS_DB_PATH, JSON.stringify(suppliers, null, 2), "utf-8");
+  } catch (error) {
+    console.error(
+      "L\u1ED7i chi ti\u1EBFt khi l\u01B0u shop/OAuth:",
+      error?.response?.data || error?.message || String(error)
+    );
+    console.error("[Suppliers DB] Failed to write suppliers.json:", error);
+  }
+}
+async function listSuppliers(_req, res) {
+  return res.json(loadSuppliers());
+}
+async function createSupplier(req, res) {
+  const body = req.body || {};
+  if (!body.name?.trim() || !body.supplierCode?.trim()) {
+    return res.status(400).json({ error: "name_and_supplierCode_required" });
+  }
+  const suppliers = loadSuppliers();
+  const code = String(body.supplierCode).trim().toUpperCase();
+  if (suppliers.some((s2) => s2.supplierCode === code)) {
+    return res.status(400).json({ error: "supplier_code_duplicate" });
+  }
+  const supplier = normalizeSupplier({
+    id: `sup-${Date.now()}`,
+    name: body.name,
+    supplierCode: code,
+    totalOrderValue: 0,
+    totalPaid: 0,
+    totalDebt: 0,
+    status: body.status || "active"
+  });
+  suppliers.unshift(supplier);
+  saveSuppliers(suppliers);
+  return res.status(201).json({ supplier, suppliers });
+}
+async function updateSupplier(req, res) {
+  const suppliers = loadSuppliers();
+  const index = suppliers.findIndex((s2) => s2.id === req.params.id);
+  if (index === -1) {
+    return res.status(404).json({ error: "supplier_not_found" });
+  }
+  const body = req.body || {};
+  const code = body.supplierCode ? String(body.supplierCode).trim().toUpperCase() : suppliers[index].supplierCode;
+  if (suppliers.some((s2, i2) => i2 !== index && s2.supplierCode === code)) {
+    return res.status(400).json({ error: "supplier_code_duplicate" });
+  }
+  const updated = normalizeSupplier({
+    ...suppliers[index],
+    ...body,
+    id: suppliers[index].id,
+    supplierCode: code
+  });
+  suppliers[index] = updated;
+  saveSuppliers(suppliers);
+  return res.json({ supplier: updated, suppliers });
+}
+async function deleteSupplier(req, res) {
+  const suppliers = loadSuppliers();
+  const target = suppliers.find((s2) => s2.id === req.params.id);
+  if (!target) {
+    return res.status(404).json({ error: "supplier_not_found" });
+  }
+  if (target.totalDebt > 0) {
+    return res.status(400).json({ error: "supplier_has_debt" });
+  }
+  const next = suppliers.filter((s2) => s2.id !== req.params.id);
+  saveSuppliers(next);
+  return res.json({ deleted: req.params.id, suppliers: next });
+}
+async function clearAllSuppliers(_req, res) {
+  saveSuppliers([]);
+  console.log("[Suppliers] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 d\u1EEF li\u1EC7u nh\xE0 cung c\u1EA5p.");
+  return res.json({ success: true, cleared: true, suppliers: [] });
+}
+
+// routes/suppliersRoutes.js
+var router5 = (0, import_express6.Router)();
+router5.get("/", listSuppliers);
+router5.post("/", createSupplier);
+router5.post("/clear-all", clearAllSuppliers);
+router5.put("/:id", updateSupplier);
+router5.delete("/:id", deleteSupplier);
+var suppliersRoutes_default = router5;
+
+// routes/expensesRoutes.js
+var import_express7 = __toESM(require_express2(), 1);
+
+// controllers/expensesController.js
+var import_fs5 = __toESM(require("fs"), 1);
+var import_path4 = __toESM(require("path"), 1);
+var APP_ROOT3 = resolveAppRoot();
+var EXPENSES_DB_PATH = import_path4.default.join(APP_ROOT3, "data", "expenses.json");
+var EXPENSES_CLEAR_MARKER = import_path4.default.join(APP_ROOT3, "data", ".expenses-cleared-v2");
+function loadExpenses() {
+  try {
+    if (!import_fs5.default.existsSync(EXPENSES_DB_PATH)) return [];
+    const raw = import_fs5.default.readFileSync(EXPENSES_DB_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error("[Expenses DB] Failed to read expenses.json:", error);
+    return [];
+  }
+}
+function saveExpenses(expenses) {
+  try {
+    import_fs5.default.mkdirSync(import_path4.default.dirname(EXPENSES_DB_PATH), { recursive: true });
+    import_fs5.default.writeFileSync(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
+  } catch (error) {
+    console.error("[Expenses DB] Failed to write expenses.json:", error);
+  }
+}
+function migrateExpensesStorageOnce() {
+  if (import_fs5.default.existsSync(EXPENSES_CLEAR_MARKER)) return;
+  saveExpenses([]);
+  try {
+    import_fs5.default.mkdirSync(import_path4.default.dirname(EXPENSES_CLEAR_MARKER), { recursive: true });
+    import_fs5.default.writeFileSync(EXPENSES_CLEAR_MARKER, (/* @__PURE__ */ new Date()).toISOString(), "utf-8");
+    console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch d\u1EEF li\u1EC7u chi ph\xED c\u0169 (migration m\u1ED9t l\u1EA7n).");
+  } catch (error) {
+    console.error("[Expenses] Failed to write clear marker:", error);
+  }
+}
+migrateExpensesStorageOnce();
+async function listExpenses(_req, res) {
+  return res.json(loadExpenses());
+}
+async function createExpense(req, res) {
+  const body = req.body || {};
+  if (!body.title?.trim() || !body.amount || !body.category || !body.date) {
+    return res.status(400).json({ error: "expense_fields_required" });
+  }
+  const expenses = loadExpenses();
+  const entry = {
+    id: body.id || `exp-${Date.now()}`,
+    title: String(body.title).trim(),
+    amount: Math.max(0, Math.round(Number(body.amount))),
+    category: String(body.category),
+    date: String(body.date),
+    notes: body.notes ? String(body.notes) : void 0
+  };
+  expenses.unshift(entry);
+  saveExpenses(expenses);
+  return res.status(201).json({ expense: entry, expenses });
+}
+async function deleteExpense(req, res) {
+  const expenses = loadExpenses();
+  const next = expenses.filter((e2) => e2.id !== req.params.id);
+  if (next.length === expenses.length) {
+    return res.status(404).json({ error: "expense_not_found" });
+  }
+  saveExpenses(next);
+  return res.json({ deleted: req.params.id, expenses: next });
+}
+async function clearAllExpenses(_req, res) {
+  saveExpenses([]);
+  console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 chi ph\xED doanh nghi\u1EC7p.");
+  return res.json({ success: true, cleared: true, expenses: [] });
+}
+
+// routes/expensesRoutes.js
+var router6 = (0, import_express7.Router)();
+router6.get("/", listExpenses);
+router6.post("/", createExpense);
+router6.post("/clear-all", clearAllExpenses);
+router6.delete("/:id", deleteExpense);
+var expensesRoutes_default = router6;
+
+// middlewares/errorHandler.js
+function errorHandler(err, req, res, next) {
+  if (res.headersSent) {
+    return next(err);
+  }
+  if (err instanceof SyntaxError && err && typeof err === "object" && "body" in err) {
+    return res.status(400).json({
+      success: false,
+      message: "JSON body kh\xF4ng h\u1EE3p l\u1EC7"
+    });
+  }
+  const status = Number(err?.status || err?.statusCode) || 500;
+  const message = String(err?.message || "").trim() || "L\u1ED7i m\xE1y ch\u1EE7 n\u1ED9i b\u1ED9.";
+  console.error(`[ErrorHandler] ${req.method} ${req.originalUrl}:`, message);
+  return res.status(status).json({
+    success: false,
+    message
+  });
+}
+var errorHandler_default = errorHandler;
 
 // middlewares/cors.js
 function corsMiddleware(req, res, next) {
@@ -93778,39 +94223,14 @@ function resetHeavyJob() {
   cpanelHeavyJobActive = null;
 }
 
-// utils/appPaths.js
-var import_path = __toESM(require("path"), 1);
-var import_fs2 = __toESM(require("fs"), 1);
-function resolveAppRoot() {
-  const candidates = [
-    process.env.PASSENGER_APP_ROOT,
-    typeof __dirname !== "undefined" ? __dirname : "",
-    process.cwd()
-  ].map((c) => String(c || "").trim()).filter(Boolean);
-  for (const candidate of candidates) {
-    const abs = import_path.default.resolve(candidate);
-    if (import_fs2.default.existsSync(import_path.default.join(abs, "server.cjs")) || import_fs2.default.existsSync(import_path.default.join(abs, "data")) || import_fs2.default.existsSync(import_path.default.join(abs, ".htaccess")) || import_fs2.default.existsSync(import_path.default.join(abs, ".env"))) {
-      return abs;
-    }
-  }
-  return import_path.default.resolve(candidates[0] || process.cwd());
-}
-var PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
-function resolveAppBaseUrl() {
-  const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
-  if (process.env.NODE_ENV === "production") return PRODUCTION_APP_URL;
-  return PRODUCTION_APP_URL;
-}
-
 // src/db/mongoStore.ts
 var import_mongoose4 = __toESM(require("mongoose"), 1);
-var import_fs5 = __toESM(require("fs"), 1);
-var import_path4 = __toESM(require("path"), 1);
+var import_fs8 = __toESM(require("fs"), 1);
+var import_path7 = __toESM(require("path"), 1);
 
 // src/db/productsDiskStore.ts
-var import_fs3 = __toESM(require("fs"), 1);
-var import_path2 = __toESM(require("path"), 1);
+var import_fs6 = __toESM(require("fs"), 1);
+var import_path5 = __toESM(require("path"), 1);
 function isProductsDiskMode() {
   const raw = process.env.PRODUCTS_STORAGE ?? process.env.PRODUCTS_DISK;
   if (raw == null || String(raw).trim() === "") return true;
@@ -93831,11 +94251,11 @@ function resolveAppRoot2() {
   return process.cwd();
 }
 function getProductsDiskPath() {
-  return import_path2.default.join(resolveAppRoot2(), "data", "products.json");
+  return import_path5.default.join(resolveAppRoot2(), "data", "products.json");
 }
 function ensureDataDir() {
-  const dir = import_path2.default.dirname(getProductsDiskPath());
-  if (!import_fs3.default.existsSync(dir)) import_fs3.default.mkdirSync(dir, { recursive: true });
+  const dir = import_path5.default.dirname(getProductsDiskPath());
+  if (!import_fs6.default.existsSync(dir)) import_fs6.default.mkdirSync(dir, { recursive: true });
 }
 function normalizeProduct(p) {
   if (!p || typeof p !== "object") return null;
@@ -93859,16 +94279,16 @@ function inheritShopeeLinkFromParent(child, parent) {
 }
 function readProductsFromDisk() {
   const file = getProductsDiskPath();
-  if (!import_fs3.default.existsSync(file)) {
+  if (!import_fs6.default.existsSync(file)) {
     productsCache = { mtimeMs: 0, products: [] };
     return [];
   }
-  const st = import_fs3.default.statSync(file);
+  const st = import_fs6.default.statSync(file);
   if (productsCache && productsCache.mtimeMs === st.mtimeMs) {
     return productsCache.products;
   }
   try {
-    const raw = import_fs3.default.readFileSync(file, "utf-8");
+    const raw = import_fs6.default.readFileSync(file, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const products = (Array.isArray(parsed) ? parsed : []).map(normalizeProduct).filter(Boolean);
     productsCache = { mtimeMs: st.mtimeMs, products };
@@ -93883,10 +94303,10 @@ function writeProductsToDiskSync(products) {
   const file = getProductsDiskPath();
   const list = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean);
   const tmp = `${file}.tmp.${process.pid}`;
-  import_fs3.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
-  import_fs3.default.renameSync(tmp, file);
+  import_fs6.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
+  import_fs6.default.renameSync(tmp, file);
   try {
-    const st = import_fs3.default.statSync(file);
+    const st = import_fs6.default.statSync(file);
     productsCache = { mtimeMs: st.mtimeMs, products: list };
   } catch {
     productsCache = { mtimeMs: Date.now(), products: list };
@@ -94110,8 +94530,8 @@ async function applyImportStockAndPriceOnDisk(productId, quantityDelta, importPr
 }
 
 // src/db/channelListingsDiskStore.ts
-var import_fs4 = __toESM(require("fs"), 1);
-var import_path3 = __toESM(require("path"), 1);
+var import_fs7 = __toESM(require("fs"), 1);
+var import_path6 = __toESM(require("path"), 1);
 var appRootResolved2 = "";
 var listingsCache = null;
 var writeChain2 = Promise.resolve();
@@ -94123,11 +94543,11 @@ function resolveAppRoot3() {
   return process.cwd();
 }
 function getChannelListingsDiskPath() {
-  return import_path3.default.join(resolveAppRoot3(), "data", "channel_listings.json");
+  return import_path6.default.join(resolveAppRoot3(), "data", "channel_listings.json");
 }
 function ensureDataDir2() {
-  const dir = import_path3.default.dirname(getChannelListingsDiskPath());
-  if (!import_fs4.default.existsSync(dir)) import_fs4.default.mkdirSync(dir, { recursive: true });
+  const dir = import_path6.default.dirname(getChannelListingsDiskPath());
+  if (!import_fs7.default.existsSync(dir)) import_fs7.default.mkdirSync(dir, { recursive: true });
 }
 function normalizeListing(row) {
   if (!row || typeof row !== "object") return null;
@@ -94137,16 +94557,16 @@ function normalizeListing(row) {
 }
 function readChannelListingsFromDisk() {
   const file = getChannelListingsDiskPath();
-  if (!import_fs4.default.existsSync(file)) {
+  if (!import_fs7.default.existsSync(file)) {
     listingsCache = { mtimeMs: 0, listings: [] };
     return [];
   }
-  const st = import_fs4.default.statSync(file);
+  const st = import_fs7.default.statSync(file);
   if (listingsCache && listingsCache.mtimeMs === st.mtimeMs) {
     return listingsCache.listings;
   }
   try {
-    const raw = import_fs4.default.readFileSync(file, "utf-8");
+    const raw = import_fs7.default.readFileSync(file, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const listings = (Array.isArray(parsed) ? parsed : []).map(normalizeListing).filter(Boolean);
     listingsCache = { mtimeMs: st.mtimeMs, listings };
@@ -94164,10 +94584,10 @@ function writeChannelListingsToDiskSync(listings) {
   const file = getChannelListingsDiskPath();
   const list = (Array.isArray(listings) ? listings : []).map(normalizeListing).filter(Boolean);
   const tmp = `${file}.tmp.${process.pid}`;
-  import_fs4.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
-  import_fs4.default.renameSync(tmp, file);
+  import_fs7.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
+  import_fs7.default.renameSync(tmp, file);
   try {
-    const st = import_fs4.default.statSync(file);
+    const st = import_fs7.default.statSync(file);
     listingsCache = { mtimeMs: st.mtimeMs, listings: list };
   } catch {
     listingsCache = { mtimeMs: Date.now(), listings: list };
@@ -94444,8 +94864,8 @@ async function initMongo(appRoot) {
     if (import_mongoose4.default.connection.readyState === 0) {
       await connectDB();
       try {
-        import_fs5.default.writeFileSync(
-          import_path4.default.join(appRootResolved3, "db_status.txt"),
+        import_fs8.default.writeFileSync(
+          import_path7.default.join(appRootResolved3, "db_status.txt"),
           "KET_NOI_THANH_CONG_LUC: " + (/* @__PURE__ */ new Date()).toISOString()
         );
       } catch {
@@ -94527,8 +94947,8 @@ async function initMongo(appRoot) {
     mongoReady = false;
     const msg = err instanceof Error ? err.message : String(err);
     const code = err && typeof err === "object" && "code" in err ? String(err.code) : "undefined";
-    import_fs5.default.writeFileSync(
-      import_path4.default.join(appRootResolved3, "db_status.txt"),
+    import_fs8.default.writeFileSync(
+      import_path7.default.join(appRootResolved3, "db_status.txt"),
       "LOI_KET_NOI: " + msg + " | CODE: " + code
     );
     console.error("L\u1ED6I MONGODB STARTUP:", msg);
@@ -94611,17 +95031,17 @@ async function maybeDropMongoListingsWhenDiskReady(mongoListingCount) {
   }
 }
 async function maybeMigrateJsonFallbackToMongo() {
-  const productsPath = import_path4.default.join(appRootResolved3, "data", "products.json");
-  const listingsPath = import_path4.default.join(appRootResolved3, "data", "channel_listings.json");
+  const productsPath = import_path7.default.join(appRootResolved3, "data", "products.json");
+  const listingsPath = import_path7.default.join(appRootResolved3, "data", "channel_listings.json");
   let products = [];
   let listings = [];
   try {
-    if (import_fs5.default.existsSync(productsPath)) {
-      const parsed = JSON.parse(import_fs5.default.readFileSync(productsPath, "utf-8"));
+    if (import_fs8.default.existsSync(productsPath)) {
+      const parsed = JSON.parse(import_fs8.default.readFileSync(productsPath, "utf-8"));
       products = Array.isArray(parsed) ? parsed : [];
     }
-    if (import_fs5.default.existsSync(listingsPath)) {
-      const parsed = JSON.parse(import_fs5.default.readFileSync(listingsPath, "utf-8"));
+    if (import_fs8.default.existsSync(listingsPath)) {
+      const parsed = JSON.parse(import_fs8.default.readFileSync(listingsPath, "utf-8"));
       listings = Array.isArray(parsed) ? parsed : [];
     }
   } catch (err) {
@@ -96937,7 +97357,15 @@ async function seedStoreFromArrays(products, listings) {
 
 // server.ts
 var import_meta = {};
-var scanRoutes = scanRoutes_default?.default?.use ? scanRoutes_default.default : scanRoutes_default;
+function asRouter(mod) {
+  return mod?.default?.use ? mod.default : mod;
+}
+var scanRoutes = asRouter(scanRoutes_default);
+var authRoutes = asRouter(authRoutes_default);
+var healthRoutes = asRouter(healthRoutes_default);
+var vietnamAddressRoutes = asRouter(vietnamAddressRoutes_default);
+var suppliersRoutes = asRouter(suppliersRoutes_default);
+var expensesRoutes = asRouter(expensesRoutes_default);
 function writeCpanelCrashLog(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
@@ -96946,12 +97374,12 @@ function writeCpanelCrashLog(kind, err) {
 ${(/* @__PURE__ */ new Date()).toISOString()}
 `;
     const targets = [
-      import_path5.default.join(process.cwd(), "cpanel_error_log.txt"),
-      typeof __dirname !== "undefined" ? import_path5.default.join(__dirname, "cpanel_error_log.txt") : ""
+      import_path8.default.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? import_path8.default.join(__dirname, "cpanel_error_log.txt") : ""
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs6.default.writeFileSync(file, line);
+        import_fs9.default.writeFileSync(file, line);
       } catch {
       }
     }
@@ -96965,7 +97393,7 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (err) => {
   writeCpanelCrashLog("Rejection", err);
 });
-var APP_ROOT = resolveAppRoot();
+var APP_ROOT4 = resolveAppRoot();
 var isCpanelPassengerRuntime = Boolean(
   String(
     process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
@@ -96976,12 +97404,12 @@ if (isCpanelPassengerRuntime) {
   console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
 }
 var dotenvCandidates = [
-  import_path5.default.join(APP_ROOT, ".env"),
-  import_path5.default.join(process.cwd(), ".env"),
-  import_path5.default.resolve(".env")
+  import_path8.default.join(APP_ROOT4, ".env"),
+  import_path8.default.join(process.cwd(), ".env"),
+  import_path8.default.resolve(".env")
 ];
 for (const envPath of dotenvCandidates) {
-  if (import_fs6.default.existsSync(envPath)) {
+  if (import_fs9.default.existsSync(envPath)) {
     const loaded = import_dotenv2.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
@@ -96992,17 +97420,17 @@ for (const envPath of dotenvCandidates) {
 }
 import_dotenv2.default.config();
 console.log(
-  `[Config] APP_ROOT=${APP_ROOT} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
+  `[Config] APP_ROOT=${APP_ROOT4} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
 );
-setProductsDiskAppRoot(APP_ROOT);
+setProductsDiskAppRoot(APP_ROOT4);
 console.log(
   `[Products] storage=${isProductsDiskMode() ? "disk" : "mongo"} path=${getProductsDiskPath()}`
 );
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs6.default.writeFileSync(
-      import_path5.default.join(APP_ROOT, "cpanel_error_log.txt"),
+    import_fs9.default.writeFileSync(
+      import_path8.default.join(APP_ROOT4, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
 ${(/* @__PURE__ */ new Date()).toISOString()}
@@ -97013,10 +97441,10 @@ ${(/* @__PURE__ */ new Date()).toISOString()}
 }
 process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
 process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
-var WAYBILLS_DIR = import_path5.default.join(APP_ROOT, "storage", "waybills");
-var LEGACY_PUBLIC_PRINTS_DIR = import_path5.default.join(APP_ROOT, "public", "prints");
+var WAYBILLS_DIR = import_path8.default.join(APP_ROOT4, "storage", "waybills");
+var LEGACY_PUBLIC_PRINTS_DIR = import_path8.default.join(APP_ROOT4, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
-var LABELS_DIR = import_path5.default.join(APP_ROOT, "storage", "labels");
+var LABELS_DIR = import_path8.default.join(APP_ROOT4, "storage", "labels");
 var LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
 var labelMemCache = /* @__PURE__ */ new Map();
@@ -97024,24 +97452,24 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs6.default.existsSync(LABELS_DIR)) import_fs6.default.mkdirSync(LABELS_DIR, { recursive: true });
+    if (!import_fs9.default.existsSync(LABELS_DIR)) import_fs9.default.mkdirSync(LABELS_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path5.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
+  const probe = import_path8.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
   try {
-    import_fs6.default.writeFileSync(probe, "ok");
-    import_fs6.default.unlinkSync(probe);
+    import_fs9.default.writeFileSync(probe, "ok");
+    import_fs9.default.unlinkSync(probe);
   } catch (err) {
     console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
 function safeLabelFilename(raw) {
-  const base = import_path5.default.basename(String(raw || "").trim());
+  const base = import_path8.default.basename(String(raw || "").trim());
   if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
   return base;
 }
@@ -97078,14 +97506,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs6.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs9.default.readdirSync(LABELS_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs6.default.unlinkSync(import_path5.default.join(LABELS_DIR, name));
+        import_fs9.default.unlinkSync(import_path8.default.join(LABELS_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -97123,16 +97551,16 @@ function putLabelMem(filename, buffer, contentType) {
     cleanupExpiredLabelFiles();
     const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
     if (snMatch?.[1]) removeExistingLabelFilesForOrderSns([snMatch[1]]);
-    const dest = import_path5.default.join(LABELS_DIR, safe);
+    const dest = import_path8.default.join(LABELS_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
-    import_fs6.default.writeFileSync(dest, buffer);
-    if (!import_fs6.default.existsSync(dest)) {
+    import_fs9.default.writeFileSync(dest, buffer);
+    if (!import_fs9.default.existsSync(dest)) {
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file kh\xF4ng t\u1ED3n t\u1EA1i sau writeFileSync: ${dest}`);
     }
-    const st = import_fs6.default.statSync(dest);
+    const st = import_fs9.default.statSync(dest);
     if (!st.isFile() || st.size <= 0) {
       try {
-        import_fs6.default.unlinkSync(dest);
+        import_fs9.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file tr\xEAn \u0111\u0129a r\u1ED7ng: ${dest}`);
@@ -97141,15 +97569,15 @@ function putLabelMem(filename, buffer, contentType) {
       console.warn(`[Labels] C\u1EA3nh b\xE1o size l\u1EC7ch: buffer=${buffer.length} disk=${st.size} \u2192 ${dest}`);
     }
     const head = Buffer.alloc(5);
-    const fd = import_fs6.default.openSync(dest, "r");
+    const fd = import_fs9.default.openSync(dest, "r");
     try {
-      import_fs6.default.readSync(fd, head, 0, 5, 0);
+      import_fs9.default.readSync(fd, head, 0, 5, 0);
     } finally {
-      import_fs6.default.closeSync(fd);
+      import_fs9.default.closeSync(fd);
     }
     if (head.toString("utf8", 0, 4) !== "%PDF") {
       try {
-        import_fs6.default.unlinkSync(dest);
+        import_fs9.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`File ghi ra kh\xF4ng c\xF2n l\xE0 PDF h\u1EE3p l\u1EC7: ${safe}`);
@@ -97177,19 +97605,19 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path5.default.join(LABELS_DIR, safe);
+  const filePath = import_path8.default.join(LABELS_DIR, safe);
   try {
-    if (!import_fs6.default.existsSync(filePath)) return null;
-    const st = import_fs6.default.statSync(filePath);
+    if (!import_fs9.default.existsSync(filePath)) return null;
+    const st = import_fs9.default.statSync(filePath);
     if (!st.isFile() || st.size <= 0) {
       console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
       try {
-        import_fs6.default.unlinkSync(filePath);
+        import_fs9.default.unlinkSync(filePath);
       } catch {
       }
       return null;
     }
-    const buf = import_fs6.default.readFileSync(filePath);
+    const buf = import_fs9.default.readFileSync(filePath);
     if (!buf.length || !isPdfBuffer(buf)) return null;
     labelMemCache.set(safe, {
       buf,
@@ -97216,9 +97644,9 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path5.default.join(LABELS_DIR, safe);
-  if (import_fs6.default.existsSync(diskPath)) {
-    const st = import_fs6.default.statSync(diskPath);
+  const diskPath = import_path8.default.join(LABELS_DIR, safe);
+  if (import_fs9.default.existsSync(diskPath)) {
+    const st = import_fs9.default.statSync(diskPath);
     if (st.size <= 0) {
       throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
     }
@@ -97237,13 +97665,13 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs6.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs9.default.readdirSync(LABELS_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path5.default.join(LABELS_DIR, name);
+      const full = import_path8.default.join(LABELS_DIR, name);
       try {
-        const st = import_fs6.default.statSync(full);
+        const st = import_fs9.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs6.default.unlinkSync(full);
+          import_fs9.default.unlinkSync(full);
           labelMemCache.delete(name);
           deleted += 1;
         }
@@ -97265,11 +97693,11 @@ function wipeLegacyPublicPrints() {
   let deleted = 0;
   for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
     try {
-      if (!import_fs6.default.existsSync(dir)) continue;
-      for (const name of import_fs6.default.readdirSync(dir)) {
+      if (!import_fs9.default.existsSync(dir)) continue;
+      for (const name of import_fs9.default.readdirSync(dir)) {
         if (!WAYBILL_FILE_RE.test(name)) continue;
         try {
-          import_fs6.default.unlinkSync(import_path5.default.join(dir, name));
+          import_fs9.default.unlinkSync(import_path8.default.join(dir, name));
           deleted += 1;
         } catch {
         }
@@ -97359,8 +97787,8 @@ function serveLabelPdfFromMem(filename, res) {
     return "invalid";
   }
 }
-var ENV_PATH = import_path5.default.join(APP_ROOT, ".env");
-var APP_BASE_URL = resolveAppBaseUrl();
+var ENV_PATH = import_path8.default.join(APP_ROOT4, ".env");
+var APP_BASE_URL2 = resolveAppBaseUrl();
 function resolveLabelsPublicBaseUrl() {
   const explicit = String(
     process.env.LABELS_BASE_URL || process.env.CPANEL_PUBLIC_URL || process.env.CPANEL_BACKEND_URL || ""
@@ -97380,7 +97808,7 @@ function absoluteLabelUrl(relativePath) {
   } else {
     const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
     const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || import_path5.default.basename(p));
+    fn = decodeURIComponent(fnMatch?.[1] || import_path8.default.basename(p));
   }
   if (!safeLabelFilename(fn)) return null;
   try {
@@ -97393,18 +97821,18 @@ function absoluteLabelUrl(relativePath) {
   console.log(`[Labels] URL tr\u1EA3 v\u1EC1 cho FE: ${url}`);
   return url;
 }
-function resolveShopeeCallbackUrl() {
+function resolveShopeeCallbackUrl2() {
   const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
   if (explicit) return explicit;
-  return `${APP_BASE_URL}/api/shopee/callback`;
+  return `${APP_BASE_URL2}/api/shopee/callback`;
 }
-var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
-var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
+var SHOPEE_CALLBACK_URL2 = resolveShopeeCallbackUrl2();
+var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL2}/api/webhook/shopee`;
 var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 function updateEnvVar(key, value) {
   let content = "";
-  if (import_fs6.default.existsSync(ENV_PATH)) {
-    content = import_fs6.default.readFileSync(ENV_PATH, "utf-8");
+  if (import_fs9.default.existsSync(ENV_PATH)) {
+    content = import_fs9.default.readFileSync(ENV_PATH, "utf-8");
   }
   const regex = new RegExp(`^${key}\\s*=.*$`, "m");
   const line = `${key}=${value}`;
@@ -97413,7 +97841,7 @@ function updateEnvVar(key, value) {
   } else {
     content = (content.trimEnd() ? content.trimEnd() + "\n" : "") + line + "\n";
   }
-  import_fs6.default.writeFileSync(ENV_PATH, content, "utf-8");
+  import_fs9.default.writeFileSync(ENV_PATH, content, "utf-8");
   process.env[key] = value;
 }
 function maskApiKey(key) {
@@ -97435,19 +97863,19 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path5.default.resolve(APP_ROOT, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path5.default.resolve(APP_ROOT, "data", "shopee_oauth_last.json");
+var SHOPEE_TOKENS_PATH = import_path8.default.resolve(APP_ROOT4, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path8.default.resolve(APP_ROOT4, "data", "shopee_oauth_last.json");
 function ensureDataDirs() {
-  const dataDir = import_path5.default.join(APP_ROOT, "data");
-  import_fs6.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs6.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs6.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  const dataDir = import_path8.default.join(APP_ROOT4, "data");
+  import_fs9.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs9.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs9.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs6.default.writeFileSync(
+    import_fs9.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -97458,8 +97886,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs6.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs6.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs9.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs9.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -97475,12 +97903,12 @@ try {
   console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
 }
 console.log(
-  `[Boot] APP_ROOT=${APP_ROOT} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs6.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL}`
+  `[Boot] APP_ROOT=${APP_ROOT4} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs9.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
 );
 function loadShopeeTokens() {
   try {
-    if (!import_fs6.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs6.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs9.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs9.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -97514,7 +97942,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path5.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path8.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -97546,15 +97974,15 @@ function saveShopeeTokens(tokensToWrite) {
       JSON.stringify({
         absPath,
         SHOPEE_TOKENS_PATH,
-        APP_ROOT,
+        APP_ROOT: APP_ROOT4,
         keys: keysAfter,
         byteLength: Buffer.byteLength(payload, "utf-8")
       })
     );
-    import_fs6.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs9.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs6.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs9.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -97590,10 +98018,10 @@ function buildOAuthFrontendRedirectUrl(req, result) {
   if (result.success) {
     const savedQuery = encodeURIComponent((result.saved_shop_ids || []).join(","));
     const expectedQuery = expectedShop ? `&expected_shop=${encodeURIComponent(expectedShop)}` : "";
-    return `${APP_BASE_URL}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
+    return `${APP_BASE_URL2}/?shopee_linked=1&shop_id=${encodeURIComponent(oauthShopId)}&saved_shops=${savedQuery}${expectedQuery}`;
   }
   const errMsg = result.message || result.error || "token_exchange_failed";
-  return `${APP_BASE_URL}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
+  return `${APP_BASE_URL2}/?shopee_linked=0&shop_id=${encodeURIComponent(oauthShopId)}&error=${encodeURIComponent(errMsg)}`;
 }
 function normalizeShopeeTokenResponse(raw) {
   const inner = raw?.response && typeof raw.response === "object" && !Array.isArray(raw.response) ? raw.response : raw?.data && typeof raw.data === "object" ? raw.data : raw;
@@ -97784,7 +98212,7 @@ async function completeShopeeOAuthFlow(code, params) {
     shopee_shop_id_list: tokenResult.shop_id_list || [],
     file_keys_after: Object.keys(loadShopeeTokens()),
     tokens_path: SHOPEE_TOKENS_PATH,
-    app_root: APP_ROOT
+    app_root: APP_ROOT4
   });
   return {
     success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
@@ -97803,7 +98231,7 @@ function buildShopeeAuthPartnerUrl(shopId) {
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp);
   const sid = normalizeShopIdKey(shopId);
-  const redirectTarget = sid ? `${SHOPEE_CALLBACK_URL}?redirect=1&expected_shop=${sid}` : `${SHOPEE_CALLBACK_URL}?redirect=1`;
+  const redirectTarget = sid ? `${SHOPEE_CALLBACK_URL2}?redirect=1&expected_shop=${sid}` : `${SHOPEE_CALLBACK_URL2}?redirect=1`;
   const redirect = encodeURIComponent(redirectTarget);
   let url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&sign=${sign}&redirect=${redirect}`;
   if (sid) url += `&shop_id=${sid}`;
@@ -98406,7 +98834,7 @@ function resolveCreateRequireFilename() {
     if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
-  return import_path5.default.resolve(process.cwd(), "server.cjs");
+  return import_path8.default.resolve(process.cwd(), "server.cjs");
 }
 var shopeeHttpDispatcher = void 0;
 try {
@@ -100170,14 +100598,14 @@ async function resolvePublishImageBuffer(src) {
   }
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
-    const filePath = import_path5.default.join(APP_ROOT, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs6.default.existsSync(filePath)) {
-      return { buf: import_fs6.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    const filePath = import_path8.default.join(APP_ROOT4, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (import_fs9.default.existsSync(filePath)) {
+      return { buf: import_fs9.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
   if (raw.startsWith("/")) {
-    fetchUrl = `${APP_BASE_URL.replace(/\/$/, "")}${raw}`;
+    fetchUrl = `${APP_BASE_URL2.replace(/\/$/, "")}${raw}`;
   }
   const res = await fetch(fetchUrl);
   if (!res.ok) throw new Error(`Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c \u1EA3nh (${res.status}): ${raw.slice(0, 120)}`);
@@ -101136,7 +101564,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
 var shopeeSyncQueue = [];
 var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
 var shopeeSyncQueueRunning = false;
-var SCAN_BG_QUEUE_PATH = import_path5.default.join(APP_ROOT, "data", "scan-bg-queue.json");
+var SCAN_BG_QUEUE_PATH = import_path8.default.join(APP_ROOT4, "data", "scan-bg-queue.json");
 var scanBgJobs = [];
 var scanBgJobKeys = /* @__PURE__ */ new Set();
 var scanBgWorkerRunning = false;
@@ -101146,8 +101574,8 @@ function normalizeScanBgKey(code) {
 }
 function loadScanBgQueueFromDisk() {
   try {
-    if (!import_fs6.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
-    const raw = JSON.parse(import_fs6.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    if (!import_fs9.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(import_fs9.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
     const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
     for (const j of list) {
       const code = String(j?.code || "").trim();
@@ -101190,11 +101618,11 @@ function persistScanBgQueueSoon() {
   scanBgPersistTimer = setTimeout(() => {
     scanBgPersistTimer = null;
     try {
-      import_fs6.default.mkdirSync(import_path5.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      import_fs9.default.mkdirSync(import_path8.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
       const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
       const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
       const jobs = [...pending, ...recent];
-      import_fs6.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+      import_fs9.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
     } catch (err) {
       console.warn("[Scan BG] persist failed:", err?.message || err);
     }
@@ -103575,7 +104003,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
   const sources = [];
   let carrier;
   let internal;
-  const consider = (key, value, path7) => {
+  const consider = (key, value, path10) => {
     if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
@@ -103585,7 +104013,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
         internal = s2;
-        sources.push(`${path7}=${s2}(internal)`);
+        sources.push(`${path10}=${s2}(internal)`);
       }
       return;
     }
@@ -103593,20 +104021,20 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (!carrier || isCarrierTrackingCode(s2)) {
       if (!carrier || isCarrierTrackingCode(s2) && !isCarrierTrackingCode(carrier)) {
         carrier = s2;
-        sources.push(`${path7}=${s2}`);
+        sources.push(`${path10}=${s2}`);
       } else if (!carrier) {
         carrier = s2;
-        sources.push(`${path7}=${s2}`);
+        sources.push(`${path10}=${s2}`);
       }
     } else if (!carrier && s2.length >= 6) {
       carrier = s2;
-      sources.push(`${path7}=${s2}`);
+      sources.push(`${path10}=${s2}`);
     }
   };
-  const walk = (node, path7, depth) => {
+  const walk = (node, path10, depth) => {
     if (node == null || depth > 8) return;
     if (Array.isArray(node)) {
-      node.forEach((item, i2) => walk(item, `${path7}[${i2}]`, depth + 1));
+      node.forEach((item, i2) => walk(item, `${path10}[${i2}]`, depth + 1));
       return;
     }
     if (typeof node !== "object") return;
@@ -103615,7 +104043,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (nodeSn && nodeSn !== wantSn) return;
     }
     for (const [k, v] of Object.entries(node)) {
-      const childPath = path7 ? `${path7}.${k}` : k;
+      const childPath = path10 ? `${path10}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
         consider(k, v, childPath);
       } else {
@@ -104573,7 +105001,7 @@ function agentDebugLogAc966f(payload) {
     timestamp: Date.now()
   };
   try {
-    import_fs6.default.appendFileSync(import_path5.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
+    import_fs9.default.appendFileSync(import_path8.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
   } catch {
   }
   fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
@@ -105525,7 +105953,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
   }
   return { added, updated };
 }
-var ORDERS_DB_PATH = import_path5.default.join(APP_ROOT, "data", "orders.json");
+var ORDERS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "orders.json");
 var orderLookupIndex = null;
 function normalizeOrderIndexKey(raw) {
   return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
@@ -105569,11 +105997,11 @@ function withLocalDbTimeout(promise, timeoutMs, label) {
 }
 function loadOrders() {
   try {
-    if (!import_fs6.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs9.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs6.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs9.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -105708,8 +106136,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs6.default.mkdirSync(import_path5.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs6.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs9.default.mkdirSync(import_path8.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs9.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -105727,12 +106155,12 @@ function saveOrders(orders) {
 function isHandedOverGarbageOrder(order) {
   return matchesHandedOverCarrierTabOrder(order);
 }
-var HANDED_OVER_CLEANUP_MARKER = import_path5.default.join(APP_ROOT, "data", ".cleanup-handed-over-v2");
+var HANDED_OVER_CLEANUP_MARKER = import_path8.default.join(APP_ROOT4, "data", ".cleanup-handed-over-v2");
 async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs6.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs9.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -105762,10 +106190,10 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
   if (stillLeft === 0) {
     try {
-      const v1 = import_path5.default.join(APP_ROOT, "data", ".cleanup-handed-over-v1");
-      if (import_fs6.default.existsSync(v1)) import_fs6.default.unlinkSync(v1);
-      import_fs6.default.mkdirSync(import_path5.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs6.default.writeFileSync(
+      const v1 = import_path8.default.join(APP_ROOT4, "data", ".cleanup-handed-over-v1");
+      if (import_fs9.default.existsSync(v1)) import_fs9.default.unlinkSync(v1);
+      import_fs9.default.mkdirSync(import_path8.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs9.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -105874,9 +106302,9 @@ function buildDashboardChart(dailyRevenue, range) {
   }
   return Array.from(buckets.values());
 }
-var PRODUCTS_DB_PATH = import_path5.default.join(APP_ROOT, "data", "products.json");
-var LOCAL_INVENTORY_CACHE_PATH = import_path5.default.join(APP_ROOT, "data", "local_inventory.json");
-var SQLITE_LEGACY_PATH = import_path5.default.join(APP_ROOT, "database.sqlite");
+var PRODUCTS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "products.json");
+var LOCAL_INVENTORY_CACHE_PATH = import_path8.default.join(APP_ROOT4, "data", "local_inventory.json");
+var SQLITE_LEGACY_PATH = import_path8.default.join(APP_ROOT4, "database.sqlite");
 function getProductChildrenList(p) {
   try {
     if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
@@ -105972,18 +106400,18 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
-var INVENTORY_AUDIT_PATH = import_path5.default.join(APP_ROOT, "data", "inventory_audit.json");
-var INVENTORY_BACKUP_DIR = import_path5.default.join(APP_ROOT, "data", "inventory_backups");
+var INVENTORY_AUDIT_PATH = import_path8.default.join(APP_ROOT4, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path8.default.join(APP_ROOT4, "data", "inventory_backups");
 function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs6.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs6.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs9.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs9.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs6.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs9.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -105991,36 +106419,36 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs6.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs9.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs6.default.writeFileSync(
-    import_path5.default.join(INVENTORY_BACKUP_DIR, fileName),
+  import_fs9.default.writeFileSync(
+    import_path8.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
   );
   writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
   return fileName;
 }
-var CHANNEL_LISTINGS_DB_PATH = import_path5.default.join(APP_ROOT, "data", "channel_listings.json");
-var SHOPEE_SYNC_ERRORS_DB_PATH = import_path5.default.join(APP_ROOT, "data", "shopee_sync_errors.json");
+var CHANNEL_LISTINGS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "channel_listings.json");
+var SHOPEE_SYNC_ERRORS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs6.default.existsSync(filePath)) return;
+  if (!import_fs9.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs6.default.renameSync(filePath, dest);
-    console.log(`[Mongo Migrate] Renamed ${import_path5.default.basename(filePath)} \u2192 ${import_path5.default.basename(dest)}`);
+    import_fs9.default.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${import_path8.default.basename(filePath)} \u2192 ${import_path8.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
   }
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs6.default.existsSync(filePath)) return [];
-    const raw = import_fs6.default.readFileSync(filePath, "utf-8");
+    if (!import_fs9.default.existsSync(filePath)) return [];
+    const raw = import_fs9.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -106029,26 +106457,26 @@ function readLegacyJsonArray(filePath) {
   }
 }
 function findLatestMigratedJson(baseName) {
-  const dataDir = import_path5.default.join(APP_ROOT, "data");
-  if (!import_fs6.default.existsSync(dataDir)) return null;
+  const dataDir = import_path8.default.join(APP_ROOT4, "data");
+  if (!import_fs9.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs6.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs9.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
-  return import_path5.default.join(dataDir, matches[matches.length - 1]);
+  return import_path8.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   if (isProductsDiskMode()) {
     try {
-      const existing = import_fs6.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs6.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      const existing = import_fs9.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs9.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
       if (!Array.isArray(existing) || existing.length === 0) {
-        const dataDir = import_path5.default.join(APP_ROOT, "data");
-        if (import_fs6.default.existsSync(dataDir)) {
-          const migrated = import_fs6.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+        const dataDir = import_path8.default.join(APP_ROOT4, "data");
+        if (import_fs9.default.existsSync(dataDir)) {
+          const migrated = import_fs9.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
           const latest = migrated[migrated.length - 1];
           if (latest) {
-            const src = import_path5.default.join(dataDir, latest);
+            const src = import_path8.default.join(dataDir, latest);
             const dest = getProductsDiskPath();
-            import_fs6.default.copyFileSync(src, dest);
+            import_fs9.default.copyFileSync(src, dest);
             console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
           }
         }
@@ -106065,9 +106493,9 @@ async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs6.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs6.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs6.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs9.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs9.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs9.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -106086,10 +106514,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs6.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs9.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs6.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs9.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -106115,10 +106543,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs6.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs9.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs6.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs9.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -106129,8 +106557,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs6.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs6.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs9.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs9.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -106154,8 +106582,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs6.default.mkdirSync(import_path5.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs6.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs9.default.mkdirSync(import_path8.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs9.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -106833,44 +107261,7 @@ async function bulkAutoLinkAllPending(opts) {
     masterProductCount
   };
 }
-var SUPPLIERS_DB_PATH = import_path5.default.join(APP_ROOT, "data", "suppliers.json");
-function normalizeSupplier(raw) {
-  const totalOrderValue = Number(raw?.totalOrderValue) || 0;
-  const totalPaid = Number(raw?.totalPaid) || 0;
-  return {
-    id: String(raw?.id || `sup-${Date.now()}`),
-    name: String(raw?.name || "").trim(),
-    supplierCode: String(raw?.supplierCode || raw?.supplier_code || "").trim().toUpperCase(),
-    totalOrderValue,
-    totalPaid,
-    totalDebt: Number(raw?.totalDebt ?? totalOrderValue - totalPaid) || 0,
-    status: raw?.status === "inactive" ? "inactive" : "active"
-  };
-}
-function loadSuppliers() {
-  try {
-    if (!import_fs6.default.existsSync(SUPPLIERS_DB_PATH)) return [];
-    const raw = import_fs6.default.readFileSync(SUPPLIERS_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.map(normalizeSupplier) : [];
-  } catch (error) {
-    console.error("[Suppliers DB] Failed to read suppliers.json:", error);
-    return [];
-  }
-}
-function saveSuppliers(suppliers) {
-  try {
-    import_fs6.default.mkdirSync(import_path5.default.dirname(SUPPLIERS_DB_PATH), { recursive: true });
-    import_fs6.default.writeFileSync(SUPPLIERS_DB_PATH, JSON.stringify(suppliers, null, 2), "utf-8");
-  } catch (error) {
-    console.error(
-      "L\u1ED7i chi ti\u1EBFt khi l\u01B0u shop/OAuth:",
-      error?.response?.data || error?.message || String(error)
-    );
-    console.error("[Suppliers DB] Failed to write suppliers.json:", error);
-  }
-}
-var CHANNEL_SETTINGS_PATH = import_path5.default.join(APP_ROOT, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH = import_path8.default.join(APP_ROOT4, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -107021,8 +107412,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs6.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs6.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs9.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs9.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -107044,7 +107435,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs6.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs9.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -107091,11 +107482,11 @@ function syncOAuthShopsToChannelSettings(savedShopIds, opts) {
     logOAuthSaveError("syncOAuthShopsToChannelSettings", error);
   }
 }
-var IMPORTS_DB_PATH = import_path5.default.join(APP_ROOT, "data", "imports.json");
+var IMPORTS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "imports.json");
 function loadImports() {
   try {
-    if (!import_fs6.default.existsSync(IMPORTS_DB_PATH)) return [];
-    const raw = import_fs6.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
+    if (!import_fs9.default.existsSync(IMPORTS_DB_PATH)) return [];
+    const raw = import_fs9.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
@@ -107105,45 +107496,12 @@ function loadImports() {
 }
 function saveImports(imports) {
   try {
-    import_fs6.default.mkdirSync(import_path5.default.dirname(IMPORTS_DB_PATH), { recursive: true });
-    import_fs6.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+    import_fs9.default.mkdirSync(import_path8.default.dirname(IMPORTS_DB_PATH), { recursive: true });
+    import_fs9.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
   } catch (error) {
     console.error("[Imports DB] Failed to write imports.json:", error);
   }
 }
-var EXPENSES_DB_PATH = import_path5.default.join(APP_ROOT, "data", "expenses.json");
-var EXPENSES_CLEAR_MARKER = import_path5.default.join(APP_ROOT, "data", ".expenses-cleared-v2");
-function loadExpenses() {
-  try {
-    if (!import_fs6.default.existsSync(EXPENSES_DB_PATH)) return [];
-    const raw = import_fs6.default.readFileSync(EXPENSES_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error("[Expenses DB] Failed to read expenses.json:", error);
-    return [];
-  }
-}
-function saveExpenses(expenses) {
-  try {
-    import_fs6.default.mkdirSync(import_path5.default.dirname(EXPENSES_DB_PATH), { recursive: true });
-    import_fs6.default.writeFileSync(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
-  } catch (error) {
-    console.error("[Expenses DB] Failed to write expenses.json:", error);
-  }
-}
-function migrateExpensesStorageOnce() {
-  if (import_fs6.default.existsSync(EXPENSES_CLEAR_MARKER)) return;
-  saveExpenses([]);
-  try {
-    import_fs6.default.mkdirSync(import_path5.default.dirname(EXPENSES_CLEAR_MARKER), { recursive: true });
-    import_fs6.default.writeFileSync(EXPENSES_CLEAR_MARKER, (/* @__PURE__ */ new Date()).toISOString(), "utf-8");
-    console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch d\u1EEF li\u1EC7u chi ph\xED c\u0169 (migration m\u1ED9t l\u1EA7n).");
-  } catch (error) {
-    console.error("[Expenses] Failed to write clear marker:", error);
-  }
-}
-migrateExpensesStorageOnce();
 function applyBulkProductUpdate(product, opts) {
   let stock = Number(product.stock) || 0;
   let sellingPrice = Number(product.sellingPrice) || 0;
@@ -107991,7 +108349,7 @@ async function processShopeeWebhookPayload(body) {
   }
 }
 async function startServer() {
-  const app = (0, import_express3.default)();
+  const app = (0, import_express8.default)();
   const PORT = process.env.PORT || 3e3;
   const appWithRouteMethods = app;
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -108021,8 +108379,8 @@ async function startServer() {
   }
   app.use(cors_default);
   app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload));
-  app.use(import_express3.default.json({ limit: "50mb" }));
-  app.use(import_express3.default.urlencoded({ limit: "50mb", extended: true }));
+  app.use(import_express8.default.json({ limit: "50mb" }));
+  app.use(import_express8.default.urlencoded({ limit: "50mb", extended: true }));
   try {
     ensureLabelsDir();
   } catch (err) {
@@ -108040,100 +108398,27 @@ async function startServer() {
     (_req, res) => res.status(410).type("text/plain").send("Use /api/webhook/shopee")
   );
   app.use(dbReady_default);
-  app.post("/api/login", (req, res) => {
-    const { username, password } = req.body;
-    const expectedUsername = process.env.ADMIN_USERNAME || "admin";
-    const expectedPassword = process.env.ADMIN_PASSWORD || "password123";
-    if (username === expectedUsername && password === expectedPassword) {
-      const token = signAdminToken(username);
-      return res.json({ token, username });
-    } else {
-      return res.status(401).json({ error: "T\xEAn \u0111\u0103ng nh\u1EADp ho\u1EB7c m\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c." });
-    }
+  initHealthController({
+    ensureDataDirs,
+    listShopeeOAuthShopIds,
+    loadLastOAuthAudit,
+    tokensPath: SHOPEE_TOKENS_PATH,
+    appRoot: APP_ROOT4,
+    appBaseUrl: APP_BASE_URL2,
+    shopeeCallbackUrl: SHOPEE_CALLBACK_URL2,
+    shopeeWebhookUrl: SHOPEE_WEBHOOK_URL2
   });
-  app.get("/api/auth/verify", authMiddleware, async (req, res) => {
-    res.json({ valid: true, username: req.user.username });
-  });
+  app.post("/api/login", login);
+  app.get("/api/auth/verify", authMiddleware, verifyAuth);
+  app.use("/api", authRoutes);
   app.post("/api/scan/save", authMiddleware, saveScanOrders);
   app.get("/api/scan/don-hoan-huy", authMiddleware, listDonHoanHuy);
   app.use("/api/scan", authMiddleware, scanRoutes);
-  app.get("/api/config/public", (_req, res) => {
-    res.json({
-      appUrl: APP_BASE_URL,
-      apiBaseUrl: APP_BASE_URL,
-      shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
-      shopeeWebhookUrl: SHOPEE_WEBHOOK_URL
-    });
-  });
-  app.post("/api/debug/client-log", authMiddleware, (req, res) => {
-    try {
-      ensureDataDirs();
-      const logPath = import_path5.default.join(APP_ROOT, "data", "debug-556dce.ndjson");
-      const payload = {
-        sessionId: "556dce",
-        runId: req.body?.runId || "post-fix",
-        hypothesisId: req.body?.hypothesisId || null,
-        location: req.body?.location || "client",
-        message: req.body?.message || "",
-        data: req.body?.data || {},
-        timestamp: Date.now()
-      };
-      import_fs6.default.appendFileSync(logPath, `${JSON.stringify(payload)}
-`, "utf-8");
-      return res.status(200).json({ ok: true });
-    } catch (error) {
-      return res.status(500).json({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  });
-  app.get("/api/debug/client-log", authMiddleware, (_req, res) => {
-    try {
-      const logPath = import_path5.default.join(APP_ROOT, "data", "debug-556dce.ndjson");
-      if (!import_fs6.default.existsSync(logPath)) return res.json({ ok: true, lines: [] });
-      const lines = import_fs6.default.readFileSync(logPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(-80).map((line) => {
-        try {
-          return JSON.parse(line);
-        } catch {
-          return { raw: line };
-        }
-      });
-      return res.json({ ok: true, lines });
-    } catch (error) {
-      return res.status(500).json({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  });
-  app.get("/api/health", (_req, res) => {
-    const shopIds = listShopeeOAuthShopIds();
-    let dataDirWritable = false;
-    try {
-      ensureDataDirs();
-      import_fs6.default.accessSync(import_path5.default.join(APP_ROOT, "data"), import_fs6.default.constants.W_OK);
-      dataDirWritable = true;
-    } catch {
-      dataDirWritable = false;
-    }
-    res.status(200).json({
-      ok: true,
-      service: "cpanel-backend",
-      host: APP_BASE_URL,
-      appRoot: APP_ROOT,
-      tokensPath: SHOPEE_TOKENS_PATH,
-      tokensFileExists: import_fs6.default.existsSync(SHOPEE_TOKENS_PATH),
-      dataDirWritable,
-      shopeeOAuthShopIds: shopIds,
-      lastOAuth: loadLastOAuthAudit(),
-      oauthHint: shopIds.length > 0 ? "V\xE0o C\xE0i \u0111\u1EB7t \u2192 shop Shopee \u2192 b\u1EA5m OAuth (shop_id ph\u1EA3i kh\u1EDBp). Sau OAuth ki\u1EC3m tra lastOAuth.success=true." : "Ch\u01B0a c\xF3 shop OAuth \u2014 b\u1EA5m n\xFAt OAuth trong C\xE0i \u0111\u1EB7t.",
-      checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      routes: {
-        mappingProducts: true
-      }
-    });
-  });
+  app.get("/api/config/public", getPublicConfig);
+  app.post("/api/debug/client-log", authMiddleware, postClientLog);
+  app.get("/api/debug/client-log", authMiddleware, getClientLog);
+  app.get("/api/health", getHealth);
+  app.use("/api", healthRoutes);
   const handleMappingProductsGet = async (_req, res) => {
     try {
       const cache = await reloadCachesFromDb();
@@ -108487,8 +108772,8 @@ async function startServer() {
         expected_shop: expectedShop || null,
         query: req.query || {},
         SHOPEE_TOKENS_PATH,
-        SHOPEE_CALLBACK_URL,
-        APP_ROOT,
+        SHOPEE_CALLBACK_URL: SHOPEE_CALLBACK_URL2,
+        APP_ROOT: APP_ROOT4,
         cwd: process.cwd()
       })
     );
@@ -108534,7 +108819,7 @@ async function startServer() {
         ...result,
         message: result.message || `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${result.saved_shop_ids.join(", ")}].`,
         tokens_path: SHOPEE_TOKENS_PATH,
-        callback_url: SHOPEE_CALLBACK_URL
+        callback_url: SHOPEE_CALLBACK_URL2
       });
     } catch (error) {
       logOAuthSaveError("Shopee Callback", error);
@@ -108544,7 +108829,7 @@ async function startServer() {
         success: false,
         error: error?.message || "unknown_error",
         tokens_path: SHOPEE_TOKENS_PATH,
-        app_root: APP_ROOT
+        app_root: APP_ROOT4
       });
       const failResult = {
         success: false,
@@ -109389,71 +109674,12 @@ async function startServer() {
       });
     }
   });
-  app.get("/api/suppliers", authMiddleware, async (_req, res) => {
-    return res.json(loadSuppliers());
-  });
-  app.post("/api/suppliers", authMiddleware, async (req, res) => {
-    const body = req.body || {};
-    if (!body.name?.trim() || !body.supplierCode?.trim()) {
-      return res.status(400).json({ error: "name_and_supplierCode_required" });
-    }
-    const suppliers = loadSuppliers();
-    const code = String(body.supplierCode).trim().toUpperCase();
-    if (suppliers.some((s2) => s2.supplierCode === code)) {
-      return res.status(400).json({ error: "supplier_code_duplicate" });
-    }
-    const supplier = normalizeSupplier({
-      id: `sup-${Date.now()}`,
-      name: body.name,
-      supplierCode: code,
-      totalOrderValue: 0,
-      totalPaid: 0,
-      totalDebt: 0,
-      status: body.status || "active"
-    });
-    suppliers.unshift(supplier);
-    saveSuppliers(suppliers);
-    return res.status(201).json({ supplier, suppliers });
-  });
-  app.put("/api/suppliers/:id", authMiddleware, async (req, res) => {
-    const suppliers = loadSuppliers();
-    const index = suppliers.findIndex((s2) => s2.id === req.params.id);
-    if (index === -1) {
-      return res.status(404).json({ error: "supplier_not_found" });
-    }
-    const body = req.body || {};
-    const code = body.supplierCode ? String(body.supplierCode).trim().toUpperCase() : suppliers[index].supplierCode;
-    if (suppliers.some((s2, i2) => i2 !== index && s2.supplierCode === code)) {
-      return res.status(400).json({ error: "supplier_code_duplicate" });
-    }
-    const updated = normalizeSupplier({
-      ...suppliers[index],
-      ...body,
-      id: suppliers[index].id,
-      supplierCode: code
-    });
-    suppliers[index] = updated;
-    saveSuppliers(suppliers);
-    return res.json({ supplier: updated, suppliers });
-  });
-  app.delete("/api/suppliers/:id", authMiddleware, async (req, res) => {
-    const suppliers = loadSuppliers();
-    const target = suppliers.find((s2) => s2.id === req.params.id);
-    if (!target) {
-      return res.status(404).json({ error: "supplier_not_found" });
-    }
-    if (target.totalDebt > 0) {
-      return res.status(400).json({ error: "supplier_has_debt" });
-    }
-    const next = suppliers.filter((s2) => s2.id !== req.params.id);
-    saveSuppliers(next);
-    return res.json({ deleted: req.params.id, suppliers: next });
-  });
-  app.post("/api/suppliers/clear-all", authMiddleware, async (_req, res) => {
-    saveSuppliers([]);
-    console.log("[Suppliers] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 d\u1EEF li\u1EC7u nh\xE0 cung c\u1EA5p.");
-    return res.json({ success: true, cleared: true, suppliers: [] });
-  });
+  app.get("/api/suppliers", authMiddleware, listSuppliers);
+  app.post("/api/suppliers", authMiddleware, createSupplier);
+  app.put("/api/suppliers/:id", authMiddleware, updateSupplier);
+  app.delete("/api/suppliers/:id", authMiddleware, deleteSupplier);
+  app.post("/api/suppliers/clear-all", authMiddleware, clearAllSuppliers);
+  app.use("/api/suppliers", authMiddleware, suppliersRoutes);
   app.get("/api/imports", authMiddleware, async (_req, res) => {
     return res.json(loadImports());
   });
@@ -109599,41 +109825,11 @@ async function startServer() {
     console.log("[Imports] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 l\u1ECBch s\u1EED nh\u1EADp h\xE0ng.");
     return res.json({ success: true, cleared: true, imports: [] });
   });
-  app.get("/api/expenses", authMiddleware, async (_req, res) => {
-    return res.json(loadExpenses());
-  });
-  app.post("/api/expenses", authMiddleware, async (req, res) => {
-    const body = req.body || {};
-    if (!body.title?.trim() || !body.amount || !body.category || !body.date) {
-      return res.status(400).json({ error: "expense_fields_required" });
-    }
-    const expenses = loadExpenses();
-    const entry = {
-      id: body.id || `exp-${Date.now()}`,
-      title: String(body.title).trim(),
-      amount: Math.max(0, Math.round(Number(body.amount))),
-      category: String(body.category),
-      date: String(body.date),
-      notes: body.notes ? String(body.notes) : void 0
-    };
-    expenses.unshift(entry);
-    saveExpenses(expenses);
-    return res.status(201).json({ expense: entry, expenses });
-  });
-  app.delete("/api/expenses/:id", authMiddleware, async (req, res) => {
-    const expenses = loadExpenses();
-    const next = expenses.filter((e2) => e2.id !== req.params.id);
-    if (next.length === expenses.length) {
-      return res.status(404).json({ error: "expense_not_found" });
-    }
-    saveExpenses(next);
-    return res.json({ deleted: req.params.id, expenses: next });
-  });
-  app.post("/api/expenses/clear-all", authMiddleware, async (_req, res) => {
-    saveExpenses([]);
-    console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 chi ph\xED doanh nghi\u1EC7p.");
-    return res.json({ success: true, cleared: true, expenses: [] });
-  });
+  app.get("/api/expenses", authMiddleware, listExpenses);
+  app.post("/api/expenses", authMiddleware, createExpense);
+  app.delete("/api/expenses/:id", authMiddleware, deleteExpense);
+  app.post("/api/expenses/clear-all", authMiddleware, clearAllExpenses);
+  app.use("/api/expenses", authMiddleware, expensesRoutes);
   app.get("/api/dashboard", authMiddleware, async (req, res) => {
     try {
       res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -110034,8 +110230,8 @@ async function startServer() {
     try {
       for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
         try {
-          const p = import_path5.default.join(APP_ROOT, "data", name);
-          if (import_fs6.default.existsSync(p)) import_fs6.default.unlinkSync(p);
+          const p = import_path8.default.join(APP_ROOT4, "data", name);
+          if (import_fs9.default.existsSync(p)) import_fs9.default.unlinkSync(p);
         } catch {
         }
       }
@@ -111253,66 +111449,10 @@ async function startServer() {
       });
     }
   });
-  const VN_ADDRESS_API = "https://provinces.open-api.vn/api";
-  let vnProvincesCache = null;
-  const vnDistrictsCache = /* @__PURE__ */ new Map();
-  const vnWardsCache = /* @__PURE__ */ new Map();
-  const fetchVnJson = async (url) => {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error(`VN address API ${res.status}`);
-    return res.json();
-  };
-  app.get("/api/vietnam-address/provinces", authMiddleware, async (_req, res) => {
-    try {
-      if (!vnProvincesCache) {
-        vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
-      }
-      const list = (vnProvincesCache || []).map((p) => ({
-        name: p.name,
-        code: p.code
-      }));
-      return res.json(list);
-    } catch (error) {
-      console.error("[VN Address] provinces:", error);
-      return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch T\u1EC9nh/Th\xE0nh" });
-    }
-  });
-  app.get("/api/vietnam-address/districts/:provinceCode", authMiddleware, async (req, res) => {
-    try {
-      const provinceCode = Number(req.params.provinceCode);
-      if (!provinceCode) return res.json([]);
-      if (!vnDistrictsCache.has(provinceCode)) {
-        const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${provinceCode}?depth=2`);
-        const districts = Array.isArray(data?.districts) ? data.districts : [];
-        vnDistrictsCache.set(
-          provinceCode,
-          districts.map((d) => ({ name: d.name, code: d.code }))
-        );
-      }
-      return res.json(vnDistrictsCache.get(provinceCode) || []);
-    } catch (error) {
-      console.error("[VN Address] districts:", error);
-      return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Qu\u1EADn/Huy\u1EC7n" });
-    }
-  });
-  app.get("/api/vietnam-address/wards/:districtCode", authMiddleware, async (req, res) => {
-    try {
-      const districtCode = Number(req.params.districtCode);
-      if (!districtCode) return res.json([]);
-      if (!vnWardsCache.has(districtCode)) {
-        const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${districtCode}?depth=2`);
-        const wards = Array.isArray(data?.wards) ? data.wards : [];
-        vnWardsCache.set(
-          districtCode,
-          wards.map((w) => ({ name: w.name, code: w.code }))
-        );
-      }
-      return res.json(vnWardsCache.get(districtCode) || []);
-    } catch (error) {
-      console.error("[VN Address] wards:", error);
-      return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Ph\u01B0\u1EDDng/X\xE3" });
-    }
-  });
+  app.get("/api/vietnam-address/provinces", authMiddleware, getProvinces);
+  app.get("/api/vietnam-address/districts/:provinceCode", authMiddleware, getDistricts);
+  app.get("/api/vietnam-address/wards/:districtCode", authMiddleware, getWards);
+  app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
   const buildCarrierLogisticsPayload = (carrier, customer, addr, extras) => {
     if (carrier === "ghn") {
       return {
@@ -112200,11 +112340,11 @@ async function startServer() {
     if (!sn) return null;
     try {
       ensureLabelsDir();
-      const matches = import_fs6.default.readdirSync(LABELS_DIR).filter(
+      const matches = import_fs9.default.readdirSync(LABELS_DIR).filter(
         (name) => /\.pdf$/i.test(name) && (name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`))
       ).map((name) => {
-        const full = import_path5.default.join(LABELS_DIR, name);
-        return { name, mtime: import_fs6.default.statSync(full).mtimeMs, size: import_fs6.default.statSync(full).size };
+        const full = import_path8.default.join(LABELS_DIR, name);
+        return { name, mtime: import_fs9.default.statSync(full).mtimeMs, size: import_fs9.default.statSync(full).size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
       if (!newest) return null;
@@ -112668,7 +112808,7 @@ async function startServer() {
     const savedFromDownload = "savedFiles" in downloadResult && Array.isArray(downloadResult.savedFiles) ? downloadResult.savedFiles.filter((n) => safeLabelFilename(n) && hasLabelMem(n)) : [];
     let filename = savedFromDownload[savedFromDownload.length - 1] || (ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`);
     console.log(`[Shopee Print] B\u1EAFt \u0111\u1EA7u in cho \u0111\u01A1n ${orderSns.join(",")}`);
-    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path5.default.join(LABELS_DIR, filename)}`);
+    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path8.default.join(LABELS_DIR, filename)}`);
     if (!hasLabelMem(filename)) {
       filename = saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
@@ -112798,7 +112938,7 @@ async function startServer() {
     } else if (savedFilenames.length > 0) {
       const relative = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
       if (relative) {
-        const fn = import_path5.default.basename(relative);
+        const fn = import_path8.default.basename(relative);
         assertLabelFileReady(fn);
         primaryUrl = absoluteLabelUrl(relative);
         pdfFilename = fn;
@@ -113753,7 +113893,7 @@ async function startServer() {
       shopIds,
       details,
       tokensPath: SHOPEE_TOKENS_PATH,
-      appRoot: APP_ROOT,
+      appRoot: APP_ROOT4,
       lastOAuth,
       count: shopIds.length
     });
@@ -113778,7 +113918,7 @@ async function startServer() {
       success: true,
       shop_id: shopId,
       url: buildShopeeAuthPartnerUrl(shopId),
-      callback: SHOPEE_CALLBACK_URL
+      callback: SHOPEE_CALLBACK_URL2
     });
   });
   app.post("/api/settings/shop-connection-status", authMiddleware, async (req, res) => {
@@ -113905,11 +114045,11 @@ Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
       return res.status(500).json({ error: error.message || "L\u1ED7i x\u1EED l\xFD AI t\u1EEB server" });
     }
   });
-  const LISTINGS_DB_PATH = import_path5.default.join(APP_ROOT, "data", "multi_channel_listings.json");
+  const LISTINGS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs6.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs6.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs9.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs9.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -113917,9 +114057,9 @@ Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
     }
   };
   const writeListingsDb = (listings) => {
-    const dir = import_path5.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs6.default.existsSync(dir)) import_fs6.default.mkdirSync(dir, { recursive: true });
-    import_fs6.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    const dir = import_path8.default.dirname(LISTINGS_DB_PATH);
+    if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
+    import_fs9.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
   const markdownToHtml = (text) => {
     if (!text) return "";
@@ -114090,11 +114230,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       return res.status(500).json({ success: false, error: error.message || "L\u01B0u th\u1EA5t b\u1EA1i" });
     }
   });
-  const PRODUCT_LISTINGS_DB_PATH = import_path5.default.join(APP_ROOT, "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs6.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs6.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs9.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs9.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -114102,9 +114242,9 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   };
   const writeProductListingsDb = (rows) => {
-    const dir = import_path5.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs6.default.existsSync(dir)) import_fs6.default.mkdirSync(dir, { recursive: true });
-    import_fs6.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    const dir = import_path8.default.dirname(PRODUCT_LISTINGS_DB_PATH);
+    if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
+    import_fs9.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -114361,12 +114501,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       });
     }
   });
-  const PUBLISH_EDIT_DB_PATH = import_path5.default.join(APP_ROOT, "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = import_path5.default.join(APP_ROOT, "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = import_path8.default.join(APP_ROOT4, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs6.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs6.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs9.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs9.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -114374,9 +114514,9 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   };
   const writePublishEditDb = (data) => {
-    const dir = import_path5.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs6.default.existsSync(dir)) import_fs6.default.mkdirSync(dir, { recursive: true });
-    import_fs6.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    const dir = import_path8.default.dirname(PUBLISH_EDIT_DB_PATH);
+    if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
+    import_fs9.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -114417,11 +114557,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs6.default.existsSync(FRAMED_IMAGES_DIR)) import_fs6.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs9.default.existsSync(FRAMED_IMAGES_DIR)) import_fs9.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs6.default.writeFileSync(import_path5.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs9.default.writeFileSync(import_path8.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -114443,12 +114583,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   });
   app.get("/api/framed-images/:productId", (req, res) => {
-    const filePath = import_path5.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs6.default.existsSync(filePath)) {
+    const filePath = import_path8.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
+    if (!import_fs9.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs6.default.readFileSync(filePath));
+    return res.send(import_fs9.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -114466,8 +114606,8 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
-    const distPath = import_path5.default.join(APP_ROOT, "dist");
-    app.use(import_express3.default.static(distPath, {
+    const distPath = import_path8.default.join(APP_ROOT4, "dist");
+    app.use(import_express8.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -114492,12 +114632,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.sendFile(import_path5.default.join(distPath, "index.html"));
+      return res.sendFile(import_path8.default.join(distPath, "index.html"));
     });
   }
   async function connectDB2() {
     try {
-      const ok = await initMongo(APP_ROOT);
+      const ok = await initMongo(APP_ROOT4);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
@@ -114519,9 +114659,9 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       console.log(
         process.env.PORT ? `Server optimized for cPanel Phusion Passenger: listening on ${PORT}` : `Server running locally on port ${PORT}`
       );
-      console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
+      console.log(`[Config] APP_BASE_URL=${APP_BASE_URL2}`);
       console.log(`[Config] NODE_ENV=${process.env.NODE_ENV || "unset"}`);
-      console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
+      console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL2}`);
       if (!process.env.PORT) {
         console.log("[Dashboard] API route ready: GET /api/dashboard?date_range=...");
       }

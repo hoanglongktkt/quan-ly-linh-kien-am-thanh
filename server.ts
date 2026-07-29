@@ -39,11 +39,42 @@ import {
   setCachedShopeeAddressList,
 } from "./src/services/redis.ts";
 import scanRoutesImport from "./routes/scanRoutes.js";
+import authRoutesImport from "./routes/authRoutes.js";
+import healthRoutesImport from "./routes/healthRoutes.js";
+import vietnamAddressRoutesImport from "./routes/vietnamAddressRoutes.js";
+import suppliersRoutesImport from "./routes/suppliersRoutes.js";
+import expensesRoutesImport from "./routes/expensesRoutes.js";
 import errorHandler from "./middlewares/errorHandler.js";
-import { authMiddleware, signAdminToken } from "./middlewares/auth.js";
+import { authMiddleware } from "./middlewares/auth.js";
 import corsMiddleware from "./middlewares/cors.js";
 import dbReadyMiddleware from "./middlewares/dbReady.js";
 import { saveScanOrders, listDonHoanHuy } from "./controllers/scanController.js";
+import { login, verifyAuth } from "./controllers/authController.js";
+import {
+  initHealthController,
+  getHealth,
+  getPublicConfig,
+  postClientLog,
+  getClientLog,
+} from "./controllers/healthController.js";
+import {
+  getProvinces,
+  getDistricts,
+  getWards,
+} from "./controllers/vietnamAddressController.js";
+import {
+  listSuppliers,
+  createSupplier,
+  updateSupplier,
+  deleteSupplier,
+  clearAllSuppliers,
+} from "./controllers/suppliersController.js";
+import {
+  listExpenses,
+  createExpense,
+  deleteExpense,
+  clearAllExpenses,
+} from "./controllers/expensesController.js";
 import {
   extractHttpClientError,
   sendApiErrorJson,
@@ -61,10 +92,15 @@ import { tryAcquireHeavyJob, releaseHeavyJob, resetHeavyJob } from "./utils/heav
 import { resolveAppRoot, resolveAppBaseUrl } from "./utils/appPaths.js";
 
 /** ESM/CJS interop — luôn lấy Router thật. */
-const scanRoutes =
-  (scanRoutesImport as any)?.default?.use
-    ? (scanRoutesImport as any).default
-    : scanRoutesImport;
+function asRouter(mod: any) {
+  return mod?.default?.use ? mod.default : mod;
+}
+const scanRoutes = asRouter(scanRoutesImport);
+const authRoutes = asRouter(authRoutesImport);
+const healthRoutes = asRouter(healthRoutesImport);
+const vietnamAddressRoutes = asRouter(vietnamAddressRoutesImport);
+const suppliersRoutes = asRouter(suppliersRoutesImport);
+const expensesRoutes = asRouter(expensesRoutesImport);
 import {
   initMongo,
   loadProductsFromStore,
@@ -13901,47 +13937,6 @@ async function bulkAutoLinkAllPending(opts?: { limit?: number }): Promise<{
     masterProductCount,
   };
 }
-const SUPPLIERS_DB_PATH = path.join(APP_ROOT, "data", "suppliers.json");
-
-function normalizeSupplier(raw: any): any {
-  const totalOrderValue = Number(raw?.totalOrderValue) || 0;
-  const totalPaid = Number(raw?.totalPaid) || 0;
-  return {
-    id: String(raw?.id || `sup-${Date.now()}`),
-    name: String(raw?.name || "").trim(),
-    supplierCode: String(raw?.supplierCode || raw?.supplier_code || "").trim().toUpperCase(),
-    totalOrderValue,
-    totalPaid,
-    totalDebt: Number(raw?.totalDebt ?? totalOrderValue - totalPaid) || 0,
-    status: raw?.status === "inactive" ? "inactive" : "active",
-  };
-}
-
-function loadSuppliers(): any[] {
-  try {
-    if (!fs.existsSync(SUPPLIERS_DB_PATH)) return [];
-    const raw = fs.readFileSync(SUPPLIERS_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.map(normalizeSupplier) : [];
-  } catch (error) {
-    console.error("[Suppliers DB] Failed to read suppliers.json:", error);
-    return [];
-  }
-}
-
-function saveSuppliers(suppliers: any[]): void {
-  try {
-    fs.mkdirSync(path.dirname(SUPPLIERS_DB_PATH), { recursive: true });
-    fs.writeFileSync(SUPPLIERS_DB_PATH, JSON.stringify(suppliers, null, 2), "utf-8");
-  } catch (error: any) {
-    console.error(
-      "Lỗi chi tiết khi lưu shop/OAuth:",
-      error?.response?.data || error?.message || String(error),
-    );
-    console.error("[Suppliers DB] Failed to write suppliers.json:", error);
-  }
-}
-
 const CHANNEL_SETTINGS_PATH = path.join(APP_ROOT, "data", "channel_settings.json");
 
 const DEFAULT_CHANNEL_SETTINGS: Record<string, any> = {
@@ -14226,44 +14221,6 @@ function saveImports(imports: any[]): void {
     console.error("[Imports DB] Failed to write imports.json:", error);
   }
 }
-
-const EXPENSES_DB_PATH = path.join(APP_ROOT, "data", "expenses.json");
-const EXPENSES_CLEAR_MARKER = path.join(APP_ROOT, "data", ".expenses-cleared-v2");
-
-function loadExpenses(): any[] {
-  try {
-    if (!fs.existsSync(EXPENSES_DB_PATH)) return [];
-    const raw = fs.readFileSync(EXPENSES_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error("[Expenses DB] Failed to read expenses.json:", error);
-    return [];
-  }
-}
-
-function saveExpenses(expenses: any[]): void {
-  try {
-    fs.mkdirSync(path.dirname(EXPENSES_DB_PATH), { recursive: true });
-    fs.writeFileSync(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
-  } catch (error) {
-    console.error("[Expenses DB] Failed to write expenses.json:", error);
-  }
-}
-
-function migrateExpensesStorageOnce(): void {
-  if (fs.existsSync(EXPENSES_CLEAR_MARKER)) return;
-  saveExpenses([]);
-  try {
-    fs.mkdirSync(path.dirname(EXPENSES_CLEAR_MARKER), { recursive: true });
-    fs.writeFileSync(EXPENSES_CLEAR_MARKER, new Date().toISOString(), "utf-8");
-    console.log("[Expenses] Đã xóa sạch dữ liệu chi phí cũ (migration một lần).");
-  } catch (error) {
-    console.error("[Expenses] Failed to write clear marker:", error);
-  }
-}
-
-migrateExpensesStorageOnce();
 
 function applyBulkProductUpdate(
   product: any,
@@ -15573,115 +15530,32 @@ async function startServer() {
   /** DB chưa sẵn sàng → trả 503 NGAY (sync, không await/chờ). Auth/health/oauth/ship-order vẫn chạy. */
   app.use(dbReadyMiddleware);
 
-  app.post("/api/login", (req, res) => {
-    const { username, password } = req.body;
-    const expectedUsername = process.env.ADMIN_USERNAME || "admin";
-    const expectedPassword = process.env.ADMIN_PASSWORD || "password123";
-    if (username === expectedUsername && password === expectedPassword) {
-      const token = signAdminToken(username);
-      return res.json({ token, username });
-    } else {
-      return res.status(401).json({ error: "T\xEAn \u0111\u0103ng nh\u1EADp ho\u1EB7c m\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c." });
-    }
+  /** Phase 1 MVC — Auth / Health / Config / Debug (inject Shopee deps cho /api/health). */
+  initHealthController({
+    ensureDataDirs,
+    listShopeeOAuthShopIds,
+    loadLastOAuthAudit,
+    tokensPath: SHOPEE_TOKENS_PATH,
+    appRoot: APP_ROOT,
+    appBaseUrl: APP_BASE_URL,
+    shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
+    shopeeWebhookUrl: SHOPEE_WEBHOOK_URL,
   });
 
-  app.get("/api/auth/verify", authMiddleware, async (req: any, res) => {
-    res.json({ valid: true, username: req.user.username });
-  });
+  app.post("/api/login", login);
+  app.get("/api/auth/verify", authMiddleware, verifyAuth);
+  app.use("/api", authRoutes);
 
   /** MVC — đăng ký tường minh (không phụ thuộc app.use router). */
   app.post("/api/scan/save", authMiddleware, saveScanOrders);
   app.get("/api/scan/don-hoan-huy", authMiddleware, listDonHoanHuy);
   app.use("/api/scan", authMiddleware, scanRoutes);
 
-  app.get("/api/config/public", (_req, res) => {
-    res.json({
-      appUrl: APP_BASE_URL,
-      apiBaseUrl: APP_BASE_URL,
-      shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
-      shopeeWebhookUrl: SHOPEE_WEBHOOK_URL,
-    });
-  });
-
-  // Debug ingest same-origin (HTTPS production không gọi được http://127.0.0.1).
-  app.post("/api/debug/client-log", authMiddleware, (req: any, res) => {
-    try {
-      ensureDataDirs();
-      const logPath = path.join(APP_ROOT, "data", "debug-556dce.ndjson");
-      const payload = {
-        sessionId: "556dce",
-        runId: req.body?.runId || "post-fix",
-        hypothesisId: req.body?.hypothesisId || null,
-        location: req.body?.location || "client",
-        message: req.body?.message || "",
-        data: req.body?.data || {},
-        timestamp: Date.now(),
-      };
-      fs.appendFileSync(logPath, `${JSON.stringify(payload)}\n`, "utf-8");
-      return res.status(200).json({ ok: true });
-    } catch (error: unknown) {
-      return res.status(500).json({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-
-  app.get("/api/debug/client-log", authMiddleware, (_req, res) => {
-    try {
-      const logPath = path.join(APP_ROOT, "data", "debug-556dce.ndjson");
-      if (!fs.existsSync(logPath)) return res.json({ ok: true, lines: [] });
-      const lines = fs
-        .readFileSync(logPath, "utf-8")
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .slice(-80)
-        .map((line) => {
-          try {
-            return JSON.parse(line);
-          } catch {
-            return { raw: line };
-          }
-        });
-      return res.json({ ok: true, lines });
-    } catch (error: unknown) {
-      return res.status(500).json({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-
-  app.get("/api/health", (_req, res) => {
-    const shopIds = listShopeeOAuthShopIds();
-    let dataDirWritable = false;
-    try {
-      ensureDataDirs();
-      fs.accessSync(path.join(APP_ROOT, "data"), fs.constants.W_OK);
-      dataDirWritable = true;
-    } catch {
-      dataDirWritable = false;
-    }
-    res.status(200).json({
-      ok: true,
-      service: "cpanel-backend",
-      host: APP_BASE_URL,
-      appRoot: APP_ROOT,
-      tokensPath: SHOPEE_TOKENS_PATH,
-      tokensFileExists: fs.existsSync(SHOPEE_TOKENS_PATH),
-      dataDirWritable,
-      shopeeOAuthShopIds: shopIds,
-      lastOAuth: loadLastOAuthAudit(),
-      oauthHint:
-        shopIds.length > 0
-          ? "Vào Cài đặt → shop Shopee → bấm OAuth (shop_id phải khớp). Sau OAuth kiểm tra lastOAuth.success=true."
-          : "Chưa có shop OAuth — bấm nút OAuth trong Cài đặt.",
-      checkedAt: new Date().toISOString(),
-      routes: {
-        mappingProducts: true,
-      },
-    });
-  });
+  app.get("/api/config/public", getPublicConfig);
+  app.post("/api/debug/client-log", authMiddleware, postClientLog);
+  app.get("/api/debug/client-log", authMiddleware, getClientLog);
+  app.get("/api/health", getHealth);
+  app.use("/api", healthRoutes);
 
   // ─── Mapping products — ĐẶT SỚM, TRƯỚC static / SPA catch-all ───
   const handleMappingProductsGet = async (_req: any, res: any) => {
@@ -17137,80 +17011,13 @@ async function startServer() {
     }
   });
 
-  // --- Suppliers API (data/suppliers.json) ---
-  app.get("/api/suppliers", authMiddleware, async (_req, res) => {
-    return res.json(loadSuppliers());
-  });
-
-  app.post("/api/suppliers", authMiddleware, async (req, res) => {
-    const body = req.body || {};
-    if (!body.name?.trim() || !body.supplierCode?.trim()) {
-      return res.status(400).json({ error: "name_and_supplierCode_required" });
-    }
-    const suppliers = loadSuppliers();
-    const code = String(body.supplierCode).trim().toUpperCase();
-    if (suppliers.some((s) => s.supplierCode === code)) {
-      return res.status(400).json({ error: "supplier_code_duplicate" });
-    }
-    const supplier = normalizeSupplier({
-      id: `sup-${Date.now()}`,
-      name: body.name,
-      supplierCode: code,
-      totalOrderValue: 0,
-      totalPaid: 0,
-      totalDebt: 0,
-      status: body.status || "active",
-    });
-    suppliers.unshift(supplier);
-    saveSuppliers(suppliers);
-    return res.status(201).json({ supplier, suppliers });
-  });
-
-  app.put("/api/suppliers/:id", authMiddleware, async (req, res) => {
-    const suppliers = loadSuppliers();
-    const index = suppliers.findIndex((s) => s.id === req.params.id);
-    if (index === -1) {
-      return res.status(404).json({ error: "supplier_not_found" });
-    }
-    const body = req.body || {};
-    const code = body.supplierCode
-      ? String(body.supplierCode).trim().toUpperCase()
-      : suppliers[index].supplierCode;
-    if (
-      suppliers.some((s, i) => i !== index && s.supplierCode === code)
-    ) {
-      return res.status(400).json({ error: "supplier_code_duplicate" });
-    }
-    const updated = normalizeSupplier({
-      ...suppliers[index],
-      ...body,
-      id: suppliers[index].id,
-      supplierCode: code,
-    });
-    suppliers[index] = updated;
-    saveSuppliers(suppliers);
-    return res.json({ supplier: updated, suppliers });
-  });
-
-  app.delete("/api/suppliers/:id", authMiddleware, async (req, res) => {
-    const suppliers = loadSuppliers();
-    const target = suppliers.find((s) => s.id === req.params.id);
-    if (!target) {
-      return res.status(404).json({ error: "supplier_not_found" });
-    }
-    if (target.totalDebt > 0) {
-      return res.status(400).json({ error: "supplier_has_debt" });
-    }
-    const next = suppliers.filter((s) => s.id !== req.params.id);
-    saveSuppliers(next);
-    return res.json({ deleted: req.params.id, suppliers: next });
-  });
-
-  app.post("/api/suppliers/clear-all", authMiddleware, async (_req, res) => {
-    saveSuppliers([]);
-    console.log("[Suppliers] Đã xóa sạch toàn bộ dữ liệu nhà cung cấp.");
-    return res.json({ success: true, cleared: true, suppliers: [] });
-  });
+  // --- Suppliers API (data/suppliers.json) — Phase 1 MVC ---
+  app.get("/api/suppliers", authMiddleware, listSuppliers);
+  app.post("/api/suppliers", authMiddleware, createSupplier);
+  app.put("/api/suppliers/:id", authMiddleware, updateSupplier);
+  app.delete("/api/suppliers/:id", authMiddleware, deleteSupplier);
+  app.post("/api/suppliers/clear-all", authMiddleware, clearAllSuppliers);
+  app.use("/api/suppliers", authMiddleware, suppliersRoutes);
 
   // --- Imports API (data/imports.json + cập nhật tồn/giá Mongo atomic) ---
   app.get("/api/imports", authMiddleware, async (_req, res) => {
@@ -17385,45 +17192,12 @@ async function startServer() {
     return res.json({ success: true, cleared: true, imports: [] });
   });
 
-  // --- Expenses API (data/expenses.json) ---
-  app.get("/api/expenses", authMiddleware, async (_req, res) => {
-    return res.json(loadExpenses());
-  });
-
-  app.post("/api/expenses", authMiddleware, async (req, res) => {
-    const body = req.body || {};
-    if (!body.title?.trim() || !body.amount || !body.category || !body.date) {
-      return res.status(400).json({ error: "expense_fields_required" });
-    }
-    const expenses = loadExpenses();
-    const entry = {
-      id: body.id || `exp-${Date.now()}`,
-      title: String(body.title).trim(),
-      amount: Math.max(0, Math.round(Number(body.amount))),
-      category: String(body.category),
-      date: String(body.date),
-      notes: body.notes ? String(body.notes) : undefined,
-    };
-    expenses.unshift(entry);
-    saveExpenses(expenses);
-    return res.status(201).json({ expense: entry, expenses });
-  });
-
-  app.delete("/api/expenses/:id", authMiddleware, async (req, res) => {
-    const expenses = loadExpenses();
-    const next = expenses.filter((e: any) => e.id !== req.params.id);
-    if (next.length === expenses.length) {
-      return res.status(404).json({ error: "expense_not_found" });
-    }
-    saveExpenses(next);
-    return res.json({ deleted: req.params.id, expenses: next });
-  });
-
-  app.post("/api/expenses/clear-all", authMiddleware, async (_req, res) => {
-    saveExpenses([]);
-    console.log("[Expenses] Đã xóa sạch toàn bộ chi phí doanh nghiệp.");
-    return res.json({ success: true, cleared: true, expenses: [] });
-  });
+  // --- Expenses API (data/expenses.json) — Phase 1 MVC ---
+  app.get("/api/expenses", authMiddleware, listExpenses);
+  app.post("/api/expenses", authMiddleware, createExpense);
+  app.delete("/api/expenses/:id", authMiddleware, deleteExpense);
+  app.post("/api/expenses/clear-all", authMiddleware, clearAllExpenses);
+  app.use("/api/expenses", authMiddleware, expensesRoutes);
 
   // --- Dashboard API ---
   // CHỈ đọc MongoDB — TUYỆT ĐỐI không gọi Shopee API / fetch / axios / hàm Tracking ở đây,
@@ -19487,72 +19261,11 @@ async function startServer() {
     }
   });
 
-  const VN_ADDRESS_API = "https://provinces.open-api.vn/api";
-  let vnProvincesCache: any[] | null = null;
-  const vnDistrictsCache = new Map<number, any[]>();
-  const vnWardsCache = new Map<number, any[]>();
-
-  const fetchVnJson = async (url: string) => {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error(`VN address API ${res.status}`);
-    return res.json();
-  };
-
-  app.get("/api/vietnam-address/provinces", authMiddleware, async (_req, res) => {
-    try {
-      if (!vnProvincesCache) {
-        vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
-      }
-      const list = (vnProvincesCache || []).map((p: any) => ({
-        name: p.name,
-        code: p.code,
-      }));
-      return res.json(list);
-    } catch (error: any) {
-      console.error("[VN Address] provinces:", error);
-      return res.status(502).json({ error: "Không tải được danh sách Tỉnh/Thành" });
-    }
-  });
-
-  app.get("/api/vietnam-address/districts/:provinceCode", authMiddleware, async (req, res) => {
-    try {
-      const provinceCode = Number(req.params.provinceCode);
-      if (!provinceCode) return res.json([]);
-
-      if (!vnDistrictsCache.has(provinceCode)) {
-        const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${provinceCode}?depth=2`);
-        const districts = Array.isArray(data?.districts) ? data.districts : [];
-        vnDistrictsCache.set(
-          provinceCode,
-          districts.map((d: any) => ({ name: d.name, code: d.code }))
-        );
-      }
-      return res.json(vnDistrictsCache.get(provinceCode) || []);
-    } catch (error: any) {
-      console.error("[VN Address] districts:", error);
-      return res.status(502).json({ error: "Không tải được danh sách Quận/Huyện" });
-    }
-  });
-
-  app.get("/api/vietnam-address/wards/:districtCode", authMiddleware, async (req, res) => {
-    try {
-      const districtCode = Number(req.params.districtCode);
-      if (!districtCode) return res.json([]);
-
-      if (!vnWardsCache.has(districtCode)) {
-        const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${districtCode}?depth=2`);
-        const wards = Array.isArray(data?.wards) ? data.wards : [];
-        vnWardsCache.set(
-          districtCode,
-          wards.map((w: any) => ({ name: w.name, code: w.code }))
-        );
-      }
-      return res.json(vnWardsCache.get(districtCode) || []);
-    } catch (error: any) {
-      console.error("[VN Address] wards:", error);
-      return res.status(502).json({ error: "Không tải được danh sách Phường/Xã" });
-    }
-  });
+  // --- Vietnam Address API — Phase 1 MVC ---
+  app.get("/api/vietnam-address/provinces", authMiddleware, getProvinces);
+  app.get("/api/vietnam-address/districts/:provinceCode", authMiddleware, getDistricts);
+  app.get("/api/vietnam-address/wards/:districtCode", authMiddleware, getWards);
+  app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
 
   const buildCarrierLogisticsPayload = (
     carrier: string,
