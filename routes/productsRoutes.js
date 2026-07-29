@@ -13,11 +13,15 @@ import {
   bulkUpdateProducts,
   bulkChannelSync,
 } from "../controllers/productsController.js";
+import { previewItemVariants } from "../controllers/shopeeProductsController.js";
 
 const router = Router();
 
 router.get("/search", searchProducts);
 router.post("/sync-shopee", handleProductSyncShopee);
+// Alias ổn định — ĐẶT TRƯỚC route /:id/*
+router.post("/shopee-item-preview", previewItemVariants);
+router.get("/shopee-item-preview", previewItemVariants);
 router.post("/:id/sync-shopee", handleProductSyncShopee);
 router.put("/replace", replaceProducts);
 router.post("/inventory-balance", inventoryBalance);

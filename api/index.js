@@ -15,6 +15,7 @@ import { handleMappingSkuIndex } from '../_lib/handlers/mappingSkuIndex.js';
 import { handleMappingBulkAutoLink } from '../_lib/handlers/mappingBulkAutoLink.js';
 import { handleProductSyncShopee } from '../_lib/handlers/productSyncShopee.js';
 import { handleShopeeProductsSync } from '../_lib/handlers/shopeeProductsSync.js';
+import { handleShopeeItemPreview } from '../_lib/handlers/shopeeItemPreview.js';
 import { handleProductsSearch } from '../_lib/handlers/productsSearch.js';
 import { handleScanBulkUpdate } from '../_lib/handlers/scanBulkUpdate.js';
 import { handleScanSave, handleScanDonHoanHuy } from '../_lib/handlers/scanSave.js';
@@ -63,6 +64,8 @@ const LOCAL_ROUTES = {
   'products/sync-shopee': handleProductSyncShopee,
   // Khởi tạo kho — proxy JSON-safe (Passenger HTML 500 → lỗi rõ, không crash FE).
   'shopee/products/sync': handleShopeeProductsSync,
+  'shopee/products/item-preview': handleShopeeItemPreview,
+  'products/shopee-item-preview': handleShopeeItemPreview,
   // Tìm SP nhập hàng — local trên Vercel (tránh cPanel cũ 404 / HTML → FE fallback local).
   'products/search': handleProductsSearch,
   // cPanel cũ trả 404 cho route bulk quét — xử lý local trên Vercel.

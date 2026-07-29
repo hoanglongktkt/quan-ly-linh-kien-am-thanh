@@ -1,14 +1,9 @@
-Exception: Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'F:\web ban hang\web goc\dist\devServer.ts' imported from F:\web ban hang\web goc\dist\server.cjs
-Did you mean to import "../devServer.ts"?
-    at finalizeResolution (node:internal/modules/esm/resolve:271:11)
-    at moduleResolve (node:internal/modules/esm/resolve:865:10)
-    at defaultResolve (node:internal/modules/esm/resolve:992:11)
-    at #cachedDefaultResolve (node:internal/modules/esm/loader:701:20)
-    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:721:38)
-    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:759:56)
-    at #resolve (node:internal/modules/esm/loader:683:17)
-    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:603:35)
-    at node:internal/modules/esm/loader:632:32
-    at TracingChannel.tracePromise (node:diagnostics_channel:362:14)
+Exception: Error: listen EADDRINUSE: address already in use :::3099
+    at Server.setupListenHandle [as _listen2] (node:net:2009:16)
+    at listenInCluster (node:net:2066:12)
+    at Server.listen (node:net:2171:7)
+    at app.listen (F:\web ban hang\web goc\node_modules\express\lib\application.js:635:24)
+    at startListening (F:\web ban hang\web goc\server.ts:15350:11)
+    at startServer (F:\web ban hang\web goc\server.ts:15356:3)
 ---
-2026-07-29T06:39:11.915Z
+2026-07-29T15:42:12.285Z

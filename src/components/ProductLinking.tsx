@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Product, SyncLog, ConnectedShop } from '../types';
-import { parseJsonResponse, apiFetch } from '../utils/apiClient';
+import { parseJsonResponse, apiFetch, PRODUCTION_API_BASE } from '../utils/apiClient';
 import { 
   Check, 
   AlertCircle, 
@@ -842,18 +842,53 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     try {
       const token = localStorage.getItem('admin_token');
       const shopId = resolveInitShopId(item);
-      const res = await apiFetch('/api/shopee/products/item-preview', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ itemId, shopId, channelId: item.channelId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.success === false) {
-        throw new Error(data?.message || data?.error || 'Không lấy được dữ liệu Shopee');
+      const payload = { itemId, shopId, channelId: item.channelId, shopeeItemId: itemId };
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+      // Nhiều đường dẫn: shopee route → products alias → gọi thẳng API cPanel (bypass proxy cũ).
+      const endpoints = [
+        '/api/shopee/products/item-preview',
+        '/api/products/shopee-item-preview',
+        `${PRODUCTION_API_BASE}/api/shopee/products/item-preview`,
+        `${PRODUCTION_API_BASE}/api/products/shopee-item-preview`,
+      ];
+
+      let data: any = null;
+      let lastMessage = '';
+      for (const endpoint of endpoints) {
+        try {
+          const res = await apiFetch(endpoint, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+          });
+          const json = await res.json().catch(() => ({}));
+          const msg = String(json?.message || json?.error || '');
+          if (res.status === 404 || /không tồn tại|not_found|not found/i.test(msg)) {
+            lastMessage = msg || `HTTP ${res.status}`;
+            continue;
+          }
+          if (!res.ok || json?.success === false) {
+            throw new Error(msg || 'Không lấy được dữ liệu Shopee');
+          }
+          data = json;
+          break;
+        } catch (inner: unknown) {
+          const message = inner instanceof Error ? inner.message : String(inner);
+          if (/không tồn tại|not_found|not found|Failed to fetch|NetworkError/i.test(message)) {
+            lastMessage = message;
+            continue;
+          }
+          throw inner;
+        }
       }
+
+      if (!data) {
+        throw new Error(lastMessage || 'Không tải được chi tiết Shopee');
+      }
+
       const rows = mapShopeePreviewToInitRows(data?.variants);
       if (rows.length > 0) {
         setInitVariants(rows);

@@ -12776,6 +12776,8 @@ async function startServer() {
   // Mount tường minh — tránh 404 khi router interop/MVC miss sau refactor.
   app.post("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
   app.get("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
+  app.post("/api/products/shopee-item-preview", authMiddleware, previewItemVariants);
+  app.get("/api/products/shopee-item-preview", authMiddleware, previewItemVariants);
   app.post("/api/shopee/products/sync-item-variants", authMiddleware, syncItemVariants);
   app.post("/api/shopee/products/sync", authMiddleware, syncProducts);
 
