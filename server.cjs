@@ -105129,7 +105129,13 @@ async function processShopeeWebhookPayload(body) {
 
 // server.ts
 function asRouter(mod) {
-  return mod?.default?.use ? mod.default : mod;
+  if (mod && typeof mod.use === "function") return mod;
+  if (mod?.default && typeof mod.default.use === "function") return mod.default;
+  if (mod?.router && typeof mod.router.use === "function") return mod.router;
+  if (mod?.default?.default && typeof mod.default.default.use === "function") {
+    return mod.default.default;
+  }
+  return mod;
 }
 var scanRoutes = asRouter(scanRoutes_default);
 var authRoutes = asRouter(authRoutes_default);
@@ -113973,6 +113979,10 @@ async function startServer() {
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
   app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
+  app.post("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
+  app.get("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
+  app.post("/api/shopee/products/sync-item-variants", authMiddleware, syncItemVariants);
+  app.post("/api/shopee/products/sync", authMiddleware, syncProducts);
   async function prewarmShopeeAddressCacheForShip(toShip, shipMethod) {
     if (shipMethod !== "pickup") return;
     const shopIds = [

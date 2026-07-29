@@ -304,6 +304,7 @@ import {
   initShopeeProductsController,
   syncProducts,
   syncItemVariants,
+  previewItemVariants,
 } from "./controllers/shopeeProductsController.js";
 import {
   initShopeeShipController,
@@ -326,9 +327,15 @@ import {
 } from "./controllers/shopeeWebhookController.js";
 
 import { resolveAppRoot, resolveAppBaseUrl } from "./utils/appPaths.js";
-/** ESM/CJS interop — luôn lấy Router thật. */
+/** ESM/CJS interop — luôn lấy Router thật (tránh default double-wrap). */
 function asRouter(mod: any) {
-  return mod?.default?.use ? mod.default : mod;
+  if (mod && typeof mod.use === "function") return mod;
+  if (mod?.default && typeof mod.default.use === "function") return mod.default;
+  if (mod?.router && typeof mod.router.use === "function") return mod.router;
+  if (mod?.default?.default && typeof mod.default.default.use === "function") {
+    return mod.default.default;
+  }
+  return mod;
 }
 const scanRoutes = asRouter(scanRoutesImport);
 const authRoutes = asRouter(authRoutesImport);
@@ -12766,6 +12773,11 @@ async function startServer() {
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
   app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
+  // Mount tường minh — tránh 404 khi router interop/MVC miss sau refactor.
+  app.post("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
+  app.get("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
+  app.post("/api/shopee/products/sync-item-variants", authMiddleware, syncItemVariants);
+  app.post("/api/shopee/products/sync", authMiddleware, syncProducts);
 
   // --- Shopee logistics: "Chuẩn bị hàng" (ship_order) ------------------------
 

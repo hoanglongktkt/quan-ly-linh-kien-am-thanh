@@ -858,6 +858,9 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
       if (rows.length > 0) {
         setInitVariants(rows);
         if (data?.title) setInitTitle(String(data.title));
+        setInitError(null);
+      } else {
+        setInitError('Shopee không trả về phân loại/giá/tồn kho.');
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
