@@ -85,6 +85,8 @@ import {
   finishSyncJob,
   getSyncJob,
   loadOrderEvents,
+  purgeMongoTempCollections,
+  ensureRetentionTtlIndexes,
   mirrorTopLevelTrackingIntoData,
   getDashboardStatsFromStore,
   getLowStockProductsFromStore,
@@ -11237,6 +11239,36 @@ function scheduleClosedOrdersRetentionCleanup(): void {
   console.log("[Orders Retention] Scheduled: hủy/hoàn >14d, hoàn tất/ĐVVC >30d, mỗi 24h.");
 }
 
+/** Dọn order_events + sync_jobs (Atlas Free) — chạy ngay sau boot + mỗi 24h. */
+let mongoTempCleanupRunning = false;
+let mongoTempCleanupTimer: ReturnType<typeof setInterval> | undefined;
+
+function scheduleMongoTempCollectionsCleanup(): void {
+  if (mongoTempCleanupTimer) return;
+  const run = () => {
+    if (mongoTempCleanupRunning || !isMongoReady()) return;
+    mongoTempCleanupRunning = true;
+    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14, ensureTtl: true })
+      .then((r) => {
+        console.log(
+          `[Mongo Temp Cleanup] order_events ${r.orderEventsBefore}→${r.orderEventsAfter} (−${r.orderEventsDeleted}),` +
+            ` sync_jobs ${r.syncJobsBefore}→${r.syncJobsAfter} (−${r.syncJobsDeleted})`,
+        );
+      })
+      .catch((err) => console.warn("[Mongo Temp Cleanup] schedule error:", err?.message || err))
+      .finally(() => {
+        mongoTempCleanupRunning = false;
+      });
+  };
+  // Chạy sớm hơn retention đơn (~45s) để giải phóng dung lượng Atlas ngay.
+  setTimeout(run, 45_000);
+  mongoTempCleanupTimer = setInterval(run, 24 * 60 * 60 * 1000);
+  if (typeof (mongoTempCleanupTimer as any).unref === "function") {
+    (mongoTempCleanupTimer as any).unref();
+  }
+  console.log("[Mongo Temp Cleanup] Scheduled: order_events/sync_jobs >14d + TTL 14d, mỗi 24h.");
+}
+
 function isOrderAlreadyScanProcessed(order: any): boolean {
   const local = resolveOrderLocalStatus(order);
   if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") return true;
@@ -18146,6 +18178,64 @@ async function startServer() {
     }
   });
 
+  /**
+   * Dọn log tạm Mongo (Atlas Free 512MB):
+   * - order_events cũ hơn N ngày (mặc định 14)
+   * - sync_jobs đã xong cũ hơn N ngày
+   * - đảm bảo TTL Index 14 ngày (1.209.600s) trên occurred_at / finished_at
+   * Body: { order_event_days?: number, sync_job_days?: number, ensure_ttl?: boolean }
+   */
+  app.post("/api/mongo/cleanup-temp", authMiddleware, async (req, res) => {
+    try {
+      if (!isMongoReady()) {
+        return res.status(503).json({
+          success: false,
+          error: "mongodb_not_ready",
+          message: "MongoDB chưa sẵn sàng.",
+        });
+      }
+      const eventDays = Number(req.body?.order_event_days ?? req.body?.orderEventDays ?? 14);
+      const jobDays = Number(req.body?.sync_job_days ?? req.body?.syncJobDays ?? 14);
+      const ensureTtl = req.body?.ensure_ttl !== false && req.body?.ensureTtl !== false;
+      const result = await purgeMongoTempCollections({
+        orderEventDays: Number.isFinite(eventDays) && eventDays > 0 ? eventDays : 14,
+        syncJobDays: Number.isFinite(jobDays) && jobDays > 0 ? jobDays : 14,
+        ensureTtl,
+      });
+      return res.json({
+        success: true,
+        ...result,
+        message:
+          result.orderEventsDeleted > 0 || result.syncJobsDeleted > 0
+            ? `Đã xóa ${result.orderEventsDeleted} order_events + ${result.syncJobsDeleted} sync_jobs.`
+            : "Không còn bản ghi tạm quá hạn để xóa (TTL vẫn giữ 14 ngày).",
+      });
+    } catch (error: any) {
+      console.error("[Mongo Temp Cleanup] API error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "mongo_temp_cleanup_failed",
+        message: error?.message || "Không thể dọn order_events/sync_jobs.",
+      });
+    }
+  });
+
+  /** Chỉ tạo/sửa TTL Index 14 ngày — không xóa hàng loạt. */
+  app.post("/api/mongo/ensure-ttl", authMiddleware, async (_req, res) => {
+    try {
+      if (!isMongoReady()) {
+        return res.status(503).json({ success: false, error: "mongodb_not_ready" });
+      }
+      const ttl = await ensureRetentionTtlIndexes();
+      return res.json({ success: true, ...ttl });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "ensure_ttl_failed",
+      });
+    }
+  });
+
   /** Dọn PDF vận đơn hết hạn trên đĩa (không lưu Mongo). */
   app.post("/api/orders/cleanup-label-pdfs", authMiddleware, async (_req, res) => {
     try {
@@ -23365,6 +23455,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
         scheduleClosedOrdersRetentionCleanup();
+        scheduleMongoTempCollectionsCleanup();
       }
       // KHÔNG tự xóa đơn ĐVVC khi boot — chỉ qua POST /api/orders/cleanup-handed-over.
       console.log(`[MongoDB] connectDB xong — ready=${isMongoReady()} uri=${getMongoUriMasked()}`);

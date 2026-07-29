@@ -117,13 +117,14 @@ type SyncJobDoc = {
   requested_by?: string | null;
 };
 
+/** TTL mặc định 14 ngày (1.209.600 giây) — Atlas Free 512MB dễ đầy vì order_events. */
 const ORDER_EVENT_TTL_SECONDS = Math.max(
   24 * 60 * 60,
-  Number(process.env.ORDER_EVENT_TTL_SECONDS || 60 * 24 * 60 * 60),
+  Number(process.env.ORDER_EVENT_TTL_SECONDS || 14 * 24 * 60 * 60),
 );
 const SYNC_JOB_TTL_SECONDS = Math.max(
   24 * 60 * 60,
-  Number(process.env.SYNC_JOB_TTL_SECONDS || 60 * 24 * 60 * 60),
+  Number(process.env.SYNC_JOB_TTL_SECONDS || 14 * 24 * 60 * 60),
 );
 
 const ProductSchema = new Schema<ProductDoc>(
@@ -492,12 +493,27 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
     } catch (idxErr) {
       console.warn("[MongoDB] syncIndexes orders:", idxErr);
     }
-    // TTL index đã được tạo khi triển khai trước. Không gọi syncIndexes() ở mỗi lần
-    // boot vì MongoDB không cho thay đổi expireAfterSeconds của index cùng tên bằng
-    // lệnh create; lỗi đó chỉ làm nhiễu log và dễ bị hiểu nhầm là Mongo không khởi tạo.
-    console.log(
-      `[MongoDB] Retention indexes giữ nguyên (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`,
-    );
+
+    // TTL + dọn ngay order_events/sync_jobs (Atlas Free 512MB — không chờ TTL monitor).
+    try {
+      const ttl = await ensureRetentionTtlIndexes();
+      console.log(
+        `[MongoDB] TTL ready order_events=${ttl.orderEventsTtlSeconds}s sync_jobs=${ttl.syncJobsTtlSeconds}s` +
+          ` (recreated=${ttl.recreated.join(",") || "none"})`,
+      );
+    } catch (ttlErr: any) {
+      console.warn("[MongoDB] ensureRetentionTtlIndexes:", ttlErr?.message || ttlErr);
+    }
+    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14 })
+      .then((r) => {
+        console.log(
+          `[MongoDB] Temp cleanup boot: order_events_deleted=${r.orderEventsDeleted}` +
+            ` sync_jobs_deleted=${r.syncJobsDeleted} before_events=${r.orderEventsBefore}`,
+        );
+      })
+      .catch((err: any) =>
+        console.warn("[MongoDB] Temp cleanup boot failed:", err?.message || err),
+      );
 
     // One-time migrate từ JSON local nếu Atlas trống (chỉ khi Kho Gốc vẫn dùng Mongo).
     if (!isProductsDiskMode() && productCount === 0 && listingCount === 0) {
@@ -3017,6 +3033,190 @@ export async function loadOrderEvents(orderSn: string, limit = 50): Promise<any[
     .sort({ occurred_at: -1 })
     .limit(Math.max(1, Math.min(200, limit)))
     .lean();
+}
+
+/**
+ * Đảm bảo TTL Index trên order_events.occurred_at và sync_jobs.finished_at.
+ * Nếu index cũ lệch expireAfterSeconds → drop + tạo lại (Mongo không cho sửa TTL tại chỗ).
+ */
+export async function ensureRetentionTtlIndexes(): Promise<{
+  orderEventsTtlSeconds: number;
+  syncJobsTtlSeconds: number;
+  recreated: string[];
+}> {
+  requireMongo();
+  const recreated: string[] = [];
+
+  const ensureTtl = async (
+    model: Model<any>,
+    indexName: string,
+    key: Record<string, 1 | -1>,
+    expireAfterSeconds: number,
+  ) => {
+    const coll = model.collection;
+    const existing = await coll.indexes();
+    const hit = existing.find((idx: any) => idx?.name === indexName);
+    const currentTtl = hit?.expireAfterSeconds;
+    if (hit && Number(currentTtl) === Number(expireAfterSeconds)) {
+      return;
+    }
+    if (hit) {
+      try {
+        await coll.dropIndex(indexName);
+        console.log(
+          `[MongoDB] Dropped TTL index ${indexName} (old expireAfterSeconds=${currentTtl})`,
+        );
+      } catch (dropErr: any) {
+        // Index không tồn tại / đang build — thử tiếp create.
+        console.warn(`[MongoDB] dropIndex ${indexName}:`, dropErr?.message || dropErr);
+      }
+    }
+    await coll.createIndex(key, {
+      name: indexName,
+      expireAfterSeconds,
+      background: true,
+    } as any);
+    recreated.push(indexName);
+    console.log(
+      `[MongoDB] Created TTL index ${indexName} expireAfterSeconds=${expireAfterSeconds}`,
+    );
+  };
+
+  await ensureTtl(
+    OrderEventModel,
+    "order_events_ttl",
+    { occurred_at: 1 },
+    ORDER_EVENT_TTL_SECONDS,
+  );
+  await ensureTtl(
+    SyncJobModel,
+    "sync_jobs_ttl",
+    { finished_at: 1 },
+    SYNC_JOB_TTL_SECONDS,
+  );
+
+  return {
+    orderEventsTtlSeconds: ORDER_EVENT_TTL_SECONDS,
+    syncJobsTtlSeconds: SYNC_JOB_TTL_SECONDS,
+    recreated,
+  };
+}
+
+/** Xóa order_events cũ hơn N ngày (mặc định 14) — batch để tránh timeout Atlas. */
+export async function purgeOrderEventsOlderThan(
+  days = 14,
+  opts?: { batchSize?: number; maxBatches?: number },
+): Promise<{ deleted: number; cutoffIso: string; before: number; after: number }> {
+  requireMongo();
+  const safeDays = Number.isFinite(days) && days > 0 ? days : 14;
+  const batchSize = Math.max(500, Math.min(10_000, Math.floor(opts?.batchSize || 5000)));
+  const maxBatches = Math.max(1, Math.min(500, Math.floor(opts?.maxBatches || 200)));
+  const cutoff = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
+  const before = await OrderEventModel.countDocuments().catch(() => 0);
+
+  let deleted = 0;
+  for (let i = 0; i < maxBatches; i += 1) {
+    const rows = await OrderEventModel.find({ occurred_at: { $lt: cutoff } })
+      .select({ _id: 1 })
+      .limit(batchSize)
+      .lean();
+    if (!rows.length) break;
+    const ids = rows.map((r: any) => r._id);
+    const result = await OrderEventModel.deleteMany({ _id: { $in: ids } });
+    const n = Number(result.deletedCount || 0);
+    deleted += n;
+    if (n < batchSize) break;
+  }
+
+  const after = await OrderEventModel.countDocuments().catch(() => Math.max(0, before - deleted));
+  console.log(
+    `[MongoDB] purgeOrderEventsOlderThan days=${safeDays} deleted=${deleted} before=${before} after=${after} cutoff=${cutoff.toISOString()}`,
+  );
+  return { deleted, cutoffIso: cutoff.toISOString(), before, after };
+}
+
+/** Xóa sync_jobs đã kết thúc cũ hơn N ngày (finished_at). */
+export async function purgeSyncJobsOlderThan(
+  days = 14,
+  opts?: { batchSize?: number; maxBatches?: number },
+): Promise<{ deleted: number; cutoffIso: string; before: number; after: number }> {
+  requireMongo();
+  const safeDays = Number.isFinite(days) && days > 0 ? days : 14;
+  const batchSize = Math.max(500, Math.min(10_000, Math.floor(opts?.batchSize || 5000)));
+  const maxBatches = Math.max(1, Math.min(200, Math.floor(opts?.maxBatches || 100)));
+  const cutoff = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1000);
+  const before = await SyncJobModel.countDocuments().catch(() => 0);
+
+  let deleted = 0;
+  for (let i = 0; i < maxBatches; i += 1) {
+    const rows = await SyncJobModel.find({
+      finished_at: { $type: "date", $lt: cutoff },
+      state: { $in: ["succeeded", "failed"] },
+    })
+      .select({ _id: 1 })
+      .limit(batchSize)
+      .lean();
+    if (!rows.length) break;
+    const ids = rows.map((r: any) => r._id);
+    const result = await SyncJobModel.deleteMany({ _id: { $in: ids } });
+    const n = Number(result.deletedCount || 0);
+    deleted += n;
+    if (n < batchSize) break;
+  }
+
+  const after = await SyncJobModel.countDocuments().catch(() => Math.max(0, before - deleted));
+  console.log(
+    `[MongoDB] purgeSyncJobsOlderThan days=${safeDays} deleted=${deleted} before=${before} after=${after}`,
+  );
+  return { deleted, cutoffIso: cutoff.toISOString(), before, after };
+}
+
+/**
+ * Dọn các collection tạm / log trên Atlas Free:
+ * - order_events (log sync) — TTL 14d trên occurred_at
+ * - sync_jobs (job lịch sử) — TTL 14d trên finished_at
+ * products/channel_listings đã chuyển disk; orders giữ nguyên (cleanup riêng).
+ */
+export async function purgeMongoTempCollections(opts?: {
+  orderEventDays?: number;
+  syncJobDays?: number;
+  ensureTtl?: boolean;
+}): Promise<{
+  orderEventsDeleted: number;
+  syncJobsDeleted: number;
+  orderEventsBefore: number;
+  orderEventsAfter: number;
+  syncJobsBefore: number;
+  syncJobsAfter: number;
+  ttl?: Awaited<ReturnType<typeof ensureRetentionTtlIndexes>>;
+  note: string;
+}> {
+  requireMongo();
+  const orderEventDays = opts?.orderEventDays ?? 14;
+  const syncJobDays = opts?.syncJobDays ?? 14;
+  let ttl: Awaited<ReturnType<typeof ensureRetentionTtlIndexes>> | undefined;
+  if (opts?.ensureTtl !== false) {
+    try {
+      ttl = await ensureRetentionTtlIndexes();
+    } catch (err: any) {
+      console.warn("[MongoDB] ensureRetentionTtlIndexes in purge:", err?.message || err);
+    }
+  }
+
+  const events = await purgeOrderEventsOlderThan(orderEventDays);
+  const jobs = await purgeSyncJobsOlderThan(syncJobDays);
+
+  return {
+    orderEventsDeleted: events.deleted,
+    syncJobsDeleted: jobs.deleted,
+    orderEventsBefore: events.before,
+    orderEventsAfter: events.after,
+    syncJobsBefore: jobs.before,
+    syncJobsAfter: jobs.after,
+    ttl,
+    note:
+      "Đã dọn order_events + sync_jobs. Collection chính: orders (giữ), products/channel_listings (ưu tiên disk). TTL Mongo tự xóa tiếp mỗi ~60s.",
+  };
 }
 
 export type DashboardLiteProduct = {
