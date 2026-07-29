@@ -16,6 +16,7 @@ import { handleProductSyncShopee } from '../_lib/handlers/productSyncShopee.js';
 import { handleShopeeProductsSync } from '../_lib/handlers/shopeeProductsSync.js';
 import { handleProductsSearch } from '../_lib/handlers/productsSearch.js';
 import { handleScanBulkUpdate } from '../_lib/handlers/scanBulkUpdate.js';
+import { handleScanSave, handleScanDonHoanHuy } from '../_lib/handlers/scanSave.js';
 import { handleScanBgEnqueue, handleScanBgStatus, handleScanBgAck } from '../_lib/handlers/scanBgQueue.js';
 import { handleHandOverCarrier } from '../_lib/handlers/handOverCarrier.js';
 import { handleCleanupHandedOver } from '../_lib/handlers/cleanupHandedOver.js';
@@ -65,6 +66,8 @@ const LOCAL_ROUTES = {
   'products/search': handleProductsSearch,
   // cPanel cũ trả 404 cho route bulk quét — xử lý local trên Vercel.
   'orders/scan-bulk-update': handleScanBulkUpdate,
+  'scan/save': handleScanSave,
+  'scan/don-hoan-huy': handleScanDonHoanHuy,
   'orders/scan-bg-enqueue': handleScanBgEnqueue,
   'orders/scan-bg-status': handleScanBgStatus,
   'orders/scan-bg-ack': handleScanBgAck,

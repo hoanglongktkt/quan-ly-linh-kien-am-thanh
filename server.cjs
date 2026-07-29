@@ -18908,17 +18908,17 @@ var require_router = __commonJS({
     var toString = Object.prototype.toString;
     var proto = module2.exports = function(options) {
       var opts = options || {};
-      function router(req, res, next) {
-        router.handle(req, res, next);
+      function router2(req, res, next) {
+        router2.handle(req, res, next);
       }
-      setPrototypeOf(router, proto);
-      router.params = {};
-      router._params = [];
-      router.caseSensitive = opts.caseSensitive;
-      router.mergeParams = opts.mergeParams;
-      router.strict = opts.strict;
-      router.stack = [];
-      return router;
+      setPrototypeOf(router2, proto);
+      router2.params = {};
+      router2._params = [];
+      router2.caseSensitive = opts.caseSensitive;
+      router2.mergeParams = opts.mergeParams;
+      router2.strict = opts.strict;
+      router2.stack = [];
+      return router2;
     };
     proto.param = function param(name, fn) {
       if (typeof name === "function") {
@@ -21935,7 +21935,7 @@ var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports2, module2) {
     "use strict";
     var finalhandler = require_finalhandler();
-    var Router = require_router();
+    var Router2 = require_router();
     var methods = require_methods();
     var middleware = require_init();
     var query = require_query();
@@ -22000,7 +22000,7 @@ var require_application = __commonJS({
     };
     app.lazyrouter = function lazyrouter() {
       if (!this._router) {
-        this._router = new Router({
+        this._router = new Router2({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
@@ -22009,17 +22009,17 @@ var require_application = __commonJS({
       }
     };
     app.handle = function handle(req, res, callback) {
-      var router = this._router;
+      var router2 = this._router;
       var done = callback || finalhandler(req, res, {
         env: this.get("env"),
         onerror: logerror.bind(this)
       });
-      if (!router) {
+      if (!router2) {
         debug("no routes defined on app");
         done();
         return;
       }
-      router.handle(req, res, done);
+      router2.handle(req, res, done);
     };
     app.use = function use(fn) {
       var offset = 0;
@@ -22039,15 +22039,15 @@ var require_application = __commonJS({
         throw new TypeError("app.use() requires a middleware function");
       }
       this.lazyrouter();
-      var router = this._router;
+      var router2 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router.use(path6, fn2);
+          return router2.use(path6, fn2);
         }
         debug(".use app under %s", path6);
         fn2.mountpath = path6;
         fn2.parent = this;
-        router.use(path6, function mounted_app(req, res, next) {
+        router2.use(path6, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -23864,7 +23864,7 @@ var require_express = __commonJS({
     var mixin = require_merge_descriptors();
     var proto = require_application();
     var Route = require_route();
-    var Router = require_router();
+    var Router2 = require_router();
     var req = require_request();
     var res = require_response();
     exports2 = module2.exports = createApplication;
@@ -23887,7 +23887,7 @@ var require_express = __commonJS({
     exports2.request = req;
     exports2.response = res;
     exports2.Route = Route;
-    exports2.Router = Router;
+    exports2.Router = Router2;
     exports2.json = bodyParser.json;
     exports2.query = require_query();
     exports2.raw = bodyParser.raw;
@@ -71461,7 +71461,7 @@ var require_jsonwebtoken = __commonJS({
 });
 
 // server.ts
-var import_express2 = __toESM(require_express2(), 1);
+var import_express3 = __toESM(require_express2(), 1);
 var import_path4 = __toESM(require("path"), 1);
 var import_fs5 = __toESM(require("fs"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
@@ -92415,7 +92415,7 @@ function getApiKeyFromEnv() {
 // server.ts
 var import_dotenv = __toESM(require_main(), 1);
 var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
-var import_mongoose2 = __toESM(require("mongoose"), 1);
+var import_mongoose4 = __toESM(require("mongoose"), 1);
 
 // src/webhooks/shopeeWebhookHandler.ts
 var import_express = __toESM(require_express2(), 1);
@@ -92540,11 +92540,11 @@ function createBoundedQueue(processPayload) {
 }
 function createShopeeWebhookRouter(processPayload) {
   const queue = createBoundedQueue(processPayload);
-  const router = import_express.default.Router();
-  router.get("/shopee", (_req, res) => {
+  const router2 = import_express.default.Router();
+  router2.get("/shopee", (_req, res) => {
     res.status(200).type("text/plain").send("success");
   });
-  router.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+  router2.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     const bodyPreview = rawBody.toString("utf8").slice(0, 4e3);
     console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee \u2014 headers:", {
@@ -92608,7 +92608,7 @@ function createShopeeWebhookRouter(processPayload) {
       if (!res.headersSent) return res.status(500).type("text/plain").send("Internal Server Error");
     }
   });
-  return router;
+  return router2;
 }
 
 // src/utils/orderItemVariation.ts
@@ -92991,6 +92991,25 @@ function buildHandedOverWritePatch(now, source = HANDED_OVER_SOURCE.MANUAL_BUTTO
 function applyHandedOverWrite(order, now, source) {
   return { ...order, ...buildHandedOverWritePatch(now, source) };
 }
+function buildDefaultInternalFlagsPatch(now) {
+  const ts = now || (/* @__PURE__ */ new Date()).toISOString();
+  return {
+    is_handed_over: false,
+    local_status: ORDER_LOCAL_STATUS.NONE,
+    localStatus: ORDER_LOCAL_STATUS.NONE,
+    internal_status: ORDER_LOCAL_STATUS.NONE,
+    localStatusAt: ts,
+    local_status_updated_at: ts,
+    isHandedOverToCarrier: false,
+    is_handed_over_to_carrier: false,
+    is_handed_over_to_courier: false,
+    handed_over_source: null,
+    handedOverSource: null
+  };
+}
+function buildClearHandedOverPatch(now) {
+  return buildDefaultInternalFlagsPatch(now);
+}
 function resolveOrderLocalStatus(order) {
   if (order.is_local_return_archived) {
     if (isOrderHandedOverToCarrier(order)) return ORDER_LOCAL_STATUS.HANDED_OVER;
@@ -93277,8 +93296,250 @@ async function setCachedShopeeAddressList(shopId, result) {
   }, ADDRESS_LIST_TTL_SEC);
 }
 
-// src/db/mongoStore.ts
+// routes/scanRoutes.js
+var import_express2 = __toESM(require_express2(), 1);
+
+// models/DonHoanHuy.js
 var import_mongoose = __toESM(require("mongoose"), 1);
+var DonHoanHuySchema = new import_mongoose.default.Schema(
+  {
+    orderSn: {
+      type: String,
+      required: true,
+      index: true,
+      trim: true
+    },
+    status: {
+      type: String,
+      default: "scanned",
+      trim: true
+    },
+    scannedAt: {
+      type: Date,
+      default: Date.now,
+      expires: 1209600
+      // 14 ngày
+    },
+    note: {
+      type: String,
+      default: "",
+      trim: true
+    }
+  },
+  {
+    collection: "don_hoan_huy",
+    versionKey: false,
+    strict: false
+    // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
+  }
+);
+DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
+var DonHoanHuy = import_mongoose.default.models.DonHoanHuy || import_mongoose.default.model("DonHoanHuy", DonHoanHuySchema);
+var DonHoanHuy_default = DonHoanHuy;
+
+// config/db.js
+var import_mongoose2 = __toESM(require("mongoose"), 1);
+function isDBReady() {
+  return import_mongoose2.default.connection.readyState === 1;
+}
+
+// controllers/scanController.js
+function normalizeOrderSn(raw) {
+  return String(raw || "").replace(/^shopee-/i, "").trim();
+}
+function describeDbError(err) {
+  const msg = String(err?.message || err || "");
+  if (/quota|space|storage|over.?space/i.test(msg)) {
+    return "Quota MongoDB \u0111\u1EA7y (Atlas Over space quota). H\xE3y d\u1ECDn d\u1EEF li\u1EC7u ho\u1EB7c n\xE2ng g\xF3i.";
+  }
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEOUT|serverSelection|connect ETIMEDOUT|MongoNetwork/i.test(msg)) {
+    return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI.";
+  }
+  if (/duplicate key|E11000/i.test(msg)) {
+    return "Tr\xF9ng m\xE3 \u0111\u01A1n trong don_hoan_huy (\u0111\xE3 l\u01B0u tr\u01B0\u1EDBc \u0111\xF3).";
+  }
+  return msg || "L\u1ED7i Database kh\xF4ng x\xE1c \u0111\u1ECBnh.";
+}
+async function saveScanOrders(req, res) {
+  try {
+    if (!isDBReady()) {
+      return res.status(500).json({
+        success: false,
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 ki\u1EC3m tra k\u1EBFt n\u1ED1i Atlas."
+      });
+    }
+    const body = req.body || {};
+    const codes = [];
+    const pushCode = (v, status, note) => {
+      const sn = normalizeOrderSn(v);
+      if (!sn) return;
+      codes.push({
+        orderSn: sn,
+        status: status || "scanned",
+        note: note || ""
+      });
+    };
+    if (Array.isArray(body.codes)) {
+      for (const c of body.codes) {
+        if (c && typeof c === "object") {
+          pushCode(c.orderSn || c.code || c.orderId, c.status, c.note);
+        } else {
+          pushCode(c, body.status, body.note);
+        }
+      }
+    }
+    if (Array.isArray(body.orderSns)) {
+      for (const c of body.orderSns) pushCode(c, body.status, body.note);
+    }
+    if (Array.isArray(body.items)) {
+      for (const it of body.items) {
+        const t2 = String(it?.type || it?.status || body.status || "").toLowerCase();
+        const status = t2 === "return" || t2 === "return_received" || t2 === "da_nhan_hoan" ? "return_received" : t2 === "cancelled" || t2 === "cancel" || t2 === "don_huy" ? "cancelled" : it?.status || "scanned";
+        pushCode(it?.orderSn || it?.code || it?.orderId, status, it?.note);
+      }
+    }
+    if (Array.isArray(body.donHuyCodes)) {
+      for (const c of body.donHuyCodes) pushCode(c, "cancelled", "don_huy");
+    }
+    if (Array.isArray(body.daNhanHoanCodes)) {
+      for (const c of body.daNhanHoanCodes) pushCode(c, "return_received", "da_nhan_hoan");
+    }
+    if (typeof body.code === "string" || typeof body.orderSn === "string") {
+      pushCode(body.orderSn || body.code, body.status, body.note);
+    }
+    const bySn = /* @__PURE__ */ new Map();
+    for (const row of codes) bySn.set(row.orderSn, row);
+    const unique = [...bySn.values()];
+    if (!unique.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Thi\u1EBFu m\u1EA3ng m\xE3 \u0111\u01A1n (codes / orderSns / items)."
+      });
+    }
+    const now = /* @__PURE__ */ new Date();
+    const ops = unique.map((row) => ({
+      updateOne: {
+        filter: { orderSn: row.orderSn },
+        update: {
+          $set: {
+            orderSn: row.orderSn,
+            status: row.status,
+            scannedAt: now,
+            note: row.note || "",
+            local_status: row.status === "return_received" ? "RETURN_RECEIVED" : "CANCELLED_STORED",
+            type: row.status === "return_received" ? "return" : "cancelled",
+            source: "api_scan_save"
+          },
+          $setOnInsert: {
+            createdAt: now
+          }
+        },
+        upsert: true
+      }
+    }));
+    const result = await DonHoanHuy_default.bulkWrite(ops, { ordered: false });
+    return res.json({
+      success: true,
+      message: `\u0110\xE3 l\u01B0u ${unique.length} \u0111\u01A1n v\xE0o don_hoan_huy.`,
+      saved: unique.length,
+      upserted: result.upsertedCount || 0,
+      modified: result.modifiedCount || 0,
+      matched: result.matchedCount || 0,
+      donHoanHuy: {
+        ok: unique.length,
+        failed: 0,
+        already: 0,
+        ensured: unique.length,
+        errors: []
+      },
+      orderSns: unique.map((r2) => r2.orderSn)
+    });
+  } catch (err) {
+    console.error("[POST /api/scan/save]", err);
+    return res.status(500).json({
+      success: false,
+      message: describeDbError(err)
+    });
+  }
+}
+async function listDonHoanHuy(req, res) {
+  try {
+    if (!isDBReady()) {
+      return res.status(500).json({
+        success: false,
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 ki\u1EC3m tra k\u1EBFt n\u1ED1i Atlas.",
+        data: []
+      });
+    }
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 5e3) : 2e3;
+    const docs = await DonHoanHuy_default.find({}).sort({ scannedAt: -1 }).limit(limit).maxTimeMS(5e3).lean();
+    const data = (docs || []).map((doc) => {
+      const sn = normalizeOrderSn(doc.orderSn);
+      const status = String(doc.status || "scanned");
+      const local = doc.local_status || (status === "return_received" ? "RETURN_RECEIVED" : "CANCELLED_STORED");
+      return {
+        id: doc._id || `dhh-${sn}`,
+        orderSn: sn,
+        status,
+        note: doc.note || "",
+        scannedAt: doc.scannedAt || null,
+        local_status: local,
+        localStatus: local,
+        internal_status: local,
+        don_hoan_huy: true,
+        type: doc.type || (status === "return_received" ? "return" : "cancelled"),
+        shopId: doc.shopId || null,
+        shopName: doc.shopName || null,
+        tracking_no: doc.tracking_no || null,
+        channel: "shopee",
+        ...doc.data && typeof doc.data === "object" ? doc.data : {}
+      };
+    });
+    return res.json({
+      success: true,
+      data,
+      total: data.length
+    });
+  } catch (err) {
+    console.error("[GET /api/scan/don-hoan-huy]", err);
+    return res.status(500).json({
+      success: false,
+      message: describeDbError(err),
+      data: []
+    });
+  }
+}
+
+// routes/scanRoutes.js
+var router = (0, import_express2.Router)();
+router.post("/save", saveScanOrders);
+router.get("/don-hoan-huy", listDonHoanHuy);
+var scanRoutes_default = router;
+
+// middlewares/errorHandler.js
+function errorHandler(err, req, res, next) {
+  if (res.headersSent) {
+    return next(err);
+  }
+  if (err instanceof SyntaxError && err && typeof err === "object" && "body" in err) {
+    return res.status(400).json({
+      success: false,
+      message: "JSON body kh\xF4ng h\u1EE3p l\u1EC7"
+    });
+  }
+  const status = Number(err?.status || err?.statusCode) || 500;
+  const message = String(err?.message || "").trim() || "L\u1ED7i m\xE1y ch\u1EE7 n\u1ED9i b\u1ED9.";
+  console.error(`[ErrorHandler] ${req.method} ${req.originalUrl}:`, message);
+  return res.status(status).json({
+    success: false,
+    message
+  });
+}
+var errorHandler_default = errorHandler;
+
+// src/db/mongoStore.ts
+var import_mongoose3 = __toESM(require("mongoose"), 1);
 var import_fs4 = __toESM(require("fs"), 1);
 var import_path3 = __toESM(require("path"), 1);
 
@@ -93679,17 +93940,17 @@ function countChannelListingsOnDisk() {
 // src/db/mongoStore.ts
 var ORDER_EVENT_TTL_SECONDS = Math.max(
   24 * 60 * 60,
-  Number(process.env.ORDER_EVENT_TTL_SECONDS || 60 * 24 * 60 * 60)
+  Number(process.env.ORDER_EVENT_TTL_SECONDS || 14 * 24 * 60 * 60)
 );
 var SYNC_JOB_TTL_SECONDS = Math.max(
   24 * 60 * 60,
-  Number(process.env.SYNC_JOB_TTL_SECONDS || 60 * 24 * 60 * 60)
+  Number(process.env.SYNC_JOB_TTL_SECONDS || 14 * 24 * 60 * 60)
 );
-var ProductSchema = new import_mongoose.Schema(
+var ProductSchema = new import_mongoose3.Schema(
   {
     _id: { type: String, required: true },
     sku: { type: String, default: null, index: true },
-    data: { type: import_mongoose.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose3.Schema.Types.Mixed, required: true }
   },
   { collection: "products", versionKey: false }
 );
@@ -93698,7 +93959,7 @@ ProductSchema.index({ "data.title": 1 });
 ProductSchema.index({ "data.children.sku": 1 });
 ProductSchema.index({ "data.children_models.sku": 1 });
 ProductSchema.index({ "data.stock": 1 });
-var ChannelListingSchema = new import_mongoose.Schema(
+var ChannelListingSchema = new import_mongoose3.Schema(
   {
     _id: { type: String, required: true },
     channelId: { type: String, default: null, index: true },
@@ -93706,18 +93967,18 @@ var ChannelListingSchema = new import_mongoose.Schema(
     sku: { type: String, default: null, index: true },
     status: { type: String, default: null, index: true },
     linkedProductId: { type: String, default: null, index: true },
-    data: { type: import_mongoose.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose3.Schema.Types.Mixed, required: true }
   },
   { collection: "channel_listings", versionKey: false }
 );
-var MetaSchema = new import_mongoose.Schema(
+var MetaSchema = new import_mongoose3.Schema(
   {
     _id: { type: String, required: true },
     value: { type: String, required: true }
   },
   { collection: "meta", versionKey: false }
 );
-var OrderSchema = new import_mongoose.Schema(
+var OrderSchema = new import_mongoose3.Schema(
   {
     _id: { type: String, required: true },
     orderSn: { type: String, default: null, index: true },
@@ -93735,7 +93996,7 @@ var OrderSchema = new import_mongoose.Schema(
     last_synced_at: { type: Date, default: null, index: true },
     last_shopee_update_at: { type: Date, default: null },
     sync_state: { type: String, default: "verified", index: true },
-    data: { type: import_mongoose.Schema.Types.Mixed, required: true }
+    data: { type: import_mongoose3.Schema.Types.Mixed, required: true }
   },
   { collection: "orders", versionKey: false }
 );
@@ -93754,7 +94015,7 @@ OrderSchema.index({ shopId: 1, shopee_order_status: 1, last_synced_at: 1 });
 OrderSchema.index({ shopId: 1, shopee_order_status: 1, "data.date": -1, _id: -1 });
 OrderSchema.index({ shopId: 1, status: 1, "data.date": -1, _id: -1 });
 OrderSchema.index({ "data.date": -1, _id: -1 });
-var OrderEventSchema = new import_mongoose.Schema(
+var OrderEventSchema = new import_mongoose3.Schema(
   {
     _id: { type: String, required: true },
     orderSn: { type: String, required: true, index: true },
@@ -93766,7 +94027,7 @@ var OrderEventSchema = new import_mongoose.Schema(
     next_shopee_status: { type: String, default: null },
     logistics_status: { type: String, default: null },
     occurred_at: { type: Date, required: true, index: true },
-    payload: { type: import_mongoose.Schema.Types.Mixed, default: null }
+    payload: { type: import_mongoose3.Schema.Types.Mixed, default: null }
   },
   { collection: "order_events", versionKey: false }
 );
@@ -93775,14 +94036,14 @@ OrderEventSchema.index(
   { occurred_at: 1 },
   { expireAfterSeconds: ORDER_EVENT_TTL_SECONDS, name: "order_events_ttl" }
 );
-var SyncJobSchema = new import_mongoose.Schema(
+var SyncJobSchema = new import_mongoose3.Schema(
   {
     _id: { type: String, required: true },
     type: { type: String, required: true, index: true },
     state: { type: String, required: true, index: true },
     started_at: { type: Date, default: null },
     finished_at: { type: Date, default: null },
-    metrics: { type: import_mongoose.Schema.Types.Mixed, default: {} },
+    metrics: { type: import_mongoose3.Schema.Types.Mixed, default: {} },
     error: { type: String, default: null },
     requested_by: { type: String, default: null }
   },
@@ -93793,12 +94054,23 @@ SyncJobSchema.index(
   { finished_at: 1 },
   { expireAfterSeconds: SYNC_JOB_TTL_SECONDS, name: "sync_jobs_ttl" }
 );
+var DonHoanHuySchema2 = new import_mongoose3.Schema(
+  {
+    orderSn: { type: String, required: true, index: true, trim: true },
+    status: { type: String, default: "scanned" },
+    scannedAt: { type: Date, default: Date.now, expires: 1209600 },
+    note: { type: String, default: "" }
+  },
+  { collection: "don_hoan_huy", versionKey: false, strict: false }
+);
+DonHoanHuySchema2.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
 var ProductModel;
 var ChannelListingModel;
 var MetaModel;
 var OrderModel;
 var OrderEventModel;
 var SyncJobModel;
+var DonHoanHuyModel;
 var mongoReady = false;
 var appRootResolved3 = "";
 var writeChain3 = Promise.resolve();
@@ -93806,12 +94078,13 @@ function getMongoUri() {
   return String(process.env.MONGODB_URI || process.env.MONGO_URL || "").trim();
 }
 function ensureModels() {
-  ProductModel = import_mongoose.default.models.Product || import_mongoose.default.model("Product", ProductSchema);
-  ChannelListingModel = import_mongoose.default.models.ChannelListing || import_mongoose.default.model("ChannelListing", ChannelListingSchema);
-  MetaModel = import_mongoose.default.models.AppMeta || import_mongoose.default.model("AppMeta", MetaSchema);
-  OrderModel = import_mongoose.default.models.Order || import_mongoose.default.model("Order", OrderSchema);
-  OrderEventModel = import_mongoose.default.models.OrderEvent || import_mongoose.default.model("OrderEvent", OrderEventSchema);
-  SyncJobModel = import_mongoose.default.models.SyncJob || import_mongoose.default.model("SyncJob", SyncJobSchema);
+  ProductModel = import_mongoose3.default.models.Product || import_mongoose3.default.model("Product", ProductSchema);
+  ChannelListingModel = import_mongoose3.default.models.ChannelListing || import_mongoose3.default.model("ChannelListing", ChannelListingSchema);
+  MetaModel = import_mongoose3.default.models.AppMeta || import_mongoose3.default.model("AppMeta", MetaSchema);
+  OrderModel = import_mongoose3.default.models.Order || import_mongoose3.default.model("Order", OrderSchema);
+  OrderEventModel = import_mongoose3.default.models.OrderEvent || import_mongoose3.default.model("OrderEvent", OrderEventSchema);
+  SyncJobModel = import_mongoose3.default.models.SyncJob || import_mongoose3.default.model("SyncJob", SyncJobSchema);
+  DonHoanHuyModel = import_mongoose3.default.models.DonHoanHuy || import_mongoose3.default.model("DonHoanHuy", DonHoanHuySchema2);
 }
 function requireMongo() {
   if (!isMongoReady()) {
@@ -93886,7 +94159,7 @@ function withWriteTimeout(promise, label, timeoutMs = 1e4) {
   });
 }
 function isMongoReady() {
-  return mongoReady && import_mongoose.default.connection.readyState === 1;
+  return mongoReady && import_mongoose3.default.connection.readyState === 1;
 }
 function getMongoUriMasked() {
   const uri = getMongoUri();
@@ -93916,9 +94189,12 @@ async function initMongo(appRoot) {
   }
   try {
     ensureModels();
-    if (import_mongoose.default.connection.readyState === 0) {
-      await import_mongoose.default.connect(uri, {
-        serverSelectionTimeoutMS: 1e4,
+    if (import_mongoose3.default.connection.readyState === 0) {
+      await import_mongoose3.default.connect(uri, {
+        // Fail nhanh 5s — API không được im lặng chờ tới khi client timeout.
+        serverSelectionTimeoutMS: 5e3,
+        connectTimeoutMS: 5e3,
+        socketTimeoutMS: 15e3,
         // Tăng 5→15: pool 5 quá nhỏ khi Dashboard/Products/Orders + Webhook cùng chạy
         // song song — hết pool khiến query MỚI phải XẾP HÀNG chờ connection (không lỗi
         // ngay) và có thể "treo" tới khi client-side timeout bắn, dù bản thân query rất
@@ -93928,7 +94204,7 @@ async function initMongo(appRoot) {
         minPoolSize: 1,
         // Nếu pool vẫn hết, THẤT BẠI NHANH thay vì chờ vô thời hạn — trả lỗi rõ ràng
         // để route trả response ngay (tránh cộng dồn request treo → cPanel tăng process).
-        waitQueueTimeoutMS: 8e3,
+        waitQueueTimeoutMS: 5e3,
         maxIdleTimeMS: 3e4
       });
       import_fs4.default.writeFileSync(
@@ -93936,11 +94212,11 @@ async function initMongo(appRoot) {
         "KET_NOI_THANH_CONG_LUC: " + (/* @__PURE__ */ new Date()).toISOString()
       );
     }
-    mongoReady = import_mongoose.default.connection.readyState === 1;
+    mongoReady = import_mongoose3.default.connection.readyState === 1;
     if (!mongoReady) {
       console.error(
         "L\u1ED6I MONGODB STARTUP:",
-        `mongoose readyState=${import_mongoose.default.connection.readyState} (expect 1)`
+        `mongoose readyState=${import_mongoose3.default.connection.readyState} (expect 1)`
       );
       return isProductsDiskMode();
     }
@@ -93984,8 +94260,20 @@ async function initMongo(appRoot) {
     } catch (idxErr) {
       console.warn("[MongoDB] syncIndexes orders:", idxErr);
     }
-    console.log(
-      `[MongoDB] Retention indexes gi\u1EEF nguy\xEAn (order_events=${ORDER_EVENT_TTL_SECONDS}s, sync_jobs=${SYNC_JOB_TTL_SECONDS}s)`
+    try {
+      const ttl = await ensureRetentionTtlIndexes();
+      console.log(
+        `[MongoDB] TTL ready order_events=${ttl.orderEventsTtlSeconds}s sync_jobs=${ttl.syncJobsTtlSeconds}s (recreated=${ttl.recreated.join(",") || "none"})`
+      );
+    } catch (ttlErr) {
+      console.warn("[MongoDB] ensureRetentionTtlIndexes:", ttlErr?.message || ttlErr);
+    }
+    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14 }).then((r2) => {
+      console.log(
+        `[MongoDB] Temp cleanup boot: order_events_deleted=${r2.orderEventsDeleted} sync_jobs_deleted=${r2.syncJobsDeleted} before_events=${r2.orderEventsBefore}`
+      );
+    }).catch(
+      (err) => console.warn("[MongoDB] Temp cleanup boot failed:", err?.message || err)
     );
     if (!isProductsDiskMode() && productCount === 0 && listingCount === 0) {
       try {
@@ -94506,7 +94794,7 @@ async function applyImportStockAndPriceToMainWarehouse(productId, quantityDelta,
     };
   };
   try {
-    const session = await import_mongoose.default.startSession();
+    const session = await import_mongoose3.default.startSession();
     try {
       let out;
       await session.withTransaction(async () => {
@@ -94824,21 +95112,6 @@ async function bulkUpsertOrdersToStore(orders) {
       setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false"
     });
     const filter = buildOrderCompoundFilter(orderSn || String(_id).replace(/^shopee-/i, ""), _id, shopIdStr || null);
-    const event = orderSn ? {
-      _id: `order-event-${orderSn}-${Date.now()}-${pendingWrites.length}`,
-      orderSn,
-      shopId: shopIdStr || null,
-      source: String(order.sync_source || "shopee_sync"),
-      next_status: order.status != null ? String(order.status) : null,
-      next_shopee_status: rawStatus || null,
-      logistics_status: order.logistics_status != null ? String(order.logistics_status) : null,
-      occurred_at: /* @__PURE__ */ new Date(),
-      payload: {
-        tracking_no: usableTn,
-        package_number: order.packageNumber || null,
-        shopee_update_at: incomingUpdateAt?.toISOString() || null
-      }
-    } : null;
     pendingWrites.push({
       op: {
         updateOne: {
@@ -94850,7 +95123,7 @@ async function bulkUpsertOrdersToStore(orders) {
           upsert: true
         }
       },
-      event,
+      event: null,
       orderSn,
       id: _id,
       updateAt: incomingUpdateAt
@@ -94900,13 +95173,9 @@ async function bulkUpsertOrdersToStore(orders) {
           return true;
         });
         const ops = accepted.map((item) => item.op);
-        const events = accepted.flatMap((item) => item.event ? [item.event] : []);
         if (ops.length === 0) return;
         const result = await OrderModel.bulkWrite(ops, { ordered: false });
         await setMeta("orders_updated_at", (/* @__PURE__ */ new Date()).toISOString());
-        if (events.length > 0) {
-          await OrderEventModel.insertMany(events, { ordered: false });
-        }
         console.log(
           `[DB UPDATED] bulkWrite orders \u2014 upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0} writeErrors=${result.hasWriteErrors?.() ? result.getWriteErrors?.()?.length || "?" : 0}`
         );
@@ -95537,7 +95806,11 @@ function hydrateOrderFromMongoDoc(d) {
   const carrier = String(
     d?.shipping_carrier || data.shipping_carrier || data.checkout_shipping_carrier || ""
   ).trim();
-  const handed = d?.is_handed_over === true || data.is_handed_over === true || data.isHandedOverToCarrier === true || data.is_handed_over_to_carrier === true || data.is_handed_over_to_courier === true || String(data.local_status || data.localStatus || "").toUpperCase() === "HANDED_OVER";
+  const handed = d?.is_handed_over === true || data.is_handed_over === true || data.isHandedOverToCarrier === true || data.is_handed_over_to_carrier === true || data.is_handed_over_to_courier === true || String(data.local_status || data.localStatus || data.internal_status || "").toUpperCase() === "HANDED_OVER";
+  const localRaw = String(
+    data.local_status || data.localStatus || data.internal_status || ""
+  ).toUpperCase();
+  const localStored = localRaw === "CANCELLED_STORED" || localRaw === "RETURN_RECEIVED" ? localRaw : handed ? "HANDED_OVER" : localRaw === "NONE" || localRaw === "HANDED_OVER" ? localRaw : "";
   return {
     ...data,
     id: data.id || d._id || (sn ? `shopee-${sn}` : void 0),
@@ -95555,10 +95828,10 @@ function hydrateOrderFromMongoDoc(d) {
     is_handed_over_to_courier: handed,
     isPrinted: d?.isPrinted != null ? Boolean(d.isPrinted) : Boolean(data.isPrinted),
     isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
-    ...handed ? {
-      local_status: data.local_status || "HANDED_OVER",
-      localStatus: data.localStatus || "HANDED_OVER",
-      internal_status: data.internal_status || "HANDED_OVER"
+    ...localStored ? {
+      local_status: localStored,
+      localStatus: localStored,
+      internal_status: localStored
     } : {}
   };
 }
@@ -95912,6 +96185,328 @@ async function loadOrderEvents(orderSn, limit = 50) {
   requireMongo();
   return OrderEventModel.find({ orderSn: String(orderSn).trim() }).sort({ occurred_at: -1 }).limit(Math.max(1, Math.min(200, limit))).lean();
 }
+function describeMongoWriteError(err) {
+  const anyErr = err;
+  const msg = String(anyErr?.message || err || "");
+  const code = String(anyErr?.code ?? anyErr?.codeName ?? "");
+  const name = String(anyErr?.name || "");
+  if (/server selection|ServerSelectionError|timed out after|maxTimeMS|ExceededTimeLimit|MongoServerSelectionError|MongoNetworkTimeoutError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|MongoNetworkError|topology was destroyed|connection.*closed|mongodb_not_ready|Chưa kết nối được Database/i.test(
+    msg + name + code
+  )) {
+    return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB";
+  }
+  if (/quota|space|exceeded|8000|AtlasError/i.test(msg + code) || code === "8000") {
+    return "Quota MongoDB ch\u01B0a nh\u1EA3 \u0111\u1EE7 dung l\u01B0\u1EE3ng (Atlas Over space quota). H\xE3y d\u1ECDn order_events ho\u1EB7c n\xE2ng g\xF3i.";
+  }
+  if (/not authorized|Unauthorized|authentication failed|bad auth|insufficient.*privilege/i.test(msg) || code === "13" || code === "18") {
+    return "Sai quy\u1EC1n t\xE0i kho\u1EA3n DB \u2014 c\u1EA7n user ReadWrite (kh\xF4ng d\xF9ng t\xE0i kho\u1EA3n ch\u1EC9 \u0111\u1ECDc nh\u01B0 dev_test).";
+  }
+  if (/duplicate key|E11000/i.test(msg)) {
+    return "Tr\xF9ng m\xE3 \u0111\u01A1n trong don_hoan_huy (\u0111\xE3 l\u01B0u tr\u01B0\u1EDBc \u0111\xF3).";
+  }
+  return msg || "L\u1ED7i ghi MongoDB kh\xF4ng x\xE1c \u0111\u1ECBnh.";
+}
+function isMongoConnectionError(err) {
+  return describeMongoWriteError(err) === "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB";
+}
+function donHoanHuyDocToOrder(doc) {
+  const sn = String(doc?.orderSn || "").replace(/^shopee-/i, "").trim();
+  const statusRaw = String(doc?.status || "").toLowerCase();
+  const local = String(doc?.local_status || "").toUpperCase() === "RETURN_RECEIVED" || statusRaw === "return_received" || doc?.type === "return" ? "RETURN_RECEIVED" : "CANCELLED_STORED";
+  const status = local === "RETURN_RECEIVED" ? "return_received" : statusRaw || "cancelled";
+  const scannedAt = doc?.scannedAt ? new Date(doc.scannedAt).toISOString() : doc?.createdAt ? new Date(doc.createdAt).toISOString() : (/* @__PURE__ */ new Date()).toISOString();
+  const base = doc?.data && typeof doc.data === "object" ? { ...doc.data } : {};
+  return {
+    ...base,
+    id: base.id || `shopee-${sn}`,
+    orderSn: sn,
+    shopId: doc?.shopId != null ? doc.shopId : base.shopId,
+    shopName: doc?.shopName || base.shopName,
+    status,
+    note: doc?.note || "",
+    shopee_order_status: doc?.shopee_order_status || base.shopee_order_status,
+    tracking_no: doc?.tracking_no || base.tracking_no || base.trackingNumber,
+    trackingNumber: doc?.tracking_no || base.trackingNumber || base.tracking_no,
+    return_tracking_no: doc?.return_tracking_no || base.return_tracking_no,
+    local_status: local,
+    localStatus: local,
+    internal_status: local,
+    local_status_updated_at: scannedAt,
+    localStatusAt: scannedAt,
+    is_local_return_archived: false,
+    channel: base.channel || "shopee",
+    don_hoan_huy: true,
+    scannedAt,
+    shopee_cancel_return_kind: local === "RETURN_RECEIVED" ? "refund_return" : base.shopee_cancel_return_kind || "cancelled"
+  };
+}
+async function loadDonHoanHuyAsOrders(limit = 2e3) {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const safeLimit = Math.max(1, Math.min(5e3, Math.floor(limit) || 2e3));
+  const docs = await DonHoanHuyModel.find({}).sort({ scannedAt: -1 }).limit(safeLimit).maxTimeMS(5e3).lean();
+  return (docs || []).map(donHoanHuyDocToOrder);
+}
+async function existsDonHoanHuy(orderSn) {
+  if (!orderSn || !isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn).replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const hit = await DonHoanHuyModel.findOne({ orderSn: sn }).select({ _id: 1 }).maxTimeMS(5e3).lean();
+  return Boolean(hit);
+}
+async function upsertDonHoanHuy(order, opts) {
+  try {
+    requireMongo();
+  } catch (readyErr) {
+    console.error("[MongoDB] upsertDonHoanHuy requireMongo:", readyErr);
+    return { ok: false, orderSn: "", error: "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" };
+  }
+  const sn = String(order?.orderSn || order?.order_sn || "").replace(/^shopee-/i, "").trim();
+  if (!sn) {
+    return { ok: false, orderSn: "", error: "Thi\u1EBFu orderSn \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c don_hoan_huy." };
+  }
+  const inferredReturn = opts?.type === "return" || String(order?.local_status || order?.localStatus || "").toUpperCase() === "RETURN_RECEIVED" || String(order?.status || "") === "return_received" || String(order?.status || "") === "return_pending" || String(order?.shopee_order_status || "").toUpperCase() === "TO_RETURN";
+  const type = inferredReturn ? "return" : "cancelled";
+  const local_status = type === "return" ? "RETURN_RECEIVED" : "CANCELLED_STORED";
+  const now = opts?.scannedAt ? new Date(opts.scannedAt) : /* @__PURE__ */ new Date();
+  const scannedAt = Number.isNaN(now.getTime()) ? /* @__PURE__ */ new Date() : now;
+  const tn = String(order?.tracking_no || order?.trackingNumber || "").trim() || null;
+  const rtn = String(order?.return_tracking_no || "").trim() || null;
+  const DON_HOAN_HUY_MAX_MS = 5e3;
+  try {
+    const writePromise = DonHoanHuyModel.findOneAndUpdate(
+      { orderSn: sn },
+      {
+        $set: {
+          orderSn: sn,
+          status: type === "return" ? "return_received" : "cancelled",
+          scannedAt,
+          note: opts?.scanCode ? `scan:${opts.scanCode}` : "",
+          shopId: order?.shopId != null ? String(order.shopId) : null,
+          type,
+          local_status,
+          tracking_no: tn,
+          return_tracking_no: rtn,
+          shopee_order_status: order?.shopee_order_status ? String(order.shopee_order_status) : null,
+          shopName: order?.shopName != null ? String(order.shopName) : null,
+          scan_code: opts?.scanCode ? String(opts.scanCode) : null,
+          source: opts?.source || "qr_scan",
+          data: {
+            id: order?.id || `shopee-${sn}`,
+            orderSn: sn,
+            items: Array.isArray(order?.items) ? order.items.slice(0, 20) : [],
+            date: order?.date || null,
+            totalAmount: order?.totalAmount ?? null,
+            channel: order?.channel || "shopee",
+            shipping_carrier: order?.shipping_carrier || null,
+            packageNumber: order?.packageNumber || null
+          }
+        },
+        $setOnInsert: {
+          createdAt: scannedAt
+        }
+      },
+      { upsert: true, new: true, maxTimeMS: DON_HOAN_HUY_MAX_MS }
+    );
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("MongoDB maxTimeMS/serverSelection timeout 5000ms")),
+        DON_HOAN_HUY_MAX_MS + 500
+      );
+    });
+    await Promise.race([writePromise, timeoutPromise]);
+    console.log(
+      `[MongoDB] upsert don_hoan_huy ok order_sn=${sn} type=${type} local_status=${local_status}`
+    );
+    return { ok: true, orderSn: sn };
+  } catch (err) {
+    console.error("[MongoDB] upsert don_hoan_huy FAIL order_sn=" + sn + ":", err);
+    const detail = describeMongoWriteError(err);
+    return {
+      ok: false,
+      orderSn: sn,
+      error: isMongoConnectionError(err) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail
+    };
+  }
+}
+async function upsertDonHoanHuyBatch(rows) {
+  let ok = 0;
+  let failed = 0;
+  const errors = [];
+  for (const row of rows) {
+    const r2 = await upsertDonHoanHuy(row.order, {
+      type: row.type,
+      scanCode: row.scanCode,
+      source: row.source
+    });
+    if (r2.ok) ok += 1;
+    else {
+      failed += 1;
+      if (r2.error) errors.push(`#${r2.orderSn || "?"}: ${r2.error}`);
+    }
+  }
+  return { ok, failed, errors };
+}
+async function mergeDonHoanHuyIntoOrders(orders) {
+  if (!isMongoReady()) return orders;
+  try {
+    requireMongo();
+    const dhh = await loadDonHoanHuyAsOrders(3e3);
+    if (!dhh.length) return orders;
+    const list = Array.isArray(orders) ? [...orders] : [];
+    const bySn = /* @__PURE__ */ new Map();
+    list.forEach((o, i2) => {
+      const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (sn) bySn.set(sn, i2);
+    });
+    for (const row of dhh) {
+      const sn = String(row.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!sn) continue;
+      const idx = bySn.get(sn);
+      if (idx !== void 0) {
+        const cur = list[idx];
+        list[idx] = {
+          ...cur,
+          ...row,
+          items: cur.items?.length ? cur.items : row.items,
+          local_status: row.local_status,
+          localStatus: row.local_status,
+          internal_status: row.local_status,
+          is_local_return_archived: false
+        };
+      } else {
+        bySn.set(sn, list.length);
+        list.unshift(row);
+      }
+    }
+    return list;
+  } catch (err) {
+    console.warn("[MongoDB] mergeDonHoanHuyIntoOrders:", err?.message || err);
+    return orders;
+  }
+}
+async function ensureRetentionTtlIndexes() {
+  requireMongo();
+  const recreated = [];
+  const ensureTtl = async (model, indexName, key, expireAfterSeconds) => {
+    const coll = model.collection;
+    const existing = await coll.indexes();
+    const hit = existing.find((idx) => idx?.name === indexName);
+    const currentTtl = hit?.expireAfterSeconds;
+    if (hit && Number(currentTtl) === Number(expireAfterSeconds)) {
+      return;
+    }
+    if (hit) {
+      try {
+        await coll.dropIndex(indexName);
+        console.log(
+          `[MongoDB] Dropped TTL index ${indexName} (old expireAfterSeconds=${currentTtl})`
+        );
+      } catch (dropErr) {
+        console.warn(`[MongoDB] dropIndex ${indexName}:`, dropErr?.message || dropErr);
+      }
+    }
+    await coll.createIndex(key, {
+      name: indexName,
+      expireAfterSeconds,
+      background: true
+    });
+    recreated.push(indexName);
+    console.log(
+      `[MongoDB] Created TTL index ${indexName} expireAfterSeconds=${expireAfterSeconds}`
+    );
+  };
+  await ensureTtl(
+    OrderEventModel,
+    "order_events_ttl",
+    { occurred_at: 1 },
+    ORDER_EVENT_TTL_SECONDS
+  );
+  await ensureTtl(
+    SyncJobModel,
+    "sync_jobs_ttl",
+    { finished_at: 1 },
+    SYNC_JOB_TTL_SECONDS
+  );
+  return {
+    orderEventsTtlSeconds: ORDER_EVENT_TTL_SECONDS,
+    syncJobsTtlSeconds: SYNC_JOB_TTL_SECONDS,
+    recreated
+  };
+}
+async function purgeSyncJobsOlderThan(days = 14, opts) {
+  requireMongo();
+  const safeDays = Number.isFinite(days) && days > 0 ? days : 14;
+  const batchSize = Math.max(500, Math.min(1e4, Math.floor(opts?.batchSize || 5e3)));
+  const maxBatches = Math.max(1, Math.min(200, Math.floor(opts?.maxBatches || 100)));
+  const cutoff = new Date(Date.now() - safeDays * 24 * 60 * 60 * 1e3);
+  const before = await SyncJobModel.countDocuments().catch(() => 0);
+  let deleted = 0;
+  for (let i2 = 0; i2 < maxBatches; i2 += 1) {
+    const rows = await SyncJobModel.find({
+      finished_at: { $type: "date", $lt: cutoff },
+      state: { $in: ["succeeded", "failed"] }
+    }).select({ _id: 1 }).limit(batchSize).lean();
+    if (!rows.length) break;
+    const ids = rows.map((r2) => r2._id);
+    const result = await SyncJobModel.deleteMany({ _id: { $in: ids } });
+    const n = Number(result.deletedCount || 0);
+    deleted += n;
+    if (n < batchSize) break;
+  }
+  const after = await SyncJobModel.countDocuments().catch(() => Math.max(0, before - deleted));
+  console.log(
+    `[MongoDB] purgeSyncJobsOlderThan days=${safeDays} deleted=${deleted} before=${before} after=${after}`
+  );
+  return { deleted, cutoffIso: cutoff.toISOString(), before, after };
+}
+async function purgeMongoTempCollections(opts) {
+  requireMongo();
+  const syncJobDays = opts?.syncJobDays ?? 14;
+  let ttl;
+  if (opts?.ensureTtl !== false) {
+    try {
+      ttl = await ensureRetentionTtlIndexes();
+    } catch (err) {
+      console.warn("[MongoDB] ensureRetentionTtlIndexes in purge:", err?.message || err);
+    }
+  }
+  const orderEventsBefore = await OrderEventModel.countDocuments().catch(() => 0);
+  let orderEventsDeleted = 0;
+  if (orderEventsBefore > 0) {
+    try {
+      await OrderEventModel.collection.drop();
+      orderEventsDeleted = orderEventsBefore;
+      console.log(
+        `[MongoDB] Dropped collection order_events entirely (was ${orderEventsBefore} docs)`
+      );
+    } catch (dropErr) {
+      const msg = String(dropErr?.message || dropErr || "");
+      if (!/ns not found|NamespaceNotFound/i.test(msg)) {
+        console.warn("[MongoDB] drop order_events failed, fallback deleteMany:", msg);
+        try {
+          const r2 = await OrderEventModel.deleteMany({});
+          orderEventsDeleted = Number(r2.deletedCount || 0);
+        } catch (delErr) {
+          console.warn("[MongoDB] deleteMany order_events failed:", delErr?.message || delErr);
+        }
+      }
+    }
+  }
+  const orderEventsAfter = await OrderEventModel.countDocuments().catch(() => 0);
+  const jobs = await purgeSyncJobsOlderThan(syncJobDays);
+  return {
+    orderEventsDeleted,
+    syncJobsDeleted: jobs.deleted,
+    orderEventsBefore,
+    orderEventsAfter,
+    syncJobsBefore: jobs.before,
+    syncJobsAfter: jobs.after,
+    ttl,
+    note: "\u0110\xE3 x\xF3a order_events (ng\u1EEBng ghi log). sync_jobs TTL 14d. don_hoan_huy TTL 14d ri\xEAng."
+  };
+}
 async function getLowStockProductsFromStore(threshold, limit = 50) {
   requireMongo();
   const docs = await ProductModel.find(
@@ -96103,6 +96698,7 @@ async function seedStoreFromArrays(products, listings) {
 
 // server.ts
 var import_meta = {};
+var scanRoutes = scanRoutes_default?.default?.use ? scanRoutes_default.default : scanRoutes_default;
 function writeCpanelCrashLog(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
@@ -100393,6 +100989,257 @@ function tryAcquireHeavyJob(name) {
 function releaseHeavyJob(name) {
   if (cpanelHeavyJobActive?.name === name) cpanelHeavyJobActive = null;
 }
+var SCAN_BG_QUEUE_PATH = import_path4.default.join(APP_ROOT, "data", "scan-bg-queue.json");
+var scanBgJobs = [];
+var scanBgJobKeys = /* @__PURE__ */ new Set();
+var scanBgWorkerRunning = false;
+var scanBgPersistTimer = null;
+function normalizeScanBgKey(code) {
+  return String(code || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+}
+function loadScanBgQueueFromDisk() {
+  try {
+    if (!import_fs5.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(import_fs5.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
+    for (const j of list) {
+      const code = String(j?.code || "").trim();
+      const codeKey = normalizeScanBgKey(code || j?.codeKey || "");
+      if (!code || !codeKey || scanBgJobKeys.has(codeKey)) continue;
+      const rawStatus = String(j?.status || "pending");
+      let status = rawStatus === "running" || rawStatus === "pending" ? "pending" : rawStatus === "failed" ? "failed" : rawStatus === "skipped" ? "skipped" : "done";
+      if (status !== "pending") {
+        if (j?.notified) continue;
+      }
+      const job = {
+        id: String(j?.id || `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+        code,
+        codeKey,
+        status,
+        enqueuedAt: String(j?.enqueuedAt || (/* @__PURE__ */ new Date()).toISOString()),
+        startedAt: j?.startedAt ? String(j.startedAt) : void 0,
+        finishedAt: j?.finishedAt ? String(j.finishedAt) : void 0,
+        orderId: j?.orderId ? String(j.orderId) : void 0,
+        orderSn: j?.orderSn ? String(j.orderSn) : void 0,
+        action: j?.action,
+        local_status: j?.local_status ? String(j.local_status) : void 0,
+        message: j?.message ? String(j.message) : void 0,
+        notified: Boolean(j?.notified)
+      };
+      scanBgJobs.push(job);
+      if (job.status === "pending") {
+        scanBgJobKeys.add(codeKey);
+      }
+    }
+    console.log(
+      `[Scan BG] loaded disk jobs=${scanBgJobs.length} pending=${scanBgJobs.filter((j) => j.status === "pending").length}`
+    );
+  } catch (err) {
+    console.warn("[Scan BG] load disk failed:", err?.message || err);
+  }
+}
+function persistScanBgQueueSoon() {
+  if (scanBgPersistTimer) return;
+  scanBgPersistTimer = setTimeout(() => {
+    scanBgPersistTimer = null;
+    try {
+      import_fs5.default.mkdirSync(import_path4.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
+      const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
+      const jobs = [...pending, ...recent];
+      import_fs5.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+    } catch (err) {
+      console.warn("[Scan BG] persist failed:", err?.message || err);
+    }
+  }, 250);
+}
+function classifyScanBgCancelReturn(order) {
+  const status = String(order?.status || "");
+  const raw = String(order?.shopee_order_status || "").toUpperCase();
+  const kind = String(order?.shopee_cancel_return_kind || "");
+  const isReturn = kind === "refund_return" || status === "return_pending" || status === "return_received" || raw === "TO_RETURN" || Boolean(order?.return_sn);
+  const isCancel = !isReturn && (kind === "cancelled" || kind === "failed_delivery" || status === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL" || isShopeeCancelOrReturnLikeOrder(order));
+  return { isReturn, isCancel };
+}
+function enqueueScanBgCodes(codes) {
+  const added = [];
+  for (const raw of codes) {
+    const code = String(raw || "").trim();
+    const codeKey = normalizeScanBgKey(code);
+    if (!code || !codeKey) continue;
+    if (scanBgJobKeys.has(codeKey)) continue;
+    const existing = scanBgJobs.find(
+      (j) => j.codeKey === codeKey && (j.status === "pending" || j.status === "running")
+    );
+    if (existing) continue;
+    const job = {
+      id: `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      code,
+      codeKey,
+      status: "pending",
+      enqueuedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      notified: false
+    };
+    scanBgJobs.push(job);
+    scanBgJobKeys.add(codeKey);
+    added.push(job);
+  }
+  if (added.length) {
+    persistScanBgQueueSoon();
+    void drainScanBgQueue();
+  }
+  const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running").length;
+  return { queued: added.length, pending, jobs: added };
+}
+async function processOneScanBgJob(job) {
+  job.status = "running";
+  job.startedAt = (/* @__PURE__ */ new Date()).toISOString();
+  persistScanBgQueueSoon();
+  try {
+    let found = null;
+    try {
+      found = await findOrderByScanCodeInStore(job.code);
+      if (found && !isValidOrder(found)) found = null;
+      if (found) found = mirrorTrackingFieldsForRead(found);
+    } catch {
+      found = null;
+    }
+    if (!found) {
+      try {
+        found = await resolveOrderFromShopeeByScanCode(job.code);
+        if (found) {
+          found = mirrorTrackingFieldsForRead(found);
+        }
+      } catch (err) {
+        console.warn(`[Scan BG] Shopee resolve code=${job.code}:`, err?.message || err);
+      }
+    }
+    if (!found) {
+      job.status = "done";
+      job.action = "not_found";
+      job.message = `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n kh\u1EDBp m\xE3 "${job.code}"`;
+      job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+    job.orderId = found.id ? String(found.id) : void 0;
+    job.orderSn = found.orderSn ? String(found.orderSn) : void 0;
+    const existingLocal = resolveOrderLocalStatus(found);
+    let alreadyDhh = false;
+    try {
+      alreadyDhh = await existsDonHoanHuy(String(found.orderSn || ""));
+    } catch {
+      alreadyDhh = false;
+    }
+    if (alreadyDhh) {
+      job.status = "done";
+      job.action = "duplicate";
+      job.local_status = existingLocal === "RETURN_RECEIVED" ? "RETURN_RECEIVED" : "CANCELLED_STORED";
+      job.message = `\u0110\u01A1n #${found.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`;
+      job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+    const { isReturn, isCancel } = classifyScanBgCancelReturn(found);
+    if (!isReturn && !isCancel) {
+      job.status = "done";
+      job.action = "found_other";
+      job.message = `\u0110\u01A1n #${found.orderSn} kh\xF4ng ph\u1EA3i h\u1EE7y/ho\xE0n \u2014 b\u1ECF qua ghi c\u1EDD`;
+      job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+    const target = isReturn ? ORDER_LOCAL_STATUS.RETURN_RECEIVED : ORDER_LOCAL_STATUS.CANCELLED_STORED;
+    clearHandedOverLocalForCancelReturn(found);
+    setOrderLocalStatus(found, target);
+    const dhh = await upsertDonHoanHuy(found, {
+      type: isReturn ? "return" : "cancelled",
+      scanCode: job.code,
+      source: "scan_bg"
+    });
+    if (!dhh.ok) {
+      throw new Error(dhh.error || "Ghi don_hoan_huy th\u1EA5t b\u1EA1i");
+    }
+    job.status = "done";
+    job.action = isReturn ? "return_received" : "cancelled";
+    job.local_status = target;
+    job.message = isReturn ? `\u0110\xE3 d\xF2 ng\u1EA7m nh\u1EADn ho\xE0n #${found.orderSn} \u2192 don_hoan_huy` : `\u0110\xE3 d\xF2 ng\u1EA7m \u0111\u01A1n h\u1EE7y #${found.orderSn} \u2192 don_hoan_huy`;
+    job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    scanBgJobKeys.delete(job.codeKey);
+  } catch (err) {
+    job.status = "failed";
+    job.action = "error";
+    job.message = describeMongoWriteError(err);
+    job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    scanBgJobKeys.delete(job.codeKey);
+    console.error(`[Scan BG] job fail code=${job.code}:`, err);
+  } finally {
+    persistScanBgQueueSoon();
+  }
+}
+async function drainScanBgQueue() {
+  if (scanBgWorkerRunning) return;
+  scanBgWorkerRunning = true;
+  try {
+    while (true) {
+      const next = scanBgJobs.find((j) => j.status === "pending");
+      if (!next) break;
+      await processOneScanBgJob(next);
+      await new Promise((r2) => setTimeout(r2, 400));
+    }
+  } finally {
+    scanBgWorkerRunning = false;
+    const stillPending = scanBgJobs.some((j) => j.status === "pending");
+    if (stillPending) {
+      queueMicrotask(() => {
+        void drainScanBgQueue();
+      });
+    }
+  }
+}
+function getScanBgStatusSnapshot() {
+  const pending = scanBgJobs.filter((j) => j.status === "pending");
+  const running = scanBgJobs.filter((j) => j.status === "running");
+  const recent = scanBgJobs.filter((j) => j.status === "done" || j.status === "failed" || j.status === "skipped").slice(-40);
+  const unnotified = recent.filter((j) => !j.notified);
+  const summary = { cancelled: 0, returnReceived: 0, notFound: 0, failed: 0 };
+  for (const j of unnotified) {
+    if (j.action === "cancelled") summary.cancelled += 1;
+    else if (j.action === "return_received") summary.returnReceived += 1;
+    else if (j.action === "not_found") summary.notFound += 1;
+    else if (j.action === "error" || j.status === "failed") summary.failed += 1;
+  }
+  return {
+    pending,
+    running,
+    recent,
+    unnotified,
+    pendingCount: pending.length + running.length,
+    summary
+  };
+}
+function ackScanBgNotifications(ids) {
+  const idSet = Array.isArray(ids) && ids.length > 0 ? new Set(ids.map(String)) : null;
+  let n = 0;
+  for (const j of scanBgJobs) {
+    if (j.status !== "done" && j.status !== "failed" && j.status !== "skipped") continue;
+    if (j.notified) continue;
+    if (idSet && !idSet.has(j.id)) continue;
+    j.notified = true;
+    n += 1;
+  }
+  if (n) persistScanBgQueueSoon();
+  return n;
+}
+try {
+  loadScanBgQueueFromDisk();
+  if (scanBgJobs.some((j) => j.status === "pending")) {
+    setTimeout(() => {
+      void drainScanBgQueue();
+    }, 1500);
+  }
+} catch {
+}
 function detectStockPriceChanges(before, after) {
   const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
   const stockAfter = Math.max(0, Math.round(Number(after?.stock) || 0));
@@ -103905,6 +104752,7 @@ function setOrderLocalStatus(order, status) {
   }
   order.local_status = status;
   order.localStatus = status;
+  order.internal_status = status;
   order.local_status_updated_at = now;
   order.localStatusAt = now;
   if (status === "CANCELLED_STORED" || status === "RETURN_RECEIVED") {
@@ -104001,6 +104849,28 @@ function scheduleClosedOrdersRetentionCleanup() {
     closedOrdersRetentionTimer.unref();
   }
   console.log("[Orders Retention] Scheduled: h\u1EE7y/ho\xE0n >14d, ho\xE0n t\u1EA5t/\u0110VVC >30d, m\u1ED7i 24h.");
+}
+var mongoTempCleanupRunning = false;
+var mongoTempCleanupTimer;
+function scheduleMongoTempCollectionsCleanup() {
+  if (mongoTempCleanupTimer) return;
+  const run = () => {
+    if (mongoTempCleanupRunning || !isMongoReady()) return;
+    mongoTempCleanupRunning = true;
+    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14, ensureTtl: true }).then((r2) => {
+      console.log(
+        `[Mongo Temp Cleanup] order_events ${r2.orderEventsBefore}\u2192${r2.orderEventsAfter} (\u2212${r2.orderEventsDeleted}), sync_jobs ${r2.syncJobsBefore}\u2192${r2.syncJobsAfter} (\u2212${r2.syncJobsDeleted})`
+      );
+    }).catch((err) => console.warn("[Mongo Temp Cleanup] schedule error:", err?.message || err)).finally(() => {
+      mongoTempCleanupRunning = false;
+    });
+  };
+  setTimeout(run, 45e3);
+  mongoTempCleanupTimer = setInterval(run, 24 * 60 * 60 * 1e3);
+  if (typeof mongoTempCleanupTimer.unref === "function") {
+    mongoTempCleanupTimer.unref();
+  }
+  console.log("[Mongo Temp Cleanup] Scheduled: order_events/sync_jobs >14d + TTL 14d, m\u1ED7i 24h.");
 }
 function isOrderAlreadyScanProcessed(order) {
   const local = resolveOrderLocalStatus2(order);
@@ -107010,7 +107880,7 @@ var authMiddleware = (req, res, next) => {
   }
 };
 async function startServer() {
-  const app = (0, import_express2.default)();
+  const app = (0, import_express3.default)();
   const PORT = process.env.PORT || 3e3;
   const appWithRouteMethods = app;
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -107053,8 +107923,8 @@ async function startServer() {
     next();
   });
   app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload));
-  app.use(import_express2.default.json({ limit: "50mb" }));
-  app.use(import_express2.default.urlencoded({ limit: "50mb", extended: true }));
+  app.use(import_express3.default.json({ limit: "50mb" }));
+  app.use(import_express3.default.urlencoded({ limit: "50mb", extended: true }));
   try {
     ensureLabelsDir();
   } catch (err) {
@@ -107076,12 +107946,12 @@ async function startServer() {
     if (!pathName.startsWith("/api/")) return next();
     const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/auth/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName === "/api/webhook/shopee" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
     if (allowWithoutDb) return next();
-    if (import_mongoose2.default.connection.readyState !== 1) {
+    if (import_mongoose4.default.connection.readyState !== 1) {
       return res.status(503).json({
         success: false,
         message: "Database \u0111ang k\u1EBFt n\u1ED1i, vui l\xF2ng th\u1EED l\u1EA1i sau",
         error: "database_connecting",
-        readyState: import_mongoose2.default.connection.readyState
+        readyState: import_mongoose4.default.connection.readyState
       });
     }
     return next();
@@ -107100,6 +107970,9 @@ async function startServer() {
   app.get("/api/auth/verify", authMiddleware, async (req, res) => {
     res.json({ valid: true, username: req.user.username });
   });
+  app.post("/api/scan/save", authMiddleware, saveScanOrders);
+  app.get("/api/scan/don-hoan-huy", authMiddleware, listDonHoanHuy);
+  app.use("/api/scan", authMiddleware, scanRoutes);
   app.get("/api/config/public", (_req, res) => {
     res.json({
       appUrl: APP_BASE_URL,
@@ -108810,11 +109683,20 @@ async function startServer() {
       const rawLimit = Number(req.query.limit);
       const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : void 0;
       const rawOrders = await readOrdersForRefresh(limit);
+      let mergedOrders = rawOrders;
+      try {
+        mergedOrders = await mergeDonHoanHuyIntoOrders(rawOrders);
+      } catch (mergeErr) {
+        console.warn(
+          "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
+          mergeErr?.message || mergeErr
+        );
+      }
       let products = [];
       if (!limit) {
         try {
           products = await withLocalDbTimeout(
-            loadProductsForOrders(rawOrders),
+            loadProductsForOrders(mergedOrders),
             2500,
             "orders_refresh_catalog"
           );
@@ -108825,7 +109707,7 @@ async function startServer() {
           );
         }
       }
-      const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
+      const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(mergedOrders, products));
       console.log(
         `[FRONTEND FETCHED] GET /api/orders/refresh${limit ? `?limit=${limit}` : ""} \u2014 tr\u1EA3 v\u1EC1 ${orders.length} \u0111\u01A1n t\u1EEB MongoDB.`
       );
@@ -109031,7 +109913,17 @@ async function startServer() {
     } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
       rawOrders = rawOrders.filter((o) => matchesShippingTab(o));
     } else if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
-      rawOrders = rawOrders.filter((o) => matchesReceivedCancelReturnTabOrder(o));
+      try {
+        rawOrders = await loadDonHoanHuyAsOrders(
+          Number.isFinite(Number(req.query.limit)) ? Math.min(Math.floor(Number(req.query.limit)), 5e3) : 2e3
+        );
+        console.log(
+          `[GET /api/orders] query.tab=${tab} source=don_hoan_huy \u2192 ${rawOrders.length} \u0111\u01A1n`
+        );
+      } catch (dhhErr) {
+        console.error("[GET /api/orders] don_hoan_huy load failed:", dhhErr);
+        rawOrders = rawOrders.filter((o) => matchesReceivedCancelReturnTabOrder(o));
+      }
     } else if (tab === "pending_confirm" || tab === "pending_verification" || tab === "cho-xac-nhan" || tab === "pending_shopee_check" || tab === "dang_kiem_tra_shopee" || tab === "shopee_check") {
       rawOrders = rawOrders.filter(
         (o) => {
@@ -109100,6 +109992,51 @@ async function startServer() {
         success: false,
         error: error?.message || "cleanup_closed_retention_failed",
         message: error?.message || "Kh\xF4ng th\u1EC3 d\u1ECDn \u0111\u01A1n \u0111\xE3 \u0111\xF3ng."
+      });
+    }
+  });
+  app.post("/api/mongo/cleanup-temp", authMiddleware, async (req, res) => {
+    try {
+      if (!isMongoReady()) {
+        return res.status(503).json({
+          success: false,
+          error: "mongodb_not_ready",
+          message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng."
+        });
+      }
+      const eventDays = Number(req.body?.order_event_days ?? req.body?.orderEventDays ?? 14);
+      const jobDays = Number(req.body?.sync_job_days ?? req.body?.syncJobDays ?? 14);
+      const ensureTtl = req.body?.ensure_ttl !== false && req.body?.ensureTtl !== false;
+      const result = await purgeMongoTempCollections({
+        orderEventDays: Number.isFinite(eventDays) && eventDays > 0 ? eventDays : 14,
+        syncJobDays: Number.isFinite(jobDays) && jobDays > 0 ? jobDays : 14,
+        ensureTtl
+      });
+      return res.json({
+        success: true,
+        ...result,
+        message: result.orderEventsDeleted > 0 || result.syncJobsDeleted > 0 ? `\u0110\xE3 x\xF3a ${result.orderEventsDeleted} order_events + ${result.syncJobsDeleted} sync_jobs.` : "Kh\xF4ng c\xF2n b\u1EA3n ghi t\u1EA1m qu\xE1 h\u1EA1n \u0111\u1EC3 x\xF3a (TTL v\u1EABn gi\u1EEF 14 ng\xE0y)."
+      });
+    } catch (error) {
+      console.error("[Mongo Temp Cleanup] API error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "mongo_temp_cleanup_failed",
+        message: error?.message || "Kh\xF4ng th\u1EC3 d\u1ECDn order_events/sync_jobs."
+      });
+    }
+  });
+  app.post("/api/mongo/ensure-ttl", authMiddleware, async (_req, res) => {
+    try {
+      if (!isMongoReady()) {
+        return res.status(503).json({ success: false, error: "mongodb_not_ready" });
+      }
+      const ttl = await ensureRetentionTtlIndexes();
+      return res.json({ success: true, ...ttl });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "ensure_ttl_failed"
       });
     }
   });
@@ -109476,13 +110413,22 @@ async function startServer() {
         HANDED_OVER_SOURCE.MANUAL_BUTTON
       ));
     }
-    if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED" || localPatch === "NONE") {
+    const wantLocalStored = localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED" || localPatch === "NONE";
+    if (wantLocalStored) {
       const nowIso = (/* @__PURE__ */ new Date()).toISOString();
       patch.local_status = localPatch;
       patch.localStatus = localPatch;
+      patch.internal_status = localPatch;
       patch.localStatusAt = patch.localStatusAt || nowIso;
       patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
       if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
+        patch.is_local_return_archived = false;
+        Object.assign(patch, buildClearHandedOverPatch(nowIso));
+        patch.local_status = localPatch;
+        patch.localStatus = localPatch;
+        patch.internal_status = localPatch;
+        patch.localStatusAt = nowIso;
+        patch.local_status_updated_at = nowIso;
         patch.is_local_return_archived = false;
       }
       if (localPatch === "RETURN_RECEIVED") {
@@ -109521,6 +110467,21 @@ async function startServer() {
         });
       } catch (err) {
         console.error("[Orders PATCH] markOrderHandedOver failed:", err?.message || err);
+      }
+    }
+    if (isMongoReady() && (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED")) {
+      try {
+        await markOrderLocalStatusInStore(
+          String(orders[index].orderSn || ""),
+          localPatch,
+          {
+            shopId: orders[index].shopId != null ? String(orders[index].shopId) : void 0,
+            clearHandedOver: true,
+            status: localPatch === "RETURN_RECEIVED" ? "return_received" : String(orders[index].status || "cancelled")
+          }
+        );
+      } catch (err) {
+        console.error("[Orders PATCH] markOrderLocalStatus failed:", err?.message || err);
       }
     }
     return res.json(orders[index]);
@@ -109744,6 +110705,73 @@ async function startServer() {
       });
     }
   });
+  app.get("/api/orders/don-hoan-huy", authMiddleware, listDonHoanHuy);
+  app.post("/api/orders/don-hoan-huy", authMiddleware, saveScanOrders);
+  app.post("/api/orders/scan-bg-enqueue", authMiddleware, async (req, res) => {
+    try {
+      const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : Array.isArray(req.body?.scannedCodes) ? req.body.scannedCodes : req.body?.code ? [req.body.code] : [];
+      const codes = [
+        ...new Set(rawCodes.map((c) => String(c || "").trim()).filter(Boolean))
+      ];
+      if (!codes.length) {
+        return res.status(400).json({
+          success: false,
+          error: "missing_codes",
+          message: "Thi\u1EBFu m\xE3 qu\xE9t (codes)."
+        });
+      }
+      const result = enqueueScanBgCodes(codes);
+      console.log(
+        `[Scan BG] enqueue queued=${result.queued} pending=${result.pending} codes=${codes.length}`
+      );
+      return res.json({
+        success: true,
+        queued: result.queued,
+        pending: result.pending,
+        jobs: result.jobs,
+        message: result.queued > 0 ? `\u0110\xE3 x\u1EBFp ${result.queued} m\xE3 v\xE0o h\xE0ng \u0111\u1EE3i d\xF2 ng\u1EA7m.` : "C\xE1c m\xE3 \u0111\xE3 c\xF3 trong h\xE0ng \u0111\u1EE3i d\xF2 ng\u1EA7m."
+      });
+    } catch (error) {
+      console.error("[Scan BG] enqueue error:", error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "scan_bg_enqueue_failed",
+        message: error?.message || "Kh\xF4ng th\u1EC3 x\u1EBFp h\xE0ng \u0111\u1EE3i d\xF2 ng\u1EA7m."
+      });
+    }
+  });
+  app.get("/api/orders/scan-bg-status", authMiddleware, async (_req, res) => {
+    try {
+      const snap = getScanBgStatusSnapshot();
+      return res.json({
+        success: true,
+        pendingCount: snap.pendingCount,
+        pending: snap.pending,
+        running: snap.running,
+        recent: snap.recent,
+        unnotified: snap.unnotified,
+        summary: snap.summary,
+        workerRunning: scanBgWorkerRunning
+      });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "scan_bg_status_failed"
+      });
+    }
+  });
+  app.post("/api/orders/scan-bg-ack", authMiddleware, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : void 0;
+      const acked = ackScanBgNotifications(ids);
+      return res.json({ success: true, acked });
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "scan_bg_ack_failed"
+      });
+    }
+  });
   app.post("/api/orders/scan-bulk-update", authMiddleware, async (req, res) => {
     try {
       const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : Array.isArray(req.body?.scannedCodes) ? req.body.scannedCodes : Array.isArray(req.body?.scanCodes) ? req.body.scanCodes : [];
@@ -109799,6 +110827,7 @@ async function startServer() {
       const changedOrders = [];
       const updatedById = /* @__PURE__ */ new Map();
       const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
+      let donHoanHuyAlready = 0;
       const norm = (c) => String(c || "").trim().toUpperCase();
       for (const { code, found } of lookupPairs) {
         const codeKey = norm(code);
@@ -109817,13 +110846,45 @@ async function startServer() {
         const status = String(order.status || "");
         const rawShopee = String(order.shopee_order_status || "").toUpperCase();
         const existingLocal = resolveOrderLocalStatus2(order);
+        let alreadyInDonHoanHuy = false;
+        try {
+          alreadyInDonHoanHuy = await existsDonHoanHuy(String(order.orderSn || ""));
+        } catch {
+          alreadyInDonHoanHuy = false;
+        }
         const forceHandOver = forceHandOverCodes.has(codeKey) || forceHandOverCodes.has(norm(String(order.orderSn || ""))) || forceHandOverCodes.has(norm(String(order.trackingNumber || order.tracking_no || "")));
         const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || ""))) || forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceCancelCodes.has(norm(String(order.return_tracking_no || "")));
         const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.return_tracking_no || "")));
         const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN";
         const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || isShopeeCancelOrReturnLikeOrder(order));
-        const allowForceCancelReturnOverride = (forceCancel || forceReturn) && existingLocal === "HANDED_OVER" && (isCancelLike || isReturnLike || forceCancel || forceReturn);
-        if (isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride) {
+        if (forceCancel && alreadyInDonHoanHuy) {
+          summary.donHuy += 1;
+          donHoanHuyAlready += 1;
+          results.push({
+            code,
+            action: "cancelled",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `\u0110\u01A1n h\u1EE7y #${order.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`,
+            local_status: "CANCELLED_STORED"
+          });
+          continue;
+        }
+        if (forceReturn && alreadyInDonHoanHuy) {
+          summary.daNhanHoan += 1;
+          donHoanHuyAlready += 1;
+          results.push({
+            code,
+            action: "return_received",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `\u0110\u01A1n #${order.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`,
+            local_status: "RETURN_RECEIVED"
+          });
+          continue;
+        }
+        const allowForceCancelReturnOverride = (forceCancel || forceReturn) && (existingLocal === "HANDED_OVER" || existingLocal === "CANCELLED_STORED" || existingLocal === "RETURN_RECEIVED" || isCancelLike || isReturnLike);
+        if (isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride && !forceCancel && !forceReturn) {
           const reason = getScanProcessedReason(order);
           results.push({
             code,
@@ -109966,14 +111027,78 @@ async function startServer() {
           reason: `Tr\u1EA1ng th\xE1i "${status}" kh\xF4ng thu\u1ED9c quy t\u1EAFc qu\xE9t \u0110VVC`
         });
       }
-      if (changedOrders.length > 0) {
+      const cancelReturnRows = [];
+      for (const o of changedOrders) {
+        const local = String(
+          o?.local_status || o?.localStatus || o?.internal_status || ""
+        ).toUpperCase();
+        if (local === "CANCELLED_STORED") {
+          cancelReturnRows.push({ order: o, type: "cancelled" });
+        } else if (local === "RETURN_RECEIVED") {
+          cancelReturnRows.push({ order: o, type: "return" });
+        }
+      }
+      let donHoanHuyWrite = {
+        ok: 0,
+        failed: 0,
+        errors: []
+      };
+      if (cancelReturnRows.length > 0) {
+        if (!isMongoReady()) {
+          console.error("[Orders Scan Bulk] Mongo not ready \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c don_hoan_huy");
+          return res.status(500).json({
+            success: false,
+            message: "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB",
+            error: "mongodb_not_ready"
+          });
+        }
         try {
-          await persistChangedOrdersPatch(changedOrders);
-        } catch (persistErr) {
-          console.warn(
-            "[Orders Scan Bulk] persistChangedOrdersPatch:",
-            persistErr?.message || persistErr
+          donHoanHuyWrite = await upsertDonHoanHuyBatch(
+            cancelReturnRows.map((r2) => ({
+              order: r2.order,
+              type: r2.type,
+              scanCode: void 0,
+              source: "qr_scan"
+            }))
           );
+        } catch (dhhErr) {
+          console.error("[Orders Scan Bulk] don_hoan_huy batch FAIL:", dhhErr);
+          const detail = describeMongoWriteError(dhhErr);
+          return res.status(500).json({
+            success: false,
+            message: isMongoConnectionError(dhhErr) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
+            error: "don_hoan_huy_write_failed"
+          });
+        }
+        if (donHoanHuyWrite.failed > 0 && donHoanHuyWrite.ok === 0) {
+          const detail = donHoanHuyWrite.errors[0] || "Kh\xF4ng ghi \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o v\xE0o collection don_hoan_huy.";
+          console.error("[Orders Scan Bulk] don_hoan_huy all failed:", donHoanHuyWrite.errors);
+          const connFail = /Lỗi kết nối MongoDB/i.test(detail);
+          return res.status(500).json({
+            success: false,
+            message: connFail ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
+            error: "don_hoan_huy_write_failed",
+            errors: donHoanHuyWrite.errors.slice(0, 10)
+          });
+        }
+      }
+      if (changedOrders.length > 0) {
+        const handoverOnly = changedOrders.filter((o) => {
+          const local = String(
+            o?.local_status || o?.localStatus || o?.internal_status || ""
+          ).toUpperCase();
+          return local === "HANDED_OVER" || o?.is_handed_over === true || o?.isHandedOverToCarrier === true;
+        });
+        if (handoverOnly.length > 0) {
+          try {
+            await persistChangedOrdersPatch(handoverOnly);
+          } catch (persistErr) {
+            console.warn(
+              "[Orders Scan Bulk] persistChangedOrdersPatch handover:",
+              describeMongoWriteError(persistErr),
+              persistErr
+            );
+          }
         }
         let flagOk = 0;
         for (const o of changedOrders) {
@@ -109991,30 +111116,17 @@ async function startServer() {
                 shopId
               });
               if (ok) flagOk += 1;
-            } else if (local === "CANCELLED_STORED") {
-              const ok = await markOrderLocalStatusInStore(sn, "CANCELLED_STORED", {
-                shopId,
-                clearHandedOver: true,
-                status: String(o.status || "cancelled")
-              });
-              if (ok) flagOk += 1;
-            } else if (local === "RETURN_RECEIVED") {
-              const ok = await markOrderLocalStatusInStore(sn, "RETURN_RECEIVED", {
-                shopId,
-                clearHandedOver: true,
-                status: "return_received"
-              });
-              if (ok) flagOk += 1;
             }
           } catch (flagErr) {
             console.error(
               `[Orders Scan Bulk] mark flag fail order_sn=${sn}:`,
-              flagErr?.message || flagErr
+              describeMongoWriteError(flagErr),
+              flagErr
             );
           }
         }
         console.log(
-          `[Orders Scan Bulk] warehouse flags written=${flagOk}/${changedOrders.length}`
+          `[Orders Scan Bulk] don_hoan_huy ok=${donHoanHuyWrite.ok} fail=${donHoanHuyWrite.failed} handoverFlags=${flagOk} changed=${changedOrders.length}`
         );
         ordersRefreshCache = null;
       }
@@ -110029,6 +111141,11 @@ async function startServer() {
         success: true,
         processedCount,
         persistedCount: changedOrders.length,
+        donHoanHuy: {
+          ...donHoanHuyWrite,
+          already: donHoanHuyAlready,
+          ensured: donHoanHuyWrite.ok + donHoanHuyAlready
+        },
         summary,
         stats: {
           handedOver: summary.daXuatKho,
@@ -110044,10 +111161,11 @@ async function startServer() {
       });
     } catch (error) {
       console.error("[Orders Scan Bulk] Error:", error);
+      const detail = describeMongoWriteError(error);
       return res.status(500).json({
         success: false,
-        error: error?.message || "scan_bulk_update_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt h\xE0ng lo\u1EA1t \u0111\u01A1n \u0111\xE3 qu\xE9t."
+        message: isMongoConnectionError(error) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt h\xE0ng lo\u1EA1t \u0111\u01A1n \u0111\xE3 qu\xE9t.",
+        error: error?.message || "scan_bulk_update_failed"
       });
     }
   });
@@ -113255,17 +114373,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       details: "not_found"
     });
   });
-  app.use((err, req, res, _next) => {
-    if (err instanceof SyntaxError && err && typeof err === "object" && "body" in err) {
-      return res.status(400).json({
-        success: false,
-        message: "JSON body kh\xF4ng h\u1EE3p l\u1EC7",
-        details: err.message
-      });
-    }
-    console.error("[Express] Unhandled error:", req.method, req.originalUrl, err);
-    return sendApiErrorJson(res, err, 500);
-  });
+  app.use(errorHandler_default);
   if (isDevelopmentRuntime) {
     const developmentModulePath = ["./", "dev", "Server.ts"].join("");
     const { setupDevelopmentMiddleware } = await import(developmentModulePath);
@@ -113275,7 +114383,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
     const distPath = import_path4.default.join(APP_ROOT, "dist");
-    app.use(import_express2.default.static(distPath, {
+    app.use(import_express3.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -113310,6 +114418,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
         scheduleClosedOrdersRetentionCleanup();
+        scheduleMongoTempCollectionsCleanup();
       }
       console.log(`[MongoDB] connectDB xong \u2014 ready=${isMongoReady()} uri=${getMongoUriMasked()}`);
     } catch (err) {

@@ -40,9 +40,15 @@ import {
   getCachedShopeeAddressList,
   setCachedShopeeAddressList,
 } from "./src/services/redis.ts";
-import scanRoutes from "./routes/scanRoutes.js";
+import scanRoutesImport from "./routes/scanRoutes.js";
 import errorHandler from "./middlewares/errorHandler.js";
 import { saveScanOrders, listDonHoanHuy } from "./controllers/scanController.js";
+
+/** ESM/CJS interop — luôn lấy Router thật. */
+const scanRoutes =
+  (scanRoutesImport as any)?.default?.use
+    ? (scanRoutesImport as any).default
+    : scanRoutesImport;
 import {
   initMongo,
   loadProductsFromStore,
@@ -15812,7 +15818,9 @@ async function startServer() {
     res.json({ valid: true, username: req.user.username });
   });
 
-  /** MVC Clean Code — API quét / lưu don_hoan_huy */
+  /** MVC — đăng ký tường minh (không phụ thuộc app.use router). */
+  app.post("/api/scan/save", authMiddleware, saveScanOrders);
+  app.get("/api/scan/don-hoan-huy", authMiddleware, listDonHoanHuy);
   app.use("/api/scan", authMiddleware, scanRoutes);
 
   app.get("/api/config/public", (_req, res) => {
