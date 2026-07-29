@@ -19,11 +19,12 @@ export {
   HANDED_OVER_SOURCE,
 } from './orderWarehouseStatus';
 
-/** Tab "Đã nhận đơn hủy, đơn hoàn" — chỉ đơn còn active trong 14 ngày. */
+/** Tab "Đã nhận đơn hủy, đơn hoàn" — đơn trong don_hoan_huy (local_status hoặc cờ don_hoan_huy). */
 export function matchesReceivedCancelReturnTab(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   if (order.is_local_return_archived) return false;
+  if (order.don_hoan_huy === true) return true;
   const local = resolveOrderLocalStatus(order);
   return (
     local === ORDER_LOCAL_STATUS.RETURN_RECEIVED ||

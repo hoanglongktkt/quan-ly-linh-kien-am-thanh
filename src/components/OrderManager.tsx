@@ -3626,10 +3626,10 @@ export default function OrderManager({
           );
         throw new Error(
           aborted
-            ? 'Lưu thất bại, vui lòng thử lại'
+            ? 'Hết thời gian chờ 10 giây — server chưa phản hồi. Kiểm tra MongoDB / mạng rồi thử lại.'
             : fetchErr instanceof Error
               ? fetchErr.message
-              : 'Lưu thất bại, vui lòng thử lại',
+              : 'Không kết nối được API lưu đơn.',
         );
       }
 
@@ -3640,9 +3640,10 @@ export default function OrderManager({
         data = {};
       }
       if (!res.ok || data?.success === false) {
-        throw new Error(
-          String(data?.message || data?.error || 'Lưu thất bại, vui lòng thử lại'),
+        const detail = String(
+          data?.message || data?.error || `HTTP ${res.status} — lưu DB thất bại`,
         );
+        throw new Error(detail);
       }
 
       const summaryRaw = (data?.summary || {}) as {
@@ -3731,10 +3732,7 @@ export default function OrderManager({
     } catch (err: unknown) {
       // Giữ 3 list đã verify — cho phép bấm lại GHI DB.
       const msg = err instanceof Error ? err.message : String(err);
-      const failMsg =
-        /Lưu thất bại|timeout|aborted|AbortError|timed?\s*out|quá lâu/i.test(msg)
-          ? 'Lưu thất bại, vui lòng thử lại'
-          : msg || 'Lưu thất bại, vui lòng thử lại';
+      const failMsg = msg?.trim() || 'Lưu thất bại — không rõ nguyên nhân. Xem log server.';
       showScanToast(failMsg, 'error');
       setCameraScanResult(`${failMsg} — còn ${codes.length} mã. Bấm GHI DB để thử lại`);
       resumeCameraAfterSave();

@@ -254,12 +254,58 @@ SyncJobSchema.index(
   { expireAfterSeconds: SYNC_JOB_TTL_SECONDS, name: "sync_jobs_ttl" },
 );
 
+/** Tab "Đã nhận đơn hủy, đơn hoàn" — collection riêng, TTL 14 ngày trên scannedAt. */
+type DonHoanHuyDoc = {
+  _id: string;
+  orderSn: string;
+  shopId?: string | null;
+  type: "cancelled" | "return";
+  status: string;
+  local_status: "CANCELLED_STORED" | "RETURN_RECEIVED";
+  scannedAt: Date;
+  createdAt: Date;
+  tracking_no?: string | null;
+  return_tracking_no?: string | null;
+  shopee_order_status?: string | null;
+  shopName?: string | null;
+  scan_code?: string | null;
+  source?: string | null;
+  data?: any;
+};
+
+const DonHoanHuySchema = new Schema<DonHoanHuyDoc>(
+  {
+    _id: { type: String, required: true },
+    orderSn: { type: String, required: true, index: true },
+    shopId: { type: String, default: null, index: true },
+    type: { type: String, required: true, index: true },
+    status: { type: String, required: true },
+    local_status: { type: String, required: true, index: true },
+    scannedAt: { type: Date, required: true, index: true },
+    createdAt: { type: Date, required: true },
+    tracking_no: { type: String, default: null },
+    return_tracking_no: { type: String, default: null },
+    shopee_order_status: { type: String, default: null },
+    shopName: { type: String, default: null },
+    scan_code: { type: String, default: null },
+    source: { type: String, default: "qr_scan" },
+    data: { type: Schema.Types.Mixed, default: null },
+  },
+  { collection: "don_hoan_huy", versionKey: false },
+);
+DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
+DonHoanHuySchema.index(
+  { scannedAt: 1 },
+  { expireAfterSeconds: 14 * 24 * 60 * 60, name: "don_hoan_huy_ttl_14d" },
+);
+
 let ProductModel: Model<ProductDoc>;
 let ChannelListingModel: Model<ListingDoc>;
 let MetaModel: Model<MetaDoc>;
 let OrderModel: Model<OrderDoc>;
 let OrderEventModel: Model<OrderEventDoc>;
 let SyncJobModel: Model<SyncJobDoc>;
+let DonHoanHuyModel: Model<DonHoanHuyDoc>;
 
 let mongoReady = false;
 let appRootResolved = "";
@@ -289,6 +335,9 @@ function ensureModels(): void {
   SyncJobModel =
     (mongoose.models.SyncJob as Model<SyncJobDoc>) ||
     mongoose.model<SyncJobDoc>("SyncJob", SyncJobSchema);
+  DonHoanHuyModel =
+    (mongoose.models.DonHoanHuy as Model<DonHoanHuyDoc>) ||
+    mongoose.model<DonHoanHuyDoc>("DonHoanHuy", DonHoanHuySchema);
 }
 
 function requireMongo(): void {
@@ -3035,6 +3084,246 @@ export async function loadOrderEvents(orderSn: string, limit = 50): Promise<any[
     .lean();
 }
 
+/** Phân loại lỗi Mongo ghi DB — trả message rõ cho FE. */
+export function describeMongoWriteError(err: unknown): string {
+  const anyErr = err as { message?: string; code?: number | string; codeName?: string; name?: string };
+  const msg = String(anyErr?.message || err || "");
+  const code = String(anyErr?.code ?? anyErr?.codeName ?? "");
+  const name = String(anyErr?.name || "");
+  if (/quota|space|exceeded|8000|AtlasError/i.test(msg + code) || code === "8000") {
+    return "Quota MongoDB chưa nhả đủ dung lượng (Atlas Over space quota). Hãy dọn order_events hoặc nâng gói.";
+  }
+  if (
+    /not authorized|Unauthorized|authentication failed|bad auth|insufficient.*privilege/i.test(msg) ||
+    code === "13" ||
+    code === "18"
+  ) {
+    return "Sai quyền tài khoản DB — cần user ReadWrite (không dùng tài khoản chỉ đọc như dev_test).";
+  }
+  if (
+    /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|MongoNetworkError|ServerSelectionError|topology was destroyed|connection.*closed/i.test(
+      msg + name,
+    )
+  ) {
+    return "Mất kết nối MongoDB. Kiểm tra mạng, IP whitelist Atlas hoặc chuỗi MONGODB_URI.";
+  }
+  if (/mongodb_not_ready|Chưa kết nối được Database/i.test(msg)) {
+    return "MongoDB chưa sẵn sàng trên server. Xem App Logs / khởi động lại backend.";
+  }
+  if (/duplicate key|E11000/i.test(msg)) {
+    return "Trùng mã đơn trong don_hoan_huy (đã lưu trước đó).";
+  }
+  return msg || "Lỗi ghi MongoDB không xác định.";
+}
+
+function donHoanHuyDocToOrder(doc: any): any {
+  const sn = String(doc?.orderSn || "").replace(/^shopee-/i, "").trim();
+  const local = String(doc?.local_status || "").toUpperCase() === "RETURN_RECEIVED"
+    ? "RETURN_RECEIVED"
+    : "CANCELLED_STORED";
+  const status =
+    local === "RETURN_RECEIVED"
+      ? "return_received"
+      : String(doc?.status || "cancelled");
+  const scannedAt = doc?.scannedAt
+    ? new Date(doc.scannedAt).toISOString()
+    : doc?.createdAt
+      ? new Date(doc.createdAt).toISOString()
+      : new Date().toISOString();
+  const base = doc?.data && typeof doc.data === "object" ? { ...doc.data } : {};
+  return {
+    ...base,
+    id: base.id || `shopee-${sn}`,
+    orderSn: sn,
+    shopId: doc?.shopId != null ? doc.shopId : base.shopId,
+    shopName: doc?.shopName || base.shopName,
+    status,
+    shopee_order_status: doc?.shopee_order_status || base.shopee_order_status,
+    tracking_no: doc?.tracking_no || base.tracking_no || base.trackingNumber,
+    trackingNumber: doc?.tracking_no || base.trackingNumber || base.tracking_no,
+    return_tracking_no: doc?.return_tracking_no || base.return_tracking_no,
+    local_status: local,
+    localStatus: local,
+    internal_status: local,
+    local_status_updated_at: scannedAt,
+    localStatusAt: scannedAt,
+    is_local_return_archived: false,
+    channel: base.channel || "shopee",
+    don_hoan_huy: true,
+    scannedAt,
+    shopee_cancel_return_kind:
+      local === "RETURN_RECEIVED"
+        ? "refund_return"
+        : base.shopee_cancel_return_kind || "cancelled",
+  };
+}
+
+/** Đọc toàn bộ tab Đã nhận hủy/hoàn từ collection don_hoan_huy. */
+export async function loadDonHoanHuyAsOrders(limit = 2000): Promise<any[]> {
+  if (!isMongoReady()) return [];
+  requireMongo();
+  const safeLimit = Math.max(1, Math.min(5000, Math.floor(limit) || 2000));
+  const docs = await DonHoanHuyModel.find({})
+    .sort({ scannedAt: -1 })
+    .limit(safeLimit)
+    .lean();
+  return (docs || []).map(donHoanHuyDocToOrder);
+}
+
+export async function existsDonHoanHuy(orderSn: string): Promise<boolean> {
+  if (!orderSn || !isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn).replace(/^shopee-/i, "").trim();
+  if (!sn) return false;
+  const hit = await DonHoanHuyModel.findById(`dhh-${sn}`).select({ _id: 1 }).lean();
+  return Boolean(hit);
+}
+
+/**
+ * Upsert đơn hủy/hoàn vào collection don_hoan_huy (SSOT cho tab).
+ * TTL 14 ngày tự xóa theo scannedAt.
+ */
+export async function upsertDonHoanHuy(
+  order: any,
+  opts?: {
+    type?: "cancelled" | "return";
+    scanCode?: string;
+    source?: string;
+    scannedAt?: string | Date;
+  },
+): Promise<{ ok: boolean; orderSn: string; error?: string }> {
+  requireMongo();
+  const sn = String(order?.orderSn || order?.order_sn || "")
+    .replace(/^shopee-/i, "")
+    .trim();
+  if (!sn) {
+    return { ok: false, orderSn: "", error: "Thiếu orderSn — không ghi được don_hoan_huy." };
+  }
+
+  const inferredReturn =
+    opts?.type === "return" ||
+    String(order?.local_status || order?.localStatus || "").toUpperCase() === "RETURN_RECEIVED" ||
+    String(order?.status || "") === "return_received" ||
+    String(order?.status || "") === "return_pending" ||
+    String(order?.shopee_order_status || "").toUpperCase() === "TO_RETURN";
+  const type: "cancelled" | "return" = inferredReturn ? "return" : "cancelled";
+  const local_status = type === "return" ? "RETURN_RECEIVED" : "CANCELLED_STORED";
+  const now = opts?.scannedAt ? new Date(opts.scannedAt) : new Date();
+  const scannedAt = Number.isNaN(now.getTime()) ? new Date() : now;
+  const _id = `dhh-${sn}`;
+
+  const tn = String(order?.tracking_no || order?.trackingNumber || "").trim() || null;
+  const rtn = String(order?.return_tracking_no || "").trim() || null;
+
+  try {
+    await DonHoanHuyModel.findOneAndUpdate(
+      { _id },
+      {
+        $set: {
+          orderSn: sn,
+          shopId: order?.shopId != null ? String(order.shopId) : null,
+          type,
+          status: type === "return" ? "return_received" : "cancelled",
+          local_status,
+          scannedAt,
+          tracking_no: tn,
+          return_tracking_no: rtn,
+          shopee_order_status: order?.shopee_order_status
+            ? String(order.shopee_order_status)
+            : null,
+          shopName: order?.shopName != null ? String(order.shopName) : null,
+          scan_code: opts?.scanCode ? String(opts.scanCode) : null,
+          source: opts?.source || "qr_scan",
+          data: {
+            id: order?.id || `shopee-${sn}`,
+            orderSn: sn,
+            items: Array.isArray(order?.items) ? order.items.slice(0, 20) : [],
+            date: order?.date || null,
+            totalAmount: order?.totalAmount ?? null,
+            channel: order?.channel || "shopee",
+            shipping_carrier: order?.shipping_carrier || null,
+            packageNumber: order?.packageNumber || null,
+          },
+        },
+        $setOnInsert: {
+          _id,
+          createdAt: scannedAt,
+        },
+      },
+      { upsert: true, new: true },
+    );
+    console.log(
+      `[MongoDB] upsert don_hoan_huy ok order_sn=${sn} type=${type} local_status=${local_status}`,
+    );
+    return { ok: true, orderSn: sn };
+  } catch (err) {
+    const detail = describeMongoWriteError(err);
+    console.error(`[MongoDB] upsert don_hoan_huy FAIL order_sn=${sn}:`, detail, err);
+    return { ok: false, orderSn: sn, error: detail };
+  }
+}
+
+export async function upsertDonHoanHuyBatch(
+  rows: Array<{ order: any; type?: "cancelled" | "return"; scanCode?: string; source?: string }>,
+): Promise<{ ok: number; failed: number; errors: string[] }> {
+  let ok = 0;
+  let failed = 0;
+  const errors: string[] = [];
+  for (const row of rows) {
+    const r = await upsertDonHoanHuy(row.order, {
+      type: row.type,
+      scanCode: row.scanCode,
+      source: row.source,
+    });
+    if (r.ok) ok += 1;
+    else {
+      failed += 1;
+      if (r.error) errors.push(`#${r.orderSn || "?"}: ${r.error}`);
+    }
+  }
+  return { ok, failed, errors };
+}
+
+/** Gộp bản ghi don_hoan_huy vào list orders (để tab FE lọc local_status vẫn thấy). */
+export async function mergeDonHoanHuyIntoOrders(orders: any[]): Promise<any[]> {
+  if (!isMongoReady()) return orders;
+  try {
+    requireMongo();
+    const dhh = await loadDonHoanHuyAsOrders(3000);
+    if (!dhh.length) return orders;
+    const list = Array.isArray(orders) ? [...orders] : [];
+    const bySn = new Map<string, number>();
+    list.forEach((o, i) => {
+      const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (sn) bySn.set(sn, i);
+    });
+    for (const row of dhh) {
+      const sn = String(row.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!sn) continue;
+      const idx = bySn.get(sn);
+      if (idx !== undefined) {
+        const cur = list[idx];
+        list[idx] = {
+          ...cur,
+          ...row,
+          items: cur.items?.length ? cur.items : row.items,
+          local_status: row.local_status,
+          localStatus: row.local_status,
+          internal_status: row.local_status,
+          is_local_return_archived: false,
+        };
+      } else {
+        bySn.set(sn, list.length);
+        list.unshift(row);
+      }
+    }
+    return list;
+  } catch (err: any) {
+    console.warn("[MongoDB] mergeDonHoanHuyIntoOrders:", err?.message || err);
+    return orders;
+  }
+}
+
 /**
  * Đảm bảo TTL Index trên order_events.occurred_at và sync_jobs.finished_at.
  * Nếu index cũ lệch expireAfterSeconds → drop + tạo lại (Mongo không cho sửa TTL tại chỗ).
@@ -3093,6 +3382,12 @@ export async function ensureRetentionTtlIndexes(): Promise<{
     "sync_jobs_ttl",
     { finished_at: 1 },
     SYNC_JOB_TTL_SECONDS,
+  );
+  await ensureTtl(
+    DonHoanHuyModel,
+    "don_hoan_huy_ttl_14d",
+    { scannedAt: 1 },
+    14 * 24 * 60 * 60,
   );
 
   return {
@@ -3215,7 +3510,7 @@ export async function purgeMongoTempCollections(opts?: {
     syncJobsAfter: jobs.after,
     ttl,
     note:
-      "Đã dọn order_events + sync_jobs. Collection chính: orders (giữ), products/channel_listings (ưu tiên disk). TTL Mongo tự xóa tiếp mỗi ~60s.",
+      "Đã dọn order_events + sync_jobs. don_hoan_huy (tab hủy/hoàn) TTL 14d riêng. products/listings ưu tiên disk. orders giữ theo retention riêng.",
   };
 }
 

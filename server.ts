@@ -87,6 +87,12 @@ import {
   loadOrderEvents,
   purgeMongoTempCollections,
   ensureRetentionTtlIndexes,
+  upsertDonHoanHuy,
+  upsertDonHoanHuyBatch,
+  loadDonHoanHuyAsOrders,
+  mergeDonHoanHuyIntoOrders,
+  existsDonHoanHuy,
+  describeMongoWriteError,
   mirrorTopLevelTrackingIntoData,
   getDashboardStatsFromStore,
   getLowStockProductsFromStore,
@@ -5844,11 +5850,27 @@ async function processOneScanBgJob(job: ScanBgJob): Promise<void> {
     job.orderSn = found.orderSn ? String(found.orderSn) : undefined;
 
     const existingLocal = resolveOrderLocalStatusShared(found);
-    if (existingLocal === "CANCELLED_STORED" || existingLocal === "RETURN_RECEIVED") {
+    let alreadyDhh = false;
+    try {
+      alreadyDhh = await existsDonHoanHuy(String(found.orderSn || ""));
+    } catch {
+      alreadyDhh = false;
+    }
+    if (
+      existingLocal === "CANCELLED_STORED" ||
+      existingLocal === "RETURN_RECEIVED" ||
+      alreadyDhh
+    ) {
       job.status = "done";
       job.action = "duplicate";
-      job.local_status = existingLocal;
-      job.message = `Đơn #${found.orderSn} đã có cờ ${existingLocal}`;
+      job.local_status = alreadyDhh
+        ? existingLocal === "RETURN_RECEIVED"
+          ? "RETURN_RECEIVED"
+          : existingLocal === "CANCELLED_STORED"
+            ? "CANCELLED_STORED"
+            : "CANCELLED_STORED"
+        : existingLocal;
+      job.message = `Đơn #${found.orderSn} đã có trong don_hoan_huy / cờ nội bộ`;
       job.finishedAt = new Date().toISOString();
       scanBgJobKeys.delete(job.codeKey);
       return;
@@ -5870,28 +5892,22 @@ async function processOneScanBgJob(job: ScanBgJob): Promise<void> {
     clearHandedOverLocalForCancelReturn(found);
     setOrderLocalStatus(found, target);
 
-    try {
-      await persistChangedOrdersPatch([found]);
-    } catch (persistErr: any) {
-      console.warn("[Scan BG] persistChangedOrdersPatch:", persistErr?.message || persistErr);
-    }
-
-    const sn = String(found.orderSn || "").replace(/^shopee-/i, "").trim();
-    if (sn && isMongoReady()) {
-      const ok = await markOrderLocalStatusInStore(sn, target, {
-        shopId: found.shopId != null ? String(found.shopId) : undefined,
-        clearHandedOver: true,
-        status: isReturn ? "return_received" : String(found.status || "cancelled"),
-      });
-      console.log(`[Scan BG] markOrderLocalStatus=${target} sn=${sn} ok=${ok}`);
+    // SSOT tab hủy/hoàn: ghi collection don_hoan_huy (TTL 14 ngày).
+    const dhh = await upsertDonHoanHuy(found, {
+      type: isReturn ? "return" : "cancelled",
+      scanCode: job.code,
+      source: "scan_bg",
+    });
+    if (!dhh.ok) {
+      throw new Error(dhh.error || "Ghi don_hoan_huy thất bại");
     }
 
     job.status = "done";
     job.action = isReturn ? "return_received" : "cancelled";
     job.local_status = target;
     job.message = isReturn
-      ? `Đã dò ngầm nhận hoàn #${found.orderSn} → RETURN_RECEIVED`
-      : `Đã dò ngầm đơn hủy #${found.orderSn} → CANCELLED_STORED`;
+      ? `Đã dò ngầm nhận hoàn #${found.orderSn} → don_hoan_huy`
+      : `Đã dò ngầm đơn hủy #${found.orderSn} → don_hoan_huy`;
     job.finishedAt = new Date().toISOString();
     scanBgJobKeys.delete(job.codeKey);
   } catch (err: any) {
@@ -17805,6 +17821,16 @@ async function startServer() {
       const limit =
         Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5000) : undefined;
       const rawOrders = await readOrdersForRefresh(limit);
+      // Gộp collection don_hoan_huy — SSOT tab "Đã nhận đơn hủy, đơn hoàn".
+      let mergedOrders = rawOrders;
+      try {
+        mergedOrders = await mergeDonHoanHuyIntoOrders(rawOrders);
+      } catch (mergeErr: any) {
+        console.warn(
+          "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
+          mergeErr?.message || mergeErr,
+        );
+      }
       // Webhook cũ hoặc payload detail thiếu model_name vẫn được khôi phục từ catalog
       // trước khi trả về UI; không ghi ngược vào Mongo trong route read-only này.
       // Catalog lỗi/timeout/chậm KHÔNG được làm hỏng danh sách đơn.
@@ -17813,7 +17839,7 @@ async function startServer() {
       if (!limit) {
         try {
           products = await withLocalDbTimeout(
-            loadProductsForOrders(rawOrders),
+            loadProductsForOrders(mergedOrders),
             2500,
             "orders_refresh_catalog",
           );
@@ -17824,7 +17850,7 @@ async function startServer() {
           );
         }
       }
-      const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(rawOrders, products));
+      const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(mergedOrders, products));
       console.log(
         `[FRONTEND FETCHED] GET /api/orders/refresh` +
           `${limit ? `?limit=${limit}` : ""} — trả về ${orders.length} đơn từ MongoDB.`,
@@ -18073,7 +18099,20 @@ async function startServer() {
       tab === "received-cancel-returns" ||
       tab === "da_nhan_huy_hoan"
     ) {
-      rawOrders = rawOrders.filter((o: any) => matchesReceivedCancelReturnTabOrder(o));
+      // SSOT tab: collection don_hoan_huy (TTL 14 ngày) — không lọc local_status trên orders.
+      try {
+        rawOrders = await loadDonHoanHuyAsOrders(
+          Number.isFinite(Number(req.query.limit))
+            ? Math.min(Math.floor(Number(req.query.limit)), 5000)
+            : 2000,
+        );
+        console.log(
+          `[GET /api/orders] query.tab=${tab} source=don_hoan_huy → ${rawOrders.length} đơn`,
+        );
+      } catch (dhhErr: any) {
+        console.error("[GET /api/orders] don_hoan_huy load failed:", dhhErr);
+        rawOrders = rawOrders.filter((o: any) => matchesReceivedCancelReturnTabOrder(o));
+      }
     } else if (
       tab === "pending_confirm" ||
       tab === "pending_verification" ||
@@ -19064,6 +19103,35 @@ async function startServer() {
     }
   });
 
+  /** Danh sách tab Đã nhận đơn hủy/hoàn — đọc thẳng collection don_hoan_huy. */
+  app.get("/api/orders/don-hoan-huy", authMiddleware, async (req, res) => {
+    try {
+      if (!isMongoReady()) {
+        return res.status(503).json({
+          success: false,
+          error: "mongodb_not_ready",
+          message: "MongoDB chưa sẵn sàng trên server.",
+          data: [],
+        });
+      }
+      const limitRaw = Number(req.query.limit);
+      const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 5000) : 2000;
+      const raw = await loadDonHoanHuyAsOrders(limit);
+      const products = await loadProductsForOrders(raw);
+      const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(raw, products));
+      return res.json({ success: true, data: orders, total: orders.length });
+    } catch (error: any) {
+      const detail = describeMongoWriteError(error);
+      console.error("[GET /api/orders/don-hoan-huy]", detail, error);
+      return res.status(500).json({
+        success: false,
+        error: error?.message || "don_hoan_huy_list_failed",
+        message: detail,
+        data: [],
+      });
+    }
+  });
+
   /**
    * Queue dò ngầm quét mã — Backend worker độc lập FE.
    * POST body: { codes: string[] } — đẩy vào queue, trả về ngay.
@@ -19265,6 +19333,12 @@ async function startServer() {
         const status = String(order.status || "");
         const rawShopee = String(order.shopee_order_status || "").toUpperCase();
         const existingLocal = resolveOrderLocalStatus(order);
+        let alreadyInDonHoanHuy = false;
+        try {
+          alreadyInDonHoanHuy = await existsDonHoanHuy(String(order.orderSn || ""));
+        } catch {
+          alreadyInDonHoanHuy = false;
+        }
         const forceHandOver =
           forceHandOverCodes.has(codeKey) ||
           forceHandOverCodes.has(norm(String(order.orderSn || ""))) ||
@@ -19293,9 +19367,11 @@ async function startServer() {
         // Chặn quét trùng — trừ forceCancel/forceReturn ghi đè HANDED_OVER → hủy/hoàn.
         // Idempotent: force cùng cờ đích đã có → coi như thành công (đã ghi DB trước đó).
         const alreadySameCancel =
-          forceCancel && existingLocal === "CANCELLED_STORED";
+          (forceCancel && existingLocal === "CANCELLED_STORED") ||
+          (forceCancel && alreadyInDonHoanHuy);
         const alreadySameReturn =
-          forceReturn && existingLocal === "RETURN_RECEIVED";
+          (forceReturn && existingLocal === "RETURN_RECEIVED") ||
+          (forceReturn && alreadyInDonHoanHuy);
         if (alreadySameCancel) {
           summary.donHuy += 1;
           results.push({
@@ -19479,17 +19555,92 @@ async function startServer() {
         });
       }
 
-      // Chỉ persist các đơn đã đổi — không full-collection rewrite.
-      // QUAN TRỌNG: bulkUpsertOrdersToStore CỐ Ý bỏ INTERNAL_FLAG_KEYS
-      // (is_handed_over / local_status) → phải ghi cờ kho bằng API chuyên dụng.
-      if (changedOrders.length > 0) {
+      // Persist: hủy/hoàn → collection don_hoan_huy (SSOT tab);
+      // xuất kho → markOrderHandedOver. Không phụ thuộc order_events.
+      const cancelReturnRows: Array<{
+        order: any;
+        type: "cancelled" | "return";
+        scanCode?: string;
+      }> = [];
+      for (const o of changedOrders) {
+        const local = String(
+          o?.local_status || o?.localStatus || o?.internal_status || "",
+        ).toUpperCase();
+        if (local === "CANCELLED_STORED") {
+          cancelReturnRows.push({ order: o, type: "cancelled" });
+        } else if (local === "RETURN_RECEIVED") {
+          cancelReturnRows.push({ order: o, type: "return" });
+        }
+      }
+
+      let donHoanHuyWrite: { ok: number; failed: number; errors: string[] } = {
+        ok: 0,
+        failed: 0,
+        errors: [],
+      };
+      if (cancelReturnRows.length > 0) {
+        if (!isMongoReady()) {
+          console.error("[Orders Scan Bulk] Mongo not ready — không ghi được don_hoan_huy");
+          return res.status(503).json({
+            success: false,
+            error: "mongodb_not_ready",
+            message: "MongoDB chưa sẵn sàng trên server. Xem App Logs / khởi động lại backend.",
+          });
+        }
         try {
-          await persistChangedOrdersPatch(changedOrders);
-        } catch (persistErr: any) {
-          console.warn(
-            "[Orders Scan Bulk] persistChangedOrdersPatch:",
-            persistErr?.message || persistErr,
+          donHoanHuyWrite = await upsertDonHoanHuyBatch(
+            cancelReturnRows.map((r) => ({
+              order: r.order,
+              type: r.type,
+              scanCode: undefined,
+              source: "qr_scan",
+            })),
           );
+        } catch (dhhErr: any) {
+          const detail = describeMongoWriteError(dhhErr);
+          console.error("[Orders Scan Bulk] don_hoan_huy batch FAIL:", detail, dhhErr);
+          return res.status(500).json({
+            success: false,
+            error: "don_hoan_huy_write_failed",
+            message: detail,
+          });
+        }
+        if (donHoanHuyWrite.failed > 0 && donHoanHuyWrite.ok === 0) {
+          const detail =
+            donHoanHuyWrite.errors[0] ||
+            "Không ghi được đơn nào vào collection don_hoan_huy.";
+          console.error("[Orders Scan Bulk] don_hoan_huy all failed:", donHoanHuyWrite.errors);
+          return res.status(500).json({
+            success: false,
+            error: "don_hoan_huy_write_failed",
+            message: detail,
+            errors: donHoanHuyWrite.errors.slice(0, 10),
+          });
+        }
+      }
+
+      if (changedOrders.length > 0) {
+        // Handed-over vẫn ghi orders; hủy/hoàn ưu tiên don_hoan_huy (cờ orders là phụ).
+        const handoverOnly = changedOrders.filter((o) => {
+          const local = String(
+            o?.local_status || o?.localStatus || o?.internal_status || "",
+          ).toUpperCase();
+          return (
+            local === "HANDED_OVER" ||
+            o?.is_handed_over === true ||
+            o?.isHandedOverToCarrier === true
+          );
+        });
+        if (handoverOnly.length > 0) {
+          try {
+            await persistChangedOrdersPatch(handoverOnly);
+          } catch (persistErr: any) {
+            console.warn(
+              "[Orders Scan Bulk] persistChangedOrdersPatch handover:",
+              describeMongoWriteError(persistErr),
+              persistErr,
+            );
+          }
         }
 
         let flagOk = 0;
@@ -19512,30 +19663,19 @@ async function startServer() {
                 shopId,
               });
               if (ok) flagOk += 1;
-            } else if (local === "CANCELLED_STORED") {
-              const ok = await markOrderLocalStatusInStore(sn, "CANCELLED_STORED", {
-                shopId,
-                clearHandedOver: true,
-                status: String(o.status || "cancelled"),
-              });
-              if (ok) flagOk += 1;
-            } else if (local === "RETURN_RECEIVED") {
-              const ok = await markOrderLocalStatusInStore(sn, "RETURN_RECEIVED", {
-                shopId,
-                clearHandedOver: true,
-                status: "return_received",
-              });
-              if (ok) flagOk += 1;
             }
+            // CANCELLED_STORED / RETURN_RECEIVED: đã ghi don_hoan_huy ở trên.
           } catch (flagErr: any) {
             console.error(
               `[Orders Scan Bulk] mark flag fail order_sn=${sn}:`,
-              flagErr?.message || flagErr,
+              describeMongoWriteError(flagErr),
+              flagErr,
             );
           }
         }
         console.log(
-          `[Orders Scan Bulk] warehouse flags written=${flagOk}/${changedOrders.length}`,
+          `[Orders Scan Bulk] don_hoan_huy ok=${donHoanHuyWrite.ok} fail=${donHoanHuyWrite.failed}` +
+            ` handoverFlags=${flagOk} changed=${changedOrders.length}`,
         );
         ordersRefreshCache = null;
       }
@@ -19553,6 +19693,7 @@ async function startServer() {
         success: true,
         processedCount,
         persistedCount: changedOrders.length,
+        donHoanHuy: donHoanHuyWrite,
         summary,
         stats: {
           handedOver: summary.daXuatKho,
@@ -19567,11 +19708,12 @@ async function startServer() {
         orders: enriched,
       });
     } catch (error: any) {
-      console.error("[Orders Scan Bulk] Error:", error);
+      const detail = describeMongoWriteError(error);
+      console.error("[Orders Scan Bulk] Error:", detail, error?.stack || error);
       return res.status(500).json({
         success: false,
         error: error?.message || "scan_bulk_update_failed",
-        message: error?.message || "Không thể cập nhật hàng loạt đơn đã quét.",
+        message: detail || "Không thể cập nhật hàng loạt đơn đã quét.",
       });
     }
   });
