@@ -1,5 +1,5 @@
 import DonHoanHuy from "../models/DonHoanHuy.js";
-import { isDBReady } from "../config/db.js";
+import { connectDB, isDBReady, getMongoUri } from "../config/db.js";
 
 function normalizeOrderSn(raw) {
   return String(raw || "")
@@ -12,7 +12,11 @@ function describeDbError(err) {
   if (/quota|space|storage|over.?space/i.test(msg)) {
     return "Quota MongoDB đầy (Atlas Over space quota). Hãy dọn dữ liệu hoặc nâng gói.";
   }
-  if (/ECONNREFUSED|ENOTFOUND|ETIMEOUT|serverSelection|connect ETIMEDOUT|MongoNetwork/i.test(msg)) {
+  if (
+    /ECONNREFUSED|ENOTFOUND|ETIMEOUT|serverSelection|connect ETIMEDOUT|MongoNetwork|Thiếu MONGODB/i.test(
+      msg,
+    )
+  ) {
     return "Lỗi kết nối MongoDB / mạng. Kiểm tra Atlas và biến MONGODB_URI.";
   }
   if (/duplicate key|E11000/i.test(msg)) {
@@ -21,12 +25,31 @@ function describeDbError(err) {
   return msg || "Lỗi Database không xác định.";
 }
 
+async function ensureDbConnected() {
+  if (isDBReady()) return true;
+  if (!getMongoUri()) {
+    throw new Error("Thiếu MONGODB_URI / MONGO_URL trong biến môi trường.");
+  }
+  await connectDB();
+  return isDBReady();
+}
+
 /**
  * POST /api/scan/save
  * Body: { codes: string[] } | { orderSns: string[] } | { items: [...] }
  */
 export async function saveScanOrders(req, res) {
   try {
+    try {
+      await ensureDbConnected();
+    } catch (dbErr) {
+      console.error("[POST /api/scan/save] DB connect:", dbErr);
+      return res.status(500).json({
+        success: false,
+        message: describeDbError(dbErr),
+      });
+    }
+
     if (!isDBReady()) {
       return res.status(500).json({
         success: false,
@@ -149,6 +172,17 @@ export async function saveScanOrders(req, res) {
  */
 export async function listDonHoanHuy(req, res) {
   try {
+    try {
+      await ensureDbConnected();
+    } catch (dbErr) {
+      console.error("[GET /api/scan/don-hoan-huy] DB connect:", dbErr);
+      return res.status(500).json({
+        success: false,
+        message: describeDbError(dbErr),
+        data: [],
+      });
+    }
+
     if (!isDBReady()) {
       return res.status(500).json({
         success: false,

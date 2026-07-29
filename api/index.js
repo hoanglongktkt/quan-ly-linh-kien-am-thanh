@@ -3,6 +3,7 @@
  * Mọi /api/* và /labels/* rewrite → /api?path=...
  * Shared code nằm ở /_lib (ngoài /api) để không bị đếm vào giới hạn 12 functions.
  */
+import 'dotenv/config';
 import { handleLogin } from '../_lib/handlers/login.js';
 import { handleAuthVerify } from '../_lib/handlers/authVerify.js';
 import { handleShopeeCallback } from '../_lib/handlers/shopeeCallback.js';

@@ -92413,7 +92413,7 @@ function getApiKeyFromEnv() {
 }
 
 // server.ts
-var import_dotenv = __toESM(require_main(), 1);
+var import_dotenv2 = __toESM(require_main(), 1);
 var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
 var import_mongoose4 = __toESM(require("mongoose"), 1);
 
@@ -93338,7 +93338,42 @@ var DonHoanHuy = import_mongoose.default.models.DonHoanHuy || import_mongoose.de
 var DonHoanHuy_default = DonHoanHuy;
 
 // config/db.js
+var import_dotenv = __toESM(require_main(), 1);
 var import_mongoose2 = __toESM(require("mongoose"), 1);
+try {
+  import_dotenv.default.config();
+} catch {
+}
+function getMongoUri() {
+  return String(
+    process.env.MONGODB_URI || process.env.MONGO_URL || process.env.MONGO_URI || ""
+  ).trim();
+}
+async function connectDB() {
+  const uri = getMongoUri();
+  if (!uri) {
+    throw new Error("Thi\u1EBFu MONGODB_URI / MONGO_URL trong bi\u1EBFn m\xF4i tr\u01B0\u1EDDng.");
+  }
+  if (import_mongoose2.default.connection.readyState === 1) {
+    return import_mongoose2.default.connection;
+  }
+  import_mongoose2.default.set("strictQuery", true);
+  try {
+    await import_mongoose2.default.connect(uri, {
+      serverSelectionTimeoutMS: 5e3,
+      connectTimeoutMS: 5e3,
+      socketTimeoutMS: 45e3,
+      maxPoolSize: 10
+    });
+  } catch (err) {
+    const msg = err?.message || String(err);
+    throw new Error(
+      /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|MongoNetwork/i.test(msg) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI." : msg || "Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c MongoDB."
+    );
+  }
+  console.log("[DB] MongoDB Connected Successfully");
+  return import_mongoose2.default.connection;
+}
 function isDBReady() {
   return import_mongoose2.default.connection.readyState === 1;
 }
@@ -93352,7 +93387,9 @@ function describeDbError(err) {
   if (/quota|space|storage|over.?space/i.test(msg)) {
     return "Quota MongoDB \u0111\u1EA7y (Atlas Over space quota). H\xE3y d\u1ECDn d\u1EEF li\u1EC7u ho\u1EB7c n\xE2ng g\xF3i.";
   }
-  if (/ECONNREFUSED|ENOTFOUND|ETIMEOUT|serverSelection|connect ETIMEDOUT|MongoNetwork/i.test(msg)) {
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEOUT|serverSelection|connect ETIMEDOUT|MongoNetwork|Thiếu MONGODB/i.test(
+    msg
+  )) {
     return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI.";
   }
   if (/duplicate key|E11000/i.test(msg)) {
@@ -93360,8 +93397,25 @@ function describeDbError(err) {
   }
   return msg || "L\u1ED7i Database kh\xF4ng x\xE1c \u0111\u1ECBnh.";
 }
+async function ensureDbConnected() {
+  if (isDBReady()) return true;
+  if (!getMongoUri()) {
+    throw new Error("Thi\u1EBFu MONGODB_URI / MONGO_URL trong bi\u1EBFn m\xF4i tr\u01B0\u1EDDng.");
+  }
+  await connectDB();
+  return isDBReady();
+}
 async function saveScanOrders(req, res) {
   try {
+    try {
+      await ensureDbConnected();
+    } catch (dbErr) {
+      console.error("[POST /api/scan/save] DB connect:", dbErr);
+      return res.status(500).json({
+        success: false,
+        message: describeDbError(dbErr)
+      });
+    }
     if (!isDBReady()) {
       return res.status(500).json({
         success: false,
@@ -93464,6 +93518,16 @@ async function saveScanOrders(req, res) {
 }
 async function listDonHoanHuy(req, res) {
   try {
+    try {
+      await ensureDbConnected();
+    } catch (dbErr) {
+      console.error("[GET /api/scan/don-hoan-huy] DB connect:", dbErr);
+      return res.status(500).json({
+        success: false,
+        message: describeDbError(dbErr),
+        data: []
+      });
+    }
     if (!isDBReady()) {
       return res.status(500).json({
         success: false,
@@ -94074,7 +94138,7 @@ var DonHoanHuyModel;
 var mongoReady = false;
 var appRootResolved3 = "";
 var writeChain3 = Promise.resolve();
-function getMongoUri() {
+function getMongoUri2() {
   return String(process.env.MONGODB_URI || process.env.MONGO_URL || "").trim();
 }
 function ensureModels() {
@@ -94162,7 +94226,7 @@ function isMongoReady() {
   return mongoReady && import_mongoose3.default.connection.readyState === 1;
 }
 function getMongoUriMasked() {
-  const uri = getMongoUri();
+  const uri = getMongoUri2();
   if (!uri) return "(missing MONGODB_URI)";
   return uri.replace(/\/\/([^:]+):([^@]+)@/, "//$1:***@");
 }
@@ -94176,7 +94240,7 @@ async function initMongo(appRoot) {
       `[Products] STORAGE=disk \u2014 Kho G\u1ED1c: ${getProductsDiskPath()} | Mapping: ${getChannelListingsDiskPath()} (kh\xF4ng ghi Mongo products/listings)`
     );
   }
-  const uri = getMongoUri();
+  const uri = getMongoUri2();
   console.log(`[MongoDB] Boot \u2014 APP_ROOT=${appRootResolved3}`);
   console.log(`[MongoDB] Boot \u2014 URI=${getMongoUriMasked()}`);
   if (!uri) {
@@ -96757,7 +96821,7 @@ var dotenvCandidates = [
 ];
 for (const envPath of dotenvCandidates) {
   if (import_fs5.default.existsSync(envPath)) {
-    const loaded = import_dotenv.default.config({ path: envPath });
+    const loaded = import_dotenv2.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
     } else {
@@ -96765,7 +96829,7 @@ for (const envPath of dotenvCandidates) {
     }
   }
 }
-import_dotenv.default.config();
+import_dotenv2.default.config();
 console.log(
   `[Config] APP_ROOT=${APP_ROOT} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
 );
@@ -114411,7 +114475,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       return res.sendFile(import_path4.default.join(distPath, "index.html"));
     });
   }
-  async function connectDB() {
+  async function connectDB2() {
     try {
       const ok = await initMongo(APP_ROOT);
       if (ok && isMongoReady()) {
@@ -114442,7 +114506,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
         console.log("[Dashboard] API route ready: GET /api/dashboard?date_range=...");
       }
       console.log(`[MongoDB] listen OK \u2014 connecting DB in background (ready=${isMongoReady()})`);
-      void connectDB();
+      void connectDB2();
       console.log("[Boot] Order sync: webhook ON + one-shot recovery pull (24h) after Mongo ready.");
       console.log("[Shopee Tracking Scanner] T\u1EA0M T\u1EAET (iron-fist purge) \u2014 kh\xF4ng qu\xE9t khi boot.");
       console.log("[Orders Retention] Job x\xF3a \u0111\u01A1n \u0111\xE3 \u0111\xF3ng: h\u1EE7y/ho\xE0n >14d, ho\xE0n t\u1EA5t/\u0110VVC >30d (sau Mongo ready).");
