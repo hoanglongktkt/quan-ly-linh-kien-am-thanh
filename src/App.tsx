@@ -405,12 +405,12 @@ export default function App() {
 
     const silent = Boolean(opts?.silent);
     const bustCache = opts?.bustCache !== false;
-    // Silent/background mặc định shallow vừa đủ đếm tab; nút "Làm mới" = full list.
+    // Silent/background: chỉ 50 đơn mới nhất (nhanh trên mobile); "Làm mới" = full list.
     const limit =
       typeof opts?.limit === 'number' && opts.limit > 0
         ? opts.limit
         : silent
-          ? 500
+          ? 50
           : undefined;
     const merge = opts?.merge ?? Boolean(limit);
     const flightKey = limit ? `limit:${limit}` : 'full';
@@ -1316,15 +1316,14 @@ export default function App() {
     const bootstrapCatalog = async () => {
       purgeLegacyCatalogCache();
 
-      // Stale-while-revalidate: IndexedDB render tạm; shallow merge 50 đơn mới nhất
-      // (không replace/wipe toàn bộ — tránh mất list khi Mongo chậm/rỗng tạm thời).
+      // Stale-while-revalidate: IndexedDB hiện ngay (<0.5s); API ngầm lấy 50 đơn mới nhất.
       const cached = await loadOrdersCache();
       ordersHydrateRef.current = cached;
       if (cached.length > 0) {
         setOrders(cached);
         setHasLoadedOrdersOnce(true);
       }
-      void fetchOrders({ silent: true, limit: 500, merge: true });
+      void fetchOrders({ silent: true, limit: 50, merge: true });
 
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });

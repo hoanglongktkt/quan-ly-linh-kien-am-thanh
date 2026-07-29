@@ -10,7 +10,10 @@ const ordersStore = localforage.createInstance({
 
 const ORDERS_CACHE_KEY = 'orders_v2';
 const CACHE_VERSION = 2;
-const MAX_DISPLAY_CACHE_AGE_MS = 5 * 60 * 1000;
+/** Giữ cache lâu để mở app mobile hiện ngay dữ liệu cũ (SWR), API cập nhật ngầm sau. */
+const MAX_DISPLAY_CACHE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Chỉ lưu tối đa N đơn mới nhất — nhẹ máy, đủ hiện màn hình chính. */
+const MAX_CACHED_ORDERS = 100;
 
 type OrderCacheEnvelope = {
   version: number;
@@ -18,7 +21,7 @@ type OrderCacheEnvelope = {
   orders: Order[];
 };
 
-/** Cache chỉ phục vụ hiển thị ngắn hạn; không được xem là dữ liệu trạng thái chuẩn. */
+/** Cache hiển thị tức thì (stale-while-revalidate); không phải nguồn trạng thái chuẩn. */
 export async function loadOrdersCache(): Promise<Order[]> {
   try {
     const raw = await ordersStore.getItem<unknown>(ORDERS_CACHE_KEY);
@@ -26,7 +29,7 @@ export async function loadOrdersCache(): Promise<Order[]> {
     const cache = raw as Partial<OrderCacheEnvelope>;
     if (cache.version !== CACHE_VERSION || !Number.isFinite(cache.savedAt)) return [];
     if (Date.now() - Number(cache.savedAt) > MAX_DISPLAY_CACHE_AGE_MS) return [];
-    return sanitizeOrders(cache.orders);
+    return sanitizeOrders(cache.orders).slice(0, MAX_CACHED_ORDERS);
   } catch (err) {
     console.warn('[orderCache] load failed:', err);
     return [];
@@ -35,10 +38,11 @@ export async function loadOrdersCache(): Promise<Order[]> {
 
 export async function saveOrdersCache(orders: Order[]): Promise<void> {
   try {
+    const trimmed = sanitizeOrders(orders).slice(0, MAX_CACHED_ORDERS);
     await ordersStore.setItem<OrderCacheEnvelope>(ORDERS_CACHE_KEY, {
       version: CACHE_VERSION,
       savedAt: Date.now(),
-      orders,
+      orders: trimmed,
     });
   } catch (err) {
     console.warn('[orderCache] save failed:', err);
