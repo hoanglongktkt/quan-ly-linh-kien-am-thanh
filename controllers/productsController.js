@@ -89,7 +89,11 @@ export async function listProducts(req, res) {
       Number.isFinite(rawSize) && rawSize > 0
         ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize))
         : PRODUCTS_PAGE_SIZE_DEFAULT;
-    const search = String(req.query?.search ?? req.query?.keyword ?? "").trim();
+    // Khớp FE: ?search=... hoặc ?keyword=... (hỗ trợ array / khoảng trắng thừa)
+    const rawSearch = req.query?.search ?? req.query?.keyword ?? "";
+    const search = String(Array.isArray(rawSearch) ? rawSearch[0] : rawSearch)
+      .replace(/\s+/g, " ")
+      .trim();
 
     // Chỉ đọc 1 trang (mặc định 50) — cấm fallback loadProducts()/find({}) toàn kho.
     const paged = await deps.withLocalDbTimeout(
@@ -97,6 +101,15 @@ export async function listProducts(req, res) {
       diskMode ? 15_000 : 30_000,
       "products_page_load",
     );
+
+    if (search) {
+      console.log("[Products API] GET /api/products search", {
+        search,
+        page: paged.page,
+        total: paged.total,
+        hits: Array.isArray(paged.products) ? paged.products.length : 0,
+      });
+    }
 
     return res.status(200).json({
       success: true,

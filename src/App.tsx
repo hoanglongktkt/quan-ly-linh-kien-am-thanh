@@ -284,6 +284,9 @@ export default function App() {
   const ordersHydrateRef = useRef<Order[]>([]);
   /** Từ khóa search Kho SP chính — giữ qua phân trang / focus refresh. */
   const productsSearchRef = useRef('');
+  /** Sequence guard — tránh response search cũ ghi đè kết quả mới hơn. */
+  const fetchProductsSeqRef = useRef(0);
+  const fetchProductsAbortRef = useRef<AbortController | null>(null);
 
   const [logs, setLogs] = useState<SyncLog[]>(() =>
     safeGetJson('omni_logs', INITIAL_SYNC_LOGS),
@@ -600,26 +603,32 @@ export default function App() {
     const append = !!opts?.append;
     const silent = Boolean(opts?.silent);
     if (opts && Object.prototype.hasOwnProperty.call(opts, 'search')) {
-      productsSearchRef.current = String(opts.search ?? '').trim();
+      productsSearchRef.current = String(opts.search ?? '').replace(/\s+/g, ' ').trim();
     }
     const searchQ = productsSearchRef.current;
+
+    const seq = ++fetchProductsSeqRef.current;
+    fetchProductsAbortRef.current?.abort();
 
     if (!silent) setProductsLoading(true);
     const maxAttempts = forceRefresh ? 3 : 2;
     let lastErr: unknown = null;
     try {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (seq !== fetchProductsSeqRef.current) return;
+        const controller = new AbortController();
+        fetchProductsAbortRef.current = controller;
         try {
-          const controller = new AbortController();
           // Khớp timeout backend 30s — cPanel/Mongo cold-start cần thêm thời gian.
           const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
-          // Chỉ đọc trực tiếp DB Kho gốc theo trang (page/pageSize), không tải cả kho.
+          // Chỉ đọc trực tiếp DB Kho gốc theo trang (page/pageSize/search), không tải cả kho.
           const params = new URLSearchParams({
             page: String(page),
             pageSize: String(pageSize),
             t: String(Date.now()),
           });
-          if (searchQ) params.set('search', searchQ);
+          // Luôn gửi search (kể cả rỗng) để backend và FE đồng bộ tham số.
+          params.set('search', searchQ);
           const response = await fetch(`/api/products?${params.toString()}`, {
             method: 'GET',
             cache: 'no-store',
@@ -631,9 +640,11 @@ export default function App() {
             },
           });
           window.clearTimeout(timeoutId);
+          if (seq !== fetchProductsSeqRef.current) return;
           if (!response.ok) throw new Error('Không thể đọc dữ liệu Kho gốc từ Database.');
 
           const data = await response.json();
+          if (seq !== fetchProductsSeqRef.current) return;
           if (Array.isArray(data)) {
             setProducts(data);
             setProductsMeta({ page: 1, pageSize: data.length, total: data.length, totalPages: 1, hasMore: false });
@@ -653,6 +664,9 @@ export default function App() {
           });
           return;
         } catch (err) {
+          if (seq !== fetchProductsSeqRef.current) return;
+          const aborted = err instanceof DOMException && err.name === 'AbortError';
+          if (aborted) return;
           lastErr = err;
           console.warn(`[Fetch Products] attempt ${attempt}/${maxAttempts} failed:`, err);
           if (attempt < maxAttempts) {
@@ -660,12 +674,13 @@ export default function App() {
           }
         }
       }
+      if (seq !== fetchProductsSeqRef.current) return;
       console.error('Fetch products error:', lastErr);
       // Lỗi mạng/Mongo không đồng nghĩa kho thật rỗng. Giữ danh sách hiện có.
       // Chỉ ném lỗi khi caller chủ động forceRefresh (vd: sau khởi tạo kho).
       if (forceRefresh) throw lastErr;
     } finally {
-      if (!silent) setProductsLoading(false);
+      if (seq === fetchProductsSeqRef.current && !silent) setProductsLoading(false);
     }
   };
 

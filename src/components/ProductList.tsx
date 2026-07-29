@@ -180,7 +180,7 @@ export default function ProductList({
     }
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     searchDebounceRef.current = setTimeout(() => {
-      const q = search.trim();
+      const q = search.replace(/\s+/g, ' ').trim();
       setServerSearch(q);
       void onRefreshProductsRef.current?.({ page: 1, append: false, search: q });
     }, 400);
@@ -368,12 +368,13 @@ export default function ProductList({
   const filteredGroups = productGroups.filter((group) => {
     const rep = group.representative;
     // Search đã lọc server-side (toàn DB) — không filter lại theo search trên trang hiện tại.
+    const channels = Array.isArray(rep.channels) ? rep.channels : [];
 
     const matchesChannel =
       channelFilter === 'all' ? true :
-      channelFilter === 'shopee' ? rep.channels.includes('shopee') :
-      channelFilter === 'tiktok' ? rep.channels.includes('tiktok') :
-      rep.channels.length === 0;
+      channelFilter === 'shopee' ? channels.includes('shopee') :
+      channelFilter === 'tiktok' ? channels.includes('tiktok') :
+      channels.length === 0;
 
     const matchesCategory = categoryFilter === 'all' ? true : rep.category === categoryFilter;
 
@@ -958,7 +959,7 @@ export default function ProductList({
 
       {/* Products Table - Desktop Only */}
       <div className="max-md:hidden md:block bg-white rounded-2xl border border-gray-100 shadow-xs overflow-hidden">
-        {!productsLoading && products.length === 0 && (
+        {!productsLoading && products.length === 0 && !serverSearch && (
           <div className="p-8 text-center space-y-3 border-b border-gray-50">
             <p className="text-sm text-gray-500 font-semibold">
               Chưa có dữ liệu trong Kho gốc. Hãy dùng nút "Khởi tạo từ sàn" để lấy dữ liệu.
@@ -1024,8 +1025,10 @@ export default function ProductList({
             <tbody className="divide-y divide-gray-50 text-sm">
               {filteredGroups.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-12 text-center text-gray-400">
-                    Không tìm thấy sản phẩm nào khớp với bộ lọc.
+                  <td colSpan={8} className="p-16 text-center">
+                    <p className="text-sm font-semibold text-gray-400 tracking-wide">
+                      {productsLoading ? 'Đang tải...' : 'Không tìm thấy sản phẩm'}
+                    </p>
                   </td>
                 </tr>
               ) : (
@@ -1343,8 +1346,10 @@ export default function ProductList({
       {/* Products Card List - Mobile-First */}
       <div className="max-md:block md:hidden space-y-4">
         {filteredGroups.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-gray-150 p-12 text-center text-gray-400 text-xs">
-            Không tìm thấy sản phẩm nào khớp với bộ lọc.
+          <div className="bg-white rounded-2xl border border-gray-150 p-16 text-center">
+            <p className="text-sm font-semibold text-gray-400 tracking-wide">
+              {productsLoading ? 'Đang tải...' : 'Không tìm thấy sản phẩm'}
+            </p>
           </div>
         ) : (
           filteredGroups.map((group) => {

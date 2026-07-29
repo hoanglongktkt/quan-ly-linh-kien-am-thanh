@@ -38,6 +38,10 @@ import {
   countChannelListingsOnDisk,
   deleteAllChannelListingsFromDisk,
 } from "./channelListingsDiskStore.ts";
+import {
+  buildAccentFlexibleRegex,
+  normalizeProductSearchText,
+} from "../utils/productSearch.ts";
 
 export { isProductsDiskMode, getProductsDiskPath, setProductsDiskAppRoot, inheritShopeeLinkFromParent };
 export { getChannelListingsDiskPath };
@@ -677,26 +681,26 @@ export async function loadProductsFromStore(): Promise<any[]> {
   return docsToProducts(docs);
 }
 
-/** Filter $regex (i) cho phân trang + count Kho Gốc theo tên/SKU. */
+/** Filter $regex (i) cho phân trang + count Kho Gốc theo tên/SKU (hỗ trợ bỏ dấu). */
 function buildProductListSearchFilter(search: string): Record<string, unknown> {
-  const q = String(search || "").trim();
-  if (!q) return {};
-  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const contains = { $regex: escaped, $options: "i" as const };
+  const regex = buildAccentFlexibleRegex(search);
+  if (!regex) return {};
   return {
     $or: [
-      { sku: contains },
-      { "data.sku": contains },
-      { "data.name": contains },
-      { "data.title": contains },
-      { "data.modelName": contains },
-      { "data.barcode": contains },
-      { "data.children.sku": contains },
-      { "data.children.title": contains },
-      { "data.children.name": contains },
-      { "data.children_models.sku": contains },
-      { "data.children_models.title": contains },
-      { "data.children_models.modelName": contains },
+      { sku: regex },
+      { "data.sku": regex },
+      { "data.name": regex },
+      { "data.title": regex },
+      { "data.modelName": regex },
+      { "data.barcode": regex },
+      { "data.children.sku": regex },
+      { "data.children.title": regex },
+      { "data.children.name": regex },
+      { "data.children.modelName": regex },
+      { "data.children_models.sku": regex },
+      { "data.children_models.title": regex },
+      { "data.children_models.modelName": regex },
+      { "data.children_models.name": regex },
     ],
   };
 }
@@ -711,8 +715,9 @@ export async function loadProductsPageFromStore(
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  const q = normalizeProductSearchText(search);
   const filter = buildProductListSearchFilter(search);
-  const hasSearch = Object.keys(filter).length > 0;
+  const hasSearch = !!q && Object.keys(filter).length > 0;
   // cPanel/Mongo chậm: cho đến 30s mỗi query trang; không bao giờ fallback load hết kho.
   const COUNT_MAX_MS = 15_000;
   const PAGE_MAX_MS = 30_000;
@@ -738,6 +743,15 @@ export async function loadProductsPageFromStore(
     .limit(safeSize)
     .maxTimeMS(PAGE_MAX_MS)
     .lean();
+
+  if (hasSearch) {
+    console.log("[MongoSearch] loadProductsPageFromStore", {
+      q,
+      total,
+      page: currentPage,
+      hits: docs.length,
+    });
+  }
 
   return {
     products: docsToProducts(docs),

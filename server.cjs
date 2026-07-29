@@ -921,8 +921,8 @@ var require_ms = __commonJS({
   "node_modules/body-parser/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h2 = m2 * 60;
-    var d = h2 * 24;
+    var h3 = m2 * 60;
+    var d = h3 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -965,7 +965,7 @@ var require_ms = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h2;
+          return n * h3;
         case "minutes":
         case "minute":
         case "mins":
@@ -992,8 +992,8 @@ var require_ms = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h2) {
-        return Math.round(ms / h2) + "h";
+      if (ms >= h3) {
+        return Math.round(ms / h3) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -1004,7 +1004,7 @@ var require_ms = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h2, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h3, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -17342,8 +17342,8 @@ var require_ms2 = __commonJS({
   "node_modules/finalhandler/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h2 = m2 * 60;
-    var d = h2 * 24;
+    var h3 = m2 * 60;
+    var d = h3 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -17386,7 +17386,7 @@ var require_ms2 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h2;
+          return n * h3;
         case "minutes":
         case "minute":
         case "mins":
@@ -17413,8 +17413,8 @@ var require_ms2 = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h2) {
-        return Math.round(ms / h2) + "h";
+      if (ms >= h3) {
+        return Math.round(ms / h3) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -17425,7 +17425,7 @@ var require_ms2 = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h2, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h3, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -18061,8 +18061,8 @@ var require_ms3 = __commonJS({
   "node_modules/express/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h2 = m2 * 60;
-    var d = h2 * 24;
+    var h3 = m2 * 60;
+    var d = h3 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -18105,7 +18105,7 @@ var require_ms3 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h2;
+          return n * h3;
         case "minutes":
         case "minute":
         case "mins":
@@ -18132,8 +18132,8 @@ var require_ms3 = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h2) {
-        return Math.round(ms / h2) + "h";
+      if (ms >= h3) {
+        return Math.round(ms / h3) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -18144,7 +18144,7 @@ var require_ms3 = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h2, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h3, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -19627,8 +19627,8 @@ var require_ms4 = __commonJS({
   "node_modules/send/node_modules/debug/node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h2 = m2 * 60;
-    var d = h2 * 24;
+    var h3 = m2 * 60;
+    var d = h3 * 24;
     var y = d * 365.25;
     module2.exports = function(val, options) {
       options = options || {};
@@ -19671,7 +19671,7 @@ var require_ms4 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h2;
+          return n * h3;
         case "minutes":
         case "minute":
         case "mins":
@@ -19698,8 +19698,8 @@ var require_ms4 = __commonJS({
       if (ms >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (ms >= h2) {
-        return Math.round(ms / h2) + "h";
+      if (ms >= h3) {
+        return Math.round(ms / h3) + "h";
       }
       if (ms >= m2) {
         return Math.round(ms / m2) + "m";
@@ -19710,7 +19710,7 @@ var require_ms4 = __commonJS({
       return ms + "ms";
     }
     function fmtLong(ms) {
-      return plural(ms, d, "day") || plural(ms, h2, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
+      return plural(ms, d, "day") || plural(ms, h3, "hour") || plural(ms, m2, "minute") || plural(ms, s2, "second") || ms + " ms";
     }
     function plural(ms, n, name) {
       if (ms < n) {
@@ -20227,8 +20227,8 @@ var require_ms5 = __commonJS({
   "node_modules/ms/index.js"(exports2, module2) {
     var s2 = 1e3;
     var m2 = s2 * 60;
-    var h2 = m2 * 60;
-    var d = h2 * 24;
+    var h3 = m2 * 60;
+    var d = h3 * 24;
     var w = d * 7;
     var y = d * 365.25;
     module2.exports = function(val, options) {
@@ -20276,7 +20276,7 @@ var require_ms5 = __commonJS({
         case "hrs":
         case "hr":
         case "h":
-          return n * h2;
+          return n * h3;
         case "minutes":
         case "minute":
         case "mins":
@@ -20304,8 +20304,8 @@ var require_ms5 = __commonJS({
       if (msAbs >= d) {
         return Math.round(ms / d) + "d";
       }
-      if (msAbs >= h2) {
-        return Math.round(ms / h2) + "h";
+      if (msAbs >= h3) {
+        return Math.round(ms / h3) + "h";
       }
       if (msAbs >= m2) {
         return Math.round(ms / m2) + "m";
@@ -20320,8 +20320,8 @@ var require_ms5 = __commonJS({
       if (msAbs >= d) {
         return plural(ms, msAbs, d, "day");
       }
-      if (msAbs >= h2) {
-        return plural(ms, msAbs, h2, "hour");
+      if (msAbs >= h3) {
+        return plural(ms, msAbs, h3, "hour");
       }
       if (msAbs >= m2) {
         return plural(ms, msAbs, m2, "minute");
@@ -25042,7 +25042,7 @@ var require_trees = __commonJS({
       var extra = desc.stat_desc.extra_bits;
       var base = desc.stat_desc.extra_base;
       var max_length = desc.stat_desc.max_length;
-      var h2;
+      var h3;
       var n, m2;
       var bits;
       var xbits;
@@ -25052,8 +25052,8 @@ var require_trees = __commonJS({
         s2.bl_count[bits] = 0;
       }
       tree[s2.heap[s2.heap_max] * 2 + 1] = 0;
-      for (h2 = s2.heap_max + 1; h2 < HEAP_SIZE; h2++) {
-        n = s2.heap[h2];
+      for (h3 = s2.heap_max + 1; h3 < HEAP_SIZE; h3++) {
+        n = s2.heap[h3];
         bits = tree[tree[n * 2 + 1] * 2 + 1] + 1;
         if (bits > max_length) {
           bits = max_length;
@@ -25090,7 +25090,7 @@ var require_trees = __commonJS({
       for (bits = max_length; bits !== 0; bits--) {
         n = s2.bl_count[bits];
         while (n !== 0) {
-          m2 = s2.heap[--h2];
+          m2 = s2.heap[--h3];
           if (m2 > max_code) {
             continue;
           }
@@ -33593,27 +33593,27 @@ var require_UPNG = __commonJS({
     }
     var UPNG = {};
     UPNG.toRGBA8 = function(out) {
-      var w = out.width, h2 = out.height;
-      if (out.tabs.acTL == null) return [UPNG.toRGBA8.decodeImage(out.data, w, h2, out).buffer];
+      var w = out.width, h3 = out.height;
+      if (out.tabs.acTL == null) return [UPNG.toRGBA8.decodeImage(out.data, w, h3, out).buffer];
       var frms = [];
       if (out.frames[0].data == null) out.frames[0].data = out.data;
-      var len = w * h2 * 4, img = new Uint8Array(len), empty = new Uint8Array(len), prev = new Uint8Array(len);
+      var len = w * h3 * 4, img = new Uint8Array(len), empty = new Uint8Array(len), prev = new Uint8Array(len);
       for (var i2 = 0; i2 < out.frames.length; i2++) {
         var frm = out.frames[i2];
         var fx = frm.rect.x, fy = frm.rect.y, fw = frm.rect.width, fh = frm.rect.height;
         var fdata = UPNG.toRGBA8.decodeImage(frm.data, fw, fh, out);
         if (i2 != 0) for (var j = 0; j < len; j++) prev[j] = img[j];
-        if (frm.blend == 0) UPNG._copyTile(fdata, fw, fh, img, w, h2, fx, fy, 0);
-        else if (frm.blend == 1) UPNG._copyTile(fdata, fw, fh, img, w, h2, fx, fy, 1);
+        if (frm.blend == 0) UPNG._copyTile(fdata, fw, fh, img, w, h3, fx, fy, 0);
+        else if (frm.blend == 1) UPNG._copyTile(fdata, fw, fh, img, w, h3, fx, fy, 1);
         frms.push(img.buffer.slice(0));
         if (frm.dispose == 0) {
-        } else if (frm.dispose == 1) UPNG._copyTile(empty, fw, fh, img, w, h2, fx, fy, 0);
+        } else if (frm.dispose == 1) UPNG._copyTile(empty, fw, fh, img, w, h3, fx, fy, 0);
         else if (frm.dispose == 2) for (var j = 0; j < len; j++) img[j] = prev[j];
       }
       return frms;
     };
-    UPNG.toRGBA8.decodeImage = function(data, w, h2, out) {
-      var area = w * h2, bpp = UPNG.decode._getBPP(out);
+    UPNG.toRGBA8.decodeImage = function(data, w, h3, out) {
+      var area = w * h3, bpp = UPNG.decode._getBPP(out);
       var bpl = Math.ceil(w * bpp / 8);
       var bf = new Uint8Array(area * 4), bf32 = new Uint32Array(bf.buffer);
       var ctype = out.ctype, depth = out.depth;
@@ -33656,7 +33656,7 @@ var require_UPNG = __commonJS({
         }
       } else if (ctype == 3) {
         var p = out.tabs["PLTE"], ap = out.tabs["tRNS"], tl = ap ? ap.length : 0;
-        if (depth == 1) for (var y = 0; y < h2; y++) {
+        if (depth == 1) for (var y = 0; y < h3; y++) {
           var s0 = y * bpl, t0 = y * w;
           for (var i2 = 0; i2 < w; i2++) {
             var qi = t0 + i2 << 2, j = data[s0 + (i2 >> 3)] >> 7 - ((i2 & 7) << 0) & 1, cj = 3 * j;
@@ -33666,7 +33666,7 @@ var require_UPNG = __commonJS({
             bf[qi + 3] = j < tl ? ap[j] : 255;
           }
         }
-        if (depth == 2) for (var y = 0; y < h2; y++) {
+        if (depth == 2) for (var y = 0; y < h3; y++) {
           var s0 = y * bpl, t0 = y * w;
           for (var i2 = 0; i2 < w; i2++) {
             var qi = t0 + i2 << 2, j = data[s0 + (i2 >> 2)] >> 6 - ((i2 & 3) << 1) & 3, cj = 3 * j;
@@ -33676,7 +33676,7 @@ var require_UPNG = __commonJS({
             bf[qi + 3] = j < tl ? ap[j] : 255;
           }
         }
-        if (depth == 4) for (var y = 0; y < h2; y++) {
+        if (depth == 4) for (var y = 0; y < h3; y++) {
           var s0 = y * bpl, t0 = y * w;
           for (var i2 = 0; i2 < w; i2++) {
             var qi = t0 + i2 << 2, j = data[s0 + (i2 >> 1)] >> 4 - ((i2 & 1) << 2) & 15, cj = 3 * j;
@@ -33710,7 +33710,7 @@ var require_UPNG = __commonJS({
         }
       } else if (ctype == 0) {
         var tr = out.tabs["tRNS"] ? out.tabs["tRNS"] : -1;
-        for (var y = 0; y < h2; y++) {
+        for (var y = 0; y < h3; y++) {
           var off = y * bpl, to = y * w;
           if (depth == 1) for (var x2 = 0; x2 < w; x2++) {
             var gr = 255 * (data[off + (x2 >>> 3)] >>> 7 - (x2 & 7) & 1), al = gr == tr * 255 ? 0 : 255;
@@ -33847,12 +33847,12 @@ var require_UPNG = __commonJS({
       delete out.filter;
       return out;
     };
-    UPNG.decode._decompress = function(out, dd, w, h2) {
+    UPNG.decode._decompress = function(out, dd, w, h3) {
       var time = Date.now();
-      var bpp = UPNG.decode._getBPP(out), bpl = Math.ceil(w * bpp / 8), buff = new Uint8Array((bpl + 1 + out.interlace) * h2);
+      var bpp = UPNG.decode._getBPP(out), bpl = Math.ceil(w * bpp / 8), buff = new Uint8Array((bpl + 1 + out.interlace) * h3);
       dd = UPNG.decode._inflate(dd, buff);
       var time = Date.now();
-      if (out.interlace == 0) dd = UPNG.decode._filterZero(dd, out, 0, w, h2);
+      if (out.interlace == 0) dd = UPNG.decode._filterZero(dd, out, 0, w, h3);
       else if (out.interlace == 1) dd = UPNG.decode._readInterlace(dd, out);
       return dd;
     };
@@ -33864,7 +33864,7 @@ var require_UPNG = __commonJS({
       var H = {};
       H.H = {};
       H.H.N = function(N, W) {
-        var R = Uint8Array, i2 = 0, m2 = 0, J = 0, h2 = 0, Q = 0, X = 0, u = 0, w = 0, d = 0, v, C;
+        var R = Uint8Array, i2 = 0, m2 = 0, J = 0, h3 = 0, Q = 0, X = 0, u = 0, w = 0, d = 0, v, C;
         if (N[0] == 3 && N[1] == 0) return W ? W : new R(0);
         var V = H.H, n = V.b, A2 = V.e, l = V.R, M = V.n, I = V.A, e2 = V.Z, b = V.m, Z2 = W == null;
         if (Z2) W = new R(N.length >>> 2 << 3);
@@ -33890,7 +33890,7 @@ var require_UPNG = __commonJS({
           }
           if (m2 == 2) {
             J = A2(N, d, 5) + 257;
-            h2 = A2(N, d + 5, 5) + 1;
+            h3 = A2(N, d + 5, 5) + 1;
             Q = A2(N, d + 10, 4) + 4;
             d += 14;
             var E = d, j = 1;
@@ -33908,10 +33908,10 @@ var require_UPNG = __commonJS({
             I(b.Q, j, b.u);
             v = b.w;
             C = b.d;
-            d = l(b.u, (1 << j) - 1, J + h2, N, d, b.v);
+            d = l(b.u, (1 << j) - 1, J + h3, N, d, b.v);
             var r2 = V.V(b.v, 0, J, b.C);
             X = (1 << r2) - 1;
-            var S2 = V.V(b.v, J, h2, b.D);
+            var S2 = V.V(b.v, J, h3, b.D);
             u = (1 << S2) - 1;
             M(b.C, r2);
             I(b.C, r2, v);
@@ -34133,9 +34133,9 @@ var require_UPNG = __commonJS({
       return H.H.N;
     })();
     UPNG.decode._readInterlace = function(data, out) {
-      var w = out.width, h2 = out.height;
+      var w = out.width, h3 = out.height;
       var bpp = UPNG.decode._getBPP(out), cbpp = bpp >> 3, bpl = Math.ceil(w * bpp / 8);
-      var img = new Uint8Array(h2 * bpl);
+      var img = new Uint8Array(h3 * bpl);
       var di = 0;
       var starting_row = [0, 0, 4, 0, 2, 0, 1];
       var starting_col = [0, 4, 0, 2, 0, 1, 0];
@@ -34146,7 +34146,7 @@ var require_UPNG = __commonJS({
         var ri = row_increment[pass], ci = col_increment[pass];
         var sw = 0, sh = 0;
         var cr = starting_row[pass];
-        while (cr < h2) {
+        while (cr < h3) {
           cr += ri;
           sh++;
         }
@@ -34158,7 +34158,7 @@ var require_UPNG = __commonJS({
         var bpll = Math.ceil(sw * bpp / 8);
         UPNG.decode._filterZero(data, out, di, sw, sh);
         var y = 0, row = starting_row[pass];
-        while (row < h2) {
+        while (row < h3) {
           var col = starting_col[pass];
           var cdi = di + y * bpll << 3;
           while (col < w) {
@@ -34196,13 +34196,13 @@ var require_UPNG = __commonJS({
       var noc = [1, null, 3, 1, 2, null, 4][out.ctype];
       return noc * out.depth;
     };
-    UPNG.decode._filterZero = function(data, out, off, w, h2) {
+    UPNG.decode._filterZero = function(data, out, off, w, h3) {
       var bpp = UPNG.decode._getBPP(out), bpl = Math.ceil(w * bpp / 8), paeth = UPNG.decode._paeth;
       bpp = Math.ceil(bpp / 8);
       var i2 = 0, di = 1, type = data[off], x2 = 0;
       if (type > 1) data[off] = [0, 0, 1][type - 2];
       if (type == 3) for (x2 = bpp; x2 < bpl; x2++) data[x2 + 1] = data[x2 + 1] + (data[x2 + 1 - bpp] >>> 1) & 255;
-      for (var y = 0; y < h2; y++) {
+      for (var y = 0; y < h3; y++) {
         i2 = off + y * bpl;
         di = i2 + y + 1;
         type = data[di - 1];
@@ -34295,9 +34295,9 @@ var require_UPNG = __commonJS({
       }
     };
     UPNG._copyTile = function(sb, sw, sh, tb, tw, th, xoff, yoff, mode) {
-      var w = Math.min(sw, tw), h2 = Math.min(sh, th);
+      var w = Math.min(sw, tw), h3 = Math.min(sh, th);
       var si = 0, ti = 0;
-      for (var y = 0; y < h2; y++) for (var x2 = 0; x2 < w; x2++) {
+      for (var y = 0; y < h3; y++) for (var x2 = 0; x2 < w; x2++) {
         if (xoff >= 0 && yoff >= 0) {
           si = y * sw + x2 << 2;
           ti = (yoff + y) * tw + xoff + x2 << 2;
@@ -34341,14 +34341,14 @@ var require_UPNG = __commonJS({
       }
       return true;
     };
-    UPNG.encode = function(bufs, w, h2, ps, dels, tabs, forbidPlte) {
+    UPNG.encode = function(bufs, w, h3, ps, dels, tabs, forbidPlte) {
       if (ps == null) ps = 0;
       if (forbidPlte == null) forbidPlte = false;
-      var nimg = UPNG.encode.compress(bufs, w, h2, ps, [false, false, false, 0, forbidPlte]);
+      var nimg = UPNG.encode.compress(bufs, w, h3, ps, [false, false, false, 0, forbidPlte]);
       UPNG.encode.compressPNG(nimg, -1);
-      return UPNG.encode._main(nimg, w, h2, dels, tabs);
+      return UPNG.encode._main(nimg, w, h3, dels, tabs);
     };
-    UPNG.encodeLL = function(bufs, w, h2, cc, ac, depth, dels, tabs) {
+    UPNG.encodeLL = function(bufs, w, h3, cc, ac, depth, dels, tabs) {
       var nimg = {
         ctype: 0 + (cc == 1 ? 0 : 2) + (ac == 0 ? 0 : 4),
         depth,
@@ -34361,7 +34361,7 @@ var require_UPNG = __commonJS({
           x: 0,
           y: 0,
           width: w,
-          height: h2
+          height: h3
         },
         img: new Uint8Array(bufs[i2]),
         blend: 0,
@@ -34370,10 +34370,10 @@ var require_UPNG = __commonJS({
         bpl: Math.ceil(bipl / 8)
       });
       UPNG.encode.compressPNG(nimg, 0, true);
-      var out = UPNG.encode._main(nimg, w, h2, dels, tabs);
+      var out = UPNG.encode._main(nimg, w, h3, dels, tabs);
       return out;
     };
-    UPNG.encode._main = function(nimg, w, h2, dels, tabs) {
+    UPNG.encode._main = function(nimg, w, h3, dels, tabs) {
       if (tabs == null) tabs = {};
       var crc = UPNG.crc.crc, wUi = UPNG._bin.writeUint, wUs = UPNG._bin.writeUshort, wAs = UPNG._bin.writeASCII;
       var offset = 8, anim = nimg.frames.length > 1, pltAlpha = false;
@@ -34401,7 +34401,7 @@ var require_UPNG = __commonJS({
       offset += 4;
       wUi(data, offset, w);
       offset += 4;
-      wUi(data, offset, h2);
+      wUi(data, offset, h3);
       offset += 4;
       data[offset] = nimg.depth;
       offset++;
@@ -34536,7 +34536,7 @@ var require_UPNG = __commonJS({
         frm.cimg = UPNG.encode._filterZero(frm.img, nh, frm.bpp, frm.bpl, fdata, filter, levelZero);
       }
     };
-    UPNG.encode.compress = function(bufs, w, h2, ps, prms) {
+    UPNG.encode.compress = function(bufs, w, h3, ps, prms) {
       var onlyBlend = prms[0], evenCrd = prms[1], forbidPrev = prms[2], minBits = prms[3], forbidPlte = prms[4];
       var ctype = 6, depth = 8, alphaAnd = 255;
       for (var j = 0; j < bufs.length; j++) {
@@ -34544,7 +34544,7 @@ var require_UPNG = __commonJS({
         for (var i2 = 0; i2 < ilen; i2 += 4) alphaAnd &= img[i2 + 3];
       }
       var gotAlpha = alphaAnd != 255;
-      var frms = UPNG.encode.framize(bufs, w, h2, onlyBlend, evenCrd, forbidPrev);
+      var frms = UPNG.encode.framize(bufs, w, h3, onlyBlend, evenCrd, forbidPrev);
       var cmap = {}, plte = [], inds = [];
       if (ps != 0) {
         var nbufs = [];
@@ -34634,18 +34634,18 @@ var require_UPNG = __commonJS({
         frames: frms
       };
     };
-    UPNG.encode.framize = function(bufs, w, h2, alwaysBlend, evenCrd, forbidPrev) {
+    UPNG.encode.framize = function(bufs, w, h3, alwaysBlend, evenCrd, forbidPrev) {
       var frms = [];
       for (var j = 0; j < bufs.length; j++) {
         var cimg = new Uint8Array(bufs[j]), cimg32 = new Uint32Array(cimg.buffer);
         var nimg;
-        var nx = 0, ny = 0, nw = w, nh = h2, blend = alwaysBlend ? 1 : 0;
+        var nx = 0, ny = 0, nw = w, nh = h3, blend = alwaysBlend ? 1 : 0;
         if (j != 0) {
           var tlim = forbidPrev || alwaysBlend || j == 1 || frms[j - 2].dispose != 0 ? 1 : 2, tstp = 0, tarea = 1e9;
           for (var it = 0; it < tlim; it++) {
             var pimg = new Uint8Array(bufs[j - 1 - it]), p32 = new Uint32Array(bufs[j - 1 - it]);
-            var mix = w, miy = h2, max = -1, may = -1;
-            for (var y = 0; y < h2; y++) for (var x2 = 0; x2 < w; x2++) {
+            var mix = w, miy = h3, max = -1, may = -1;
+            for (var y = 0; y < h3; y++) for (var x2 = 0; x2 < w; x2++) {
               var i2 = y * w + x2;
               if (cimg32[i2] != p32[i2]) {
                 if (x2 < mix) mix = x2;
@@ -34672,15 +34672,15 @@ var require_UPNG = __commonJS({
           var pimg = new Uint8Array(bufs[j - 1 - tstp]);
           if (tstp == 1) frms[j - 1].dispose = 2;
           nimg = new Uint8Array(nw * nh * 4);
-          UPNG._copyTile(pimg, w, h2, nimg, nw, nh, -nx, -ny, 0);
-          blend = UPNG._copyTile(cimg, w, h2, nimg, nw, nh, -nx, -ny, 3) ? 1 : 0;
-          if (blend == 1) UPNG.encode._prepareDiff(cimg, w, h2, nimg, {
+          UPNG._copyTile(pimg, w, h3, nimg, nw, nh, -nx, -ny, 0);
+          blend = UPNG._copyTile(cimg, w, h3, nimg, nw, nh, -nx, -ny, 3) ? 1 : 0;
+          if (blend == 1) UPNG.encode._prepareDiff(cimg, w, h3, nimg, {
             x: nx,
             y: ny,
             width: nw,
             height: nh
           });
-          else UPNG._copyTile(cimg, w, h2, nimg, nw, nh, -nx, -ny, 0);
+          else UPNG._copyTile(cimg, w, h3, nimg, nw, nh, -nx, -ny, 0);
         } else nimg = cimg.slice(0);
         frms.push({
           rect: {
@@ -34707,8 +34707,8 @@ var require_UPNG = __commonJS({
           height: maY - miY
         };
         frms[j - 1].dispose = 1;
-        if (j - 1 != 0) UPNG.encode._updateFrame(bufs, w, h2, frms, j - 1, r2, evenCrd);
-        UPNG.encode._updateFrame(bufs, w, h2, frms, j, r2, evenCrd);
+        if (j - 1 != 0) UPNG.encode._updateFrame(bufs, w, h3, frms, j - 1, r2, evenCrd);
+        UPNG.encode._updateFrame(bufs, w, h3, frms, j, r2, evenCrd);
       }
       var area = 0;
       if (bufs.length != 1) for (var i2 = 0; i2 < frms.length; i2++) {
@@ -34717,11 +34717,11 @@ var require_UPNG = __commonJS({
       }
       return frms;
     };
-    UPNG.encode._updateFrame = function(bufs, w, h2, frms, i2, r2, evenCrd) {
+    UPNG.encode._updateFrame = function(bufs, w, h3, frms, i2, r2, evenCrd) {
       var U8 = Uint8Array, U32 = Uint32Array;
       var pimg = new U8(bufs[i2 - 1]), pimg32 = new U32(bufs[i2 - 1]), nimg = i2 + 1 < bufs.length ? new U8(bufs[i2 + 1]) : null;
       var cimg = new U8(bufs[i2]), cimg32 = new U32(cimg.buffer);
-      var mix = w, miy = h2, max = -1, may = -1;
+      var mix = w, miy = h3, max = -1, may = -1;
       for (var y = 0; y < r2.height; y++) for (var x2 = 0; x2 < r2.width; x2++) {
         var cx = r2.x + x2, cy = r2.y + y;
         var j = cy * w + cx, cc = cimg32[j];
@@ -34749,24 +34749,24 @@ var require_UPNG = __commonJS({
       fr.blend = 1;
       fr.img = new Uint8Array(r2.width * r2.height * 4);
       if (frms[i2 - 1].dispose == 0) {
-        UPNG._copyTile(pimg, w, h2, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
-        UPNG.encode._prepareDiff(cimg, w, h2, fr.img, r2);
-      } else UPNG._copyTile(cimg, w, h2, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
+        UPNG._copyTile(pimg, w, h3, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
+        UPNG.encode._prepareDiff(cimg, w, h3, fr.img, r2);
+      } else UPNG._copyTile(cimg, w, h3, fr.img, r2.width, r2.height, -r2.x, -r2.y, 0);
     };
-    UPNG.encode._prepareDiff = function(cimg, w, h2, nimg, rec) {
-      UPNG._copyTile(cimg, w, h2, nimg, rec.width, rec.height, -rec.x, -rec.y, 2);
+    UPNG.encode._prepareDiff = function(cimg, w, h3, nimg, rec) {
+      UPNG._copyTile(cimg, w, h3, nimg, rec.width, rec.height, -rec.x, -rec.y, 2);
     };
-    UPNG.encode._filterZero = function(img, h2, bpp, bpl, data, filter, levelZero) {
+    UPNG.encode._filterZero = function(img, h3, bpp, bpl, data, filter, levelZero) {
       var fls = [], ftry = [0, 1, 2, 3, 4];
       if (filter != -1) ftry = [filter];
-      else if (h2 * bpl > 5e5 || bpp == 1) ftry = [0];
+      else if (h3 * bpl > 5e5 || bpp == 1) ftry = [0];
       var opts;
       if (levelZero) opts = {
         level: 0
       };
       var CMPR = levelZero && UZIP != null ? UZIP : _pako.default;
       for (var i2 = 0; i2 < ftry.length; i2++) {
-        for (var y = 0; y < h2; y++) UPNG.encode._filterLine(data, img, y, bpl, bpp, ftry[i2]);
+        for (var y = 0; y < h3; y++) UPNG.encode._filterLine(data, img, y, bpl, bpp, ftry[i2]);
         fls.push(CMPR["deflate"](data, opts));
       }
       var ti, tsize = 1e9;
@@ -40219,19 +40219,19 @@ var require_rotations = __commonJS({
       if (degreeAngle === void 0) {
         degreeAngle = 0;
       }
-      var x2 = rectangle.x, y = rectangle.y, w = rectangle.width, h2 = rectangle.height;
+      var x2 = rectangle.x, y = rectangle.y, w = rectangle.width, h3 = rectangle.height;
       var r2 = exports2.reduceRotation(degreeAngle);
       var b = borderWidth / 2;
       if (r2 === 0)
-        return { x: x2 - b, y: y - b, width: w, height: h2 };
+        return { x: x2 - b, y: y - b, width: w, height: h3 };
       else if (r2 === 90)
-        return { x: x2 - h2 + b, y: y - b, width: h2, height: w };
+        return { x: x2 - h3 + b, y: y - b, width: h3, height: w };
       else if (r2 === 180)
-        return { x: x2 - w + b, y: y - h2 + b, width: w, height: h2 };
+        return { x: x2 - w + b, y: y - h3 + b, width: w, height: h3 };
       else if (r2 === 270)
-        return { x: x2 - b, y: y - w + b, width: h2, height: w };
+        return { x: x2 - b, y: y - w + b, width: h3, height: w };
       else
-        return { x: x2 - b, y: y - b, width: w, height: h2 };
+        return { x: x2 - b, y: y - b, width: w, height: h3 };
     };
   }
 });
@@ -71445,7 +71445,7 @@ var require_websocket_server = __commonJS({
       socket.once("finish", socket.destroy);
       socket.end(
         `HTTP/1.1 ${code} ${http3.STATUS_CODES[code]}\r
-` + Object.keys(headers).map((h2) => `${h2}: ${headers[h2]}`).join("\r\n") + "\r\n\r\n" + message
+` + Object.keys(headers).map((h3) => `${h3}: ${headers[h3]}`).join("\r\n") + "\r\n\r\n" + message
       );
     }
     function abortHandshakeOrEmitwsClientError(server, req, socket, code, message, headers) {
@@ -72268,6 +72268,7 @@ async function ensureConnected(client) {
       await client.connect();
     } else if (client.status === "connecting") {
       await new Promise((resolve, reject) => {
+        let timer;
         const onReady = () => {
           cleanup();
           resolve();
@@ -72279,10 +72280,11 @@ async function ensureConnected(client) {
         const cleanup = () => {
           client.off("ready", onReady);
           client.off("error", onError);
+          if (timer) clearTimeout(timer);
         };
         client.once("ready", onReady);
         client.once("error", onError);
-        setTimeout(() => {
+        timer = setTimeout(() => {
           cleanup();
           reject(new Error("connect timeout"));
         }, 3e3);
@@ -72403,6 +72405,7 @@ var MONGO_CONNECT_OPTIONS = {
   waitQueueTimeoutMS: 5e3,
   maxIdleTimeMS: 3e4
 };
+var connectPromise = null;
 function getMongoUri() {
   return String(
     process.env.MONGODB_URI || process.env.MONGO_URL || process.env.MONGO_URI || ""
@@ -72416,17 +72419,26 @@ async function connectDB() {
   if (import_mongoose2.default.connection.readyState === 1) {
     return import_mongoose2.default.connection;
   }
-  import_mongoose2.default.set("strictQuery", true);
-  try {
-    await import_mongoose2.default.connect(uri, MONGO_CONNECT_OPTIONS);
-  } catch (err) {
-    const msg = err?.message || String(err);
-    throw new Error(
-      /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|MongoNetwork/i.test(msg) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI." : msg || "Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c MongoDB."
-    );
+  if (connectPromise) {
+    return connectPromise;
   }
-  console.log("[DB] MongoDB Connected Successfully");
-  return import_mongoose2.default.connection;
+  import_mongoose2.default.set("strictQuery", true);
+  connectPromise = (async () => {
+    try {
+      if (import_mongoose2.default.connection.readyState !== 1) {
+        await import_mongoose2.default.connect(uri, MONGO_CONNECT_OPTIONS);
+      }
+      console.log("[DB] MongoDB Connected Successfully");
+      return import_mongoose2.default.connection;
+    } catch (err) {
+      connectPromise = null;
+      const msg = err?.message || String(err);
+      throw new Error(
+        /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|MongoNetwork/i.test(msg) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI." : msg || "Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c MongoDB."
+      );
+    }
+  })();
+  return connectPromise;
 }
 function isDBReady() {
   return import_mongoose2.default.connection.readyState === 1;
@@ -72629,10 +72641,49 @@ async function listDonHoanHuy(req, res) {
   }
 }
 
+// middlewares/errorHandler.js
+function errorHandler(err, req, res, next) {
+  if (res.headersSent) {
+    return next(err);
+  }
+  if (err instanceof SyntaxError && err && typeof err === "object" && "body" in err) {
+    return res.status(400).json({
+      success: false,
+      message: "JSON body kh\xF4ng h\u1EE3p l\u1EC7"
+    });
+  }
+  if (err?.name === "AbortError" || err?.code === "ETIMEDOUT" || /timeout/i.test(String(err?.message || ""))) {
+    return res.status(504).json({
+      success: false,
+      message: String(err?.message || "").trim() || "Request timeout.",
+      error: "gateway_timeout"
+    });
+  }
+  const status = Number(err?.status || err?.statusCode) || 500;
+  const message = String(err?.message || "").trim() || "L\u1ED7i m\xE1y ch\u1EE7 n\u1ED9i b\u1ED9.";
+  console.error(`[ErrorHandler] ${req.method} ${req.originalUrl}:`, message);
+  return res.status(status).json({
+    success: false,
+    message
+  });
+}
+function asyncHandler(fn) {
+  return function asyncRouteWrapper(req, res, next) {
+    Promise.resolve(fn(req, res, next)).catch((err) => {
+      if (res.headersSent) {
+        console.error(`[AsyncHandler] late error ${req.method} ${req.originalUrl}:`, err?.message || err);
+        return;
+      }
+      next(err);
+    });
+  };
+}
+var errorHandler_default = errorHandler;
+
 // routes/scanRoutes.js
 var router = (0, import_express2.Router)();
-router.post("/save", saveScanOrders);
-router.get("/don-hoan-huy", listDonHoanHuy);
+router.post("/save", asyncHandler(saveScanOrders));
+router.get("/don-hoan-huy", asyncHandler(listDonHoanHuy));
 var scanRoutes_default = router;
 
 // routes/authRoutes.js
@@ -72849,13 +72900,28 @@ var import_express5 = __toESM(require_express2(), 1);
 
 // controllers/vietnamAddressController.js
 var VN_ADDRESS_API = "https://provinces.open-api.vn/api";
+var VN_ADDRESS_TIMEOUT_MS = 1e4;
 var vnProvincesCache = null;
 var vnDistrictsCache = /* @__PURE__ */ new Map();
 var vnWardsCache = /* @__PURE__ */ new Map();
 async function fetchVnJson(url) {
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) throw new Error(`VN address API ${res.status}`);
-  return res.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), VN_ADDRESS_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal
+    });
+    if (!res.ok) throw new Error(`VN address API ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`VN address API timeout sau ${VN_ADDRESS_TIMEOUT_MS / 1e3}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 async function getProvinces(_req, res) {
   try {
@@ -72911,9 +72977,9 @@ async function getWards(req, res) {
 
 // routes/vietnamAddressRoutes.js
 var router4 = (0, import_express5.Router)();
-router4.get("/provinces", getProvinces);
-router4.get("/districts/:provinceCode", getDistricts);
-router4.get("/wards/:districtCode", getWards);
+router4.get("/provinces", asyncHandler(getProvinces));
+router4.get("/districts/:provinceCode", asyncHandler(getDistricts));
+router4.get("/wards/:districtCode", asyncHandler(getWards));
 var vietnamAddressRoutes_default = router4;
 
 // routes/suppliersRoutes.js
@@ -94427,12 +94493,22 @@ async function postShopConnectionStatus(req, res) {
     for (const shop of shops) {
       if (!shop?.id) continue;
       try {
-        statuses[shop.id] = await Promise.race([
-          deps3.checkShopConnectionStatus(shop),
-          new Promise((_, reject) => {
-            setTimeout(() => reject(new Error("Timeout ki\u1EC3m tra k\u1EBFt n\u1ED1i (15s)")), 15e3);
-          })
-        ]);
+        statuses[shop.id] = await new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("Timeout ki\u1EC3m tra k\u1EBFt n\u1ED1i (15s)")),
+            15e3
+          );
+          Promise.resolve(deps3.checkShopConnectionStatus(shop)).then(
+            (v) => {
+              clearTimeout(timer);
+              resolve(v);
+            },
+            (e2) => {
+              clearTimeout(timer);
+              reject(e2);
+            }
+          );
+        });
       } catch (shopErr) {
         console.error("[Shop connection-status] shop failed:", shop?.id, shopErr);
         statuses[shop.id] = {
@@ -94925,27 +95001,6 @@ var router10 = (0, import_express11.Router)();
 router10.get("/", getDashboard);
 var dashboardRoutes_default = router10;
 
-// middlewares/errorHandler.js
-function errorHandler(err, req, res, next) {
-  if (res.headersSent) {
-    return next(err);
-  }
-  if (err instanceof SyntaxError && err && typeof err === "object" && "body" in err) {
-    return res.status(400).json({
-      success: false,
-      message: "JSON body kh\xF4ng h\u1EE3p l\u1EC7"
-    });
-  }
-  const status = Number(err?.status || err?.statusCode) || 500;
-  const message = String(err?.message || "").trim() || "L\u1ED7i m\xE1y ch\u1EE7 n\u1ED9i b\u1ED9.";
-  console.error(`[ErrorHandler] ${req.method} ${req.originalUrl}:`, message);
-  return res.status(status).json({
-    success: false,
-    message
-  });
-}
-var errorHandler_default = errorHandler;
-
 // middlewares/cors.js
 function corsMiddleware(req, res, next) {
   const origin = req.headers.origin;
@@ -95418,6 +95473,7 @@ var scanBgJobs = [];
 var scanBgJobKeys = /* @__PURE__ */ new Set();
 var scanBgWorkerRunning = false;
 var scanBgPersistTimer = null;
+var scanBgDrainKickTimer = null;
 var deps6 = {
   findOrderByScanCodeInStore: async () => null,
   isValidOrder: () => false,
@@ -95436,10 +95492,14 @@ var deps6 = {
 };
 function initScanBgQueue(partial) {
   deps6 = { ...deps6, ...partial };
-  if (scanBgJobs.some((j) => j.status === "pending")) {
-    setTimeout(() => {
-      void drainScanBgQueue();
-    }, 1500);
+  if (!scanBgJobs.some((j) => j.status === "pending")) return;
+  if (scanBgDrainKickTimer || scanBgWorkerRunning) return;
+  scanBgDrainKickTimer = setTimeout(() => {
+    scanBgDrainKickTimer = null;
+    void drainScanBgQueue();
+  }, 1500);
+  if (typeof scanBgDrainKickTimer.unref === "function") {
+    scanBgDrainKickTimer.unref();
   }
 }
 function isScanBgWorkerRunning() {
@@ -95503,6 +95563,9 @@ function persistScanBgQueueSoon() {
       console.warn("[Scan BG] persist failed:", err?.message || err);
     }
   }, 250);
+  if (typeof scanBgPersistTimer.unref === "function") {
+    scanBgPersistTimer.unref();
+  }
 }
 function classifyScanBgCancelReturn(order) {
   const status = String(order?.status || "");
@@ -96028,9 +96091,10 @@ async function processShopeeSyncQueue() {
   } finally {
     shopeeSyncQueueRunning = false;
     if (shopeeSyncQueue.length > 0) {
-      setTimeout(() => {
+      const kick = setTimeout(() => {
         void processShopeeSyncQueue();
       }, SHOPEE_SYNC_QUEUE_GAP_MS);
+      if (typeof kick.unref === "function") kick.unref();
     }
   }
 }
@@ -96147,11 +96211,21 @@ async function listProducts(req, res) {
     const rawSize = Number(req.query?.pageSize ?? req.query?.limit);
     const page = Number.isFinite(rawPage) && rawPage > 0 ? Math.floor(rawPage) : 1;
     const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize)) : PRODUCTS_PAGE_SIZE_DEFAULT;
+    const rawSearch = req.query?.search ?? req.query?.keyword ?? "";
+    const search = String(Array.isArray(rawSearch) ? rawSearch[0] : rawSearch).replace(/\s+/g, " ").trim();
     const paged = await deps8.withLocalDbTimeout(
-      deps8.loadProductsPageFromStore(page, pageSize),
+      deps8.loadProductsPageFromStore(page, pageSize, search),
       diskMode ? 15e3 : 3e4,
       "products_page_load"
     );
+    if (search) {
+      console.log("[Products API] GET /api/products search", {
+        search,
+        page: paged.page,
+        total: paged.total,
+        hits: Array.isArray(paged.products) ? paged.products.length : 0
+      });
+    }
     return res.status(200).json({
       success: true,
       products: paged.products,
@@ -97327,6 +97401,67 @@ var import_path10 = __toESM(require("path"), 1);
 // src/db/productsDiskStore.ts
 var import_fs9 = __toESM(require("fs"), 1);
 var import_path8 = __toESM(require("path"), 1);
+
+// src/utils/productSearch.ts
+function normalizeProductSearchText(input) {
+  return String(input ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/\s+/g, " ").trim();
+}
+function escapeRegexLiteral(input) {
+  return String(input || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function buildAccentFlexibleRegex(rawQuery) {
+  const folded = normalizeProductSearchText(rawQuery);
+  if (!folded) return null;
+  const map = {
+    a: "a\xE1\xE0\u1EA3\xE3\u1EA1\u0103\u1EAF\u1EB1\u1EB3\u1EB5\u1EB7\xE2\u1EA5\u1EA7\u1EA9\u1EAB\u1EAD",
+    d: "d\u0111",
+    e: "e\xE9\xE8\u1EBB\u1EBD\u1EB9\xEA\u1EBF\u1EC1\u1EC3\u1EC5\u1EC7",
+    i: "i\xED\xEC\u1EC9\u0129\u1ECB",
+    o: "o\xF3\xF2\u1ECF\xF5\u1ECD\xF4\u1ED1\u1ED3\u1ED5\u1ED7\u1ED9\u01A1\u1EDB\u1EDD\u1EDF\u1EE1\u1EE3",
+    u: "u\xFA\xF9\u1EE7\u0169\u1EE5\u01B0\u1EE9\u1EEB\u1EED\u1EEF\u1EF1",
+    y: "y\xFD\u1EF3\u1EF7\u1EF9\u1EF5"
+  };
+  let pattern = "";
+  for (const ch of folded) {
+    if (ch === " ") {
+      pattern += "\\s+";
+      continue;
+    }
+    const group = map[ch];
+    if (group) {
+      pattern += `[${group}${group.toUpperCase()}]`;
+    } else {
+      pattern += escapeRegexLiteral(ch);
+    }
+  }
+  try {
+    return new RegExp(pattern, "i");
+  } catch {
+    return new RegExp(escapeRegexLiteral(folded), "i");
+  }
+}
+function productRowMatchesSearch(row, rawQuery) {
+  const q = normalizeProductSearchText(rawQuery);
+  if (!q) return true;
+  const parts = [
+    row?.sku,
+    row?.barcode,
+    row?.title,
+    row?.name,
+    row?.modelName,
+    ...Array.isArray(row?.tierLabels) ? row.tierLabels : []
+  ];
+  for (const key of ["children", "children_models"]) {
+    const list = Array.isArray(row?.[key]) ? row[key] : [];
+    for (const c of list) {
+      parts.push(c?.sku, c?.title, c?.name, c?.modelName, c?.barcode);
+    }
+  }
+  const hay = normalizeProductSearchText(parts.map((v) => String(v ?? "")).join(" "));
+  return hay.includes(q);
+}
+
+// src/db/productsDiskStore.ts
 function isProductsDiskMode() {
   const raw = process.env.PRODUCTS_STORAGE ?? process.env.PRODUCTS_DISK;
   if (raw == null || String(raw).trim() === "") return true;
@@ -97437,16 +97572,18 @@ async function deleteProductsByIdsFromDisk(ids) {
 function countProductsOnDisk() {
   return readProductsFromDisk().length;
 }
-function loadProductsPageFromDisk(page = 1, pageSize = 50) {
+function loadProductsPageFromDisk(page = 1, pageSize = 50, search = "") {
   const all = readProductsFromDisk();
+  const q = normalizeProductSearchText(search);
+  const filtered = q ? all.filter((p) => productRowMatchesSearch(p, search)) : all;
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
-  const total = all.length;
+  const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
   const start = (currentPage - 1) * safeSize;
   return {
-    products: all.slice(start, start + safeSize),
+    products: filtered.slice(start, start + safeSize),
     total,
     page: currentPage,
     pageSize: safeSize,
@@ -97500,28 +97637,22 @@ function loadProductsByIdsFromDisk(productIds, shopeeItemIds = []) {
   );
 }
 function searchProductsFromDisk(query, limit = 40) {
-  const q = String(query || "").trim().toLowerCase();
+  const q = normalizeProductSearchText(query);
   const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
   const all = readProductsFromDisk();
   if (!q) return all.slice(0, safeLimit);
   const scored = [];
   for (const p of all) {
-    const sku = String(p.sku || "").toLowerCase();
-    const title = String(p.title || "").toLowerCase();
+    if (!productRowMatchesSearch(p, query)) continue;
+    const sku = normalizeProductSearchText(p.sku);
+    const title = normalizeProductSearchText(p.title);
     let score = 0;
     if (sku === q) score = 300;
     else if (sku.startsWith(q)) score = 200;
     else if (sku.includes(q)) score = 120;
     else if (title.includes(q)) score = 80;
-    else {
-      const childHit = [...p.children || [], ...p.children_models || []].some((c) => {
-        const csku = String(c?.sku || "").toLowerCase();
-        const ctitle = String(c?.title || c?.modelName || "").toLowerCase();
-        return csku === q || csku.startsWith(q) || csku.includes(q) || ctitle.includes(q);
-      });
-      if (childHit) score = 90;
-    }
-    if (score > 0) scored.push({ p, score });
+    else score = 90;
+    scored.push({ p, score });
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, safeLimit).map((x2) => x2.p);
@@ -97957,15 +98088,13 @@ async function initMongo(appRoot) {
   }
   try {
     ensureModels();
-    if (import_mongoose4.default.connection.readyState === 0) {
-      await connectDB();
-      try {
-        import_fs11.default.writeFileSync(
-          import_path10.default.join(appRootResolved3, "db_status.txt"),
-          "KET_NOI_THANH_CONG_LUC: " + (/* @__PURE__ */ new Date()).toISOString()
-        );
-      } catch {
-      }
+    await connectDB();
+    try {
+      import_fs11.default.writeFileSync(
+        import_path10.default.join(appRootResolved3, "db_status.txt"),
+        "KET_NOI_THANH_CONG_LUC: " + (/* @__PURE__ */ new Date()).toISOString()
+      );
+    } catch {
     }
     mongoReady = import_mongoose4.default.connection.readyState === 1;
     if (!mongoReady) {
@@ -98157,26 +98286,60 @@ async function loadProductsFromStore() {
   const docs = await ProductModel.find({}).lean();
   return docsToProducts(docs);
 }
-async function loadProductsPageFromStore(page = 1, pageSize = 50) {
-  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize);
+function buildProductListSearchFilter(search) {
+  const regex = buildAccentFlexibleRegex(search);
+  if (!regex) return {};
+  return {
+    $or: [
+      { sku: regex },
+      { "data.sku": regex },
+      { "data.name": regex },
+      { "data.title": regex },
+      { "data.modelName": regex },
+      { "data.barcode": regex },
+      { "data.children.sku": regex },
+      { "data.children.title": regex },
+      { "data.children.name": regex },
+      { "data.children.modelName": regex },
+      { "data.children_models.sku": regex },
+      { "data.children_models.title": regex },
+      { "data.children_models.modelName": regex },
+      { "data.children_models.name": regex }
+    ]
+  };
+}
+async function loadProductsPageFromStore(page = 1, pageSize = 50, search = "") {
+  if (isProductsDiskMode()) return loadProductsPageFromDisk(page, pageSize, search);
   requireMongo();
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
+  const q = normalizeProductSearchText(search);
+  const filter = buildProductListSearchFilter(search);
+  const hasSearch = !!q && Object.keys(filter).length > 0;
   const COUNT_MAX_MS = 15e3;
   const PAGE_MAX_MS = 3e4;
   let total = 0;
   try {
-    total = await ProductModel.countDocuments({}).maxTimeMS(COUNT_MAX_MS);
+    total = await ProductModel.countDocuments(filter).maxTimeMS(COUNT_MAX_MS);
   } catch (countErr) {
     console.warn(
       "[MongoDB] countDocuments ch\u1EADm/l\u1ED7i \u2014 d\xF9ng estimatedDocumentCount:",
       countErr instanceof Error ? countErr.message : countErr
     );
+    if (hasSearch) throw countErr;
     total = await ProductModel.estimatedDocumentCount().maxTimeMS(COUNT_MAX_MS);
   }
   const totalPages = Math.max(1, Math.ceil(Math.max(0, total) / safeSize) || 1);
   const currentPage = Math.min(safePage, totalPages);
-  const docs = await ProductModel.find({}).sort({ _id: 1 }).skip((currentPage - 1) * safeSize).limit(safeSize).maxTimeMS(PAGE_MAX_MS).lean();
+  const docs = await ProductModel.find(filter).sort({ _id: 1 }).skip((currentPage - 1) * safeSize).limit(safeSize).maxTimeMS(PAGE_MAX_MS).lean();
+  if (hasSearch) {
+    console.log("[MongoSearch] loadProductsPageFromStore", {
+      q,
+      total,
+      page: currentPage,
+      hits: docs.length
+    });
+  }
   return {
     products: docsToProducts(docs),
     total,
@@ -102091,31 +102254,32 @@ async function ackScanBg(req, res) {
 
 // routes/ordersRoutes.js
 var router13 = (0, import_express14.Router)();
-router13.get("/refresh", refreshOrders);
-router13.get("/query", queryOrders);
-router13.get("/lookup", lookupOrder);
-router13.post("/cleanup-handed-over", cleanupHandedOver);
-router13.post("/cleanup-closed-retention", cleanupClosedRetention);
-router13.post("/cleanup-label-pdfs", cleanupLabelPdfs);
-router13.post("/cleanup-processed-pickup", cleanupProcessedPickup);
-router13.post("/cleanup-mock", cleanupMockOrders);
-router13.post("/hydrate-tracking", hydrateTracking);
-router13.post("/enrich-tracking", enrichTracking);
-router13.post("/hand-over-carrier/bulk", handOverCarrierBulk);
-router13.post("/hand-over-carrier", handOverCarrierByCode);
-router13.post("/heal-handed-over", healHandedOver);
-router13.post("/manual", createManualOrder);
-router13.get("/don-hoan-huy", listDonHoanHuy);
-router13.post("/don-hoan-huy", saveScanOrders);
-router13.post("/scan-bg-enqueue", enqueueScanBg);
-router13.get("/scan-bg-status", getScanBgStatus);
-router13.post("/scan-bg-ack", ackScanBg);
-router13.post("/scan-bulk-update", scanBulkUpdate);
-router13.get("/:orderSn/events", getOrderEvents);
-router13.post("/:id/hand-over-carrier", handOverCarrierById);
-router13.get("/", listOrders);
-router13.patch("/:id", patchOrder);
-router13.delete("/:id", deleteOrder);
+var h2 = asyncHandler;
+router13.get("/refresh", h2(refreshOrders));
+router13.get("/query", h2(queryOrders));
+router13.get("/lookup", h2(lookupOrder));
+router13.post("/cleanup-handed-over", h2(cleanupHandedOver));
+router13.post("/cleanup-closed-retention", h2(cleanupClosedRetention));
+router13.post("/cleanup-label-pdfs", h2(cleanupLabelPdfs));
+router13.post("/cleanup-processed-pickup", h2(cleanupProcessedPickup));
+router13.post("/cleanup-mock", h2(cleanupMockOrders));
+router13.post("/hydrate-tracking", h2(hydrateTracking));
+router13.post("/enrich-tracking", h2(enrichTracking));
+router13.post("/hand-over-carrier/bulk", h2(handOverCarrierBulk));
+router13.post("/hand-over-carrier", h2(handOverCarrierByCode));
+router13.post("/heal-handed-over", h2(healHandedOver));
+router13.post("/manual", h2(createManualOrder));
+router13.get("/don-hoan-huy", h2(listDonHoanHuy));
+router13.post("/don-hoan-huy", h2(saveScanOrders));
+router13.post("/scan-bg-enqueue", h2(enqueueScanBg));
+router13.get("/scan-bg-status", h2(getScanBgStatus));
+router13.post("/scan-bg-ack", h2(ackScanBg));
+router13.post("/scan-bulk-update", h2(scanBulkUpdate));
+router13.get("/:orderSn/events", h2(getOrderEvents));
+router13.post("/:id/hand-over-carrier", h2(handOverCarrierById));
+router13.get("/", h2(listOrders));
+router13.patch("/:id", h2(patchOrder));
+router13.delete("/:id", h2(deleteOrder));
 var ordersRoutes_default = router13;
 
 // routes/shopeeAuthRoutes.js
@@ -102175,7 +102339,12 @@ try {
     },
     connections: 3,
     pipelining: 0,
-    keepAliveTimeout: 3e4
+    keepAliveTimeout: 1e4,
+    keepAliveMaxTimeout: 15e3,
+    // Chặn socket treo vô hạn khi Shopee không trả headers/body.
+    headersTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
+    bodyTimeout: SHOPEE_HTTP_TIMEOUT_MS + 2e3,
+    connectTimeout: 8e3
   });
   console.log("[Shopee HTTP] undici Agent OK \u2014 TLS dispatcher s\u1EB5n s\xE0ng cho sync Shopee.");
 } catch (undiciErr) {
@@ -102197,10 +102366,13 @@ async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_
     if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
     const fetchPromise = fetch(url, fetchInit);
     const hardTimeoutPromise = new Promise((_, reject) => {
-      hardTimer = setTimeout(
-        () => reject(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`)),
-        timeoutMs + 1e3
-      );
+      hardTimer = setTimeout(() => {
+        try {
+          controller.abort();
+        } catch {
+        }
+        reject(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`));
+      }, timeoutMs + 1e3);
     });
     return await Promise.race([fetchPromise, hardTimeoutPromise]);
   } catch (error) {
@@ -103201,21 +103373,22 @@ async function getShopeeAccessTokenForApi(shopKey, opts) {
 async function verifyShopeeShopToken(shopId, accessToken) {
   const key = normalizeShopIdKey(shopId);
   if (!key || !accessToken) return { ok: false, error: "missing_shop_or_token" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12e3);
   try {
     const apiPath = "/api/v2/shop/get_shop_info";
     const timestamp = Math.floor(Date.now() / 1e3);
     const sign = shopeeSign(apiPath, timestamp, accessToken, key);
     const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${key}&sign=${sign}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12e3);
     const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
     const json2 = await res.json();
     const err = String(json2?.error || "").trim();
     if (err) return { ok: false, error: err };
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error?.message || String(error) };
+  } finally {
+    clearTimeout(timer);
   }
 }
 function resolveShopeeApiShopId(record, configuredShopId) {

@@ -4,6 +4,10 @@
  */
 import fs from "fs";
 import path from "path";
+import {
+  normalizeProductSearchText,
+  productRowMatchesSearch,
+} from "../utils/productSearch.ts";
 
 export function isProductsDiskMode(): boolean {
   // Mặc định disk (hosting) — Atlas free dễ đầy. Set PRODUCTS_STORAGE=mongo để dùng Atlas.
@@ -144,30 +148,6 @@ export function countProductsOnDisk(): number {
   return readProductsFromDisk().length;
 }
 
-function productMatchesDiskSearch(p: any, qLower: string): boolean {
-  if (!qLower) return true;
-  const hay = [
-    p?.sku,
-    p?.barcode,
-    p?.title,
-    p?.name,
-    p?.modelName,
-  ]
-    .map((v) => String(v || "").toLowerCase())
-    .join(" ");
-  if (hay.includes(qLower)) return true;
-  for (const key of ["children", "children_models"] as const) {
-    const list = Array.isArray(p?.[key]) ? p[key] : [];
-    for (const c of list) {
-      const childHay = [c?.sku, c?.title, c?.name, c?.modelName]
-        .map((v) => String(v || "").toLowerCase())
-        .join(" ");
-      if (childHay.includes(qLower)) return true;
-    }
-  }
-  return false;
-}
-
 export function loadProductsPageFromDisk(
   page = 1,
   pageSize = 50,
@@ -181,8 +161,8 @@ export function loadProductsPageFromDisk(
   hasMore: boolean;
 } {
   const all = readProductsFromDisk();
-  const qLower = String(search || "").trim().toLowerCase();
-  const filtered = qLower ? all.filter((p) => productMatchesDiskSearch(p, qLower)) : all;
+  const q = normalizeProductSearchText(search);
+  const filtered = q ? all.filter((p) => productRowMatchesSearch(p, search)) : all;
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safeSize = Math.min(50, Math.max(1, Math.floor(Number(pageSize) || 50)));
   const total = filtered.length;
@@ -253,29 +233,23 @@ export function loadProductsByIdsFromDisk(
 }
 
 export function searchProductsFromDisk(query: string, limit = 40): any[] {
-  const q = String(query || "").trim().toLowerCase();
+  const q = normalizeProductSearchText(query);
   const safeLimit = Math.min(100, Math.max(1, Math.floor(Number(limit) || 40)));
   const all = readProductsFromDisk();
   if (!q) return all.slice(0, safeLimit);
 
   const scored: Array<{ p: any; score: number }> = [];
   for (const p of all) {
-    const sku = String(p.sku || "").toLowerCase();
-    const title = String(p.title || "").toLowerCase();
+    if (!productRowMatchesSearch(p, query)) continue;
+    const sku = normalizeProductSearchText(p.sku);
+    const title = normalizeProductSearchText(p.title);
     let score = 0;
     if (sku === q) score = 300;
     else if (sku.startsWith(q)) score = 200;
     else if (sku.includes(q)) score = 120;
     else if (title.includes(q)) score = 80;
-    else {
-      const childHit = [...(p.children || []), ...(p.children_models || [])].some((c: any) => {
-        const csku = String(c?.sku || "").toLowerCase();
-        const ctitle = String(c?.title || c?.modelName || "").toLowerCase();
-        return csku === q || csku.startsWith(q) || csku.includes(q) || ctitle.includes(q);
-      });
-      if (childHit) score = 90;
-    }
-    if (score > 0) scored.push({ p, score });
+    else score = 90;
+    scored.push({ p, score });
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, safeLimit).map((x) => x.p);
