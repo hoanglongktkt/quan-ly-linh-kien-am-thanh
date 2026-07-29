@@ -1330,6 +1330,51 @@ export default function OrderManager({
     );
   };
 
+  /** Ghi ngay local_status=CANCELLED_STORED|RETURN_RECEIVED xuống Mongo (tab received_cancel_returns lọc field này). */
+  const persistCancelReturnScanFlag = React.useCallback(
+    async (code: string, kind: 'cancel' | 'return') => {
+      const token = localStorage.getItem('admin_token');
+      if (!token || !code) return;
+      try {
+        const res = await fetch('/api/orders/scan-bulk-update', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            codes: [code],
+            scannedCodes: [code],
+            daXuatKhoCodes: [],
+            donHuyCodes: kind === 'cancel' ? [code] : [],
+            daNhanHoanCodes: kind === 'return' ? [code] : [],
+          }),
+        });
+        const data = await res.json().catch(() => ({} as Record<string, unknown>));
+        if (!res.ok || data?.success === false) {
+          console.warn('[Scan] persist cancel/return flag failed:', data?.message || res.status);
+          return;
+        }
+        const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
+        if (updatedOrders.length > 0) {
+          const byId = new Map(updatedOrders.map((o) => [o.id, o]));
+          const merged = ordersRef.current.map((o) => {
+            const next = byId.get(o.id);
+            return next ? { ...o, ...next } : o;
+          });
+          for (const o of updatedOrders) {
+            if (!merged.some((x) => x.id === o.id)) merged.unshift(o);
+          }
+          ordersRef.current = merged;
+          onUpdateOrders(merged, { persist: false });
+        }
+      } catch (err) {
+        console.warn('[Scan] persist cancel/return flag error:', err);
+      }
+    },
+    [onUpdateOrders],
+  );
+
   /** Real-time: quét → dò trạng thái ngay (chưa ghi DB). Local miss → queue dò ngầm, không block. */
   const drainBackgroundLookupQueue = React.useCallback(async () => {
     if (backgroundLookupBusyRef.current) return;
@@ -1366,40 +1411,9 @@ export default function OrderManager({
         const { isReturnBucket, isCancelBucket } = classifyScanCancelReturnBuckets(order);
         if (!isReturnBucket && !isCancelBucket) continue;
 
-        // Âm thầm ghi cờ CANCELLED_STORED / RETURN_RECEIVED vào DB.
+        // Âm thầm ghi cờ CANCELLED_STORED / RETURN_RECEIVED vào DB (field tab lọc).
         try {
-          const res = await fetch('/api/orders/scan-bulk-update', {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              codes: [code],
-              scannedCodes: [code],
-              daXuatKhoCodes: [],
-              donHuyCodes: isCancelBucket ? [code] : [],
-              daNhanHoanCodes: isReturnBucket ? [code] : [],
-            }),
-          });
-          const data = await res.json().catch(() => ({} as Record<string, unknown>));
-          if (!res.ok || data?.success === false) {
-            console.warn('[Scan BG lookup] silent DB update failed:', data?.message || res.status);
-            continue;
-          }
-          const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
-          if (updatedOrders.length > 0) {
-            const byId = new Map(updatedOrders.map((o) => [o.id, o]));
-            const merged = ordersRef.current.map((o) => {
-              const next = byId.get(o.id);
-              return next ? { ...o, ...next } : o;
-            });
-            for (const o of updatedOrders) {
-              if (!merged.some((x) => x.id === o.id)) merged.unshift(o);
-            }
-            ordersRef.current = merged;
-            onUpdateOrders(merged, { persist: false });
-          }
+          await persistCancelReturnScanFlag(code, isReturnBucket ? 'return' : 'cancel');
           if (!isTearingDownScannerRef.current) {
             showScanToast(
               isReturnBucket
@@ -1422,7 +1436,7 @@ export default function OrderManager({
         });
       }
     }
-  }, [onUpdateOrders]);
+  }, [onUpdateOrders, persistCancelReturnScanFlag]);
 
   const enqueueBackgroundLookup = React.useCallback(
     (rawCode: string) => {
@@ -1580,6 +1594,8 @@ export default function OrderManager({
             daNhanHoanListRef.current = next;
             return next;
           });
+          // Ghi ngay local_status=RETURN_RECEIVED xuống Mongo (tab lọc theo field này).
+          void persistCancelReturnScanFlag(trimmed, 'return');
           setCameraScanResult(
             waybill
               ? `✓ Nhận hoàn · VĐ ${waybill} · #${order.orderSn}`
@@ -1604,6 +1620,8 @@ export default function OrderManager({
             donHuyListRef.current = next;
             return next;
           });
+          // Ghi ngay local_status=CANCELLED_STORED xuống Mongo (tab lọc theo field này).
+          void persistCancelReturnScanFlag(trimmed, 'cancel');
           setCameraScanResult(
             waybill
               ? isFailedDelivery
@@ -1681,7 +1699,7 @@ export default function OrderManager({
         }
       }
     },
-    [isFlushingQueue, orderScanIndex, onUpdateOrders, enqueueBackgroundLookup]
+    [isFlushingQueue, orderScanIndex, onUpdateOrders, enqueueBackgroundLookup, persistCancelReturnScanFlag]
   );
 
   useEffect(() => {

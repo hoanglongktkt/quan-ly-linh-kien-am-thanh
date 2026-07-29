@@ -92,17 +92,27 @@ function buildLocalPatch(targetStatus) {
     return {
       local_status: 'CANCELLED_STORED',
       localStatus: 'CANCELLED_STORED',
+      internal_status: 'CANCELLED_STORED',
       localStatusAt: now,
       local_status_updated_at: now,
       is_local_return_archived: false,
+      is_handed_over: false,
+      isHandedOverToCarrier: false,
+      is_handed_over_to_carrier: false,
+      is_handed_over_to_courier: false,
     };
   }
   return {
     local_status: 'RETURN_RECEIVED',
     localStatus: 'RETURN_RECEIVED',
+    internal_status: 'RETURN_RECEIVED',
     localStatusAt: now,
     local_status_updated_at: now,
     is_local_return_archived: false,
+    is_handed_over: false,
+    isHandedOverToCarrier: false,
+    is_handed_over_to_carrier: false,
+    is_handed_over_to_courier: false,
     status: 'return_received',
   };
 }

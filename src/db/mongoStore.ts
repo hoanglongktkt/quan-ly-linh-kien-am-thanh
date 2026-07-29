@@ -2529,7 +2529,18 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     data.isHandedOverToCarrier === true ||
     data.is_handed_over_to_carrier === true ||
     data.is_handed_over_to_courier === true ||
-    String(data.local_status || data.localStatus || "").toUpperCase() === "HANDED_OVER";
+    String(data.local_status || data.localStatus || data.internal_status || "").toUpperCase() === "HANDED_OVER";
+  const localRaw = String(
+    data.local_status || data.localStatus || data.internal_status || "",
+  ).toUpperCase();
+  const localStored =
+    localRaw === "CANCELLED_STORED" || localRaw === "RETURN_RECEIVED"
+      ? localRaw
+      : handed
+        ? "HANDED_OVER"
+        : localRaw === "NONE" || localRaw === "HANDED_OVER"
+          ? localRaw
+          : "";
   return {
     ...data,
     id: data.id || d._id || (sn ? `shopee-${sn}` : undefined),
@@ -2550,11 +2561,11 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     is_handed_over_to_courier: handed,
     isPrinted: d?.isPrinted != null ? Boolean(d.isPrinted) : Boolean(data.isPrinted),
     isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
-    ...(handed
+    ...(localStored
       ? {
-          local_status: data.local_status || "HANDED_OVER",
-          localStatus: data.localStatus || "HANDED_OVER",
-          internal_status: data.internal_status || "HANDED_OVER",
+          local_status: localStored,
+          localStatus: localStored,
+          internal_status: localStored,
         }
       : {}),
   };

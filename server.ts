@@ -10696,8 +10696,10 @@ function setOrderLocalStatus(order: any, status: OrderLocalStatus): void {
     Object.assign(order, buildHandedOverWritePatch(now));
     return;
   }
+  // Tab "Đã nhận đơn hủy, đơn hoàn" lọc theo local_status / localStatus / internal_status.
   order.local_status = status;
   order.localStatus = status;
+  order.internal_status = status;
   order.local_status_updated_at = now;
   order.localStatusAt = now;
   if (status === "CANCELLED_STORED" || status === "RETURN_RECEIVED") {
@@ -18281,17 +18283,27 @@ async function startServer() {
       ));
     }
     // Chuẩn hóa cờ nội bộ kho nếu client gửi local_status (không phải HANDED_OVER).
-    if (
+    // Tab received_cancel_returns lọc theo local_status / localStatus / internal_status.
+    const wantLocalStored =
       localPatch === "CANCELLED_STORED" ||
       localPatch === "RETURN_RECEIVED" ||
-      localPatch === "NONE"
-    ) {
+      localPatch === "NONE";
+    if (wantLocalStored) {
       const nowIso = new Date().toISOString();
       patch.local_status = localPatch;
       patch.localStatus = localPatch;
+      patch.internal_status = localPatch;
       patch.localStatusAt = patch.localStatusAt || nowIso;
       patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
       if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
+        patch.is_local_return_archived = false;
+        Object.assign(patch, buildClearHandedOverPatch(nowIso));
+        // buildClearHandedOverPatch đặt local_status=NONE — ghi đè lại cờ đích.
+        patch.local_status = localPatch;
+        patch.localStatus = localPatch;
+        patch.internal_status = localPatch;
+        patch.localStatusAt = nowIso;
+        patch.local_status_updated_at = nowIso;
         patch.is_local_return_archived = false;
       }
       if (localPatch === "RETURN_RECEIVED") {
@@ -18331,6 +18343,29 @@ async function startServer() {
         });
       } catch (err: any) {
         console.error("[Orders PATCH] markOrderHandedOver failed:", err?.message || err);
+      }
+    }
+    // bulkUpsert bỏ INTERNAL_FLAG_KEYS — phải ghi cờ hủy/hoàn bằng API chuyên dụng
+    // để tab received_cancel_returns (lọc local_status) thấy đơn sau refresh.
+    if (
+      isMongoReady() &&
+      (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED")
+    ) {
+      try {
+        await markOrderLocalStatusInStore(
+          String(orders[index].orderSn || ""),
+          localPatch as "CANCELLED_STORED" | "RETURN_RECEIVED",
+          {
+            shopId: orders[index].shopId != null ? String(orders[index].shopId) : undefined,
+            clearHandedOver: true,
+            status:
+              localPatch === "RETURN_RECEIVED"
+                ? "return_received"
+                : String(orders[index].status || "cancelled"),
+          },
+        );
+      } catch (err: any) {
+        console.error("[Orders PATCH] markOrderLocalStatus failed:", err?.message || err);
       }
     }
     return res.json(orders[index]);
@@ -18738,6 +18773,35 @@ async function startServer() {
             isShopeeCancelOrReturnLikeOrder(order));
 
         // Chặn quét trùng — trừ forceCancel/forceReturn ghi đè HANDED_OVER → hủy/hoàn.
+        // Idempotent: force cùng cờ đích đã có → coi như thành công (đã ghi DB trước đó).
+        const alreadySameCancel =
+          forceCancel && existingLocal === "CANCELLED_STORED";
+        const alreadySameReturn =
+          forceReturn && existingLocal === "RETURN_RECEIVED";
+        if (alreadySameCancel) {
+          summary.donHuy += 1;
+          results.push({
+            code,
+            action: "cancelled",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Đơn hủy #${order.orderSn} đã có CANCELLED_STORED`,
+            local_status: "CANCELLED_STORED",
+          });
+          continue;
+        }
+        if (alreadySameReturn) {
+          summary.daNhanHoan += 1;
+          results.push({
+            code,
+            action: "return_received",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Đơn #${order.orderSn} đã có RETURN_RECEIVED`,
+            local_status: "RETURN_RECEIVED",
+          });
+          continue;
+        }
         const allowForceCancelReturnOverride =
           (forceCancel || forceReturn) &&
           existingLocal === "HANDED_OVER" &&
