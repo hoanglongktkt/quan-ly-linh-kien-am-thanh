@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: phase-3-scan-remainder
     content: "Phase 3: Bóc scan-bg + scan-bulk; dọn alias; một model DonHoanHuy"
-    status: pending
+    status: completed
   - id: phase-4-catalog
     content: "Phase 4: Bóc Products, Mapping/Auto-link, stock sync queue"
     status: pending

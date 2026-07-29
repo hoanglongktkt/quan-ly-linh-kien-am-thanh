@@ -1292,8 +1292,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs13 = require("fs");
-          stream2 = new fs13.SyncWriteStream(fd2, { autoClose: false });
+          var fs14 = require("fs");
+          stream2 = new fs14.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -14080,11 +14080,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path12) {
-      if (!path12 || typeof path12 !== "string") {
+    function lookup(path13) {
+      if (!path13 || typeof path13 !== "string") {
         return false;
       }
-      var extension3 = extname("x." + path12).toLowerCase().substr(1);
+      var extension3 = extname("x." + path13).toLowerCase().substr(1);
       if (!extension3) {
         return false;
       }
@@ -17713,8 +17713,8 @@ var require_node2 = __commonJS({
           }
           break;
         case "FILE":
-          var fs13 = require("fs");
-          stream2 = new fs13.SyncWriteStream(fd2, { autoClose: false });
+          var fs14 = require("fs");
+          stream2 = new fs14.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18432,8 +18432,8 @@ var require_node3 = __commonJS({
           }
           break;
         case "FILE":
-          var fs13 = require("fs");
-          stream2 = new fs13.SyncWriteStream(fd2, { autoClose: false });
+          var fs14 = require("fs");
+          stream2 = new fs14.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18521,7 +18521,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path12, keys, options) {
+    function pathToRegexp(path13, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -18535,8 +18535,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m2;
-      if (path12 instanceof RegExp) {
-        while (m2 = MATCHING_GROUP_REGEXP.exec(path12.source)) {
+      if (path13 instanceof RegExp) {
+        while (m2 = MATCHING_GROUP_REGEXP.exec(path13.source)) {
           if (m2[0][0] === "\\") continue;
           keys.push({
             name: m2[1] || name++,
@@ -18544,18 +18544,18 @@ var require_path_to_regexp = __commonJS({
             offset: m2.index
           });
         }
-        return path12;
+        return path13;
       }
-      if (Array.isArray(path12)) {
-        path12 = path12.map(function(value) {
+      if (Array.isArray(path13)) {
+        path13 = path13.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path12.join("|"), flags);
+        return new RegExp(path13.join("|"), flags);
       }
-      if (typeof path12 !== "string") {
+      if (typeof path13 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path12 = path12.replace(
+      path13 = path13.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -18572,7 +18572,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path12.slice(pos, offset);
+            backtrack += path13.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -18602,7 +18602,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m2 = MATCHING_GROUP_REGEXP.exec(path12)) {
+      while (m2 = MATCHING_GROUP_REGEXP.exec(path13)) {
         if (m2[0][0] === "\\") continue;
         if (keysOffset + i2 === keys.length || keys[keysOffset + i2].offset > m2.index) {
           keys.splice(keysOffset + i2, 0, {
@@ -18614,13 +18614,13 @@ var require_path_to_regexp = __commonJS({
         }
         i2++;
       }
-      path12 += strict ? "" : path12[path12.length - 1] === "/" ? "?" : "/?";
+      path13 += strict ? "" : path13[path13.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path12 += "$";
-      } else if (path12[path12.length - 1] !== "/") {
-        path12 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path13 += "$";
+      } else if (path13[path13.length - 1] !== "/") {
+        path13 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path12, flags);
+      return new RegExp("^" + path13, flags);
     }
   }
 });
@@ -18633,19 +18633,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path12, options, fn) {
+    function Layer(path13, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path12, options, fn);
+        return new Layer(path13, options, fn);
       }
-      debug("new %o", path12);
+      debug("new %o", path13);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path12, this.keys = [], opts);
-      this.regexp.fast_star = path12 === "*";
-      this.regexp.fast_slash = path12 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path13, this.keys = [], opts);
+      this.regexp.fast_star = path13 === "*";
+      this.regexp.fast_slash = path13 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -18669,20 +18669,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path12) {
+    Layer.prototype.match = function match2(path13) {
       var match3;
-      if (path12 != null) {
+      if (path13 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path12) };
-          this.path = path12;
+          this.params = { "0": decode_param(path13) };
+          this.path = path13;
           return true;
         }
-        match3 = this.regexp.exec(path12);
+        match3 = this.regexp.exec(path13);
       }
       if (!match3) {
         this.params = void 0;
@@ -18775,10 +18775,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path12) {
-      this.path = path12;
+    function Route(path13) {
+      this.path = path13;
       this.stack = [];
-      debug("new %o", path12);
+      debug("new %o", path13);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18990,8 +18990,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path12 = getPathname(req);
-        if (path12 == null) {
+        var path13 = getPathname(req);
+        if (path13 == null) {
           return done(layerError);
         }
         var layer;
@@ -18999,7 +18999,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path12);
+          match2 = matchLayer(layer, path13);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -19037,18 +19037,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path12);
+            trim_prefix(layer, layerError, layerPath, path13);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path12) {
+      function trim_prefix(layer, layerError, layerPath, path13) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path12.slice(0, layerPath.length)) {
+          if (layerPath !== path13.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path12[layerPath.length];
+          var c = path13[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -19126,7 +19126,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path12 = "/";
+      var path13 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -19134,7 +19134,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path12 = fn;
+          path13 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -19146,8 +19146,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path12, fn.name || "<anonymous>");
-        var layer = new Layer(path12, {
+        debug("use %o %s", path13, fn.name || "<anonymous>");
+        var layer = new Layer(path13, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -19157,9 +19157,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path12) {
-      var route2 = new Route(path12);
-      var layer = new Layer(path12, {
+    proto.route = function route(path13) {
+      var route2 = new Route(path13);
+      var layer = new Layer(path13, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -19169,8 +19169,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path12) {
-        var route = this.route(path12);
+      proto[method] = function(path13) {
+        var route = this.route(path13);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -19206,9 +19206,9 @@ var require_router = __commonJS({
       }
       return toString.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path12) {
+    function matchLayer(layer, path13) {
       try {
-        return layer.match(path12);
+        return layer.match(path13);
       } catch (err) {
         return err;
       }
@@ -19326,13 +19326,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path12 = require("path");
-    var fs13 = require("fs");
-    var dirname = path12.dirname;
-    var basename3 = path12.basename;
-    var extname = path12.extname;
-    var join = path12.join;
-    var resolve = path12.resolve;
+    var path13 = require("path");
+    var fs14 = require("fs");
+    var dirname = path13.dirname;
+    var basename3 = path13.basename;
+    var extname = path13.extname;
+    var join = path13.join;
+    var resolve = path13.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -19361,17 +19361,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path13;
+      var path14;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i2 = 0; i2 < roots.length && !path13; i2++) {
+      for (var i2 = 0; i2 < roots.length && !path14; i2++) {
         var root = roots[i2];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename3(loc);
-        path13 = this.resolve(dir, file);
+        path14 = this.resolve(dir, file);
       }
-      return path13;
+      return path14;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -19379,21 +19379,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path13 = join(dir, file);
-      var stat3 = tryStat(path13);
+      var path14 = join(dir, file);
+      var stat3 = tryStat(path14);
       if (stat3 && stat3.isFile()) {
-        return path13;
+        return path14;
       }
-      path13 = join(dir, basename3(file, ext), "index" + ext);
-      stat3 = tryStat(path13);
+      path14 = join(dir, basename3(file, ext), "index" + ext);
+      stat3 = tryStat(path14);
       if (stat3 && stat3.isFile()) {
-        return path13;
+        return path14;
       }
     };
-    function tryStat(path13) {
-      debug('stat "%s"', path13);
+    function tryStat(path14) {
+      debug('stat "%s"', path14);
       try {
-        return fs13.statSync(path13);
+        return fs14.statSync(path14);
       } catch (e2) {
         return void 0;
       }
@@ -19998,8 +19998,8 @@ var require_node4 = __commonJS({
           }
           break;
         case "FILE":
-          var fs13 = require("fs");
-          stream2 = new fs13.SyncWriteStream(fd2, { autoClose: false });
+          var fs14 = require("fs");
+          stream2 = new fs14.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -20171,8 +20171,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports2, module2) {
-    var path12 = require("path");
-    var fs13 = require("fs");
+    var path13 = require("path");
+    var fs14 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -20193,7 +20193,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs13.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs14.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -20201,8 +20201,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path13, fallback) {
-      var ext = path13.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path14, fallback) {
+      var ext = path14.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -20431,33 +20431,33 @@ var require_send = __commonJS({
     var escapeHtml = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs13 = require("fs");
+    var fs14 = require("fs");
     var mime = require_mime();
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path12 = require("path");
+    var path13 = require("path");
     var statuses = require_statuses();
     var Stream4 = require("stream");
     var util = require("util");
-    var extname = path12.extname;
-    var join = path12.join;
-    var normalize = path12.normalize;
-    var resolve = path12.resolve;
-    var sep = path12.sep;
+    var extname = path13.extname;
+    var join = path13.join;
+    var normalize = path13.normalize;
+    var resolve = path13.resolve;
+    var sep = path13.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path13, options) {
-      return new SendStream(req, path13, options);
+    function send(req, path14, options) {
+      return new SendStream(req, path14, options);
     }
-    function SendStream(req, path13, options) {
+    function SendStream(req, path14, options) {
       Stream4.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path13;
+      this.path = path14;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -20503,8 +20503,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path13) {
-      this._root = resolve(String(path13));
+    SendStream.prototype.root = function root(path14) {
+      this._root = resolve(String(path14));
       debug("root %s", this._root);
       return this;
     };
@@ -20617,10 +20617,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path13) {
+    SendStream.prototype.redirect = function redirect(path14) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path13);
+        this.emit("directory", res, path14);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -20640,42 +20640,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path13 = decode(this.path);
-      if (path13 === -1) {
+      var path14 = decode(this.path);
+      if (path14 === -1) {
         this.error(400);
         return res;
       }
-      if (~path13.indexOf("\0")) {
+      if (~path14.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path13) {
-          path13 = normalize("." + sep + path13);
+        if (path14) {
+          path14 = normalize("." + sep + path14);
         }
-        if (UP_PATH_REGEXP.test(path13)) {
-          debug('malicious path "%s"', path13);
+        if (UP_PATH_REGEXP.test(path14)) {
+          debug('malicious path "%s"', path14);
           this.error(403);
           return res;
         }
-        parts = path13.split(sep);
-        path13 = normalize(join(root, path13));
+        parts = path14.split(sep);
+        path14 = normalize(join(root, path14));
       } else {
-        if (UP_PATH_REGEXP.test(path13)) {
-          debug('malicious path "%s"', path13);
+        if (UP_PATH_REGEXP.test(path14)) {
+          debug('malicious path "%s"', path14);
           this.error(403);
           return res;
         }
-        parts = normalize(path13).split(sep);
-        path13 = resolve(path13);
+        parts = normalize(path14).split(sep);
+        path14 = resolve(path14);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path13);
+        debug('%s dotfile "%s"', access, path14);
         switch (access) {
           case "allow":
             break;
@@ -20689,13 +20689,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path13);
+        this.sendIndex(path14);
         return res;
       }
-      this.sendFile(path13);
+      this.sendFile(path14);
       return res;
     };
-    SendStream.prototype.send = function send2(path13, stat3) {
+    SendStream.prototype.send = function send2(path14, stat3) {
       var len = stat3.size;
       var options = this.options;
       var opts = {};
@@ -20707,9 +20707,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path13);
-      this.setHeader(path13, stat3);
-      this.type(path13);
+      debug('pipe "%s"', path14);
+      this.setHeader(path14, stat3);
+      this.type(path14);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -20758,28 +20758,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path13, opts);
+      this.stream(path14, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path13) {
+    SendStream.prototype.sendFile = function sendFile(path14) {
       var i2 = 0;
       var self2 = this;
-      debug('stat "%s"', path13);
-      fs13.stat(path13, function onstat(err, stat3) {
-        if (err && err.code === "ENOENT" && !extname(path13) && path13[path13.length - 1] !== sep) {
+      debug('stat "%s"', path14);
+      fs14.stat(path14, function onstat(err, stat3) {
+        if (err && err.code === "ENOENT" && !extname(path14) && path14[path14.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat3.isDirectory()) return self2.redirect(path13);
-        self2.emit("file", path13, stat3);
-        self2.send(path13, stat3);
+        if (stat3.isDirectory()) return self2.redirect(path14);
+        self2.emit("file", path14, stat3);
+        self2.send(path14, stat3);
       });
       function next(err) {
         if (self2._extensions.length <= i2) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path13 + "." + self2._extensions[i2++];
+        var p = path14 + "." + self2._extensions[i2++];
         debug('stat "%s"', p);
-        fs13.stat(p, function(err2, stat3) {
+        fs14.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20787,7 +20787,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path13) {
+    SendStream.prototype.sendIndex = function sendIndex(path14) {
       var i2 = -1;
       var self2 = this;
       function next(err) {
@@ -20795,9 +20795,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path13, self2._index[i2]);
+        var p = join(path14, self2._index[i2]);
         debug('stat "%s"', p);
-        fs13.stat(p, function(err2, stat3) {
+        fs14.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20806,10 +20806,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path13, options) {
+    SendStream.prototype.stream = function stream(path14, options) {
       var self2 = this;
       var res = this.res;
-      var stream2 = fs13.createReadStream(path13, options);
+      var stream2 = fs14.createReadStream(path14, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -20824,10 +20824,10 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path13) {
+    SendStream.prototype.type = function type(path14) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path13);
+      var type2 = mime.lookup(path14);
       if (!type2) {
         debug("no content-type");
         return;
@@ -20836,9 +20836,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path13, stat3) {
+    SendStream.prototype.setHeader = function setHeader(path14, stat3) {
       var res = this.res;
-      this.emit("headers", res, path13, stat3);
+      this.emit("headers", res, path14, stat3);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -20897,9 +20897,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path13) {
+    function decode(path14) {
       try {
-        return decodeURIComponent(path13);
+        return decodeURIComponent(path14);
       } catch (err) {
         return -1;
       }
@@ -21808,10 +21808,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path12) {
-      if ("/" === path12[0]) return true;
-      if (":" === path12[1] && ("\\" === path12[2] || "/" === path12[2])) return true;
-      if ("\\\\" === path12.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path13) {
+      if ("/" === path13[0]) return true;
+      if (":" === path13[1] && ("\\" === path13[2] || "/" === path13[2])) return true;
+      if ("\\\\" === path13.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate3.function(
       flatten,
@@ -22023,7 +22023,7 @@ var require_application = __commonJS({
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path12 = "/";
+      var path13 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22031,7 +22031,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path12 = fn;
+          path13 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -22042,12 +22042,12 @@ var require_application = __commonJS({
       var router11 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router11.use(path12, fn2);
+          return router11.use(path13, fn2);
         }
-        debug(".use app under %s", path12);
-        fn2.mountpath = path12;
+        debug(".use app under %s", path13);
+        fn2.mountpath = path13;
         fn2.parent = this;
-        router11.use(path12, function mounted_app(req, res, next) {
+        router11.use(path13, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -22059,9 +22059,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path12) {
+    app.route = function route(path13) {
       this.lazyrouter();
-      return this._router.route(path12);
+      return this._router.route(path13);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -22112,7 +22112,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path12() {
+    app.path = function path13() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -22128,19 +22128,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path12) {
+      app[method] = function(path13) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path12);
+          return this.set(path13);
         }
         this.lazyrouter();
-        var route = this._router.route(path12);
+        var route = this._router.route(path13);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path12) {
+    app.all = function all(path13) {
       this.lazyrouter();
-      var route = this._router.route(path12);
+      var route = this._router.route(path13);
       var args = slice.call(arguments, 1);
       for (var i2 = 0; i2 < methods.length; i2++) {
         route[methods[i2]].apply(route, args);
@@ -22899,7 +22899,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP2(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path12() {
+    defineGetter(req, "path", function path13() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -23221,7 +23221,7 @@ var require_response = __commonJS({
     var http3 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path12 = require("path");
+    var path13 = require("path");
     var statuses = require_statuses();
     var merge = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -23230,9 +23230,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path12.extname;
+    var extname = path13.extname;
     var mime = send.mime;
-    var resolve = path12.resolve;
+    var resolve = path13.resolve;
     var vary = require_vary();
     var res = Object.create(http3.ServerResponse.prototype);
     module2.exports = res;
@@ -23409,26 +23409,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path13, options, callback) {
+    res.sendFile = function sendFile(path14, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path13) {
+      if (!path14) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path13 !== "string") {
+      if (typeof path14 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path13)) {
+      if (!opts.root && !isAbsolute(path14)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path13);
+      var pathname = encodeURI(path14);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -23438,7 +23438,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path13, options, callback) {
+    res.sendfile = function(path14, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -23448,7 +23448,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path13, opts);
+      var file = send(req, path14, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -23461,7 +23461,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path13, filename, options, callback) {
+    res.download = function download(path14, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23478,7 +23478,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path13)
+        "Content-Disposition": contentDisposition(name || path14)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23491,7 +23491,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path13) : path13;
+      var fullPath = !opts.root ? resolve(path14) : path14;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23792,11 +23792,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path12 = parseUrl(req).pathname;
-        if (path12 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path12 = "";
+        var path13 = parseUrl(req).pathname;
+        if (path13 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path13 = "";
         }
-        var stream = send(req, path12, opts);
+        var stream = send(req, path13, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -40569,14 +40569,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path12) {
+    var parse = function(path13) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path12; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path13; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -40890,8 +40890,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path12) {
-      return apply(parse(path12));
+    exports2.svgPathToOperators = function(path13) {
+      return apply(parse(path13));
     };
   }
 });
@@ -41074,7 +41074,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path12, options) {
+    exports2.drawSvgPath = function(path13, options) {
       var _a2, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -41088,7 +41088,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path12), [
+      ], svgPath_1.svgPathToOperators(path13), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -45386,12 +45386,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path12, options) {
+        PDFPage2.prototype.drawSvgPath = function(path13, options) {
           var _a2, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path12, "path", ["string"]);
+          utils_1.assertIs(path13, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -45420,7 +45420,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path12, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path13, {
             x: (_a2 = options.x) !== null && _a2 !== void 0 ? _a2 : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -45916,8 +45916,8 @@ var require_cjs = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs13 = require("fs");
-    var path12 = require("path");
+    var fs14 = require("fs");
+    var path13 = require("path");
     var os = require("os");
     var crypto4 = require("crypto");
     var TIPS = [
@@ -46048,7 +46048,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs13.existsSync(filepath)) {
+            if (fs14.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -46056,15 +46056,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path12.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path13.resolve(process.cwd(), ".env.vault");
       }
-      if (fs13.existsSync(possibleVaultPath)) {
+      if (fs14.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path12.join(os.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path13.join(os.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -46081,7 +46081,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path12.resolve(process.cwd(), ".env");
+      const dotenvPath = path13.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -46109,13 +46109,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path13 of optionPaths) {
+      for (const path14 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs13.readFileSync(path13, { encoding }));
+          const parsed = DotenvModule.parse(fs14.readFileSync(path14, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e2) {
           if (debug) {
-            _debug(`failed to load ${path13} ${e2.message}`);
+            _debug(`failed to load ${path14} ${e2.message}`);
           }
           lastError = e2;
         }
@@ -46128,7 +46128,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path12.relative(process.cwd(), filePath);
+            const relative = path13.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e2) {
             if (debug) {
@@ -56672,22 +56672,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path12, type) => fromBlob((0, import_node_fs.statSync)(path12), path12, type);
-    blobFrom = (path12, type) => stat(path12).then((stat3) => fromBlob(stat3, path12, type));
-    fileFrom = (path12, type) => stat(path12).then((stat3) => fromFile(stat3, path12, type));
-    fileFromSync = (path12, type) => fromFile((0, import_node_fs.statSync)(path12), path12, type);
-    fromBlob = (stat3, path12, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path12,
+    blobFromSync = (path13, type) => fromBlob((0, import_node_fs.statSync)(path13), path13, type);
+    blobFrom = (path13, type) => stat(path13).then((stat3) => fromBlob(stat3, path13, type));
+    fileFrom = (path13, type) => stat(path13).then((stat3) => fromFile(stat3, path13, type));
+    fileFromSync = (path13, type) => fromFile((0, import_node_fs.statSync)(path13), path13, type);
+    fromBlob = (stat3, path13, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path13,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path12, type = "") => new file_default([new BlobDataItem({
-      path: path12,
+    fromFile = (stat3, path13, type = "") => new file_default([new BlobDataItem({
+      path: path13,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path12), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path13), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -61644,9 +61644,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs13 = require("fs");
+    var fs14 = require("fs");
     var os = require("os");
-    var path12 = require("path");
+    var path13 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -61732,15 +61732,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs13.promises.lstat(filePath);
+        const stats = await fs14.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path12.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path12.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path12.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path13.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path13.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path13.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os.platform().startsWith("win");
@@ -63143,11 +63143,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path12 = require("path");
-    var fs13 = require("fs");
+    var path13 = require("path");
+    var fs14 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs13.readFile ? (0, util_1.promisify)(fs13.readFile) : async () => {
+    var readFile = fs14.readFile ? (0, util_1.promisify)(fs14.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -63215,7 +63215,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path12.extname(keyFilePath);
+        const keyFileExtension = path13.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -64824,12 +64824,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs13 = require("fs");
-    var readFile = (0, util_1.promisify)(fs13.readFile ?? (() => {
+    var fs14 = require("fs");
+    var readFile = (0, util_1.promisify)(fs14.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs13.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs14.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs13.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs14.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -64947,7 +64947,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs13 = require("fs");
+    var fs14 = require("fs");
     var crypto_1 = require("crypto");
     var https2 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -65041,7 +65041,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs13.promises.readFile(configPath, "utf8");
+          fileContents = await fs14.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -65066,14 +65066,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs13.promises.readFile(certPath);
+          cert = await fs14.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs13.promises.readFile(keyPath);
+          key = await fs14.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -65092,7 +65092,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs13.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs14.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index) => {
             try {
@@ -65794,7 +65794,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs13 = require("fs");
+    var fs14 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -65879,14 +65879,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs13.promises.realpath(this.outputFile);
+          filePath = await fs14.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs13.promises.lstat(filePath)).isFile()) {
+        if (!(await fs14.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs13.promises.readFile(filePath, {
+        const responseString = await fs14.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -66297,7 +66297,7 @@ var require_gdchclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
     var crypto4 = require("crypto");
-    var fs13 = require("fs");
+    var fs14 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -66520,7 +66520,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs13.promises.readFile(currentPath);
+            const ca = await fs14.promises.readFile(currentPath);
             return new https2.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -66580,11 +66580,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs13 = require("fs");
+    var fs14 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
     var os = require("os");
-    var path12 = require("path");
+    var path13 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -66871,12 +66871,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location = path12.join(home, ".config");
+            location = path13.join(home, ".config");
           }
         }
         if (location) {
-          location = path12.join(location, "gcloud", "application_default_credentials.json");
-          if (!fs13.existsSync(location)) {
+          location = path13.join(location, "gcloud", "application_default_credentials.json");
+          if (!fs14.existsSync(location)) {
             location = null;
           }
         }
@@ -66897,8 +66897,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs13.realpathSync(filePath);
-          if (!fs13.lstatSync(filePath).isFile()) {
+          filePath = fs14.realpathSync(filePath);
+          if (!fs14.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -66907,7 +66907,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream = fs13.createReadStream(filePath);
+        const readStream = fs14.createReadStream(filePath);
         return this.fromStream(readStream, options);
       }
       /**
@@ -67234,8 +67234,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path12.resolve(this.keyFilename);
-          const stream = fs13.createReadStream(filePath);
+          const filePath = path13.resolve(this.keyFilename);
+          const stream = fs14.createReadStream(filePath);
           return await this.fromStreamAsync(stream, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -71462,8 +71462,8 @@ var require_websocket_server = __commonJS({
 
 // server.ts
 var import_express12 = __toESM(require_express2(), 1);
-var import_path10 = __toESM(require("path"), 1);
-var import_fs11 = __toESM(require("fs"), 1);
+var import_path11 = __toESM(require("path"), 1);
+var import_fs12 = __toESM(require("fs"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 var import_node_module = require("node:module");
 var import_pdf_lib = __toESM(require_cjs(), 1);
@@ -76926,7 +76926,7 @@ var Batches = class extends BaseModule {
       params
     );
     const urlParams = body["_url"];
-    const path12 = formatMap("{model}:batchGenerateContent", urlParams);
+    const path13 = formatMap("{model}:batchGenerateContent", urlParams);
     const batch = body["batch"];
     const inputConfig = batch["inputConfig"];
     const requestsWrapper = inputConfig["requests"];
@@ -76947,7 +76947,7 @@ var Batches = class extends BaseModule {
     delete body["config"];
     delete body["_url"];
     delete body["_query"];
-    return { path: path12, body };
+    return { path: path13, body };
   }
   // Helper function to get the first GCS URI
   getGcsUri(src) {
@@ -77003,16 +77003,16 @@ var Batches = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createBatchJobParametersToVertex(this.apiClient, params);
-      path12 = formatMap("batchPredictionJobs", body["_url"]);
+      path13 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77027,12 +77027,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = createBatchJobParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{model}:batchGenerateContent", body["_url"]);
+      path13 = formatMap("{model}:batchGenerateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77057,18 +77057,18 @@ var Batches = class extends BaseModule {
   async createEmbeddingsInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+      path13 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77097,16 +77097,16 @@ var Batches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getBatchJobParametersToVertex(this.apiClient, params);
-      path12 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path13 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77121,12 +77121,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = getBatchJobParametersToMldev(this.apiClient, params);
-      path12 = formatMap("batches/{name}", body["_url"]);
+      path13 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77154,16 +77154,16 @@ var Batches = class extends BaseModule {
    */
   async cancel(params) {
     var _a2, _b, _c, _d;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-      path12 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+      path13 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77172,12 +77172,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-      path12 = formatMap("batches/{name}:cancel", body["_url"]);
+      path13 = formatMap("batches/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77189,16 +77189,16 @@ var Batches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listBatchJobsParametersToVertex(params);
-      path12 = formatMap("batchPredictionJobs", body["_url"]);
+      path13 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77221,12 +77221,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = listBatchJobsParametersToMldev(params);
-      path12 = formatMap("batches", body["_url"]);
+      path13 = formatMap("batches", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77263,16 +77263,16 @@ var Batches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-      path12 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path13 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -77293,12 +77293,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-      path12 = formatMap("batches/{name}", body["_url"]);
+      path13 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -78222,16 +78222,16 @@ var Caches = class extends BaseModule {
   async create(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createCachedContentParametersToVertex(this.apiClient, params);
-      path12 = formatMap("cachedContents", body["_url"]);
+      path13 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -78245,12 +78245,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = createCachedContentParametersToMldev(this.apiClient, params);
-      path12 = formatMap("cachedContents", body["_url"]);
+      path13 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -78278,16 +78278,16 @@ var Caches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getCachedContentParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -78301,12 +78301,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = getCachedContentParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -78334,16 +78334,16 @@ var Caches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -78366,12 +78366,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -78411,16 +78411,16 @@ var Caches = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateCachedContentParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -78434,12 +78434,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = updateCachedContentParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -78456,16 +78456,16 @@ var Caches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listCachedContentsParametersToVertex(params);
-      path12 = formatMap("cachedContents", body["_url"]);
+      path13 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -78488,12 +78488,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = listCachedContentsParametersToMldev(params);
-      path12 = formatMap("cachedContents", body["_url"]);
+      path13 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -79089,18 +79089,18 @@ var Files = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFilesParametersToMldev(params);
-      path12 = formatMap("files", body["_url"]);
+      path13 = formatMap("files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -79126,18 +79126,18 @@ var Files = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileParametersToMldev(params);
-      path12 = formatMap("upload/v1beta/files", body["_url"]);
+      path13 = formatMap("upload/v1beta/files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -79172,18 +79172,18 @@ var Files = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileParametersToMldev(params);
-      path12 = formatMap("files/{file}", body["_url"]);
+      path13 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -79213,18 +79213,18 @@ var Files = class extends BaseModule {
   async delete(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileParametersToMldev(params);
-      path12 = formatMap("files/{file}", body["_url"]);
+      path13 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -79250,18 +79250,18 @@ var Files = class extends BaseModule {
   async registerFilesInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = internalRegisterFilesParametersToMldev(params);
-      path12 = formatMap("files:register", body["_url"]);
+      path13 = formatMap("files:register", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84515,13 +84515,13 @@ var ApiClient = class {
       throw new Error("HTTP options are not correctly set.");
     }
   }
-  constructUrl(path12, httpOptions, prependProjectLocation) {
+  constructUrl(path13, httpOptions, prependProjectLocation) {
     const urlElement = [this.getRequestUrlInternal(httpOptions)];
     if (prependProjectLocation) {
       urlElement.push(this.getBaseResourcePath());
     }
-    if (path12 !== "") {
-      urlElement.push(path12);
+    if (path13 !== "") {
+      urlElement.push(path13);
     }
     const url = new URL(`${urlElement.join("/")}`);
     return url;
@@ -84820,8 +84820,8 @@ var ApiClient = class {
       file: fileToUpload
     };
     const fileName = this.getFileName(file);
-    const path12 = formatMap("upload/v1beta/files", body["_url"]);
-    const uploadUrl = await this.fetchUploadUrl(path12, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const path13 = formatMap("upload/v1beta/files", body["_url"]);
+    const uploadUrl = await this.fetchUploadUrl(path13, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.upload(file, uploadUrl, this);
   }
   /**
@@ -84845,13 +84845,13 @@ var ApiClient = class {
     if (mimeType === void 0 || mimeType === "") {
       throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
     }
-    const path12 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+    const path13 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
     const fileName = this.getFileName(file);
     const body = {};
     if (config != null) {
       uploadToFileSearchStoreConfigToMldev(config, body);
     }
-    const uploadUrl = await this.fetchUploadUrl(path12, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const uploadUrl = await this.fetchUploadUrl(path13, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);
   }
   /**
@@ -84864,7 +84864,7 @@ var ApiClient = class {
     const downloader = this.clientOptions.downloader;
     await downloader.download(params, this);
   }
-  async fetchUploadUrl(path12, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+  async fetchUploadUrl(path13, sizeBytes, mimeType, fileName, body, configHttpOptions) {
     var _a2;
     let httpOptions = {};
     if (configHttpOptions) {
@@ -84877,7 +84877,7 @@ var ApiClient = class {
       };
     }
     const httpResponse = await this.request({
-      path: path12,
+      path: path13,
       body: JSON.stringify(body),
       httpMethod: "POST",
       httpOptions
@@ -86073,16 +86073,16 @@ var Models = class extends BaseModule {
   async generateContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:generateContent", body["_url"]);
+      path13 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86105,12 +86105,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{model}:generateContent", body["_url"]);
+      path13 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86136,17 +86136,17 @@ var Models = class extends BaseModule {
   async generateContentStreamInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path13 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86182,13 +86182,13 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path13 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86248,17 +86248,17 @@ var Models = class extends BaseModule {
   async embedContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
       const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-      path12 = formatMap(endpointUrl, body["_url"]);
+      path13 = formatMap(endpointUrl, body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86281,12 +86281,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-      path12 = formatMap("{model}:batchEmbedContents", body["_url"]);
+      path13 = formatMap("{model}:batchEmbedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86315,16 +86315,16 @@ var Models = class extends BaseModule {
   async generateImagesInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateImagesParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:predict", body["_url"]);
+      path13 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86347,12 +86347,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateImagesParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{model}:predict", body["_url"]);
+      path13 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86381,16 +86381,16 @@ var Models = class extends BaseModule {
   async editImageInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = editImageParametersInternalToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:predict", body["_url"]);
+      path13 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86421,16 +86421,16 @@ var Models = class extends BaseModule {
   async upscaleImageInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:predict", body["_url"]);
+      path13 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86482,16 +86482,16 @@ var Models = class extends BaseModule {
   async recontextImage(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = recontextImageParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:predict", body["_url"]);
+      path13 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86533,16 +86533,16 @@ var Models = class extends BaseModule {
   async segmentImage(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = segmentImageParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:predict", body["_url"]);
+      path13 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86572,16 +86572,16 @@ var Models = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getModelParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86596,12 +86596,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = getModelParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86619,16 +86619,16 @@ var Models = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listModelsParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{models_url}", body["_url"]);
+      path13 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86651,12 +86651,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = listModelsParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{models_url}", body["_url"]);
+      path13 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86699,16 +86699,16 @@ var Models = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateModelParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{model}", body["_url"]);
+      path13 = formatMap("{model}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -86723,12 +86723,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = updateModelParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -86757,16 +86757,16 @@ var Models = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteModelParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86789,12 +86789,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = deleteModelParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86836,16 +86836,16 @@ var Models = class extends BaseModule {
   async countTokens(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = countTokensParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:countTokens", body["_url"]);
+      path13 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86868,12 +86868,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = countTokensParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{model}:countTokens", body["_url"]);
+      path13 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86917,16 +86917,16 @@ var Models = class extends BaseModule {
   async computeTokens(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = computeTokensParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:computeTokens", body["_url"]);
+      path13 = formatMap("{model}:computeTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86957,16 +86957,16 @@ var Models = class extends BaseModule {
   async generateVideosInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateVideosParametersToVertex(this.apiClient, params);
-      path12 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path13 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86983,12 +86983,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateVideosParametersToMldev(this.apiClient, params);
-      path12 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path13 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87090,16 +87090,16 @@ var Operations = class extends BaseModule {
   async getVideosOperationInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getOperationParametersToVertex(params);
-      path12 = formatMap("{operationName}", body["_url"]);
+      path13 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87111,12 +87111,12 @@ var Operations = class extends BaseModule {
       return response;
     } else {
       const body = getOperationParametersToMldev(params);
-      path12 = formatMap("{operationName}", body["_url"]);
+      path13 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87131,16 +87131,16 @@ var Operations = class extends BaseModule {
   async fetchPredictVideosOperationInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = fetchPredictOperationParametersToVertex(params);
-      path12 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+      path13 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87828,20 +87828,20 @@ var Tokens = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
     } else {
       const body = createAuthTokenParametersToMldev(this.apiClient, params);
-      path12 = formatMap("auth_tokens", body["_url"]);
+      path13 = formatMap("auth_tokens", body["_url"]);
       queryParams = body["_query"];
       delete body["config"];
       delete body["_url"];
       delete body["_query"];
       const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(transformedBody),
         httpMethod: "POST",
@@ -87951,18 +87951,18 @@ var Documents = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getDocumentParametersToMldev(params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87983,18 +87983,18 @@ var Documents = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteDocumentParametersToMldev(params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -88006,18 +88006,18 @@ var Documents = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listDocumentsParametersToMldev(params);
-      path12 = formatMap("{parent}/documents", body["_url"]);
+      path13 = formatMap("{parent}/documents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88134,18 +88134,18 @@ var FileSearchStores = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-      path12 = formatMap("fileSearchStores", body["_url"]);
+      path13 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -88168,18 +88168,18 @@ var FileSearchStores = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileSearchStoreParametersToMldev(params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88200,18 +88200,18 @@ var FileSearchStores = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileSearchStoreParametersToMldev(params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -88223,18 +88223,18 @@ var FileSearchStores = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFileSearchStoresParametersToMldev(params);
-      path12 = formatMap("fileSearchStores", body["_url"]);
+      path13 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88254,18 +88254,18 @@ var FileSearchStores = class extends BaseModule {
   async uploadToFileSearchStoreInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = uploadToFileSearchStoreParametersToMldev(params);
-      path12 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+      path13 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -88293,18 +88293,18 @@ var FileSearchStores = class extends BaseModule {
   async importFile(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = importFileParametersToMldev(params);
-      path12 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+      path13 = formatMap("{file_search_store_name}:importFile", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -89440,16 +89440,16 @@ var ClientSDK = class {
   }
   _createRequest(context, conf, options) {
     var _a2, _b, _c, _d, _e;
-    const { method, path: path12, query, headers: opHeaders, security } = conf;
+    const { method, path: path13, query, headers: opHeaders, security } = conf;
     const base = (_a2 = conf.baseURL) !== null && _a2 !== void 0 ? _a2 : this._baseURL;
     if (!base) {
       return ERR(new InvalidRequestError("No base URL provided for operation"));
     }
     const baseURL = new URL(base);
     let reqURL;
-    if (path12) {
+    if (path13) {
       baseURL.pathname = baseURL.pathname.replace(/\/+$/, "") + "/";
-      reqURL = new URL(path12, baseURL);
+      reqURL = new URL(path13, baseURL);
       if (!reqURL.search && baseURL.search) {
         reqURL.search = baseURL.search;
       }
@@ -90265,7 +90265,7 @@ async function $do$e(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path12 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path13 = pathToFunc("/{api_version}/agents")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -90296,7 +90296,7 @@ async function $do$e(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -90340,7 +90340,7 @@ async function $do$d(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path13 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90370,7 +90370,7 @@ async function $do$d(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90414,7 +90414,7 @@ async function $do$c(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path13 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90444,7 +90444,7 @@ async function $do$c(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90486,7 +90486,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path12 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path13 = pathToFunc("/{api_version}/agents")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token,
@@ -90521,7 +90521,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     query,
     body,
@@ -90673,7 +90673,7 @@ async function $do$a(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
+  const path13 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90703,7 +90703,7 @@ async function $do$a(client, id, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90746,7 +90746,7 @@ async function $do$9(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path12 = pathToFunc("/{api_version}/interactions")(pathParams);
+  const path13 = pathToFunc("/{api_version}/interactions")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: ((_b = input === null || input === void 0 ? void 0 : input.body) === null || _b === void 0 ? void 0 : _b.stream) ? "text/event-stream" : "application/json"
@@ -90777,7 +90777,7 @@ async function $do$9(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -90827,7 +90827,7 @@ async function $do$8(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path13 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90857,7 +90857,7 @@ async function $do$8(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90907,7 +90907,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path13 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const query = encodeFormQuery({
     "include_input": payload.include_input,
     "last_event_id": payload.last_event_id,
@@ -90942,7 +90942,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     query,
     body,
@@ -91016,7 +91016,7 @@ async function $do$6(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path12 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path13 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -91047,7 +91047,7 @@ async function $do$6(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -91091,7 +91091,7 @@ async function $do$5(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path13 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -91121,7 +91121,7 @@ async function $do$5(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -91165,7 +91165,7 @@ async function $do$4(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path13 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -91195,7 +91195,7 @@ async function $do$4(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -91236,7 +91236,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path12 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path13 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token
@@ -91270,7 +91270,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     query,
     body,
@@ -91316,7 +91316,7 @@ async function $do$2(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
+  const path13 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -91347,7 +91347,7 @@ async function $do$2(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -91392,7 +91392,7 @@ async function $do$1(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
+  const path13 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -91423,7 +91423,7 @@ async function $do$1(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -91469,7 +91469,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
       charEncoding: "percent"
     })
   };
-  const path12 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path13 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const query = encodeFormQuery({
     "update_mask": payload.update_mask
   });
@@ -91503,7 +91503,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
     security: requestSecurity,
     method: "PATCH",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path12,
+    path: path13,
     headers,
     query,
     body: body$,
@@ -93519,16 +93519,16 @@ var Tunings = class extends BaseModule {
   async getInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getTuningJobParametersToVertex(params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93549,12 +93549,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = getTuningJobParametersToMldev(params);
-      path12 = formatMap("{name}", body["_url"]);
+      path13 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93578,16 +93578,16 @@ var Tunings = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listTuningJobsParametersToVertex(params);
-      path12 = formatMap("tuningJobs", body["_url"]);
+      path13 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93626,16 +93626,16 @@ var Tunings = class extends BaseModule {
   async cancel(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelTuningJobParametersToVertex(params);
-      path12 = formatMap("{name}:cancel", body["_url"]);
+      path13 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93658,12 +93658,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = cancelTuningJobParametersToMldev(params);
-      path12 = formatMap("{name}:cancel", body["_url"]);
+      path13 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93689,16 +93689,16 @@ var Tunings = class extends BaseModule {
   async tuneInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createTuningJobParametersPrivateToVertex(params, params);
-      path12 = formatMap("tuningJobs", body["_url"]);
+      path13 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93724,18 +93724,18 @@ var Tunings = class extends BaseModule {
   async tuneMldevInternal(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createTuningJobParametersPrivateToMldev(params);
-      path12 = formatMap("tunedModels", body["_url"]);
+      path13 = formatMap("tunedModels", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93759,16 +93759,16 @@ var Tunings = class extends BaseModule {
   async validateReward(params) {
     var _a2, _b;
     let response;
-    let path12 = "";
+    let path13 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = validateRewardParametersToVertex(params);
-      path12 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
+      path13 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path12,
+        path: path13,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -94984,6 +94984,778 @@ function dbReadyMiddleware(req, res, next) {
 }
 var dbReady_default = dbReadyMiddleware;
 
+// services/scanBgQueue.js
+var import_fs8 = __toESM(require("fs"), 1);
+var import_path7 = __toESM(require("path"), 1);
+var APP_ROOT6 = resolveAppRoot();
+var SCAN_BG_QUEUE_PATH = import_path7.default.join(APP_ROOT6, "data", "scan-bg-queue.json");
+var scanBgJobs = [];
+var scanBgJobKeys = /* @__PURE__ */ new Set();
+var scanBgWorkerRunning = false;
+var scanBgPersistTimer = null;
+var deps5 = {
+  findOrderByScanCodeInStore: async () => null,
+  isValidOrder: () => false,
+  mirrorTrackingFieldsForRead: (o) => o,
+  resolveOrderFromShopeeByScanCode: async () => null,
+  resolveOrderLocalStatusShared: () => "",
+  existsDonHoanHuy: async () => false,
+  isShopeeCancelOrReturnLikeOrder: () => false,
+  ORDER_LOCAL_STATUS: { RETURN_RECEIVED: "RETURN_RECEIVED", CANCELLED_STORED: "CANCELLED_STORED" },
+  clearHandedOverLocalForCancelReturn: () => {
+  },
+  setOrderLocalStatus: () => {
+  },
+  upsertDonHoanHuy: async () => ({ ok: false, error: "upsertDonHoanHuy_not_initialized" }),
+  describeMongoWriteError: (err) => String(err?.message || err || "")
+};
+function initScanBgQueue(partial) {
+  deps5 = { ...deps5, ...partial };
+  if (scanBgJobs.some((j) => j.status === "pending")) {
+    setTimeout(() => {
+      void drainScanBgQueue();
+    }, 1500);
+  }
+}
+function isScanBgWorkerRunning() {
+  return scanBgWorkerRunning;
+}
+function normalizeScanBgKey(code) {
+  return String(code || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
+}
+function loadScanBgQueueFromDisk() {
+  try {
+    if (!import_fs8.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(import_fs8.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
+    for (const j of list) {
+      const code = String(j?.code || "").trim();
+      const codeKey = normalizeScanBgKey(code || j?.codeKey || "");
+      if (!code || !codeKey || scanBgJobKeys.has(codeKey)) continue;
+      const rawStatus = String(j?.status || "pending");
+      let status = rawStatus === "running" || rawStatus === "pending" ? "pending" : rawStatus === "failed" ? "failed" : rawStatus === "skipped" ? "skipped" : "done";
+      if (status !== "pending") {
+        if (j?.notified) continue;
+      }
+      const job = {
+        id: String(j?.id || `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
+        code,
+        codeKey,
+        status,
+        enqueuedAt: String(j?.enqueuedAt || (/* @__PURE__ */ new Date()).toISOString()),
+        startedAt: j?.startedAt ? String(j.startedAt) : void 0,
+        finishedAt: j?.finishedAt ? String(j.finishedAt) : void 0,
+        orderId: j?.orderId ? String(j.orderId) : void 0,
+        orderSn: j?.orderSn ? String(j.orderSn) : void 0,
+        action: j?.action,
+        local_status: j?.local_status ? String(j.local_status) : void 0,
+        message: j?.message ? String(j.message) : void 0,
+        notified: Boolean(j?.notified)
+      };
+      scanBgJobs.push(job);
+      if (job.status === "pending") {
+        scanBgJobKeys.add(codeKey);
+      }
+    }
+    console.log(
+      `[Scan BG] loaded disk jobs=${scanBgJobs.length} pending=${scanBgJobs.filter((j) => j.status === "pending").length}`
+    );
+  } catch (err) {
+    console.warn("[Scan BG] load disk failed:", err?.message || err);
+  }
+}
+function persistScanBgQueueSoon() {
+  if (scanBgPersistTimer) return;
+  scanBgPersistTimer = setTimeout(() => {
+    scanBgPersistTimer = null;
+    try {
+      import_fs8.default.mkdirSync(import_path7.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
+      const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
+      const jobs = [...pending, ...recent];
+      import_fs8.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+    } catch (err) {
+      console.warn("[Scan BG] persist failed:", err?.message || err);
+    }
+  }, 250);
+}
+function classifyScanBgCancelReturn(order) {
+  const status = String(order?.status || "");
+  const raw = String(order?.shopee_order_status || "").toUpperCase();
+  const kind = String(order?.shopee_cancel_return_kind || "");
+  const isReturn = kind === "refund_return" || status === "return_pending" || status === "return_received" || raw === "TO_RETURN" || Boolean(order?.return_sn);
+  const isCancel = !isReturn && (kind === "cancelled" || kind === "failed_delivery" || status === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL" || deps5.isShopeeCancelOrReturnLikeOrder(order));
+  return { isReturn, isCancel };
+}
+function enqueueScanBgCodes(codes) {
+  const added = [];
+  for (const raw of codes) {
+    const code = String(raw || "").trim();
+    const codeKey = normalizeScanBgKey(code);
+    if (!code || !codeKey) continue;
+    if (scanBgJobKeys.has(codeKey)) continue;
+    const existing = scanBgJobs.find(
+      (j) => j.codeKey === codeKey && (j.status === "pending" || j.status === "running")
+    );
+    if (existing) continue;
+    const job = {
+      id: `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      code,
+      codeKey,
+      status: "pending",
+      enqueuedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      notified: false
+    };
+    scanBgJobs.push(job);
+    scanBgJobKeys.add(codeKey);
+    added.push(job);
+  }
+  if (added.length) {
+    persistScanBgQueueSoon();
+    void drainScanBgQueue();
+  }
+  const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running").length;
+  return { queued: added.length, pending, jobs: added };
+}
+async function processOneScanBgJob(job) {
+  job.status = "running";
+  job.startedAt = (/* @__PURE__ */ new Date()).toISOString();
+  persistScanBgQueueSoon();
+  try {
+    let found = null;
+    try {
+      found = await deps5.findOrderByScanCodeInStore(job.code);
+      if (found && !deps5.isValidOrder(found)) found = null;
+      if (found) found = deps5.mirrorTrackingFieldsForRead(found);
+    } catch {
+      found = null;
+    }
+    if (!found) {
+      try {
+        found = await deps5.resolveOrderFromShopeeByScanCode(job.code);
+        if (found) {
+          found = deps5.mirrorTrackingFieldsForRead(found);
+        }
+      } catch (err) {
+        console.warn(`[Scan BG] Shopee resolve code=${job.code}:`, err?.message || err);
+      }
+    }
+    if (!found) {
+      job.status = "done";
+      job.action = "not_found";
+      job.message = `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n kh\u1EDBp m\xE3 "${job.code}"`;
+      job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+    job.orderId = found.id ? String(found.id) : void 0;
+    job.orderSn = found.orderSn ? String(found.orderSn) : void 0;
+    const existingLocal = deps5.resolveOrderLocalStatusShared(found);
+    let alreadyDhh = false;
+    try {
+      alreadyDhh = await deps5.existsDonHoanHuy(String(found.orderSn || ""));
+    } catch {
+      alreadyDhh = false;
+    }
+    if (alreadyDhh) {
+      job.status = "done";
+      job.action = "duplicate";
+      job.local_status = existingLocal === "RETURN_RECEIVED" ? "RETURN_RECEIVED" : "CANCELLED_STORED";
+      job.message = `\u0110\u01A1n #${found.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`;
+      job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+    const { isReturn, isCancel } = classifyScanBgCancelReturn(found);
+    if (!isReturn && !isCancel) {
+      job.status = "done";
+      job.action = "found_other";
+      job.message = `\u0110\u01A1n #${found.orderSn} kh\xF4ng ph\u1EA3i h\u1EE7y/ho\xE0n \u2014 b\u1ECF qua ghi c\u1EDD`;
+      job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+    const target = isReturn ? deps5.ORDER_LOCAL_STATUS.RETURN_RECEIVED : deps5.ORDER_LOCAL_STATUS.CANCELLED_STORED;
+    deps5.clearHandedOverLocalForCancelReturn(found);
+    deps5.setOrderLocalStatus(found, target);
+    const dhh = await deps5.upsertDonHoanHuy(found, {
+      type: isReturn ? "return" : "cancelled",
+      scanCode: job.code,
+      source: "scan_bg"
+    });
+    if (!dhh.ok) {
+      throw new Error(dhh.error || "Ghi don_hoan_huy th\u1EA5t b\u1EA1i");
+    }
+    job.status = "done";
+    job.action = isReturn ? "return_received" : "cancelled";
+    job.local_status = target;
+    job.message = isReturn ? `\u0110\xE3 d\xF2 ng\u1EA7m nh\u1EADn ho\xE0n #${found.orderSn} \u2192 don_hoan_huy` : `\u0110\xE3 d\xF2 ng\u1EA7m \u0111\u01A1n h\u1EE7y #${found.orderSn} \u2192 don_hoan_huy`;
+    job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    scanBgJobKeys.delete(job.codeKey);
+  } catch (err) {
+    job.status = "failed";
+    job.action = "error";
+    job.message = deps5.describeMongoWriteError(err);
+    job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    scanBgJobKeys.delete(job.codeKey);
+    console.error(`[Scan BG] job fail code=${job.code}:`, err);
+  } finally {
+    persistScanBgQueueSoon();
+  }
+}
+async function drainScanBgQueue() {
+  if (scanBgWorkerRunning) return;
+  scanBgWorkerRunning = true;
+  try {
+    while (true) {
+      const next = scanBgJobs.find((j) => j.status === "pending");
+      if (!next) break;
+      await processOneScanBgJob(next);
+      await new Promise((r2) => setTimeout(r2, 400));
+    }
+  } finally {
+    scanBgWorkerRunning = false;
+    const stillPending = scanBgJobs.some((j) => j.status === "pending");
+    if (stillPending) {
+      queueMicrotask(() => {
+        void drainScanBgQueue();
+      });
+    }
+  }
+}
+function getScanBgStatusSnapshot() {
+  const pending = scanBgJobs.filter((j) => j.status === "pending");
+  const running = scanBgJobs.filter((j) => j.status === "running");
+  const recent = scanBgJobs.filter((j) => j.status === "done" || j.status === "failed" || j.status === "skipped").slice(-40);
+  const unnotified = recent.filter((j) => !j.notified);
+  const summary = { cancelled: 0, returnReceived: 0, notFound: 0, failed: 0 };
+  for (const j of unnotified) {
+    if (j.action === "cancelled") summary.cancelled += 1;
+    else if (j.action === "return_received") summary.returnReceived += 1;
+    else if (j.action === "not_found") summary.notFound += 1;
+    else if (j.action === "error" || j.status === "failed") summary.failed += 1;
+  }
+  return {
+    pending,
+    running,
+    recent,
+    unnotified,
+    pendingCount: pending.length + running.length,
+    summary
+  };
+}
+function ackScanBgNotifications(ids) {
+  const idSet = Array.isArray(ids) && ids.length > 0 ? new Set(ids.map(String)) : null;
+  let n = 0;
+  for (const j of scanBgJobs) {
+    if (j.status !== "done" && j.status !== "failed" && j.status !== "skipped") continue;
+    if (j.notified) continue;
+    if (idSet && !idSet.has(j.id)) continue;
+    j.notified = true;
+    n += 1;
+  }
+  if (n) persistScanBgQueueSoon();
+  return n;
+}
+try {
+  loadScanBgQueueFromDisk();
+} catch {
+}
+
+// controllers/scanBgController.js
+async function enqueueScanBg(req, res) {
+  try {
+    const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : Array.isArray(req.body?.scannedCodes) ? req.body.scannedCodes : req.body?.code ? [req.body.code] : [];
+    const codes = [
+      ...new Set(rawCodes.map((c) => String(c || "").trim()).filter(Boolean))
+    ];
+    if (!codes.length) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_codes",
+        message: "Thi\u1EBFu m\xE3 qu\xE9t (codes)."
+      });
+    }
+    const result = enqueueScanBgCodes(codes);
+    console.log(
+      `[Scan BG] enqueue queued=${result.queued} pending=${result.pending} codes=${codes.length}`
+    );
+    return res.json({
+      success: true,
+      queued: result.queued,
+      pending: result.pending,
+      jobs: result.jobs,
+      message: result.queued > 0 ? `\u0110\xE3 x\u1EBFp ${result.queued} m\xE3 v\xE0o h\xE0ng \u0111\u1EE3i d\xF2 ng\u1EA7m.` : "C\xE1c m\xE3 \u0111\xE3 c\xF3 trong h\xE0ng \u0111\u1EE3i d\xF2 ng\u1EA7m."
+    });
+  } catch (error) {
+    console.error("[Scan BG] enqueue error:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "scan_bg_enqueue_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 x\u1EBFp h\xE0ng \u0111\u1EE3i d\xF2 ng\u1EA7m."
+    });
+  }
+}
+async function getScanBgStatus(_req, res) {
+  try {
+    const snap = getScanBgStatusSnapshot();
+    return res.json({
+      success: true,
+      pendingCount: snap.pendingCount,
+      pending: snap.pending,
+      running: snap.running,
+      recent: snap.recent,
+      unnotified: snap.unnotified,
+      summary: snap.summary,
+      workerRunning: isScanBgWorkerRunning()
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "scan_bg_status_failed"
+    });
+  }
+}
+async function ackScanBg(req, res) {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : void 0;
+    const acked = ackScanBgNotifications(ids);
+    return res.json({ success: true, acked });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "scan_bg_ack_failed"
+    });
+  }
+}
+
+// controllers/scanBulkController.js
+var deps6 = {
+  findOrderByScanCodeInStore: async () => null,
+  isValidOrder: () => false,
+  mirrorTrackingFieldsForRead: (o) => o,
+  resolveOrderLocalStatus: () => "",
+  existsDonHoanHuy: async () => false,
+  isShopeeCancelOrReturnLikeOrder: () => false,
+  isOrderAlreadyScanProcessed: () => false,
+  getScanProcessedReason: () => "",
+  handOverOrderToCarrierByIndex: async () => ({ ok: false, error: "not_initialized" }),
+  clearHandedOverLocalForCancelReturn: () => {
+  },
+  setOrderLocalStatus: () => {
+  },
+  ORDER_LOCAL_STATUS: { HANDED_OVER: "HANDED_OVER" },
+  isEligibleForHandOverShared: () => false,
+  isMongoReady: () => false,
+  upsertDonHoanHuyBatch: async () => ({ ok: 0, failed: 0, errors: ["not_initialized"] }),
+  describeMongoWriteError: (err) => String(err?.message || err || ""),
+  isMongoConnectionError: () => false,
+  persistChangedOrdersPatch: async () => 0,
+  markOrderHandedOverInStore: async () => false,
+  loadProductsForOrders: async () => [],
+  enrichOrdersFromCatalog: (orders) => orders,
+  invalidateOrdersRefreshCache: () => {
+  }
+};
+function initScanBulkController(partial) {
+  deps6 = { ...deps6, ...partial };
+}
+async function scanBulkUpdate(req, res) {
+  try {
+    const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : Array.isArray(req.body?.scannedCodes) ? req.body.scannedCodes : Array.isArray(req.body?.scanCodes) ? req.body.scanCodes : [];
+    const codes = [...new Set(rawCodes.map((c) => String(c || "").trim()).filter(Boolean))];
+    if (!codes.length) {
+      return res.status(400).json({
+        success: false,
+        error: "Thi\u1EBFu danh s\xE1ch m\xE3 qu\xE9t (codes).",
+        message: "Thi\u1EBFu danh s\xE1ch m\xE3 qu\xE9t (codes / scannedCodes)."
+      });
+    }
+    const toCodeSet = (arr) => {
+      if (!Array.isArray(arr)) return /* @__PURE__ */ new Set();
+      return new Set(arr.map((c) => String(c || "").trim().toUpperCase()).filter(Boolean));
+    };
+    const forceHandOverCodes = toCodeSet(req.body?.daXuatKhoCodes);
+    const forceCancelCodes = toCodeSet(req.body?.donHuyCodes);
+    const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
+    const lookupPairs = await Promise.all(
+      codes.map(async (code) => {
+        let found = null;
+        try {
+          found = await deps6.findOrderByScanCodeInStore(code);
+          if (found && !deps6.isValidOrder(found)) found = null;
+          if (found) found = deps6.mirrorTrackingFieldsForRead(found);
+        } catch (lookupErr) {
+          console.warn(
+            `[Orders Scan Bulk] lookup miss code=${code}:`,
+            lookupErr?.message || lookupErr
+          );
+        }
+        return { code, found };
+      })
+    );
+    const orders = [];
+    const orderIndexById = /* @__PURE__ */ new Map();
+    const putScoped = (order) => {
+      if (!order?.id) return -1;
+      const existing = orderIndexById.get(String(order.id));
+      if (existing !== void 0) return existing;
+      const idx = orders.length;
+      orders.push(order);
+      orderIndexById.set(String(order.id), idx);
+      return idx;
+    };
+    for (const pair of lookupPairs) {
+      if (pair.found) putScoped(pair.found);
+    }
+    const results = [];
+    const failed_scans = [];
+    const changedOrders = [];
+    const updatedById = /* @__PURE__ */ new Map();
+    const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
+    let donHoanHuyAlready = 0;
+    const norm = (c) => String(c || "").trim().toUpperCase();
+    for (const { code, found } of lookupPairs) {
+      const codeKey = norm(code);
+      if (!found) {
+        results.push({ code, action: "not_found", message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n v\u1EDBi m\xE3 "${code}"` });
+        failed_scans.push({ code, reason: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n trong h\u1EC7 th\u1ED1ng" });
+        continue;
+      }
+      const index = putScoped(found);
+      if (index < 0) {
+        results.push({ code, action: "not_found", message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n v\u1EDBi m\xE3 "${code}"` });
+        failed_scans.push({ code, reason: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n trong h\u1EC7 th\u1ED1ng" });
+        continue;
+      }
+      const order = orders[index];
+      const status = String(order.status || "");
+      const rawShopee = String(order.shopee_order_status || "").toUpperCase();
+      const existingLocal = deps6.resolveOrderLocalStatus(order);
+      let alreadyInDonHoanHuy = false;
+      try {
+        alreadyInDonHoanHuy = await deps6.existsDonHoanHuy(String(order.orderSn || ""));
+      } catch {
+        alreadyInDonHoanHuy = false;
+      }
+      const forceHandOver = forceHandOverCodes.has(codeKey) || forceHandOverCodes.has(norm(String(order.orderSn || ""))) || forceHandOverCodes.has(norm(String(order.trackingNumber || order.tracking_no || "")));
+      const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || ""))) || forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceCancelCodes.has(norm(String(order.return_tracking_no || "")));
+      const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.return_tracking_no || "")));
+      const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN";
+      const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || deps6.isShopeeCancelOrReturnLikeOrder(order));
+      if (forceCancel && alreadyInDonHoanHuy) {
+        summary.donHuy += 1;
+        donHoanHuyAlready += 1;
+        results.push({
+          code,
+          action: "cancelled",
+          orderId: order.id,
+          orderSn: order.orderSn,
+          message: `\u0110\u01A1n h\u1EE7y #${order.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`,
+          local_status: "CANCELLED_STORED"
+        });
+        continue;
+      }
+      if (forceReturn && alreadyInDonHoanHuy) {
+        summary.daNhanHoan += 1;
+        donHoanHuyAlready += 1;
+        results.push({
+          code,
+          action: "return_received",
+          orderId: order.id,
+          orderSn: order.orderSn,
+          message: `\u0110\u01A1n #${order.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`,
+          local_status: "RETURN_RECEIVED"
+        });
+        continue;
+      }
+      const allowForceCancelReturnOverride = (forceCancel || forceReturn) && (existingLocal === "HANDED_OVER" || existingLocal === "CANCELLED_STORED" || existingLocal === "RETURN_RECEIVED" || isCancelLike || isReturnLike);
+      if (deps6.isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride && !forceCancel && !forceReturn) {
+        const reason = deps6.getScanProcessedReason(order);
+        results.push({
+          code,
+          action: "duplicate",
+          orderId: order.id,
+          orderSn: order.orderSn,
+          message: reason,
+          local_status: existingLocal
+        });
+        failed_scans.push({
+          code,
+          orderId: order.id,
+          orderSn: order.orderSn,
+          reason
+        });
+        continue;
+      }
+      if (forceHandOver) {
+        const result = await deps6.handOverOrderToCarrierByIndex(orders, index, {
+          persist: false,
+          source: "qr_scan"
+        });
+        if (!result.ok) {
+          results.push({
+            code,
+            action: "rejected",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: result.error,
+            local_status: existingLocal
+          });
+          failed_scans.push({
+            code,
+            orderId: order.id,
+            orderSn: order.orderSn,
+            reason: result.error
+          });
+          continue;
+        }
+        if (result.changed) {
+          changedOrders.push(result.order);
+          updatedById.set(result.order.id, result.order);
+          summary.daXuatKho += 1;
+        }
+        results.push({
+          code,
+          action: "handed_over",
+          orderId: result.order.id,
+          orderSn: result.order.orderSn,
+          message: result.changed ? `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${result.order.orderSn}` : `\u0110\u01A1n #${result.order.orderSn} \u0111\xE3 c\xF3 c\u1EDD \u0110VVC`,
+          local_status: deps6.ORDER_LOCAL_STATUS.HANDED_OVER
+        });
+        continue;
+      }
+      if (forceReturn || isReturnLike) {
+        const updated = { ...order };
+        deps6.clearHandedOverLocalForCancelReturn(updated);
+        deps6.setOrderLocalStatus(updated, "RETURN_RECEIVED");
+        orders[index] = updated;
+        changedOrders.push(updated);
+        updatedById.set(updated.id, updated);
+        summary.daNhanHoan += 1;
+        results.push({
+          code,
+          action: "return_received",
+          orderId: updated.id,
+          orderSn: updated.orderSn,
+          message: `\u0110\xE3 nh\u1EADn h\xE0ng ho\xE0n \u2014 \u0111\u01A1n #${updated.orderSn}`,
+          local_status: "RETURN_RECEIVED"
+        });
+        continue;
+      }
+      if (forceCancel || isCancelLike) {
+        const updated = { ...order };
+        if (updated.status !== "cancelled") updated.status = "cancelled";
+        deps6.clearHandedOverLocalForCancelReturn(updated);
+        deps6.setOrderLocalStatus(updated, "CANCELLED_STORED");
+        orders[index] = updated;
+        changedOrders.push(updated);
+        updatedById.set(updated.id, updated);
+        summary.donHuy += 1;
+        results.push({
+          code,
+          action: "cancelled",
+          orderId: updated.id,
+          orderSn: updated.orderSn,
+          message: `\u0110\u01A1n h\u1EE7y #${updated.orderSn} \u2192 CANCELLED_STORED`,
+          local_status: "CANCELLED_STORED"
+        });
+        continue;
+      }
+      if (deps6.isEligibleForHandOverShared(order)) {
+        const result = await deps6.handOverOrderToCarrierByIndex(orders, index, {
+          persist: false,
+          source: "qr_scan"
+        });
+        if (!result.ok) {
+          results.push({
+            code,
+            action: "rejected",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: result.error,
+            local_status: existingLocal
+          });
+          failed_scans.push({
+            code,
+            orderId: order.id,
+            orderSn: order.orderSn,
+            reason: result.error
+          });
+          continue;
+        }
+        if (result.changed) {
+          changedOrders.push(result.order);
+          updatedById.set(result.order.id, result.order);
+          summary.daXuatKho += 1;
+        }
+        results.push({
+          code,
+          action: "handed_over",
+          orderId: result.order.id,
+          orderSn: result.order.orderSn,
+          message: `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${result.order.orderSn}`,
+          local_status: deps6.ORDER_LOCAL_STATUS.HANDED_OVER
+        });
+        continue;
+      }
+      results.push({
+        code,
+        action: "skipped",
+        orderId: order.id,
+        orderSn: order.orderSn,
+        message: `\u0110\u01A1n #${order.orderSn} kh\xF4ng thu\u1ED9c Ch\u1EDD l\u1EA5y h\xE0ng (\u0111\xE3 x\u1EED l\xFD) / \u0110\u01A1n h\u1EE7y \u2014 b\u1ECF qua`
+      });
+      failed_scans.push({
+        code,
+        orderId: order.id,
+        orderSn: order.orderSn,
+        reason: `Tr\u1EA1ng th\xE1i "${status}" kh\xF4ng thu\u1ED9c quy t\u1EAFc qu\xE9t \u0110VVC`
+      });
+    }
+    const cancelReturnRows = [];
+    for (const o of changedOrders) {
+      const local = String(
+        o?.local_status || o?.localStatus || o?.internal_status || ""
+      ).toUpperCase();
+      if (local === "CANCELLED_STORED") {
+        cancelReturnRows.push({ order: o, type: "cancelled" });
+      } else if (local === "RETURN_RECEIVED") {
+        cancelReturnRows.push({ order: o, type: "return" });
+      }
+    }
+    let donHoanHuyWrite = {
+      ok: 0,
+      failed: 0,
+      errors: []
+    };
+    if (cancelReturnRows.length > 0) {
+      if (!deps6.isMongoReady()) {
+        console.error("[Orders Scan Bulk] Mongo not ready \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c don_hoan_huy");
+        return res.status(500).json({
+          success: false,
+          message: "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB",
+          error: "mongodb_not_ready"
+        });
+      }
+      try {
+        donHoanHuyWrite = await deps6.upsertDonHoanHuyBatch(
+          cancelReturnRows.map((r2) => ({
+            order: r2.order,
+            type: r2.type,
+            scanCode: void 0,
+            source: "qr_scan"
+          }))
+        );
+      } catch (dhhErr) {
+        console.error("[Orders Scan Bulk] don_hoan_huy batch FAIL:", dhhErr);
+        const detail = deps6.describeMongoWriteError(dhhErr);
+        return res.status(500).json({
+          success: false,
+          message: deps6.isMongoConnectionError(dhhErr) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
+          error: "don_hoan_huy_write_failed"
+        });
+      }
+      if (donHoanHuyWrite.failed > 0 && donHoanHuyWrite.ok === 0) {
+        const detail = donHoanHuyWrite.errors[0] || "Kh\xF4ng ghi \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o v\xE0o collection don_hoan_huy.";
+        console.error("[Orders Scan Bulk] don_hoan_huy all failed:", donHoanHuyWrite.errors);
+        const connFail = /Lỗi kết nối MongoDB/i.test(detail);
+        return res.status(500).json({
+          success: false,
+          message: connFail ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
+          error: "don_hoan_huy_write_failed",
+          errors: donHoanHuyWrite.errors.slice(0, 10)
+        });
+      }
+    }
+    if (changedOrders.length > 0) {
+      const handoverOnly = changedOrders.filter((o) => {
+        const local = String(
+          o?.local_status || o?.localStatus || o?.internal_status || ""
+        ).toUpperCase();
+        return local === "HANDED_OVER" || o?.is_handed_over === true || o?.isHandedOverToCarrier === true;
+      });
+      if (handoverOnly.length > 0) {
+        try {
+          await deps6.persistChangedOrdersPatch(handoverOnly);
+        } catch (persistErr) {
+          console.warn(
+            "[Orders Scan Bulk] persistChangedOrdersPatch handover:",
+            deps6.describeMongoWriteError(persistErr),
+            persistErr
+          );
+        }
+      }
+      let flagOk = 0;
+      for (const o of changedOrders) {
+        const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (!sn) continue;
+        const shopId = o?.shopId != null ? String(o.shopId) : void 0;
+        const local = String(
+          o?.local_status || o?.localStatus || o?.internal_status || ""
+        ).toUpperCase();
+        try {
+          if (local === "HANDED_OVER" || o?.is_handed_over === true || o?.isHandedOverToCarrier === true) {
+            const ok = await deps6.markOrderHandedOverInStore(sn, {
+              source: "qr_scan",
+              handedOverAt: String(o.handedOverAt || (/* @__PURE__ */ new Date()).toISOString()),
+              shopId
+            });
+            if (ok) flagOk += 1;
+          }
+        } catch (flagErr) {
+          console.error(
+            `[Orders Scan Bulk] mark flag fail order_sn=${sn}:`,
+            deps6.describeMongoWriteError(flagErr),
+            flagErr
+          );
+        }
+      }
+      console.log(
+        `[Orders Scan Bulk] don_hoan_huy ok=${donHoanHuyWrite.ok} fail=${donHoanHuyWrite.failed} handoverFlags=${flagOk} changed=${changedOrders.length}`
+      );
+      deps6.invalidateOrdersRefreshCache();
+    }
+    const updatedList = [...updatedById.values()];
+    const products = await deps6.loadProductsForOrders(updatedList);
+    const enriched = deps6.enrichOrdersFromCatalog(updatedList, products);
+    const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
+    console.log(
+      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps6.isMongoReady()}`
+    );
+    return res.json({
+      success: true,
+      processedCount,
+      persistedCount: changedOrders.length,
+      donHoanHuy: {
+        ...donHoanHuyWrite,
+        already: donHoanHuyAlready,
+        ensured: donHoanHuyWrite.ok + donHoanHuyAlready
+      },
+      summary,
+      stats: {
+        handedOver: summary.daXuatKho,
+        cancelled: summary.donHuy,
+        returnReceived: summary.daNhanHoan,
+        notFound: failed_scans.filter((f3) => f3.reason.includes("Kh\xF4ng t\xECm th\u1EA5y")).length,
+        skipped: results.filter((r2) => r2.action === "skipped").length,
+        duplicates: results.filter((r2) => r2.action === "duplicate").length
+      },
+      results,
+      failed_scans,
+      orders: enriched
+    });
+  } catch (error) {
+    console.error("[Orders Scan Bulk] Error:", error);
+    const detail = deps6.describeMongoWriteError(error);
+    return res.status(500).json({
+      success: false,
+      message: deps6.isMongoConnectionError(error) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt h\xE0ng lo\u1EA1t \u0111\u01A1n \u0111\xE3 qu\xE9t.",
+      error: error?.message || "scan_bulk_update_failed"
+    });
+  }
+}
+
 // utils/apiError.js
 function extractHttpClientError(err) {
   const anyErr = err;
@@ -95085,12 +95857,12 @@ function resetHeavyJob() {
 
 // src/db/mongoStore.ts
 var import_mongoose4 = __toESM(require("mongoose"), 1);
-var import_fs10 = __toESM(require("fs"), 1);
-var import_path9 = __toESM(require("path"), 1);
+var import_fs11 = __toESM(require("fs"), 1);
+var import_path10 = __toESM(require("path"), 1);
 
 // src/db/productsDiskStore.ts
-var import_fs8 = __toESM(require("fs"), 1);
-var import_path7 = __toESM(require("path"), 1);
+var import_fs9 = __toESM(require("fs"), 1);
+var import_path8 = __toESM(require("path"), 1);
 function isProductsDiskMode() {
   const raw = process.env.PRODUCTS_STORAGE ?? process.env.PRODUCTS_DISK;
   if (raw == null || String(raw).trim() === "") return true;
@@ -95111,11 +95883,11 @@ function resolveAppRoot2() {
   return process.cwd();
 }
 function getProductsDiskPath() {
-  return import_path7.default.join(resolveAppRoot2(), "data", "products.json");
+  return import_path8.default.join(resolveAppRoot2(), "data", "products.json");
 }
 function ensureDataDir() {
-  const dir = import_path7.default.dirname(getProductsDiskPath());
-  if (!import_fs8.default.existsSync(dir)) import_fs8.default.mkdirSync(dir, { recursive: true });
+  const dir = import_path8.default.dirname(getProductsDiskPath());
+  if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
 }
 function normalizeProduct(p) {
   if (!p || typeof p !== "object") return null;
@@ -95139,16 +95911,16 @@ function inheritShopeeLinkFromParent(child, parent) {
 }
 function readProductsFromDisk() {
   const file = getProductsDiskPath();
-  if (!import_fs8.default.existsSync(file)) {
+  if (!import_fs9.default.existsSync(file)) {
     productsCache = { mtimeMs: 0, products: [] };
     return [];
   }
-  const st = import_fs8.default.statSync(file);
+  const st = import_fs9.default.statSync(file);
   if (productsCache && productsCache.mtimeMs === st.mtimeMs) {
     return productsCache.products;
   }
   try {
-    const raw = import_fs8.default.readFileSync(file, "utf-8");
+    const raw = import_fs9.default.readFileSync(file, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const products = (Array.isArray(parsed) ? parsed : []).map(normalizeProduct).filter(Boolean);
     productsCache = { mtimeMs: st.mtimeMs, products };
@@ -95163,10 +95935,10 @@ function writeProductsToDiskSync(products) {
   const file = getProductsDiskPath();
   const list = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean);
   const tmp = `${file}.tmp.${process.pid}`;
-  import_fs8.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
-  import_fs8.default.renameSync(tmp, file);
+  import_fs9.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
+  import_fs9.default.renameSync(tmp, file);
   try {
-    const st = import_fs8.default.statSync(file);
+    const st = import_fs9.default.statSync(file);
     productsCache = { mtimeMs: st.mtimeMs, products: list };
   } catch {
     productsCache = { mtimeMs: Date.now(), products: list };
@@ -95390,8 +96162,8 @@ async function applyImportStockAndPriceOnDisk(productId, quantityDelta, importPr
 }
 
 // src/db/channelListingsDiskStore.ts
-var import_fs9 = __toESM(require("fs"), 1);
-var import_path8 = __toESM(require("path"), 1);
+var import_fs10 = __toESM(require("fs"), 1);
+var import_path9 = __toESM(require("path"), 1);
 var appRootResolved2 = "";
 var listingsCache = null;
 var writeChain2 = Promise.resolve();
@@ -95403,11 +96175,11 @@ function resolveAppRoot3() {
   return process.cwd();
 }
 function getChannelListingsDiskPath() {
-  return import_path8.default.join(resolveAppRoot3(), "data", "channel_listings.json");
+  return import_path9.default.join(resolveAppRoot3(), "data", "channel_listings.json");
 }
 function ensureDataDir2() {
-  const dir = import_path8.default.dirname(getChannelListingsDiskPath());
-  if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
+  const dir = import_path9.default.dirname(getChannelListingsDiskPath());
+  if (!import_fs10.default.existsSync(dir)) import_fs10.default.mkdirSync(dir, { recursive: true });
 }
 function normalizeListing(row) {
   if (!row || typeof row !== "object") return null;
@@ -95417,16 +96189,16 @@ function normalizeListing(row) {
 }
 function readChannelListingsFromDisk() {
   const file = getChannelListingsDiskPath();
-  if (!import_fs9.default.existsSync(file)) {
+  if (!import_fs10.default.existsSync(file)) {
     listingsCache = { mtimeMs: 0, listings: [] };
     return [];
   }
-  const st = import_fs9.default.statSync(file);
+  const st = import_fs10.default.statSync(file);
   if (listingsCache && listingsCache.mtimeMs === st.mtimeMs) {
     return listingsCache.listings;
   }
   try {
-    const raw = import_fs9.default.readFileSync(file, "utf-8");
+    const raw = import_fs10.default.readFileSync(file, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const listings = (Array.isArray(parsed) ? parsed : []).map(normalizeListing).filter(Boolean);
     listingsCache = { mtimeMs: st.mtimeMs, listings };
@@ -95444,10 +96216,10 @@ function writeChannelListingsToDiskSync(listings) {
   const file = getChannelListingsDiskPath();
   const list = (Array.isArray(listings) ? listings : []).map(normalizeListing).filter(Boolean);
   const tmp = `${file}.tmp.${process.pid}`;
-  import_fs9.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
-  import_fs9.default.renameSync(tmp, file);
+  import_fs10.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
+  import_fs10.default.renameSync(tmp, file);
   try {
-    const st = import_fs9.default.statSync(file);
+    const st = import_fs10.default.statSync(file);
     listingsCache = { mtimeMs: st.mtimeMs, listings: list };
   } catch {
     listingsCache = { mtimeMs: Date.now(), listings: list };
@@ -95724,8 +96496,8 @@ async function initMongo(appRoot) {
     if (import_mongoose4.default.connection.readyState === 0) {
       await connectDB();
       try {
-        import_fs10.default.writeFileSync(
-          import_path9.default.join(appRootResolved3, "db_status.txt"),
+        import_fs11.default.writeFileSync(
+          import_path10.default.join(appRootResolved3, "db_status.txt"),
           "KET_NOI_THANH_CONG_LUC: " + (/* @__PURE__ */ new Date()).toISOString()
         );
       } catch {
@@ -95807,8 +96579,8 @@ async function initMongo(appRoot) {
     mongoReady = false;
     const msg = err instanceof Error ? err.message : String(err);
     const code = err && typeof err === "object" && "code" in err ? String(err.code) : "undefined";
-    import_fs10.default.writeFileSync(
-      import_path9.default.join(appRootResolved3, "db_status.txt"),
+    import_fs11.default.writeFileSync(
+      import_path10.default.join(appRootResolved3, "db_status.txt"),
       "LOI_KET_NOI: " + msg + " | CODE: " + code
     );
     console.error("L\u1ED6I MONGODB STARTUP:", msg);
@@ -95891,17 +96663,17 @@ async function maybeDropMongoListingsWhenDiskReady(mongoListingCount) {
   }
 }
 async function maybeMigrateJsonFallbackToMongo() {
-  const productsPath = import_path9.default.join(appRootResolved3, "data", "products.json");
-  const listingsPath = import_path9.default.join(appRootResolved3, "data", "channel_listings.json");
+  const productsPath = import_path10.default.join(appRootResolved3, "data", "products.json");
+  const listingsPath = import_path10.default.join(appRootResolved3, "data", "channel_listings.json");
   let products = [];
   let listings = [];
   try {
-    if (import_fs10.default.existsSync(productsPath)) {
-      const parsed = JSON.parse(import_fs10.default.readFileSync(productsPath, "utf-8"));
+    if (import_fs11.default.existsSync(productsPath)) {
+      const parsed = JSON.parse(import_fs11.default.readFileSync(productsPath, "utf-8"));
       products = Array.isArray(parsed) ? parsed : [];
     }
-    if (import_fs10.default.existsSync(listingsPath)) {
-      const parsed = JSON.parse(import_fs10.default.readFileSync(listingsPath, "utf-8"));
+    if (import_fs11.default.existsSync(listingsPath)) {
+      const parsed = JSON.parse(import_fs11.default.readFileSync(listingsPath, "utf-8"));
       listings = Array.isArray(parsed) ? parsed : [];
     }
   } catch (err) {
@@ -98238,12 +99010,12 @@ function writeCpanelCrashLog(kind, err) {
 ${(/* @__PURE__ */ new Date()).toISOString()}
 `;
     const targets = [
-      import_path10.default.join(process.cwd(), "cpanel_error_log.txt"),
-      typeof __dirname !== "undefined" ? import_path10.default.join(__dirname, "cpanel_error_log.txt") : ""
+      import_path11.default.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? import_path11.default.join(__dirname, "cpanel_error_log.txt") : ""
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs11.default.writeFileSync(file, line);
+        import_fs12.default.writeFileSync(file, line);
       } catch {
       }
     }
@@ -98257,7 +99029,7 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (err) => {
   writeCpanelCrashLog("Rejection", err);
 });
-var APP_ROOT6 = resolveAppRoot();
+var APP_ROOT7 = resolveAppRoot();
 var isCpanelPassengerRuntime = Boolean(
   String(
     process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
@@ -98268,12 +99040,12 @@ if (isCpanelPassengerRuntime) {
   console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
 }
 var dotenvCandidates = [
-  import_path10.default.join(APP_ROOT6, ".env"),
-  import_path10.default.join(process.cwd(), ".env"),
-  import_path10.default.resolve(".env")
+  import_path11.default.join(APP_ROOT7, ".env"),
+  import_path11.default.join(process.cwd(), ".env"),
+  import_path11.default.resolve(".env")
 ];
 for (const envPath of dotenvCandidates) {
-  if (import_fs11.default.existsSync(envPath)) {
+  if (import_fs12.default.existsSync(envPath)) {
     const loaded = import_dotenv2.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
@@ -98284,17 +99056,17 @@ for (const envPath of dotenvCandidates) {
 }
 import_dotenv2.default.config();
 console.log(
-  `[Config] APP_ROOT=${APP_ROOT6} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
+  `[Config] APP_ROOT=${APP_ROOT7} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
 );
-setProductsDiskAppRoot(APP_ROOT6);
+setProductsDiskAppRoot(APP_ROOT7);
 console.log(
   `[Products] storage=${isProductsDiskMode() ? "disk" : "mongo"} path=${getProductsDiskPath()}`
 );
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs11.default.writeFileSync(
-      import_path10.default.join(APP_ROOT6, "cpanel_error_log.txt"),
+    import_fs12.default.writeFileSync(
+      import_path11.default.join(APP_ROOT7, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
 ${(/* @__PURE__ */ new Date()).toISOString()}
@@ -98305,10 +99077,10 @@ ${(/* @__PURE__ */ new Date()).toISOString()}
 }
 process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
 process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
-var WAYBILLS_DIR = import_path10.default.join(APP_ROOT6, "storage", "waybills");
-var LEGACY_PUBLIC_PRINTS_DIR = import_path10.default.join(APP_ROOT6, "public", "prints");
+var WAYBILLS_DIR = import_path11.default.join(APP_ROOT7, "storage", "waybills");
+var LEGACY_PUBLIC_PRINTS_DIR = import_path11.default.join(APP_ROOT7, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
-var LABELS_DIR = import_path10.default.join(APP_ROOT6, "storage", "labels");
+var LABELS_DIR = import_path11.default.join(APP_ROOT7, "storage", "labels");
 var LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
 var labelMemCache = /* @__PURE__ */ new Map();
@@ -98316,24 +99088,24 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs11.default.existsSync(LABELS_DIR)) import_fs11.default.mkdirSync(LABELS_DIR, { recursive: true });
+    if (!import_fs12.default.existsSync(LABELS_DIR)) import_fs12.default.mkdirSync(LABELS_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path10.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
+  const probe = import_path11.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
   try {
-    import_fs11.default.writeFileSync(probe, "ok");
-    import_fs11.default.unlinkSync(probe);
+    import_fs12.default.writeFileSync(probe, "ok");
+    import_fs12.default.unlinkSync(probe);
   } catch (err) {
     console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
 function safeLabelFilename(raw) {
-  const base = import_path10.default.basename(String(raw || "").trim());
+  const base = import_path11.default.basename(String(raw || "").trim());
   if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
   return base;
 }
@@ -98370,14 +99142,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs11.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs12.default.readdirSync(LABELS_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs11.default.unlinkSync(import_path10.default.join(LABELS_DIR, name));
+        import_fs12.default.unlinkSync(import_path11.default.join(LABELS_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -98415,16 +99187,16 @@ function putLabelMem(filename, buffer, contentType) {
     cleanupExpiredLabelFiles();
     const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
     if (snMatch?.[1]) removeExistingLabelFilesForOrderSns([snMatch[1]]);
-    const dest = import_path10.default.join(LABELS_DIR, safe);
+    const dest = import_path11.default.join(LABELS_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
-    import_fs11.default.writeFileSync(dest, buffer);
-    if (!import_fs11.default.existsSync(dest)) {
+    import_fs12.default.writeFileSync(dest, buffer);
+    if (!import_fs12.default.existsSync(dest)) {
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file kh\xF4ng t\u1ED3n t\u1EA1i sau writeFileSync: ${dest}`);
     }
-    const st = import_fs11.default.statSync(dest);
+    const st = import_fs12.default.statSync(dest);
     if (!st.isFile() || st.size <= 0) {
       try {
-        import_fs11.default.unlinkSync(dest);
+        import_fs12.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file tr\xEAn \u0111\u0129a r\u1ED7ng: ${dest}`);
@@ -98433,15 +99205,15 @@ function putLabelMem(filename, buffer, contentType) {
       console.warn(`[Labels] C\u1EA3nh b\xE1o size l\u1EC7ch: buffer=${buffer.length} disk=${st.size} \u2192 ${dest}`);
     }
     const head = Buffer.alloc(5);
-    const fd = import_fs11.default.openSync(dest, "r");
+    const fd = import_fs12.default.openSync(dest, "r");
     try {
-      import_fs11.default.readSync(fd, head, 0, 5, 0);
+      import_fs12.default.readSync(fd, head, 0, 5, 0);
     } finally {
-      import_fs11.default.closeSync(fd);
+      import_fs12.default.closeSync(fd);
     }
     if (head.toString("utf8", 0, 4) !== "%PDF") {
       try {
-        import_fs11.default.unlinkSync(dest);
+        import_fs12.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`File ghi ra kh\xF4ng c\xF2n l\xE0 PDF h\u1EE3p l\u1EC7: ${safe}`);
@@ -98469,19 +99241,19 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path10.default.join(LABELS_DIR, safe);
+  const filePath = import_path11.default.join(LABELS_DIR, safe);
   try {
-    if (!import_fs11.default.existsSync(filePath)) return null;
-    const st = import_fs11.default.statSync(filePath);
+    if (!import_fs12.default.existsSync(filePath)) return null;
+    const st = import_fs12.default.statSync(filePath);
     if (!st.isFile() || st.size <= 0) {
       console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
       try {
-        import_fs11.default.unlinkSync(filePath);
+        import_fs12.default.unlinkSync(filePath);
       } catch {
       }
       return null;
     }
-    const buf = import_fs11.default.readFileSync(filePath);
+    const buf = import_fs12.default.readFileSync(filePath);
     if (!buf.length || !isPdfBuffer(buf)) return null;
     labelMemCache.set(safe, {
       buf,
@@ -98508,9 +99280,9 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path10.default.join(LABELS_DIR, safe);
-  if (import_fs11.default.existsSync(diskPath)) {
-    const st = import_fs11.default.statSync(diskPath);
+  const diskPath = import_path11.default.join(LABELS_DIR, safe);
+  if (import_fs12.default.existsSync(diskPath)) {
+    const st = import_fs12.default.statSync(diskPath);
     if (st.size <= 0) {
       throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
     }
@@ -98529,13 +99301,13 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs11.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs12.default.readdirSync(LABELS_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path10.default.join(LABELS_DIR, name);
+      const full = import_path11.default.join(LABELS_DIR, name);
       try {
-        const st = import_fs11.default.statSync(full);
+        const st = import_fs12.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs11.default.unlinkSync(full);
+          import_fs12.default.unlinkSync(full);
           labelMemCache.delete(name);
           deleted += 1;
         }
@@ -98557,11 +99329,11 @@ function wipeLegacyPublicPrints() {
   let deleted = 0;
   for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
     try {
-      if (!import_fs11.default.existsSync(dir)) continue;
-      for (const name of import_fs11.default.readdirSync(dir)) {
+      if (!import_fs12.default.existsSync(dir)) continue;
+      for (const name of import_fs12.default.readdirSync(dir)) {
         if (!WAYBILL_FILE_RE.test(name)) continue;
         try {
-          import_fs11.default.unlinkSync(import_path10.default.join(dir, name));
+          import_fs12.default.unlinkSync(import_path11.default.join(dir, name));
           deleted += 1;
         } catch {
         }
@@ -98651,7 +99423,6 @@ function serveLabelPdfFromMem(filename, res) {
     return "invalid";
   }
 }
-var ENV_PATH2 = import_path10.default.join(APP_ROOT6, ".env");
 var APP_BASE_URL2 = resolveAppBaseUrl();
 function resolveLabelsPublicBaseUrl() {
   const explicit = String(
@@ -98672,7 +99443,7 @@ function absoluteLabelUrl(relativePath) {
   } else {
     const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
     const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || import_path10.default.basename(p));
+    fn = decodeURIComponent(fnMatch?.[1] || import_path11.default.basename(p));
   }
   if (!safeLabelFilename(fn)) return null;
   try {
@@ -98708,19 +99479,19 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path10.default.resolve(APP_ROOT6, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path10.default.resolve(APP_ROOT6, "data", "shopee_oauth_last.json");
+var SHOPEE_TOKENS_PATH = import_path11.default.resolve(APP_ROOT7, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path11.default.resolve(APP_ROOT7, "data", "shopee_oauth_last.json");
 function ensureDataDirs() {
-  const dataDir = import_path10.default.join(APP_ROOT6, "data");
-  import_fs11.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs11.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs11.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  const dataDir = import_path11.default.join(APP_ROOT7, "data");
+  import_fs12.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs12.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs12.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs11.default.writeFileSync(
+    import_fs12.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -98731,8 +99502,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs11.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs11.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs12.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs12.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -98748,12 +99519,12 @@ try {
   console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
 }
 console.log(
-  `[Boot] APP_ROOT=${APP_ROOT6} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs11.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
+  `[Boot] APP_ROOT=${APP_ROOT7} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs12.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
 );
 function loadShopeeTokens() {
   try {
-    if (!import_fs11.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs11.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs12.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs12.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -98787,7 +99558,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path10.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path11.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -98819,15 +99590,15 @@ function saveShopeeTokens(tokensToWrite) {
       JSON.stringify({
         absPath,
         SHOPEE_TOKENS_PATH,
-        APP_ROOT: APP_ROOT6,
+        APP_ROOT: APP_ROOT7,
         keys: keysAfter,
         byteLength: Buffer.byteLength(payload, "utf-8")
       })
     );
-    import_fs11.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs12.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs11.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs12.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -99057,7 +99828,7 @@ async function completeShopeeOAuthFlow(code, params) {
     shopee_shop_id_list: tokenResult.shop_id_list || [],
     file_keys_after: Object.keys(loadShopeeTokens()),
     tokens_path: SHOPEE_TOKENS_PATH,
-    app_root: APP_ROOT6
+    app_root: APP_ROOT7
   });
   return {
     success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
@@ -99679,7 +100450,7 @@ function resolveCreateRequireFilename() {
     if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
-  return import_path10.default.resolve(process.cwd(), "server.cjs");
+  return import_path11.default.resolve(process.cwd(), "server.cjs");
 }
 var shopeeHttpDispatcher = void 0;
 try {
@@ -101443,9 +102214,9 @@ async function resolvePublishImageBuffer(src) {
   }
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
-    const filePath = import_path10.default.join(APP_ROOT6, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs11.default.existsSync(filePath)) {
-      return { buf: import_fs11.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    const filePath = import_path11.default.join(APP_ROOT7, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (import_fs12.default.existsSync(filePath)) {
+      return { buf: import_fs12.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
@@ -102409,257 +103180,6 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
 var shopeeSyncQueue = [];
 var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
 var shopeeSyncQueueRunning = false;
-var SCAN_BG_QUEUE_PATH = import_path10.default.join(APP_ROOT6, "data", "scan-bg-queue.json");
-var scanBgJobs = [];
-var scanBgJobKeys = /* @__PURE__ */ new Set();
-var scanBgWorkerRunning = false;
-var scanBgPersistTimer = null;
-function normalizeScanBgKey(code) {
-  return String(code || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
-}
-function loadScanBgQueueFromDisk() {
-  try {
-    if (!import_fs11.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
-    const raw = JSON.parse(import_fs11.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
-    const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
-    for (const j of list) {
-      const code = String(j?.code || "").trim();
-      const codeKey = normalizeScanBgKey(code || j?.codeKey || "");
-      if (!code || !codeKey || scanBgJobKeys.has(codeKey)) continue;
-      const rawStatus = String(j?.status || "pending");
-      let status = rawStatus === "running" || rawStatus === "pending" ? "pending" : rawStatus === "failed" ? "failed" : rawStatus === "skipped" ? "skipped" : "done";
-      if (status !== "pending") {
-        if (j?.notified) continue;
-      }
-      const job = {
-        id: String(j?.id || `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`),
-        code,
-        codeKey,
-        status,
-        enqueuedAt: String(j?.enqueuedAt || (/* @__PURE__ */ new Date()).toISOString()),
-        startedAt: j?.startedAt ? String(j.startedAt) : void 0,
-        finishedAt: j?.finishedAt ? String(j.finishedAt) : void 0,
-        orderId: j?.orderId ? String(j.orderId) : void 0,
-        orderSn: j?.orderSn ? String(j.orderSn) : void 0,
-        action: j?.action,
-        local_status: j?.local_status ? String(j.local_status) : void 0,
-        message: j?.message ? String(j.message) : void 0,
-        notified: Boolean(j?.notified)
-      };
-      scanBgJobs.push(job);
-      if (job.status === "pending") {
-        scanBgJobKeys.add(codeKey);
-      }
-    }
-    console.log(
-      `[Scan BG] loaded disk jobs=${scanBgJobs.length} pending=${scanBgJobs.filter((j) => j.status === "pending").length}`
-    );
-  } catch (err) {
-    console.warn("[Scan BG] load disk failed:", err?.message || err);
-  }
-}
-function persistScanBgQueueSoon() {
-  if (scanBgPersistTimer) return;
-  scanBgPersistTimer = setTimeout(() => {
-    scanBgPersistTimer = null;
-    try {
-      import_fs11.default.mkdirSync(import_path10.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
-      const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
-      const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
-      const jobs = [...pending, ...recent];
-      import_fs11.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
-    } catch (err) {
-      console.warn("[Scan BG] persist failed:", err?.message || err);
-    }
-  }, 250);
-}
-function classifyScanBgCancelReturn(order) {
-  const status = String(order?.status || "");
-  const raw = String(order?.shopee_order_status || "").toUpperCase();
-  const kind = String(order?.shopee_cancel_return_kind || "");
-  const isReturn = kind === "refund_return" || status === "return_pending" || status === "return_received" || raw === "TO_RETURN" || Boolean(order?.return_sn);
-  const isCancel = !isReturn && (kind === "cancelled" || kind === "failed_delivery" || status === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL" || isShopeeCancelOrReturnLikeOrder(order));
-  return { isReturn, isCancel };
-}
-function enqueueScanBgCodes(codes) {
-  const added = [];
-  for (const raw of codes) {
-    const code = String(raw || "").trim();
-    const codeKey = normalizeScanBgKey(code);
-    if (!code || !codeKey) continue;
-    if (scanBgJobKeys.has(codeKey)) continue;
-    const existing = scanBgJobs.find(
-      (j) => j.codeKey === codeKey && (j.status === "pending" || j.status === "running")
-    );
-    if (existing) continue;
-    const job = {
-      id: `sbg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      code,
-      codeKey,
-      status: "pending",
-      enqueuedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      notified: false
-    };
-    scanBgJobs.push(job);
-    scanBgJobKeys.add(codeKey);
-    added.push(job);
-  }
-  if (added.length) {
-    persistScanBgQueueSoon();
-    void drainScanBgQueue();
-  }
-  const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running").length;
-  return { queued: added.length, pending, jobs: added };
-}
-async function processOneScanBgJob(job) {
-  job.status = "running";
-  job.startedAt = (/* @__PURE__ */ new Date()).toISOString();
-  persistScanBgQueueSoon();
-  try {
-    let found = null;
-    try {
-      found = await findOrderByScanCodeInStore(job.code);
-      if (found && !isValidOrder(found)) found = null;
-      if (found) found = mirrorTrackingFieldsForRead(found);
-    } catch {
-      found = null;
-    }
-    if (!found) {
-      try {
-        found = await resolveOrderFromShopeeByScanCode(job.code);
-        if (found) {
-          found = mirrorTrackingFieldsForRead(found);
-        }
-      } catch (err) {
-        console.warn(`[Scan BG] Shopee resolve code=${job.code}:`, err?.message || err);
-      }
-    }
-    if (!found) {
-      job.status = "done";
-      job.action = "not_found";
-      job.message = `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n kh\u1EDBp m\xE3 "${job.code}"`;
-      job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-      scanBgJobKeys.delete(job.codeKey);
-      return;
-    }
-    job.orderId = found.id ? String(found.id) : void 0;
-    job.orderSn = found.orderSn ? String(found.orderSn) : void 0;
-    const existingLocal = resolveOrderLocalStatus(found);
-    let alreadyDhh = false;
-    try {
-      alreadyDhh = await existsDonHoanHuy(String(found.orderSn || ""));
-    } catch {
-      alreadyDhh = false;
-    }
-    if (alreadyDhh) {
-      job.status = "done";
-      job.action = "duplicate";
-      job.local_status = existingLocal === "RETURN_RECEIVED" ? "RETURN_RECEIVED" : "CANCELLED_STORED";
-      job.message = `\u0110\u01A1n #${found.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`;
-      job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-      scanBgJobKeys.delete(job.codeKey);
-      return;
-    }
-    const { isReturn, isCancel } = classifyScanBgCancelReturn(found);
-    if (!isReturn && !isCancel) {
-      job.status = "done";
-      job.action = "found_other";
-      job.message = `\u0110\u01A1n #${found.orderSn} kh\xF4ng ph\u1EA3i h\u1EE7y/ho\xE0n \u2014 b\u1ECF qua ghi c\u1EDD`;
-      job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-      scanBgJobKeys.delete(job.codeKey);
-      return;
-    }
-    const target = isReturn ? ORDER_LOCAL_STATUS.RETURN_RECEIVED : ORDER_LOCAL_STATUS.CANCELLED_STORED;
-    clearHandedOverLocalForCancelReturn(found);
-    setOrderLocalStatus(found, target);
-    const dhh = await upsertDonHoanHuy(found, {
-      type: isReturn ? "return" : "cancelled",
-      scanCode: job.code,
-      source: "scan_bg"
-    });
-    if (!dhh.ok) {
-      throw new Error(dhh.error || "Ghi don_hoan_huy th\u1EA5t b\u1EA1i");
-    }
-    job.status = "done";
-    job.action = isReturn ? "return_received" : "cancelled";
-    job.local_status = target;
-    job.message = isReturn ? `\u0110\xE3 d\xF2 ng\u1EA7m nh\u1EADn ho\xE0n #${found.orderSn} \u2192 don_hoan_huy` : `\u0110\xE3 d\xF2 ng\u1EA7m \u0111\u01A1n h\u1EE7y #${found.orderSn} \u2192 don_hoan_huy`;
-    job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-    scanBgJobKeys.delete(job.codeKey);
-  } catch (err) {
-    job.status = "failed";
-    job.action = "error";
-    job.message = describeMongoWriteError(err);
-    job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
-    scanBgJobKeys.delete(job.codeKey);
-    console.error(`[Scan BG] job fail code=${job.code}:`, err);
-  } finally {
-    persistScanBgQueueSoon();
-  }
-}
-async function drainScanBgQueue() {
-  if (scanBgWorkerRunning) return;
-  scanBgWorkerRunning = true;
-  try {
-    while (true) {
-      const next = scanBgJobs.find((j) => j.status === "pending");
-      if (!next) break;
-      await processOneScanBgJob(next);
-      await new Promise((r2) => setTimeout(r2, 400));
-    }
-  } finally {
-    scanBgWorkerRunning = false;
-    const stillPending = scanBgJobs.some((j) => j.status === "pending");
-    if (stillPending) {
-      queueMicrotask(() => {
-        void drainScanBgQueue();
-      });
-    }
-  }
-}
-function getScanBgStatusSnapshot() {
-  const pending = scanBgJobs.filter((j) => j.status === "pending");
-  const running = scanBgJobs.filter((j) => j.status === "running");
-  const recent = scanBgJobs.filter((j) => j.status === "done" || j.status === "failed" || j.status === "skipped").slice(-40);
-  const unnotified = recent.filter((j) => !j.notified);
-  const summary = { cancelled: 0, returnReceived: 0, notFound: 0, failed: 0 };
-  for (const j of unnotified) {
-    if (j.action === "cancelled") summary.cancelled += 1;
-    else if (j.action === "return_received") summary.returnReceived += 1;
-    else if (j.action === "not_found") summary.notFound += 1;
-    else if (j.action === "error" || j.status === "failed") summary.failed += 1;
-  }
-  return {
-    pending,
-    running,
-    recent,
-    unnotified,
-    pendingCount: pending.length + running.length,
-    summary
-  };
-}
-function ackScanBgNotifications(ids) {
-  const idSet = Array.isArray(ids) && ids.length > 0 ? new Set(ids.map(String)) : null;
-  let n = 0;
-  for (const j of scanBgJobs) {
-    if (j.status !== "done" && j.status !== "failed" && j.status !== "skipped") continue;
-    if (j.notified) continue;
-    if (idSet && !idSet.has(j.id)) continue;
-    j.notified = true;
-    n += 1;
-  }
-  if (n) persistScanBgQueueSoon();
-  return n;
-}
-try {
-  loadScanBgQueueFromDisk();
-  if (scanBgJobs.some((j) => j.status === "pending")) {
-    setTimeout(() => {
-      void drainScanBgQueue();
-    }, 1500);
-  }
-} catch {
-}
 function detectStockPriceChanges(before, after) {
   const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
   const stockAfter = Math.max(0, Math.round(Number(after?.stock) || 0));
@@ -104848,7 +105368,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
   const sources = [];
   let carrier;
   let internal;
-  const consider = (key, value, path12) => {
+  const consider = (key, value, path13) => {
     if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
@@ -104858,7 +105378,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
         internal = s2;
-        sources.push(`${path12}=${s2}(internal)`);
+        sources.push(`${path13}=${s2}(internal)`);
       }
       return;
     }
@@ -104866,20 +105386,20 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (!carrier || isCarrierTrackingCode(s2)) {
       if (!carrier || isCarrierTrackingCode(s2) && !isCarrierTrackingCode(carrier)) {
         carrier = s2;
-        sources.push(`${path12}=${s2}`);
+        sources.push(`${path13}=${s2}`);
       } else if (!carrier) {
         carrier = s2;
-        sources.push(`${path12}=${s2}`);
+        sources.push(`${path13}=${s2}`);
       }
     } else if (!carrier && s2.length >= 6) {
       carrier = s2;
-      sources.push(`${path12}=${s2}`);
+      sources.push(`${path13}=${s2}`);
     }
   };
-  const walk = (node, path12, depth) => {
+  const walk = (node, path13, depth) => {
     if (node == null || depth > 8) return;
     if (Array.isArray(node)) {
-      node.forEach((item, i2) => walk(item, `${path12}[${i2}]`, depth + 1));
+      node.forEach((item, i2) => walk(item, `${path13}[${i2}]`, depth + 1));
       return;
     }
     if (typeof node !== "object") return;
@@ -104888,7 +105408,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (nodeSn && nodeSn !== wantSn) return;
     }
     for (const [k, v] of Object.entries(node)) {
-      const childPath = path12 ? `${path12}.${k}` : k;
+      const childPath = path13 ? `${path13}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
         consider(k, v, childPath);
       } else {
@@ -105846,7 +106366,7 @@ function agentDebugLogAc966f(payload) {
     timestamp: Date.now()
   };
   try {
-    import_fs11.default.appendFileSync(import_path10.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
+    import_fs12.default.appendFileSync(import_path11.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
   } catch {
   }
   fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
@@ -106798,7 +107318,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
   }
   return { added, updated };
 }
-var ORDERS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "orders.json");
+var ORDERS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "orders.json");
 var orderLookupIndex = null;
 function normalizeOrderIndexKey(raw) {
   return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
@@ -106842,11 +107362,11 @@ function withLocalDbTimeout(promise, timeoutMs, label) {
 }
 function loadOrders() {
   try {
-    if (!import_fs11.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs12.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs11.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs12.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -106981,8 +107501,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs11.default.mkdirSync(import_path10.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs11.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs12.default.mkdirSync(import_path11.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs12.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -107000,12 +107520,12 @@ function saveOrders(orders) {
 function isHandedOverGarbageOrder(order) {
   return matchesHandedOverCarrierTabOrder(order);
 }
-var HANDED_OVER_CLEANUP_MARKER = import_path10.default.join(APP_ROOT6, "data", ".cleanup-handed-over-v2");
+var HANDED_OVER_CLEANUP_MARKER = import_path11.default.join(APP_ROOT7, "data", ".cleanup-handed-over-v2");
 async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs11.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs12.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -107035,10 +107555,10 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
   if (stillLeft === 0) {
     try {
-      const v1 = import_path10.default.join(APP_ROOT6, "data", ".cleanup-handed-over-v1");
-      if (import_fs11.default.existsSync(v1)) import_fs11.default.unlinkSync(v1);
-      import_fs11.default.mkdirSync(import_path10.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs11.default.writeFileSync(
+      const v1 = import_path11.default.join(APP_ROOT7, "data", ".cleanup-handed-over-v1");
+      if (import_fs12.default.existsSync(v1)) import_fs12.default.unlinkSync(v1);
+      import_fs12.default.mkdirSync(import_path11.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs12.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -107063,9 +107583,9 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   );
   return { removed, sns: allSns, skipped: false };
 }
-var PRODUCTS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "products.json");
-var LOCAL_INVENTORY_CACHE_PATH = import_path10.default.join(APP_ROOT6, "data", "local_inventory.json");
-var SQLITE_LEGACY_PATH = import_path10.default.join(APP_ROOT6, "database.sqlite");
+var PRODUCTS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "products.json");
+var LOCAL_INVENTORY_CACHE_PATH = import_path11.default.join(APP_ROOT7, "data", "local_inventory.json");
+var SQLITE_LEGACY_PATH = import_path11.default.join(APP_ROOT7, "database.sqlite");
 function getProductChildrenList(p) {
   try {
     if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
@@ -107161,18 +107681,18 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
-var INVENTORY_AUDIT_PATH = import_path10.default.join(APP_ROOT6, "data", "inventory_audit.json");
-var INVENTORY_BACKUP_DIR = import_path10.default.join(APP_ROOT6, "data", "inventory_backups");
+var INVENTORY_AUDIT_PATH = import_path11.default.join(APP_ROOT7, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path11.default.join(APP_ROOT7, "data", "inventory_backups");
 function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs11.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs11.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs12.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs12.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs11.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs12.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -107180,36 +107700,36 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs11.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs12.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs11.default.writeFileSync(
-    import_path10.default.join(INVENTORY_BACKUP_DIR, fileName),
+  import_fs12.default.writeFileSync(
+    import_path11.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
   );
   writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
   return fileName;
 }
-var CHANNEL_LISTINGS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "channel_listings.json");
-var SHOPEE_SYNC_ERRORS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "shopee_sync_errors.json");
+var CHANNEL_LISTINGS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "channel_listings.json");
+var SHOPEE_SYNC_ERRORS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs11.default.existsSync(filePath)) return;
+  if (!import_fs12.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs11.default.renameSync(filePath, dest);
-    console.log(`[Mongo Migrate] Renamed ${import_path10.default.basename(filePath)} \u2192 ${import_path10.default.basename(dest)}`);
+    import_fs12.default.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${import_path11.default.basename(filePath)} \u2192 ${import_path11.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
   }
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs11.default.existsSync(filePath)) return [];
-    const raw = import_fs11.default.readFileSync(filePath, "utf-8");
+    if (!import_fs12.default.existsSync(filePath)) return [];
+    const raw = import_fs12.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -107218,26 +107738,26 @@ function readLegacyJsonArray(filePath) {
   }
 }
 function findLatestMigratedJson(baseName) {
-  const dataDir = import_path10.default.join(APP_ROOT6, "data");
-  if (!import_fs11.default.existsSync(dataDir)) return null;
+  const dataDir = import_path11.default.join(APP_ROOT7, "data");
+  if (!import_fs12.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs11.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs12.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
-  return import_path10.default.join(dataDir, matches[matches.length - 1]);
+  return import_path11.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   if (isProductsDiskMode()) {
     try {
-      const existing = import_fs11.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs11.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      const existing = import_fs12.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs12.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
       if (!Array.isArray(existing) || existing.length === 0) {
-        const dataDir = import_path10.default.join(APP_ROOT6, "data");
-        if (import_fs11.default.existsSync(dataDir)) {
-          const migrated = import_fs11.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+        const dataDir = import_path11.default.join(APP_ROOT7, "data");
+        if (import_fs12.default.existsSync(dataDir)) {
+          const migrated = import_fs12.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
           const latest = migrated[migrated.length - 1];
           if (latest) {
-            const src = import_path10.default.join(dataDir, latest);
+            const src = import_path11.default.join(dataDir, latest);
             const dest = getProductsDiskPath();
-            import_fs11.default.copyFileSync(src, dest);
+            import_fs12.default.copyFileSync(src, dest);
             console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
           }
         }
@@ -107254,9 +107774,9 @@ async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs11.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs11.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs11.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs12.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs12.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs12.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -107275,10 +107795,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs11.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs12.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs11.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs12.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -107304,10 +107824,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs11.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs12.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs11.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs12.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -107318,8 +107838,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs11.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs11.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs12.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs12.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -107343,8 +107863,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs11.default.mkdirSync(import_path10.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs11.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs12.default.mkdirSync(import_path11.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs12.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -108022,7 +108542,7 @@ async function bulkAutoLinkAllPending(opts) {
     masterProductCount
   };
 }
-var CHANNEL_SETTINGS_PATH = import_path10.default.join(APP_ROOT6, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH = import_path11.default.join(APP_ROOT7, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -108173,8 +108693,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs11.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs11.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs12.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs12.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -108196,7 +108716,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs11.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs12.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -109144,7 +109664,7 @@ async function startServer() {
     listShopeeOAuthShopIds,
     loadLastOAuthAudit,
     tokensPath: SHOPEE_TOKENS_PATH,
-    appRoot: APP_ROOT6,
+    appRoot: APP_ROOT7,
     appBaseUrl: APP_BASE_URL2,
     shopeeCallbackUrl: SHOPEE_CALLBACK_URL2,
     shopeeWebhookUrl: SHOPEE_WEBHOOK_URL2
@@ -109514,7 +110034,7 @@ async function startServer() {
         query: req.query || {},
         SHOPEE_TOKENS_PATH,
         SHOPEE_CALLBACK_URL: SHOPEE_CALLBACK_URL2,
-        APP_ROOT: APP_ROOT6,
+        APP_ROOT: APP_ROOT7,
         cwd: process.cwd()
       })
     );
@@ -109570,7 +110090,7 @@ async function startServer() {
         success: false,
         error: error?.message || "unknown_error",
         tokens_path: SHOPEE_TOKENS_PATH,
-        app_root: APP_ROOT6
+        app_root: APP_ROOT7
       });
       const failResult = {
         success: false,
@@ -110752,8 +111272,8 @@ async function startServer() {
     try {
       for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
         try {
-          const p = import_path10.default.join(APP_ROOT6, "data", name);
-          if (import_fs11.default.existsSync(p)) import_fs11.default.unlinkSync(p);
+          const p = import_path11.default.join(APP_ROOT7, "data", name);
+          if (import_fs12.default.existsSync(p)) import_fs12.default.unlinkSync(p);
         } catch {
         }
       }
@@ -111509,468 +112029,50 @@ async function startServer() {
   });
   app.get("/api/orders/don-hoan-huy", authMiddleware, listDonHoanHuy);
   app.post("/api/orders/don-hoan-huy", authMiddleware, saveScanOrders);
-  app.post("/api/orders/scan-bg-enqueue", authMiddleware, async (req, res) => {
-    try {
-      const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : Array.isArray(req.body?.scannedCodes) ? req.body.scannedCodes : req.body?.code ? [req.body.code] : [];
-      const codes = [
-        ...new Set(rawCodes.map((c) => String(c || "").trim()).filter(Boolean))
-      ];
-      if (!codes.length) {
-        return res.status(400).json({
-          success: false,
-          error: "missing_codes",
-          message: "Thi\u1EBFu m\xE3 qu\xE9t (codes)."
-        });
-      }
-      const result = enqueueScanBgCodes(codes);
-      console.log(
-        `[Scan BG] enqueue queued=${result.queued} pending=${result.pending} codes=${codes.length}`
-      );
-      return res.json({
-        success: true,
-        queued: result.queued,
-        pending: result.pending,
-        jobs: result.jobs,
-        message: result.queued > 0 ? `\u0110\xE3 x\u1EBFp ${result.queued} m\xE3 v\xE0o h\xE0ng \u0111\u1EE3i d\xF2 ng\u1EA7m.` : "C\xE1c m\xE3 \u0111\xE3 c\xF3 trong h\xE0ng \u0111\u1EE3i d\xF2 ng\u1EA7m."
-      });
-    } catch (error) {
-      console.error("[Scan BG] enqueue error:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "scan_bg_enqueue_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 x\u1EBFp h\xE0ng \u0111\u1EE3i d\xF2 ng\u1EA7m."
-      });
+  initScanBgQueue({
+    findOrderByScanCodeInStore,
+    isValidOrder,
+    mirrorTrackingFieldsForRead,
+    resolveOrderFromShopeeByScanCode,
+    resolveOrderLocalStatusShared: resolveOrderLocalStatus,
+    existsDonHoanHuy,
+    isShopeeCancelOrReturnLikeOrder,
+    ORDER_LOCAL_STATUS,
+    clearHandedOverLocalForCancelReturn,
+    setOrderLocalStatus,
+    upsertDonHoanHuy,
+    describeMongoWriteError
+  });
+  initScanBulkController({
+    findOrderByScanCodeInStore,
+    isValidOrder,
+    mirrorTrackingFieldsForRead,
+    resolveOrderLocalStatus: resolveOrderLocalStatus2,
+    existsDonHoanHuy,
+    isShopeeCancelOrReturnLikeOrder,
+    isOrderAlreadyScanProcessed,
+    getScanProcessedReason,
+    handOverOrderToCarrierByIndex,
+    clearHandedOverLocalForCancelReturn,
+    setOrderLocalStatus,
+    ORDER_LOCAL_STATUS,
+    isEligibleForHandOverShared: isEligibleForHandOverToCarrier,
+    isMongoReady,
+    upsertDonHoanHuyBatch,
+    describeMongoWriteError,
+    isMongoConnectionError,
+    persistChangedOrdersPatch,
+    markOrderHandedOverInStore,
+    loadProductsForOrders,
+    enrichOrdersFromCatalog,
+    invalidateOrdersRefreshCache: () => {
+      ordersRefreshCache = null;
     }
   });
-  app.get("/api/orders/scan-bg-status", authMiddleware, async (_req, res) => {
-    try {
-      const snap = getScanBgStatusSnapshot();
-      return res.json({
-        success: true,
-        pendingCount: snap.pendingCount,
-        pending: snap.pending,
-        running: snap.running,
-        recent: snap.recent,
-        unnotified: snap.unnotified,
-        summary: snap.summary,
-        workerRunning: scanBgWorkerRunning
-      });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "scan_bg_status_failed"
-      });
-    }
-  });
-  app.post("/api/orders/scan-bg-ack", authMiddleware, async (req, res) => {
-    try {
-      const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String) : void 0;
-      const acked = ackScanBgNotifications(ids);
-      return res.json({ success: true, acked });
-    } catch (error) {
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "scan_bg_ack_failed"
-      });
-    }
-  });
-  app.post("/api/orders/scan-bulk-update", authMiddleware, async (req, res) => {
-    try {
-      const rawCodes = Array.isArray(req.body?.codes) ? req.body.codes : Array.isArray(req.body?.scannedCodes) ? req.body.scannedCodes : Array.isArray(req.body?.scanCodes) ? req.body.scanCodes : [];
-      const codes = [...new Set(rawCodes.map((c) => String(c || "").trim()).filter(Boolean))];
-      if (!codes.length) {
-        return res.status(400).json({
-          success: false,
-          error: "Thi\u1EBFu danh s\xE1ch m\xE3 qu\xE9t (codes).",
-          message: "Thi\u1EBFu danh s\xE1ch m\xE3 qu\xE9t (codes / scannedCodes)."
-        });
-      }
-      const toCodeSet = (arr) => {
-        if (!Array.isArray(arr)) return /* @__PURE__ */ new Set();
-        return new Set(
-          arr.map((c) => String(c || "").trim().toUpperCase()).filter(Boolean)
-        );
-      };
-      const forceHandOverCodes = toCodeSet(req.body?.daXuatKhoCodes);
-      const forceCancelCodes = toCodeSet(req.body?.donHuyCodes);
-      const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
-      const lookupPairs = await Promise.all(
-        codes.map(async (code) => {
-          let found = null;
-          try {
-            found = await findOrderByScanCodeInStore(code);
-            if (found && !isValidOrder(found)) found = null;
-            if (found) found = mirrorTrackingFieldsForRead(found);
-          } catch (lookupErr) {
-            console.warn(
-              `[Orders Scan Bulk] lookup miss code=${code}:`,
-              lookupErr?.message || lookupErr
-            );
-          }
-          return { code, found };
-        })
-      );
-      const orders = [];
-      const orderIndexById = /* @__PURE__ */ new Map();
-      const putScoped = (order) => {
-        if (!order?.id) return -1;
-        const existing = orderIndexById.get(String(order.id));
-        if (existing !== void 0) return existing;
-        const idx = orders.length;
-        orders.push(order);
-        orderIndexById.set(String(order.id), idx);
-        return idx;
-      };
-      for (const pair of lookupPairs) {
-        if (pair.found) putScoped(pair.found);
-      }
-      const results = [];
-      const failed_scans = [];
-      const changedOrders = [];
-      const updatedById = /* @__PURE__ */ new Map();
-      const summary = { daXuatKho: 0, donHuy: 0, daNhanHoan: 0 };
-      let donHoanHuyAlready = 0;
-      const norm = (c) => String(c || "").trim().toUpperCase();
-      for (const { code, found } of lookupPairs) {
-        const codeKey = norm(code);
-        if (!found) {
-          results.push({ code, action: "not_found", message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n v\u1EDBi m\xE3 "${code}"` });
-          failed_scans.push({ code, reason: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n trong h\u1EC7 th\u1ED1ng" });
-          continue;
-        }
-        const index = putScoped(found);
-        if (index < 0) {
-          results.push({ code, action: "not_found", message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n v\u1EDBi m\xE3 "${code}"` });
-          failed_scans.push({ code, reason: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n trong h\u1EC7 th\u1ED1ng" });
-          continue;
-        }
-        const order = orders[index];
-        const status = String(order.status || "");
-        const rawShopee = String(order.shopee_order_status || "").toUpperCase();
-        const existingLocal = resolveOrderLocalStatus2(order);
-        let alreadyInDonHoanHuy = false;
-        try {
-          alreadyInDonHoanHuy = await existsDonHoanHuy(String(order.orderSn || ""));
-        } catch {
-          alreadyInDonHoanHuy = false;
-        }
-        const forceHandOver = forceHandOverCodes.has(codeKey) || forceHandOverCodes.has(norm(String(order.orderSn || ""))) || forceHandOverCodes.has(norm(String(order.trackingNumber || order.tracking_no || "")));
-        const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || ""))) || forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceCancelCodes.has(norm(String(order.return_tracking_no || "")));
-        const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.return_tracking_no || "")));
-        const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN";
-        const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || isShopeeCancelOrReturnLikeOrder(order));
-        if (forceCancel && alreadyInDonHoanHuy) {
-          summary.donHuy += 1;
-          donHoanHuyAlready += 1;
-          results.push({
-            code,
-            action: "cancelled",
-            orderId: order.id,
-            orderSn: order.orderSn,
-            message: `\u0110\u01A1n h\u1EE7y #${order.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`,
-            local_status: "CANCELLED_STORED"
-          });
-          continue;
-        }
-        if (forceReturn && alreadyInDonHoanHuy) {
-          summary.daNhanHoan += 1;
-          donHoanHuyAlready += 1;
-          results.push({
-            code,
-            action: "return_received",
-            orderId: order.id,
-            orderSn: order.orderSn,
-            message: `\u0110\u01A1n #${order.orderSn} \u0111\xE3 c\xF3 trong don_hoan_huy`,
-            local_status: "RETURN_RECEIVED"
-          });
-          continue;
-        }
-        const allowForceCancelReturnOverride = (forceCancel || forceReturn) && (existingLocal === "HANDED_OVER" || existingLocal === "CANCELLED_STORED" || existingLocal === "RETURN_RECEIVED" || isCancelLike || isReturnLike);
-        if (isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride && !forceCancel && !forceReturn) {
-          const reason = getScanProcessedReason(order);
-          results.push({
-            code,
-            action: "duplicate",
-            orderId: order.id,
-            orderSn: order.orderSn,
-            message: reason,
-            local_status: existingLocal
-          });
-          failed_scans.push({
-            code,
-            orderId: order.id,
-            orderSn: order.orderSn,
-            reason
-          });
-          continue;
-        }
-        if (forceHandOver) {
-          const result = await handOverOrderToCarrierByIndex(orders, index, {
-            persist: false,
-            source: "qr_scan"
-          });
-          if (!result.ok) {
-            results.push({
-              code,
-              action: "rejected",
-              orderId: order.id,
-              orderSn: order.orderSn,
-              message: result.error,
-              local_status: existingLocal
-            });
-            failed_scans.push({
-              code,
-              orderId: order.id,
-              orderSn: order.orderSn,
-              reason: result.error
-            });
-            continue;
-          }
-          if (result.changed) {
-            changedOrders.push(result.order);
-            updatedById.set(result.order.id, result.order);
-            summary.daXuatKho += 1;
-          }
-          results.push({
-            code,
-            action: "handed_over",
-            orderId: result.order.id,
-            orderSn: result.order.orderSn,
-            message: result.changed ? `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${result.order.orderSn}` : `\u0110\u01A1n #${result.order.orderSn} \u0111\xE3 c\xF3 c\u1EDD \u0110VVC`,
-            local_status: ORDER_LOCAL_STATUS.HANDED_OVER
-          });
-          continue;
-        }
-        if (forceReturn || isReturnLike) {
-          const updated = { ...order };
-          clearHandedOverLocalForCancelReturn(updated);
-          setOrderLocalStatus(updated, "RETURN_RECEIVED");
-          orders[index] = updated;
-          changedOrders.push(updated);
-          updatedById.set(updated.id, updated);
-          summary.daNhanHoan += 1;
-          results.push({
-            code,
-            action: "return_received",
-            orderId: updated.id,
-            orderSn: updated.orderSn,
-            message: `\u0110\xE3 nh\u1EADn h\xE0ng ho\xE0n \u2014 \u0111\u01A1n #${updated.orderSn}`,
-            local_status: "RETURN_RECEIVED"
-          });
-          continue;
-        }
-        if (forceCancel || isCancelLike) {
-          const updated = { ...order };
-          if (updated.status !== "cancelled") updated.status = "cancelled";
-          clearHandedOverLocalForCancelReturn(updated);
-          setOrderLocalStatus(updated, "CANCELLED_STORED");
-          orders[index] = updated;
-          changedOrders.push(updated);
-          updatedById.set(updated.id, updated);
-          summary.donHuy += 1;
-          results.push({
-            code,
-            action: "cancelled",
-            orderId: updated.id,
-            orderSn: updated.orderSn,
-            message: `\u0110\u01A1n h\u1EE7y #${updated.orderSn} \u2192 CANCELLED_STORED`,
-            local_status: "CANCELLED_STORED"
-          });
-          continue;
-        }
-        if (isEligibleForHandOverToCarrier(order)) {
-          const result = await handOverOrderToCarrierByIndex(orders, index, {
-            persist: false,
-            source: "qr_scan"
-          });
-          if (!result.ok) {
-            results.push({
-              code,
-              action: "rejected",
-              orderId: order.id,
-              orderSn: order.orderSn,
-              message: result.error,
-              local_status: existingLocal
-            });
-            failed_scans.push({
-              code,
-              orderId: order.id,
-              orderSn: order.orderSn,
-              reason: result.error
-            });
-            continue;
-          }
-          if (result.changed) {
-            changedOrders.push(result.order);
-            updatedById.set(result.order.id, result.order);
-            summary.daXuatKho += 1;
-          }
-          results.push({
-            code,
-            action: "handed_over",
-            orderId: result.order.id,
-            orderSn: result.order.orderSn,
-            message: `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${result.order.orderSn}`,
-            local_status: ORDER_LOCAL_STATUS.HANDED_OVER
-          });
-          continue;
-        }
-        results.push({
-          code,
-          action: "skipped",
-          orderId: order.id,
-          orderSn: order.orderSn,
-          message: `\u0110\u01A1n #${order.orderSn} kh\xF4ng thu\u1ED9c Ch\u1EDD l\u1EA5y h\xE0ng (\u0111\xE3 x\u1EED l\xFD) / \u0110\u01A1n h\u1EE7y \u2014 b\u1ECF qua`
-        });
-        failed_scans.push({
-          code,
-          orderId: order.id,
-          orderSn: order.orderSn,
-          reason: `Tr\u1EA1ng th\xE1i "${status}" kh\xF4ng thu\u1ED9c quy t\u1EAFc qu\xE9t \u0110VVC`
-        });
-      }
-      const cancelReturnRows = [];
-      for (const o of changedOrders) {
-        const local = String(
-          o?.local_status || o?.localStatus || o?.internal_status || ""
-        ).toUpperCase();
-        if (local === "CANCELLED_STORED") {
-          cancelReturnRows.push({ order: o, type: "cancelled" });
-        } else if (local === "RETURN_RECEIVED") {
-          cancelReturnRows.push({ order: o, type: "return" });
-        }
-      }
-      let donHoanHuyWrite = {
-        ok: 0,
-        failed: 0,
-        errors: []
-      };
-      if (cancelReturnRows.length > 0) {
-        if (!isMongoReady()) {
-          console.error("[Orders Scan Bulk] Mongo not ready \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c don_hoan_huy");
-          return res.status(500).json({
-            success: false,
-            message: "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB",
-            error: "mongodb_not_ready"
-          });
-        }
-        try {
-          donHoanHuyWrite = await upsertDonHoanHuyBatch(
-            cancelReturnRows.map((r2) => ({
-              order: r2.order,
-              type: r2.type,
-              scanCode: void 0,
-              source: "qr_scan"
-            }))
-          );
-        } catch (dhhErr) {
-          console.error("[Orders Scan Bulk] don_hoan_huy batch FAIL:", dhhErr);
-          const detail = describeMongoWriteError(dhhErr);
-          return res.status(500).json({
-            success: false,
-            message: isMongoConnectionError(dhhErr) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
-            error: "don_hoan_huy_write_failed"
-          });
-        }
-        if (donHoanHuyWrite.failed > 0 && donHoanHuyWrite.ok === 0) {
-          const detail = donHoanHuyWrite.errors[0] || "Kh\xF4ng ghi \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o v\xE0o collection don_hoan_huy.";
-          console.error("[Orders Scan Bulk] don_hoan_huy all failed:", donHoanHuyWrite.errors);
-          const connFail = /Lỗi kết nối MongoDB/i.test(detail);
-          return res.status(500).json({
-            success: false,
-            message: connFail ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
-            error: "don_hoan_huy_write_failed",
-            errors: donHoanHuyWrite.errors.slice(0, 10)
-          });
-        }
-      }
-      if (changedOrders.length > 0) {
-        const handoverOnly = changedOrders.filter((o) => {
-          const local = String(
-            o?.local_status || o?.localStatus || o?.internal_status || ""
-          ).toUpperCase();
-          return local === "HANDED_OVER" || o?.is_handed_over === true || o?.isHandedOverToCarrier === true;
-        });
-        if (handoverOnly.length > 0) {
-          try {
-            await persistChangedOrdersPatch(handoverOnly);
-          } catch (persistErr) {
-            console.warn(
-              "[Orders Scan Bulk] persistChangedOrdersPatch handover:",
-              describeMongoWriteError(persistErr),
-              persistErr
-            );
-          }
-        }
-        let flagOk = 0;
-        for (const o of changedOrders) {
-          const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
-          if (!sn) continue;
-          const shopId = o?.shopId != null ? String(o.shopId) : void 0;
-          const local = String(
-            o?.local_status || o?.localStatus || o?.internal_status || ""
-          ).toUpperCase();
-          try {
-            if (local === "HANDED_OVER" || o?.is_handed_over === true || o?.isHandedOverToCarrier === true) {
-              const ok = await markOrderHandedOverInStore(sn, {
-                source: "qr_scan",
-                handedOverAt: String(o.handedOverAt || (/* @__PURE__ */ new Date()).toISOString()),
-                shopId
-              });
-              if (ok) flagOk += 1;
-            }
-          } catch (flagErr) {
-            console.error(
-              `[Orders Scan Bulk] mark flag fail order_sn=${sn}:`,
-              describeMongoWriteError(flagErr),
-              flagErr
-            );
-          }
-        }
-        console.log(
-          `[Orders Scan Bulk] don_hoan_huy ok=${donHoanHuyWrite.ok} fail=${donHoanHuyWrite.failed} handoverFlags=${flagOk} changed=${changedOrders.length}`
-        );
-        ordersRefreshCache = null;
-      }
-      const updatedList = [...updatedById.values()];
-      const products = await loadProductsForOrders(updatedList);
-      const enriched = enrichOrdersFromCatalog(updatedList, products);
-      const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
-      console.log(
-        `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${isMongoReady()}`
-      );
-      return res.json({
-        success: true,
-        processedCount,
-        persistedCount: changedOrders.length,
-        donHoanHuy: {
-          ...donHoanHuyWrite,
-          already: donHoanHuyAlready,
-          ensured: donHoanHuyWrite.ok + donHoanHuyAlready
-        },
-        summary,
-        stats: {
-          handedOver: summary.daXuatKho,
-          cancelled: summary.donHuy,
-          returnReceived: summary.daNhanHoan,
-          notFound: failed_scans.filter((f3) => f3.reason.includes("Kh\xF4ng t\xECm th\u1EA5y")).length,
-          skipped: results.filter((r2) => r2.action === "skipped").length,
-          duplicates: results.filter((r2) => r2.action === "duplicate").length
-        },
-        results,
-        failed_scans,
-        orders: enriched
-      });
-    } catch (error) {
-      console.error("[Orders Scan Bulk] Error:", error);
-      const detail = describeMongoWriteError(error);
-      return res.status(500).json({
-        success: false,
-        message: isMongoConnectionError(error) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt h\xE0ng lo\u1EA1t \u0111\u01A1n \u0111\xE3 qu\xE9t.",
-        error: error?.message || "scan_bulk_update_failed"
-      });
-    }
-  });
+  app.post("/api/orders/scan-bg-enqueue", authMiddleware, enqueueScanBg);
+  app.get("/api/orders/scan-bg-status", authMiddleware, getScanBgStatus);
+  app.post("/api/orders/scan-bg-ack", authMiddleware, ackScanBg);
+  app.post("/api/orders/scan-bulk-update", authMiddleware, scanBulkUpdate);
   app.get("/api/vietnam-address/provinces", authMiddleware, getProvinces);
   app.get("/api/vietnam-address/districts/:provinceCode", authMiddleware, getDistricts);
   app.get("/api/vietnam-address/wards/:districtCode", authMiddleware, getWards);
@@ -112862,11 +112964,11 @@ async function startServer() {
     if (!sn) return null;
     try {
       ensureLabelsDir();
-      const matches = import_fs11.default.readdirSync(LABELS_DIR).filter(
+      const matches = import_fs12.default.readdirSync(LABELS_DIR).filter(
         (name) => /\.pdf$/i.test(name) && (name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`))
       ).map((name) => {
-        const full = import_path10.default.join(LABELS_DIR, name);
-        return { name, mtime: import_fs11.default.statSync(full).mtimeMs, size: import_fs11.default.statSync(full).size };
+        const full = import_path11.default.join(LABELS_DIR, name);
+        return { name, mtime: import_fs12.default.statSync(full).mtimeMs, size: import_fs12.default.statSync(full).size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
       if (!newest) return null;
@@ -113330,7 +113432,7 @@ async function startServer() {
     const savedFromDownload = "savedFiles" in downloadResult && Array.isArray(downloadResult.savedFiles) ? downloadResult.savedFiles.filter((n) => safeLabelFilename(n) && hasLabelMem(n)) : [];
     let filename = savedFromDownload[savedFromDownload.length - 1] || (ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`);
     console.log(`[Shopee Print] B\u1EAFt \u0111\u1EA7u in cho \u0111\u01A1n ${orderSns.join(",")}`);
-    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path10.default.join(LABELS_DIR, filename)}`);
+    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path11.default.join(LABELS_DIR, filename)}`);
     if (!hasLabelMem(filename)) {
       filename = saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
@@ -113460,7 +113562,7 @@ async function startServer() {
     } else if (savedFilenames.length > 0) {
       const relative = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
       if (relative) {
-        const fn = import_path10.default.basename(relative);
+        const fn = import_path11.default.basename(relative);
         assertLabelFileReady(fn);
         primaryUrl = absoluteLabelUrl(relative);
         pdfFilename = fn;
@@ -114310,7 +114412,7 @@ async function startServer() {
       shopIds,
       details,
       tokensPath: SHOPEE_TOKENS_PATH,
-      appRoot: APP_ROOT6,
+      appRoot: APP_ROOT7,
       lastOAuth,
       count: shopIds.length
     });
@@ -114338,11 +114440,11 @@ async function startServer() {
       callback: SHOPEE_CALLBACK_URL2
     });
   });
-  const LISTINGS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "multi_channel_listings.json");
+  const LISTINGS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs11.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs11.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs12.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs12.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -114350,9 +114452,9 @@ async function startServer() {
     }
   };
   const writeListingsDb = (listings) => {
-    const dir = import_path10.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs11.default.existsSync(dir)) import_fs11.default.mkdirSync(dir, { recursive: true });
-    import_fs11.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    const dir = import_path11.default.dirname(LISTINGS_DB_PATH);
+    if (!import_fs12.default.existsSync(dir)) import_fs12.default.mkdirSync(dir, { recursive: true });
+    import_fs12.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
   app.post("/api/gemini/optimize", authMiddleware, geminiOptimize);
   app.post("/api/ai/parse-address", authMiddleware, parseAddress);
@@ -114377,11 +114479,11 @@ async function startServer() {
       return res.status(500).json({ success: false, error: error.message || "L\u01B0u th\u1EA5t b\u1EA1i" });
     }
   });
-  const PRODUCT_LISTINGS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs11.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs11.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs12.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs12.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -114389,9 +114491,9 @@ async function startServer() {
     }
   };
   const writeProductListingsDb = (rows) => {
-    const dir = import_path10.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs11.default.existsSync(dir)) import_fs11.default.mkdirSync(dir, { recursive: true });
-    import_fs11.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    const dir = import_path11.default.dirname(PRODUCT_LISTINGS_DB_PATH);
+    if (!import_fs12.default.existsSync(dir)) import_fs12.default.mkdirSync(dir, { recursive: true });
+    import_fs12.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -114648,12 +114750,12 @@ async function startServer() {
       });
     }
   });
-  const PUBLISH_EDIT_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = import_path10.default.join(APP_ROOT6, "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = import_path11.default.join(APP_ROOT7, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = import_path11.default.join(APP_ROOT7, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs11.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs11.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs12.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs12.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -114661,9 +114763,9 @@ async function startServer() {
     }
   };
   const writePublishEditDb = (data) => {
-    const dir = import_path10.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs11.default.existsSync(dir)) import_fs11.default.mkdirSync(dir, { recursive: true });
-    import_fs11.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    const dir = import_path11.default.dirname(PUBLISH_EDIT_DB_PATH);
+    if (!import_fs12.default.existsSync(dir)) import_fs12.default.mkdirSync(dir, { recursive: true });
+    import_fs12.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -114704,11 +114806,11 @@ async function startServer() {
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs11.default.existsSync(FRAMED_IMAGES_DIR)) import_fs11.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs12.default.existsSync(FRAMED_IMAGES_DIR)) import_fs12.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs11.default.writeFileSync(import_path10.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs12.default.writeFileSync(import_path11.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -114730,12 +114832,12 @@ async function startServer() {
     }
   });
   app.get("/api/framed-images/:productId", (req, res) => {
-    const filePath = import_path10.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs11.default.existsSync(filePath)) {
+    const filePath = import_path11.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
+    if (!import_fs12.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs11.default.readFileSync(filePath));
+    return res.send(import_fs12.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -114753,7 +114855,7 @@ async function startServer() {
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
-    const distPath = import_path10.default.join(APP_ROOT6, "dist");
+    const distPath = import_path11.default.join(APP_ROOT7, "dist");
     app.use(import_express12.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
@@ -114779,12 +114881,12 @@ async function startServer() {
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.sendFile(import_path10.default.join(distPath, "index.html"));
+      return res.sendFile(import_path11.default.join(distPath, "index.html"));
     });
   }
   async function connectDB2() {
     try {
-      const ok = await initMongo(APP_ROOT6);
+      const ok = await initMongo(APP_ROOT7);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();

@@ -1,7 +1,9 @@
 import mongoose from "mongoose";
 
 /**
- * Collection `don_hoan_huy` — đơn hủy/hoàn đã quét.
+ * SSOT duy nhất cho collection `don_hoan_huy` — đơn hủy/hoàn đã quét.
+ * Mọi đọc/ghi (scanController, mongoStore upsert/load/exists, scan-bg, scan-bulk)
+ * phải dùng model này — không định nghĩa schema trùng ở nơi khác.
  * TTL 14 ngày (1.209.600 giây) trên scannedAt.
  */
 const DonHoanHuySchema = new mongoose.Schema(
