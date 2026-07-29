@@ -1,0 +1,43 @@
+import mongoose from "mongoose";
+
+/**
+ * Collection `don_hoan_huy` — đơn hủy/hoàn đã quét.
+ * TTL 14 ngày (1.209.600 giây) trên scannedAt.
+ */
+const DonHoanHuySchema = new mongoose.Schema(
+  {
+    orderSn: {
+      type: String,
+      required: true,
+      index: true,
+      trim: true,
+    },
+    status: {
+      type: String,
+      default: "scanned",
+      trim: true,
+    },
+    scannedAt: {
+      type: Date,
+      default: Date.now,
+      expires: 1209600, // 14 ngày
+    },
+    note: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+  },
+  {
+    collection: "don_hoan_huy",
+    versionKey: false,
+    strict: false, // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
+  },
+);
+
+DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
+
+const DonHoanHuy =
+  mongoose.models.DonHoanHuy || mongoose.model("DonHoanHuy", DonHoanHuySchema);
+
+export default DonHoanHuy;

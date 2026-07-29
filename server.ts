@@ -40,6 +40,9 @@ import {
   getCachedShopeeAddressList,
   setCachedShopeeAddressList,
 } from "./src/services/redis.ts";
+import scanRoutes from "./routes/scanRoutes.js";
+import errorHandler from "./middlewares/errorHandler.js";
+import { saveScanOrders, listDonHoanHuy } from "./controllers/scanController.js";
 import {
   initMongo,
   loadProductsFromStore,
@@ -15809,6 +15812,9 @@ async function startServer() {
     res.json({ valid: true, username: req.user.username });
   });
 
+  /** MVC Clean Code — API quét / lưu don_hoan_huy */
+  app.use("/api/scan", authMiddleware, scanRoutes);
+
   app.get("/api/config/public", (_req, res) => {
     res.json({
       appUrl: APP_BASE_URL,
@@ -19098,131 +19104,11 @@ async function startServer() {
     }
   });
 
-  /** Danh sách tab Đã nhận đơn hủy/hoàn — đọc thẳng collection don_hoan_huy. */
-  app.get("/api/orders/don-hoan-huy", authMiddleware, async (req, res) => {
-    try {
-      if (!isMongoReady()) {
-        return res.status(503).json({
-          success: false,
-          error: "mongodb_not_ready",
-          message: "MongoDB chưa sẵn sàng trên server.",
-          data: [],
-        });
-      }
-      const limitRaw = Number(req.query.limit);
-      const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 5000) : 2000;
-      const raw = await loadDonHoanHuyAsOrders(limit);
-      const products = await loadProductsForOrders(raw);
-      const orders = enrichOrdersWithShopNames(enrichOrdersFromCatalog(raw, products));
-      return res.json({ success: true, data: orders, total: orders.length });
-    } catch (error: any) {
-      const detail = describeMongoWriteError(error);
-      console.error("[GET /api/orders/don-hoan-huy]", detail, error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "don_hoan_huy_list_failed",
-        message: detail,
-        data: [],
-      });
-    }
-  });
+  /** Danh sách tab Đã nhận đơn hủy/hoàn — alias MVC GET /api/scan/don-hoan-huy. */
+  app.get("/api/orders/don-hoan-huy", authMiddleware, listDonHoanHuy);
 
-  /**
-   * Ghi trực tiếp collection don_hoan_huy (tab hủy/hoàn).
-   * Body: { items: [{ orderSn|orderId|code, type: 'cancelled'|'return' }] } hoặc { orders: Order[], type }
-   */
-  app.post("/api/orders/don-hoan-huy", authMiddleware, async (req, res) => {
-    try {
-      if (!isMongoReady()) {
-        return res.status(503).json({
-          success: false,
-          message: "Lỗi kết nối MongoDB",
-          error: "mongodb_not_ready",
-        });
-      }
-      const body = req.body || {};
-      const rows: Array<{ order: any; type: "cancelled" | "return"; scanCode?: string }> = [];
-      const items = Array.isArray(body.items) ? body.items : [];
-      const ordersIn = Array.isArray(body.orders) ? body.orders : [];
-      const defaultType =
-        body.type === "cancelled" || body.type === "cancel"
-          ? ("cancelled" as const)
-          : body.type === "return"
-            ? ("return" as const)
-            : null;
-
-      for (const o of ordersIn) {
-        if (!o || typeof o !== "object") continue;
-        const local = String(
-          o.local_status || o.localStatus || o.internal_status || "",
-        ).toUpperCase();
-        const t: "cancelled" | "return" =
-          defaultType ||
-          (local === "CANCELLED_STORED" ? "cancelled" : "return");
-        rows.push({ order: o, type: t });
-      }
-
-      for (const it of items) {
-        const code = String(it?.orderSn || it?.orderId || it?.code || "").trim();
-        if (!code) continue;
-        const t: "cancelled" | "return" =
-          it?.type === "cancelled" || it?.type === "cancel"
-            ? "cancelled"
-            : "return";
-        let found: any = null;
-        try {
-          found = await findOrderByScanCodeInStore(code);
-        } catch {
-          found = null;
-        }
-        if (!found) {
-          found = {
-            id: `dhh-${code}`,
-            orderSn: code,
-            status: t === "cancelled" ? "cancelled" : "return_received",
-          };
-        }
-        rows.push({ order: found, type: t, scanCode: String(it?.code || code) });
-      }
-
-      if (!rows.length) {
-        return res.status(400).json({
-          success: false,
-          message: "Thiếu items/orders để ghi don_hoan_huy.",
-        });
-      }
-
-      const write = await upsertDonHoanHuyBatch(
-        rows.map((r) => ({
-          order: r.order,
-          type: r.type,
-          scanCode: r.scanCode,
-          source: "api_don_hoan_huy",
-        })),
-      );
-      if (write.failed > 0 && write.ok === 0) {
-        return res.status(500).json({
-          success: false,
-          message: write.errors[0] || "Không ghi được don_hoan_huy",
-          donHoanHuy: write,
-        });
-      }
-      ordersRefreshCache = null;
-      return res.json({
-        success: true,
-        donHoanHuy: { ...write, already: 0, ensured: write.ok },
-        processedCount: write.ok,
-      });
-    } catch (error: any) {
-      console.error("[POST /api/orders/don-hoan-huy]", error);
-      return res.status(500).json({
-        success: false,
-        message: isMongoConnectionError(error)
-          ? "Lỗi kết nối MongoDB"
-          : describeMongoWriteError(error),
-      });
-    }
-  });
+  /** Ghi trực tiếp collection don_hoan_huy — alias MVC POST /api/scan/save. */
+  app.post("/api/orders/don-hoan-huy", authMiddleware, saveScanOrders);
 
   /**
    * Queue dò ngầm quét mã — Backend worker độc lập FE.
@@ -23640,17 +23526,7 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     });
   });
 
-  app.use((err: unknown, req: any, res: any, _next: any) => {
-    if (err instanceof SyntaxError && err && typeof err === "object" && "body" in err) {
-      return res.status(400).json({
-        success: false,
-        message: "JSON body không hợp lệ",
-        details: err.message,
-      });
-    }
-    console.error("[Express] Unhandled error:", req.method, req.originalUrl, err);
-    return sendApiErrorJson(res, err, 500);
-  });
+  app.use(errorHandler);
 
   if (isDevelopmentRuntime) {
     // The computed import keeps all development tooling out of server.cjs.

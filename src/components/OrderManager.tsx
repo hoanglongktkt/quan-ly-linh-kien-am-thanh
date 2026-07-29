@@ -1339,13 +1339,13 @@ export default function OrderManager({
     );
   };
 
-  /** Ghi ngay local_status=CANCELLED_STORED|RETURN_RECEIVED xuống Mongo (tab received_cancel_returns lọc field này). */
+  /** Ghi ngay đơn hủy/hoàn vào collection don_hoan_huy (POST /api/scan/save). */
   const persistCancelReturnScanFlag = React.useCallback(
     async (code: string, kind: 'cancel' | 'return') => {
       const token = localStorage.getItem('admin_token');
       if (!token || !code) return;
       try {
-        const res = await fetch('/api/orders/scan-bulk-update', {
+        const res = await fetch('/api/scan/save', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -1353,32 +1353,25 @@ export default function OrderManager({
           },
           body: JSON.stringify({
             codes: [code],
-            scannedCodes: [code],
-            daXuatKhoCodes: [],
             donHuyCodes: kind === 'cancel' ? [code] : [],
             daNhanHoanCodes: kind === 'return' ? [code] : [],
+            status: kind === 'return' ? 'return_received' : 'cancelled',
           }),
         });
         const data = await res.json().catch(() => ({} as Record<string, unknown>));
         if (!res.ok || data?.success === false) {
           console.warn('[Scan] persist cancel/return flag failed:', data?.message || res.status);
-          return;
-        }
-        const updatedOrders = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
-        if (updatedOrders.length > 0) {
-          const byId = new Map(updatedOrders.map((o) => [o.id, o]));
-          const merged = ordersRef.current.map((o) => {
-            const next = byId.get(o.id);
-            return next ? { ...o, ...next } : o;
-          });
-          for (const o of updatedOrders) {
-            if (!merged.some((x) => x.id === o.id)) merged.unshift(o);
-          }
-          ordersRef.current = merged;
-          onUpdateOrders(merged, { persist: false });
+          showScanToast(
+            String(data?.message || `HTTP ${res.status} — không lưu được đơn hủy/hoàn`),
+            'error',
+          );
         }
       } catch (err) {
         console.warn('[Scan] persist cancel/return flag error:', err);
+        showScanToast(
+          err instanceof Error ? err.message : 'Không kết nối được API lưu đơn.',
+          'error',
+        );
       }
     },
     [onUpdateOrders],
@@ -3610,23 +3603,115 @@ export default function OrderManager({
           ),
         ];
 
-      let res: Response;
+      const huyCodes = pickCodes(cancelled);
+      const hoanCodes = pickCodes(returned);
+      const xuatCodes = pickCodes(shipped);
+
+      let data: Record<string, unknown> = {};
+      let dhhFromSave: {
+        ok?: number;
+        failed?: number;
+        already?: number;
+        ensured?: number;
+        errors?: string[];
+      } | null = null;
+
       try {
-        res = await fetch('/api/orders/scan-bulk-update', {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            codes,
-            scannedCodes: codes,
-            daXuatKhoCodes: pickCodes(shipped),
-            donHuyCodes: pickCodes(cancelled),
-            daNhanHoanCodes: pickCodes(returned),
-          }),
-        });
+        // 1) Lưu hủy/hoàn qua MVC API /api/scan/save
+        if (huyCodes.length + hoanCodes.length > 0) {
+          const saveRes = await fetch('/api/scan/save', {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              codes: [...huyCodes, ...hoanCodes],
+              donHuyCodes: huyCodes,
+              daNhanHoanCodes: hoanCodes,
+            }),
+          });
+          const saveData = (await saveRes.json().catch(() => ({}))) as Record<
+            string,
+            unknown
+          >;
+          if (!saveRes.ok || saveData?.success === false) {
+            throw new Error(
+              String(
+                saveData?.message ||
+                  saveData?.error ||
+                  `HTTP ${saveRes.status} — lưu don_hoan_huy thất bại`,
+              ),
+            );
+          }
+          dhhFromSave = (saveData?.donHoanHuy || {
+            ok: Number(saveData?.saved) || huyCodes.length + hoanCodes.length,
+            ensured: Number(saveData?.saved) || huyCodes.length + hoanCodes.length,
+            failed: 0,
+            already: 0,
+            errors: [],
+          }) as typeof dhhFromSave;
+          data = { ...saveData, donHoanHuy: dhhFromSave };
+        }
+
+        // 2) Xuất kho / bàn giao ĐVVC (nếu có) — vẫn qua scan-bulk-update
+        if (xuatCodes.length > 0) {
+          const res = await fetch('/api/orders/scan-bulk-update', {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              codes: xuatCodes,
+              scannedCodes: xuatCodes,
+              daXuatKhoCodes: xuatCodes,
+              donHuyCodes: [],
+              daNhanHoanCodes: [],
+            }),
+          });
+          const bulkData = (await res.json().catch(() => ({}))) as Record<
+            string,
+            unknown
+          >;
+          if (!res.ok || bulkData?.success === false) {
+            throw new Error(
+              String(
+                bulkData?.message ||
+                  bulkData?.error ||
+                  `HTTP ${res.status} — lưu xuất kho thất bại`,
+              ),
+            );
+          }
+          data = {
+            ...bulkData,
+            donHoanHuy: dhhFromSave || bulkData.donHoanHuy,
+            summary: {
+              daXuatKho: xuatCodes.length,
+              donHuy: huyCodes.length,
+              daNhanHoan: hoanCodes.length,
+              ...((bulkData.summary as object) || {}),
+            },
+            processedCount:
+              xuatCodes.length + huyCodes.length + hoanCodes.length,
+          };
+        } else if (!dhhFromSave) {
+          throw new Error('Không có mã đơn để lưu.');
+        } else {
+          data = {
+            ...data,
+            success: true,
+            summary: {
+              daXuatKho: 0,
+              donHuy: huyCodes.length,
+              daNhanHoan: hoanCodes.length,
+            },
+            processedCount: huyCodes.length + hoanCodes.length,
+            donHoanHuy: dhhFromSave,
+          };
+        }
       } catch (fetchErr: unknown) {
         const aborted =
           (fetchErr instanceof DOMException && fetchErr.name === 'AbortError') ||
@@ -3643,19 +3728,6 @@ export default function OrderManager({
         );
       }
 
-      let data: Record<string, unknown> = {};
-      try {
-        data = (await res.json()) as Record<string, unknown>;
-      } catch {
-        data = {};
-      }
-      if (!res.ok || data?.success === false) {
-        const detail = String(
-          data?.message || data?.error || `HTTP ${res.status} — lưu DB thất bại`,
-        );
-        throw new Error(detail);
-      }
-
       const summaryRaw = (data?.summary || {}) as {
         daXuatKho?: number;
         donHuy?: number;
@@ -3664,9 +3736,9 @@ export default function OrderManager({
       const daXuatKho = Number(summaryRaw.daXuatKho);
       const donHuy = Number(summaryRaw.donHuy);
       const daNhanHoan = Number(summaryRaw.daNhanHoan);
-      const safeXuat = Number.isFinite(daXuatKho) ? daXuatKho : 0;
-      const safeHuy = Number.isFinite(donHuy) ? donHuy : 0;
-      const safeHoan = Number.isFinite(daNhanHoan) ? daNhanHoan : 0;
+      const safeXuat = Number.isFinite(daXuatKho) ? daXuatKho : xuatCodes.length;
+      const safeHuy = Number.isFinite(donHuy) ? donHuy : huyCodes.length;
+      const safeHoan = Number.isFinite(daNhanHoan) ? daNhanHoan : hoanCodes.length;
       const processedRaw = Number(data?.processedCount);
       const processedCount = Number.isFinite(processedRaw)
         ? processedRaw
@@ -3675,7 +3747,7 @@ export default function OrderManager({
       // Hủy/hoàn bắt buộc phải có bản ghi don_hoan_huy (ok hoặc already).
       const needDonHoanHuy = cancelled.length + returned.length > 0;
       if (needDonHoanHuy) {
-        const dhh = (data?.donHoanHuy || null) as {
+        const dhh = (data?.donHoanHuy || dhhFromSave || null) as {
           ok?: number;
           failed?: number;
           already?: number;

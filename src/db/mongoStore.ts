@@ -254,16 +254,17 @@ SyncJobSchema.index(
   { expireAfterSeconds: SYNC_JOB_TTL_SECONDS, name: "sync_jobs_ttl" },
 );
 
-/** Tab "Đã nhận đơn hủy, đơn hoàn" — collection riêng, TTL 14 ngày trên scannedAt. */
+/** Tab "Đã nhận đơn hủy, đơn hoàn" — schema chuẩn MVC (TTL 14 ngày trên scannedAt). */
 type DonHoanHuyDoc = {
-  _id: string;
+  _id?: string;
   orderSn: string;
-  shopId?: string | null;
-  type: "cancelled" | "return";
   status: string;
-  local_status: "CANCELLED_STORED" | "RETURN_RECEIVED";
   scannedAt: Date;
-  createdAt: Date;
+  note?: string;
+  shopId?: string | null;
+  type?: "cancelled" | "return";
+  local_status?: "CANCELLED_STORED" | "RETURN_RECEIVED";
+  createdAt?: Date;
   tracking_no?: string | null;
   return_tracking_no?: string | null;
   shopee_order_status?: string | null;
@@ -275,29 +276,14 @@ type DonHoanHuyDoc = {
 
 const DonHoanHuySchema = new Schema<DonHoanHuyDoc>(
   {
-    _id: { type: String, required: true },
-    orderSn: { type: String, required: true, index: true },
-    shopId: { type: String, default: null, index: true },
-    type: { type: String, required: true, index: true },
-    status: { type: String, required: true },
-    local_status: { type: String, required: true, index: true },
-    scannedAt: { type: Date, required: true, index: true },
-    createdAt: { type: Date, required: true },
-    tracking_no: { type: String, default: null },
-    return_tracking_no: { type: String, default: null },
-    shopee_order_status: { type: String, default: null },
-    shopName: { type: String, default: null },
-    scan_code: { type: String, default: null },
-    source: { type: String, default: "qr_scan" },
-    data: { type: Schema.Types.Mixed, default: null },
+    orderSn: { type: String, required: true, index: true, trim: true },
+    status: { type: String, default: "scanned" },
+    scannedAt: { type: Date, default: Date.now, expires: 1209600 },
+    note: { type: String, default: "" },
   },
-  { collection: "don_hoan_huy", versionKey: false },
+  { collection: "don_hoan_huy", versionKey: false, strict: false },
 );
 DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
-DonHoanHuySchema.index(
-  { scannedAt: 1 },
-  { expireAfterSeconds: 14 * 24 * 60 * 60, name: "don_hoan_huy_ttl_14d" },
-);
 
 let ProductModel: Model<ProductDoc>;
 let ChannelListingModel: Model<ListingDoc>;
@@ -1667,24 +1653,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // CANCELLED không bao giờ ghi đè bản pending_confirm cũ.
     const filter = buildOrderCompoundFilter(orderSn || String(_id).replace(/^shopee-/i, ""), _id, shopIdStr || null);
 
-    const event: OrderEventDoc | null = orderSn
-      ? {
-          _id: `order-event-${orderSn}-${Date.now()}-${pendingWrites.length}`,
-          orderSn,
-          shopId: shopIdStr || null,
-          source: String(order.sync_source || "shopee_sync"),
-          next_status: order.status != null ? String(order.status) : null,
-          next_shopee_status: rawStatus || null,
-          logistics_status:
-            order.logistics_status != null ? String(order.logistics_status) : null,
-          occurred_at: new Date(),
-          payload: {
-            tracking_no: usableTn,
-            package_number: order.packageNumber || null,
-            shopee_update_at: incomingUpdateAt?.toISOString() || null,
-          },
-        }
-      : null;
+    // order_events đã bỏ — không ghi log rác vào Atlas Free.
     pendingWrites.push({
       op: {
         updateOne: {
@@ -1696,7 +1665,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           upsert: true,
         },
       },
-      event,
+      event: null,
       orderSn,
       id: _id,
       updateAt: incomingUpdateAt,
@@ -1752,19 +1721,10 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
           return true;
         });
         const ops = accepted.map((item) => item.op);
-        // order_events từng làm đầy Atlas Free 512MB — mặc định TẮT.
-        // Bật lại chỉ khi ORDER_EVENTS_ENABLED=1.
-        const eventsEnabled =
-          String(process.env.ORDER_EVENTS_ENABLED || "").trim() === "1";
-        const events = eventsEnabled
-          ? accepted.flatMap((item) => (item.event ? [item.event] : []))
-          : [];
         if (ops.length === 0) return;
         const result = await OrderModel.bulkWrite(ops as any, { ordered: false });
         await setMeta("orders_updated_at", new Date().toISOString());
-        if (events.length > 0) {
-          await OrderEventModel.insertMany(events, { ordered: false });
-        }
+        // Không ghi order_events (đã loại bỏ để tránh đầy Atlas Free).
         console.log(
           `[DB UPDATED] bulkWrite orders — upserted=${result.upsertedCount || 0} modified=${result.modifiedCount || 0} matched=${result.matchedCount || 0}` +
             ` writeErrors=${(result as any).hasWriteErrors?.() ? (result as any).getWriteErrors?.()?.length || "?" : 0}`,
@@ -3128,13 +3088,17 @@ export function isMongoConnectionError(err: unknown): boolean {
 
 function donHoanHuyDocToOrder(doc: any): any {
   const sn = String(doc?.orderSn || "").replace(/^shopee-/i, "").trim();
-  const local = String(doc?.local_status || "").toUpperCase() === "RETURN_RECEIVED"
-    ? "RETURN_RECEIVED"
-    : "CANCELLED_STORED";
+  const statusRaw = String(doc?.status || "").toLowerCase();
+  const local =
+    String(doc?.local_status || "").toUpperCase() === "RETURN_RECEIVED" ||
+    statusRaw === "return_received" ||
+    doc?.type === "return"
+      ? "RETURN_RECEIVED"
+      : "CANCELLED_STORED";
   const status =
     local === "RETURN_RECEIVED"
       ? "return_received"
-      : String(doc?.status || "cancelled");
+      : statusRaw || "cancelled";
   const scannedAt = doc?.scannedAt
     ? new Date(doc.scannedAt).toISOString()
     : doc?.createdAt
@@ -3148,6 +3112,7 @@ function donHoanHuyDocToOrder(doc: any): any {
     shopId: doc?.shopId != null ? doc.shopId : base.shopId,
     shopName: doc?.shopName || base.shopName,
     status,
+    note: doc?.note || "",
     shopee_order_status: doc?.shopee_order_status || base.shopee_order_status,
     tracking_no: doc?.tracking_no || base.tracking_no || base.trackingNumber,
     trackingNumber: doc?.tracking_no || base.trackingNumber || base.tracking_no,
@@ -3186,7 +3151,7 @@ export async function existsDonHoanHuy(orderSn: string): Promise<boolean> {
   requireMongo();
   const sn = String(orderSn).replace(/^shopee-/i, "").trim();
   if (!sn) return false;
-  const hit = await DonHoanHuyModel.findById(`dhh-${sn}`)
+  const hit = await DonHoanHuyModel.findOne({ orderSn: sn })
     .select({ _id: 1 })
     .maxTimeMS(5000)
     .lean();
@@ -3230,24 +3195,24 @@ export async function upsertDonHoanHuy(
   const local_status = type === "return" ? "RETURN_RECEIVED" : "CANCELLED_STORED";
   const now = opts?.scannedAt ? new Date(opts.scannedAt) : new Date();
   const scannedAt = Number.isNaN(now.getTime()) ? new Date() : now;
-  const _id = `dhh-${sn}`;
 
   const tn = String(order?.tracking_no || order?.trackingNumber || "").trim() || null;
   const rtn = String(order?.return_tracking_no || "").trim() || null;
   const DON_HOAN_HUY_MAX_MS = 5000;
 
   try {
-    // Collection don_hoan_huy tự tạo khi upsert lần đầu (Mongoose + Atlas).
+    // Collection don_hoan_huy — unique theo orderSn, TTL 14d trên scannedAt.
     const writePromise = DonHoanHuyModel.findOneAndUpdate(
-      { _id },
+      { orderSn: sn },
       {
         $set: {
           orderSn: sn,
+          status: type === "return" ? "return_received" : "cancelled",
+          scannedAt,
+          note: opts?.scanCode ? `scan:${opts.scanCode}` : "",
           shopId: order?.shopId != null ? String(order.shopId) : null,
           type,
-          status: type === "return" ? "return_received" : "cancelled",
           local_status,
-          scannedAt,
           tracking_no: tn,
           return_tracking_no: rtn,
           shopee_order_status: order?.shopee_order_status
@@ -3268,7 +3233,6 @@ export async function upsertDonHoanHuy(
           },
         },
         $setOnInsert: {
-          _id,
           createdAt: scannedAt,
         },
       },
@@ -3418,12 +3382,7 @@ export async function ensureRetentionTtlIndexes(): Promise<{
     { finished_at: 1 },
     SYNC_JOB_TTL_SECONDS,
   );
-  await ensureTtl(
-    DonHoanHuyModel,
-    "don_hoan_huy_ttl_14d",
-    { scannedAt: 1 },
-    14 * 24 * 60 * 60,
-  );
+  // don_hoan_huy TTL: schema scannedAt.expires = 1209600 (Mongoose tự tạo index)
 
   return {
     orderEventsTtlSeconds: ORDER_EVENT_TTL_SECONDS,
@@ -3502,10 +3461,9 @@ export async function purgeSyncJobsOlderThan(
 }
 
 /**
- * Dọn các collection tạm / log trên Atlas Free:
- * - order_events (log sync) — TTL 14d trên occurred_at
- * - sync_jobs (job lịch sử) — TTL 14d trên finished_at
- * products/channel_listings đã chuyển disk; orders giữ nguyên (cleanup riêng).
+ * Dọn collection tạm trên Atlas Free.
+ * order_events đã NGỪNG ghi — xóa toàn bộ để giải phóng dung lượng.
+ * sync_jobs: chỉ xóa job đã kết thúc >14 ngày.
  */
 export async function purgeMongoTempCollections(opts?: {
   orderEventDays?: number;
@@ -3522,7 +3480,6 @@ export async function purgeMongoTempCollections(opts?: {
   note: string;
 }> {
   requireMongo();
-  const orderEventDays = opts?.orderEventDays ?? 14;
   const syncJobDays = opts?.syncJobDays ?? 14;
   let ttl: Awaited<ReturnType<typeof ensureRetentionTtlIndexes>> | undefined;
   if (opts?.ensureTtl !== false) {
@@ -3533,19 +3490,42 @@ export async function purgeMongoTempCollections(opts?: {
     }
   }
 
-  const events = await purgeOrderEventsOlderThan(orderEventDays);
+  const orderEventsBefore = await OrderEventModel.countDocuments().catch(() => 0);
+  let orderEventsDeleted = 0;
+  if (orderEventsBefore > 0) {
+    try {
+      await OrderEventModel.collection.drop();
+      orderEventsDeleted = orderEventsBefore;
+      console.log(
+        `[MongoDB] Dropped collection order_events entirely (was ${orderEventsBefore} docs)`,
+      );
+    } catch (dropErr: any) {
+      const msg = String(dropErr?.message || dropErr || "");
+      if (!/ns not found|NamespaceNotFound/i.test(msg)) {
+        console.warn("[MongoDB] drop order_events failed, fallback deleteMany:", msg);
+        try {
+          const r = await OrderEventModel.deleteMany({});
+          orderEventsDeleted = Number(r.deletedCount || 0);
+        } catch (delErr: any) {
+          console.warn("[MongoDB] deleteMany order_events failed:", delErr?.message || delErr);
+        }
+      }
+    }
+  }
+  const orderEventsAfter = await OrderEventModel.countDocuments().catch(() => 0);
+
   const jobs = await purgeSyncJobsOlderThan(syncJobDays);
 
   return {
-    orderEventsDeleted: events.deleted,
+    orderEventsDeleted,
     syncJobsDeleted: jobs.deleted,
-    orderEventsBefore: events.before,
-    orderEventsAfter: events.after,
+    orderEventsBefore,
+    orderEventsAfter,
     syncJobsBefore: jobs.before,
     syncJobsAfter: jobs.after,
     ttl,
     note:
-      "Đã dọn order_events + sync_jobs. don_hoan_huy (tab hủy/hoàn) TTL 14d riêng. products/listings ưu tiên disk. orders giữ theo retention riêng.",
+      "Đã xóa order_events (ngừng ghi log). sync_jobs TTL 14d. don_hoan_huy TTL 14d riêng.",
   };
 }
 

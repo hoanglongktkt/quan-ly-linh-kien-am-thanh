@@ -346,9 +346,17 @@ export async function handleScanBulkUpdate(req, res) {
 
     let donHoanHuy = { ok: 0, failed: 0, errors: [], already: 0, ensured: 0 };
     if (dhhItems.length > 0) {
-      const dhhRes = await fetchJson(backend.url, req, 'orders/don-hoan-huy', {
+      const dhhRes = await fetchJson(backend.url, req, 'scan/save', {
         method: 'POST',
-        body: JSON.stringify({ items: dhhItems }),
+        body: JSON.stringify({
+          items: dhhItems,
+          donHuyCodes: dhhItems
+            .filter((i) => i.type === 'cancelled' || i.type === 'cancel')
+            .map((i) => i.orderSn || i.code),
+          daNhanHoanCodes: dhhItems
+            .filter((i) => i.type === 'return')
+            .map((i) => i.orderSn || i.code),
+        }),
       });
       if (!dhhRes.ok || dhhRes.data?.success === false) {
         return res.status(dhhRes.status || 500).json({
