@@ -1292,8 +1292,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs16 = require("fs");
-          stream2 = new fs16.SyncWriteStream(fd2, { autoClose: false });
+          var fs17 = require("fs");
+          stream2 = new fs17.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -14080,11 +14080,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path15) {
-      if (!path15 || typeof path15 !== "string") {
+    function lookup(path17) {
+      if (!path17 || typeof path17 !== "string") {
         return false;
       }
-      var extension3 = extname("x." + path15).toLowerCase().substr(1);
+      var extension3 = extname("x." + path17).toLowerCase().substr(1);
       if (!extension3) {
         return false;
       }
@@ -17713,8 +17713,8 @@ var require_node2 = __commonJS({
           }
           break;
         case "FILE":
-          var fs16 = require("fs");
-          stream2 = new fs16.SyncWriteStream(fd2, { autoClose: false });
+          var fs17 = require("fs");
+          stream2 = new fs17.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18432,8 +18432,8 @@ var require_node3 = __commonJS({
           }
           break;
         case "FILE":
-          var fs16 = require("fs");
-          stream2 = new fs16.SyncWriteStream(fd2, { autoClose: false });
+          var fs17 = require("fs");
+          stream2 = new fs17.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18521,7 +18521,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path15, keys, options) {
+    function pathToRegexp(path17, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -18535,8 +18535,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m2;
-      if (path15 instanceof RegExp) {
-        while (m2 = MATCHING_GROUP_REGEXP.exec(path15.source)) {
+      if (path17 instanceof RegExp) {
+        while (m2 = MATCHING_GROUP_REGEXP.exec(path17.source)) {
           if (m2[0][0] === "\\") continue;
           keys.push({
             name: m2[1] || name++,
@@ -18544,18 +18544,18 @@ var require_path_to_regexp = __commonJS({
             offset: m2.index
           });
         }
-        return path15;
+        return path17;
       }
-      if (Array.isArray(path15)) {
-        path15 = path15.map(function(value) {
+      if (Array.isArray(path17)) {
+        path17 = path17.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path15.join("|"), flags);
+        return new RegExp(path17.join("|"), flags);
       }
-      if (typeof path15 !== "string") {
+      if (typeof path17 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path15 = path15.replace(
+      path17 = path17.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -18572,7 +18572,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path15.slice(pos, offset);
+            backtrack += path17.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -18602,7 +18602,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m2 = MATCHING_GROUP_REGEXP.exec(path15)) {
+      while (m2 = MATCHING_GROUP_REGEXP.exec(path17)) {
         if (m2[0][0] === "\\") continue;
         if (keysOffset + i2 === keys.length || keys[keysOffset + i2].offset > m2.index) {
           keys.splice(keysOffset + i2, 0, {
@@ -18614,13 +18614,13 @@ var require_path_to_regexp = __commonJS({
         }
         i2++;
       }
-      path15 += strict ? "" : path15[path15.length - 1] === "/" ? "?" : "/?";
+      path17 += strict ? "" : path17[path17.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path15 += "$";
-      } else if (path15[path15.length - 1] !== "/") {
-        path15 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path17 += "$";
+      } else if (path17[path17.length - 1] !== "/") {
+        path17 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path15, flags);
+      return new RegExp("^" + path17, flags);
     }
   }
 });
@@ -18633,19 +18633,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path15, options, fn) {
+    function Layer(path17, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path15, options, fn);
+        return new Layer(path17, options, fn);
       }
-      debug("new %o", path15);
+      debug("new %o", path17);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path15, this.keys = [], opts);
-      this.regexp.fast_star = path15 === "*";
-      this.regexp.fast_slash = path15 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path17, this.keys = [], opts);
+      this.regexp.fast_star = path17 === "*";
+      this.regexp.fast_slash = path17 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -18669,20 +18669,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path15) {
+    Layer.prototype.match = function match2(path17) {
       var match3;
-      if (path15 != null) {
+      if (path17 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path15) };
-          this.path = path15;
+          this.params = { "0": decode_param(path17) };
+          this.path = path17;
           return true;
         }
-        match3 = this.regexp.exec(path15);
+        match3 = this.regexp.exec(path17);
       }
       if (!match3) {
         this.params = void 0;
@@ -18775,10 +18775,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path15) {
-      this.path = path15;
+    function Route(path17) {
+      this.path = path17;
       this.stack = [];
-      debug("new %o", path15);
+      debug("new %o", path17);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18990,8 +18990,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path15 = getPathname(req);
-        if (path15 == null) {
+        var path17 = getPathname(req);
+        if (path17 == null) {
           return done(layerError);
         }
         var layer;
@@ -18999,7 +18999,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path15);
+          match2 = matchLayer(layer, path17);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -19037,18 +19037,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path15);
+            trim_prefix(layer, layerError, layerPath, path17);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path15) {
+      function trim_prefix(layer, layerError, layerPath, path17) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path15.slice(0, layerPath.length)) {
+          if (layerPath !== path17.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path15[layerPath.length];
+          var c = path17[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -19126,7 +19126,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path15 = "/";
+      var path17 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -19134,7 +19134,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path15 = fn;
+          path17 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -19146,8 +19146,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path15, fn.name || "<anonymous>");
-        var layer = new Layer(path15, {
+        debug("use %o %s", path17, fn.name || "<anonymous>");
+        var layer = new Layer(path17, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -19157,9 +19157,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path15) {
-      var route2 = new Route(path15);
-      var layer = new Layer(path15, {
+    proto.route = function route(path17) {
+      var route2 = new Route(path17);
+      var layer = new Layer(path17, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -19169,8 +19169,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path15) {
-        var route = this.route(path15);
+      proto[method] = function(path17) {
+        var route = this.route(path17);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -19206,9 +19206,9 @@ var require_router = __commonJS({
       }
       return toString.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path15) {
+    function matchLayer(layer, path17) {
       try {
-        return layer.match(path15);
+        return layer.match(path17);
       } catch (err) {
         return err;
       }
@@ -19326,13 +19326,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path15 = require("path");
-    var fs16 = require("fs");
-    var dirname = path15.dirname;
-    var basename3 = path15.basename;
-    var extname = path15.extname;
-    var join = path15.join;
-    var resolve = path15.resolve;
+    var path17 = require("path");
+    var fs17 = require("fs");
+    var dirname = path17.dirname;
+    var basename3 = path17.basename;
+    var extname = path17.extname;
+    var join = path17.join;
+    var resolve = path17.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -19361,17 +19361,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path16;
+      var path18;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i2 = 0; i2 < roots.length && !path16; i2++) {
+      for (var i2 = 0; i2 < roots.length && !path18; i2++) {
         var root = roots[i2];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename3(loc);
-        path16 = this.resolve(dir, file);
+        path18 = this.resolve(dir, file);
       }
-      return path16;
+      return path18;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -19379,21 +19379,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path16 = join(dir, file);
-      var stat3 = tryStat(path16);
+      var path18 = join(dir, file);
+      var stat3 = tryStat(path18);
       if (stat3 && stat3.isFile()) {
-        return path16;
+        return path18;
       }
-      path16 = join(dir, basename3(file, ext), "index" + ext);
-      stat3 = tryStat(path16);
+      path18 = join(dir, basename3(file, ext), "index" + ext);
+      stat3 = tryStat(path18);
       if (stat3 && stat3.isFile()) {
-        return path16;
+        return path18;
       }
     };
-    function tryStat(path16) {
-      debug('stat "%s"', path16);
+    function tryStat(path18) {
+      debug('stat "%s"', path18);
       try {
-        return fs16.statSync(path16);
+        return fs17.statSync(path18);
       } catch (e2) {
         return void 0;
       }
@@ -19998,8 +19998,8 @@ var require_node4 = __commonJS({
           }
           break;
         case "FILE":
-          var fs16 = require("fs");
-          stream2 = new fs16.SyncWriteStream(fd2, { autoClose: false });
+          var fs17 = require("fs");
+          stream2 = new fs17.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -20171,8 +20171,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports2, module2) {
-    var path15 = require("path");
-    var fs16 = require("fs");
+    var path17 = require("path");
+    var fs17 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -20193,7 +20193,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs16.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs17.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -20201,8 +20201,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path16, fallback) {
-      var ext = path16.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path18, fallback) {
+      var ext = path18.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -20431,33 +20431,33 @@ var require_send = __commonJS({
     var escapeHtml = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var mime = require_mime();
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path15 = require("path");
+    var path17 = require("path");
     var statuses = require_statuses();
     var Stream4 = require("stream");
     var util = require("util");
-    var extname = path15.extname;
-    var join = path15.join;
-    var normalize = path15.normalize;
-    var resolve = path15.resolve;
-    var sep = path15.sep;
+    var extname = path17.extname;
+    var join = path17.join;
+    var normalize = path17.normalize;
+    var resolve = path17.resolve;
+    var sep = path17.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path16, options) {
-      return new SendStream(req, path16, options);
+    function send(req, path18, options) {
+      return new SendStream(req, path18, options);
     }
-    function SendStream(req, path16, options) {
+    function SendStream(req, path18, options) {
       Stream4.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path16;
+      this.path = path18;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -20503,8 +20503,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path16) {
-      this._root = resolve(String(path16));
+    SendStream.prototype.root = function root(path18) {
+      this._root = resolve(String(path18));
       debug("root %s", this._root);
       return this;
     };
@@ -20617,10 +20617,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path16) {
+    SendStream.prototype.redirect = function redirect(path18) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path16);
+        this.emit("directory", res, path18);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -20640,42 +20640,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path16 = decode(this.path);
-      if (path16 === -1) {
+      var path18 = decode(this.path);
+      if (path18 === -1) {
         this.error(400);
         return res;
       }
-      if (~path16.indexOf("\0")) {
+      if (~path18.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path16) {
-          path16 = normalize("." + sep + path16);
+        if (path18) {
+          path18 = normalize("." + sep + path18);
         }
-        if (UP_PATH_REGEXP.test(path16)) {
-          debug('malicious path "%s"', path16);
+        if (UP_PATH_REGEXP.test(path18)) {
+          debug('malicious path "%s"', path18);
           this.error(403);
           return res;
         }
-        parts = path16.split(sep);
-        path16 = normalize(join(root, path16));
+        parts = path18.split(sep);
+        path18 = normalize(join(root, path18));
       } else {
-        if (UP_PATH_REGEXP.test(path16)) {
-          debug('malicious path "%s"', path16);
+        if (UP_PATH_REGEXP.test(path18)) {
+          debug('malicious path "%s"', path18);
           this.error(403);
           return res;
         }
-        parts = normalize(path16).split(sep);
-        path16 = resolve(path16);
+        parts = normalize(path18).split(sep);
+        path18 = resolve(path18);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path16);
+        debug('%s dotfile "%s"', access, path18);
         switch (access) {
           case "allow":
             break;
@@ -20689,13 +20689,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path16);
+        this.sendIndex(path18);
         return res;
       }
-      this.sendFile(path16);
+      this.sendFile(path18);
       return res;
     };
-    SendStream.prototype.send = function send2(path16, stat3) {
+    SendStream.prototype.send = function send2(path18, stat3) {
       var len = stat3.size;
       var options = this.options;
       var opts = {};
@@ -20707,9 +20707,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path16);
-      this.setHeader(path16, stat3);
-      this.type(path16);
+      debug('pipe "%s"', path18);
+      this.setHeader(path18, stat3);
+      this.type(path18);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -20758,28 +20758,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path16, opts);
+      this.stream(path18, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path16) {
+    SendStream.prototype.sendFile = function sendFile(path18) {
       var i2 = 0;
       var self2 = this;
-      debug('stat "%s"', path16);
-      fs16.stat(path16, function onstat(err, stat3) {
-        if (err && err.code === "ENOENT" && !extname(path16) && path16[path16.length - 1] !== sep) {
+      debug('stat "%s"', path18);
+      fs17.stat(path18, function onstat(err, stat3) {
+        if (err && err.code === "ENOENT" && !extname(path18) && path18[path18.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat3.isDirectory()) return self2.redirect(path16);
-        self2.emit("file", path16, stat3);
-        self2.send(path16, stat3);
+        if (stat3.isDirectory()) return self2.redirect(path18);
+        self2.emit("file", path18, stat3);
+        self2.send(path18, stat3);
       });
       function next(err) {
         if (self2._extensions.length <= i2) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path16 + "." + self2._extensions[i2++];
+        var p = path18 + "." + self2._extensions[i2++];
         debug('stat "%s"', p);
-        fs16.stat(p, function(err2, stat3) {
+        fs17.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20787,7 +20787,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path16) {
+    SendStream.prototype.sendIndex = function sendIndex(path18) {
       var i2 = -1;
       var self2 = this;
       function next(err) {
@@ -20795,9 +20795,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path16, self2._index[i2]);
+        var p = join(path18, self2._index[i2]);
         debug('stat "%s"', p);
-        fs16.stat(p, function(err2, stat3) {
+        fs17.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20806,10 +20806,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path16, options) {
+    SendStream.prototype.stream = function stream(path18, options) {
       var self2 = this;
       var res = this.res;
-      var stream2 = fs16.createReadStream(path16, options);
+      var stream2 = fs17.createReadStream(path18, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -20824,10 +20824,10 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path16) {
+    SendStream.prototype.type = function type(path18) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path16);
+      var type2 = mime.lookup(path18);
       if (!type2) {
         debug("no content-type");
         return;
@@ -20836,9 +20836,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path16, stat3) {
+    SendStream.prototype.setHeader = function setHeader(path18, stat3) {
       var res = this.res;
-      this.emit("headers", res, path16, stat3);
+      this.emit("headers", res, path18, stat3);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -20897,9 +20897,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path16) {
+    function decode(path18) {
       try {
-        return decodeURIComponent(path16);
+        return decodeURIComponent(path18);
       } catch (err) {
         return -1;
       }
@@ -21808,10 +21808,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path15) {
-      if ("/" === path15[0]) return true;
-      if (":" === path15[1] && ("\\" === path15[2] || "/" === path15[2])) return true;
-      if ("\\\\" === path15.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path17) {
+      if ("/" === path17[0]) return true;
+      if (":" === path17[1] && ("\\" === path17[2] || "/" === path17[2])) return true;
+      if ("\\\\" === path17.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate3.function(
       flatten,
@@ -22023,7 +22023,7 @@ var require_application = __commonJS({
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path15 = "/";
+      var path17 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22031,7 +22031,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path15 = fn;
+          path17 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -22042,12 +22042,12 @@ var require_application = __commonJS({
       var router14 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router14.use(path15, fn2);
+          return router14.use(path17, fn2);
         }
-        debug(".use app under %s", path15);
-        fn2.mountpath = path15;
+        debug(".use app under %s", path17);
+        fn2.mountpath = path17;
         fn2.parent = this;
-        router14.use(path15, function mounted_app(req, res, next) {
+        router14.use(path17, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -22059,9 +22059,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path15) {
+    app.route = function route(path17) {
       this.lazyrouter();
-      return this._router.route(path15);
+      return this._router.route(path17);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -22112,7 +22112,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path15() {
+    app.path = function path17() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -22128,19 +22128,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path15) {
+      app[method] = function(path17) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path15);
+          return this.set(path17);
         }
         this.lazyrouter();
-        var route = this._router.route(path15);
+        var route = this._router.route(path17);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path15) {
+    app.all = function all(path17) {
       this.lazyrouter();
-      var route = this._router.route(path15);
+      var route = this._router.route(path17);
       var args = slice.call(arguments, 1);
       for (var i2 = 0; i2 < methods.length; i2++) {
         route[methods[i2]].apply(route, args);
@@ -22899,7 +22899,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP2(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path15() {
+    defineGetter(req, "path", function path17() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -23221,7 +23221,7 @@ var require_response = __commonJS({
     var http3 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path15 = require("path");
+    var path17 = require("path");
     var statuses = require_statuses();
     var merge = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -23230,9 +23230,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path15.extname;
+    var extname = path17.extname;
     var mime = send.mime;
-    var resolve = path15.resolve;
+    var resolve = path17.resolve;
     var vary = require_vary();
     var res = Object.create(http3.ServerResponse.prototype);
     module2.exports = res;
@@ -23409,26 +23409,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path16, options, callback) {
+    res.sendFile = function sendFile(path18, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path16) {
+      if (!path18) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path16 !== "string") {
+      if (typeof path18 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path16)) {
+      if (!opts.root && !isAbsolute(path18)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path16);
+      var pathname = encodeURI(path18);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -23438,7 +23438,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path16, options, callback) {
+    res.sendfile = function(path18, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -23448,7 +23448,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path16, opts);
+      var file = send(req, path18, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -23461,7 +23461,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path16, filename, options, callback) {
+    res.download = function download(path18, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23478,7 +23478,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path16)
+        "Content-Disposition": contentDisposition(name || path18)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23491,7 +23491,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path16) : path16;
+      var fullPath = !opts.root ? resolve(path18) : path18;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23792,11 +23792,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path15 = parseUrl(req).pathname;
-        if (path15 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path15 = "";
+        var path17 = parseUrl(req).pathname;
+        if (path17 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path17 = "";
         }
-        var stream = send(req, path15, opts);
+        var stream = send(req, path17, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -40569,14 +40569,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path15) {
+    var parse = function(path17) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path15; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path17; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -40890,8 +40890,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path15) {
-      return apply(parse(path15));
+    exports2.svgPathToOperators = function(path17) {
+      return apply(parse(path17));
     };
   }
 });
@@ -41074,7 +41074,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path15, options) {
+    exports2.drawSvgPath = function(path17, options) {
       var _a2, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -41088,7 +41088,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path15), [
+      ], svgPath_1.svgPathToOperators(path17), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -45386,12 +45386,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path15, options) {
+        PDFPage2.prototype.drawSvgPath = function(path17, options) {
           var _a2, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path15, "path", ["string"]);
+          utils_1.assertIs(path17, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -45420,7 +45420,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path15, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path17, {
             x: (_a2 = options.x) !== null && _a2 !== void 0 ? _a2 : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -45916,8 +45916,8 @@ var require_cjs = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs16 = require("fs");
-    var path15 = require("path");
+    var fs17 = require("fs");
+    var path17 = require("path");
     var os = require("os");
     var crypto4 = require("crypto");
     var TIPS = [
@@ -46048,7 +46048,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs16.existsSync(filepath)) {
+            if (fs17.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -46056,15 +46056,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path15.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path17.resolve(process.cwd(), ".env.vault");
       }
-      if (fs16.existsSync(possibleVaultPath)) {
+      if (fs17.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path15.join(os.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path17.join(os.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -46081,7 +46081,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path15.resolve(process.cwd(), ".env");
+      const dotenvPath = path17.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -46109,13 +46109,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path16 of optionPaths) {
+      for (const path18 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs16.readFileSync(path16, { encoding }));
+          const parsed = DotenvModule.parse(fs17.readFileSync(path18, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e2) {
           if (debug) {
-            _debug(`failed to load ${path16} ${e2.message}`);
+            _debug(`failed to load ${path18} ${e2.message}`);
           }
           lastError = e2;
         }
@@ -46128,7 +46128,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative = path15.relative(process.cwd(), filePath);
+            const relative = path17.relative(process.cwd(), filePath);
             shortPaths.push(relative);
           } catch (e2) {
             if (debug) {
@@ -56672,22 +56672,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path15, type) => fromBlob((0, import_node_fs.statSync)(path15), path15, type);
-    blobFrom = (path15, type) => stat(path15).then((stat3) => fromBlob(stat3, path15, type));
-    fileFrom = (path15, type) => stat(path15).then((stat3) => fromFile(stat3, path15, type));
-    fileFromSync = (path15, type) => fromFile((0, import_node_fs.statSync)(path15), path15, type);
-    fromBlob = (stat3, path15, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path15,
+    blobFromSync = (path17, type) => fromBlob((0, import_node_fs.statSync)(path17), path17, type);
+    blobFrom = (path17, type) => stat(path17).then((stat3) => fromBlob(stat3, path17, type));
+    fileFrom = (path17, type) => stat(path17).then((stat3) => fromFile(stat3, path17, type));
+    fileFromSync = (path17, type) => fromFile((0, import_node_fs.statSync)(path17), path17, type);
+    fromBlob = (stat3, path17, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path17,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path15, type = "") => new file_default([new BlobDataItem({
-      path: path15,
+    fromFile = (stat3, path17, type = "") => new file_default([new BlobDataItem({
+      path: path17,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path15), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path17), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -61644,9 +61644,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var os = require("os");
-    var path15 = require("path");
+    var path17 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -61732,15 +61732,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs16.promises.lstat(filePath);
+        const stats = await fs17.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path15.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path15.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path15.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path17.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path17.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path17.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os.platform().startsWith("win");
@@ -63143,11 +63143,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path15 = require("path");
-    var fs16 = require("fs");
+    var path17 = require("path");
+    var fs17 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs16.readFile ? (0, util_1.promisify)(fs16.readFile) : async () => {
+    var readFile = fs17.readFile ? (0, util_1.promisify)(fs17.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -63215,7 +63215,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path15.extname(keyFilePath);
+        const keyFileExtension = path17.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -64824,12 +64824,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs16 = require("fs");
-    var readFile = (0, util_1.promisify)(fs16.readFile ?? (() => {
+    var fs17 = require("fs");
+    var readFile = (0, util_1.promisify)(fs17.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs16.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs17.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs16.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs17.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -64947,7 +64947,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var crypto_1 = require("crypto");
     var https2 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -65041,7 +65041,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs16.promises.readFile(configPath, "utf8");
+          fileContents = await fs17.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -65066,14 +65066,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs16.promises.readFile(certPath);
+          cert = await fs17.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs16.promises.readFile(keyPath);
+          key = await fs17.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -65092,7 +65092,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs16.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs17.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index) => {
             try {
@@ -65794,7 +65794,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -65879,14 +65879,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs16.promises.realpath(this.outputFile);
+          filePath = await fs17.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs16.promises.lstat(filePath)).isFile()) {
+        if (!(await fs17.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs16.promises.readFile(filePath, {
+        const responseString = await fs17.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -66297,7 +66297,7 @@ var require_gdchclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
     var crypto4 = require("crypto");
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -66520,7 +66520,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs16.promises.readFile(currentPath);
+            const ca = await fs17.promises.readFile(currentPath);
             return new https2.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -66580,11 +66580,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs16 = require("fs");
+    var fs17 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
     var os = require("os");
-    var path15 = require("path");
+    var path17 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -66871,12 +66871,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location = path15.join(home, ".config");
+            location = path17.join(home, ".config");
           }
         }
         if (location) {
-          location = path15.join(location, "gcloud", "application_default_credentials.json");
-          if (!fs16.existsSync(location)) {
+          location = path17.join(location, "gcloud", "application_default_credentials.json");
+          if (!fs17.existsSync(location)) {
             location = null;
           }
         }
@@ -66897,8 +66897,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs16.realpathSync(filePath);
-          if (!fs16.lstatSync(filePath).isFile()) {
+          filePath = fs17.realpathSync(filePath);
+          if (!fs17.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -66907,7 +66907,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream = fs16.createReadStream(filePath);
+        const readStream = fs17.createReadStream(filePath);
         return this.fromStream(readStream, options);
       }
       /**
@@ -67234,8 +67234,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path15.resolve(this.keyFilename);
-          const stream = fs16.createReadStream(filePath);
+          const filePath = path17.resolve(this.keyFilename);
+          const stream = fs17.createReadStream(filePath);
           return await this.fromStreamAsync(stream, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -71462,10 +71462,8 @@ var require_websocket_server = __commonJS({
 
 // server.ts
 var import_express15 = __toESM(require_express2(), 1);
-var import_path13 = __toESM(require("path"), 1);
-var import_fs14 = __toESM(require("fs"), 1);
-var import_crypto = __toESM(require("crypto"), 1);
-var import_node_module = require("node:module");
+var import_path15 = __toESM(require("path"), 1);
+var import_fs15 = __toESM(require("fs"), 1);
 var import_pdf_lib = __toESM(require_cjs(), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 
@@ -76926,7 +76924,7 @@ var Batches = class extends BaseModule {
       params
     );
     const urlParams = body["_url"];
-    const path15 = formatMap("{model}:batchGenerateContent", urlParams);
+    const path17 = formatMap("{model}:batchGenerateContent", urlParams);
     const batch = body["batch"];
     const inputConfig = batch["inputConfig"];
     const requestsWrapper = inputConfig["requests"];
@@ -76947,7 +76945,7 @@ var Batches = class extends BaseModule {
     delete body["config"];
     delete body["_url"];
     delete body["_query"];
-    return { path: path15, body };
+    return { path: path17, body };
   }
   // Helper function to get the first GCS URI
   getGcsUri(src) {
@@ -77003,16 +77001,16 @@ var Batches = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createBatchJobParametersToVertex(this.apiClient, params);
-      path15 = formatMap("batchPredictionJobs", body["_url"]);
+      path17 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77027,12 +77025,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = createBatchJobParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{model}:batchGenerateContent", body["_url"]);
+      path17 = formatMap("{model}:batchGenerateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77057,18 +77055,18 @@ var Batches = class extends BaseModule {
   async createEmbeddingsInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+      path17 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77097,16 +77095,16 @@ var Batches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getBatchJobParametersToVertex(this.apiClient, params);
-      path15 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path17 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77121,12 +77119,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = getBatchJobParametersToMldev(this.apiClient, params);
-      path15 = formatMap("batches/{name}", body["_url"]);
+      path17 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77154,16 +77152,16 @@ var Batches = class extends BaseModule {
    */
   async cancel(params) {
     var _a2, _b, _c, _d;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-      path15 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+      path17 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77172,12 +77170,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-      path15 = formatMap("batches/{name}:cancel", body["_url"]);
+      path17 = formatMap("batches/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77189,16 +77187,16 @@ var Batches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listBatchJobsParametersToVertex(params);
-      path15 = formatMap("batchPredictionJobs", body["_url"]);
+      path17 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77221,12 +77219,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = listBatchJobsParametersToMldev(params);
-      path15 = formatMap("batches", body["_url"]);
+      path17 = formatMap("batches", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77263,16 +77261,16 @@ var Batches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-      path15 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path17 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -77293,12 +77291,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-      path15 = formatMap("batches/{name}", body["_url"]);
+      path17 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -78222,16 +78220,16 @@ var Caches = class extends BaseModule {
   async create(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createCachedContentParametersToVertex(this.apiClient, params);
-      path15 = formatMap("cachedContents", body["_url"]);
+      path17 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -78245,12 +78243,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = createCachedContentParametersToMldev(this.apiClient, params);
-      path15 = formatMap("cachedContents", body["_url"]);
+      path17 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -78278,16 +78276,16 @@ var Caches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getCachedContentParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -78301,12 +78299,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = getCachedContentParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -78334,16 +78332,16 @@ var Caches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -78366,12 +78364,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -78411,16 +78409,16 @@ var Caches = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateCachedContentParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -78434,12 +78432,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = updateCachedContentParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -78456,16 +78454,16 @@ var Caches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listCachedContentsParametersToVertex(params);
-      path15 = formatMap("cachedContents", body["_url"]);
+      path17 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -78488,12 +78486,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = listCachedContentsParametersToMldev(params);
-      path15 = formatMap("cachedContents", body["_url"]);
+      path17 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -79089,18 +79087,18 @@ var Files = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFilesParametersToMldev(params);
-      path15 = formatMap("files", body["_url"]);
+      path17 = formatMap("files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -79126,18 +79124,18 @@ var Files = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileParametersToMldev(params);
-      path15 = formatMap("upload/v1beta/files", body["_url"]);
+      path17 = formatMap("upload/v1beta/files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -79172,18 +79170,18 @@ var Files = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileParametersToMldev(params);
-      path15 = formatMap("files/{file}", body["_url"]);
+      path17 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -79213,18 +79211,18 @@ var Files = class extends BaseModule {
   async delete(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileParametersToMldev(params);
-      path15 = formatMap("files/{file}", body["_url"]);
+      path17 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -79250,18 +79248,18 @@ var Files = class extends BaseModule {
   async registerFilesInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = internalRegisterFilesParametersToMldev(params);
-      path15 = formatMap("files:register", body["_url"]);
+      path17 = formatMap("files:register", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84515,13 +84513,13 @@ var ApiClient = class {
       throw new Error("HTTP options are not correctly set.");
     }
   }
-  constructUrl(path15, httpOptions, prependProjectLocation) {
+  constructUrl(path17, httpOptions, prependProjectLocation) {
     const urlElement = [this.getRequestUrlInternal(httpOptions)];
     if (prependProjectLocation) {
       urlElement.push(this.getBaseResourcePath());
     }
-    if (path15 !== "") {
-      urlElement.push(path15);
+    if (path17 !== "") {
+      urlElement.push(path17);
     }
     const url = new URL(`${urlElement.join("/")}`);
     return url;
@@ -84820,8 +84818,8 @@ var ApiClient = class {
       file: fileToUpload
     };
     const fileName = this.getFileName(file);
-    const path15 = formatMap("upload/v1beta/files", body["_url"]);
-    const uploadUrl = await this.fetchUploadUrl(path15, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const path17 = formatMap("upload/v1beta/files", body["_url"]);
+    const uploadUrl = await this.fetchUploadUrl(path17, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.upload(file, uploadUrl, this);
   }
   /**
@@ -84845,13 +84843,13 @@ var ApiClient = class {
     if (mimeType === void 0 || mimeType === "") {
       throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
     }
-    const path15 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+    const path17 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
     const fileName = this.getFileName(file);
     const body = {};
     if (config != null) {
       uploadToFileSearchStoreConfigToMldev(config, body);
     }
-    const uploadUrl = await this.fetchUploadUrl(path15, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const uploadUrl = await this.fetchUploadUrl(path17, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);
   }
   /**
@@ -84864,7 +84862,7 @@ var ApiClient = class {
     const downloader = this.clientOptions.downloader;
     await downloader.download(params, this);
   }
-  async fetchUploadUrl(path15, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+  async fetchUploadUrl(path17, sizeBytes, mimeType, fileName, body, configHttpOptions) {
     var _a2;
     let httpOptions = {};
     if (configHttpOptions) {
@@ -84877,7 +84875,7 @@ var ApiClient = class {
       };
     }
     const httpResponse = await this.request({
-      path: path15,
+      path: path17,
       body: JSON.stringify(body),
       httpMethod: "POST",
       httpOptions
@@ -86073,16 +86071,16 @@ var Models = class extends BaseModule {
   async generateContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:generateContent", body["_url"]);
+      path17 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86105,12 +86103,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{model}:generateContent", body["_url"]);
+      path17 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86136,17 +86134,17 @@ var Models = class extends BaseModule {
   async generateContentStreamInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path17 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86182,13 +86180,13 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path17 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86248,17 +86246,17 @@ var Models = class extends BaseModule {
   async embedContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
       const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-      path15 = formatMap(endpointUrl, body["_url"]);
+      path17 = formatMap(endpointUrl, body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86281,12 +86279,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-      path15 = formatMap("{model}:batchEmbedContents", body["_url"]);
+      path17 = formatMap("{model}:batchEmbedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86315,16 +86313,16 @@ var Models = class extends BaseModule {
   async generateImagesInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateImagesParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:predict", body["_url"]);
+      path17 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86347,12 +86345,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateImagesParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{model}:predict", body["_url"]);
+      path17 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86381,16 +86379,16 @@ var Models = class extends BaseModule {
   async editImageInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = editImageParametersInternalToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:predict", body["_url"]);
+      path17 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86421,16 +86419,16 @@ var Models = class extends BaseModule {
   async upscaleImageInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:predict", body["_url"]);
+      path17 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86482,16 +86480,16 @@ var Models = class extends BaseModule {
   async recontextImage(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = recontextImageParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:predict", body["_url"]);
+      path17 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86533,16 +86531,16 @@ var Models = class extends BaseModule {
   async segmentImage(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = segmentImageParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:predict", body["_url"]);
+      path17 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86572,16 +86570,16 @@ var Models = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getModelParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86596,12 +86594,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = getModelParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86619,16 +86617,16 @@ var Models = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listModelsParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{models_url}", body["_url"]);
+      path17 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86651,12 +86649,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = listModelsParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{models_url}", body["_url"]);
+      path17 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86699,16 +86697,16 @@ var Models = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateModelParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{model}", body["_url"]);
+      path17 = formatMap("{model}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -86723,12 +86721,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = updateModelParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -86757,16 +86755,16 @@ var Models = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteModelParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86789,12 +86787,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = deleteModelParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86836,16 +86834,16 @@ var Models = class extends BaseModule {
   async countTokens(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = countTokensParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:countTokens", body["_url"]);
+      path17 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86868,12 +86866,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = countTokensParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{model}:countTokens", body["_url"]);
+      path17 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86917,16 +86915,16 @@ var Models = class extends BaseModule {
   async computeTokens(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = computeTokensParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:computeTokens", body["_url"]);
+      path17 = formatMap("{model}:computeTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86957,16 +86955,16 @@ var Models = class extends BaseModule {
   async generateVideosInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateVideosParametersToVertex(this.apiClient, params);
-      path15 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path17 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86983,12 +86981,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateVideosParametersToMldev(this.apiClient, params);
-      path15 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path17 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87090,16 +87088,16 @@ var Operations = class extends BaseModule {
   async getVideosOperationInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getOperationParametersToVertex(params);
-      path15 = formatMap("{operationName}", body["_url"]);
+      path17 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87111,12 +87109,12 @@ var Operations = class extends BaseModule {
       return response;
     } else {
       const body = getOperationParametersToMldev(params);
-      path15 = formatMap("{operationName}", body["_url"]);
+      path17 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87131,16 +87129,16 @@ var Operations = class extends BaseModule {
   async fetchPredictVideosOperationInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = fetchPredictOperationParametersToVertex(params);
-      path15 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+      path17 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87828,20 +87826,20 @@ var Tokens = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
     } else {
       const body = createAuthTokenParametersToMldev(this.apiClient, params);
-      path15 = formatMap("auth_tokens", body["_url"]);
+      path17 = formatMap("auth_tokens", body["_url"]);
       queryParams = body["_query"];
       delete body["config"];
       delete body["_url"];
       delete body["_query"];
       const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(transformedBody),
         httpMethod: "POST",
@@ -87951,18 +87949,18 @@ var Documents = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getDocumentParametersToMldev(params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -87983,18 +87981,18 @@ var Documents = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteDocumentParametersToMldev(params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -88006,18 +88004,18 @@ var Documents = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listDocumentsParametersToMldev(params);
-      path15 = formatMap("{parent}/documents", body["_url"]);
+      path17 = formatMap("{parent}/documents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88134,18 +88132,18 @@ var FileSearchStores = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-      path15 = formatMap("fileSearchStores", body["_url"]);
+      path17 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -88168,18 +88166,18 @@ var FileSearchStores = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileSearchStoreParametersToMldev(params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88200,18 +88198,18 @@ var FileSearchStores = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileSearchStoreParametersToMldev(params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -88223,18 +88221,18 @@ var FileSearchStores = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFileSearchStoresParametersToMldev(params);
-      path15 = formatMap("fileSearchStores", body["_url"]);
+      path17 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -88254,18 +88252,18 @@ var FileSearchStores = class extends BaseModule {
   async uploadToFileSearchStoreInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = uploadToFileSearchStoreParametersToMldev(params);
-      path15 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+      path17 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -88293,18 +88291,18 @@ var FileSearchStores = class extends BaseModule {
   async importFile(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = importFileParametersToMldev(params);
-      path15 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+      path17 = formatMap("{file_search_store_name}:importFile", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -89440,16 +89438,16 @@ var ClientSDK = class {
   }
   _createRequest(context, conf, options) {
     var _a2, _b, _c, _d, _e;
-    const { method, path: path15, query, headers: opHeaders, security } = conf;
+    const { method, path: path17, query, headers: opHeaders, security } = conf;
     const base = (_a2 = conf.baseURL) !== null && _a2 !== void 0 ? _a2 : this._baseURL;
     if (!base) {
       return ERR(new InvalidRequestError("No base URL provided for operation"));
     }
     const baseURL = new URL(base);
     let reqURL;
-    if (path15) {
+    if (path17) {
       baseURL.pathname = baseURL.pathname.replace(/\/+$/, "") + "/";
-      reqURL = new URL(path15, baseURL);
+      reqURL = new URL(path17, baseURL);
       if (!reqURL.search && baseURL.search) {
         reqURL.search = baseURL.search;
       }
@@ -90265,7 +90263,7 @@ async function $do$e(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path15 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path17 = pathToFunc("/{api_version}/agents")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -90296,7 +90294,7 @@ async function $do$e(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -90340,7 +90338,7 @@ async function $do$d(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path17 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90370,7 +90368,7 @@ async function $do$d(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90414,7 +90412,7 @@ async function $do$c(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path17 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90444,7 +90442,7 @@ async function $do$c(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90486,7 +90484,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path15 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path17 = pathToFunc("/{api_version}/agents")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token,
@@ -90521,7 +90519,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     query,
     body,
@@ -90673,7 +90671,7 @@ async function $do$a(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
+  const path17 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90703,7 +90701,7 @@ async function $do$a(client, id, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90746,7 +90744,7 @@ async function $do$9(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path15 = pathToFunc("/{api_version}/interactions")(pathParams);
+  const path17 = pathToFunc("/{api_version}/interactions")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: ((_b = input === null || input === void 0 ? void 0 : input.body) === null || _b === void 0 ? void 0 : _b.stream) ? "text/event-stream" : "application/json"
@@ -90777,7 +90775,7 @@ async function $do$9(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -90827,7 +90825,7 @@ async function $do$8(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path17 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -90857,7 +90855,7 @@ async function $do$8(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -90907,7 +90905,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path17 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const query = encodeFormQuery({
     "include_input": payload.include_input,
     "last_event_id": payload.last_event_id,
@@ -90942,7 +90940,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     query,
     body,
@@ -91016,7 +91014,7 @@ async function $do$6(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path15 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path17 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -91047,7 +91045,7 @@ async function $do$6(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -91091,7 +91089,7 @@ async function $do$5(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path17 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -91121,7 +91119,7 @@ async function $do$5(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -91165,7 +91163,7 @@ async function $do$4(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path17 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -91195,7 +91193,7 @@ async function $do$4(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -91236,7 +91234,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path15 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path17 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token
@@ -91270,7 +91268,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     query,
     body,
@@ -91316,7 +91314,7 @@ async function $do$2(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
+  const path17 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -91347,7 +91345,7 @@ async function $do$2(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -91392,7 +91390,7 @@ async function $do$1(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
+  const path17 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -91423,7 +91421,7 @@ async function $do$1(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -91469,7 +91467,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
       charEncoding: "percent"
     })
   };
-  const path15 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path17 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const query = encodeFormQuery({
     "update_mask": payload.update_mask
   });
@@ -91503,7 +91501,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
     security: requestSecurity,
     method: "PATCH",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path15,
+    path: path17,
     headers,
     query,
     body: body$,
@@ -93519,16 +93517,16 @@ var Tunings = class extends BaseModule {
   async getInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getTuningJobParametersToVertex(params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93549,12 +93547,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = getTuningJobParametersToMldev(params);
-      path15 = formatMap("{name}", body["_url"]);
+      path17 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93578,16 +93576,16 @@ var Tunings = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listTuningJobsParametersToVertex(params);
-      path15 = formatMap("tuningJobs", body["_url"]);
+      path17 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -93626,16 +93624,16 @@ var Tunings = class extends BaseModule {
   async cancel(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelTuningJobParametersToVertex(params);
-      path15 = formatMap("{name}:cancel", body["_url"]);
+      path17 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93658,12 +93656,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = cancelTuningJobParametersToMldev(params);
-      path15 = formatMap("{name}:cancel", body["_url"]);
+      path17 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93689,16 +93687,16 @@ var Tunings = class extends BaseModule {
   async tuneInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createTuningJobParametersPrivateToVertex(params, params);
-      path15 = formatMap("tuningJobs", body["_url"]);
+      path17 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93724,18 +93722,18 @@ var Tunings = class extends BaseModule {
   async tuneMldevInternal(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createTuningJobParametersPrivateToMldev(params);
-      path15 = formatMap("tunedModels", body["_url"]);
+      path17 = formatMap("tunedModels", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -93759,16 +93757,16 @@ var Tunings = class extends BaseModule {
   async validateReward(params) {
     var _a2, _b;
     let response;
-    let path15 = "";
+    let path17 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = validateRewardParametersToVertex(params);
-      path15 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
+      path17 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path15,
+        path: path17,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -102166,478 +102164,306 @@ function resetHeavyJob() {
   cpanelHeavyJobActive = null;
 }
 
-// server.ts
+// services/shopee/auth.js
+var import_fs14 = __toESM(require("fs"), 1);
+var import_path14 = __toESM(require("path"), 1);
+var import_crypto = __toESM(require("crypto"), 1);
+
+// services/shopee/client.js
+var import_path13 = __toESM(require("path"), 1);
+var import_node_module = require("node:module");
 var import_meta = {};
-function asRouter(mod) {
-  return mod?.default?.use ? mod.default : mod;
-}
-var scanRoutes = asRouter(scanRoutes_default);
-var authRoutes = asRouter(authRoutes_default);
-var healthRoutes = asRouter(healthRoutes_default);
-var vietnamAddressRoutes = asRouter(vietnamAddressRoutes_default);
-var suppliersRoutes = asRouter(suppliersRoutes_default);
-var expensesRoutes = asRouter(expensesRoutes_default);
-var importsRoutes = asRouter(importsRoutes_default);
-var settingsRoutes = asRouter(settingsRoutes_default);
-var aiRoutes = asRouter(aiRoutes_default);
-var dashboardRoutes = asRouter(dashboardRoutes_default);
-var productsRoutes = asRouter(productsRoutes_default);
-var mappingRoutes = asRouter(mappingRoutes_default);
-var ordersRoutes = asRouter(ordersRoutes_default);
-function writeCpanelCrashLog(kind, err) {
+var SHOPEE_API_MAX_RETRY = 3;
+var SHOPEE_API_RETRY_BASE_MS = 1500;
+var SHOPEE_HTTP_TIMEOUT_MS = 15e3;
+var SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
+var SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
+var SHOPEE_PRODUCT_BATCH_SIZE = 10;
+var SHOPEE_PRODUCT_API_DELAY_MS = 1e3;
+var SHOPEE_PRODUCT_BATCH_PAUSE_MS = 2500;
+var SHOPEE_SYNC_BATCH_DELAY_MS = 1e3;
+var SHOPEE_REAUTH_REQUIRED_MESSAGE = "Vui l\xF2ng v\xE0o m\u1EE5c C\u1EA5u h\xECnh \u0111\u1EC3 li\xEAn k\u1EBFt l\u1EA1i gian h\xE0ng Shopee (Token \u0111\xE3 h\u1EBFt h\u1EA1n ho\xE0n to\xE0n)";
+function resolveCreateRequireFilename() {
   try {
-    const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    const line = `${kind}: ${stack}
----
-${(/* @__PURE__ */ new Date()).toISOString()}
-`;
-    const targets = [
-      import_path13.default.join(process.cwd(), "cpanel_error_log.txt"),
-      typeof __dirname !== "undefined" ? import_path13.default.join(__dirname, "cpanel_error_log.txt") : ""
-    ].filter(Boolean);
-    for (const file of targets) {
-      try {
-        import_fs14.default.writeFileSync(file, line);
-      } catch {
-      }
+    if (typeof __filename === "string" && __filename.length > 0) {
+      return __filename;
     }
-    console.error(line);
   } catch {
   }
-}
-process.on("uncaughtException", (err) => {
-  writeCpanelCrashLog("Exception", err);
-});
-process.on("unhandledRejection", (err) => {
-  writeCpanelCrashLog("Rejection", err);
-});
-var APP_ROOT9 = resolveAppRoot();
-var isCpanelPassengerRuntime = Boolean(
-  String(
-    process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
-  ).trim()
-);
-var isDevelopmentRuntime = process.env.NODE_ENV !== "production" && !isCpanelPassengerRuntime;
-if (isCpanelPassengerRuntime) {
-  console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
-}
-var dotenvCandidates = [
-  import_path13.default.join(APP_ROOT9, ".env"),
-  import_path13.default.join(process.cwd(), ".env"),
-  import_path13.default.resolve(".env")
-];
-for (const envPath of dotenvCandidates) {
-  if (import_fs14.default.existsSync(envPath)) {
-    const loaded = import_dotenv2.default.config({ path: envPath });
-    if (loaded.error) {
-      console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
-    } else {
-      console.log(`[Config] dotenv loaded: ${envPath}`);
-    }
-  }
-}
-import_dotenv2.default.config();
-console.log(
-  `[Config] APP_ROOT=${APP_ROOT9} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
-);
-setProductsDiskAppRoot(APP_ROOT9);
-console.log(
-  `[Products] storage=${isProductsDiskMode() ? "disk" : "mongo"} path=${getProductsDiskPath()}`
-);
-function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
-    const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs14.default.writeFileSync(
-      import_path13.default.join(APP_ROOT9, "cpanel_error_log.txt"),
-      `${kind}: ${stack}
----
-${(/* @__PURE__ */ new Date()).toISOString()}
-`
-    );
+    const metaUrl = typeof import_meta !== "undefined" ? String(import_meta?.url || "") : "";
+    if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
+  return import_path13.default.resolve(process.cwd(), "server.cjs");
 }
-process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
-process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
-var WAYBILLS_DIR = import_path13.default.join(APP_ROOT9, "storage", "waybills");
-var LEGACY_PUBLIC_PRINTS_DIR = import_path13.default.join(APP_ROOT9, "public", "prints");
-var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
-var LABELS_DIR = import_path13.default.join(APP_ROOT9, "storage", "labels");
-var LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1e3;
-var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
-var labelMemCache = /* @__PURE__ */ new Map();
-var LABEL_MEM_MAX_ENTRIES = 48;
-var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
-function ensureLabelsDir() {
-  try {
-    if (!import_fs14.default.existsSync(LABELS_DIR)) import_fs14.default.mkdirSync(LABELS_DIR, { recursive: true });
-  } catch (err) {
-    console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
-  }
-}
-function assertLabelsDirWritable() {
-  ensureLabelsDir();
-  const probe = import_path13.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
-  try {
-    import_fs14.default.writeFileSync(probe, "ok");
-    import_fs14.default.unlinkSync(probe);
-  } catch (err) {
-    console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
-    throw err instanceof Error ? err : new Error(String(err));
-  }
-}
-function safeLabelFilename(raw) {
-  const base = import_path13.default.basename(String(raw || "").trim());
-  if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
-  return base;
-}
-function isPdfBuffer(buffer, contentType) {
-  if (!buffer || buffer.length < 5) return false;
-  if (buffer.subarray(0, 4).toString() === "%PDF") return true;
-  return false;
-}
-function getLabelMemTotalBytes() {
-  let total = 0;
-  for (const val of labelMemCache.values()) total += val.buf.length;
-  return total;
-}
-function evictLabelMemIfNeeded() {
-  while (labelMemCache.size > 0 && (labelMemCache.size >= LABEL_MEM_MAX_ENTRIES || getLabelMemTotalBytes() >= LABEL_MEM_MAX_BYTES)) {
-    let oldestKey = null;
-    let oldestExp = Infinity;
-    for (const [key, val] of labelMemCache) {
-      if (val.expires < oldestExp) {
-        oldestExp = val.expires;
-        oldestKey = key;
-      }
-    }
-    if (!oldestKey) break;
-    labelMemCache.delete(oldestKey);
-    console.log(
-      `[Labels] Evict RAM ${oldestKey} (entries=${labelMemCache.size}, bytes\u2248${getLabelMemTotalBytes()})`
-    );
-  }
-}
-function removeExistingLabelFilesForOrderSns(orderSns) {
-  ensureLabelsDir();
-  const sns = [...new Set(orderSns.map((s2) => String(s2 || "").replace(/[^a-zA-Z0-9_-]/g, "")).filter(Boolean))];
-  if (sns.length === 0) return 0;
-  let deleted = 0;
-  try {
-    for (const name of import_fs14.default.readdirSync(LABELS_DIR)) {
-      if (!/\.pdf$/i.test(name)) continue;
-      const hit = sns.some(
-        (sn) => name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
-      );
-      if (!hit) continue;
-      try {
-        import_fs14.default.unlinkSync(import_path13.default.join(LABELS_DIR, name));
-        labelMemCache.delete(name);
-        deleted += 1;
-      } catch {
-      }
-    }
-  } catch (err) {
-    console.warn("[Labels] Kh\xF4ng qu\xE9t \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c \u0111\u1EC3 ghi \u0111\xE8:", err);
-  }
-  return deleted;
-}
-function putLabelMem(filename, buffer, contentType) {
-  const safe = safeLabelFilename(filename);
-  if (!safe) throw new Error(`T\xEAn file v\u1EADn \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7: ${filename}`);
-  console.log(`[Labels] B\u1EAFt \u0111\u1EA7u l\u01B0u PDF: ${safe}, size=${buffer?.length || 0}, type=${contentType || ""}`);
-  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
-    console.error(`[Labels] T\u1EEA CH\u1ED0I ghi file r\u1ED7ng: ${filename}, type=${contentType || ""}`);
-    throw new Error("Buffer PDF r\u1ED7ng \u2014 kh\xF4ng ghi file v\xE0 kh\xF4ng tr\u1EA3 URL.");
-  }
-  if (buffer.length < 64) {
-    console.error(
-      `[Labels] Buffer qu\xE1 nh\u1ECF (${buffer.length} bytes), head=${buffer.subarray(0, Math.min(20, buffer.length)).toString("hex")}`
-    );
-    throw new Error(`Buffer PDF kh\xF4ng h\u1EE3p l\u1EC7 (ch\u1EC9 ${buffer.length} bytes).`);
-  }
-  if (!isPdfBuffer(buffer, contentType)) {
-    console.error(
-      `[Labels] Kh\xF4ng ph\u1EA3i PDF: ${filename}, size=${buffer.length}, head=${buffer.subarray(0, 20).toString("hex")}`
-    );
-    throw new Error("D\u1EEF li\u1EC7u v\u1EADn \u0111\u01A1n t\u1EEB Shopee kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7.");
-  }
-  try {
-    ensureLabelsDir();
-    assertLabelsDirWritable();
-    evictLabelMemIfNeeded();
-    cleanupExpiredLabelFiles();
-    const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
-    if (snMatch?.[1]) removeExistingLabelFilesForOrderSns([snMatch[1]]);
-    const dest = import_path13.default.join(LABELS_DIR, safe);
-    console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
-    import_fs14.default.writeFileSync(dest, buffer);
-    if (!import_fs14.default.existsSync(dest)) {
-      throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file kh\xF4ng t\u1ED3n t\u1EA1i sau writeFileSync: ${dest}`);
-    }
-    const st = import_fs14.default.statSync(dest);
-    if (!st.isFile() || st.size <= 0) {
-      try {
-        import_fs14.default.unlinkSync(dest);
-      } catch {
-      }
-      throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file tr\xEAn \u0111\u0129a r\u1ED7ng: ${dest}`);
-    }
-    if (st.size !== buffer.length) {
-      console.warn(`[Labels] C\u1EA3nh b\xE1o size l\u1EC7ch: buffer=${buffer.length} disk=${st.size} \u2192 ${dest}`);
-    }
-    const head = Buffer.alloc(5);
-    const fd = import_fs14.default.openSync(dest, "r");
-    try {
-      import_fs14.default.readSync(fd, head, 0, 5, 0);
-    } finally {
-      import_fs14.default.closeSync(fd);
-    }
-    if (head.toString("utf8", 0, 4) !== "%PDF") {
-      try {
-        import_fs14.default.unlinkSync(dest);
-      } catch {
-      }
-      throw new Error(`File ghi ra kh\xF4ng c\xF2n l\xE0 PDF h\u1EE3p l\u1EC7: ${safe}`);
-    }
-    labelMemCache.set(safe, {
-      buf: buffer,
-      expires: Date.now() + LABEL_RAM_TTL_MS,
-      contentType: "application/pdf"
-    });
-    console.log(`[Labels] K\u1EBFt qu\u1EA3: OK \u2014 Saved ${safe} (${st.size} bytes) \u2192 ${dest}`);
-    return safe;
-  } catch (err) {
-    console.error(`[Labels] K\u1EBFt qu\u1EA3: L\u1ED7i \u2014 ${err?.message || err}`);
-    throw err;
-  }
-}
-function getLabelMem(filename) {
-  const safe = safeLabelFilename(filename);
-  if (!safe) return null;
-  const ram = labelMemCache.get(safe);
-  if (ram) {
-    if (ram.expires < Date.now() || !ram.buf?.length || !isPdfBuffer(ram.buf)) {
-      labelMemCache.delete(safe);
-    } else {
-      return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
-    }
-  }
-  const filePath = import_path13.default.join(LABELS_DIR, safe);
-  try {
-    if (!import_fs14.default.existsSync(filePath)) return null;
-    const st = import_fs14.default.statSync(filePath);
-    if (!st.isFile() || st.size <= 0) {
-      console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
-      try {
-        import_fs14.default.unlinkSync(filePath);
-      } catch {
-      }
-      return null;
-    }
-    const buf = import_fs14.default.readFileSync(filePath);
-    if (!buf.length || !isPdfBuffer(buf)) return null;
-    labelMemCache.set(safe, {
-      buf,
-      expires: Date.now() + LABEL_RAM_TTL_MS,
-      contentType: "application/pdf"
-    });
-    return { buf, contentType: "application/pdf" };
-  } catch (err) {
-    console.warn(`[Labels] \u0110\u1ECDc \u0111\u0129a l\u1ED7i ${safe}:`, err?.message || err);
-    return null;
-  }
-}
-function hasLabelMem(filename) {
-  const hit = getLabelMem(filename);
-  return Boolean(hit && hit.buf.length > 0 && isPdfBuffer(hit.buf));
-}
-function assertLabelFileReady(filename) {
-  const safe = safeLabelFilename(filename);
-  if (!safe) throw new Error(`T\xEAn file v\u1EADn \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7: ${filename}`);
-  const hit = getLabelMem(safe);
-  if (!hit || !hit.buf.length) {
-    throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng t\u1ED3n t\u1EA1i ho\u1EB7c r\u1ED7ng: ${safe}`);
-  }
-  if (!isPdfBuffer(hit.buf)) {
-    throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
-  }
-  const diskPath = import_path13.default.join(LABELS_DIR, safe);
-  if (import_fs14.default.existsSync(diskPath)) {
-    const st = import_fs14.default.statSync(diskPath);
-    if (st.size <= 0) {
-      throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
-    }
-  }
-  return { safe, size: hit.buf.length };
-}
-function cleanupExpiredLabelFiles() {
-  let deleted = 0;
-  const now = Date.now();
-  for (const [key, val] of labelMemCache) {
-    if (val.expires < now) {
-      labelMemCache.delete(key);
-      deleted += 1;
-    }
-  }
-  try {
-    ensureLabelsDir();
-    const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs14.default.readdirSync(LABELS_DIR)) {
-      if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path13.default.join(LABELS_DIR, name);
-      try {
-        const st = import_fs14.default.statSync(full);
-        if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs14.default.unlinkSync(full);
-          labelMemCache.delete(name);
-          deleted += 1;
-        }
-      } catch {
-      }
-    }
-  } catch (err) {
-    console.warn("[Labels Cleanup] l\u1ED7i qu\xE9t th\u01B0 m\u1EE5c:", err);
-  }
-  if (deleted > 0) {
-    console.log(`[Labels Cleanup] \u0110\xE3 x\xF3a ${deleted} m\u1EE5c h\u1EBFt h\u1EA1n/r\u1ED7ng.`);
-  }
-  return deleted;
-}
-function cleanupExpiredPrintFiles() {
-  return cleanupExpiredLabelFiles();
-}
-function wipeLegacyPublicPrints() {
-  let deleted = 0;
-  for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
-    try {
-      if (!import_fs14.default.existsSync(dir)) continue;
-      for (const name of import_fs14.default.readdirSync(dir)) {
-        if (!WAYBILL_FILE_RE.test(name)) continue;
-        try {
-          import_fs14.default.unlinkSync(import_path13.default.join(dir, name));
-          deleted += 1;
-        } catch {
-        }
-      }
-    } catch (err) {
-      console.warn(`[Labels] Kh\xF4ng d\u1ECDn \u0111\u01B0\u1EE3c legacy ${dir}:`, err);
-    }
-  }
-  if (deleted > 0) {
-    console.log(`[Labels] \u0110\xE3 x\xF3a ${deleted} file legacy (public/prints|storage/waybills).`);
-  }
-  return deleted;
-}
-function scheduleWaybillsCleanup() {
-  setImmediate(() => {
-    try {
-      cleanupExpiredLabelFiles();
-      wipeLegacyPublicPrints();
-    } catch (err) {
-      console.warn("[Labels Cleanup] l\u1ED7i:", err);
-    }
-  });
-}
+var shopeeHttpDispatcher = void 0;
 try {
-  assertLabelsDirWritable();
-  console.log(`[Labels] LABELS_DIR=${LABELS_DIR} (writable OK)`);
-} catch (err) {
-  console.error("[Labels] BOOT: storage/labels kh\xF4ng ghi \u0111\u01B0\u1EE3c \u2014 in \u0111\u01A1n s\u1EBD th\u1EA5t b\u1EA1i:", err);
-}
-wipeLegacyPublicPrints();
-cleanupExpiredLabelFiles();
-var labelDiskCleanupRunning = false;
-var labelDailySweepAt = 0;
-var labelDiskCleanupTimer = setInterval(() => {
-  if (labelDiskCleanupRunning) return;
-  labelDiskCleanupRunning = true;
+  const nodeRequire = (0, import_node_module.createRequire)(resolveCreateRequireFilename());
+  let undiciMod;
   try {
-    const n = cleanupExpiredLabelFiles();
-    const now = Date.now();
-    if (now - labelDailySweepAt >= 24 * 60 * 60 * 1e3) {
-      labelDailySweepAt = now;
-      wipeLegacyPublicPrints();
-      console.log(`[Labels Cleanup] Daily sweep xong \u2014 deleted\u2248${n}, TTL=24h, dir=${LABELS_DIR}`);
-    }
-  } catch (err) {
-    console.warn("[Labels Cleanup] setInterval l\u1ED7i:", err);
-  } finally {
-    labelDiskCleanupRunning = false;
+    undiciMod = nodeRequire("node:undici");
+  } catch {
+    undiciMod = nodeRequire("undici");
   }
-}, 60 * 60 * 1e3);
-if (typeof labelDiskCleanupTimer.unref === "function") {
-  labelDiskCleanupTimer.unref();
+  const ShopeeUndiciAgent = undiciMod?.Agent;
+  if (typeof ShopeeUndiciAgent !== "function") {
+    throw new Error("undici.Agent kh\xF4ng kh\u1EA3 d\u1EE5ng");
+  }
+  shopeeHttpDispatcher = new ShopeeUndiciAgent({
+    connect: {
+      rejectUnauthorized: true,
+      minVersion: SHOPEE_TLS_MIN_VERSION,
+      maxVersion: SHOPEE_TLS_MAX_VERSION
+    },
+    connections: 3,
+    pipelining: 0,
+    keepAliveTimeout: 3e4
+  });
+  console.log("[Shopee HTTP] undici Agent OK \u2014 TLS dispatcher s\u1EB5n s\xE0ng cho sync Shopee.");
+} catch (undiciErr) {
+  console.info(
+    "[Shopee HTTP] D\xF9ng fetch t\xEDch h\u1EE3p c\u1EE7a Node (kh\xF4ng d\xF9ng undici dispatcher):",
+    undiciErr?.message || undiciErr
+  );
+  shopeeHttpDispatcher = void 0;
 }
-function serveLabelPdfFromMem(filename, res) {
+async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let hardTimer;
   try {
-    const safe = safeLabelFilename(decodeURIComponent(String(filename || "")));
-    if (!safe) {
-      res.status(400).type("text/plain").send("T\xEAn file v\u1EADn \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
-      return "invalid";
-    }
-    const hit = getLabelMem(safe);
-    if (!hit || !hit.buf.length) {
-      console.warn(`[Labels] 404 \u2014 kh\xF4ng th\u1EA5y file: ${safe} (dir=${LABELS_DIR})`);
-      return "not_found";
-    }
-    if (!isPdfBuffer(hit.buf, hit.contentType)) {
-      console.error(
-        `[Labels] Buffer kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}, size=${hit.buf.length}, head=${hit.buf.subarray(0, 20).toString("hex")}`
+    const fetchInit = {
+      ...init,
+      signal: controller.signal
+    };
+    if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
+    const fetchPromise = fetch(url, fetchInit);
+    const hardTimeoutPromise = new Promise((_, reject) => {
+      hardTimer = setTimeout(
+        () => reject(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`)),
+        timeoutMs + 1e3
       );
-      res.status(415).type("text/plain").send("File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7.");
-      return "invalid";
+    });
+    return await Promise.race([fetchPromise, hardTimeoutPromise]);
+  } catch (error) {
+    if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
+      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms \u2014 ${String(url).slice(0, 180)}`);
+      throw new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`);
     }
-    res.status(200);
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
-    res.setHeader("Content-Length", String(hit.buf.length));
-    res.setHeader("Cache-Control", "private, max-age=300");
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.end(hit.buf);
-    console.log(`[Labels] Served PDF /api/public/labels/${safe} (${hit.buf.length} bytes)`);
-    return "sent";
-  } catch (err) {
-    console.error(`[Labels] serveLabelPdf l\u1ED7i:`, err?.message || err);
-    if (!res.headersSent) {
-      res.status(500).type("text/plain").send("L\u1ED7i \u0111\u1ECDc file v\u1EADn \u0111\u01A1n PDF.");
-    }
-    return "invalid";
+    console.error(
+      `[Shopee HTTP] FETCH L\u1ED6I \u2014 ${String(url).slice(0, 120)}:`,
+      error?.message || error
+    );
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    if (hardTimer) clearTimeout(hardTimer);
   }
 }
-var APP_BASE_URL2 = resolveAppBaseUrl();
-function resolveLabelsPublicBaseUrl() {
-  const explicit = String(
-    process.env.LABELS_BASE_URL || process.env.CPANEL_PUBLIC_URL || process.env.CPANEL_BACKEND_URL || ""
-  ).trim();
-  if (explicit) return explicit.replace(/\/$/, "");
-  return "https://api.linhkienamthanh.net";
+function shopeeExponentialBackoffMs(attempt, baseMs = SHOPEE_API_RETRY_BASE_MS) {
+  return Math.min(3e4, baseMs * Math.pow(2, attempt));
 }
-function absoluteLabelUrl(relativePath) {
-  if (!relativePath) return null;
-  let fn = "";
-  if (/^https?:\/\//i.test(relativePath)) {
+var shopeeRetryTelemetry = { retries: 0, rateLimits: 0, exhausted: 0 };
+function snapshotShopeeRetryTelemetry() {
+  return { ...shopeeRetryTelemetry };
+}
+function diffShopeeRetryTelemetry(before) {
+  return {
+    retries: shopeeRetryTelemetry.retries - before.retries,
+    rate_limits: shopeeRetryTelemetry.rateLimits - before.rateLimits,
+    exhausted_retries: shopeeRetryTelemetry.exhausted - before.exhausted,
+    max_retries: SHOPEE_API_MAX_RETRY
+  };
+}
+function isShopeeRetryableNetworkError(err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
+}
+function isShopeeRetryableHttpStatus(status) {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
+async function runInShopeeBatches(items, processor, opts) {
+  if (items.length === 0) return;
+  const batchSize = opts?.batchSize ?? SHOPEE_PRODUCT_BATCH_SIZE;
+  const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
+  const batchPauseMs = opts?.batchPauseMs ?? SHOPEE_PRODUCT_BATCH_PAUSE_MS;
+  for (let batchStart = 0; batchStart < items.length; batchStart += batchSize) {
+    const batch = items.slice(batchStart, batchStart + batchSize);
+    const batchNo = Math.floor(batchStart / batchSize) + 1;
+    const totalBatches = Math.ceil(items.length / batchSize);
+    console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
+    for (let j = 0; j < batch.length; j++) {
+      await processor(batch[j], batchStart + j);
+      if (j < batch.length - 1) await sleep2(itemDelayMs);
+    }
+    if (batchStart + batchSize < items.length) {
+      console.log(`[Shopee Throttle] Ngh\u1EC9 ${batchPauseMs}ms tr\u01B0\u1EDBc batch k\u1EBF...`);
+      await sleep2(batchPauseMs);
+    }
+  }
+}
+function shopeeSyncDelay(ms = SHOPEE_SYNC_BATCH_DELAY_MS) {
+  return sleep2(ms);
+}
+function shopeeApiErrorResult(err, context, httpStatus) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(`[Shopee API] ${context}:`, message);
+  const status = httpStatus || (/HTTP\s*401|\b401\b|invalid_access_token|unauthorized|auth/i.test(message) ? 401 : /HTTP\s*429|\b429\b|rate.?limit|too many/i.test(message) ? 429 : /HTTP\s*504|\b504\b|timeout|timed out|AbortError/i.test(message) ? 504 : void 0);
+  return {
+    error: status === 401 ? "unauthorized" : status === 429 ? "rate_limit_exceeded" : status === 504 ? "gateway_timeout" : "shopee_api_error",
+    message: formatShopeeApiError({ error: "shopee_api_error", message: `${context}: ${message}` }, status),
+    httpStatus: status
+  };
+}
+function formatShopeeApiError(json2, httpStatus) {
+  const parts = [json2?.message, json2?.error, json2?.msg].map((v) => String(v ?? "").trim()).filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
+  const status = typeof httpStatus === "number" && httpStatus > 0 ? httpStatus : typeof json2?.httpStatus === "number" && json2.httpStatus > 0 ? json2.httpStatus : void 0;
+  if (status === 401) {
+    return parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
+  }
+  if (status === 429) {
+    return parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
+  }
+  if (status === 504) {
+    return parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0111\u1ED3ng b\u1ED9 nhanh (2 gi\u1EDD).";
+  }
+  if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
+    return parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9 v\xE0 th\u1EED l\u1EA1i.";
+  }
+  if (parts.length > 0) return parts.join(" \u2014 ");
+  if (status && status >= 400) return `Shopee API l\u1ED7i HTTP ${status}`;
+  return "L\u1ED7i Shopee API kh\xF4ng x\xE1c \u0111\u1ECBnh";
+}
+function isShopeeRateLimited(httpStatus, json2) {
+  if (httpStatus === 429) return true;
+  const text = `${json2?.error || ""} ${json2?.message || ""}`.toLowerCase();
+  return /rate.?limit|too many request|api_call_limit|exceed/.test(text);
+}
+async function shopeeFetchJsonWithRetry(url, context, opts) {
+  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res;
+    let rawText = "";
     try {
-      fn = decodeURIComponent(new URL(relativePath).pathname.split("/").pop() || "");
-    } catch {
-      return null;
+      res = await fetchWithTimeout(url);
+      rawText = await res.text();
+    } catch (err) {
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        shopeeRetryTelemetry.retries++;
+        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
+        await sleep2(waitMs);
+        continue;
+      }
+      const netMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
     }
-  } else {
-    const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
-    const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || import_path13.default.basename(p));
+    let json2;
+    try {
+      json2 = rawText ? JSON.parse(rawText) : {};
+    } catch (parseErr) {
+      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      return {
+        httpStatus: res.status,
+        json: {
+          error: "json_parse_error",
+          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
+        }
+      };
+    }
+    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      console.warn(
+        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+      );
+      await sleep2(waitMs);
+      continue;
+    }
+    if (res.status === 401 || res.status === 429 || res.status === 504 || res.status >= 400 && json2?.error) {
+      json2.message = formatShopeeApiError(json2, res.status);
+      json2.httpStatus = res.status;
+    }
+    return { json: json2, httpStatus: res.status };
   }
-  if (!safeLabelFilename(fn)) return null;
-  try {
-    assertLabelFileReady(fn);
-  } catch (err) {
-    console.error(`[Labels] absoluteLabelUrl T\u1EEA CH\u1ED0I URL (file ch\u01B0a s\u1EB5n s\xE0ng): ${fn} \u2014 ${err?.message || err}`);
-    return null;
-  }
-  const url = `${resolveLabelsPublicBaseUrl()}/api/public/labels/${encodeURIComponent(fn)}`;
-  console.log(`[Labels] URL tr\u1EA3 v\u1EC1 cho FE: ${url}`);
-  return url;
+  shopeeRetryTelemetry.exhausted++;
+  return {
+    httpStatus: 429,
+    json: {
+      error: "rate_limit_exceeded",
+      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429),
+      httpStatus: 429
+    }
+  };
 }
+async function shopeePostJsonWithRetry(url, body, context, opts) {
+  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
+  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let res;
+    let rawText = "";
+    try {
+      res = await fetchWithTimeout(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      rawText = await res.text();
+    } catch (err) {
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
+        shopeeRetryTelemetry.retries++;
+        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
+        await sleep2(waitMs);
+        continue;
+      }
+      const netMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
+    }
+    let json2;
+    try {
+      json2 = rawText ? JSON.parse(rawText) : {};
+    } catch (parseErr) {
+      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+      return {
+        httpStatus: res.status,
+        json: {
+          error: "json_parse_error",
+          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
+        }
+      };
+    }
+    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
+      shopeeRetryTelemetry.retries++;
+      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
+      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
+      console.warn(
+        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
+      );
+      await sleep2(waitMs);
+      continue;
+    }
+    if (json2?.error && !json2.message) {
+      json2.message = formatShopeeApiError(json2, res.status);
+    }
+    return { json: json2, httpStatus: res.status };
+  }
+  shopeeRetryTelemetry.exhausted++;
+  return {
+    httpStatus: 429,
+    json: {
+      error: "rate_limit_exceeded",
+      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429)
+    }
+  };
+}
+
+// services/shopee/auth.js
+var APP_ROOT9 = resolveAppRoot();
+var APP_BASE_URL2 = resolveAppBaseUrl();
 function resolveShopeeCallbackUrl2() {
   const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
   if (explicit) return explicit;
@@ -102661,10 +102487,19 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path13.default.resolve(APP_ROOT9, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path13.default.resolve(APP_ROOT9, "data", "shopee_oauth_last.json");
+var SHOPEE_TOKENS_PATH = import_path14.default.resolve(APP_ROOT9, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path14.default.resolve(APP_ROOT9, "data", "shopee_oauth_last.json");
+var deps12 = {
+  syncOAuthShopsToChannelSettings: () => {
+  },
+  logOAuthSaveError: () => {
+  }
+};
+function initShopeeAuth(partial) {
+  deps12 = { ...deps12, ...partial };
+}
 function ensureDataDirs() {
-  const dataDir = import_path13.default.join(APP_ROOT9, "data");
+  const dataDir = import_path14.default.join(APP_ROOT9, "data");
   import_fs14.default.mkdirSync(dataDir, { recursive: true });
   if (!import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)) {
     import_fs14.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
@@ -102690,19 +102525,21 @@ function loadLastOAuthAudit() {
     return null;
   }
 }
-ensureDataDirs();
-try {
-  const normalized = normalizeTokenStore(loadShopeeTokens());
-  if (Object.keys(normalized).length > 0) {
-    saveShopeeTokens(normalized);
-    console.log(`[Boot] Normalized shopee_tokens.json keys: [${Object.keys(normalized).join(", ")}]`);
+function bootShopeeAuth() {
+  ensureDataDirs();
+  try {
+    const normalized = normalizeTokenStore(loadShopeeTokens());
+    if (Object.keys(normalized).length > 0) {
+      saveShopeeTokens(normalized);
+      console.log(`[Boot] Normalized shopee_tokens.json keys: [${Object.keys(normalized).join(", ")}]`);
+    }
+  } catch (error) {
+    console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
   }
-} catch (error) {
-  console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
+  console.log(
+    `[Boot] APP_ROOT=${APP_ROOT9} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
+  );
 }
-console.log(
-  `[Boot] APP_ROOT=${APP_ROOT9} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
-);
 function loadShopeeTokens() {
   try {
     if (!import_fs14.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
@@ -102740,7 +102577,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path13.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path14.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -102784,7 +102621,7 @@ function saveShopeeTokens(tokensToWrite) {
     );
     return true;
   } catch (error) {
-    logOAuthSaveError("saveShopeeTokens", error);
+    deps12.logOAuthSaveError("saveShopeeTokens", error);
     console.error(
       "[Shopee Tokens] fs.writeFileSync \u2014 L\u1ED6I GHI FILE",
       JSON.stringify({
@@ -102989,7 +102826,7 @@ async function completeShopeeOAuthFlow(code, params) {
     });
     tokenResult.saved_shop_ids = savedIds;
     if (savedIds.length > 0) {
-      syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
+      deps12.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
     }
   }
   const shopMismatch = Boolean(
@@ -103039,7 +102876,7 @@ function buildShopeeAuthPartnerUrl(shopId) {
 function saveShopeeTokenForShop(shopId, record) {
   const key = normalizeShopIdKey(shopId);
   if (!key) return;
-  let tokens = normalizeTokenStore(loadShopeeTokens());
+  const tokens = normalizeTokenStore(loadShopeeTokens());
   const existing = tokens[key];
   tokens[key] = buildShopeeTokenRecord(
     key,
@@ -103211,7 +103048,7 @@ async function exchangeShopeeCodeForToken(code, opts) {
     });
     rawText = await res.text();
   } catch (error) {
-    logOAuthSaveError("exchangeShopeeCodeForToken fetch", error);
+    deps12.logOAuthSaveError("exchangeShopeeCodeForToken fetch", error);
     return {
       error: "network_error",
       message: error?.message || "Kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c Shopee token/get"
@@ -103285,17 +103122,16 @@ async function refreshShopeeToken(shopId, refreshToken) {
     );
     return normalized;
   } catch (error) {
-    logOAuthSaveError(`refreshShopeeToken shop_id=${shopId}`, error);
+    deps12.logOAuthSaveError(`refreshShopeeToken shop_id=${shopId}`, error);
     return { error: "refresh_failed", message: error?.message || String(error) };
   }
 }
-var SHOPEE_REAUTH_REQUIRED_MESSAGE = "Vui l\xF2ng v\xE0o m\u1EE5c C\u1EA5u h\xECnh \u0111\u1EC3 li\xEAn k\u1EBFt l\u1EA1i gian h\xE0ng Shopee (Token \u0111\xE3 h\u1EBFt h\u1EA1n ho\xE0n to\xE0n)";
 var ShopeeRefreshTokenExpiredError = class extends Error {
   constructor(shopId) {
     super(SHOPEE_REAUTH_REQUIRED_MESSAGE);
-    this.code = "shopee_reauth_required";
     this.name = "ShopeeRefreshTokenExpiredError";
     this.shopId = shopId;
+    this.code = "shopee_reauth_required";
   }
 };
 function isShopeeInvalidTokenError(error, message) {
@@ -103322,7 +103158,7 @@ function readShopeeAccessTokenIfFresh(shopId) {
   if (obtainedAt > 0 && now - obtainedAt >= expireIn - 60) return null;
   return String(record.access_token);
 }
-async function refreshShopeeAccessTokenLocked(shopId, opts) {
+async function refreshShopeeAccessTokenLocked2(shopId, opts) {
   const key = normalizeShopIdKey(shopId);
   if (!key) throw new ShopeeRefreshTokenExpiredError(String(shopId || "?"));
   const inflight = shopeeTokenRefreshLocks.get(key);
@@ -103391,7 +103227,7 @@ async function getShopeeAccessTokenForApi(shopKey, opts) {
   const apiShopId = resolveShopeeApiShopId(record, fileKey);
   try {
     if (opts?.forceRefresh) {
-      const token2 = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+      const token2 = await refreshShopeeAccessTokenLocked2(fileKey, { force: true });
       return { token: token2, apiShopId, fileKey };
     }
     const token = await getValidShopeeAccessToken(fileKey);
@@ -103455,7 +103291,7 @@ async function getValidShopeeAccessToken(shopId) {
   }
   try {
     console.log(`[Shopee API] access_token c\u1EE7a shop_id=${key} \u0111\xE3 h\u1EBFt h\u1EA1n, \u0111ang refresh (mutex)...`);
-    return await refreshShopeeAccessTokenLocked(key, { force: false });
+    return await refreshShopeeAccessTokenLocked2(key, { force: false });
   } catch (err) {
     if (err instanceof ShopeeRefreshTokenExpiredError) {
       console.error(`[Shopee API] ${err.message}`);
@@ -103465,6 +103301,263 @@ async function getValidShopeeAccessToken(shopId) {
     return null;
   }
 }
+function resolveShopeeTokenShopId(requested) {
+  const tokens = loadShopeeTokens();
+  const keys = Object.keys(tokens);
+  if (!keys.length) return null;
+  const req = String(requested || "").trim();
+  if (req && tokens[req]) return req;
+  if (req) {
+    const digits = req.match(/(\d{5,})/)?.[1];
+    if (digits && tokens[digits]) return digits;
+  }
+  return keys[0];
+}
+function describeShopeeTokenFailure(shopKey) {
+  const tokens = loadShopeeTokens();
+  const key = normalizeShopIdKey(shopKey);
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record) {
+    return {
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+    };
+  }
+  if (!record.refresh_token) {
+    return {
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+    };
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
+  if (isExpired) {
+    return {
+      error: "shopee_reauth_required",
+      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+    };
+  }
+  return {
+    error: "shopee_reauth_required",
+    message: SHOPEE_REAUTH_REQUIRED_MESSAGE
+  };
+}
+
+// controllers/shopeeAuthController.js
+var APP_ROOT10 = resolveAppRoot();
+var deps13 = {
+  logOAuthSaveError: (ctx, err) => console.error(ctx, err)
+};
+function initShopeeAuthController(partial) {
+  deps13 = { ...deps13, ...partial };
+}
+function logShopeeIngress(prefix, req) {
+  console.log(
+    prefix,
+    JSON.stringify({
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      method: req.method,
+      url: req.url,
+      query: req.query || {},
+      headers: req.headers || {},
+      body: req.body ?? null
+    })
+  );
+}
+async function oauthComplete(req, res) {
+  console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
+  logShopeeIngress("[Shopee OAuth Complete]", req);
+  const code = queryParamOne(req.query.code);
+  const shopIdRaw = queryParamOne(req.query.shop_id);
+  const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
+  const expectedShop = queryParamOne(req.query.expected_shop);
+  console.log(
+    "[Shopee OAuth Complete] REQUEST (Vercel proxy JSON)",
+    JSON.stringify({
+      code_present: Boolean(code),
+      shop_id_raw: shopIdRaw || null,
+      main_account_id_raw: mainAccountIdRaw || null,
+      expected_shop: expectedShop || null,
+      SHOPEE_TOKENS_PATH
+    })
+  );
+  if (!code || !shopIdRaw && !mainAccountIdRaw) {
+    return res.status(200).type("text/plain; charset=utf-8").send(SHOPEE_CALLBACK_IDLE_MSG);
+  }
+  try {
+    const result = await completeShopeeOAuthFlow(code, {
+      shopIdRaw: shopIdRaw || void 0,
+      mainAccountIdRaw: mainAccountIdRaw || void 0,
+      expectedShopId: expectedShop || void 0
+    });
+    console.log("[Shopee OAuth Complete] K\u1EBET QU\u1EA2", JSON.stringify(result));
+    return res.status(result.success ? 200 : 400).json({
+      ...result,
+      message: result.success ? `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho shop ${result.oauth_shop_id}.` : result.message || result.error || "OAuth th\u1EA5t b\u1EA1i",
+      tokens_path: SHOPEE_TOKENS_PATH
+    });
+  } catch (error) {
+    deps13.logOAuthSaveError("Shopee OAuth Complete", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "unknown_error"
+    });
+  }
+}
+async function oauthCallback(req, res) {
+  console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
+  logShopeeIngress("[Shopee Callback]", req);
+  const code = queryParamOne(req.query.code);
+  const shopIdRaw = queryParamOne(req.query.shop_id);
+  const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
+  const expectedShop = queryParamOne(req.query.expected_shop);
+  console.log(
+    "[Shopee Callback] REQUEST NH\u1EACN \u0110\u01AF\u1EE2C",
+    JSON.stringify({
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      method: req.method,
+      url: req.url,
+      code_present: Boolean(code),
+      code_length: code.length,
+      shop_id_raw: shopIdRaw || null,
+      main_account_id_raw: mainAccountIdRaw || null,
+      expected_shop: expectedShop || null,
+      query: req.query || {},
+      SHOPEE_TOKENS_PATH,
+      SHOPEE_CALLBACK_URL: SHOPEE_CALLBACK_URL2,
+      APP_ROOT: APP_ROOT10,
+      cwd: process.cwd()
+    })
+  );
+  if (!code || !shopIdRaw && !mainAccountIdRaw) {
+    console.log("[Shopee Callback] Truy c\u1EADp tr\u1EF1c ti\u1EBFp \u2014 thi\u1EBFu code/shop_id");
+    return res.status(200).type("text/plain; charset=utf-8").send(SHOPEE_CALLBACK_IDLE_MSG);
+  }
+  const oauthShopId = normalizeShopIdKey(shopIdRaw);
+  const mainAccountId = normalizeShopIdKey(mainAccountIdRaw);
+  if (!oauthShopId && !mainAccountId) {
+    console.error(
+      `[Shopee Callback] shop_id/main_account_id kh\xF4ng h\u1EE3p l\u1EC7: shop_id=${shopIdRaw}, main_account_id=${mainAccountIdRaw}`
+    );
+    return res.status(400).json({
+      success: false,
+      error: "invalid_shop_id",
+      message: `Shop ID / Main Account ID kh\xF4ng h\u1EE3p l\u1EC7`,
+      tokens_path: SHOPEE_TOKENS_PATH
+    });
+  }
+  try {
+    const result = await completeShopeeOAuthFlow(code, {
+      shopIdRaw: shopIdRaw || void 0,
+      mainAccountIdRaw: mainAccountIdRaw || void 0,
+      expectedShopId: expectedShop || void 0
+    });
+    if (!result.success) {
+      console.error(`[Shopee Callback] \u0110\u1ED5i code th\u1EA5t b\u1EA1i:`, result.error, result.message);
+      if (shouldOAuthRedirectToFrontend(req)) {
+        return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
+      }
+      return res.status(400).json({
+        ...result,
+        message: result.message || result.error || "token_exchange_failed",
+        tokens_path: SHOPEE_TOKENS_PATH
+      });
+    }
+    console.log(
+      `[Shopee Callback] OAuth OK. Token \u0111\xE3 l\u01B0u cho: [${result.saved_shop_ids.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`
+    );
+    if (shouldOAuthRedirectToFrontend(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
+    }
+    return res.status(200).json({
+      ...result,
+      message: result.message || `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${result.saved_shop_ids.join(", ")}].`,
+      tokens_path: SHOPEE_TOKENS_PATH,
+      callback_url: SHOPEE_CALLBACK_URL2
+    });
+  } catch (error) {
+    deps13.logOAuthSaveError("Shopee Callback", error);
+    saveOAuthAudit({
+      callback_shop_id: oauthShopId || mainAccountId || null,
+      main_account_id: mainAccountId || null,
+      success: false,
+      error: error?.message || "unknown_error",
+      tokens_path: SHOPEE_TOKENS_PATH,
+      app_root: APP_ROOT10
+    });
+    const failResult = {
+      success: false,
+      error: error?.message || "unknown_error",
+      message: error?.message || "L\u1ED7i x\u1EED l\xFD OAuth callback",
+      oauth_shop_id: oauthShopId
+    };
+    if (shouldOAuthRedirectToFrontend(req)) {
+      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
+    }
+    return res.status(500).json({
+      ...failResult,
+      tokens_path: SHOPEE_TOKENS_PATH
+    });
+  }
+}
+function webhookProbe(req, res) {
+  logShopeeIngress("[Shopee Webhook]", req);
+  console.log("[Shopee Webhook] GET verification probe \u2014 200 success");
+  res.status(200).type("text/plain; charset=utf-8").send("success");
+}
+async function listOauthShops(_req, res) {
+  ensureShopeeLinkedShopTokenKeys();
+  const tokens = loadShopeeTokens();
+  const shopIds = listShopeeSyncShopIds();
+  const details = shopIds.map((id) => {
+    const record = getShopeeTokenRecord(tokens, id);
+    return {
+      shop_id: id,
+      obtained_at: record?.obtained_at ?? null,
+      expire_in: record?.expire_in ?? null,
+      oauth_shop_id: record?.oauth_shop_id ?? null,
+      shop_id_list: record?.shop_id_list ?? [],
+      has_own_key: Boolean(tokens[id])
+    };
+  });
+  const lastOAuth = loadLastOAuthAudit();
+  return res.json({
+    success: true,
+    shopIds,
+    details,
+    tokensPath: SHOPEE_TOKENS_PATH,
+    appRoot: APP_ROOT10,
+    lastOAuth,
+    count: shopIds.length
+  });
+}
+async function getAuthUrl(req, res) {
+  if (!isShopeeConfigValid()) {
+    return res.status(500).json({
+      success: false,
+      error: "invalid_partner_config",
+      message: "SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY ch\u01B0a c\u1EA5u h\xECnh tr\xEAn backend cPanel."
+    });
+  }
+  const shopId = normalizeShopIdKey(String(req.query.shop_id || ""));
+  if (!shopId) {
+    return res.status(400).json({
+      success: false,
+      error: "shop_id_required",
+      message: "C\u1EA7n shop_id (VD: 241215004) \u0111\u1EC3 t\u1EA1o link \u1EE7y quy\u1EC1n OAuth."
+    });
+  }
+  return res.json({
+    success: true,
+    shop_id: shopId,
+    url: buildShopeeAuthPartnerUrl(shopId),
+    callback: SHOPEE_CALLBACK_URL2
+  });
+}
+
+// services/shopee/diagnostics.js
 async function runShopeeConnectivityDiagnostics(shopIdInput) {
   const steps = [];
   const maskedPartnerKey = SHOPEE_PARTNER_KEY ? `${SHOPEE_PARTNER_KEY.slice(0, 4)}\u2026${SHOPEE_PARTNER_KEY.slice(-4)}` : "";
@@ -103578,6 +103671,1563 @@ async function runShopeeConnectivityDiagnostics(shopIdInput) {
     return { ok: false, code, steps, shopId };
   }
 }
+
+// controllers/shopeeOrdersController.js
+var deps14 = {
+  createSyncJob: async () => ({ id: "" }),
+  finishSyncJob: async () => {
+  },
+  pullIncrementalOrdersFromShopee: async () => ({
+    success: false,
+    pulled: 0,
+    added: 0,
+    updated: 0,
+    shops: 0,
+    errors: [],
+    message: "not_initialized"
+  }),
+  invalidateOrdersRefreshCache: () => {
+  },
+  shopeeGetReturnList: async () => ({}),
+  shopeeGetReturnDetail: async () => ({}),
+  shopeeGetReverseTrackingInfo: async () => ({}),
+  extractShopeeReturnListRows: () => [],
+  parseShopeeReturnListMore: () => false,
+  fetchReturnShippingTrackingNumber: async () => ({ tracking: "", sources: {} }),
+  loadChannelSettings: () => ({ shops: [] }),
+  asShopeeArray: (v) => Array.isArray(v) ? v : [],
+  resolveConnectedShopDisplayName: () => "",
+  pullShopeeChannelListingsPage: async () => ({
+    rowsSaved: 0,
+    hasMore: false,
+    pageIndex: 0,
+    pageStats: { rowsInPage: 0 },
+    currentOffset: 0,
+    nextOffset: null,
+    skippedItems: []
+  }),
+  flushDbWrites: async () => {
+  },
+  readChannelListingsDb: async () => [],
+  refreshCache: async () => {
+  },
+  isMongoReady: () => false,
+  SHOPEE_ITEM_LIST_PAGE_SIZE: 10
+};
+function initShopeeOrdersController(partial) {
+  deps14 = { ...deps14, ...partial };
+}
+async function pullOrders(req, res) {
+  let jobId = "";
+  const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
+  try {
+    const job = await deps14.createSyncJob("shopee_orders_pull", String(req.user?.username || ""));
+    jobId = job.id;
+    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
+    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
+    const lookbackSec = Math.floor(hours * 60 * 60);
+    const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+    const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean) : shopIdsRaw ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean) : void 0;
+    console.log(
+      `[Orders Pull] POST /api/orders/pull lookback_hours=${hours}` + (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all")
+    );
+    const result = await deps14.pullIncrementalOrdersFromShopee({
+      lookbackSec,
+      reconcileActive: true,
+      shopIds: shopIds?.length ? shopIds : void 0
+    });
+    deps14.invalidateOrdersRefreshCache();
+    await deps14.finishSyncJob(
+      jobId,
+      result.success ? "succeeded" : "failed",
+      {
+        pulled: result.pulled,
+        added: result.added,
+        updated: result.updated,
+        shops: result.shops,
+        errors: result.errors.length,
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
+      },
+      result.success ? void 0 : result.message
+    );
+    return res.status(200).json({
+      success: result.success,
+      job_id: jobId,
+      pulled: result.pulled,
+      added: result.added,
+      updated: result.updated,
+      shops: result.shops,
+      errors: result.errors.slice(0, 20),
+      message: result.message,
+      truncatedShops: result.truncatedShops || 0,
+      maxOrderSnsPerShop: result.maxOrderSnsPerShop,
+      lookbackSec: result.lookbackSec,
+      elapsedMs: result.elapsedMs,
+      warnings: result.warnings || []
+    });
+  } catch (error) {
+    console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);
+    if (jobId) {
+      await deps14.finishSyncJob(
+        jobId,
+        "failed",
+        { retry: diffShopeeRetryTelemetry(retryTelemetryBefore) },
+        error?.message || String(error)
+      );
+    }
+    return res.status(500).json({
+      success: false,
+      pulled: 0,
+      error: "orders_pull_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 k\xE9o \u0111\u01A1n t\u1EEB Shopee."
+    });
+  }
+}
+async function syncOrders(req, res) {
+  let jobId = "";
+  const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
+  try {
+    const job = await deps14.createSyncJob("shopee_orders_sync", String(req.user?.username || ""));
+    jobId = job.id;
+    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
+    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
+    const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+    const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean) : shopIdsRaw ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean) : void 0;
+    const result = await deps14.pullIncrementalOrdersFromShopee({
+      lookbackSec: Math.floor(hours * 60 * 60),
+      reconcileActive: true,
+      shopIds: shopIds?.length ? shopIds : void 0
+    });
+    deps14.invalidateOrdersRefreshCache();
+    await deps14.finishSyncJob(
+      jobId,
+      result.success ? "succeeded" : "failed",
+      {
+        pulled: result.pulled,
+        added: result.added,
+        updated: result.updated,
+        shops: result.shops,
+        errors: result.errors.length,
+        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
+      },
+      result.success ? void 0 : result.message
+    );
+    return res.status(200).json({
+      success: result.success,
+      job_id: jobId,
+      pulled: result.pulled,
+      added: result.added,
+      updated: result.updated,
+      shops: result.shops,
+      errors: result.errors.slice(0, 20),
+      message: result.message
+    });
+  } catch (error) {
+    console.error(
+      "[Orders Pull] /api/shopee/orders/sync exception:",
+      error?.stack || error?.message || error
+    );
+    if (jobId) {
+      await deps14.finishSyncJob(
+        jobId,
+        "failed",
+        { retry: diffShopeeRetryTelemetry(retryTelemetryBefore) },
+        error?.message || String(error)
+      );
+    }
+    return res.status(500).json({
+      success: false,
+      pulled: 0,
+      error: "orders_pull_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 k\xE9o \u0111\u01A1n t\u1EEB Shopee."
+    });
+  }
+}
+async function getDiagnostics(req, res) {
+  const shopId = req.query.shop_id ? String(req.query.shop_id) : void 0;
+  console.log("[Shopee Diagnostics] B\u1EAFt \u0111\u1EA7u ki\u1EC3m tra...", shopId ? `shop_id=${shopId}` : "");
+  const report = await runShopeeConnectivityDiagnostics(shopId);
+  console.log("[Shopee Diagnostics] K\u1EBFt qu\u1EA3:", JSON.stringify(report, null, 2));
+  return res.status(report.ok ? 200 : 502).json({
+    success: report.ok,
+    summary: report.code,
+    ...report,
+    checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    backend: "cpanel-node"
+  });
+}
+async function debugReturnByOrder(req, res) {
+  try {
+    const orderSn = String(req.query.order_sn || "260703PQ2D6RUK").trim();
+    const tokens = loadShopeeTokens();
+    const shopIds = Object.keys(tokens);
+    const shopId = String(req.query.shop_id || shopIds[0] || "").trim();
+    if (!shopId) {
+      return res.status(400).json({ ok: false, error: "no_shop", message: "Ch\u01B0a c\xF3 shop OAuth." });
+    }
+    const accessToken = await getValidShopeeAccessToken(shopId);
+    if (!accessToken) {
+      return res.status(401).json({ ok: false, error: "no_token", shopId });
+    }
+    const coverFrom = Math.floor((/* @__PURE__ */ new Date("2026-07-01T00:00:00+07:00")).getTime() / 1e3);
+    const coverTo = Math.floor((/* @__PURE__ */ new Date("2026-07-19T23:59:59+07:00")).getTime() / 1e3);
+    const windowSec = 15 * 24 * 60 * 60;
+    const steps = [];
+    let matchedReturnSn = "";
+    const listHits = [];
+    console.log(`[DEBUG Return] ===== order_sn=${orderSn} shop=${shopId} =====`);
+    for (const timeField of ["update", "create"]) {
+      for (let t2 = coverFrom; t2 < coverTo; t2 += windowSec) {
+        const timeFrom = t2;
+        const timeTo = Math.min(t2 + windowSec, coverTo);
+        let pageNo = 1;
+        while (pageNo <= 30) {
+          const listOpts = { pageNo, pageSize: 100 };
+          if (timeField === "update") {
+            listOpts.updateTimeFrom = timeFrom;
+            listOpts.updateTimeTo = timeTo;
+          } else {
+            listOpts.createTimeFrom = timeFrom;
+            listOpts.createTimeTo = timeTo;
+          }
+          const listResult = await deps14.shopeeGetReturnList(shopId, accessToken, listOpts);
+          const rows = deps14.extractShopeeReturnListRows(listResult);
+          for (const row of rows) {
+            if (String(row?.order_sn || "") === orderSn) {
+              matchedReturnSn = String(row.return_sn || "");
+              listHits.push(row);
+              console.log(
+                `[DEBUG Return] FOUND in list ${timeField} ${timeFrom}-${timeTo} page=${pageNo}:`,
+                JSON.stringify(row)
+              );
+            }
+          }
+          steps.push({
+            step: "get_return_list",
+            timeField,
+            timeFrom,
+            timeTo,
+            pageNo,
+            error: listResult.error || null,
+            rowCount: rows.length,
+            more: deps14.parseShopeeReturnListMore(listResult),
+            matched: Boolean(matchedReturnSn)
+          });
+          if (matchedReturnSn) break;
+          if (!deps14.parseShopeeReturnListMore(listResult) && rows.length < 100) break;
+          if (rows.length === 0) break;
+          pageNo++;
+          await sleep2(400);
+        }
+        if (matchedReturnSn) break;
+        await sleep2(300);
+      }
+      if (matchedReturnSn) break;
+    }
+    let detailRaw = null;
+    let reverseRaw = null;
+    let extractedTn = "";
+    let trackingSources = {};
+    if (matchedReturnSn) {
+      detailRaw = await deps14.shopeeGetReturnDetail(shopId, accessToken, matchedReturnSn);
+      console.log(`[DEBUG Return] === RAW get_return_detail return_sn=${matchedReturnSn} ===`);
+      console.log(JSON.stringify(detailRaw, null, 2));
+      reverseRaw = await deps14.shopeeGetReverseTrackingInfo(shopId, accessToken, matchedReturnSn);
+      console.log(`[DEBUG Return] === RAW get_reverse_tracking_info ===`);
+      console.log(JSON.stringify(reverseRaw, null, 2));
+      const fetched = await deps14.fetchReturnShippingTrackingNumber(
+        shopId,
+        accessToken,
+        matchedReturnSn,
+        detailRaw
+      );
+      extractedTn = fetched.tracking;
+      trackingSources = fetched.sources;
+      console.log(`[DEBUG Return] extracted tracking = ${extractedTn || "(EMPTY)"} sources=`, trackingSources);
+      const blob = JSON.stringify({ detail: detailRaw, reverse: reverseRaw });
+      const idxSpx = blob.indexOf("SPXVN064782062347");
+      if (idxSpx >= 0) {
+        console.log(`[DEBUG Return] FOUND SPXVN064782062347 at JSON index ${idxSpx}`);
+      } else {
+        console.warn(`[DEBUG Return] SPXVN064782062347 KH\xD4NG c\xF3 trong detail/reverse payload`);
+      }
+    } else {
+      console.warn(
+        `[DEBUG Return] KH\xD4NG t\xECm th\u1EA5y return_sn cho order_sn=${orderSn} trong c\u1EEDa s\u1ED5 01\u201319/07/2026`
+      );
+    }
+    return res.json({
+      ok: Boolean(matchedReturnSn),
+      order_sn: orderSn,
+      shop_id: shopId,
+      return_sn: matchedReturnSn || null,
+      tracking_number_extracted: extractedTn || null,
+      tracking_sources: trackingSources,
+      tracking_key_hint: "\u01AFu ti\xEAn response.tracking_number t\u1EEB get_reverse_tracking_info, sau \u0111\xF3 get_return_detail.tracking_number",
+      expected_tracking_hint: "SPXVN064782062347",
+      tracking_match: extractedTn === "SPXVN064782062347",
+      list_hits: listHits,
+      steps,
+      return_detail_raw: detailRaw,
+      reverse_tracking_raw: reverseRaw,
+      persisted: false,
+      message: matchedReturnSn ? extractedTn ? `OK \u2014 l\u1EA5y \u0111\u01B0\u1EE3c tracking_number=${extractedTn} (sources: ${Object.keys(trackingSources).join(",")})` : "T\xECm th\u1EA5y return_sn nh\u01B0ng tracking r\u1ED7ng \u2014 xem reverse_tracking_raw.response.tracking_number" : "Kh\xF4ng t\xECm th\u1EA5y return trong get_return_list (ki\u1EC3m tra token/shop/time window)"
+    });
+  } catch (error) {
+    console.error("[DEBUG Return] exception:", error?.message || error, error?.stack || "");
+    if (res.headersSent) return;
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || String(error) || "Internal Server Error"
+    });
+  }
+}
+async function syncFromShop(req, res) {
+  try {
+    const requestedShopId = String(req.body?.shop_id || "").trim();
+    const timeRange = String(req.body?.time_range || "").trim();
+    if (!requestedShopId || !["all", "24h"].includes(timeRange)) {
+      return res.status(400).json({
+        success: false,
+        error: "invalid_sync_params",
+        message: "shop_id v\xE0 time_range ('all' ho\u1EB7c '24h') l\xE0 b\u1EAFt bu\u1ED9c."
+      });
+    }
+    const channelSettings = deps14.loadChannelSettings();
+    const connectedShop = deps14.asShopeeArray(channelSettings?.shops).find(
+      (shop) => normalizeShopIdKey(shop?.shopId) === normalizeShopIdKey(requestedShopId) && shop?.connected === true
+    );
+    if (!connectedShop) {
+      return res.status(404).json({
+        success: false,
+        error: "connected_shop_not_found",
+        message: `Kh\xF4ng t\xECm th\u1EA5y shop_id=${requestedShopId} trong danh s\xE1ch gian h\xE0ng \u0111\xE3 k\u1EBFt n\u1ED1i.`
+      });
+    }
+    if (connectedShop.platform !== "shopee") {
+      return res.status(501).json({
+        success: false,
+        error: "platform_sync_not_implemented",
+        message: `\u0110\u1ED3ng b\u1ED9 s\u1EA3n ph\u1EA9m ${connectedShop.platform} ch\u01B0a \u0111\u01B0\u1EE3c t\xEDch h\u1EE3p tr\xEAn server.`
+      });
+    }
+    if (!isShopeeConfigValid()) {
+      return res.status(500).json({
+        success: false,
+        message: "SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY trong .env ch\u01B0a h\u1EE3p l\u1EC7.",
+        error: "invalid_partner_config",
+        details: "invalid_partner_config"
+      });
+    }
+    const tokenContext = await getShopeeAccessTokenForApi(requestedShopId);
+    if (!tokenContext) {
+      return res.status(401).json({
+        success: false,
+        message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${requestedShopId}.`,
+        error: "no_valid_access_token",
+        details: "no_valid_access_token"
+      });
+    }
+    const shopId = tokenContext.apiShopId;
+    const accessToken = tokenContext.token;
+    ensureDataDirs();
+    const shopName = String(connectedShop.shopName || "").trim() || deps14.resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
+    const offset = Math.max(0, Number(req.body?.offset) || 0);
+    const requestedSyncTo = Number(req.body?.sync_to);
+    const syncTo = Number.isFinite(requestedSyncTo) && requestedSyncTo > 0 ? Math.floor(requestedSyncTo) : Math.floor(Date.now() / 1e3);
+    const updateWindow = timeRange === "24h" ? { from: syncTo - 24 * 60 * 60, to: syncTo } : void 0;
+    console.log(
+      `[Sync From Shop] platform=shopee shop_id=${shopId} range=${timeRange} offset=${offset} page_size=${deps14.SHOPEE_ITEM_LIST_PAGE_SIZE}`
+    );
+    const pageResult = await deps14.pullShopeeChannelListingsPage(
+      shopId,
+      accessToken,
+      shopName,
+      offset,
+      updateWindow
+    );
+    let listingsCount = 0;
+    try {
+      await deps14.flushDbWrites();
+      listingsCount = (await deps14.readChannelListingsDb()).length;
+    } catch {
+      listingsCount = pageResult.rowsSaved;
+    }
+    try {
+      await deps14.refreshCache();
+    } catch (cacheErr) {
+      console.error("[Sync From Shop] refreshCache th\u1EA5t b\u1EA1i:", cacheErr);
+    }
+    console.log(
+      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 trang offset=${offset}, listingsInDb=${listingsCount} mongo=${deps14.isMongoReady()}`
+    );
+    return res.status(200).json({
+      success: true,
+      message: pageResult.rowsSaved > 0 ? `\u0110\xE3 l\u01B0u trang ${pageResult.pageIndex + 1}: ${pageResult.pageStats.rowsInPage} parent (${pageResult.rowsSaved} SKU)` : pageResult.hasMore ? "Trang tr\u1ED1ng \u2014 \u0111ang chuy\u1EC3n trang ti\u1EBFp theo" : "Ho\xE0n t\u1EA5t t\u1EA3i d\u1EEF li\u1EC7u t\u1EEB s\xE0n",
+      shopId,
+      shop_id: requestedShopId,
+      shopName,
+      platform: "shopee",
+      time_range: timeRange,
+      sync_to: syncTo,
+      offset: pageResult.currentOffset,
+      nextOffset: pageResult.hasMore ? pageResult.nextOffset : null,
+      hasMore: pageResult.hasMore,
+      pageSize: deps14.SHOPEE_ITEM_LIST_PAGE_SIZE,
+      pageStats: pageResult.pageStats,
+      savedCount: pageResult.rowsSaved,
+      fetchedCount: pageResult.pageStats.rowsInPage,
+      parentCount: pageResult.pageStats.rowsInPage,
+      listingsCount,
+      skippedItems: pageResult.skippedItems.length > 0 ? pageResult.skippedItems.slice(0, 50) : void 0
+    });
+  } catch (error) {
+    console.error("DB Save Error:", error);
+    console.error("[Sync From Shop] Exception:", error);
+    const errObj = error instanceof Error ? error : new Error(String(error));
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: errObj.message,
+        error: errObj.toString()
+      });
+    }
+  }
+}
+
+// controllers/shopeeProductsController.js
+var deps15 = {
+  isProductsDiskMode: () => false,
+  isMongoReady: () => false,
+  saveProducts: async () => {
+  },
+  writeInventoryAudit: () => {
+  },
+  syncShopeeWarehouseSinglePage: async () => ({
+    productCount: 0,
+    pageIndex: 0,
+    pageStats: {
+      rowsInPage: 0,
+      variantItemCount: 0,
+      itemsInPage: 0,
+      savedCount: 0,
+      skippedCount: 0
+    },
+    currentOffset: 0,
+    nextOffset: null,
+    hasMore: false,
+    skippedItems: [],
+    mergeDebug: {}
+  }),
+  SHOPEE_ITEM_LIST_PAGE_SIZE: 10,
+  fetchShopeeItemVariants: async () => ({ variantProducts: [], error: "not_initialized", modelCount: 0 }),
+  loadProducts: async () => [],
+  saveProducts: async () => {
+  },
+  replaceProductsForShopeeItem: (all, _itemId, variants) => variants,
+  extractHttpClientError: (err) => ({
+    message: err?.message || String(err),
+    details: ""
+  })
+};
+function initShopeeProductsController(partial) {
+  deps15 = { ...deps15, ...partial };
+}
+async function syncProducts(req, res) {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  try {
+    if (!deps15.isProductsDiskMode() && !deps15.isMongoReady()) {
+      return res.status(503).json({
+        success: false,
+        error: "mongodb_not_ready",
+        message: "Database ch\u01B0a s\u1EB5n s\xE0ng. Th\u1EED l\u1EA1i sau v\xE0i gi\xE2y."
+      });
+    }
+    if (!isShopeeConfigValid()) {
+      return res.status(500).json({
+        success: false,
+        error: "invalid_partner_config",
+        message: "SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY trong .env ch\u01B0a h\u1EE3p l\u1EC7.",
+        details: "invalid_partner_config"
+      });
+    }
+    const shopId = resolveShopeeTokenShopId(req.body?.shopId);
+    if (!shopId) {
+      return res.status(404).json({
+        success: false,
+        error: "no_shopee_shop_linked",
+        message: "Ch\u01B0a c\xF3 shop Shopee n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n.",
+        details: "no_shopee_shop_linked"
+      });
+    }
+    const accessToken = await getValidShopeeAccessToken(shopId);
+    if (!accessToken) {
+      return res.status(401).json({
+        success: false,
+        error: "no_valid_access_token",
+        message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId}.`,
+        details: "no_valid_access_token"
+      });
+    }
+    const rawOffset = Number(req.body?.offset ?? 0);
+    const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
+    const resetWarehouse = offset === 0 && (req.body?.reset === true || req.body?.reset === 1 || req.body?.reset === "1" || req.body?.replace === true);
+    if (resetWarehouse) {
+      console.log(
+        `[Shopee Product Sync] RESET Kho G\u1ED1c tr\u01B0\u1EDBc khi sync shop=${shopId} storage=${deps15.isProductsDiskMode() ? "disk" : "mongo"}`
+      );
+      await deps15.saveProducts([]);
+    }
+    try {
+      deps15.writeInventoryAudit("shopee_sync_page", {
+        shopId,
+        offset,
+        reset: resetWarehouse,
+        requestedBy: req.user?.username || null
+      });
+    } catch {
+    }
+    const syncStarted = Date.now();
+    console.log(
+      `[Shopee Product Sync] B\u1EAFt \u0111\u1EA7u \u0111\u1ED3ng b\u1ED9 1 trang shop_id=${shopId}, offset=${offset}, page_size=${deps15.SHOPEE_ITEM_LIST_PAGE_SIZE}`
+    );
+    const result = await deps15.syncShopeeWarehouseSinglePage(shopId, accessToken, offset);
+    const initialized = Number(result.productCount) || 0;
+    const durationMs = Date.now() - syncStarted;
+    console.log(
+      `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} \u2014 productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}, durationMs=${durationMs}`
+    );
+    if (!result.hasMore) {
+      deps15.writeInventoryAudit("shopee_sync_completed", {
+        shopId,
+        requestedBy: req.user?.username || null,
+        productCount: initialized,
+        pageCount: result.pageIndex + 1,
+        skippedCount: result.pageStats.skippedCount
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      shopId,
+      productCount: initialized,
+      stats: {
+        rowCount: result.pageStats.rowsInPage,
+        variantItemCount: result.pageStats.variantItemCount,
+        pageCount: result.pageIndex + 1,
+        itemsInPage: result.pageStats.itemsInPage,
+        savedCount: result.pageStats.savedCount,
+        skippedCount: result.pageStats.skippedCount
+      },
+      currentOffset: result.currentOffset,
+      nextOffset: result.nextOffset,
+      hasMore: result.hasMore,
+      pageIndex: result.pageIndex + 1,
+      skippedItems: result.skippedItems?.length ? result.skippedItems.slice(0, 20) : void 0,
+      message: result.hasMore ? `\u0110\xE3 l\u01B0u trang ${result.pageIndex + 1} (${result.pageStats.itemsInPage} s\u1EA3n ph\u1EA9m), ti\u1EBFp t\u1EE5c trang sau` : `\u0110\xE3 kh\u1EDFi t\u1EA1o xong ${initialized} s\u1EA3n ph\u1EA9m`,
+      forceRefresh: !result.hasMore,
+      refresh: { forceRefresh: !result.hasMore },
+      _debug: {
+        durationMs,
+        existingCount: result.mergeDebug?.existingCount ?? 0,
+        upsertCount: result.mergeDebug?.upsertCount ?? 0,
+        batchRows: result.mergeDebug?.batchRows ?? 0,
+        loadMs: result.mergeDebug?.loadMs ?? 0,
+        upsertMs: result.mergeDebug?.upsertMs ?? 0
+      }
+    });
+  } catch (error) {
+    console.error("[Shopee Product Sync] Exception:", error);
+    console.error("L\u1ED7i khi l\u01B0u DB chunk:", error);
+    const { message, details } = deps15.extractHttpClientError(error);
+    const isRate = /429|rate.?limit|too many request/i.test(message);
+    if (!res.headersSent) {
+      return res.status(isRate ? 429 : 500).json({
+        success: false,
+        error: isRate ? "shopee_rate_limit" : "exception",
+        message: message || "Kh\u1EDFi t\u1EA1o kho th\u1EA5t b\u1EA1i",
+        details: String(details || "").slice(0, 500)
+      });
+    }
+  }
+}
+async function syncItemVariants(req, res) {
+  try {
+    if (!isShopeeConfigValid()) {
+      return res.status(500).json({
+        success: false,
+        error: "invalid_partner_config",
+        message: "C\u1EA5u h\xECnh Shopee Partner kh\xF4ng h\u1EE3p l\u1EC7.",
+        details: "invalid_partner_config"
+      });
+    }
+    const rawItemId = String(req.body?.itemId || req.body?.shopeeItemId || req.body?.productId || "");
+    const itemIdMatch = rawItemId.match(/(\d{6,})/);
+    if (!itemIdMatch) {
+      return res.status(400).json({
+        success: false,
+        error: "itemId_required",
+        message: "Kh\xF4ng x\xE1c \u0111\u1ECBnh \u0111\u01B0\u1EE3c item_id Shopee.",
+        details: "itemId_required"
+      });
+    }
+    const itemId = Number(itemIdMatch[1]);
+    const shopId = resolveShopeeTokenShopId(req.body?.shopId);
+    if (!shopId) {
+      return res.status(404).json({
+        success: false,
+        error: "no_shopee_shop",
+        message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n.",
+        details: "no_shopee_shop"
+      });
+    }
+    const accessToken = await getValidShopeeAccessToken(shopId);
+    if (!accessToken) {
+      return res.status(401).json({
+        success: false,
+        error: "no_valid_access_token",
+        message: "Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7.",
+        details: "no_valid_access_token"
+      });
+    }
+    const { variantProducts, error, modelCount } = await deps15.fetchShopeeItemVariants(
+      shopId,
+      accessToken,
+      itemId
+    );
+    if (error && variantProducts.length === 0) {
+      return res.status(400).json({ success: false, error, message: error, details: String(error) });
+    }
+    if (variantProducts.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: "no_variants_found",
+        message: "Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c ph\xE2n lo\u1EA1i t\u1EEB Shopee.",
+        details: "no_variants_found"
+      });
+    }
+    const allProducts = await deps15.loadProducts();
+    const merged = deps15.replaceProductsForShopeeItem(allProducts, String(itemId), variantProducts);
+    await deps15.saveProducts(merged);
+    console.log(
+      `[Shopee Variant Sync] item_id=${itemId} -> ${variantProducts.length} dong (modelCount=${modelCount})`
+    );
+    return res.json({
+      success: true,
+      itemId: String(itemId),
+      variantCount: variantProducts.length,
+      modelCount,
+      variants: variantProducts,
+      products: merged
+    });
+  } catch (err) {
+    console.error("[Shopee Variant Sync] Exception:", err);
+    return sendApiErrorJson(res, err, 500);
+  }
+}
+
+// controllers/shopeeShipController.js
+var deps16 = {
+  loadOrdersForApi: async () => ({ orders: [] }),
+  findOrderRecord: () => null,
+  arrangeShipment: async () => ({ success: false }),
+  withOperationTimeout: async (fn) => fn(),
+  SHIP_ORDER_OPERATION_TIMEOUT_MS: 6e4,
+  isAlreadyShippedError: () => false,
+  isShopeePendingVerificationError: () => false,
+  forceHealPickupOrderIfHasTracking: () => {
+  },
+  persistOrdersToDatabase: async () => {
+  },
+  persistPendingShopeeCheckFlag: async () => {
+  },
+  /** Full bulk sync handler body — inject từ server. */
+  handleShipBulk: null,
+  executeShipOrderBackgroundJob: null,
+  shipOrderJobs: /* @__PURE__ */ new Map(),
+  createShipOrderJobId: () => `ship-${Date.now()}`,
+  pruneOldShipOrderJobs: () => {
+  }
+};
+function initShopeeShipController(partial) {
+  deps16 = { ...deps16, ...partial };
+}
+async function shipOrder(req, res) {
+  try {
+    const { orderId, orderSn, method } = req.body || {};
+    const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
+    const loaded = await deps16.loadOrdersForApi();
+    const orders = loaded.orders;
+    const hit = deps16.findOrderRecord(orders, String(orderId || orderSn || ""));
+    if (!hit) {
+      return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
+    }
+    const { index } = hit;
+    const order = orders[index];
+    console.log(
+      `[Ship Order] Y\xEAu c\u1EA7u chu\u1EA9n b\u1ECB h\xE0ng (${shipMethod}) cho \u0111\u01A1n ${order.orderSn} (channel=${order.channel})...`
+    );
+    const result = await deps16.withOperationTimeout(
+      (signal) => deps16.arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+      deps16.SHIP_ORDER_OPERATION_TIMEOUT_MS,
+      `Ship order ${order.orderSn}`
+    );
+    console.log("D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0:", JSON.stringify(result));
+    if (!result.success) {
+      console.error(
+        `[Ship Order] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`
+      );
+    }
+    if (result.success || deps16.isAlreadyShippedError(result)) {
+      const tn = String(
+        order.trackingNumber || order.tracking_no || result.trackingNumber || orders[index].trackingNumber || ""
+      ).trim();
+      orders[index] = {
+        ...orders[index],
+        ...order,
+        isPrepared: true,
+        status: "processed",
+        is_pending_shopee_check: false,
+        fulfillment_type: shipMethod,
+        ship_method: shipMethod,
+        trackingNumber: tn || orders[index].trackingNumber,
+        tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
+        shopId: orders[index].shopId || order.shopId || result.shopId,
+        shopee_order_status: order.shopee_order_status === "READY_TO_SHIP" || order.shopee_order_status === "RETRY_SHIP" || !order.shopee_order_status ? "PROCESSED" : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED"
+      };
+      deps16.forceHealPickupOrderIfHasTracking(orders[index]);
+      await deps16.persistOrdersToDatabase(orders, [orders[index]]);
+      return res.json({ success: true, mode: result.mode, order: orders[index] });
+    }
+    if (deps16.isShopeePendingVerificationError(result)) {
+      await deps16.persistPendingShopeeCheckFlag(
+        orders,
+        index,
+        result.message || result.error || "Order is pending verification"
+      );
+      return res.json({
+        success: false,
+        pendingShopeeCheck: true,
+        skipped: true,
+        order: orders[index],
+        message: result.message || "\u0110\u01A1n ch\u01B0a s\u1EB5n s\xE0ng \u2014 \u0111\xE3 b\u1ECF qua.",
+        ...result
+      });
+    }
+    return res.status(400).json({ success: false, ...result });
+  } catch (error) {
+    console.error("[Ship Order] L\u1ED7i n\u1ED9i b\u1ED9 endpoint /api/shopee/ship-order:", error?.stack || error);
+    return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error.message });
+  }
+}
+async function shipOrderBulk(req, res) {
+  if (typeof deps16.handleShipBulk === "function") {
+    return deps16.handleShipBulk(req, res);
+  }
+  return res.status(500).json({ success: false, message: "ship bulk ch\u01B0a kh\u1EDFi t\u1EA1o" });
+}
+function shipOrderBulkAsync(req, res) {
+  try {
+    deps16.pruneOldShipOrderJobs();
+    const { orderIds, orderSns, method } = req.body || {};
+    const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
+    const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
+    const snList = Array.isArray(orderSns) ? orderSns.map(String) : [];
+    if (idList.length === 0 && snList.length === 0) {
+      return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns." });
+    }
+    const estimatedTotal = Math.max(
+      new Set(
+        [...idList, ...snList].map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+      ).size,
+      idList.length || snList.length
+    );
+    const jobId = deps16.createShipOrderJobId();
+    deps16.shipOrderJobs.set(jobId, {
+      id: jobId,
+      status: "pending",
+      phase: "pending",
+      message: "\u0110\xE3 ti\u1EBFp nh\u1EADn \u2014 \u0111ang x\u1EBFp h\xE0ng x\u1EED l\xFD...",
+      total: estimatedTotal,
+      completed: 0,
+      successCount: 0,
+      results: [],
+      printDocument: null,
+      orders: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    });
+    res.once("finish", () => {
+      setImmediate(() => {
+        if (typeof deps16.executeShipOrderBackgroundJob === "function") {
+          void deps16.executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
+        } else {
+          const job = deps16.shipOrderJobs.get(jobId);
+          if (job) {
+            job.status = "failed";
+            job.error = "executeShipOrderBackgroundJob ch\u01B0a kh\u1EDFi t\u1EA1o";
+            job.updatedAt = Date.now();
+          }
+        }
+      });
+    });
+    return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
+  } catch (error) {
+    console.error(
+      "[Ship Order Bulk Async] L\u1ED7i n\u1ED9i b\u1ED9 endpoint /api/shopee/ship-order/bulk-async:",
+      error?.stack || error
+    );
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error.message });
+    }
+  }
+}
+async function getShipOrderJob(req, res) {
+  deps16.pruneOldShipOrderJobs();
+  const job = deps16.shipOrderJobs.get(String(req.params.jobId || ""));
+  if (!job) {
+    return res.status(404).json({
+      error: "job_not_found",
+      message: "Kh\xF4ng t\xECm th\u1EA5y ti\u1EBFn tr\xECnh x\u1EED l\xFD."
+    });
+  }
+  return res.json(job);
+}
+
+// controllers/shopeePrintController.js
+var deps17 = {
+  printDocumentHandler: null,
+  printDocumentJobs: /* @__PURE__ */ new Map(),
+  createPrintDocumentJobId: () => `print-${Date.now()}`,
+  pruneOldPrintDocumentJobs: () => {
+  }
+};
+function initShopeePrintController(partial) {
+  deps17 = { ...deps17, ...partial };
+}
+async function printDocument(req, res) {
+  if (typeof deps17.printDocumentHandler !== "function") {
+    return res.status(500).json({ success: false, message: "printDocumentHandler ch\u01B0a kh\u1EDFi t\u1EA1o" });
+  }
+  return deps17.printDocumentHandler(req, res);
+}
+async function printDocumentAsync(req, res) {
+  try {
+    const { orderIds } = req.body || {};
+    if (!Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds." });
+    }
+    if (typeof deps17.printDocumentHandler !== "function") {
+      return res.status(500).json({ success: false, message: "printDocumentHandler ch\u01B0a kh\u1EDFi t\u1EA1o" });
+    }
+    deps17.pruneOldPrintDocumentJobs();
+    const jobId = deps17.createPrintDocumentJobId();
+    deps17.printDocumentJobs.set(jobId, {
+      id: jobId,
+      status: "pending",
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    });
+    const fakeReq = { body: req.body, printJob: deps17.printDocumentJobs.get(jobId) };
+    setImmediate(() => {
+      void (async () => {
+        const job = deps17.printDocumentJobs.get(jobId);
+        if (!job) return;
+        job.status = "running";
+        job.updatedAt = Date.now();
+        let capturedStatus = 200;
+        const fakeRes = {
+          status(code) {
+            capturedStatus = code;
+            return this;
+          },
+          json(body) {
+            job.httpStatus = capturedStatus;
+            job.result = body;
+            job.status = capturedStatus >= 200 && capturedStatus < 300 ? "done" : "failed";
+            job.updatedAt = Date.now();
+            return this;
+          }
+        };
+        try {
+          await deps17.printDocumentHandler(fakeReq, fakeRes);
+        } catch (err) {
+          job.status = "failed";
+          job.error = err?.message || String(err);
+          job.updatedAt = Date.now();
+        }
+      })();
+    });
+    return res.status(202).json({ accepted: true, jobId });
+  } catch (error) {
+    console.error("[Print Document Async] L\u1ED7i n\u1ED9i b\u1ED9:", error?.stack || error);
+    return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error.message });
+  }
+}
+async function getPrintDocumentJob(req, res) {
+  deps17.pruneOldPrintDocumentJobs();
+  const job = deps17.printDocumentJobs.get(String(req.params.jobId || ""));
+  if (!job) {
+    return res.status(404).json({
+      error: "job_not_found",
+      message: "Kh\xF4ng t\xECm th\u1EA5y ti\u1EBFn tr\xECnh in v\u1EADn \u0111\u01A1n."
+    });
+  }
+  return res.json(job);
+}
+
+// controllers/shopeeWebhookController.js
+var deps18 = {
+  parseShopeePushEvent: () => ({}),
+  SHOPEE_WEBHOOK_ORDER_STATUSES: /* @__PURE__ */ new Set(),
+  isLogisticsHandedToCarrier: () => false,
+  loadOrders: () => [],
+  saveOrders: () => {
+  },
+  fetchNormalizeShopeeOrderChunk: async () => ({ normalized: [], errors: [] }),
+  persistShopeeOrderChunk: async () => {
+  },
+  upsertShopeeWebhookShallow: async () => {
+  },
+  applyShopeePushFieldsToOrder: () => {
+  },
+  hasUsableShopeeTrackingNumber: () => false,
+  enrichShopeeOrderTrackingFromApi: async () => {
+  },
+  isMongoReady: () => false,
+  bulkUpsertOrdersToStore: async () => {
+  },
+  applyWebhookReturnFallback: async () => {
+  }
+};
+function initShopeeWebhookController(partial) {
+  deps18 = { ...deps18, ...partial };
+}
+async function processShopeeWebhookPayload(body) {
+  try {
+    if (!body || typeof body !== "object") return;
+    console.log("[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:", JSON.stringify(body));
+    if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
+      const peek = deps18.parseShopeePushEvent(body);
+      console.log(
+        `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`
+      );
+      return;
+    }
+    const parsed = deps18.parseShopeePushEvent(body);
+    console.log(
+      "[Shopee Webhook] Push event",
+      JSON.stringify({
+        code: parsed.code,
+        eventKind: parsed.eventKind,
+        shopId: parsed.shopId || null,
+        orderSn: parsed.orderSn || null,
+        status: parsed.status || null,
+        logisticsStatus: parsed.logisticsStatus || null,
+        trackingNo: parsed.trackingNo || null,
+        packageNumber: parsed.packageNumber || null,
+        returnSn: parsed.returnSn || null
+      })
+    );
+    if (!parsed.orderSn) {
+      console.error(
+        `[Shopee Webhook] REJECTED \u2014 thi\u1EBFu order_sn (code=${parsed.code}) payload=${JSON.stringify(body).slice(0, 800)}`
+      );
+      return;
+    }
+    const shouldPersist = parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund" || deps18.SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) || deps18.isLogisticsHandedToCarrier(parsed.logisticsStatus);
+    if (!shouldPersist) {
+      console.error(
+        `[StateMachine] Webhook REJECTED \u2014 status/event kh\xF4ng c\u1EA7n persist order_sn=${parsed.orderSn} status=${parsed.status || "empty"} logistics=${parsed.logisticsStatus || "-"} code=${parsed.code} kind=${parsed.eventKind}`
+      );
+      return;
+    }
+    const orders = deps18.loadOrders();
+    const shopId = parsed.shopId;
+    let accessToken = null;
+    if (shopId) {
+      accessToken = await getValidShopeeAccessToken(shopId);
+    }
+    const shouldFetchDetail = parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund";
+    if (shouldFetchDetail && shopId && accessToken) {
+      const { normalized, errors } = await deps18.fetchNormalizeShopeeOrderChunk(
+        shopId,
+        accessToken,
+        shopId,
+        [parsed.orderSn],
+        { enrichTracking: true }
+      );
+      if (normalized.length > 0) {
+        await deps18.persistShopeeOrderChunk(orders, normalized, {
+          apiShopId: shopId,
+          accessToken
+        });
+        console.log(
+          `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
+        );
+      } else {
+        console.warn(
+          `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${parsed.orderSn}`,
+          errors?.[0] || ""
+        );
+        await deps18.upsertShopeeWebhookShallow(body, orders);
+        deps18.saveOrders(orders);
+      }
+    } else {
+      if (!shopId || !accessToken) {
+        console.warn(
+          `[Shopee Webhook] Thi\u1EBFu shop_id/token \u2014 fallback normalize th\xF4 order_sn=${parsed.orderSn}`
+        );
+      }
+      await deps18.upsertShopeeWebhookShallow(body, orders);
+      deps18.saveOrders(orders);
+    }
+    let idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
+    if (idx < 0 && (parsed.trackingNo || parsed.status)) {
+      await deps18.upsertShopeeWebhookShallow(body, orders);
+      idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
+    }
+    if (idx >= 0) {
+      const beforeTn = String(orders[idx].trackingNumber || orders[idx].tracking_no || "");
+      deps18.applyShopeePushFieldsToOrder(orders[idx], parsed);
+      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || !deps18.hasUsableShopeeTrackingNumber(orders[idx]))) {
+        try {
+          await deps18.enrichShopeeOrderTrackingFromApi(shopId, accessToken, orders[idx], {
+            retries: 4
+          });
+          deps18.applyShopeePushFieldsToOrder(orders[idx], parsed);
+        } catch (trackErr) {
+          console.warn(
+            `[Shopee Webhook] Force get_tracking_number ${parsed.orderSn}:`,
+            trackErr?.message || trackErr
+          );
+        }
+      }
+      const afterTn = String(orders[idx].trackingNumber || orders[idx].tracking_no || "");
+      console.log(
+        `[Shopee Webhook] Apply push fields order_sn=${parsed.orderSn} status=${orders[idx].status} raw=${orders[idx].shopee_order_status || "\u2014"} tn=${afterTn || "\u2014"} (before=${beforeTn || "\u2014"})`
+      );
+      deps18.saveOrders(orders);
+      if (deps18.isMongoReady()) {
+        try {
+          await deps18.bulkUpsertOrdersToStore([orders[idx]]);
+          console.log(
+            `[DB UPDATED] order_sn=${parsed.orderSn} shop_id=${shopId || orders[idx]?.shopId || "?"} status=${orders[idx]?.shopee_order_status || "?"} \u2014 upsert OK`
+          );
+        } catch (mongoErr) {
+          console.warn(
+            `[Shopee Webhook] Mongo upsert ${parsed.orderSn}:`,
+            mongoErr?.message || mongoErr
+          );
+        }
+      }
+    }
+    const orderAfter = orders.find((o) => String(o.orderSn) === parsed.orderSn);
+    const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
+    if (needReturnFallback && shopId && accessToken) {
+      await deps18.applyWebhookReturnFallback(
+        shopId,
+        accessToken,
+        parsed.orderSn,
+        orders,
+        parsed.returnSn
+      );
+      deps18.saveOrders(orders);
+      if (deps18.isMongoReady()) {
+        const row = orders.find((o) => String(o.orderSn) === parsed.orderSn);
+        if (row) {
+          try {
+            await deps18.bulkUpsertOrdersToStore([row]);
+            console.log(
+              `[DB UPDATED] (return/cancel) order_sn=${parsed.orderSn} shop_id=${row?.shopId || "?"} status=${row?.shopee_order_status || "?"} \u2014 upsert OK`
+            );
+          } catch (mongoErr) {
+            console.warn(
+              `[Shopee Webhook] Mongo upsert return ${parsed.orderSn}:`,
+              mongoErr?.message || mongoErr
+            );
+          }
+        }
+      }
+    }
+    console.log(`[Shopee Webhook] Order ${parsed.orderSn} processed (event=${parsed.eventKind}).`);
+  } catch (error) {
+    console.error("[Shopee Webhook] Async processing error:", error);
+  }
+}
+
+// server.ts
+function asRouter(mod) {
+  return mod?.default?.use ? mod.default : mod;
+}
+var scanRoutes = asRouter(scanRoutes_default);
+var authRoutes = asRouter(authRoutes_default);
+var healthRoutes = asRouter(healthRoutes_default);
+var vietnamAddressRoutes = asRouter(vietnamAddressRoutes_default);
+var suppliersRoutes = asRouter(suppliersRoutes_default);
+var expensesRoutes = asRouter(expensesRoutes_default);
+var importsRoutes = asRouter(importsRoutes_default);
+var settingsRoutes = asRouter(settingsRoutes_default);
+var aiRoutes = asRouter(aiRoutes_default);
+var dashboardRoutes = asRouter(dashboardRoutes_default);
+var productsRoutes = asRouter(productsRoutes_default);
+var mappingRoutes = asRouter(mappingRoutes_default);
+var ordersRoutes = asRouter(ordersRoutes_default);
+function writeCpanelCrashLog(kind, err) {
+  try {
+    const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
+    const line = `${kind}: ${stack}
+---
+${(/* @__PURE__ */ new Date()).toISOString()}
+`;
+    const targets = [
+      import_path15.default.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? import_path15.default.join(__dirname, "cpanel_error_log.txt") : ""
+    ].filter(Boolean);
+    for (const file of targets) {
+      try {
+        import_fs15.default.writeFileSync(file, line);
+      } catch {
+      }
+    }
+    console.error(line);
+  } catch {
+  }
+}
+process.on("uncaughtException", (err) => {
+  writeCpanelCrashLog("Exception", err);
+});
+process.on("unhandledRejection", (err) => {
+  writeCpanelCrashLog("Rejection", err);
+});
+var APP_ROOT11 = resolveAppRoot();
+var isCpanelPassengerRuntime = Boolean(
+  String(
+    process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
+  ).trim()
+);
+var isDevelopmentRuntime = process.env.NODE_ENV !== "production" && !isCpanelPassengerRuntime;
+if (isCpanelPassengerRuntime) {
+  console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
+}
+var dotenvCandidates = [
+  import_path15.default.join(APP_ROOT11, ".env"),
+  import_path15.default.join(process.cwd(), ".env"),
+  import_path15.default.resolve(".env")
+];
+for (const envPath of dotenvCandidates) {
+  if (import_fs15.default.existsSync(envPath)) {
+    const loaded = import_dotenv2.default.config({ path: envPath });
+    if (loaded.error) {
+      console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
+    } else {
+      console.log(`[Config] dotenv loaded: ${envPath}`);
+    }
+  }
+}
+import_dotenv2.default.config();
+console.log(
+  `[Config] APP_ROOT=${APP_ROOT11} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
+);
+setProductsDiskAppRoot(APP_ROOT11);
+initShopeeAuth({ syncOAuthShopsToChannelSettings, logOAuthSaveError });
+bootShopeeAuth();
+console.log(
+  `[Products] storage=${isProductsDiskMode() ? "disk" : "mongo"} path=${getProductsDiskPath()}`
+);
+function writeCpanelCrashLogToAppRoot(kind, err) {
+  try {
+    const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
+    import_fs15.default.writeFileSync(
+      import_path15.default.join(APP_ROOT11, "cpanel_error_log.txt"),
+      `${kind}: ${stack}
+---
+${(/* @__PURE__ */ new Date()).toISOString()}
+`
+    );
+  } catch {
+  }
+}
+process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
+process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
+var WAYBILLS_DIR = import_path15.default.join(APP_ROOT11, "storage", "waybills");
+var LEGACY_PUBLIC_PRINTS_DIR = import_path15.default.join(APP_ROOT11, "public", "prints");
+var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
+var LABELS_DIR = import_path15.default.join(APP_ROOT11, "storage", "labels");
+var LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1e3;
+var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
+var labelMemCache = /* @__PURE__ */ new Map();
+var LABEL_MEM_MAX_ENTRIES = 48;
+var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
+function ensureLabelsDir() {
+  try {
+    if (!import_fs15.default.existsSync(LABELS_DIR)) import_fs15.default.mkdirSync(LABELS_DIR, { recursive: true });
+  } catch (err) {
+    console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
+  }
+}
+function assertLabelsDirWritable() {
+  ensureLabelsDir();
+  const probe = import_path15.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
+  try {
+    import_fs15.default.writeFileSync(probe, "ok");
+    import_fs15.default.unlinkSync(probe);
+  } catch (err) {
+    console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
+    throw err instanceof Error ? err : new Error(String(err));
+  }
+}
+function safeLabelFilename(raw) {
+  const base = import_path15.default.basename(String(raw || "").trim());
+  if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
+  return base;
+}
+function isPdfBuffer(buffer, contentType) {
+  if (!buffer || buffer.length < 5) return false;
+  if (buffer.subarray(0, 4).toString() === "%PDF") return true;
+  return false;
+}
+function getLabelMemTotalBytes() {
+  let total = 0;
+  for (const val of labelMemCache.values()) total += val.buf.length;
+  return total;
+}
+function evictLabelMemIfNeeded() {
+  while (labelMemCache.size > 0 && (labelMemCache.size >= LABEL_MEM_MAX_ENTRIES || getLabelMemTotalBytes() >= LABEL_MEM_MAX_BYTES)) {
+    let oldestKey = null;
+    let oldestExp = Infinity;
+    for (const [key, val] of labelMemCache) {
+      if (val.expires < oldestExp) {
+        oldestExp = val.expires;
+        oldestKey = key;
+      }
+    }
+    if (!oldestKey) break;
+    labelMemCache.delete(oldestKey);
+    console.log(
+      `[Labels] Evict RAM ${oldestKey} (entries=${labelMemCache.size}, bytes\u2248${getLabelMemTotalBytes()})`
+    );
+  }
+}
+function removeExistingLabelFilesForOrderSns(orderSns) {
+  ensureLabelsDir();
+  const sns = [...new Set(orderSns.map((s2) => String(s2 || "").replace(/[^a-zA-Z0-9_-]/g, "")).filter(Boolean))];
+  if (sns.length === 0) return 0;
+  let deleted = 0;
+  try {
+    for (const name of import_fs15.default.readdirSync(LABELS_DIR)) {
+      if (!/\.pdf$/i.test(name)) continue;
+      const hit = sns.some(
+        (sn) => name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
+      );
+      if (!hit) continue;
+      try {
+        import_fs15.default.unlinkSync(import_path15.default.join(LABELS_DIR, name));
+        labelMemCache.delete(name);
+        deleted += 1;
+      } catch {
+      }
+    }
+  } catch (err) {
+    console.warn("[Labels] Kh\xF4ng qu\xE9t \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c \u0111\u1EC3 ghi \u0111\xE8:", err);
+  }
+  return deleted;
+}
+function putLabelMem(filename, buffer, contentType) {
+  const safe = safeLabelFilename(filename);
+  if (!safe) throw new Error(`T\xEAn file v\u1EADn \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7: ${filename}`);
+  console.log(`[Labels] B\u1EAFt \u0111\u1EA7u l\u01B0u PDF: ${safe}, size=${buffer?.length || 0}, type=${contentType || ""}`);
+  if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+    console.error(`[Labels] T\u1EEA CH\u1ED0I ghi file r\u1ED7ng: ${filename}, type=${contentType || ""}`);
+    throw new Error("Buffer PDF r\u1ED7ng \u2014 kh\xF4ng ghi file v\xE0 kh\xF4ng tr\u1EA3 URL.");
+  }
+  if (buffer.length < 64) {
+    console.error(
+      `[Labels] Buffer qu\xE1 nh\u1ECF (${buffer.length} bytes), head=${buffer.subarray(0, Math.min(20, buffer.length)).toString("hex")}`
+    );
+    throw new Error(`Buffer PDF kh\xF4ng h\u1EE3p l\u1EC7 (ch\u1EC9 ${buffer.length} bytes).`);
+  }
+  if (!isPdfBuffer(buffer, contentType)) {
+    console.error(
+      `[Labels] Kh\xF4ng ph\u1EA3i PDF: ${filename}, size=${buffer.length}, head=${buffer.subarray(0, 20).toString("hex")}`
+    );
+    throw new Error("D\u1EEF li\u1EC7u v\u1EADn \u0111\u01A1n t\u1EEB Shopee kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7.");
+  }
+  try {
+    ensureLabelsDir();
+    assertLabelsDirWritable();
+    evictLabelMemIfNeeded();
+    cleanupExpiredLabelFiles();
+    const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
+    if (snMatch?.[1]) removeExistingLabelFilesForOrderSns([snMatch[1]]);
+    const dest = import_path15.default.join(LABELS_DIR, safe);
+    console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
+    import_fs15.default.writeFileSync(dest, buffer);
+    if (!import_fs15.default.existsSync(dest)) {
+      throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file kh\xF4ng t\u1ED3n t\u1EA1i sau writeFileSync: ${dest}`);
+    }
+    const st = import_fs15.default.statSync(dest);
+    if (!st.isFile() || st.size <= 0) {
+      try {
+        import_fs15.default.unlinkSync(dest);
+      } catch {
+      }
+      throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file tr\xEAn \u0111\u0129a r\u1ED7ng: ${dest}`);
+    }
+    if (st.size !== buffer.length) {
+      console.warn(`[Labels] C\u1EA3nh b\xE1o size l\u1EC7ch: buffer=${buffer.length} disk=${st.size} \u2192 ${dest}`);
+    }
+    const head = Buffer.alloc(5);
+    const fd = import_fs15.default.openSync(dest, "r");
+    try {
+      import_fs15.default.readSync(fd, head, 0, 5, 0);
+    } finally {
+      import_fs15.default.closeSync(fd);
+    }
+    if (head.toString("utf8", 0, 4) !== "%PDF") {
+      try {
+        import_fs15.default.unlinkSync(dest);
+      } catch {
+      }
+      throw new Error(`File ghi ra kh\xF4ng c\xF2n l\xE0 PDF h\u1EE3p l\u1EC7: ${safe}`);
+    }
+    labelMemCache.set(safe, {
+      buf: buffer,
+      expires: Date.now() + LABEL_RAM_TTL_MS,
+      contentType: "application/pdf"
+    });
+    console.log(`[Labels] K\u1EBFt qu\u1EA3: OK \u2014 Saved ${safe} (${st.size} bytes) \u2192 ${dest}`);
+    return safe;
+  } catch (err) {
+    console.error(`[Labels] K\u1EBFt qu\u1EA3: L\u1ED7i \u2014 ${err?.message || err}`);
+    throw err;
+  }
+}
+function getLabelMem(filename) {
+  const safe = safeLabelFilename(filename);
+  if (!safe) return null;
+  const ram = labelMemCache.get(safe);
+  if (ram) {
+    if (ram.expires < Date.now() || !ram.buf?.length || !isPdfBuffer(ram.buf)) {
+      labelMemCache.delete(safe);
+    } else {
+      return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
+    }
+  }
+  const filePath = import_path15.default.join(LABELS_DIR, safe);
+  try {
+    if (!import_fs15.default.existsSync(filePath)) return null;
+    const st = import_fs15.default.statSync(filePath);
+    if (!st.isFile() || st.size <= 0) {
+      console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
+      try {
+        import_fs15.default.unlinkSync(filePath);
+      } catch {
+      }
+      return null;
+    }
+    const buf = import_fs15.default.readFileSync(filePath);
+    if (!buf.length || !isPdfBuffer(buf)) return null;
+    labelMemCache.set(safe, {
+      buf,
+      expires: Date.now() + LABEL_RAM_TTL_MS,
+      contentType: "application/pdf"
+    });
+    return { buf, contentType: "application/pdf" };
+  } catch (err) {
+    console.warn(`[Labels] \u0110\u1ECDc \u0111\u0129a l\u1ED7i ${safe}:`, err?.message || err);
+    return null;
+  }
+}
+function hasLabelMem(filename) {
+  const hit = getLabelMem(filename);
+  return Boolean(hit && hit.buf.length > 0 && isPdfBuffer(hit.buf));
+}
+function assertLabelFileReady(filename) {
+  const safe = safeLabelFilename(filename);
+  if (!safe) throw new Error(`T\xEAn file v\u1EADn \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7: ${filename}`);
+  const hit = getLabelMem(safe);
+  if (!hit || !hit.buf.length) {
+    throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng t\u1ED3n t\u1EA1i ho\u1EB7c r\u1ED7ng: ${safe}`);
+  }
+  if (!isPdfBuffer(hit.buf)) {
+    throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
+  }
+  const diskPath = import_path15.default.join(LABELS_DIR, safe);
+  if (import_fs15.default.existsSync(diskPath)) {
+    const st = import_fs15.default.statSync(diskPath);
+    if (st.size <= 0) {
+      throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
+    }
+  }
+  return { safe, size: hit.buf.length };
+}
+function cleanupExpiredLabelFiles() {
+  let deleted = 0;
+  const now = Date.now();
+  for (const [key, val] of labelMemCache) {
+    if (val.expires < now) {
+      labelMemCache.delete(key);
+      deleted += 1;
+    }
+  }
+  try {
+    ensureLabelsDir();
+    const cutoff = now - LABEL_DISK_TTL_MS;
+    for (const name of import_fs15.default.readdirSync(LABELS_DIR)) {
+      if (!WAYBILL_FILE_RE.test(name)) continue;
+      const full = import_path15.default.join(LABELS_DIR, name);
+      try {
+        const st = import_fs15.default.statSync(full);
+        if (st.size <= 0 || st.mtimeMs < cutoff) {
+          import_fs15.default.unlinkSync(full);
+          labelMemCache.delete(name);
+          deleted += 1;
+        }
+      } catch {
+      }
+    }
+  } catch (err) {
+    console.warn("[Labels Cleanup] l\u1ED7i qu\xE9t th\u01B0 m\u1EE5c:", err);
+  }
+  if (deleted > 0) {
+    console.log(`[Labels Cleanup] \u0110\xE3 x\xF3a ${deleted} m\u1EE5c h\u1EBFt h\u1EA1n/r\u1ED7ng.`);
+  }
+  return deleted;
+}
+function cleanupExpiredPrintFiles() {
+  return cleanupExpiredLabelFiles();
+}
+function wipeLegacyPublicPrints() {
+  let deleted = 0;
+  for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
+    try {
+      if (!import_fs15.default.existsSync(dir)) continue;
+      for (const name of import_fs15.default.readdirSync(dir)) {
+        if (!WAYBILL_FILE_RE.test(name)) continue;
+        try {
+          import_fs15.default.unlinkSync(import_path15.default.join(dir, name));
+          deleted += 1;
+        } catch {
+        }
+      }
+    } catch (err) {
+      console.warn(`[Labels] Kh\xF4ng d\u1ECDn \u0111\u01B0\u1EE3c legacy ${dir}:`, err);
+    }
+  }
+  if (deleted > 0) {
+    console.log(`[Labels] \u0110\xE3 x\xF3a ${deleted} file legacy (public/prints|storage/waybills).`);
+  }
+  return deleted;
+}
+function scheduleWaybillsCleanup() {
+  setImmediate(() => {
+    try {
+      cleanupExpiredLabelFiles();
+      wipeLegacyPublicPrints();
+    } catch (err) {
+      console.warn("[Labels Cleanup] l\u1ED7i:", err);
+    }
+  });
+}
+try {
+  assertLabelsDirWritable();
+  console.log(`[Labels] LABELS_DIR=${LABELS_DIR} (writable OK)`);
+} catch (err) {
+  console.error("[Labels] BOOT: storage/labels kh\xF4ng ghi \u0111\u01B0\u1EE3c \u2014 in \u0111\u01A1n s\u1EBD th\u1EA5t b\u1EA1i:", err);
+}
+wipeLegacyPublicPrints();
+cleanupExpiredLabelFiles();
+var labelDiskCleanupRunning = false;
+var labelDailySweepAt = 0;
+var labelDiskCleanupTimer = setInterval(() => {
+  if (labelDiskCleanupRunning) return;
+  labelDiskCleanupRunning = true;
+  try {
+    const n = cleanupExpiredLabelFiles();
+    const now = Date.now();
+    if (now - labelDailySweepAt >= 24 * 60 * 60 * 1e3) {
+      labelDailySweepAt = now;
+      wipeLegacyPublicPrints();
+      console.log(`[Labels Cleanup] Daily sweep xong \u2014 deleted\u2248${n}, TTL=24h, dir=${LABELS_DIR}`);
+    }
+  } catch (err) {
+    console.warn("[Labels Cleanup] setInterval l\u1ED7i:", err);
+  } finally {
+    labelDiskCleanupRunning = false;
+  }
+}, 60 * 60 * 1e3);
+if (typeof labelDiskCleanupTimer.unref === "function") {
+  labelDiskCleanupTimer.unref();
+}
+function serveLabelPdfFromMem(filename, res) {
+  try {
+    const safe = safeLabelFilename(decodeURIComponent(String(filename || "")));
+    if (!safe) {
+      res.status(400).type("text/plain").send("T\xEAn file v\u1EADn \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7.");
+      return "invalid";
+    }
+    const hit = getLabelMem(safe);
+    if (!hit || !hit.buf.length) {
+      console.warn(`[Labels] 404 \u2014 kh\xF4ng th\u1EA5y file: ${safe} (dir=${LABELS_DIR})`);
+      return "not_found";
+    }
+    if (!isPdfBuffer(hit.buf, hit.contentType)) {
+      console.error(
+        `[Labels] Buffer kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}, size=${hit.buf.length}, head=${hit.buf.subarray(0, 20).toString("hex")}`
+      );
+      res.status(415).type("text/plain").send("File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7.");
+      return "invalid";
+    }
+    res.status(200);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${safe}"`);
+    res.setHeader("Content-Length", String(hit.buf.length));
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.end(hit.buf);
+    console.log(`[Labels] Served PDF /api/public/labels/${safe} (${hit.buf.length} bytes)`);
+    return "sent";
+  } catch (err) {
+    console.error(`[Labels] serveLabelPdf l\u1ED7i:`, err?.message || err);
+    if (!res.headersSent) {
+      res.status(500).type("text/plain").send("L\u1ED7i \u0111\u1ECDc file v\u1EADn \u0111\u01A1n PDF.");
+    }
+    return "invalid";
+  }
+}
+var APP_BASE_URL3 = resolveAppBaseUrl();
+function resolveLabelsPublicBaseUrl() {
+  const explicit = String(
+    process.env.LABELS_BASE_URL || process.env.CPANEL_PUBLIC_URL || process.env.CPANEL_BACKEND_URL || ""
+  ).trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  return "https://api.linhkienamthanh.net";
+}
+function absoluteLabelUrl(relativePath) {
+  if (!relativePath) return null;
+  let fn = "";
+  if (/^https?:\/\//i.test(relativePath)) {
+    try {
+      fn = decodeURIComponent(new URL(relativePath).pathname.split("/").pop() || "");
+    } catch {
+      return null;
+    }
+  } else {
+    const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
+    const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
+    fn = decodeURIComponent(fnMatch?.[1] || import_path15.default.basename(p));
+  }
+  if (!safeLabelFilename(fn)) return null;
+  try {
+    assertLabelFileReady(fn);
+  } catch (err) {
+    console.error(`[Labels] absoluteLabelUrl T\u1EEA CH\u1ED0I URL (file ch\u01B0a s\u1EB5n s\xE0ng): ${fn} \u2014 ${err?.message || err}`);
+    return null;
+  }
+  const url = `${resolveLabelsPublicBaseUrl()}/api/public/labels/${encodeURIComponent(fn)}`;
+  console.log(`[Labels] URL tr\u1EA3 v\u1EC1 cho FE: ${url}`);
+  return url;
+}
 function toShopeeUnixSeconds(raw, fallbackSec) {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) {
@@ -103596,7 +105246,6 @@ var SHOPEE_SYNC_CHUNK_SIZE = SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS;
 var ORDER_SYNC_SAVE_DELAY_MS = 1e3;
 var SHOPEE_TRACKING_FETCH_DELAY_MS = 350;
 var SHOPEE_SYNC_CHUNK_DELAY_MS = 1e3;
-var SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
 var SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1e3;
 var SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 var SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 8;
@@ -103604,329 +105253,16 @@ var SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
 var SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var ordersPullInFlight = false;
-var SHOPEE_PRODUCT_API_DELAY_MS = 1e3;
+var SHOPEE_PRODUCT_API_DELAY_MS2 = 1e3;
 var SHOPEE_SYNC_QUEUE_MAX_RETRY2 = 3;
 var SHOPEE_ITEM_LIST_PAGE_SIZE = 10;
-var SHOPEE_PRODUCT_BATCH_SIZE = 10;
-var SHOPEE_PRODUCT_BATCH_PAUSE_MS = 2500;
+var SHOPEE_PRODUCT_BATCH_SIZE2 = 10;
+var SHOPEE_PRODUCT_BATCH_PAUSE_MS2 = 2500;
 var SHOPEE_PRODUCT_BASE_INFO_BATCH = 10;
 var CHANNEL_FETCH_MICRO_BATCH = 10;
 var CHANNEL_FETCH_YIELD_MS = 50;
 var AUTO_LINK_BATCH_LIMIT_DEFAULT = 50;
 var AUTO_LINK_BATCH_LIMIT_MAX = 100;
-var SHOPEE_API_MAX_RETRY = 3;
-var SHOPEE_API_RETRY_BASE_MS = 1500;
-var SHOPEE_HTTP_TIMEOUT_MS = 15e3;
-var SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
-var SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();
-function resolveCreateRequireFilename() {
-  try {
-    if (typeof __filename === "string" && __filename.length > 0) {
-      return __filename;
-    }
-  } catch {
-  }
-  try {
-    const metaUrl = typeof import_meta !== "undefined" ? String(import_meta?.url || "") : "";
-    if (metaUrl && metaUrl !== "undefined") return metaUrl;
-  } catch {
-  }
-  return import_path13.default.resolve(process.cwd(), "server.cjs");
-}
-var shopeeHttpDispatcher = void 0;
-try {
-  const nodeRequire = (0, import_node_module.createRequire)(resolveCreateRequireFilename());
-  let undiciMod;
-  try {
-    undiciMod = nodeRequire("node:undici");
-  } catch {
-    undiciMod = nodeRequire("undici");
-  }
-  const ShopeeUndiciAgent = undiciMod?.Agent;
-  if (typeof ShopeeUndiciAgent !== "function") {
-    throw new Error("undici.Agent kh\xF4ng kh\u1EA3 d\u1EE5ng");
-  }
-  shopeeHttpDispatcher = new ShopeeUndiciAgent({
-    connect: {
-      rejectUnauthorized: true,
-      minVersion: SHOPEE_TLS_MIN_VERSION,
-      maxVersion: SHOPEE_TLS_MAX_VERSION
-    },
-    connections: 3,
-    pipelining: 0,
-    keepAliveTimeout: 3e4
-  });
-  console.log("[Shopee HTTP] undici Agent OK \u2014 TLS dispatcher s\u1EB5n s\xE0ng cho sync Shopee.");
-} catch (undiciErr) {
-  console.info(
-    "[Shopee HTTP] D\xF9ng fetch t\xEDch h\u1EE3p c\u1EE7a Node (kh\xF4ng d\xF9ng undici dispatcher):",
-    undiciErr?.message || undiciErr
-  );
-  shopeeHttpDispatcher = void 0;
-}
-async function fetchWithTimeout(url, init = {}, timeoutMs = SHOPEE_HTTP_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let hardTimer;
-  try {
-    const fetchInit = {
-      ...init,
-      signal: controller.signal
-    };
-    if (shopeeHttpDispatcher) fetchInit.dispatcher = shopeeHttpDispatcher;
-    const fetchPromise = fetch(url, fetchInit);
-    const hardTimeoutPromise = new Promise((_, reject) => {
-      hardTimer = setTimeout(
-        () => reject(new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`)),
-        timeoutMs + 1e3
-      );
-    });
-    return await Promise.race([fetchPromise, hardTimeoutPromise]);
-  } catch (error) {
-    if (error?.name === "AbortError" || /timeout/i.test(String(error?.message || ""))) {
-      console.error(`[Shopee HTTP] TIMEOUT ${timeoutMs}ms \u2014 ${String(url).slice(0, 180)}`);
-      throw new Error(`Shopee API timeout sau ${timeoutMs / 1e3}s`);
-    }
-    console.error(
-      `[Shopee HTTP] FETCH L\u1ED6I \u2014 ${String(url).slice(0, 120)}:`,
-      error?.message || error
-    );
-    throw error;
-  } finally {
-    clearTimeout(timer);
-    if (hardTimer) clearTimeout(hardTimer);
-  }
-}
-function shopeeExponentialBackoffMs(attempt, baseMs = SHOPEE_API_RETRY_BASE_MS) {
-  return Math.min(3e4, baseMs * Math.pow(2, attempt));
-}
-var shopeeRetryTelemetry = { retries: 0, rateLimits: 0, exhausted: 0 };
-function snapshotShopeeRetryTelemetry() {
-  return { ...shopeeRetryTelemetry };
-}
-function diffShopeeRetryTelemetry(before) {
-  return {
-    retries: shopeeRetryTelemetry.retries - before.retries,
-    rate_limits: shopeeRetryTelemetry.rateLimits - before.rateLimits,
-    exhausted_retries: shopeeRetryTelemetry.exhausted - before.exhausted,
-    max_retries: SHOPEE_API_MAX_RETRY
-  };
-}
-function isShopeeRetryableNetworkError(err) {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
-}
-function isShopeeRetryableHttpStatus(status) {
-  return status === 429 || status === 502 || status === 503 || status === 504;
-}
-async function runInShopeeBatches(items, processor, opts) {
-  if (items.length === 0) return;
-  const batchSize = opts?.batchSize ?? SHOPEE_PRODUCT_BATCH_SIZE;
-  const itemDelayMs = opts?.itemDelayMs ?? SHOPEE_PRODUCT_API_DELAY_MS;
-  const batchPauseMs = opts?.batchPauseMs ?? SHOPEE_PRODUCT_BATCH_PAUSE_MS;
-  for (let batchStart = 0; batchStart < items.length; batchStart += batchSize) {
-    const batch = items.slice(batchStart, batchStart + batchSize);
-    const batchNo = Math.floor(batchStart / batchSize) + 1;
-    const totalBatches = Math.ceil(items.length / batchSize);
-    console.log(`[Shopee Throttle] Batch ${batchNo}/${totalBatches} (${batch.length} item)...`);
-    for (let j = 0; j < batch.length; j++) {
-      await processor(batch[j], batchStart + j);
-      if (j < batch.length - 1) await sleep2(itemDelayMs);
-    }
-    if (batchStart + batchSize < items.length) {
-      console.log(`[Shopee Throttle] Ngh\u1EC9 ${batchPauseMs}ms tr\u01B0\u1EDBc batch k\u1EBF...`);
-      await sleep2(batchPauseMs);
-    }
-  }
-}
-function shopeeSyncDelay(ms = SHOPEE_SYNC_BATCH_DELAY_MS) {
-  return sleep2(ms);
-}
-function shopeeApiErrorResult(err, context, httpStatus) {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`[Shopee API] ${context}:`, message);
-  const status = httpStatus || (/HTTP\s*401|\b401\b|invalid_access_token|unauthorized|auth/i.test(message) ? 401 : /HTTP\s*429|\b429\b|rate.?limit|too many/i.test(message) ? 429 : /HTTP\s*504|\b504\b|timeout|timed out|AbortError/i.test(message) ? 504 : void 0);
-  return {
-    error: status === 401 ? "unauthorized" : status === 429 ? "rate_limit_exceeded" : status === 504 ? "gateway_timeout" : "shopee_api_error",
-    message: formatShopeeApiError({ error: "shopee_api_error", message: `${context}: ${message}` }, status),
-    httpStatus: status
-  };
-}
-function formatShopeeApiError(json2, httpStatus) {
-  const parts = [json2?.message, json2?.error, json2?.msg].map((v) => String(v ?? "").trim()).filter((v) => v && !/^HTTP\s+\d+$/i.test(v));
-  const status = typeof httpStatus === "number" && httpStatus > 0 ? httpStatus : typeof json2?.httpStatus === "number" && json2.httpStatus > 0 ? json2.httpStatus : void 0;
-  if (status === 401) {
-    return parts[0] || SHOPEE_REAUTH_REQUIRED_MESSAGE;
-  }
-  if (status === 429) {
-    return parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
-  }
-  if (status === 504) {
-    return parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0111\u1ED3ng b\u1ED9 nhanh (2 gi\u1EDD).";
-  }
-  if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
-    return parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9 v\xE0 th\u1EED l\u1EA1i.";
-  }
-  if (parts.length > 0) return parts.join(" \u2014 ");
-  if (status && status >= 400) return `Shopee API l\u1ED7i HTTP ${status}`;
-  return "L\u1ED7i Shopee API kh\xF4ng x\xE1c \u0111\u1ECBnh";
-}
-function isShopeeRateLimited(httpStatus, json2) {
-  if (httpStatus === 429) return true;
-  const text = `${json2?.error || ""} ${json2?.message || ""}`.toLowerCase();
-  return /rate.?limit|too many request|api_call_limit|exceed/.test(text);
-}
-function describeShopeeTokenFailure(shopKey) {
-  const tokens = loadShopeeTokens();
-  const key = normalizeShopIdKey(shopKey);
-  const record = getShopeeTokenRecord(tokens, key);
-  if (!record) {
-    return {
-      error: "shopee_reauth_required",
-      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-    };
-  }
-  if (!record.refresh_token) {
-    return {
-      error: "shopee_reauth_required",
-      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-    };
-  }
-  const now = Math.floor(Date.now() / 1e3);
-  const obtainedAt = Number(record.obtained_at) || 0;
-  const expireIn = Number(record.expire_in) || 14400;
-  const isExpired = obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
-  if (isExpired) {
-    return {
-      error: "shopee_reauth_required",
-      message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-    };
-  }
-  return {
-    error: "shopee_reauth_required",
-    message: SHOPEE_REAUTH_REQUIRED_MESSAGE
-  };
-}
-async function shopeeFetchJsonWithRetry(url, context, opts) {
-  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
-  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    let res;
-    let rawText = "";
-    try {
-      res = await fetchWithTimeout(url);
-      rawText = await res.text();
-    } catch (err) {
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
-        shopeeRetryTelemetry.retries++;
-        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep2(waitMs);
-        continue;
-      }
-      const netMsg = err instanceof Error ? err.message : String(err);
-      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
-    }
-    let json2;
-    try {
-      json2 = rawText ? JSON.parse(rawText) : {};
-    } catch (parseErr) {
-      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      return {
-        httpStatus: res.status,
-        json: {
-          error: "json_parse_error",
-          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
-        }
-      };
-    }
-    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
-      shopeeRetryTelemetry.retries++;
-      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      console.warn(
-        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
-      );
-      await sleep2(waitMs);
-      continue;
-    }
-    if (res.status === 401 || res.status === 429 || res.status === 504 || res.status >= 400 && json2?.error) {
-      json2.message = formatShopeeApiError(json2, res.status);
-      json2.httpStatus = res.status;
-    }
-    return { json: json2, httpStatus: res.status };
-  }
-  shopeeRetryTelemetry.exhausted++;
-  return {
-    httpStatus: 429,
-    json: {
-      error: "rate_limit_exceeded",
-      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429),
-      httpStatus: 429
-    }
-  };
-}
-async function shopeePostJsonWithRetry(url, body, context, opts) {
-  const maxAttempts = opts?.maxAttempts ?? SHOPEE_API_MAX_RETRY;
-  const baseDelayMs = opts?.baseDelayMs ?? SHOPEE_API_RETRY_BASE_MS;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    let res;
-    let rawText = "";
-    try {
-      res = await fetchWithTimeout(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
-      });
-      rawText = await res.text();
-    } catch (err) {
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      if (attempt < maxAttempts - 1 && isShopeeRetryableNetworkError(err)) {
-        shopeeRetryTelemetry.retries++;
-        console.warn(`[Shopee API] ${context} l\u1ED7i m\u1EA1ng, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`);
-        await sleep2(waitMs);
-        continue;
-      }
-      const netMsg = err instanceof Error ? err.message : String(err);
-      throw new Error(`${context}: Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c Shopee API \u2014 ${netMsg}`);
-    }
-    let json2;
-    try {
-      json2 = rawText ? JSON.parse(rawText) : {};
-    } catch (parseErr) {
-      const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
-      return {
-        httpStatus: res.status,
-        json: {
-          error: "json_parse_error",
-          message: `${context}: ph\u1EA3n h\u1ED3i kh\xF4ng ph\u1EA3i JSON h\u1EE3p l\u1EC7 (HTTP ${res.status}): ${parseMsg}`
-        }
-      };
-    }
-    if ((isShopeeRateLimited(res.status, json2) || isShopeeRetryableHttpStatus(res.status)) && attempt < maxAttempts - 1) {
-      shopeeRetryTelemetry.retries++;
-      if (isShopeeRateLimited(res.status, json2)) shopeeRetryTelemetry.rateLimits++;
-      const waitMs = shopeeExponentialBackoffMs(attempt, baseDelayMs);
-      console.warn(
-        `[Shopee API] ${context} HTTP ${res.status}, retry ${attempt + 2}/${maxAttempts} sau ${waitMs}ms...`
-      );
-      await sleep2(waitMs);
-      continue;
-    }
-    if (json2?.error && !json2.message) {
-      json2.message = formatShopeeApiError(json2, res.status);
-    }
-    return { json: json2, httpStatus: res.status };
-  }
-  shopeeRetryTelemetry.exhausted++;
-  return {
-    httpStatus: 429,
-    json: {
-      error: "rate_limit_exceeded",
-      message: formatShopeeApiError({ error: "rate_limit_exceeded" }, 429)
-    }
-  };
-}
 function buildShopeeUpdateStockEntry(stock, modelId, locationId) {
   const sellerStock = {
     stock: Math.max(0, Math.round(Number(stock) || 0))
@@ -105188,10 +106524,10 @@ async function shopeeGetModelList(shopId, accessToken, itemId) {
 async function shopeeGetModelListWithRetry(shopId, accessToken, itemId, retries = 3) {
   let last = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS * attempt);
+    if (attempt > 0) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2 * attempt);
     last = await shopeeGetModelList(shopId, accessToken, itemId);
     if (!last?.error) return last;
-    if (isShopeeRateLimited(0, last)) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS * 2);
+    if (isShopeeRateLimited(0, last)) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
   }
   return last;
 }
@@ -105395,14 +106731,14 @@ async function resolvePublishImageBuffer(src) {
   }
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
-    const filePath = import_path13.default.join(APP_ROOT9, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs14.default.existsSync(filePath)) {
-      return { buf: import_fs14.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    const filePath = import_path15.default.join(APP_ROOT11, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (import_fs15.default.existsSync(filePath)) {
+      return { buf: import_fs15.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
   if (raw.startsWith("/")) {
-    fetchUrl = `${APP_BASE_URL2.replace(/\/$/, "")}${raw}`;
+    fetchUrl = `${APP_BASE_URL3.replace(/\/$/, "")}${raw}`;
   }
   const res = await fetch(fetchUrl);
   if (!res.ok) throw new Error(`Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c \u1EA3nh (${res.status}): ${raw.slice(0, 120)}`);
@@ -105576,13 +106912,13 @@ async function publishOneItemToShopee(shopId, payload) {
     const { buf, filename, mime } = await resolvePublishImageBuffer(src);
     if (buf.length > 10 * 1024 * 1024) throw new Error(`\u1EA2nh v\u01B0\u1EE3t 10MB: ${filename}`);
     imageIds.push(await shopeeUploadImage(shopId, accessToken, buf, filename, mime));
-    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
   const logisticInfo = await shopeeGetChannelList(shopId, accessToken);
   if (!logisticInfo.length) {
     throw new Error("Shop ch\u01B0a c\xF3 k\xEAnh v\u1EADn chuy\u1EC3n enabled (get_channel_list)");
   }
-  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   let mandatoryAttrs = [];
   let attributeTreeError = null;
   try {
@@ -105592,7 +106928,7 @@ async function publishOneItemToShopee(shopId, payload) {
     attributeTreeError = err?.message || String(err);
     console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "get_attribute_tree", error: attributeTreeError }, null, 2));
   }
-  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   const attributeList = buildShopeeAttributeListFromPayload(payload, mandatoryAttrs);
   const missingMandatory = mandatoryAttrs.filter(
     (a) => !attributeList.some((x2) => Number(x2.attribute_id) === Number(a.attribute_id))
@@ -105654,7 +106990,7 @@ async function publishOneItemToShopee(shopId, payload) {
     console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "add_item", response: addResp }, null, 2));
     throw new Error("add_item kh\xF4ng tr\u1EA3 v\u1EC1 item_id h\u1EE3p l\u1EC7 (Shopee kh\xF4ng t\u1EA1o s\u1EA3n ph\u1EA9m)");
   }
-  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   if (hasVariants) {
     const optionList = variants.map((v) => ({
       option: String(v.name || "Ph\xE2n lo\u1EA1i").trim().slice(0, 30) || "Ph\xE2n lo\u1EA1i"
@@ -105696,7 +107032,7 @@ async function publishOneItemToShopee(shopId, payload) {
           },
           "init_tier_variation"
         );
-        await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+        await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
         await shopeeProductPost(
           "/api/v2/product/add_model",
           shopId,
@@ -105892,7 +107228,7 @@ async function syncProductToShopee(product, shopId, accessToken) {
       { ...base, action: "update_price" }
     ];
   }
-  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+  await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   const priceResult = await shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
   if (isShopeeItemNotFoundError(priceResult)) {
     await markShopeeItemsInvalidInDb([itemId], priceResult?.error || "product.error_item_not_found");
@@ -106230,7 +107566,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
       }
       continue;
     }
-    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
     const locationId = await resolveShopeeStockLocationId(resolved.shopId, resolved.accessToken);
     const stockList = [];
     for (const p of rows) {
@@ -106268,7 +107604,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
     }
     if (stockList.length === 0) {
       processedInBatch++;
-      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
       continue;
     }
     let result;
@@ -106290,10 +107626,10 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
         });
       }
       processedInBatch++;
-      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
-      if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE === 0 && processedInBatch < itemEntries.length) {
-        console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS}ms sau ${processedInBatch}/${itemEntries.length} item...`);
-        await sleep2(SHOPEE_PRODUCT_BATCH_PAUSE_MS);
+      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+      if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE2 === 0 && processedInBatch < itemEntries.length) {
+        console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS2}ms sau ${processedInBatch}/${itemEntries.length} item...`);
+        await sleep2(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
       }
       continue;
     }
@@ -106341,10 +107677,10 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
       pushed += rows.length;
     }
     processedInBatch++;
-    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
-    if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE === 0 && processedInBatch < itemEntries.length) {
-      console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS}ms sau ${processedInBatch}/${itemEntries.length} item...`);
-      await sleep2(SHOPEE_PRODUCT_BATCH_PAUSE_MS);
+    await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
+    if (processedInBatch % SHOPEE_PRODUCT_BATCH_SIZE2 === 0 && processedInBatch < itemEntries.length) {
+      console.log(`[Shopee Push Stock] Ngh\u1EC9 ${SHOPEE_PRODUCT_BATCH_PAUSE_MS2}ms sau ${processedInBatch}/${itemEntries.length} item...`);
+      await sleep2(SHOPEE_PRODUCT_BATCH_PAUSE_MS2);
     }
   }
   if (invalidItemIds.size > 0) {
@@ -106361,18 +107697,6 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
 function getItemAvatarUrl(item) {
   const list = item?.image?.image_url_list;
   return Array.isArray(list) && list.length > 0 ? String(list[0]) : void 0;
-}
-function resolveShopeeTokenShopId(requested) {
-  const tokens = loadShopeeTokens();
-  const keys = Object.keys(tokens);
-  if (!keys.length) return null;
-  const req = String(requested || "").trim();
-  if (req && tokens[req]) return req;
-  if (req) {
-    const digits = req.match(/(\d{5,})/)?.[1];
-    if (digits && tokens[digits]) return digits;
-  }
-  return keys[0];
 }
 function asShopeeArray(value) {
   return Array.isArray(value) ? value : [];
@@ -106987,7 +108311,7 @@ async function fetchAllShopeeItemIds(shopId, accessToken) {
     hasNext = !!listResult.response?.has_next_page && items.length > 0;
     offset = listResult.response?.next_offset ?? offset + items.length;
     pageGuard++;
-    if (hasNext) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+    if (hasNext) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
   }
   return allItemIds;
 }
@@ -107013,7 +108337,7 @@ async function fetchShopeeBaseItemsByIds(shopId, accessToken, itemIds) {
       console.error(`[Shopee Sync] get_item_base_info batch ${batchIdx} exception: ${msg}`);
     }
     if (batchIdx < batches.length - 1) {
-      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS);
+      await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2);
     }
   }
   return allItems;
@@ -108247,7 +109571,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
   const sources = [];
   let carrier;
   let internal;
-  const consider = (key, value, path15) => {
+  const consider = (key, value, path17) => {
     if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
@@ -108257,7 +109581,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
         internal = s2;
-        sources.push(`${path15}=${s2}(internal)`);
+        sources.push(`${path17}=${s2}(internal)`);
       }
       return;
     }
@@ -108265,20 +109589,20 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (!carrier || isCarrierTrackingCode(s2)) {
       if (!carrier || isCarrierTrackingCode(s2) && !isCarrierTrackingCode(carrier)) {
         carrier = s2;
-        sources.push(`${path15}=${s2}`);
+        sources.push(`${path17}=${s2}`);
       } else if (!carrier) {
         carrier = s2;
-        sources.push(`${path15}=${s2}`);
+        sources.push(`${path17}=${s2}`);
       }
     } else if (!carrier && s2.length >= 6) {
       carrier = s2;
-      sources.push(`${path15}=${s2}`);
+      sources.push(`${path17}=${s2}`);
     }
   };
-  const walk = (node, path15, depth) => {
+  const walk = (node, path17, depth) => {
     if (node == null || depth > 8) return;
     if (Array.isArray(node)) {
-      node.forEach((item, i2) => walk(item, `${path15}[${i2}]`, depth + 1));
+      node.forEach((item, i2) => walk(item, `${path17}[${i2}]`, depth + 1));
       return;
     }
     if (typeof node !== "object") return;
@@ -108287,7 +109611,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (nodeSn && nodeSn !== wantSn) return;
     }
     for (const [k, v] of Object.entries(node)) {
-      const childPath = path15 ? `${path15}.${k}` : k;
+      const childPath = path17 ? `${path17}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
         consider(k, v, childPath);
       } else {
@@ -109245,7 +110569,7 @@ function agentDebugLogAc966f(payload) {
     timestamp: Date.now()
   };
   try {
-    import_fs14.default.appendFileSync(import_path13.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
+    import_fs15.default.appendFileSync(import_path15.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
   } catch {
   }
   fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
@@ -110075,9 +111399,9 @@ function withLocalDbTimeout(promise, timeoutMs, label) {
   return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
 }
 var MONGO_ORDER_RECONCILE_COOLDOWN_MS = 5 * 60 * 1e3;
-var PRODUCTS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "products.json");
-var LOCAL_INVENTORY_CACHE_PATH = import_path13.default.join(APP_ROOT9, "data", "local_inventory.json");
-var SQLITE_LEGACY_PATH = import_path13.default.join(APP_ROOT9, "database.sqlite");
+var PRODUCTS_DB_PATH = import_path15.default.join(APP_ROOT11, "data", "products.json");
+var LOCAL_INVENTORY_CACHE_PATH = import_path15.default.join(APP_ROOT11, "data", "local_inventory.json");
+var SQLITE_LEGACY_PATH = import_path15.default.join(APP_ROOT11, "database.sqlite");
 function getProductChildrenList(p) {
   try {
     if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
@@ -110173,18 +111497,18 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
-var INVENTORY_AUDIT_PATH = import_path13.default.join(APP_ROOT9, "data", "inventory_audit.json");
-var INVENTORY_BACKUP_DIR = import_path13.default.join(APP_ROOT9, "data", "inventory_backups");
+var INVENTORY_AUDIT_PATH = import_path15.default.join(APP_ROOT11, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path15.default.join(APP_ROOT11, "data", "inventory_backups");
 function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs14.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs14.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs15.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs15.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs14.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs15.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -110192,36 +111516,36 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs14.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs15.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs14.default.writeFileSync(
-    import_path13.default.join(INVENTORY_BACKUP_DIR, fileName),
+  import_fs15.default.writeFileSync(
+    import_path15.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
   );
   writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
   return fileName;
 }
-var CHANNEL_LISTINGS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "channel_listings.json");
-var SHOPEE_SYNC_ERRORS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "shopee_sync_errors.json");
+var CHANNEL_LISTINGS_DB_PATH = import_path15.default.join(APP_ROOT11, "data", "channel_listings.json");
+var SHOPEE_SYNC_ERRORS_DB_PATH = import_path15.default.join(APP_ROOT11, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs14.default.existsSync(filePath)) return;
+  if (!import_fs15.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs14.default.renameSync(filePath, dest);
-    console.log(`[Mongo Migrate] Renamed ${import_path13.default.basename(filePath)} \u2192 ${import_path13.default.basename(dest)}`);
+    import_fs15.default.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${import_path15.default.basename(filePath)} \u2192 ${import_path15.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
   }
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs14.default.existsSync(filePath)) return [];
-    const raw = import_fs14.default.readFileSync(filePath, "utf-8");
+    if (!import_fs15.default.existsSync(filePath)) return [];
+    const raw = import_fs15.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -110230,26 +111554,26 @@ function readLegacyJsonArray(filePath) {
   }
 }
 function findLatestMigratedJson(baseName) {
-  const dataDir = import_path13.default.join(APP_ROOT9, "data");
-  if (!import_fs14.default.existsSync(dataDir)) return null;
+  const dataDir = import_path15.default.join(APP_ROOT11, "data");
+  if (!import_fs15.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs14.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs15.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
-  return import_path13.default.join(dataDir, matches[matches.length - 1]);
+  return import_path15.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   if (isProductsDiskMode()) {
     try {
-      const existing = import_fs14.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs14.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      const existing = import_fs15.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs15.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
       if (!Array.isArray(existing) || existing.length === 0) {
-        const dataDir = import_path13.default.join(APP_ROOT9, "data");
-        if (import_fs14.default.existsSync(dataDir)) {
-          const migrated = import_fs14.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+        const dataDir = import_path15.default.join(APP_ROOT11, "data");
+        if (import_fs15.default.existsSync(dataDir)) {
+          const migrated = import_fs15.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
           const latest = migrated[migrated.length - 1];
           if (latest) {
-            const src = import_path13.default.join(dataDir, latest);
+            const src = import_path15.default.join(dataDir, latest);
             const dest = getProductsDiskPath();
-            import_fs14.default.copyFileSync(src, dest);
+            import_fs15.default.copyFileSync(src, dest);
             console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
           }
         }
@@ -110266,9 +111590,9 @@ async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs14.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs14.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs14.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs15.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs15.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs15.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -110287,10 +111611,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs14.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs15.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs14.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs15.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -110316,10 +111640,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs14.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs15.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs14.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs15.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -110330,8 +111654,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs14.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs14.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs15.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs15.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -110355,8 +111679,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs14.default.mkdirSync(import_path13.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs14.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs15.default.mkdirSync(import_path15.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs15.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -111034,7 +112358,7 @@ async function bulkAutoLinkAllPending(opts) {
     masterProductCount
   };
 }
-var CHANNEL_SETTINGS_PATH = import_path13.default.join(APP_ROOT9, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH = import_path15.default.join(APP_ROOT11, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -111185,8 +112509,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs14.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs14.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs15.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs15.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -111208,7 +112532,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs14.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs15.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -111894,160 +113218,6 @@ async function upsertShopeeWebhookShallow(body, orders) {
   }
   return String(merged.orderSn);
 }
-async function processShopeeWebhookPayload(body) {
-  try {
-    if (!body || typeof body !== "object") return;
-    console.log("[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:", JSON.stringify(body));
-    if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
-      const peek = parseShopeePushEvent(body);
-      console.log(
-        `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`
-      );
-      return;
-    }
-    const parsed = parseShopeePushEvent(body);
-    console.log(
-      "[Shopee Webhook] Push event",
-      JSON.stringify({
-        code: parsed.code,
-        eventKind: parsed.eventKind,
-        shopId: parsed.shopId || null,
-        orderSn: parsed.orderSn || null,
-        status: parsed.status || null,
-        logisticsStatus: parsed.logisticsStatus || null,
-        trackingNo: parsed.trackingNo || null,
-        packageNumber: parsed.packageNumber || null,
-        returnSn: parsed.returnSn || null
-      })
-    );
-    if (!parsed.orderSn) {
-      console.error(
-        `[Shopee Webhook] REJECTED \u2014 thi\u1EBFu order_sn (code=${parsed.code}) payload=${JSON.stringify(body).slice(0, 800)}`
-      );
-      return;
-    }
-    const shouldPersist = (
-      // Code 3 có order_sn là thông báo trạng thái hợp lệ, kể cả khi Shopee phát
-      // thêm trạng thái mới hoặc status tạm thời rỗng. Không được bỏ qua đơn mới.
-      parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund" || SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) || isLogisticsHandedToCarrier(parsed.logisticsStatus)
-    );
-    if (!shouldPersist) {
-      console.error(
-        `[StateMachine] Webhook REJECTED \u2014 status/event kh\xF4ng c\u1EA7n persist order_sn=${parsed.orderSn} status=${parsed.status || "empty"} logistics=${parsed.logisticsStatus || "-"} code=${parsed.code} kind=${parsed.eventKind}`
-      );
-      return;
-    }
-    const orders = loadOrders();
-    const shopId = parsed.shopId;
-    let accessToken = null;
-    if (shopId) {
-      accessToken = await getValidShopeeAccessToken(shopId);
-    }
-    const shouldFetchDetail = parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund";
-    if (shouldFetchDetail && shopId && accessToken) {
-      const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
-        shopId,
-        accessToken,
-        shopId,
-        [parsed.orderSn],
-        { enrichTracking: true }
-      );
-      if (normalized.length > 0) {
-        await persistShopeeOrderChunk(orders, normalized, {
-          apiShopId: shopId,
-          accessToken
-        });
-        console.log(
-          `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
-        );
-      } else {
-        console.warn(
-          `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${parsed.orderSn}`,
-          errors?.[0] || ""
-        );
-        await upsertShopeeWebhookShallow(body, orders);
-        saveOrders(orders);
-      }
-    } else {
-      if (!shopId || !accessToken) {
-        console.warn(
-          `[Shopee Webhook] Thi\u1EBFu shop_id/token \u2014 fallback normalize th\xF4 order_sn=${parsed.orderSn}`
-        );
-      }
-      await upsertShopeeWebhookShallow(body, orders);
-      saveOrders(orders);
-    }
-    let idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
-    if (idx < 0 && (parsed.trackingNo || parsed.status)) {
-      await upsertShopeeWebhookShallow(body, orders);
-      idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
-    }
-    if (idx >= 0) {
-      const beforeTn = String(orders[idx].trackingNumber || orders[idx].tracking_no || "");
-      applyShopeePushFieldsToOrder(orders[idx], parsed);
-      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || !hasUsableShopeeTrackingNumber(orders[idx]))) {
-        try {
-          await enrichShopeeOrderTrackingFromApi(shopId, accessToken, orders[idx], { retries: 4 });
-          applyShopeePushFieldsToOrder(orders[idx], parsed);
-        } catch (trackErr) {
-          console.warn(
-            `[Shopee Webhook] Force get_tracking_number ${parsed.orderSn}:`,
-            trackErr?.message || trackErr
-          );
-        }
-      }
-      const afterTn = String(orders[idx].trackingNumber || orders[idx].tracking_no || "");
-      console.log(
-        `[Shopee Webhook] Apply push fields order_sn=${parsed.orderSn} status=${orders[idx].status} raw=${orders[idx].shopee_order_status || "\u2014"} tn=${afterTn || "\u2014"} (before=${beforeTn || "\u2014"})`
-      );
-      saveOrders(orders);
-      if (isMongoReady()) {
-        try {
-          await bulkUpsertOrdersToStore([orders[idx]]);
-          console.log(
-            `[DB UPDATED] order_sn=${parsed.orderSn} shop_id=${shopId || orders[idx]?.shopId || "?"} status=${orders[idx]?.shopee_order_status || "?"} \u2014 upsert OK`
-          );
-        } catch (mongoErr) {
-          console.warn(
-            `[Shopee Webhook] Mongo upsert ${parsed.orderSn}:`,
-            mongoErr?.message || mongoErr
-          );
-        }
-      }
-    }
-    const orderAfter = orders.find((o) => String(o.orderSn) === parsed.orderSn);
-    const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
-    if (needReturnFallback && shopId && accessToken) {
-      await applyWebhookReturnFallback(
-        shopId,
-        accessToken,
-        parsed.orderSn,
-        orders,
-        parsed.returnSn
-      );
-      saveOrders(orders);
-      if (isMongoReady()) {
-        const row = orders.find((o) => String(o.orderSn) === parsed.orderSn);
-        if (row) {
-          try {
-            await bulkUpsertOrdersToStore([row]);
-            console.log(
-              `[DB UPDATED] (return/cancel) order_sn=${parsed.orderSn} shop_id=${row?.shopId || "?"} status=${row?.shopee_order_status || "?"} \u2014 upsert OK`
-            );
-          } catch (mongoErr) {
-            console.warn(
-              `[Shopee Webhook] Mongo upsert return ${parsed.orderSn}:`,
-              mongoErr?.message || mongoErr
-            );
-          }
-        }
-      }
-    }
-    console.log(`[Shopee Webhook] Order ${parsed.orderSn} processed (event=${parsed.eventKind}).`);
-  } catch (error) {
-    console.error("[Shopee Webhook] Async processing error:", error);
-  }
-}
 async function startServer() {
   const app = (0, import_express15.default)();
   const PORT = process.env.PORT || 3e3;
@@ -112078,6 +113248,22 @@ async function startServer() {
     };
   }
   app.use(cors_default);
+  initShopeeWebhookController({
+    parseShopeePushEvent,
+    SHOPEE_WEBHOOK_ORDER_STATUSES,
+    isLogisticsHandedToCarrier,
+    loadOrders,
+    saveOrders,
+    fetchNormalizeShopeeOrderChunk,
+    persistShopeeOrderChunk,
+    upsertShopeeWebhookShallow,
+    applyShopeePushFieldsToOrder,
+    hasUsableShopeeTrackingNumber,
+    enrichShopeeOrderTrackingFromApi,
+    isMongoReady,
+    bulkUpsertOrdersToStore,
+    applyWebhookReturnFallback
+  });
   app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload));
   app.use(import_express15.default.json({ limit: "50mb" }));
   app.use(import_express15.default.urlencoded({ limit: "50mb", extended: true }));
@@ -112103,8 +113289,8 @@ async function startServer() {
     listShopeeOAuthShopIds,
     loadLastOAuthAudit,
     tokensPath: SHOPEE_TOKENS_PATH,
-    appRoot: APP_ROOT9,
-    appBaseUrl: APP_BASE_URL2,
+    appRoot: APP_ROOT11,
+    appBaseUrl: APP_BASE_URL3,
     shopeeCallbackUrl: SHOPEE_CALLBACK_URL2,
     shopeeWebhookUrl: SHOPEE_WEBHOOK_URL2
   });
@@ -112167,158 +113353,10 @@ async function startServer() {
   app.get("/api/labels/:filename", handlePublicLabelGet);
   app.get("/labels/:filename", handlePublicLabelGet);
   app.get("/prints/:filename", handlePublicLabelGet);
-  function logShopeeIngress(prefix, req) {
-    console.log(
-      prefix,
-      JSON.stringify({
-        at: (/* @__PURE__ */ new Date()).toISOString(),
-        method: req.method,
-        url: req.url,
-        query: req.query || {},
-        headers: req.headers || {},
-        body: req.body ?? null
-      })
-    );
-  }
-  app.get("/api/shopee/oauth/complete", async (req, res) => {
-    console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
-    logShopeeIngress("[Shopee OAuth Complete]", req);
-    const code = queryParamOne(req.query.code);
-    const shopIdRaw = queryParamOne(req.query.shop_id);
-    const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
-    const expectedShop = queryParamOne(req.query.expected_shop);
-    console.log(
-      "[Shopee OAuth Complete] REQUEST (Vercel proxy JSON)",
-      JSON.stringify({
-        code_present: Boolean(code),
-        shop_id_raw: shopIdRaw || null,
-        main_account_id_raw: mainAccountIdRaw || null,
-        expected_shop: expectedShop || null,
-        SHOPEE_TOKENS_PATH
-      })
-    );
-    if (!code || !shopIdRaw && !mainAccountIdRaw) {
-      return res.status(200).type("text/plain; charset=utf-8").send(SHOPEE_CALLBACK_IDLE_MSG);
-    }
-    try {
-      const result = await completeShopeeOAuthFlow(code, {
-        shopIdRaw: shopIdRaw || void 0,
-        mainAccountIdRaw: mainAccountIdRaw || void 0,
-        expectedShopId: expectedShop || void 0
-      });
-      console.log("[Shopee OAuth Complete] K\u1EBET QU\u1EA2", JSON.stringify(result));
-      return res.status(result.success ? 200 : 400).json({
-        ...result,
-        message: result.success ? `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho shop ${result.oauth_shop_id}.` : result.message || result.error || "OAuth th\u1EA5t b\u1EA1i",
-        tokens_path: SHOPEE_TOKENS_PATH
-      });
-    } catch (error) {
-      logOAuthSaveError("Shopee OAuth Complete", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "unknown_error"
-      });
-    }
-  });
-  app.get(["/api/shopee/callback", "/api/auth/shopee/callback"], async (req, res) => {
-    console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
-    logShopeeIngress("[Shopee Callback]", req);
-    const code = queryParamOne(req.query.code);
-    const shopIdRaw = queryParamOne(req.query.shop_id);
-    const mainAccountIdRaw = queryParamOne(req.query.main_account_id);
-    const expectedShop = queryParamOne(req.query.expected_shop);
-    console.log(
-      "[Shopee Callback] REQUEST NH\u1EACN \u0110\u01AF\u1EE2C",
-      JSON.stringify({
-        at: (/* @__PURE__ */ new Date()).toISOString(),
-        method: req.method,
-        url: req.url,
-        code_present: Boolean(code),
-        code_length: code.length,
-        shop_id_raw: shopIdRaw || null,
-        main_account_id_raw: mainAccountIdRaw || null,
-        expected_shop: expectedShop || null,
-        query: req.query || {},
-        SHOPEE_TOKENS_PATH,
-        SHOPEE_CALLBACK_URL: SHOPEE_CALLBACK_URL2,
-        APP_ROOT: APP_ROOT9,
-        cwd: process.cwd()
-      })
-    );
-    if (!code || !shopIdRaw && !mainAccountIdRaw) {
-      console.log("[Shopee Callback] Truy c\u1EADp tr\u1EF1c ti\u1EBFp \u2014 thi\u1EBFu code/shop_id");
-      return res.status(200).type("text/plain; charset=utf-8").send(SHOPEE_CALLBACK_IDLE_MSG);
-    }
-    const oauthShopId = normalizeShopIdKey(shopIdRaw);
-    const mainAccountId = normalizeShopIdKey(mainAccountIdRaw);
-    if (!oauthShopId && !mainAccountId) {
-      console.error(`[Shopee Callback] shop_id/main_account_id kh\xF4ng h\u1EE3p l\u1EC7: shop_id=${shopIdRaw}, main_account_id=${mainAccountIdRaw}`);
-      return res.status(400).json({
-        success: false,
-        error: "invalid_shop_id",
-        message: `Shop ID / Main Account ID kh\xF4ng h\u1EE3p l\u1EC7`,
-        tokens_path: SHOPEE_TOKENS_PATH
-      });
-    }
-    try {
-      const result = await completeShopeeOAuthFlow(code, {
-        shopIdRaw: shopIdRaw || void 0,
-        mainAccountIdRaw: mainAccountIdRaw || void 0,
-        expectedShopId: expectedShop || void 0
-      });
-      if (!result.success) {
-        console.error(`[Shopee Callback] \u0110\u1ED5i code th\u1EA5t b\u1EA1i:`, result.error, result.message);
-        if (shouldOAuthRedirectToFrontend(req)) {
-          return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
-        }
-        return res.status(400).json({
-          ...result,
-          message: result.message || result.error || "token_exchange_failed",
-          tokens_path: SHOPEE_TOKENS_PATH
-        });
-      }
-      console.log(
-        `[Shopee Callback] OAuth OK. Token \u0111\xE3 l\u01B0u cho: [${result.saved_shop_ids.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`
-      );
-      if (shouldOAuthRedirectToFrontend(req)) {
-        return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
-      }
-      return res.status(200).json({
-        ...result,
-        message: result.message || `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${result.saved_shop_ids.join(", ")}].`,
-        tokens_path: SHOPEE_TOKENS_PATH,
-        callback_url: SHOPEE_CALLBACK_URL2
-      });
-    } catch (error) {
-      logOAuthSaveError("Shopee Callback", error);
-      saveOAuthAudit({
-        callback_shop_id: oauthShopId || mainAccountId || null,
-        main_account_id: mainAccountId || null,
-        success: false,
-        error: error?.message || "unknown_error",
-        tokens_path: SHOPEE_TOKENS_PATH,
-        app_root: APP_ROOT9
-      });
-      const failResult = {
-        success: false,
-        error: error?.message || "unknown_error",
-        message: error?.message || "L\u1ED7i x\u1EED l\xFD OAuth callback",
-        oauth_shop_id: oauthShopId
-      };
-      if (shouldOAuthRedirectToFrontend(req)) {
-        return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
-      }
-      return res.status(500).json({
-        ...failResult,
-        tokens_path: SHOPEE_TOKENS_PATH
-      });
-    }
-  });
-  app.get("/api/shopee/webhook", (req, res) => {
-    logShopeeIngress("[Shopee Webhook]", req);
-    console.log("[Shopee Webhook] GET verification probe \u2014 200 success");
-    res.status(200).type("text/plain; charset=utf-8").send("success");
-  });
+  initShopeeAuthController({ logOAuthSaveError });
+  app.get("/api/shopee/oauth/complete", oauthComplete);
+  app.get(["/api/shopee/callback", "/api/auth/shopee/callback"], oauthCallback);
+  app.get("/api/shopee/webhook", webhookProbe);
   initStockSyncQueue({
     getProductChildrenList,
     inheritShopeeLinkFromParent,
@@ -112364,10 +113402,10 @@ async function startServer() {
     writeInventoryAudit,
     writeChannelListingsDb,
     writeProductListingsDb: (rows) => {
-      const dest = import_path13.default.join(APP_ROOT9, "data", "product_listings.json");
-      const dir = import_path13.default.dirname(dest);
-      if (!import_fs14.default.existsSync(dir)) import_fs14.default.mkdirSync(dir, { recursive: true });
-      import_fs14.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
+      const dest = import_path15.default.join(APP_ROOT11, "data", "product_listings.json");
+      const dir = import_path15.default.dirname(dest);
+      if (!import_fs15.default.existsSync(dir)) import_fs15.default.mkdirSync(dir, { recursive: true });
+      import_fs15.default.writeFileSync(dest, JSON.stringify(rows, null, 2), "utf-8");
     },
     pushStockUpdatesToShopee,
     resolveShopeeTokenShopId,
@@ -112519,109 +113557,41 @@ async function startServer() {
   app.get("/api/orders/query", authMiddleware, queryOrders);
   app.get("/api/orders/:orderSn/events", authMiddleware, getOrderEvents);
   app.get("/api/sync-jobs/:jobId", authMiddleware, getSyncJobById);
-  app.post("/api/orders/pull", authMiddleware, async (req, res) => {
-    let jobId = "";
-    const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
-    try {
-      const job = await createSyncJob("shopee_orders_pull", String(req.user?.username || ""));
-      jobId = job.id;
-      const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
-      const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
-      const lookbackSec = Math.floor(hours * 60 * 60);
-      const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
-      const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean) : shopIdsRaw ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean) : void 0;
-      console.log(
-        `[Orders Pull] POST /api/orders/pull lookback_hours=${hours}` + (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all")
-      );
-      const result = await pullIncrementalOrdersFromShopee({
-        lookbackSec,
-        reconcileActive: true,
-        shopIds: shopIds?.length ? shopIds : void 0
-      });
-      invalidateOrdersRefreshCache();
-      await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
-        pulled: result.pulled,
-        added: result.added,
-        updated: result.updated,
-        shops: result.shops,
-        errors: result.errors.length,
-        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
-      }, result.success ? void 0 : result.message);
-      return res.status(200).json({
-        success: result.success,
-        job_id: jobId,
-        pulled: result.pulled,
-        added: result.added,
-        updated: result.updated,
-        shops: result.shops,
-        errors: result.errors.slice(0, 20),
-        message: result.message,
-        truncatedShops: result.truncatedShops || 0,
-        maxOrderSnsPerShop: result.maxOrderSnsPerShop,
-        lookbackSec: result.lookbackSec,
-        elapsedMs: result.elapsedMs,
-        warnings: result.warnings || []
-      });
-    } catch (error) {
-      console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);
-      if (jobId) await finishSyncJob(jobId, "failed", {
-        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
-      }, error?.message || String(error));
-      return res.status(500).json({
-        success: false,
-        pulled: 0,
-        error: "orders_pull_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 k\xE9o \u0111\u01A1n t\u1EEB Shopee."
-      });
-    }
+  initShopeeOrdersController({
+    createSyncJob,
+    finishSyncJob,
+    pullIncrementalOrdersFromShopee,
+    invalidateOrdersRefreshCache,
+    shopeeGetReturnList,
+    shopeeGetReturnDetail,
+    shopeeGetReverseTrackingInfo,
+    extractShopeeReturnListRows,
+    parseShopeeReturnListMore,
+    fetchReturnShippingTrackingNumber,
+    loadChannelSettings,
+    asShopeeArray,
+    resolveConnectedShopDisplayName,
+    pullShopeeChannelListingsPage,
+    flushDbWrites,
+    readChannelListingsDb,
+    refreshCache,
+    isMongoReady,
+    SHOPEE_ITEM_LIST_PAGE_SIZE
   });
-  app.post("/api/shopee/orders/sync", authMiddleware, async (req, res) => {
-    let jobId = "";
-    const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
-    try {
-      const job = await createSyncJob("shopee_orders_sync", String(req.user?.username || ""));
-      jobId = job.id;
-      const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
-      const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
-      const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
-      const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean) : shopIdsRaw ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean) : void 0;
-      const result = await pullIncrementalOrdersFromShopee({
-        lookbackSec: Math.floor(hours * 60 * 60),
-        reconcileActive: true,
-        shopIds: shopIds?.length ? shopIds : void 0
-      });
-      invalidateOrdersRefreshCache();
-      await finishSyncJob(jobId, result.success ? "succeeded" : "failed", {
-        pulled: result.pulled,
-        added: result.added,
-        updated: result.updated,
-        shops: result.shops,
-        errors: result.errors.length,
-        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
-      }, result.success ? void 0 : result.message);
-      return res.status(200).json({
-        success: result.success,
-        job_id: jobId,
-        pulled: result.pulled,
-        added: result.added,
-        updated: result.updated,
-        shops: result.shops,
-        errors: result.errors.slice(0, 20),
-        message: result.message
-      });
-    } catch (error) {
-      console.error("[Orders Pull] /api/shopee/orders/sync exception:", error?.stack || error?.message || error);
-      if (jobId) await finishSyncJob(jobId, "failed", {
-        retry: diffShopeeRetryTelemetry(retryTelemetryBefore)
-      }, error?.message || String(error));
-      return res.status(500).json({
-        success: false,
-        pulled: 0,
-        error: "orders_pull_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 k\xE9o \u0111\u01A1n t\u1EEB Shopee."
-      });
-    }
+  initShopeeProductsController({
+    isProductsDiskMode,
+    isMongoReady,
+    saveProducts,
+    writeInventoryAudit,
+    syncShopeeWarehouseSinglePage,
+    SHOPEE_ITEM_LIST_PAGE_SIZE,
+    fetchShopeeItemVariants,
+    loadProducts,
+    replaceProductsForShopeeItem,
+    extractHttpClientError
   });
+  app.post("/api/orders/pull", authMiddleware, pullOrders);
+  app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
   app.get("/api/orders", authMiddleware, listOrders);
   app.post("/api/orders/cleanup-handed-over", authMiddleware, cleanupHandedOver);
   app.post("/api/orders/cleanup-closed-retention", authMiddleware, cleanupClosedRetention);
@@ -112689,419 +113659,11 @@ async function startServer() {
   app.get("/api/vietnam-address/districts/:provinceCode", authMiddleware, getDistricts);
   app.get("/api/vietnam-address/wards/:districtCode", authMiddleware, getWards);
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
-  app.get("/api/shopee/diagnostics", authMiddleware, async (req, res) => {
-    const shopId = req.query.shop_id ? String(req.query.shop_id) : void 0;
-    console.log("[Shopee Diagnostics] B\u1EAFt \u0111\u1EA7u ki\u1EC3m tra...", shopId ? `shop_id=${shopId}` : "");
-    const report = await runShopeeConnectivityDiagnostics(shopId);
-    console.log("[Shopee Diagnostics] K\u1EBFt qu\u1EA3:", JSON.stringify(report, null, 2));
-    return res.status(report.ok ? 200 : 502).json({
-      success: report.ok,
-      summary: report.code,
-      ...report,
-      checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      backend: "cpanel-node"
-    });
-  });
-  app.get("/api/shopee/debug/return-by-order", authMiddleware, async (req, res) => {
-    try {
-      const orderSn = String(req.query.order_sn || "260703PQ2D6RUK").trim();
-      const tokens = loadShopeeTokens();
-      const shopIds = Object.keys(tokens);
-      const shopId = String(req.query.shop_id || shopIds[0] || "").trim();
-      if (!shopId) {
-        return res.status(400).json({ ok: false, error: "no_shop", message: "Ch\u01B0a c\xF3 shop OAuth." });
-      }
-      const accessToken = await getValidShopeeAccessToken(shopId);
-      if (!accessToken) {
-        return res.status(401).json({ ok: false, error: "no_token", shopId });
-      }
-      const coverFrom = Math.floor((/* @__PURE__ */ new Date("2026-07-01T00:00:00+07:00")).getTime() / 1e3);
-      const coverTo = Math.floor((/* @__PURE__ */ new Date("2026-07-19T23:59:59+07:00")).getTime() / 1e3);
-      const windowSec = 15 * 24 * 60 * 60;
-      const steps = [];
-      let matchedReturnSn = "";
-      const listHits = [];
-      console.log(`[DEBUG Return] ===== order_sn=${orderSn} shop=${shopId} =====`);
-      for (const timeField of ["update", "create"]) {
-        for (let t2 = coverFrom; t2 < coverTo; t2 += windowSec) {
-          const timeFrom = t2;
-          const timeTo = Math.min(t2 + windowSec, coverTo);
-          let pageNo = 1;
-          while (pageNo <= 30) {
-            const listOpts = {
-              pageNo,
-              pageSize: 100
-            };
-            if (timeField === "update") {
-              listOpts.updateTimeFrom = timeFrom;
-              listOpts.updateTimeTo = timeTo;
-            } else {
-              listOpts.createTimeFrom = timeFrom;
-              listOpts.createTimeTo = timeTo;
-            }
-            const listResult = await shopeeGetReturnList(shopId, accessToken, listOpts);
-            const rows = extractShopeeReturnListRows(listResult);
-            for (const row of rows) {
-              if (String(row?.order_sn || "") === orderSn) {
-                matchedReturnSn = String(row.return_sn || "");
-                listHits.push(row);
-                console.log(
-                  `[DEBUG Return] FOUND in list ${timeField} ${timeFrom}-${timeTo} page=${pageNo}:`,
-                  JSON.stringify(row)
-                );
-              }
-            }
-            steps.push({
-              step: "get_return_list",
-              timeField,
-              timeFrom,
-              timeTo,
-              pageNo,
-              error: listResult.error || null,
-              rowCount: rows.length,
-              more: parseShopeeReturnListMore(listResult),
-              matched: Boolean(matchedReturnSn)
-            });
-            if (matchedReturnSn) break;
-            if (!parseShopeeReturnListMore(listResult) && rows.length < 100) break;
-            if (rows.length === 0) break;
-            pageNo++;
-            await sleep2(400);
-          }
-          if (matchedReturnSn) break;
-          await sleep2(300);
-        }
-        if (matchedReturnSn) break;
-      }
-      let detailRaw = null;
-      let reverseRaw = null;
-      let extractedTn = "";
-      let trackingSources = {};
-      if (matchedReturnSn) {
-        detailRaw = await shopeeGetReturnDetail(shopId, accessToken, matchedReturnSn);
-        console.log(`[DEBUG Return] === RAW get_return_detail return_sn=${matchedReturnSn} ===`);
-        console.log(JSON.stringify(detailRaw, null, 2));
-        reverseRaw = await shopeeGetReverseTrackingInfo(shopId, accessToken, matchedReturnSn);
-        console.log(`[DEBUG Return] === RAW get_reverse_tracking_info ===`);
-        console.log(JSON.stringify(reverseRaw, null, 2));
-        const fetched = await fetchReturnShippingTrackingNumber(
-          shopId,
-          accessToken,
-          matchedReturnSn,
-          detailRaw
-        );
-        extractedTn = fetched.tracking;
-        trackingSources = fetched.sources;
-        console.log(`[DEBUG Return] extracted tracking = ${extractedTn || "(EMPTY)"} sources=`, trackingSources);
-        const blob = JSON.stringify({ detail: detailRaw, reverse: reverseRaw });
-        const idxSpx = blob.indexOf("SPXVN064782062347");
-        if (idxSpx >= 0) {
-          console.log(`[DEBUG Return] FOUND SPXVN064782062347 at JSON index ${idxSpx}`);
-        } else {
-          console.warn(`[DEBUG Return] SPXVN064782062347 KH\xD4NG c\xF3 trong detail/reverse payload`);
-        }
-      } else {
-        console.warn(`[DEBUG Return] KH\xD4NG t\xECm th\u1EA5y return_sn cho order_sn=${orderSn} trong c\u1EEDa s\u1ED5 01\u201319/07/2026`);
-      }
-      return res.json({
-        ok: Boolean(matchedReturnSn),
-        order_sn: orderSn,
-        shop_id: shopId,
-        return_sn: matchedReturnSn || null,
-        tracking_number_extracted: extractedTn || null,
-        tracking_sources: trackingSources,
-        tracking_key_hint: "\u01AFu ti\xEAn response.tracking_number t\u1EEB get_reverse_tracking_info, sau \u0111\xF3 get_return_detail.tracking_number",
-        expected_tracking_hint: "SPXVN064782062347",
-        tracking_match: extractedTn === "SPXVN064782062347",
-        list_hits: listHits,
-        steps,
-        return_detail_raw: detailRaw,
-        reverse_tracking_raw: reverseRaw,
-        persisted: false,
-        message: matchedReturnSn ? extractedTn ? `OK \u2014 l\u1EA5y \u0111\u01B0\u1EE3c tracking_number=${extractedTn} (sources: ${Object.keys(trackingSources).join(",")})` : "T\xECm th\u1EA5y return_sn nh\u01B0ng tracking r\u1ED7ng \u2014 xem reverse_tracking_raw.response.tracking_number" : "Kh\xF4ng t\xECm th\u1EA5y return trong get_return_list (ki\u1EC3m tra token/shop/time window)"
-      });
-    } catch (error) {
-      console.error("[DEBUG Return] exception:", error?.message || error, error?.stack || "");
-      if (res.headersSent) return;
-      return res.status(500).json({
-        ok: false,
-        error: error?.message || String(error) || "Internal Server Error"
-      });
-    }
-  });
-  app.post("/api/sync-from-shop", authMiddleware, async (req, res) => {
-    try {
-      const requestedShopId = String(req.body?.shop_id || "").trim();
-      const timeRange = String(req.body?.time_range || "").trim();
-      if (!requestedShopId || !["all", "24h"].includes(timeRange)) {
-        return res.status(400).json({
-          success: false,
-          error: "invalid_sync_params",
-          message: "shop_id v\xE0 time_range ('all' ho\u1EB7c '24h') l\xE0 b\u1EAFt bu\u1ED9c."
-        });
-      }
-      const channelSettings = loadChannelSettings();
-      const connectedShop = asShopeeArray(channelSettings?.shops).find(
-        (shop) => normalizeShopIdKey(shop?.shopId) === normalizeShopIdKey(requestedShopId) && shop?.connected === true
-      );
-      if (!connectedShop) {
-        return res.status(404).json({
-          success: false,
-          error: "connected_shop_not_found",
-          message: `Kh\xF4ng t\xECm th\u1EA5y shop_id=${requestedShopId} trong danh s\xE1ch gian h\xE0ng \u0111\xE3 k\u1EBFt n\u1ED1i.`
-        });
-      }
-      if (connectedShop.platform !== "shopee") {
-        return res.status(501).json({
-          success: false,
-          error: "platform_sync_not_implemented",
-          message: `\u0110\u1ED3ng b\u1ED9 s\u1EA3n ph\u1EA9m ${connectedShop.platform} ch\u01B0a \u0111\u01B0\u1EE3c t\xEDch h\u1EE3p tr\xEAn server.`
-        });
-      }
-      if (!isShopeeConfigValid()) {
-        return res.status(500).json({
-          success: false,
-          message: "SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY trong .env ch\u01B0a h\u1EE3p l\u1EC7.",
-          error: "invalid_partner_config",
-          details: "invalid_partner_config"
-        });
-      }
-      const tokenContext = await getShopeeAccessTokenForApi(requestedShopId);
-      if (!tokenContext) {
-        return res.status(401).json({
-          success: false,
-          message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${requestedShopId}.`,
-          error: "no_valid_access_token",
-          details: "no_valid_access_token"
-        });
-      }
-      const shopId = tokenContext.apiShopId;
-      const accessToken = tokenContext.token;
-      ensureDataDirs();
-      const shopName = String(connectedShop.shopName || "").trim() || resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
-      const offset = Math.max(0, Number(req.body?.offset) || 0);
-      const requestedSyncTo = Number(req.body?.sync_to);
-      const syncTo = Number.isFinite(requestedSyncTo) && requestedSyncTo > 0 ? Math.floor(requestedSyncTo) : Math.floor(Date.now() / 1e3);
-      const updateWindow = timeRange === "24h" ? { from: syncTo - 24 * 60 * 60, to: syncTo } : void 0;
-      console.log(
-        `[Sync From Shop] platform=shopee shop_id=${shopId} range=${timeRange} offset=${offset} page_size=${SHOPEE_ITEM_LIST_PAGE_SIZE}`
-      );
-      const pageResult = await pullShopeeChannelListingsPage(
-        shopId,
-        accessToken,
-        shopName,
-        offset,
-        updateWindow
-      );
-      let listingsCount = 0;
-      try {
-        await flushDbWrites();
-        listingsCount = (await readChannelListingsDb()).length;
-      } catch {
-        listingsCount = pageResult.rowsSaved;
-      }
-      try {
-        await refreshCache();
-      } catch (cacheErr) {
-        console.error("[Sync From Shop] refreshCache th\u1EA5t b\u1EA1i:", cacheErr);
-      }
-      console.log(
-        `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 trang offset=${offset}, listingsInDb=${listingsCount} mongo=${isMongoReady()}`
-      );
-      return res.status(200).json({
-        success: true,
-        message: pageResult.rowsSaved > 0 ? `\u0110\xE3 l\u01B0u trang ${pageResult.pageIndex + 1}: ${pageResult.pageStats.rowsInPage} parent (${pageResult.rowsSaved} SKU)` : pageResult.hasMore ? "Trang tr\u1ED1ng \u2014 \u0111ang chuy\u1EC3n trang ti\u1EBFp theo" : "Ho\xE0n t\u1EA5t t\u1EA3i d\u1EEF li\u1EC7u t\u1EEB s\xE0n",
-        shopId,
-        shop_id: requestedShopId,
-        shopName,
-        platform: "shopee",
-        time_range: timeRange,
-        sync_to: syncTo,
-        offset: pageResult.currentOffset,
-        nextOffset: pageResult.hasMore ? pageResult.nextOffset : null,
-        hasMore: pageResult.hasMore,
-        pageSize: SHOPEE_ITEM_LIST_PAGE_SIZE,
-        pageStats: pageResult.pageStats,
-        savedCount: pageResult.rowsSaved,
-        fetchedCount: pageResult.pageStats.rowsInPage,
-        parentCount: pageResult.pageStats.rowsInPage,
-        listingsCount,
-        skippedItems: pageResult.skippedItems.length > 0 ? pageResult.skippedItems.slice(0, 50) : void 0
-      });
-    } catch (error) {
-      console.error("DB Save Error:", error);
-      console.error("[Sync From Shop] Exception:", error);
-      const errObj = error instanceof Error ? error : new Error(String(error));
-      if (!res.headersSent) {
-        return res.status(500).json({
-          success: false,
-          message: errObj.message,
-          error: errObj.toString()
-        });
-      }
-    }
-  });
-  app.post("/api/shopee/products/sync", authMiddleware, async (req, res) => {
-    res.setHeader("Content-Type", "application/json; charset=utf-8");
-    try {
-      if (!isProductsDiskMode() && !isMongoReady()) {
-        return res.status(503).json({
-          success: false,
-          error: "mongodb_not_ready",
-          message: "Database ch\u01B0a s\u1EB5n s\xE0ng. Th\u1EED l\u1EA1i sau v\xE0i gi\xE2y."
-        });
-      }
-      if (!isShopeeConfigValid()) {
-        return res.status(500).json({
-          success: false,
-          error: "invalid_partner_config",
-          message: "SHOPEE_PARTNER_ID/SHOPEE_PARTNER_KEY trong .env ch\u01B0a h\u1EE3p l\u1EC7.",
-          details: "invalid_partner_config"
-        });
-      }
-      const shopId = resolveShopeeTokenShopId(req.body?.shopId);
-      if (!shopId) {
-        return res.status(404).json({
-          success: false,
-          error: "no_shopee_shop_linked",
-          message: "Ch\u01B0a c\xF3 shop Shopee n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n.",
-          details: "no_shopee_shop_linked"
-        });
-      }
-      const accessToken = await getValidShopeeAccessToken(shopId);
-      if (!accessToken) {
-        return res.status(401).json({
-          success: false,
-          error: "no_valid_access_token",
-          message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId}.`,
-          details: "no_valid_access_token"
-        });
-      }
-      const rawOffset = Number(req.body?.offset ?? 0);
-      const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
-      const resetWarehouse = offset === 0 && (req.body?.reset === true || req.body?.reset === 1 || req.body?.reset === "1" || req.body?.replace === true);
-      if (resetWarehouse) {
-        console.log(
-          `[Shopee Product Sync] RESET Kho G\u1ED1c tr\u01B0\u1EDBc khi sync shop=${shopId} storage=${isProductsDiskMode() ? "disk" : "mongo"}`
-        );
-        await saveProducts([]);
-      }
-      try {
-        writeInventoryAudit("shopee_sync_page", {
-          shopId,
-          offset,
-          reset: resetWarehouse,
-          requestedBy: req.user?.username || null
-        });
-      } catch {
-      }
-      const syncStarted = Date.now();
-      console.log(
-        `[Shopee Product Sync] B\u1EAFt \u0111\u1EA7u \u0111\u1ED3ng b\u1ED9 1 trang shop_id=${shopId}, offset=${offset}, page_size=${SHOPEE_ITEM_LIST_PAGE_SIZE}`
-      );
-      const result = await syncShopeeWarehouseSinglePage(shopId, accessToken, offset);
-      const initialized = Number(result.productCount) || 0;
-      const durationMs = Date.now() - syncStarted;
-      console.log(
-        `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} \u2014 productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}, durationMs=${durationMs}`
-      );
-      if (!result.hasMore) {
-        writeInventoryAudit("shopee_sync_completed", {
-          shopId,
-          requestedBy: req.user?.username || null,
-          productCount: initialized,
-          pageCount: result.pageIndex + 1,
-          skippedCount: result.pageStats.skippedCount
-        });
-      }
-      return res.status(200).json({
-        success: true,
-        shopId,
-        productCount: initialized,
-        stats: {
-          rowCount: result.pageStats.rowsInPage,
-          variantItemCount: result.pageStats.variantItemCount,
-          pageCount: result.pageIndex + 1,
-          itemsInPage: result.pageStats.itemsInPage,
-          savedCount: result.pageStats.savedCount,
-          skippedCount: result.pageStats.skippedCount
-        },
-        currentOffset: result.currentOffset,
-        nextOffset: result.nextOffset,
-        hasMore: result.hasMore,
-        pageIndex: result.pageIndex + 1,
-        skippedItems: result.skippedItems?.length ? result.skippedItems.slice(0, 20) : void 0,
-        message: result.hasMore ? `\u0110\xE3 l\u01B0u trang ${result.pageIndex + 1} (${result.pageStats.itemsInPage} s\u1EA3n ph\u1EA9m), ti\u1EBFp t\u1EE5c trang sau` : `\u0110\xE3 kh\u1EDFi t\u1EA1o xong ${initialized} s\u1EA3n ph\u1EA9m`,
-        forceRefresh: !result.hasMore,
-        refresh: { forceRefresh: !result.hasMore },
-        _debug: {
-          durationMs,
-          existingCount: result.mergeDebug?.existingCount ?? 0,
-          upsertCount: result.mergeDebug?.upsertCount ?? 0,
-          batchRows: result.mergeDebug?.batchRows ?? 0,
-          loadMs: result.mergeDebug?.loadMs ?? 0,
-          upsertMs: result.mergeDebug?.upsertMs ?? 0
-        }
-      });
-    } catch (error) {
-      console.error("[Shopee Product Sync] Exception:", error);
-      console.error("L\u1ED7i khi l\u01B0u DB chunk:", error);
-      const { message, details } = extractHttpClientError(error);
-      const isRate = /429|rate.?limit|too many request/i.test(message);
-      if (!res.headersSent) {
-        return res.status(isRate ? 429 : 500).json({
-          success: false,
-          error: isRate ? "shopee_rate_limit" : "exception",
-          message: message || "Kh\u1EDFi t\u1EA1o kho th\u1EA5t b\u1EA1i",
-          details: String(details || "").slice(0, 500)
-        });
-      }
-      return;
-    }
-  });
-  app.post("/api/shopee/products/sync-item-variants", authMiddleware, async (req, res) => {
-    try {
-      if (!isShopeeConfigValid()) {
-        return res.status(500).json({ success: false, error: "invalid_partner_config", message: "C\u1EA5u h\xECnh Shopee Partner kh\xF4ng h\u1EE3p l\u1EC7.", details: "invalid_partner_config" });
-      }
-      const rawItemId = String(req.body?.itemId || req.body?.shopeeItemId || req.body?.productId || "");
-      const itemIdMatch = rawItemId.match(/(\d{6,})/);
-      if (!itemIdMatch) {
-        return res.status(400).json({ success: false, error: "itemId_required", message: "Kh\xF4ng x\xE1c \u0111\u1ECBnh \u0111\u01B0\u1EE3c item_id Shopee.", details: "itemId_required" });
-      }
-      const itemId = Number(itemIdMatch[1]);
-      const shopId = resolveShopeeTokenShopId(req.body?.shopId);
-      if (!shopId) {
-        return res.status(404).json({ success: false, error: "no_shopee_shop", message: "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n.", details: "no_shopee_shop" });
-      }
-      const accessToken = await getValidShopeeAccessToken(shopId);
-      if (!accessToken) {
-        return res.status(401).json({ success: false, error: "no_valid_access_token", message: "Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7.", details: "no_valid_access_token" });
-      }
-      const { variantProducts, error, modelCount } = await fetchShopeeItemVariants(shopId, accessToken, itemId);
-      if (error && variantProducts.length === 0) {
-        return res.status(400).json({ success: false, error, message: error, details: String(error) });
-      }
-      if (variantProducts.length === 0) {
-        return res.status(404).json({ success: false, error: "no_variants_found", message: "Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c ph\xE2n lo\u1EA1i t\u1EEB Shopee.", details: "no_variants_found" });
-      }
-      const allProducts = await loadProducts();
-      const merged = replaceProductsForShopeeItem(allProducts, String(itemId), variantProducts);
-      await saveProducts(merged);
-      console.log(`[Shopee Variant Sync] item_id=${itemId} -> ${variantProducts.length} dong (modelCount=${modelCount})`);
-      return res.json({
-        success: true,
-        itemId: String(itemId),
-        variantCount: variantProducts.length,
-        modelCount,
-        variants: variantProducts,
-        products: merged
-      });
-    } catch (err) {
-      console.error("[Shopee Variant Sync] Exception:", err);
-      return sendApiErrorJson(res, err, 500);
-    }
-  });
+  app.get("/api/shopee/diagnostics", authMiddleware, getDiagnostics);
+  app.get("/api/shopee/debug/return-by-order", authMiddleware, debugReturnByOrder);
+  app.post("/api/sync-from-shop", authMiddleware, syncFromShop);
+  app.post("/api/shopee/products/sync", authMiddleware, syncProducts);
+  app.post("/api/shopee/products/sync-item-variants", authMiddleware, syncItemVariants);
   async function prewarmShopeeAddressCacheForShip(toShip, shipMethod) {
     if (shipMethod !== "pickup") return;
     const shopIds = [
@@ -113269,71 +113831,8 @@ async function startServer() {
       failedOrders
     };
   }
-  app.post("/api/shopee/ship-order", authMiddleware, async (req, res) => {
-    try {
-      const { orderId, orderSn, method } = req.body;
-      const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
-      const loaded = await loadOrdersForApi();
-      const orders = loaded.orders;
-      const hit = findOrderRecord(orders, String(orderId || orderSn || ""));
-      if (!hit) {
-        return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
-      }
-      const { index } = hit;
-      const order = orders[index];
-      console.log(`[Ship Order] Y\xEAu c\u1EA7u chu\u1EA9n b\u1EB1 h\xE0ng (${shipMethod}) cho \u0111\u01A1n ${order.orderSn} (channel=${order.channel})...`);
-      const result = await withOperationTimeout(
-        (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
-        SHIP_ORDER_OPERATION_TIMEOUT_MS,
-        `Ship order ${order.orderSn}`
-      );
-      console.log("D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0:", JSON.stringify(result));
-      if (!result.success) {
-        console.error(`[Ship Order] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`);
-      }
-      if (result.success || isAlreadyShippedError(result)) {
-        const tn = String(
-          order.trackingNumber || order.tracking_no || result.trackingNumber || orders[index].trackingNumber || ""
-        ).trim();
-        orders[index] = {
-          ...orders[index],
-          ...order,
-          isPrepared: true,
-          status: "processed",
-          is_pending_shopee_check: false,
-          fulfillment_type: shipMethod,
-          ship_method: shipMethod,
-          trackingNumber: tn || orders[index].trackingNumber,
-          tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
-          shopId: orders[index].shopId || order.shopId || result.shopId,
-          shopee_order_status: order.shopee_order_status === "READY_TO_SHIP" || order.shopee_order_status === "RETRY_SHIP" || !order.shopee_order_status ? "PROCESSED" : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED"
-        };
-        forceHealPickupOrderIfHasTracking(orders[index]);
-        await persistOrdersToDatabase(orders, [orders[index]]);
-        return res.json({ success: true, mode: result.mode, order: orders[index] });
-      }
-      if (isShopeePendingVerificationError(result)) {
-        await persistPendingShopeeCheckFlag(
-          orders,
-          index,
-          result.message || result.error || "Order is pending verification"
-        );
-        return res.json({
-          success: false,
-          pendingShopeeCheck: true,
-          skipped: true,
-          order: orders[index],
-          message: result.message || "\u0110\u01A1n ch\u01B0a s\u1EB5n s\xE0ng \u2014 \u0111\xE3 b\u1ECF qua.",
-          ...result
-        });
-      }
-      return res.status(400).json({ success: false, ...result });
-    } catch (error) {
-      console.error("[Ship Order] L\u1ED7i n\u1ED9i b\u1ED9 endpoint /api/shopee/ship-order:", error?.stack || error);
-      return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error.message });
-    }
-  });
-  app.post("/api/shopee/ship-order/bulk", authMiddleware, async (req, res) => {
+  app.post("/api/shopee/ship-order", authMiddleware, shipOrder);
+  const handleShipBulk = async (req, res) => {
     try {
       const { orderIds, orderSns, method } = req.body;
       const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
@@ -113399,7 +113898,7 @@ async function startServer() {
       console.error("[Ship Order Bulk] L\u1ED7i n\u1ED9i b\u1ED9 endpoint /api/shopee/ship-order/bulk:", error?.stack || error);
       return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error.message });
     }
-  });
+  };
   const LABEL_DOWNLOAD_CONCURRENCY = 5;
   scheduleWaybillsCleanup();
   function extensionForContentType(contentType) {
@@ -113429,11 +113928,11 @@ async function startServer() {
     if (!sn) return null;
     try {
       ensureLabelsDir();
-      const matches = import_fs14.default.readdirSync(LABELS_DIR).filter(
+      const matches = import_fs15.default.readdirSync(LABELS_DIR).filter(
         (name) => /\.pdf$/i.test(name) && (name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`))
       ).map((name) => {
-        const full = import_path13.default.join(LABELS_DIR, name);
-        return { name, mtime: import_fs14.default.statSync(full).mtimeMs, size: import_fs14.default.statSync(full).size };
+        const full = import_path15.default.join(LABELS_DIR, name);
+        return { name, mtime: import_fs15.default.statSync(full).mtimeMs, size: import_fs15.default.statSync(full).size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
       if (!newest) return null;
@@ -113897,7 +114396,7 @@ async function startServer() {
     const savedFromDownload = "savedFiles" in downloadResult && Array.isArray(downloadResult.savedFiles) ? downloadResult.savedFiles.filter((n) => safeLabelFilename(n) && hasLabelMem(n)) : [];
     let filename = savedFromDownload[savedFromDownload.length - 1] || (ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`);
     console.log(`[Shopee Print] B\u1EAFt \u0111\u1EA7u in cho \u0111\u01A1n ${orderSns.join(",")}`);
-    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path13.default.join(LABELS_DIR, filename)}`);
+    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path15.default.join(LABELS_DIR, filename)}`);
     if (!hasLabelMem(filename)) {
       filename = saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
@@ -114027,7 +114526,7 @@ async function startServer() {
     } else if (savedFilenames.length > 0) {
       const relative = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
       if (relative) {
-        const fn = import_path13.default.basename(relative);
+        const fn = import_path15.default.basename(relative);
         assertLabelFileReady(fn);
         primaryUrl = absoluteLabelUrl(relative);
         pdfFilename = fn;
@@ -114294,59 +114793,26 @@ async function startServer() {
       releaseHeavyJob(`ship-order:${jobId}`);
     }
   }
-  app.post("/api/shopee/ship-order/bulk-async", authMiddleware, (req, res) => {
-    try {
-      const { orderIds, orderSns, method } = req.body || {};
-      const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
-      const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
-      const snList = Array.isArray(orderSns) ? orderSns.map(String) : [];
-      if (idList.length === 0 && snList.length === 0) {
-        return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds ho\u1EB7c orderSns." });
-      }
-      const estimatedTotal = Math.max(
-        new Set(
-          [...idList, ...snList].map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
-        ).size,
-        idList.length || snList.length
-      );
-      const jobId = createShipOrderJobId();
-      shipOrderJobs.set(jobId, {
-        id: jobId,
-        status: "pending",
-        phase: "pending",
-        message: "\u0110\xE3 ti\u1EBFp nh\u1EADn \u2014 \u0111ang x\u1EBFp h\xE0ng x\u1EED l\xFD...",
-        total: estimatedTotal,
-        completed: 0,
-        successCount: 0,
-        results: [],
-        printDocument: null,
-        orders: null,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-      res.once("finish", () => {
-        setImmediate(() => {
-          void executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
-        });
-      });
-      return res.status(202).json({ accepted: true, jobId, total: estimatedTotal });
-    } catch (error) {
-      console.error("[Ship Order Bulk Async] L\u1ED7i n\u1ED9i b\u1ED9 endpoint /api/shopee/ship-order/bulk-async:", error?.stack || error);
-      if (!res.headersSent) {
-        return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error.message });
-      }
-    }
+  initShopeeShipController({
+    loadOrdersForApi,
+    findOrderRecord,
+    arrangeShipment,
+    withOperationTimeout,
+    SHIP_ORDER_OPERATION_TIMEOUT_MS,
+    isAlreadyShippedError,
+    isShopeePendingVerificationError,
+    forceHealPickupOrderIfHasTracking,
+    persistOrdersToDatabase,
+    persistPendingShopeeCheckFlag,
+    handleShipBulk,
+    executeShipOrderBackgroundJob,
+    shipOrderJobs,
+    createShipOrderJobId,
+    pruneOldShipOrderJobs
   });
-  app.get("/api/shopee/ship-order/job/:jobId", authMiddleware, async (req, res) => {
-    const job = shipOrderJobs.get(String(req.params.jobId || ""));
-    if (!job) {
-      return res.status(404).json({
-        error: "job_not_found",
-        message: "Kh\xF4ng t\xECm th\u1EA5y ti\u1EBFn tr\xECnh x\u1EED l\xFD."
-      });
-    }
-    return res.json(job);
-  });
+  app.post("/api/shopee/ship-order/bulk", authMiddleware, shipOrderBulk);
+  app.post("/api/shopee/ship-order/bulk-async", authMiddleware, shipOrderBulkAsync);
+  app.get("/api/shopee/ship-order/job/:jobId", authMiddleware, getShipOrderJob);
   async function printDocumentHandler(req, res) {
     try {
       const { orderIds, waitMs: rawWaitMs } = req.body;
@@ -114702,67 +115168,15 @@ async function startServer() {
       });
     }
   }
-  app.post("/api/shopee/print-document", authMiddleware, printDocumentHandler);
-  app.post("/api/shopee/print-document/async", authMiddleware, async (req, res) => {
-    try {
-      const { orderIds } = req.body;
-      if (!Array.isArray(orderIds) || orderIds.length === 0) {
-        return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds." });
-      }
-      pruneOldPrintDocumentJobs();
-      const jobId = createPrintDocumentJobId();
-      printDocumentJobs.set(jobId, {
-        id: jobId,
-        status: "pending",
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      });
-      const fakeReq = { body: req.body, printJob: printDocumentJobs.get(jobId) };
-      setImmediate(() => {
-        void (async () => {
-          const job = printDocumentJobs.get(jobId);
-          if (!job) return;
-          job.status = "running";
-          job.updatedAt = Date.now();
-          let capturedStatus = 200;
-          const fakeRes = {
-            status(code) {
-              capturedStatus = code;
-              return this;
-            },
-            json(body) {
-              job.httpStatus = capturedStatus;
-              job.result = body;
-              job.status = capturedStatus >= 200 && capturedStatus < 300 ? "done" : "failed";
-              job.updatedAt = Date.now();
-              return this;
-            }
-          };
-          try {
-            await printDocumentHandler(fakeReq, fakeRes);
-          } catch (err) {
-            job.status = "failed";
-            job.error = err?.message || String(err);
-            job.updatedAt = Date.now();
-          }
-        })();
-      });
-      return res.status(202).json({ accepted: true, jobId });
-    } catch (error) {
-      console.error("[Print Document Async] L\u1ED7i n\u1ED9i b\u1ED9:", error?.stack || error);
-      return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error.message });
-    }
+  initShopeePrintController({
+    printDocumentHandler,
+    printDocumentJobs,
+    createPrintDocumentJobId,
+    pruneOldPrintDocumentJobs
   });
-  app.get("/api/shopee/print-document/job/:jobId", authMiddleware, async (req, res) => {
-    const job = printDocumentJobs.get(String(req.params.jobId || ""));
-    if (!job) {
-      return res.status(404).json({
-        error: "job_not_found",
-        message: "Kh\xF4ng t\xECm th\u1EA5y ti\u1EBFn tr\xECnh in v\u1EADn \u0111\u01A1n."
-      });
-    }
-    return res.json(job);
-  });
+  app.post("/api/shopee/print-document", authMiddleware, printDocument);
+  app.post("/api/shopee/print-document/async", authMiddleware, printDocumentAsync);
+  app.get("/api/shopee/print-document/job/:jobId", authMiddleware, getPrintDocumentJob);
   async function checkShopConnectionStatus(shop) {
     if (!shop?.connected) {
       return { online: false, message: "\u0110\u1ED3ng b\u1ED9 \u0111ang t\u1EAFt" };
@@ -114856,60 +115270,13 @@ async function startServer() {
   app.post("/api/settings/test-gemini-key", authMiddleware, testGeminiKey);
   app.post("/api/settings/shop-connection-status", authMiddleware, postShopConnectionStatus);
   app.use("/api/settings", authMiddleware, settingsRoutes);
-  app.get("/api/shopee/oauth-shops", authMiddleware, async (_req, res) => {
-    ensureShopeeLinkedShopTokenKeys();
-    const tokens = loadShopeeTokens();
-    const shopIds = listShopeeSyncShopIds();
-    const details = shopIds.map((id) => {
-      const record = getShopeeTokenRecord(tokens, id);
-      return {
-        shop_id: id,
-        obtained_at: record?.obtained_at ?? null,
-        expire_in: record?.expire_in ?? null,
-        oauth_shop_id: record?.oauth_shop_id ?? null,
-        shop_id_list: record?.shop_id_list ?? [],
-        has_own_key: Boolean(tokens[id])
-      };
-    });
-    let lastOAuth = loadLastOAuthAudit();
-    return res.json({
-      success: true,
-      shopIds,
-      details,
-      tokensPath: SHOPEE_TOKENS_PATH,
-      appRoot: APP_ROOT9,
-      lastOAuth,
-      count: shopIds.length
-    });
-  });
-  app.get("/api/shopee/auth-url", authMiddleware, async (req, res) => {
-    if (!isShopeeConfigValid()) {
-      return res.status(500).json({
-        success: false,
-        error: "invalid_partner_config",
-        message: "SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY ch\u01B0a c\u1EA5u h\xECnh tr\xEAn backend cPanel."
-      });
-    }
-    const shopId = normalizeShopIdKey(String(req.query.shop_id || ""));
-    if (!shopId) {
-      return res.status(400).json({
-        success: false,
-        error: "shop_id_required",
-        message: "C\u1EA7n shop_id (VD: 241215004) \u0111\u1EC3 t\u1EA1o link \u1EE7y quy\u1EC1n OAuth."
-      });
-    }
-    return res.json({
-      success: true,
-      shop_id: shopId,
-      url: buildShopeeAuthPartnerUrl(shopId),
-      callback: SHOPEE_CALLBACK_URL2
-    });
-  });
-  const LISTINGS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "multi_channel_listings.json");
+  app.get("/api/shopee/oauth-shops", authMiddleware, listOauthShops);
+  app.get("/api/shopee/auth-url", authMiddleware, getAuthUrl);
+  const LISTINGS_DB_PATH = import_path15.default.join(APP_ROOT11, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs14.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs14.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs15.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs15.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -114917,9 +115284,9 @@ async function startServer() {
     }
   };
   const writeListingsDb = (listings) => {
-    const dir = import_path13.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs14.default.existsSync(dir)) import_fs14.default.mkdirSync(dir, { recursive: true });
-    import_fs14.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    const dir = import_path15.default.dirname(LISTINGS_DB_PATH);
+    if (!import_fs15.default.existsSync(dir)) import_fs15.default.mkdirSync(dir, { recursive: true });
+    import_fs15.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
   app.post("/api/gemini/optimize", authMiddleware, geminiOptimize);
   app.post("/api/ai/parse-address", authMiddleware, parseAddress);
@@ -114944,11 +115311,11 @@ async function startServer() {
       return res.status(500).json({ success: false, error: error.message || "L\u01B0u th\u1EA5t b\u1EA1i" });
     }
   });
-  const PRODUCT_LISTINGS_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = import_path15.default.join(APP_ROOT11, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs14.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs14.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs15.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs15.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -114956,9 +115323,9 @@ async function startServer() {
     }
   };
   const writeProductListingsDb = (rows) => {
-    const dir = import_path13.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs14.default.existsSync(dir)) import_fs14.default.mkdirSync(dir, { recursive: true });
-    import_fs14.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    const dir = import_path15.default.dirname(PRODUCT_LISTINGS_DB_PATH);
+    if (!import_fs15.default.existsSync(dir)) import_fs15.default.mkdirSync(dir, { recursive: true });
+    import_fs15.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -115104,7 +115471,7 @@ async function startServer() {
         let error_message;
         if (platform === "shopee") {
           try {
-            if (i2 > 0) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS * 2);
+            if (i2 > 0) await sleep2(SHOPEE_PRODUCT_API_DELAY_MS2 * 2);
             if (!shopKey) throw new Error("Thi\u1EBFu Shopee shop_id (OAuth)");
             const itemId = await publishOneItemToShopee(shopKey, {
               ...payload,
@@ -115215,12 +115582,12 @@ async function startServer() {
       });
     }
   });
-  const PUBLISH_EDIT_DB_PATH = import_path13.default.join(APP_ROOT9, "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = import_path13.default.join(APP_ROOT9, "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = import_path15.default.join(APP_ROOT11, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = import_path15.default.join(APP_ROOT11, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs14.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs14.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs15.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs15.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -115228,9 +115595,9 @@ async function startServer() {
     }
   };
   const writePublishEditDb = (data) => {
-    const dir = import_path13.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs14.default.existsSync(dir)) import_fs14.default.mkdirSync(dir, { recursive: true });
-    import_fs14.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    const dir = import_path15.default.dirname(PUBLISH_EDIT_DB_PATH);
+    if (!import_fs15.default.existsSync(dir)) import_fs15.default.mkdirSync(dir, { recursive: true });
+    import_fs15.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -115271,11 +115638,11 @@ async function startServer() {
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs14.default.existsSync(FRAMED_IMAGES_DIR)) import_fs14.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs15.default.existsSync(FRAMED_IMAGES_DIR)) import_fs15.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs14.default.writeFileSync(import_path13.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs15.default.writeFileSync(import_path15.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -115297,12 +115664,12 @@ async function startServer() {
     }
   });
   app.get("/api/framed-images/:productId", (req, res) => {
-    const filePath = import_path13.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs14.default.existsSync(filePath)) {
+    const filePath = import_path15.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
+    if (!import_fs15.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs14.default.readFileSync(filePath));
+    return res.send(import_fs15.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -115320,7 +115687,7 @@ async function startServer() {
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
-    const distPath = import_path13.default.join(APP_ROOT9, "dist");
+    const distPath = import_path15.default.join(APP_ROOT11, "dist");
     app.use(import_express15.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
@@ -115346,12 +115713,12 @@ async function startServer() {
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.sendFile(import_path13.default.join(distPath, "index.html"));
+      return res.sendFile(import_path15.default.join(distPath, "index.html"));
     });
   }
   async function connectDB2() {
     try {
-      const ok = await initMongo(APP_ROOT9);
+      const ok = await initMongo(APP_ROOT11);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
@@ -115373,7 +115740,7 @@ async function startServer() {
       console.log(
         process.env.PORT ? `Server optimized for cPanel Phusion Passenger: listening on ${PORT}` : `Server running locally on port ${PORT}`
       );
-      console.log(`[Config] APP_BASE_URL=${APP_BASE_URL2}`);
+      console.log(`[Config] APP_BASE_URL=${APP_BASE_URL3}`);
       console.log(`[Config] NODE_ENV=${process.env.NODE_ENV || "unset"}`);
       console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL2}`);
       if (!process.env.PORT) {
@@ -115788,4 +116155,3 @@ node-domexception/index.js:
    * g3-prettier-ignore-file
    *)
 */
-//# sourceMappingURL=server.cjs.map
