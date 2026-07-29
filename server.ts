@@ -4,7 +4,6 @@ import fs from "fs";
 import crypto from "crypto";
 import { createRequire } from "node:module";
 import { PDFDocument } from "pdf-lib";
-import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { createShopeeWebhookRouter } from "./src/webhooks/shopeeWebhookHandler.ts";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
@@ -44,6 +43,10 @@ import healthRoutesImport from "./routes/healthRoutes.js";
 import vietnamAddressRoutesImport from "./routes/vietnamAddressRoutes.js";
 import suppliersRoutesImport from "./routes/suppliersRoutes.js";
 import expensesRoutesImport from "./routes/expensesRoutes.js";
+import importsRoutesImport from "./routes/importsRoutes.js";
+import settingsRoutesImport from "./routes/settingsRoutes.js";
+import aiRoutesImport from "./routes/aiRoutes.js";
+import dashboardRoutesImport from "./routes/dashboardRoutes.js";
 import errorHandler from "./middlewares/errorHandler.js";
 import { authMiddleware } from "./middlewares/auth.js";
 import corsMiddleware from "./middlewares/cors.js";
@@ -76,6 +79,34 @@ import {
   clearAllExpenses,
 } from "./controllers/expensesController.js";
 import {
+  initImportsController,
+  listImports,
+  getImportHistory,
+  getImportProductContext,
+  createImport,
+  clearAllImports,
+  saveImports,
+} from "./controllers/importsController.js";
+import {
+  initSettingsController,
+  getChannelSettings,
+  putChannelSettings,
+  getGeminiStatus,
+  updateGeminiKey,
+  testGeminiKey,
+  postShopConnectionStatus,
+} from "./controllers/settingsController.js";
+import {
+  geminiOptimize,
+  parseAddress,
+  generateDescription,
+  ensureGeminiClientFromEnv,
+} from "./controllers/aiController.js";
+import {
+  initDashboardController,
+  getDashboard,
+} from "./controllers/dashboardController.js";
+import {
   extractHttpClientError,
   sendApiErrorJson,
   sendStrictApiErrorJson,
@@ -90,7 +121,6 @@ import {
 } from "./utils/concurrency.js";
 import { tryAcquireHeavyJob, releaseHeavyJob, resetHeavyJob } from "./utils/heavyJob.js";
 import { resolveAppRoot, resolveAppBaseUrl } from "./utils/appPaths.js";
-
 /** ESM/CJS interop — luôn lấy Router thật. */
 function asRouter(mod: any) {
   return mod?.default?.use ? mod.default : mod;
@@ -101,6 +131,10 @@ const healthRoutes = asRouter(healthRoutesImport);
 const vietnamAddressRoutes = asRouter(vietnamAddressRoutesImport);
 const suppliersRoutes = asRouter(suppliersRoutesImport);
 const expensesRoutes = asRouter(expensesRoutesImport);
+const importsRoutes = asRouter(importsRoutesImport);
+const settingsRoutes = asRouter(settingsRoutesImport);
+const aiRoutes = asRouter(aiRoutesImport);
+const dashboardRoutes = asRouter(dashboardRoutesImport);
 import {
   initMongo,
   loadProductsFromStore,
@@ -668,8 +702,6 @@ function serveLabelPdfFromMem(filename: string, res: any): ServeLabelPdfResult {
   }
 }
 
-const ENV_PATH = path.join(APP_ROOT, ".env");
-
 const APP_BASE_URL = resolveAppBaseUrl();
 
 function resolveLabelsPublicBaseUrl(): string {
@@ -721,26 +753,7 @@ const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
 const SHOPEE_CALLBACK_IDLE_MSG =
   "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 
-function updateEnvVar(key: string, value: string): void {
-  let content = "";
-  if (fs.existsSync(ENV_PATH)) {
-    content = fs.readFileSync(ENV_PATH, "utf-8");
-  }
-  const regex = new RegExp(`^${key}\\s*=.*$`, "m");
-  const line = `${key}=${value}`;
-  if (regex.test(content)) {
-    content = content.replace(regex, line);
-  } else {
-    content = (content.trimEnd() ? content.trimEnd() + "\n" : "") + line + "\n";
-  }
-  fs.writeFileSync(ENV_PATH, content, "utf-8");
-  process.env[key] = value;
-}
-
-function maskApiKey(key: string): string {
-  if (!key || key.length < 8) return "••••••••";
-  return key.slice(0, 4) + "••••" + key.slice(-4);
-}
+// updateEnvVar / maskApiKey — utils/env.js (Phase 2)
 
 // ---------------------------------------------------------------------------
 // Shopee Open Platform (Partner API v2) — REAL integration, not sandbox mock.
@@ -12360,104 +12373,7 @@ async function purgeHandedOverGarbageOrdersOnce(
   return { removed, sns: allSns, skipped: false };
 }
 
-function toDateKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function getDashboardDateRange(rangeKey: string) {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth();
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
-
-  switch (rangeKey) {
-    case "this_month":
-      return { start: new Date(y, m, 1), end, key: "this_month", label: "Tháng này" };
-    case "last_month":
-      return {
-        start: new Date(y, m - 1, 1),
-        end: new Date(y, m, 0, 23, 59, 59, 999),
-        key: "last_month",
-        label: "Tháng trước",
-      };
-    case "this_quarter": {
-      const qStart = Math.floor(m / 3) * 3;
-      return { start: new Date(y, qStart, 1), end, key: "this_quarter", label: "Quý này" };
-    }
-    case "this_year":
-      return { start: new Date(y, 0, 1), end, key: "this_year", label: "Năm nay" };
-    case "today": {
-      const start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-      return { start, end, key: "today", label: "Hôm nay" };
-    }
-    case "last_7_days":
-    default: {
-      const start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-      start.setDate(start.getDate() - 6);
-      return { start, end, key: "last_7_days", label: "7 ngày qua" };
-    }
-  }
-}
-
-/**
- * Dựng khung ngày/tháng rỗng (label hiển thị) rồi đổ số liệu doanh thu ĐÃ ĐƯỢC
- * MongoDB tính tổng sẵn theo ngày (`dailyRevenue`) vào — KHÔNG lặp qua từng đơn hàng
- * trong Node nữa (dữ liệu đầu vào chỉ còn tối đa ~366 dòng thay vì toàn bộ đơn).
- */
-function buildDashboardChart(
-  dailyRevenue: Array<{ date: string; amount: number }>,
-  range: { start: Date; end: Date; key: string },
-) {
-  const buckets = new Map<string, { key: string; label: string; amount: number }>();
-
-  if (range.key === "this_year" || range.key === "this_quarter") {
-    const cursor = new Date(range.start.getFullYear(), range.start.getMonth(), 1);
-    const endMonth = new Date(range.end.getFullYear(), range.end.getMonth(), 1);
-    while (cursor <= endMonth) {
-      const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
-      buckets.set(key, {
-        key,
-        label: `T${cursor.getMonth() + 1}`,
-        amount: 0,
-      });
-      cursor.setMonth(cursor.getMonth() + 1);
-    }
-  } else {
-    const cursor = new Date(range.start);
-    cursor.setHours(0, 0, 0, 0);
-    const endDay = new Date(range.end);
-    endDay.setHours(0, 0, 0, 0);
-    while (cursor <= endDay) {
-      const key = toDateKey(cursor);
-      buckets.set(key, {
-        key,
-        label: `${String(cursor.getDate()).padStart(2, "0")}/${String(cursor.getMonth() + 1).padStart(2, "0")}`,
-        amount: 0,
-      });
-      cursor.setDate(cursor.getDate() + 1);
-    }
-  }
-
-  for (const row of dailyRevenue) {
-    const dateStr = String(row?.date || "");
-    let bucketKey = dateStr;
-    if (range.key === "this_year" || range.key === "this_quarter") {
-      bucketKey = dateStr.slice(0, 7);
-    }
-    const bucket = buckets.get(bucketKey);
-    if (bucket) {
-      bucket.amount += Number(row?.amount) || 0;
-    }
-  }
-
-  return Array.from(buckets.values());
-}
+// toDateKey / getDashboardDateRange / buildDashboardChart — utils/dashboard.js (Phase 2)
 
 const PRODUCTS_DB_PATH = path.join(APP_ROOT, "data", "products.json"); // Kho Gốc khi PRODUCTS_STORAGE=disk
 const LOCAL_INVENTORY_CACHE_PATH = path.join(APP_ROOT, "data", "local_inventory.json"); // legacy
@@ -14199,28 +14115,7 @@ function syncOAuthShopsToChannelSettings(
   }
 }
 
-const IMPORTS_DB_PATH = path.join(APP_ROOT, "data", "imports.json");
-
-function loadImports(): any[] {
-  try {
-    if (!fs.existsSync(IMPORTS_DB_PATH)) return [];
-    const raw = fs.readFileSync(IMPORTS_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error("[Imports DB] Failed to read imports.json:", error);
-    return [];
-  }
-}
-
-function saveImports(imports: any[]): void {
-  try {
-    fs.mkdirSync(path.dirname(IMPORTS_DB_PATH), { recursive: true });
-    fs.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
-  } catch (error) {
-    console.error("[Imports DB] Failed to write imports.json:", error);
-  }
-}
+// loadImports / saveImports — controllers/importsController.js (Phase 2)
 
 function applyBulkProductUpdate(
   product: any,
@@ -17019,178 +16914,18 @@ async function startServer() {
   app.post("/api/suppliers/clear-all", authMiddleware, clearAllSuppliers);
   app.use("/api/suppliers", authMiddleware, suppliersRoutes);
 
-  // --- Imports API (data/imports.json + cập nhật tồn/giá Mongo atomic) ---
-  app.get("/api/imports", authMiddleware, async (_req, res) => {
-    return res.json(loadImports());
+  // --- Imports API — Phase 2 MVC ---
+  initImportsController({
+    loadProductById,
+    loadProducts,
+    applyImportStockAndPriceToMainWarehouse,
   });
-
-  app.get("/api/imports/history/:productId", authMiddleware, async (req, res) => {
-    try {
-      const productId = String(req.params.productId || "").trim();
-      if (!productId) return res.status(400).json({ success: false, error: "missing_product_id" });
-      const product = await loadProductById(productId);
-      const sku = String(product?.sku || "").trim();
-      const imports = loadImports();
-      const history = imports
-        .filter(
-          (imp: any) =>
-            String(imp.productId) === productId || (sku && String(imp.productSku || "") === sku),
-        )
-        .sort((a: any, b: any) => {
-          const tb = new Date(b.date || b.createdAt || 0).getTime();
-          const ta = new Date(a.date || a.createdAt || 0).getTime();
-          if (tb !== ta) return tb - ta;
-          return String(b.id || "").localeCompare(String(a.id || ""));
-        });
-      return res.json({
-        success: true,
-        productId,
-        productSku: sku || null,
-        history,
-        total: history.length,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return res.status(500).json({ success: false, error: message });
-    }
-  });
-
-  app.get("/api/imports/product-context/:productId", authMiddleware, async (req, res) => {
-    const productId = String(req.params.productId);
-    const product = (await loadProductById(productId)) || (await loadProducts()).find((p: any) => p.id === productId);
-    if (!product) {
-      return res.status(404).json({ error: "product_not_found" });
-    }
-
-    const imports = loadImports();
-    const sku = String(product.sku || "");
-    const history = imports.filter(
-      (imp: any) => imp.productId === productId || (sku && imp.productSku === sku)
-    );
-    const latest = history.length > 0
-      ? [...history].sort((a: any, b: any) => {
-          const tb = new Date(b.date || 0).getTime();
-          const ta = new Date(a.date || 0).getTime();
-          if (tb !== ta) return tb - ta;
-          return String(b.id || "").localeCompare(String(a.id || ""));
-        })[0]
-      : null;
-
-    const stock = Math.max(0, Math.round(Number(product.stock) || 0));
-    const oldPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
-    console.log("[Imports] product-context:", { productId, sku, stock, oldPrice, title: product.title });
-
-    return res.json({
-      productId,
-      stock,
-      importPrice: oldPrice,
-      oldPrice,
-      sku,
-      title: product.title || "",
-      lastSupplierName: latest?.supplierName || null,
-      lastSupplierId: latest?.supplierId || null,
-      lastImportDate: latest?.date || null,
-    });
-  });
-
-  app.post("/api/imports", authMiddleware, async (req, res) => {
-    const body = req.body || {};
-    if (!body.supplierId || !body.productId || !body.quantity || body.newImportPrice == null) {
-      return res.status(400).json({ success: false, error: "import_fields_required" });
-    }
-
-    const productId = String(body.productId).trim();
-    const productSku = String(body.productSku || body.sku || "").trim();
-    const qty = Math.max(1, Math.round(Number(body.quantity)));
-    const unitPrice = Math.max(0, Math.round(Number(body.newImportPrice)));
-    const importCost = Math.max(0, Math.round(Number(body.importCost) || 0));
-    const computedTotal = qty * unitPrice + importCost;
-    // Kho Gốc = disk (PRODUCTS_STORAGE=disk) hoặc Mongo collection `products`
-    const warehouseId = "KhoGoc";
-
-    try {
-      // 1) Cập nhật tồn + importPrice trên Kho Gốc (transaction khi khả dụng)
-      const applied = await applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice, {
-        skuHint: productSku,
-      });
-      const updatedProduct = applied.product;
-      const oldImportPrice =
-        Math.max(0, Math.round(Number(body.oldImportPrice) || 0)) || applied.oldImportPrice;
-
-      // 2) Ghi lịch sử nhập — chỉ SAU khi Mongo commit thành công
-      const imports = loadImports();
-      const entry = {
-        id: body.id || `imp-${Date.now()}`,
-        supplierId: String(body.supplierId),
-        supplierName: String(body.supplierName || ""),
-        date: body.date || new Date().toISOString().split("T")[0],
-        createdAt: new Date().toISOString(),
-        productId: String(updatedProduct?.id || productId),
-        productTitle: String(body.productTitle || updatedProduct?.title || ""),
-        productSku: String(productSku || updatedProduct?.sku || ""),
-        quantity: qty,
-        oldImportPrice,
-        newImportPrice: unitPrice,
-        importCost,
-        totalAmount: Math.max(0, Math.round(Number(body.totalAmount) || computedTotal)),
-        paidAmount: Math.max(0, Math.round(Number(body.paidAmount) || 0)),
-        status: body.status || "unpaid",
-        notes: body.notes || undefined,
-        warehouseId,
-        priceChangePercent:
-          oldImportPrice > 0
-            ? Math.round(((unitPrice - oldImportPrice) / oldImportPrice) * 1000) / 10
-            : null,
-      };
-
-      try {
-        imports.unshift(entry);
-        saveImports(imports);
-      } catch (logErr) {
-        // Bù trừ: hoàn tồn/giá nếu ghi log thất bại
-        console.error("[Imports] Ghi log thất bại — rollback tồn/giá Kho Gốc:", logErr);
-        await applyImportStockAndPriceToMainWarehouse(productId, -qty, applied.oldImportPrice, {
-          skuHint: productSku,
-        }).catch((rb) => console.error("[Imports] Rollback Kho Gốc failed:", rb));
-        throw logErr;
-      }
-
-      console.log("[Imports] PO submitted → KhoGoc", {
-        productId: entry.productId,
-        sku: entry.productSku,
-        qty,
-        oldStock: applied.oldStock,
-        newStock: applied.newStock,
-        oldImportPrice,
-        newImportPrice: unitPrice,
-        target: applied.target,
-      });
-
-      return res.status(201).json({
-        success: true,
-        import: entry,
-        imports,
-        product: updatedProduct,
-        warehouseId,
-        warehouse: "KhoGoc",
-        collection: "products",
-        stockBefore: applied.oldStock,
-        stockAfter: applied.newStock,
-        importPriceBefore: oldImportPrice,
-        importPriceAfter: unitPrice,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Imports] POST /api/imports failed:", err);
-      return res.status(500).json({ success: false, error: message || "import_failed" });
-    }
-  });
-
-  app.post("/api/imports/clear-all", authMiddleware, async (_req, res) => {
-    saveImports([]);
-    console.log("[Imports] Đã xóa sạch toàn bộ lịch sử nhập hàng.");
-    return res.json({ success: true, cleared: true, imports: [] });
-  });
+  app.get("/api/imports", authMiddleware, listImports);
+  app.get("/api/imports/history/:productId", authMiddleware, getImportHistory);
+  app.get("/api/imports/product-context/:productId", authMiddleware, getImportProductContext);
+  app.post("/api/imports", authMiddleware, createImport);
+  app.post("/api/imports/clear-all", authMiddleware, clearAllImports);
+  app.use("/api/imports", authMiddleware, importsRoutes);
 
   // --- Expenses API (data/expenses.json) — Phase 1 MVC ---
   app.get("/api/expenses", authMiddleware, listExpenses);
@@ -17199,121 +16934,17 @@ async function startServer() {
   app.post("/api/expenses/clear-all", authMiddleware, clearAllExpenses);
   app.use("/api/expenses", authMiddleware, expensesRoutes);
 
-  // --- Dashboard API ---
-  // CHỈ đọc MongoDB — TUYỆT ĐỐI không gọi Shopee API / fetch / axios / hàm Tracking ở đây,
-  // và KHÔNG còn đọc orders.json (nguồn cũ, không được Webhook cập nhật đầy đủ).
-  // Toàn bộ số liệu (doanh thu, đếm đơn, top sản phẩm, chart) tính bằng MongoDB
-  // Aggregation ($facet, 1 round-trip) trong getDashboardStatsFromStore — collection
-  // `orders` CHÍNH LÀ nơi Webhook Shopee ghi (bulkUpsertOrdersToStore/updateOrderTrackingInStore).
-  app.get("/api/dashboard", authMiddleware, async (req, res) => {
-    try {
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      const dateRange = String(req.query.date_range || "last_7_days");
-      const range = getDashboardDateRange(dateRange);
-      const startKey = toDateKey(range.start);
-      const endKey = toDateKey(range.end);
-
-      if (!isMongoReady()) {
-        return res.status(200).json({
-          dateRange: range.key,
-          dateRangeLabel: range.label,
-          startDate: startKey,
-          endDate: endKey,
-          meta: { totalOrdersInDb: 0, dashboardOrders: 0, ordersInRange: 0 },
-          kpi: { revenue: 0, newOrders: 0, returns: 0, cancelled: 0 },
-          pendingOrders: {
-            pendingApproval: 0,
-            pendingPayment: 0,
-            pendingPack: 0,
-            pendingPickup: 0,
-            shipping: 0,
-            returnPending: 0,
-          },
-          chart: [],
-          topProducts: [],
-          inventory: { lowStockThreshold: 5, lowStockProducts: [] },
-          message: "mongodb_not_ready",
-        });
-      }
-
-      const LOW_STOCK_THRESHOLD = 5;
-
-      // Query Mongo ĐỘC LẬP, mỗi cái tự bounded bởi maxTimeMS ở tầng DB + timeout riêng
-      // ở tầng Node — dashboard_stats bị chậm (VD: collection đơn hàng lớn) sẽ KHÔNG kéo
-      // theo timeout của query sản phẩm (và ngược lại). Không còn `find({})` quét toàn
-      // bộ catalog — chỉ lấy đúng SP tồn thấp (LIMIT 50, chạy song song với stats) và
-      // đúng top-5 SP bán chạy (query theo id, phụ thuộc kết quả stats nên chạy sau).
-      const [stats, lowStockRows] = await Promise.all([
-        withLocalDbTimeout(getDashboardStatsFromStore(startKey, endKey), 8000, "dashboard_stats"),
-        withLocalDbTimeout(
-          getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
-          8000,
-          "dashboard_low_stock",
-        ),
-      ]);
-
-      const wantedProductIds = stats.topProducts.map((p) => p.productId).filter(Boolean);
-      const topProductDocs = wantedProductIds.length
-        ? await withLocalDbTimeout(
-            loadProductsByIdsFromStore(wantedProductIds, []),
-            8000,
-            "dashboard_top_products",
-          )
-        : ([] as any[]);
-
-      const topProducts = stats.topProducts.map((entry, idx) => {
-        const prod = topProductDocs.find((p: any) => p.id === entry.productId);
-        return {
-          rank: idx + 1,
-          productId: entry.productId,
-          title: prod?.title || entry.title || entry.productId,
-          sku: prod?.sku || "—",
-          imageUrl: prod?.avatarUrl || prod?.imageUrl || entry.image || null,
-          quantitySold: entry.quantitySold,
-        };
-      });
-
-      const lowStockProducts = lowStockRows.map((p) => ({
-        id: p.id,
-        title: p.title || p.sku || p.id,
-        sku: p.sku,
-        stock: p.stock,
-      }));
-
-      const chart = buildDashboardChart(stats.dailyRevenue, range);
-
-      return res.json({
-        dateRange: range.key,
-        dateRangeLabel: range.label,
-        startDate: startKey,
-        endDate: endKey,
-        meta: {
-          totalOrdersInDb: stats.totalOrdersInDb,
-          dashboardOrders: stats.dashboardOrdersCount,
-          ordersInRange: stats.ordersInRangeCount,
-        },
-        kpi: {
-          revenue: stats.revenue,
-          newOrders: stats.newOrders,
-          returns: stats.returns,
-          cancelled: stats.cancelled,
-        },
-        pendingOrders: stats.pendingOrders,
-        chart,
-        topProducts,
-        inventory: {
-          lowStockThreshold: LOW_STOCK_THRESHOLD,
-          lowStockProducts,
-        },
-      });
-    } catch (error: any) {
-      console.error("[Dashboard API] Error:", error);
-      return res.status(500).json({
-        error: "dashboard_query_failed",
-        message: error?.message || "Không thể tải dữ liệu dashboard.",
-      });
-    }
+  // --- Dashboard API — Phase 2 MVC ---
+  // CHỈ đọc MongoDB — không gọi Shopee API.
+  initDashboardController({
+    isMongoReady,
+    withLocalDbTimeout,
+    getDashboardStatsFromStore,
+    getLowStockProductsFromStore,
+    loadProductsByIdsFromStore,
   });
+  app.get("/api/dashboard", authMiddleware, getDashboard);
+  app.use("/api/dashboard", authMiddleware, dashboardRoutes);
 
   /**
    * Gộp các request refresh cùng lúc (click, focus, polling hoặc nhiều tab trình duyệt)
@@ -22001,137 +21632,6 @@ async function startServer() {
     return res.json(job);
   });
 
-  let ai: GoogleGenAI | null = null;
-  if (process.env.GEMINI_API_KEY) {
-    ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-  } else {
-    console.warn("Warning: GEMINI_API_KEY is not configured in .env");
-  }
-
-  const initGeminiClient = (apiKey: string) => {
-    return new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: { "User-Agent": "aistudio-build" },
-      },
-    });
-  };
-
-  app.get("/api/settings/channels", authMiddleware, async (_req, res) => {
-    try {
-      const settings = loadChannelSettings();
-      return res.json({
-        success: true,
-        settings,
-        path: CHANNEL_SETTINGS_PATH,
-        shopCount: Array.isArray(settings.shops) ? settings.shops.length : 0,
-      });
-    } catch (error: any) {
-      logOAuthSaveError("GET /api/settings/channels", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "load_failed",
-        message: "Không đọc được cấu hình gian hàng",
-      });
-    }
-  });
-
-  app.put("/api/settings/channels", authMiddleware, async (req, res) => {
-    try {
-      const incoming = req.body?.settings;
-      if (!incoming || typeof incoming !== "object") {
-        return res.status(400).json({
-          success: false,
-          error: "invalid_settings",
-          message: "Thiếu trường settings trong body",
-        });
-      }
-      const onDisk = loadChannelSettings();
-      const incomingShops = Array.isArray(incoming.shops) ? incoming.shops : [];
-      const mergedShops = upsertShopsInChannelSettings(onDisk.shops || [], incomingShops);
-
-      if (incomingShops.length > 0 && mergedShops.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "invalid_shop_schema",
-          message: "Dữ liệu shop thiếu trường bắt buộc (platform, shopId, shopName, apiKey)",
-        });
-      }
-
-      const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...incoming, shops: mergedShops };
-      if (!saveChannelSettings(payload)) {
-        return res.status(500).json({
-          success: false,
-          error: "save_failed",
-          message: "Không ghi được file channel_settings.json trên máy chủ",
-        });
-      }
-      const saved = loadChannelSettings();
-      console.log(
-        "[Channel Settings] PUT OK — shop_ids:",
-        (saved.shops || []).map((s: any) => s.shopId).join(", ") || "(trống)",
-      );
-      return res.json({ success: true, settings: saved, shopCount: saved.shops?.length ?? 0 });
-    } catch (error: any) {
-      logOAuthSaveError("PUT /api/settings/channels", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "save_failed",
-        message: "Lưu cấu hình gian hàng thất bại",
-      });
-    }
-  });
-
-  app.get("/api/settings/gemini-status", authMiddleware, async (_req, res) => {
-    const key = process.env.GEMINI_API_KEY || "";
-    const configured = Boolean(key && key !== "chua_co_key_tam_thoi");
-    return res.json({
-      success: true,
-      configured,
-      maskedKey: configured ? maskApiKey(key) : "",
-    });
-  });
-
-  app.post("/api/settings/update-gemini-key", authMiddleware, async (req, res) => {
-    try {
-      const { apiKey } = req.body || {};
-      const trimmed = String(apiKey || "").trim();
-      if (!trimmed) {
-        return res.status(400).json({ success: false, error: "Vui lòng nhập Gemini API Key." });
-      }
-      updateEnvVar("GEMINI_API_KEY", trimmed);
-      ai = initGeminiClient(trimmed);
-      return res.json({ success: true, message: "Đã cập nhật API Key thành công!" });
-    } catch (error: any) {
-      return res.status(500).json({ success: false, error: error.message || "Lưu API Key thất bại" });
-    }
-  });
-
-  app.post("/api/settings/test-gemini-key", authMiddleware, async (req, res) => {
-    try {
-      const testKey = String(req.body?.apiKey || process.env.GEMINI_API_KEY || "").trim();
-      if (!testKey || testKey === "chua_co_key_tam_thoi") {
-        return res.status(400).json({ success: false, error: "API Key không hợp lệ" });
-      }
-      const testAi = initGeminiClient(testKey);
-      await testAi.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: "Reply with exactly: OK",
-      });
-      return res.json({ success: true, message: "Kết nối thành công!" });
-    } catch (error: any) {
-      console.error("[Gemini test]", error);
-      return res.status(400).json({ success: false, error: "API Key không hợp lệ" });
-    }
-  });
-
   async function checkShopConnectionStatus(shop: any): Promise<{ online: boolean; message: string }> {
     if (!shop?.connected) {
       return { online: false, message: "Đồng bộ đang tắt" };
@@ -22220,6 +21720,25 @@ async function startServer() {
     return { online: false, message: "Nền tảng không hỗ trợ" };
   }
 
+  // --- Settings API — Phase 2 MVC ---
+  ensureGeminiClientFromEnv();
+  initSettingsController({
+    CHANNEL_SETTINGS_PATH,
+    DEFAULT_CHANNEL_SETTINGS,
+    loadChannelSettings,
+    saveChannelSettings,
+    upsertShopsInChannelSettings,
+    logOAuthSaveError,
+    checkShopConnectionStatus,
+  });
+  app.get("/api/settings/channels", authMiddleware, getChannelSettings);
+  app.put("/api/settings/channels", authMiddleware, putChannelSettings);
+  app.get("/api/settings/gemini-status", authMiddleware, getGeminiStatus);
+  app.post("/api/settings/update-gemini-key", authMiddleware, updateGeminiKey);
+  app.post("/api/settings/test-gemini-key", authMiddleware, testGeminiKey);
+  app.post("/api/settings/shop-connection-status", authMiddleware, postShopConnectionStatus);
+  app.use("/api/settings", authMiddleware, settingsRoutes);
+
   app.get("/api/shopee/oauth-shops", authMiddleware, async (_req, res) => {
     ensureShopeeLinkedShopTokenKeys();
     const tokens = loadShopeeTokens();
@@ -22271,138 +21790,6 @@ async function startServer() {
     });
   });
 
-  app.post("/api/settings/shop-connection-status", authMiddleware, async (req, res) => {
-    try {
-      const shops = Array.isArray(req.body?.shops) ? req.body.shops : [];
-      const statuses: Record<string, { online: boolean; message: string }> = {};
-      for (const shop of shops) {
-        if (!shop?.id) continue;
-        try {
-          statuses[shop.id] = await Promise.race([
-            checkShopConnectionStatus(shop),
-            new Promise<{ online: boolean; message: string }>((_, reject) => {
-              setTimeout(() => reject(new Error("Timeout kiểm tra kết nối (15s)")), 15_000);
-            }),
-          ]);
-        } catch (shopErr: any) {
-          console.error("[Shop connection-status] shop failed:", shop?.id, shopErr);
-          statuses[shop.id] = {
-            online: false,
-            message: shopErr?.message || "Lỗi kiểm tra kết nối gian hàng",
-          };
-        }
-      }
-      return res.json({ success: true, statuses });
-    } catch (error: any) {
-      console.error("[Shop connection-status] fatal:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "Kiểm tra kết nối thất bại",
-        message: error?.message || "Kiểm tra kết nối thất bại",
-      });
-    }
-  });
-
-  // API endpoint for Gemini optimization (Protected)
-  app.post("/api/gemini/optimize", authMiddleware, async (req, res) => {
-    try {
-      const { action, text, context } = req.body;
-      const apiKey = process.env.GEMINI_API_KEY;
-
-      if (!apiKey) {
-        return res.status(503).json({
-          error: "Ch\u01B0a c\u1EA5u h\xECnh API Key c\u1EE7a Gemini AI. Vui l\xF2ng c\xE0i \u0111\u1EB7t trong m\u1EE5c Settings ho\u1EB7c Secrets.",
-        });
-      }
-
-      if (!ai) {
-        ai = new GoogleGenAI({
-          apiKey,
-          httpOptions: {
-            headers: {
-              "User-Agent": "aistudio-build",
-            },
-          },
-        });
-      }
-
-      let prompt = "";
-      if (action === "optimize-title") {
-        prompt = `B\u1EA1n l\xE0 m\u1ED9t chuy\xEAn gia t\u1ED1i \u01B0u h\xF3a SEO tr\xEAn Shopee v\xE0 TikTok Shop t\u1EA1i Vi\u1EC7t Nam.
-H\xE3y vi\u1EBFt l\u1EA1i ti\xEAu \u0111\u1EC1 s\u1EA3n ph\u1EA9m sau \u0111\xE2y \u0111\u1EC3 thu h\xFAt kh\xE1ch h\xE0ng, k\xEDch th\xEDch click, t\u0103ng t\u1EF7 l\u1EC7 chuy\u1EC3n \u0111\u1ED5i v\xE0 ch\u1EE9a c\xE1c t\u1EEB kh\xF3a t\xECm ki\u1EBFm ph\u1ED5 bi\u1EBFn (SEO).
-Ti\xEAu \u0111\u1EC1 g\u1ED1c: "${text}"
-${context ? `Y\xEAu c\u1EA7u th\xEAm: ${context}` : ""}
-
-Quy t\u1EAFc vi\u1EBFt ti\xEAu \u0111\u1EC1:
-- \u0110\u1ED9 d\xE0i t\u1EEB 50-120 k\xFD t\u1EF1.
-- Vi\u1EBFt hoa ch\u1EEF c\xE1i \u0111\u1EA7u c\u1EE7a m\u1ED7i t\u1EEB quan tr\u1ECDng (nh\u01B0 t\xEAn th\u01B0\u01A1ng hi\u1EC7u, t\xEDnh n\u0103ng ch\xEDnh).
-- Ch\u1EE9a th\u01B0\u01A1ng hi\u1EC7u, ch\u1EA5t li\u1EC7u, dung t\xEDch/k\xEDch th\u01B0\u1EDBc, c\xF4ng d\u1EE5ng n\u1ED5i b\u1EADt.
-- KH\xD4NG d\xF9ng k\xFD t\u1EF1 \u0111\u1EB7c bi\u1EC7t g\xE2y l\u1ED7i t\xECm ki\u1EBFm.
-- Ch\u1EC9 tr\u1EA3 v\u1EC1 danh s\xE1ch 3 ph\u01B0\u01A1ng \xE1n ti\xEAu \u0111\u1EC1 t\u1ED1i \u01B0u nh\u1EA5t d\u01B0\u1EDBi d\u1EA1ng danh s\xE1ch, m\u1ED7i ph\u01B0\u01A1ng \xE1n tr\xEAn 1 d\xF2ng. Kh\xF4ng gi\u1EA3i th\xEDch th\xEAm.`;
-      } else if (action === "generate-description") {
-        prompt = `B\u1EA1n l\xE0 m\u1ED9t chuy\xEAn gia Copywriter vi\u1EBFt b\xE0i m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m b\xE1n h\xE0ng (Product Description) \u0111\u1EC9nh cao tr\xEAn s\xE0n th\u01B0\u01A1ng m\u1EA1i \u0111i\u1EC7n t\u1EED Shopee v\xE0 TikTok Shop Vi\u1EC7t Nam.
-H\xE3y vi\u1EBFt m\u1ED9t b\xE0i m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m chi ti\u1EBFt, chuy\xEAn nghi\u1EC7p, thu h\xFAt ng\u01B0\u1EDDi mua d\u1EF1a tr\xEAn th\xF4ng tin s\u1EA3n ph\u1EA9m sau \u0111\xE2y.
-T\xEAn s\u1EA3n ph\u1EA9m: "${text}"
-${context ? `Th\xF4ng tin b\u1ED5 sung / Gi\xE1 c\u1EA3 / T\xEDnh n\u0103ng: ${context}` : ""}
-
-C\u1EA5u tr\xFAc b\xE0i vi\u1EBFt m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m c\u1EA7n c\xF3:
-1. Slogan thu h\xFAt & Gi\u1EDBi thi\u1EC7u ng\u1EAFn v\u1EC1 s\u1EA3n ph\u1EA9m.
-2. C\xE1c \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EADt nh\u1EA5t (g\u1EA1ch \u0111\u1EA7u d\xF2ng d\u1EC5 \u0111\u1ECDc).
-3. Th\xF4ng s\u1ED1 k\u1EF9 thu\u1EADt / H\u01B0\u1EDBng d\u1EABn s\u1EED d\u1EE5ng chi ti\u1EBFt.
-4. Cam k\u1EBFt c\u1EE7a Shop (H\xE0ng ch\xEDnh h\xE3ng, b\u1EA3o h\xE0nh, \u0111\u1ED5i tr\u1EA3 1-1 trong 7 ng\xE0y).
-5. Hashtag li\xEAn quan chu\u1EA9n SEO (8-12 hashtags \u1EDF cu\u1ED1i b\xE0i, v\xED d\u1EE5: #noichien #giadung).
-
-Phong c\xE1ch vi\u1EBFt: Th\xE2n thi\u1EC7n, thuy\u1EBFt ph\u1EE5c, \u0111\xE1ng tin c\u1EADy. \u0110\u1ECBnh d\u1EA1ng Markdown \u0111\u1EB9p m\u1EAFt, ph\xE2n c\u1EA5p r\xF5 r\xE0ng. H\xE3y ch\u1EC9 tr\u1EA3 v\u1EC1 b\xE0i vi\u1EBFt m\xF4 t\u1EA3 b\u1EB1ng Markdown. Kh\xF4ng ch\xE0o h\u1ECFi hay gi\u1EA3i th\xEDch th\xEAm.`;
-      } else if (action === "suggest-prices") {
-        const importP = typeof context === "object" ? context.importPrice : 0;
-        const sellP = typeof context === "object" ? context.sellingPrice : 0;
-        prompt = `B\u1EA1n l\xE0 chuy\xEAn gia c\u1ED1 v\u1EA5n t\xE0i ch\xEDnh v\xE0 \u0111\u1ECBnh gi\xE1 s\u1EA3n ph\u1EA9m E-commerce tr\xEAn Shopee & TikTok Shop.
-D\u1EF1a tr\xEAn th\xF4ng tin s\u1EA3n ph\u1EA9m n\xE0y:
-T\xEAn s\u1EA3n ph\u1EA9m: "${text}"
-Gi\xE1 nh\u1EADp g\u1ED1c: ${importP.toLocaleString("vi-VN")} VN\u0110.
-Gi\xE1 b\xE1n d\u1EF1 ki\u1EBFn hi\u1EC7n t\u1EA1i: ${sellP.toLocaleString("vi-VN")} VN\u0110.
-
-H\xE3y t\xEDnh to\xE1n v\xE0 ph\xE2n t\xEDch chi ti\u1EBFt b\u1EB1ng ti\u1EBFng Vi\u1EC7t:
-1. T\u1EF7 su\u1EA5t l\u1EE3i nhu\u1EADn g\u1ED9p (Gross Profit Margin %) c\u1EE7a gi\xE1 b\xE1n d\u1EF1 ki\u1EBFn hi\u1EC7n t\u1EA1i.
-2. \u0110\u1EC1 xu\u1EA5t 3 m\u1EE9c gi\xE1 b\xE1n t\u1ED1i \u01B0u (Gi\xE1 th\xE2m nh\u1EADp th\u1ECB tr\u01B0\u1EDDng, Gi\xE1 t\u1ED1i \u0111a h\xF3a l\u1EE3i nhu\u1EADn, Gi\xE1 khuy\u1EBFn m\xE3i Flash Sale) k\xE8m ph\xE2n t\xEDch l\u1EE3i nhu\u1EADn th\u1EF1c t\u1EBF (\u0111\xE3 tr\u1EEB kho\u1EA3ng 10-12% ph\xED s\xE0n Shopee/TikTok th\xF4ng th\u01B0\u1EDDng bao g\u1ED3m ph\xED thanh to\xE1n, ph\xED c\u1ED1 \u0111\u1ECBnh, ph\xED Freeship Xtra).
-3. Ph\xE2n t\xEDch t\xEDnh c\u1EA1nh tranh c\u1EE7a gi\xE1 nh\u1EADp v\xE0 \u0111\u1EC1 xu\u1EA5t chi\u1EBFn l\u01B0\u1EE3c t\u1ED1i \u01B0u chi ph\xED hi\u1EC7u qu\u1EA3.
-
-H\xE3y tr\u1EA3 v\u1EC1 k\u1EBFt qu\u1EA3 chi ti\u1EBFt b\u1EB1ng ti\u1EBFng Vi\u1EC7t, vi\u1EBFt ng\u1EAFn g\u1ECDn d\u01B0\u1EDBi d\u1EA1ng Markdown, s\u1EED d\u1EE5ng b\u1EA3ng \u0111\u1EC3 so s\xE1nh r\xF5 r\xE0ng c\xE1c m\u1EE9c gi\xE1 \u0111\u1EC1 xu\u1EA5t v\xE0 l\u1EE3i nhu\u1EADn th\u1EF1c nh\u1EADn.`;
-      } else if (action === "bulk-tag") {
-        prompt = `B\u1EA1n l\xE0 chuy\xEAn gia t\u1EEB kh\xF3a SEO cho Shopee v\xE0 TikTok Shop t\u1EA1i Vi\u1EC7t Nam.
-H\xE3y g\u1EE3i \xFD m\u1ED9t danh s\xE1ch g\u1ED3m 10-15 hashtags b\xE1n ch\u1EA1y nh\u1EA5t li\xEAn quan \u0111\u1EBFn s\u1EA3n ph\u1EA9m: "${text}".
-C\xE1c t\u1EEB kh\xF3a ph\u1EA3i ph\xF9 h\u1EE3p v\u1EDBi xu h\u01B0\u1EDBng t\xECm ki\u1EBFm h\xE0ng \u0111\u1EA7u c\u1EE7a ng\u01B0\u1EDDi Vi\u1EC7t.
-Tr\u1EA3 v\u1EC1 k\u1EBFt qu\u1EA3 d\u01B0\u1EDBi d\u1EA1ng: c\xE1c hashtags c\xE1ch nhau b\u1EB1ng d\u1EA5u c\xE1ch, k\xE8m theo 3 g\u1EE3i \xFD c\u1EE5m t\u1EEB kh\xF3a t\xECm ki\u1EBFm ch\xEDnh (search volume cao) \u0111\u1EC3 ch\xE8n v\xE0o ph\u1EA7n \u0111\u1EA7u ti\xEAu \u0111\u1EC1 ho\u1EB7c m\xF4 t\u1EA3. Tr\u1EA3 v\u1EC1 d\u01B0\u1EDBi d\u1EA1ng v\u0103n b\u1EA3n Markdown ng\u1EAFn g\u1ECDn.`;
-      } else if (action === "avoid-duplication-title") {
-        prompt = `B\u1EA1n l\xE0 chuy\xEAn gia t\u01B0 v\u1EA5n SEO v\xE0 b\xE1n h\xE0ng th\u01B0\u01A1ng m\u1EA1i \u0111i\u1EC7n t\u1EED chuy\xEAn nghi\u1EC7p t\u1EA1i Vi\u1EC7t Nam.
-Nhi\u1EC7m v\u1EE5 c\u1EE7a b\u1EA1n l\xE0 vi\u1EBFt l\u1EA1i t\xEAn s\u1EA3n ph\u1EA9m g\u1ED1c th\xE0nh 3 ph\u01B0\u01A1ng \xE1n ti\xEAu \u0111\u1EC1 kh\xE1c nhau ho\xE0n to\xE0n v\u1EC1 m\u1EB7t c\u1EA5u tr\xFAc ch\u1EEF vi\u1EBFt v\xE0 c\u1EE5m t\u1EEB b\u1ED5 tr\u1EE3, nh\u01B0ng v\u1EABn gi\u1EEF nguy\xEAn b\u1EA3n ch\u1EA5t s\u1EA3n ph\u1EA9m \u0111\u1EC3 \u0111\u0103ng l\xEAn nhi\u1EC1u gian h\xE0ng kh\xE1c nhau (Shopee, TikTok, Lazada) m\xE0 KH\xD4NG b\u1ECB qu\xE9t tr\xF9ng l\u1EB7p n\u1ED9i dung (tr\xE1nh thu\u1EADt to\xE1n spam/duplicate listings).
-
-Ti\xEAu \u0111\u1EC1 g\u1ED1c: "${text}"
-${context ? `T\u1EEB kh\xF3a/Y\xEAu c\u1EA7u th\xEAm: ${context}` : ""}
-
-Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
-- Ph\u01B0\u01A1ng \xE1n 1 (S\u1EED d\u1EE5ng c\u1EE5m t\u1EEB gi\u1EADt t\xEDt \u0111\u1EA7u trang, c\u1EA5u tr\xFAc k\u1EF9 thu\u1EADt): V\xED d\u1EE5: "[Ch\xEDnh H\xE3ng] + T\xEAn s\u1EA3n ph\u1EA9m + Th\xF4ng s\u1ED1 k\u1EF9 thu\u1EADt n\u1ED5i b\u1EADt + C\xF4ng d\u1EE5ng ch\xEDnh".
-- Ph\u01B0\u01A1ng \xE1n 2 (\u0110\xE1nh v\xE0o gi\xE1 tr\u1ECB/m\xF4 t\u1EA3 c\u1EA3m x\xFAc ng\u01B0\u1EDDi mua, qu\xE0 t\u1EB7ng k\xE8m): V\xED d\u1EE5: "T\xEAn s\u1EA3n ph\u1EA9m + [T\u1EB7ng K\xE8m Qu\xE0 / Freeship Xtra] + Ph\xE2n lo\u1EA1i/M\xE0u s\u1EAFc hot + B\u1EA3o h\xE0nh 12T".
-- Ph\u01B0\u01A1ng \xE1n 3 (T\u1EADp trung t\u1EEB kh\xF3a SEO ng\xE1ch, ph\xE2n kh\xFAc \u0111\u1ED1i t\u01B0\u1EE3ng): V\xED d\u1EE5: "T\xEAn s\u1EA3n ph\u1EA9m + Gi\u1EA3i ph\xE1p cho... + Ch\u1EA5t li\u1EC7u + [\u1EA2nh Th\u1EADt T\u1EF1 Ch\u1EE5p]".
-- \u0110\u1EA3m b\u1EA3o \u0111\u1ED9 d\xE0i m\u1ED7i ti\xEAu \u0111\u1EC1 t\u1EEB 75 \u0111\u1EBFn 115 k\xFD t\u1EF1.
-- Ch\u1EE9a c\xE1c t\u1EEB kh\xF3a \u0111\u1ED3ng ngh\u0129a phong ph\xFA \u0111\u1EC3 c\xF4ng c\u1EE5 t\xECm ki\u1EBFm kh\xF4ng nh\u1EADn d\u1EA1ng tr\xF9ng l\u1EB7p.
-- Ch\u1EC9 tr\u1EA3 v\u1EC1 danh s\xE1ch \u0111\xFAng 3 d\xF2ng ti\xEAu \u0111\u1EC1 \u0111\xE3 ch\u1EC9nh s\u1EEDa, m\u1ED7i d\xF2ng m\u1ED9t ph\u01B0\u01A1ng \xE1n, kh\xF4ng c\xF3 s\u1ED1 th\u1EE9 t\u1EF1 \u1EDF \u0111\u1EA7u d\xF2ng, kh\xF4ng gi\u1EA3i th\xEDch th\xEAm b\u1EA5t k\u1EF3 \u0111i\u1EC1u g\xEC.`;
-      } else {
-        return res.status(400).json({ error: "H\xE0nh \u0111\u1ED9ng kh\xF4ng h\u1EE3p l\u1EC7." });
-      }
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-      });
-
-      return res.json({ result: response.text });
-    } catch (error: any) {
-      console.error("Gemini API Error:", error);
-      return res.status(500).json({ error: error.message || "L\u1ED7i x\u1EED l\xFD AI t\u1EEB server" });
-    }
-  });
-
   const LISTINGS_DB_PATH = path.join(APP_ROOT, "data", "multi_channel_listings.json");
 
   const readListingsDb = (): any[] => {
@@ -22422,157 +21809,11 @@ Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
     fs.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
 
-  const markdownToHtml = (text: string): string => {
-    if (!text) return "";
-    if (/<[a-z][\s\S]*>/i.test(text)) return text;
-    const lines = text.split("\n");
-    const parts: string[] = [];
-    let inList = false;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        if (inList) { parts.push("</ul>"); inList = false; }
-        continue;
-      }
-      if (trimmed.startsWith("### ")) {
-        if (inList) { parts.push("</ul>"); inList = false; }
-        parts.push(`<h3>${trimmed.slice(4)}</h3>`);
-      } else if (trimmed.startsWith("## ")) {
-        if (inList) { parts.push("</ul>"); inList = false; }
-        parts.push(`<h2>${trimmed.slice(3)}</h2>`);
-      } else if (trimmed.startsWith("# ")) {
-        if (inList) { parts.push("</ul>"); inList = false; }
-        parts.push(`<h1>${trimmed.slice(2)}</h1>`);
-      } else if (/^[-*]\s+/.test(trimmed)) {
-        if (!inList) { parts.push("<ul>"); inList = true; }
-        parts.push(`<li>${trimmed.replace(/^[-*]\s+/, "")}</li>`);
-      } else {
-        if (inList) { parts.push("</ul>"); inList = false; }
-        parts.push(`<p>${trimmed}</p>`);
-      }
-    }
-    if (inList) parts.push("</ul>");
-    return parts.join("");
-  };
-
-  app.post("/api/ai/parse-address", authMiddleware, async (req, res) => {
-    try {
-      const { address } = req.body || {};
-      const apiKey = process.env.GEMINI_API_KEY;
-
-      if (!apiKey) {
-        return res.status(503).json({
-          error: "Chưa cấu hình API Key của Gemini AI.",
-        });
-      }
-
-      if (!address?.trim()) {
-        return res.status(400).json({ error: "Thiếu chuỗi địa chỉ cần phân tích." });
-      }
-
-      if (!ai) {
-        ai = new GoogleGenAI({
-          apiKey,
-          httpOptions: { headers: { "User-Agent": "aistudio-build" } },
-        });
-      }
-
-      const prompt = `Bạn là chuyên gia phân tích địa chỉ giao hàng Việt Nam.
-Phân tích chuỗi địa chỉ sau và trả về JSON thuần (KHÔNG markdown, KHÔNG giải thích):
-{"province":"...","district":"...","ward":"...","street":"..."}
-
-Yêu cầu:
-- province: tên Tỉnh/Thành phố chuẩn (VD: "Thành phố Hồ Chí Minh", "Hà Nội")
-- district: tên Quận/Huyện/Thị xã chuẩn (VD: "Quận 1", "Huyện Đông Anh")
-- ward: tên Phường/Xã/Thị trấn chuẩn
-- street: phần địa chỉ chi tiết còn lại (số nhà, tên đường, ngõ ngách)
-- Chuẩn hóa viết tắt: HCM/TPHCM -> Thành phố Hồ Chí Minh, Q1 -> Quận 1, P. -> Phường
-
-Địa chỉ cần phân tích: "${String(address).trim()}"`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-      });
-
-      const raw = (response.text || "").trim();
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        return res.status(422).json({ error: "AI không trả về JSON hợp lệ." });
-      }
-
-      const parsed = JSON.parse(jsonMatch[0]);
-      return res.json({
-        success: true,
-        parsed: {
-          province: String(parsed.province || "").trim(),
-          district: String(parsed.district || "").trim(),
-          ward: String(parsed.ward || "").trim(),
-          street: String(parsed.street || "").trim(),
-        },
-      });
-    } catch (error: any) {
-      console.error("[AI parse-address]", error);
-      const msg = String(error?.message || "");
-      const lower = msg.toLowerCase();
-      if (
-        lower.includes("api key") ||
-        lower.includes("api_key") ||
-        lower.includes("invalid api") ||
-        (lower.includes("invalid") && lower.includes("key"))
-      ) {
-        return res.status(401).json({
-          error: "Gemini API Key không hợp lệ. Vào Cài đặt → Cấu hình AI để cập nhật key.",
-        });
-      }
-      if (msg.startsWith("{") || msg.includes("GoogleGenerativeAI")) {
-        return res.status(502).json({
-          error: "AI tạm thời không phản hồi. Vui lòng nhập địa chỉ thủ công hoặc thử lại sau.",
-        });
-      }
-      return res.status(500).json({ error: msg || "Lỗi phân tích địa chỉ AI" });
-    }
-  });
-
-  app.post("/api/ai/generate-description", authMiddleware, async (req, res) => {
-    try {
-      const { title, keywords, context } = req.body || {};
-      const apiKey = process.env.GEMINI_API_KEY;
-
-      if (!apiKey) {
-        return res.status(503).json({
-          error: "Ch\u01B0a c\u1EA5u h\xECnh API Key c\u1EE7a Gemini AI.",
-        });
-      }
-
-      if (!ai) {
-        ai = new GoogleGenAI({
-          apiKey,
-          httpOptions: { headers: { "User-Agent": "aistudio-build" } },
-        });
-      }
-
-      const prompt = `B\u1EA1n l\xE0 chuy\xEAn gia Copywriter vi\u1EBFt m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m b\xE1n h\xE0ng tr\xEAn Shopee, Lazada v\xE0 TikTok Shop Vi\u1EC7t Nam.
-H\xE3y vi\u1EBFt m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m d\u1EA1ng HTML (d\xF9ng th\u1EBB h2, h3, p, ul, li, strong) \u2014 KH\xD4NG d\xF9ng markdown, KH\xD4NG bọc trong \`\`\`html.
-T\xEAn s\u1EA3n ph\u1EA9m: "${title || ""}"
-T\u1EEB kh\xF3a / T\xEDnh n\u0103ng: "${keywords || ""}"
-${context ? `Th\xF4ng tin th\xEAm: ${context}` : ""}
-
-C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EADt (ul/li), th\xF4ng s\u1ED1, cam k\u1EBFt shop, hashtags cu\u1ED1i b\xE0i. Ch\u1EC9 tr\u1EA3 v\u1EC1 HTML thu\u1EA7n.`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt,
-      });
-
-      const raw = (response.text || "").trim();
-      const html = markdownToHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, ""));
-      return res.json({ success: true, html });
-    } catch (error: any) {
-      console.error("[AI generate-description]", error);
-      return res.status(500).json({ error: error.message || "L\u1ED7i t\u1EA1o m\xF4 t\u1EA3 AI" });
-    }
-  });
+  // --- AI / Gemini API — Phase 2 MVC ---
+  app.post("/api/gemini/optimize", authMiddleware, geminiOptimize);
+  app.post("/api/ai/parse-address", authMiddleware, parseAddress);
+  app.post("/api/ai/generate-description", authMiddleware, generateDescription);
+  app.use("/api", aiRoutes);
 
   app.get("/api/multi-channel/listing", authMiddleware, async (_req, res) => {
     return res.json({ success: true, listings: readListingsDb() });

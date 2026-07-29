@@ -1292,8 +1292,8 @@ var require_node = __commonJS({
           }
           break;
         case "FILE":
-          var fs11 = require("fs");
-          stream2 = new fs11.SyncWriteStream(fd2, { autoClose: false });
+          var fs13 = require("fs");
+          stream2 = new fs13.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -14080,11 +14080,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path10) {
-      if (!path10 || typeof path10 !== "string") {
+    function lookup(path12) {
+      if (!path12 || typeof path12 !== "string") {
         return false;
       }
-      var extension3 = extname("x." + path10).toLowerCase().substr(1);
+      var extension3 = extname("x." + path12).toLowerCase().substr(1);
       if (!extension3) {
         return false;
       }
@@ -17713,8 +17713,8 @@ var require_node2 = __commonJS({
           }
           break;
         case "FILE":
-          var fs11 = require("fs");
-          stream2 = new fs11.SyncWriteStream(fd2, { autoClose: false });
+          var fs13 = require("fs");
+          stream2 = new fs13.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18432,8 +18432,8 @@ var require_node3 = __commonJS({
           }
           break;
         case "FILE":
-          var fs11 = require("fs");
-          stream2 = new fs11.SyncWriteStream(fd2, { autoClose: false });
+          var fs13 = require("fs");
+          stream2 = new fs13.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -18521,7 +18521,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path10, keys, options) {
+    function pathToRegexp(path12, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -18535,8 +18535,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m2;
-      if (path10 instanceof RegExp) {
-        while (m2 = MATCHING_GROUP_REGEXP.exec(path10.source)) {
+      if (path12 instanceof RegExp) {
+        while (m2 = MATCHING_GROUP_REGEXP.exec(path12.source)) {
           if (m2[0][0] === "\\") continue;
           keys.push({
             name: m2[1] || name++,
@@ -18544,18 +18544,18 @@ var require_path_to_regexp = __commonJS({
             offset: m2.index
           });
         }
-        return path10;
+        return path12;
       }
-      if (Array.isArray(path10)) {
-        path10 = path10.map(function(value) {
+      if (Array.isArray(path12)) {
+        path12 = path12.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path10.join("|"), flags);
+        return new RegExp(path12.join("|"), flags);
       }
-      if (typeof path10 !== "string") {
+      if (typeof path12 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path10 = path10.replace(
+      path12 = path12.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -18572,7 +18572,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format) {
             backtrack = "";
           } else {
-            backtrack += path10.slice(pos, offset);
+            backtrack += path12.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -18602,7 +18602,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m2 = MATCHING_GROUP_REGEXP.exec(path10)) {
+      while (m2 = MATCHING_GROUP_REGEXP.exec(path12)) {
         if (m2[0][0] === "\\") continue;
         if (keysOffset + i2 === keys.length || keys[keysOffset + i2].offset > m2.index) {
           keys.splice(keysOffset + i2, 0, {
@@ -18614,13 +18614,13 @@ var require_path_to_regexp = __commonJS({
         }
         i2++;
       }
-      path10 += strict ? "" : path10[path10.length - 1] === "/" ? "?" : "/?";
+      path12 += strict ? "" : path12[path12.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path10 += "$";
-      } else if (path10[path10.length - 1] !== "/") {
-        path10 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path12 += "$";
+      } else if (path12[path12.length - 1] !== "/") {
+        path12 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path10, flags);
+      return new RegExp("^" + path12, flags);
     }
   }
 });
@@ -18633,19 +18633,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path10, options, fn) {
+    function Layer(path12, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path10, options, fn);
+        return new Layer(path12, options, fn);
       }
-      debug("new %o", path10);
+      debug("new %o", path12);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path10, this.keys = [], opts);
-      this.regexp.fast_star = path10 === "*";
-      this.regexp.fast_slash = path10 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path12, this.keys = [], opts);
+      this.regexp.fast_star = path12 === "*";
+      this.regexp.fast_slash = path12 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -18669,20 +18669,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path10) {
+    Layer.prototype.match = function match2(path12) {
       var match3;
-      if (path10 != null) {
+      if (path12 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path10) };
-          this.path = path10;
+          this.params = { "0": decode_param(path12) };
+          this.path = path12;
           return true;
         }
-        match3 = this.regexp.exec(path10);
+        match3 = this.regexp.exec(path12);
       }
       if (!match3) {
         this.params = void 0;
@@ -18775,10 +18775,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path10) {
-      this.path = path10;
+    function Route(path12) {
+      this.path = path12;
       this.stack = [];
-      debug("new %o", path10);
+      debug("new %o", path12);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -18908,17 +18908,17 @@ var require_router = __commonJS({
     var toString = Object.prototype.toString;
     var proto = module2.exports = function(options) {
       var opts = options || {};
-      function router7(req, res, next) {
-        router7.handle(req, res, next);
+      function router11(req, res, next) {
+        router11.handle(req, res, next);
       }
-      setPrototypeOf(router7, proto);
-      router7.params = {};
-      router7._params = [];
-      router7.caseSensitive = opts.caseSensitive;
-      router7.mergeParams = opts.mergeParams;
-      router7.strict = opts.strict;
-      router7.stack = [];
-      return router7;
+      setPrototypeOf(router11, proto);
+      router11.params = {};
+      router11._params = [];
+      router11.caseSensitive = opts.caseSensitive;
+      router11.mergeParams = opts.mergeParams;
+      router11.strict = opts.strict;
+      router11.stack = [];
+      return router11;
     };
     proto.param = function param(name, fn) {
       if (typeof name === "function") {
@@ -18990,8 +18990,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path10 = getPathname(req);
-        if (path10 == null) {
+        var path12 = getPathname(req);
+        if (path12 == null) {
           return done(layerError);
         }
         var layer;
@@ -18999,7 +18999,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path10);
+          match2 = matchLayer(layer, path12);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -19037,18 +19037,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path10);
+            trim_prefix(layer, layerError, layerPath, path12);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path10) {
+      function trim_prefix(layer, layerError, layerPath, path12) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path10.slice(0, layerPath.length)) {
+          if (layerPath !== path12.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path10[layerPath.length];
+          var c = path12[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -19126,7 +19126,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path10 = "/";
+      var path12 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -19134,7 +19134,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path10 = fn;
+          path12 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -19146,8 +19146,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path10, fn.name || "<anonymous>");
-        var layer = new Layer(path10, {
+        debug("use %o %s", path12, fn.name || "<anonymous>");
+        var layer = new Layer(path12, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -19157,9 +19157,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path10) {
-      var route2 = new Route(path10);
-      var layer = new Layer(path10, {
+    proto.route = function route(path12) {
+      var route2 = new Route(path12);
+      var layer = new Layer(path12, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -19169,8 +19169,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path10) {
-        var route = this.route(path10);
+      proto[method] = function(path12) {
+        var route = this.route(path12);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -19206,9 +19206,9 @@ var require_router = __commonJS({
       }
       return toString.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path10) {
+    function matchLayer(layer, path12) {
       try {
-        return layer.match(path10);
+        return layer.match(path12);
       } catch (err) {
         return err;
       }
@@ -19326,13 +19326,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path10 = require("path");
-    var fs11 = require("fs");
-    var dirname = path10.dirname;
-    var basename3 = path10.basename;
-    var extname = path10.extname;
-    var join = path10.join;
-    var resolve = path10.resolve;
+    var path12 = require("path");
+    var fs13 = require("fs");
+    var dirname = path12.dirname;
+    var basename3 = path12.basename;
+    var extname = path12.extname;
+    var join = path12.join;
+    var resolve = path12.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -19361,17 +19361,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path11;
+      var path13;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i2 = 0; i2 < roots.length && !path11; i2++) {
+      for (var i2 = 0; i2 < roots.length && !path13; i2++) {
         var root = roots[i2];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename3(loc);
-        path11 = this.resolve(dir, file);
+        path13 = this.resolve(dir, file);
       }
-      return path11;
+      return path13;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -19379,21 +19379,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path11 = join(dir, file);
-      var stat3 = tryStat(path11);
+      var path13 = join(dir, file);
+      var stat3 = tryStat(path13);
       if (stat3 && stat3.isFile()) {
-        return path11;
+        return path13;
       }
-      path11 = join(dir, basename3(file, ext), "index" + ext);
-      stat3 = tryStat(path11);
+      path13 = join(dir, basename3(file, ext), "index" + ext);
+      stat3 = tryStat(path13);
       if (stat3 && stat3.isFile()) {
-        return path11;
+        return path13;
       }
     };
-    function tryStat(path11) {
-      debug('stat "%s"', path11);
+    function tryStat(path13) {
+      debug('stat "%s"', path13);
       try {
-        return fs11.statSync(path11);
+        return fs13.statSync(path13);
       } catch (e2) {
         return void 0;
       }
@@ -19998,8 +19998,8 @@ var require_node4 = __commonJS({
           }
           break;
         case "FILE":
-          var fs11 = require("fs");
-          stream2 = new fs11.SyncWriteStream(fd2, { autoClose: false });
+          var fs13 = require("fs");
+          stream2 = new fs13.SyncWriteStream(fd2, { autoClose: false });
           stream2._type = "fs";
           break;
         case "PIPE":
@@ -20171,8 +20171,8 @@ var require_types = __commonJS({
 // node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/mime/mime.js"(exports2, module2) {
-    var path10 = require("path");
-    var fs11 = require("fs");
+    var path12 = require("path");
+    var fs13 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
       this.extensions = /* @__PURE__ */ Object.create(null);
@@ -20193,7 +20193,7 @@ var require_mime = __commonJS({
     };
     Mime.prototype.load = function(file) {
       this._loading = file;
-      var map = {}, content = fs11.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
+      var map = {}, content = fs13.readFileSync(file, "ascii"), lines = content.split(/[\r\n]+/);
       lines.forEach(function(line) {
         var fields = line.replace(/\s*#.*|^\s*|\s*$/g, "").split(/\s+/);
         map[fields.shift()] = fields;
@@ -20201,8 +20201,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path11, fallback) {
-      var ext = path11.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path13, fallback) {
+      var ext = path13.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -20431,33 +20431,33 @@ var require_send = __commonJS({
     var escapeHtml = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
-    var fs11 = require("fs");
+    var fs13 = require("fs");
     var mime = require_mime();
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path10 = require("path");
+    var path12 = require("path");
     var statuses = require_statuses();
     var Stream4 = require("stream");
     var util = require("util");
-    var extname = path10.extname;
-    var join = path10.join;
-    var normalize = path10.normalize;
-    var resolve = path10.resolve;
-    var sep = path10.sep;
+    var extname = path12.extname;
+    var join = path12.join;
+    var normalize = path12.normalize;
+    var resolve = path12.resolve;
+    var sep = path12.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path11, options) {
-      return new SendStream(req, path11, options);
+    function send(req, path13, options) {
+      return new SendStream(req, path13, options);
     }
-    function SendStream(req, path11, options) {
+    function SendStream(req, path13, options) {
       Stream4.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path11;
+      this.path = path13;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -20503,8 +20503,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path11) {
-      this._root = resolve(String(path11));
+    SendStream.prototype.root = function root(path13) {
+      this._root = resolve(String(path13));
       debug("root %s", this._root);
       return this;
     };
@@ -20617,10 +20617,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path11) {
+    SendStream.prototype.redirect = function redirect(path13) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path11);
+        this.emit("directory", res, path13);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -20640,42 +20640,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path11 = decode(this.path);
-      if (path11 === -1) {
+      var path13 = decode(this.path);
+      if (path13 === -1) {
         this.error(400);
         return res;
       }
-      if (~path11.indexOf("\0")) {
+      if (~path13.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path11) {
-          path11 = normalize("." + sep + path11);
+        if (path13) {
+          path13 = normalize("." + sep + path13);
         }
-        if (UP_PATH_REGEXP.test(path11)) {
-          debug('malicious path "%s"', path11);
+        if (UP_PATH_REGEXP.test(path13)) {
+          debug('malicious path "%s"', path13);
           this.error(403);
           return res;
         }
-        parts = path11.split(sep);
-        path11 = normalize(join(root, path11));
+        parts = path13.split(sep);
+        path13 = normalize(join(root, path13));
       } else {
-        if (UP_PATH_REGEXP.test(path11)) {
-          debug('malicious path "%s"', path11);
+        if (UP_PATH_REGEXP.test(path13)) {
+          debug('malicious path "%s"', path13);
           this.error(403);
           return res;
         }
-        parts = normalize(path11).split(sep);
-        path11 = resolve(path11);
+        parts = normalize(path13).split(sep);
+        path13 = resolve(path13);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path11);
+        debug('%s dotfile "%s"', access, path13);
         switch (access) {
           case "allow":
             break;
@@ -20689,13 +20689,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path11);
+        this.sendIndex(path13);
         return res;
       }
-      this.sendFile(path11);
+      this.sendFile(path13);
       return res;
     };
-    SendStream.prototype.send = function send2(path11, stat3) {
+    SendStream.prototype.send = function send2(path13, stat3) {
       var len = stat3.size;
       var options = this.options;
       var opts = {};
@@ -20707,9 +20707,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path11);
-      this.setHeader(path11, stat3);
-      this.type(path11);
+      debug('pipe "%s"', path13);
+      this.setHeader(path13, stat3);
+      this.type(path13);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -20758,28 +20758,28 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path11, opts);
+      this.stream(path13, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path11) {
+    SendStream.prototype.sendFile = function sendFile(path13) {
       var i2 = 0;
       var self2 = this;
-      debug('stat "%s"', path11);
-      fs11.stat(path11, function onstat(err, stat3) {
-        if (err && err.code === "ENOENT" && !extname(path11) && path11[path11.length - 1] !== sep) {
+      debug('stat "%s"', path13);
+      fs13.stat(path13, function onstat(err, stat3) {
+        if (err && err.code === "ENOENT" && !extname(path13) && path13[path13.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self2.onStatError(err);
-        if (stat3.isDirectory()) return self2.redirect(path11);
-        self2.emit("file", path11, stat3);
-        self2.send(path11, stat3);
+        if (stat3.isDirectory()) return self2.redirect(path13);
+        self2.emit("file", path13, stat3);
+        self2.send(path13, stat3);
       });
       function next(err) {
         if (self2._extensions.length <= i2) {
           return err ? self2.onStatError(err) : self2.error(404);
         }
-        var p = path11 + "." + self2._extensions[i2++];
+        var p = path13 + "." + self2._extensions[i2++];
         debug('stat "%s"', p);
-        fs11.stat(p, function(err2, stat3) {
+        fs13.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20787,7 +20787,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path11) {
+    SendStream.prototype.sendIndex = function sendIndex(path13) {
       var i2 = -1;
       var self2 = this;
       function next(err) {
@@ -20795,9 +20795,9 @@ var require_send = __commonJS({
           if (err) return self2.onStatError(err);
           return self2.error(404);
         }
-        var p = join(path11, self2._index[i2]);
+        var p = join(path13, self2._index[i2]);
         debug('stat "%s"', p);
-        fs11.stat(p, function(err2, stat3) {
+        fs13.stat(p, function(err2, stat3) {
           if (err2) return next(err2);
           if (stat3.isDirectory()) return next();
           self2.emit("file", p, stat3);
@@ -20806,10 +20806,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path11, options) {
+    SendStream.prototype.stream = function stream(path13, options) {
       var self2 = this;
       var res = this.res;
-      var stream2 = fs11.createReadStream(path11, options);
+      var stream2 = fs13.createReadStream(path13, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -20824,10 +20824,10 @@ var require_send = __commonJS({
         self2.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path11) {
+    SendStream.prototype.type = function type(path13) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path11);
+      var type2 = mime.lookup(path13);
       if (!type2) {
         debug("no content-type");
         return;
@@ -20836,9 +20836,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path11, stat3) {
+    SendStream.prototype.setHeader = function setHeader(path13, stat3) {
       var res = this.res;
-      this.emit("headers", res, path11, stat3);
+      this.emit("headers", res, path13, stat3);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -20897,9 +20897,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path11) {
+    function decode(path13) {
       try {
-        return decodeURIComponent(path11);
+        return decodeURIComponent(path13);
       } catch (err) {
         return -1;
       }
@@ -21808,10 +21808,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path10) {
-      if ("/" === path10[0]) return true;
-      if (":" === path10[1] && ("\\" === path10[2] || "/" === path10[2])) return true;
-      if ("\\\\" === path10.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path12) {
+      if ("/" === path12[0]) return true;
+      if (":" === path12[1] && ("\\" === path12[2] || "/" === path12[2])) return true;
+      if ("\\\\" === path12.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate3.function(
       flatten,
@@ -21935,7 +21935,7 @@ var require_application = __commonJS({
   "node_modules/express/lib/application.js"(exports2, module2) {
     "use strict";
     var finalhandler = require_finalhandler();
-    var Router7 = require_router();
+    var Router11 = require_router();
     var methods = require_methods();
     var middleware = require_init();
     var query = require_query();
@@ -22000,7 +22000,7 @@ var require_application = __commonJS({
     };
     app.lazyrouter = function lazyrouter() {
       if (!this._router) {
-        this._router = new Router7({
+        this._router = new Router11({
           caseSensitive: this.enabled("case sensitive routing"),
           strict: this.enabled("strict routing")
         });
@@ -22009,21 +22009,21 @@ var require_application = __commonJS({
       }
     };
     app.handle = function handle(req, res, callback) {
-      var router7 = this._router;
+      var router11 = this._router;
       var done = callback || finalhandler(req, res, {
         env: this.get("env"),
         onerror: logerror.bind(this)
       });
-      if (!router7) {
+      if (!router11) {
         debug("no routes defined on app");
         done();
         return;
       }
-      router7.handle(req, res, done);
+      router11.handle(req, res, done);
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path10 = "/";
+      var path12 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22031,7 +22031,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path10 = fn;
+          path12 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -22039,15 +22039,15 @@ var require_application = __commonJS({
         throw new TypeError("app.use() requires a middleware function");
       }
       this.lazyrouter();
-      var router7 = this._router;
+      var router11 = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router7.use(path10, fn2);
+          return router11.use(path12, fn2);
         }
-        debug(".use app under %s", path10);
-        fn2.mountpath = path10;
+        debug(".use app under %s", path12);
+        fn2.mountpath = path12;
         fn2.parent = this;
-        router7.use(path10, function mounted_app(req, res, next) {
+        router11.use(path12, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -22059,9 +22059,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path10) {
+    app.route = function route(path12) {
       this.lazyrouter();
-      return this._router.route(path10);
+      return this._router.route(path12);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -22112,7 +22112,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path10() {
+    app.path = function path12() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -22128,19 +22128,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path10) {
+      app[method] = function(path12) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path10);
+          return this.set(path12);
         }
         this.lazyrouter();
-        var route = this._router.route(path10);
+        var route = this._router.route(path12);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path10) {
+    app.all = function all(path12) {
       this.lazyrouter();
-      var route = this._router.route(path10);
+      var route = this._router.route(path12);
       var args = slice.call(arguments, 1);
       for (var i2 = 0; i2 < methods.length; i2++) {
         route[methods[i2]].apply(route, args);
@@ -22899,7 +22899,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP2(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path10() {
+    defineGetter(req, "path", function path12() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -23221,7 +23221,7 @@ var require_response = __commonJS({
     var http3 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path10 = require("path");
+    var path12 = require("path");
     var statuses = require_statuses();
     var merge = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -23230,9 +23230,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path10.extname;
+    var extname = path12.extname;
     var mime = send.mime;
-    var resolve = path10.resolve;
+    var resolve = path12.resolve;
     var vary = require_vary();
     var res = Object.create(http3.ServerResponse.prototype);
     module2.exports = res;
@@ -23409,26 +23409,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path11, options, callback) {
+    res.sendFile = function sendFile(path13, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path11) {
+      if (!path13) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path11 !== "string") {
+      if (typeof path13 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path11)) {
+      if (!opts.root && !isAbsolute(path13)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path11);
+      var pathname = encodeURI(path13);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -23438,7 +23438,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path11, options, callback) {
+    res.sendfile = function(path13, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -23448,7 +23448,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path11, opts);
+      var file = send(req, path13, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -23461,7 +23461,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path11, filename, options, callback) {
+    res.download = function download(path13, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -23478,7 +23478,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path11)
+        "Content-Disposition": contentDisposition(name || path13)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -23491,7 +23491,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path11) : path11;
+      var fullPath = !opts.root ? resolve(path13) : path13;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -23792,11 +23792,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path10 = parseUrl(req).pathname;
-        if (path10 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path10 = "";
+        var path12 = parseUrl(req).pathname;
+        if (path12 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path12 = "";
         }
-        var stream = send(req, path10, opts);
+        var stream = send(req, path12, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -23864,7 +23864,7 @@ var require_express = __commonJS({
     var mixin = require_merge_descriptors();
     var proto = require_application();
     var Route = require_route();
-    var Router7 = require_router();
+    var Router11 = require_router();
     var req = require_request();
     var res = require_response();
     exports2 = module2.exports = createApplication;
@@ -23887,7 +23887,7 @@ var require_express = __commonJS({
     exports2.request = req;
     exports2.response = res;
     exports2.Route = Route;
-    exports2.Router = Router7;
+    exports2.Router = Router11;
     exports2.json = bodyParser.json;
     exports2.query = require_query();
     exports2.raw = bodyParser.raw;
@@ -40569,14 +40569,14 @@ var require_svgPath = __commonJS({
       ["Z", 0],
       ["z", 0]
     ]);
-    var parse = function(path10) {
+    var parse = function(path12) {
       var cmd;
       var ret = [];
       var args = [];
       var curArg = "";
       var foundDecimal = false;
       var params = 0;
-      for (var _i = 0, path_1 = path10; _i < path_1.length; _i++) {
+      for (var _i = 0, path_1 = path12; _i < path_1.length; _i++) {
         var c = path_1[_i];
         if (parameters.has(c)) {
           params = parameters.get(c);
@@ -40890,8 +40890,8 @@ var require_svgPath = __commonJS({
       ];
       return result;
     };
-    exports2.svgPathToOperators = function(path10) {
-      return apply(parse(path10));
+    exports2.svgPathToOperators = function(path12) {
+      return apply(parse(path12));
     };
   }
 });
@@ -41074,7 +41074,7 @@ var require_operations = __commonJS({
         operators_1.popGraphicsState()
       ]).filter(Boolean);
     };
-    exports2.drawSvgPath = function(path10, options) {
+    exports2.drawSvgPath = function(path12, options) {
       var _a2, _b, _c;
       return tslib_1.__spreadArrays([
         operators_1.pushGraphicsState(),
@@ -41088,7 +41088,7 @@ var require_operations = __commonJS({
         options.borderWidth && operators_1.setLineWidth(options.borderWidth),
         options.borderLineCap && operators_1.setLineCap(options.borderLineCap),
         operators_1.setDashPattern((_b = options.borderDashArray) !== null && _b !== void 0 ? _b : [], (_c = options.borderDashPhase) !== null && _c !== void 0 ? _c : 0)
-      ], svgPath_1.svgPathToOperators(path10), [
+      ], svgPath_1.svgPathToOperators(path12), [
         // prettier-ignore
         options.color && options.borderWidth ? operators_1.fillAndStroke() : options.color ? operators_1.fill() : options.borderColor ? operators_1.stroke() : operators_1.closePath(),
         operators_1.popGraphicsState()
@@ -45386,12 +45386,12 @@ var require_PDFPage = __commonJS({
             graphicsState: graphicsStateKey
           }));
         };
-        PDFPage2.prototype.drawSvgPath = function(path10, options) {
+        PDFPage2.prototype.drawSvgPath = function(path12, options) {
           var _a2, _b, _c, _d, _e, _f, _g, _h, _j;
           if (options === void 0) {
             options = {};
           }
-          utils_1.assertIs(path10, "path", ["string"]);
+          utils_1.assertIs(path12, "path", ["string"]);
           utils_1.assertOrUndefined(options.x, "options.x", ["number"]);
           utils_1.assertOrUndefined(options.y, "options.y", ["number"]);
           utils_1.assertOrUndefined(options.scale, "options.scale", ["number"]);
@@ -45420,7 +45420,7 @@ var require_PDFPage = __commonJS({
             options.borderColor = colors_1.rgb(0, 0, 0);
           }
           var contentStream = this.getContentStream();
-          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path10, {
+          contentStream.push.apply(contentStream, operations_1.drawSvgPath(path12, {
             x: (_a2 = options.x) !== null && _a2 !== void 0 ? _a2 : this.x,
             y: (_b = options.y) !== null && _b !== void 0 ? _b : this.y,
             scale: options.scale,
@@ -45910,6 +45910,4080 @@ var require_cjs = __commonJS({
     tslib_1.__exportStar(require_core(), exports2);
     tslib_1.__exportStar(require_types2(), exports2);
     tslib_1.__exportStar(require_utils4(), exports2);
+  }
+});
+
+// node_modules/dotenv/lib/main.js
+var require_main = __commonJS({
+  "node_modules/dotenv/lib/main.js"(exports2, module2) {
+    var fs13 = require("fs");
+    var path12 = require("path");
+    var os = require("os");
+    var crypto4 = require("crypto");
+    var TIPS = [
+      "\u25C8 encrypted .env [www.dotenvx.com]",
+      "\u25C8 secrets for agents [www.dotenvx.com]",
+      "\u2301 auth for agents [www.vestauth.com]",
+      "\u2318 custom filepath { path: '/custom/path/.env' }",
+      "\u2318 enable debugging { debug: true }",
+      "\u2318 override existing { override: true }",
+      "\u2318 suppress logs { quiet: true }",
+      "\u2318 multiple files { path: ['.env.local', '.env'] }"
+    ];
+    function _getRandomTip() {
+      return TIPS[Math.floor(Math.random() * TIPS.length)];
+    }
+    function parseBoolean(value) {
+      if (typeof value === "string") {
+        return !["false", "0", "no", "off", ""].includes(value.toLowerCase());
+      }
+      return Boolean(value);
+    }
+    function supportsAnsi() {
+      return process.stdout.isTTY;
+    }
+    function dim(text) {
+      return supportsAnsi() ? `\x1B[2m${text}\x1B[0m` : text;
+    }
+    var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
+    function parse(src) {
+      const obj = {};
+      let lines = src.toString();
+      lines = lines.replace(/\r\n?/mg, "\n");
+      let match2;
+      while ((match2 = LINE.exec(lines)) != null) {
+        const key = match2[1];
+        let value = match2[2] || "";
+        value = value.trim();
+        const maybeQuote = value[0];
+        value = value.replace(/^(['"`])([\s\S]*)\1$/mg, "$2");
+        if (maybeQuote === '"') {
+          value = value.replace(/\\n/g, "\n");
+          value = value.replace(/\\r/g, "\r");
+        }
+        obj[key] = value;
+      }
+      return obj;
+    }
+    function _parseVault(options) {
+      options = options || {};
+      const vaultPath = _vaultPath(options);
+      options.path = vaultPath;
+      const result = DotenvModule.configDotenv(options);
+      if (!result.parsed) {
+        const err = new Error(`MISSING_DATA: Cannot parse ${vaultPath} for an unknown reason`);
+        err.code = "MISSING_DATA";
+        throw err;
+      }
+      const keys = _dotenvKey(options).split(",");
+      const length = keys.length;
+      let decrypted;
+      for (let i2 = 0; i2 < length; i2++) {
+        try {
+          const key = keys[i2].trim();
+          const attrs = _instructions(result, key);
+          decrypted = DotenvModule.decrypt(attrs.ciphertext, attrs.key);
+          break;
+        } catch (error) {
+          if (i2 + 1 >= length) {
+            throw error;
+          }
+        }
+      }
+      return DotenvModule.parse(decrypted);
+    }
+    function _warn(message) {
+      console.error(`\u26A0 ${message}`);
+    }
+    function _debug(message) {
+      console.log(`\u2506 ${message}`);
+    }
+    function _log(message) {
+      console.log(`\u25C7 ${message}`);
+    }
+    function _dotenvKey(options) {
+      if (options && options.DOTENV_KEY && options.DOTENV_KEY.length > 0) {
+        return options.DOTENV_KEY;
+      }
+      if (process.env.DOTENV_KEY && process.env.DOTENV_KEY.length > 0) {
+        return process.env.DOTENV_KEY;
+      }
+      return "";
+    }
+    function _instructions(result, dotenvKey) {
+      let uri;
+      try {
+        uri = new URL(dotenvKey);
+      } catch (error) {
+        if (error.code === "ERR_INVALID_URL") {
+          const err = new Error("INVALID_DOTENV_KEY: Wrong format. Must be in valid uri format like dotenv://:key_1234@dotenvx.com/vault/.env.vault?environment=development");
+          err.code = "INVALID_DOTENV_KEY";
+          throw err;
+        }
+        throw error;
+      }
+      const key = uri.password;
+      if (!key) {
+        const err = new Error("INVALID_DOTENV_KEY: Missing key part");
+        err.code = "INVALID_DOTENV_KEY";
+        throw err;
+      }
+      const environment = uri.searchParams.get("environment");
+      if (!environment) {
+        const err = new Error("INVALID_DOTENV_KEY: Missing environment part");
+        err.code = "INVALID_DOTENV_KEY";
+        throw err;
+      }
+      const environmentKey = `DOTENV_VAULT_${environment.toUpperCase()}`;
+      const ciphertext = result.parsed[environmentKey];
+      if (!ciphertext) {
+        const err = new Error(`NOT_FOUND_DOTENV_ENVIRONMENT: Cannot locate environment ${environmentKey} in your .env.vault file.`);
+        err.code = "NOT_FOUND_DOTENV_ENVIRONMENT";
+        throw err;
+      }
+      return { ciphertext, key };
+    }
+    function _vaultPath(options) {
+      let possibleVaultPath = null;
+      if (options && options.path && options.path.length > 0) {
+        if (Array.isArray(options.path)) {
+          for (const filepath of options.path) {
+            if (fs13.existsSync(filepath)) {
+              possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
+            }
+          }
+        } else {
+          possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
+        }
+      } else {
+        possibleVaultPath = path12.resolve(process.cwd(), ".env.vault");
+      }
+      if (fs13.existsSync(possibleVaultPath)) {
+        return possibleVaultPath;
+      }
+      return null;
+    }
+    function _resolveHome(envPath) {
+      return envPath[0] === "~" ? path12.join(os.homedir(), envPath.slice(1)) : envPath;
+    }
+    function _configVault(options) {
+      const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
+      const quiet = parseBoolean(process.env.DOTENV_CONFIG_QUIET || options && options.quiet);
+      if (debug || !quiet) {
+        _log("loading env from encrypted .env.vault");
+      }
+      const parsed = DotenvModule._parseVault(options);
+      let processEnv = process.env;
+      if (options && options.processEnv != null) {
+        processEnv = options.processEnv;
+      }
+      DotenvModule.populate(processEnv, parsed, options);
+      return { parsed };
+    }
+    function configDotenv(options) {
+      const dotenvPath = path12.resolve(process.cwd(), ".env");
+      let encoding = "utf8";
+      let processEnv = process.env;
+      if (options && options.processEnv != null) {
+        processEnv = options.processEnv;
+      }
+      let debug = parseBoolean(processEnv.DOTENV_CONFIG_DEBUG || options && options.debug);
+      let quiet = parseBoolean(processEnv.DOTENV_CONFIG_QUIET || options && options.quiet);
+      if (options && options.encoding) {
+        encoding = options.encoding;
+      } else {
+        if (debug) {
+          _debug("no encoding is specified (UTF-8 is used by default)");
+        }
+      }
+      let optionPaths = [dotenvPath];
+      if (options && options.path) {
+        if (!Array.isArray(options.path)) {
+          optionPaths = [_resolveHome(options.path)];
+        } else {
+          optionPaths = [];
+          for (const filepath of options.path) {
+            optionPaths.push(_resolveHome(filepath));
+          }
+        }
+      }
+      let lastError;
+      const parsedAll = {};
+      for (const path13 of optionPaths) {
+        try {
+          const parsed = DotenvModule.parse(fs13.readFileSync(path13, { encoding }));
+          DotenvModule.populate(parsedAll, parsed, options);
+        } catch (e2) {
+          if (debug) {
+            _debug(`failed to load ${path13} ${e2.message}`);
+          }
+          lastError = e2;
+        }
+      }
+      const populated = DotenvModule.populate(processEnv, parsedAll, options);
+      debug = parseBoolean(processEnv.DOTENV_CONFIG_DEBUG || debug);
+      quiet = parseBoolean(processEnv.DOTENV_CONFIG_QUIET || quiet);
+      if (debug || !quiet) {
+        const keysCount = Object.keys(populated).length;
+        const shortPaths = [];
+        for (const filePath of optionPaths) {
+          try {
+            const relative = path12.relative(process.cwd(), filePath);
+            shortPaths.push(relative);
+          } catch (e2) {
+            if (debug) {
+              _debug(`failed to load ${filePath} ${e2.message}`);
+            }
+            lastError = e2;
+          }
+        }
+        _log(`injected env (${keysCount}) from ${shortPaths.join(",")} ${dim(`// tip: ${_getRandomTip()}`)}`);
+      }
+      if (lastError) {
+        return { parsed: parsedAll, error: lastError };
+      } else {
+        return { parsed: parsedAll };
+      }
+    }
+    function config(options) {
+      if (_dotenvKey(options).length === 0) {
+        return DotenvModule.configDotenv(options);
+      }
+      const vaultPath = _vaultPath(options);
+      if (!vaultPath) {
+        _warn(`you set DOTENV_KEY but you are missing a .env.vault file at ${vaultPath}`);
+        return DotenvModule.configDotenv(options);
+      }
+      return DotenvModule._configVault(options);
+    }
+    function decrypt(encrypted, keyStr) {
+      const key = Buffer.from(keyStr.slice(-64), "hex");
+      let ciphertext = Buffer.from(encrypted, "base64");
+      const nonce = ciphertext.subarray(0, 12);
+      const authTag = ciphertext.subarray(-16);
+      ciphertext = ciphertext.subarray(12, -16);
+      try {
+        const aesgcm = crypto4.createDecipheriv("aes-256-gcm", key, nonce);
+        aesgcm.setAuthTag(authTag);
+        return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
+      } catch (error) {
+        const isRange = error instanceof RangeError;
+        const invalidKeyLength = error.message === "Invalid key length";
+        const decryptionFailed = error.message === "Unsupported state or unable to authenticate data";
+        if (isRange || invalidKeyLength) {
+          const err = new Error("INVALID_DOTENV_KEY: It must be 64 characters long (or more)");
+          err.code = "INVALID_DOTENV_KEY";
+          throw err;
+        } else if (decryptionFailed) {
+          const err = new Error("DECRYPTION_FAILED: Please check your DOTENV_KEY");
+          err.code = "DECRYPTION_FAILED";
+          throw err;
+        } else {
+          throw error;
+        }
+      }
+    }
+    function populate(processEnv, parsed, options = {}) {
+      const debug = Boolean(options && options.debug);
+      const override = Boolean(options && options.override);
+      const populated = {};
+      if (typeof parsed !== "object") {
+        const err = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
+        err.code = "OBJECT_REQUIRED";
+        throw err;
+      }
+      for (const key of Object.keys(parsed)) {
+        if (Object.prototype.hasOwnProperty.call(processEnv, key)) {
+          if (override === true) {
+            processEnv[key] = parsed[key];
+            populated[key] = parsed[key];
+          }
+          if (debug) {
+            if (override === true) {
+              _debug(`"${key}" is already defined and WAS overwritten`);
+            } else {
+              _debug(`"${key}" is already defined and was NOT overwritten`);
+            }
+          }
+        } else {
+          processEnv[key] = parsed[key];
+          populated[key] = parsed[key];
+        }
+      }
+      return populated;
+    }
+    var DotenvModule = {
+      configDotenv,
+      _configVault,
+      _parseVault,
+      config,
+      decrypt,
+      parse,
+      populate
+    };
+    module2.exports.configDotenv = DotenvModule.configDotenv;
+    module2.exports._configVault = DotenvModule._configVault;
+    module2.exports._parseVault = DotenvModule._parseVault;
+    module2.exports.config = DotenvModule.config;
+    module2.exports.decrypt = DotenvModule.decrypt;
+    module2.exports.parse = DotenvModule.parse;
+    module2.exports.populate = DotenvModule.populate;
+    module2.exports = DotenvModule;
+  }
+});
+
+// node_modules/jws/lib/data-stream.js
+var require_data_stream = __commonJS({
+  "node_modules/jws/lib/data-stream.js"(exports2, module2) {
+    var Buffer4 = require_safe_buffer().Buffer;
+    var Stream4 = require("stream");
+    var util = require("util");
+    function DataStream(data) {
+      this.buffer = null;
+      this.writable = true;
+      this.readable = true;
+      if (!data) {
+        this.buffer = Buffer4.alloc(0);
+        return this;
+      }
+      if (typeof data.pipe === "function") {
+        this.buffer = Buffer4.alloc(0);
+        data.pipe(this);
+        return this;
+      }
+      if (data.length || typeof data === "object") {
+        this.buffer = data;
+        this.writable = false;
+        process.nextTick(function() {
+          this.emit("end", data);
+          this.readable = false;
+          this.emit("close");
+        }.bind(this));
+        return this;
+      }
+      throw new TypeError("Unexpected data type (" + typeof data + ")");
+    }
+    util.inherits(DataStream, Stream4);
+    DataStream.prototype.write = function write(data) {
+      this.buffer = Buffer4.concat([this.buffer, Buffer4.from(data)]);
+      this.emit("data", data);
+    };
+    DataStream.prototype.end = function end(data) {
+      if (data)
+        this.write(data);
+      this.emit("end", data);
+      this.emit("close");
+      this.writable = false;
+      this.readable = false;
+    };
+    module2.exports = DataStream;
+  }
+});
+
+// node_modules/ecdsa-sig-formatter/src/param-bytes-for-alg.js
+var require_param_bytes_for_alg = __commonJS({
+  "node_modules/ecdsa-sig-formatter/src/param-bytes-for-alg.js"(exports2, module2) {
+    "use strict";
+    function getParamSize(keySize) {
+      var result = (keySize / 8 | 0) + (keySize % 8 === 0 ? 0 : 1);
+      return result;
+    }
+    var paramBytesForAlg = {
+      ES256: getParamSize(256),
+      ES384: getParamSize(384),
+      ES512: getParamSize(521)
+    };
+    function getParamBytesForAlg(alg) {
+      var paramBytes = paramBytesForAlg[alg];
+      if (paramBytes) {
+        return paramBytes;
+      }
+      throw new Error('Unknown algorithm "' + alg + '"');
+    }
+    module2.exports = getParamBytesForAlg;
+  }
+});
+
+// node_modules/ecdsa-sig-formatter/src/ecdsa-sig-formatter.js
+var require_ecdsa_sig_formatter = __commonJS({
+  "node_modules/ecdsa-sig-formatter/src/ecdsa-sig-formatter.js"(exports2, module2) {
+    "use strict";
+    var Buffer4 = require_safe_buffer().Buffer;
+    var getParamBytesForAlg = require_param_bytes_for_alg();
+    var MAX_OCTET = 128;
+    var CLASS_UNIVERSAL = 0;
+    var PRIMITIVE_BIT = 32;
+    var TAG_SEQ = 16;
+    var TAG_INT = 2;
+    var ENCODED_TAG_SEQ = TAG_SEQ | PRIMITIVE_BIT | CLASS_UNIVERSAL << 6;
+    var ENCODED_TAG_INT = TAG_INT | CLASS_UNIVERSAL << 6;
+    function base64Url(base64) {
+      return base64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+    }
+    function signatureAsBuffer(signature) {
+      if (Buffer4.isBuffer(signature)) {
+        return signature;
+      } else if ("string" === typeof signature) {
+        return Buffer4.from(signature, "base64");
+      }
+      throw new TypeError("ECDSA signature must be a Base64 string or a Buffer");
+    }
+    function derToJose(signature, alg) {
+      signature = signatureAsBuffer(signature);
+      var paramBytes = getParamBytesForAlg(alg);
+      var maxEncodedParamLength = paramBytes + 1;
+      var inputLength = signature.length;
+      var offset = 0;
+      if (signature[offset++] !== ENCODED_TAG_SEQ) {
+        throw new Error('Could not find expected "seq"');
+      }
+      var seqLength = signature[offset++];
+      if (seqLength === (MAX_OCTET | 1)) {
+        seqLength = signature[offset++];
+      }
+      if (inputLength - offset < seqLength) {
+        throw new Error('"seq" specified length of "' + seqLength + '", only "' + (inputLength - offset) + '" remaining');
+      }
+      if (signature[offset++] !== ENCODED_TAG_INT) {
+        throw new Error('Could not find expected "int" for "r"');
+      }
+      var rLength = signature[offset++];
+      if (inputLength - offset - 2 < rLength) {
+        throw new Error('"r" specified length of "' + rLength + '", only "' + (inputLength - offset - 2) + '" available');
+      }
+      if (maxEncodedParamLength < rLength) {
+        throw new Error('"r" specified length of "' + rLength + '", max of "' + maxEncodedParamLength + '" is acceptable');
+      }
+      var rOffset = offset;
+      offset += rLength;
+      if (signature[offset++] !== ENCODED_TAG_INT) {
+        throw new Error('Could not find expected "int" for "s"');
+      }
+      var sLength = signature[offset++];
+      if (inputLength - offset !== sLength) {
+        throw new Error('"s" specified length of "' + sLength + '", expected "' + (inputLength - offset) + '"');
+      }
+      if (maxEncodedParamLength < sLength) {
+        throw new Error('"s" specified length of "' + sLength + '", max of "' + maxEncodedParamLength + '" is acceptable');
+      }
+      var sOffset = offset;
+      offset += sLength;
+      if (offset !== inputLength) {
+        throw new Error('Expected to consume entire buffer, but "' + (inputLength - offset) + '" bytes remain');
+      }
+      var rPadding = paramBytes - rLength, sPadding = paramBytes - sLength;
+      var dst = Buffer4.allocUnsafe(rPadding + rLength + sPadding + sLength);
+      for (offset = 0; offset < rPadding; ++offset) {
+        dst[offset] = 0;
+      }
+      signature.copy(dst, offset, rOffset + Math.max(-rPadding, 0), rOffset + rLength);
+      offset = paramBytes;
+      for (var o = offset; offset < o + sPadding; ++offset) {
+        dst[offset] = 0;
+      }
+      signature.copy(dst, offset, sOffset + Math.max(-sPadding, 0), sOffset + sLength);
+      dst = dst.toString("base64");
+      dst = base64Url(dst);
+      return dst;
+    }
+    function countPadding(buf, start, stop) {
+      var padding = 0;
+      while (start + padding < stop && buf[start + padding] === 0) {
+        ++padding;
+      }
+      var needsSign = buf[start + padding] >= MAX_OCTET;
+      if (needsSign) {
+        --padding;
+      }
+      return padding;
+    }
+    function joseToDer(signature, alg) {
+      signature = signatureAsBuffer(signature);
+      var paramBytes = getParamBytesForAlg(alg);
+      var signatureBytes = signature.length;
+      if (signatureBytes !== paramBytes * 2) {
+        throw new TypeError('"' + alg + '" signatures must be "' + paramBytes * 2 + '" bytes, saw "' + signatureBytes + '"');
+      }
+      var rPadding = countPadding(signature, 0, paramBytes);
+      var sPadding = countPadding(signature, paramBytes, signature.length);
+      var rLength = paramBytes - rPadding;
+      var sLength = paramBytes - sPadding;
+      var rsBytes = 1 + 1 + rLength + 1 + 1 + sLength;
+      var shortLength = rsBytes < MAX_OCTET;
+      var dst = Buffer4.allocUnsafe((shortLength ? 2 : 3) + rsBytes);
+      var offset = 0;
+      dst[offset++] = ENCODED_TAG_SEQ;
+      if (shortLength) {
+        dst[offset++] = rsBytes;
+      } else {
+        dst[offset++] = MAX_OCTET | 1;
+        dst[offset++] = rsBytes & 255;
+      }
+      dst[offset++] = ENCODED_TAG_INT;
+      dst[offset++] = rLength;
+      if (rPadding < 0) {
+        dst[offset++] = 0;
+        offset += signature.copy(dst, offset, 0, paramBytes);
+      } else {
+        offset += signature.copy(dst, offset, rPadding, paramBytes);
+      }
+      dst[offset++] = ENCODED_TAG_INT;
+      dst[offset++] = sLength;
+      if (sPadding < 0) {
+        dst[offset++] = 0;
+        signature.copy(dst, offset, paramBytes);
+      } else {
+        signature.copy(dst, offset, paramBytes + sPadding);
+      }
+      return dst;
+    }
+    module2.exports = {
+      derToJose,
+      joseToDer
+    };
+  }
+});
+
+// node_modules/buffer-equal-constant-time/index.js
+var require_buffer_equal_constant_time = __commonJS({
+  "node_modules/buffer-equal-constant-time/index.js"(exports2, module2) {
+    "use strict";
+    var Buffer4 = require("buffer").Buffer;
+    var SlowBuffer = require("buffer").SlowBuffer;
+    module2.exports = bufferEq;
+    function bufferEq(a, b) {
+      if (!Buffer4.isBuffer(a) || !Buffer4.isBuffer(b)) {
+        return false;
+      }
+      if (a.length !== b.length) {
+        return false;
+      }
+      var c = 0;
+      for (var i2 = 0; i2 < a.length; i2++) {
+        c |= a[i2] ^ b[i2];
+      }
+      return c === 0;
+    }
+    bufferEq.install = function() {
+      Buffer4.prototype.equal = SlowBuffer.prototype.equal = function equal(that) {
+        return bufferEq(this, that);
+      };
+    };
+    var origBufEqual = Buffer4.prototype.equal;
+    var origSlowBufEqual = SlowBuffer.prototype.equal;
+    bufferEq.restore = function() {
+      Buffer4.prototype.equal = origBufEqual;
+      SlowBuffer.prototype.equal = origSlowBufEqual;
+    };
+  }
+});
+
+// node_modules/jwa/index.js
+var require_jwa = __commonJS({
+  "node_modules/jwa/index.js"(exports2, module2) {
+    var Buffer4 = require_safe_buffer().Buffer;
+    var crypto4 = require("crypto");
+    var formatEcdsa = require_ecdsa_sig_formatter();
+    var util = require("util");
+    var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
+    var MSG_INVALID_SECRET = "secret must be a string or buffer";
+    var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
+    var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
+    var supportsKeyObjects = typeof crypto4.createPublicKey === "function";
+    if (supportsKeyObjects) {
+      MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
+      MSG_INVALID_SECRET += "or a KeyObject";
+    }
+    function checkIsPublicKey(key) {
+      if (Buffer4.isBuffer(key)) {
+        return;
+      }
+      if (typeof key === "string") {
+        return;
+      }
+      if (!supportsKeyObjects) {
+        throw typeError(MSG_INVALID_VERIFIER_KEY);
+      }
+      if (typeof key !== "object") {
+        throw typeError(MSG_INVALID_VERIFIER_KEY);
+      }
+      if (typeof key.type !== "string") {
+        throw typeError(MSG_INVALID_VERIFIER_KEY);
+      }
+      if (typeof key.asymmetricKeyType !== "string") {
+        throw typeError(MSG_INVALID_VERIFIER_KEY);
+      }
+      if (typeof key.export !== "function") {
+        throw typeError(MSG_INVALID_VERIFIER_KEY);
+      }
+    }
+    function checkIsPrivateKey(key) {
+      if (Buffer4.isBuffer(key)) {
+        return;
+      }
+      if (typeof key === "string") {
+        return;
+      }
+      if (typeof key === "object") {
+        return;
+      }
+      throw typeError(MSG_INVALID_SIGNER_KEY);
+    }
+    function checkIsSecretKey(key) {
+      if (Buffer4.isBuffer(key)) {
+        return;
+      }
+      if (typeof key === "string") {
+        return key;
+      }
+      if (!supportsKeyObjects) {
+        throw typeError(MSG_INVALID_SECRET);
+      }
+      if (typeof key !== "object") {
+        throw typeError(MSG_INVALID_SECRET);
+      }
+      if (key.type !== "secret") {
+        throw typeError(MSG_INVALID_SECRET);
+      }
+      if (typeof key.export !== "function") {
+        throw typeError(MSG_INVALID_SECRET);
+      }
+    }
+    function fromBase64(base64) {
+      return base64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+    }
+    function toBase64(base64url) {
+      base64url = base64url.toString();
+      var padding = 4 - base64url.length % 4;
+      if (padding !== 4) {
+        for (var i2 = 0; i2 < padding; ++i2) {
+          base64url += "=";
+        }
+      }
+      return base64url.replace(/\-/g, "+").replace(/_/g, "/");
+    }
+    function typeError(template) {
+      var args = [].slice.call(arguments, 1);
+      var errMsg = util.format.bind(util, template).apply(null, args);
+      return new TypeError(errMsg);
+    }
+    function bufferOrString(obj) {
+      return Buffer4.isBuffer(obj) || typeof obj === "string";
+    }
+    function normalizeInput(thing) {
+      if (!bufferOrString(thing))
+        thing = JSON.stringify(thing);
+      return thing;
+    }
+    function createHmacSigner(bits) {
+      return function sign(thing, secret) {
+        checkIsSecretKey(secret);
+        thing = normalizeInput(thing);
+        var hmac = crypto4.createHmac("sha" + bits, secret);
+        var sig = (hmac.update(thing), hmac.digest("base64"));
+        return fromBase64(sig);
+      };
+    }
+    var bufferEqual;
+    var timingSafeEqual = "timingSafeEqual" in crypto4 ? function timingSafeEqual2(a, b) {
+      if (a.byteLength !== b.byteLength) {
+        return false;
+      }
+      return crypto4.timingSafeEqual(a, b);
+    } : function timingSafeEqual2(a, b) {
+      if (!bufferEqual) {
+        bufferEqual = require_buffer_equal_constant_time();
+      }
+      return bufferEqual(a, b);
+    };
+    function createHmacVerifier(bits) {
+      return function verify(thing, signature, secret) {
+        var computedSig = createHmacSigner(bits)(thing, secret);
+        return timingSafeEqual(Buffer4.from(signature), Buffer4.from(computedSig));
+      };
+    }
+    function createKeySigner(bits) {
+      return function sign(thing, privateKey) {
+        checkIsPrivateKey(privateKey);
+        thing = normalizeInput(thing);
+        var signer = crypto4.createSign("RSA-SHA" + bits);
+        var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
+        return fromBase64(sig);
+      };
+    }
+    function createKeyVerifier(bits) {
+      return function verify(thing, signature, publicKey) {
+        checkIsPublicKey(publicKey);
+        thing = normalizeInput(thing);
+        signature = toBase64(signature);
+        var verifier = crypto4.createVerify("RSA-SHA" + bits);
+        verifier.update(thing);
+        return verifier.verify(publicKey, signature, "base64");
+      };
+    }
+    function createPSSKeySigner(bits) {
+      return function sign(thing, privateKey) {
+        checkIsPrivateKey(privateKey);
+        thing = normalizeInput(thing);
+        var signer = crypto4.createSign("RSA-SHA" + bits);
+        var sig = (signer.update(thing), signer.sign({
+          key: privateKey,
+          padding: crypto4.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto4.constants.RSA_PSS_SALTLEN_DIGEST
+        }, "base64"));
+        return fromBase64(sig);
+      };
+    }
+    function createPSSKeyVerifier(bits) {
+      return function verify(thing, signature, publicKey) {
+        checkIsPublicKey(publicKey);
+        thing = normalizeInput(thing);
+        signature = toBase64(signature);
+        var verifier = crypto4.createVerify("RSA-SHA" + bits);
+        verifier.update(thing);
+        return verifier.verify({
+          key: publicKey,
+          padding: crypto4.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto4.constants.RSA_PSS_SALTLEN_DIGEST
+        }, signature, "base64");
+      };
+    }
+    function createECDSASigner(bits) {
+      var inner = createKeySigner(bits);
+      return function sign() {
+        var signature = inner.apply(null, arguments);
+        signature = formatEcdsa.derToJose(signature, "ES" + bits);
+        return signature;
+      };
+    }
+    function createECDSAVerifer(bits) {
+      var inner = createKeyVerifier(bits);
+      return function verify(thing, signature, publicKey) {
+        signature = formatEcdsa.joseToDer(signature, "ES" + bits).toString("base64");
+        var result = inner(thing, signature, publicKey);
+        return result;
+      };
+    }
+    function createNoneSigner() {
+      return function sign() {
+        return "";
+      };
+    }
+    function createNoneVerifier() {
+      return function verify(thing, signature) {
+        return signature === "";
+      };
+    }
+    module2.exports = function jwa(algorithm) {
+      var signerFactories = {
+        hs: createHmacSigner,
+        rs: createKeySigner,
+        ps: createPSSKeySigner,
+        es: createECDSASigner,
+        none: createNoneSigner
+      };
+      var verifierFactories = {
+        hs: createHmacVerifier,
+        rs: createKeyVerifier,
+        ps: createPSSKeyVerifier,
+        es: createECDSAVerifer,
+        none: createNoneVerifier
+      };
+      var match2 = algorithm.match(/^(RS|PS|ES|HS)(256|384|512)$|^(none)$/);
+      if (!match2)
+        throw typeError(MSG_INVALID_ALGORITHM, algorithm);
+      var algo = (match2[1] || match2[3]).toLowerCase();
+      var bits = match2[2];
+      return {
+        sign: signerFactories[algo](bits),
+        verify: verifierFactories[algo](bits)
+      };
+    };
+  }
+});
+
+// node_modules/jws/lib/tostring.js
+var require_tostring = __commonJS({
+  "node_modules/jws/lib/tostring.js"(exports2, module2) {
+    var Buffer4 = require("buffer").Buffer;
+    module2.exports = function toString(obj) {
+      if (typeof obj === "string")
+        return obj;
+      if (typeof obj === "number" || Buffer4.isBuffer(obj))
+        return obj.toString();
+      return JSON.stringify(obj);
+    };
+  }
+});
+
+// node_modules/jws/lib/sign-stream.js
+var require_sign_stream = __commonJS({
+  "node_modules/jws/lib/sign-stream.js"(exports2, module2) {
+    var Buffer4 = require_safe_buffer().Buffer;
+    var DataStream = require_data_stream();
+    var jwa = require_jwa();
+    var Stream4 = require("stream");
+    var toString = require_tostring();
+    var util = require("util");
+    function base64url(string, encoding) {
+      return Buffer4.from(string, encoding).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+    }
+    function jwsSecuredInput(header, payload, encoding) {
+      encoding = encoding || "utf8";
+      var encodedHeader = base64url(toString(header), "binary");
+      var encodedPayload = base64url(toString(payload), encoding);
+      return util.format("%s.%s", encodedHeader, encodedPayload);
+    }
+    function jwsSign(opts) {
+      var header = opts.header;
+      var payload = opts.payload;
+      var secretOrKey = opts.secret || opts.privateKey;
+      var encoding = opts.encoding;
+      var algo = jwa(header.alg);
+      var securedInput = jwsSecuredInput(header, payload, encoding);
+      var signature = algo.sign(securedInput, secretOrKey);
+      return util.format("%s.%s", securedInput, signature);
+    }
+    function SignStream(opts) {
+      var secret = opts.secret;
+      secret = secret == null ? opts.privateKey : secret;
+      secret = secret == null ? opts.key : secret;
+      if (/^hs/i.test(opts.header.alg) === true && secret == null) {
+        throw new TypeError("secret must be a string or buffer or a KeyObject");
+      }
+      var secretStream = new DataStream(secret);
+      this.readable = true;
+      this.header = opts.header;
+      this.encoding = opts.encoding;
+      this.secret = this.privateKey = this.key = secretStream;
+      this.payload = new DataStream(opts.payload);
+      this.secret.once("close", function() {
+        if (!this.payload.writable && this.readable)
+          this.sign();
+      }.bind(this));
+      this.payload.once("close", function() {
+        if (!this.secret.writable && this.readable)
+          this.sign();
+      }.bind(this));
+    }
+    util.inherits(SignStream, Stream4);
+    SignStream.prototype.sign = function sign() {
+      try {
+        var signature = jwsSign({
+          header: this.header,
+          payload: this.payload.buffer,
+          secret: this.secret.buffer,
+          encoding: this.encoding
+        });
+        this.emit("done", signature);
+        this.emit("data", signature);
+        this.emit("end");
+        this.readable = false;
+        return signature;
+      } catch (e2) {
+        this.readable = false;
+        this.emit("error", e2);
+        this.emit("close");
+      }
+    };
+    SignStream.sign = jwsSign;
+    module2.exports = SignStream;
+  }
+});
+
+// node_modules/jws/lib/verify-stream.js
+var require_verify_stream = __commonJS({
+  "node_modules/jws/lib/verify-stream.js"(exports2, module2) {
+    var Buffer4 = require_safe_buffer().Buffer;
+    var DataStream = require_data_stream();
+    var jwa = require_jwa();
+    var Stream4 = require("stream");
+    var toString = require_tostring();
+    var util = require("util");
+    var JWS_REGEX = /^[a-zA-Z0-9\-_]+?\.[a-zA-Z0-9\-_]+?\.([a-zA-Z0-9\-_]+)?$/;
+    function isObject(thing) {
+      return Object.prototype.toString.call(thing) === "[object Object]";
+    }
+    function safeJsonParse(thing) {
+      if (isObject(thing))
+        return thing;
+      try {
+        return JSON.parse(thing);
+      } catch (e2) {
+        return void 0;
+      }
+    }
+    function headerFromJWS(jwsSig) {
+      var encodedHeader = jwsSig.split(".", 1)[0];
+      return safeJsonParse(Buffer4.from(encodedHeader, "base64").toString("binary"));
+    }
+    function securedInputFromJWS(jwsSig) {
+      return jwsSig.split(".", 2).join(".");
+    }
+    function signatureFromJWS(jwsSig) {
+      return jwsSig.split(".")[2];
+    }
+    function payloadFromJWS(jwsSig, encoding) {
+      encoding = encoding || "utf8";
+      var payload = jwsSig.split(".")[1];
+      return Buffer4.from(payload, "base64").toString(encoding);
+    }
+    function isValidJws(string) {
+      return JWS_REGEX.test(string) && !!headerFromJWS(string);
+    }
+    function jwsVerify(jwsSig, algorithm, secretOrKey) {
+      if (!algorithm) {
+        var err = new Error("Missing algorithm parameter for jws.verify");
+        err.code = "MISSING_ALGORITHM";
+        throw err;
+      }
+      jwsSig = toString(jwsSig);
+      var signature = signatureFromJWS(jwsSig);
+      var securedInput = securedInputFromJWS(jwsSig);
+      var algo = jwa(algorithm);
+      return algo.verify(securedInput, signature, secretOrKey);
+    }
+    function jwsDecode(jwsSig, opts) {
+      opts = opts || {};
+      jwsSig = toString(jwsSig);
+      if (!isValidJws(jwsSig))
+        return null;
+      var header = headerFromJWS(jwsSig);
+      if (!header)
+        return null;
+      var payload = payloadFromJWS(jwsSig);
+      if (header.typ === "JWT" || opts.json)
+        payload = JSON.parse(payload, opts.encoding);
+      return {
+        header,
+        payload,
+        signature: signatureFromJWS(jwsSig)
+      };
+    }
+    function VerifyStream(opts) {
+      opts = opts || {};
+      var secretOrKey = opts.secret;
+      secretOrKey = secretOrKey == null ? opts.publicKey : secretOrKey;
+      secretOrKey = secretOrKey == null ? opts.key : secretOrKey;
+      if (/^hs/i.test(opts.algorithm) === true && secretOrKey == null) {
+        throw new TypeError("secret must be a string or buffer or a KeyObject");
+      }
+      var secretStream = new DataStream(secretOrKey);
+      this.readable = true;
+      this.algorithm = opts.algorithm;
+      this.encoding = opts.encoding;
+      this.secret = this.publicKey = this.key = secretStream;
+      this.signature = new DataStream(opts.signature);
+      this.secret.once("close", function() {
+        if (!this.signature.writable && this.readable)
+          this.verify();
+      }.bind(this));
+      this.signature.once("close", function() {
+        if (!this.secret.writable && this.readable)
+          this.verify();
+      }.bind(this));
+    }
+    util.inherits(VerifyStream, Stream4);
+    VerifyStream.prototype.verify = function verify() {
+      try {
+        var valid = jwsVerify(this.signature.buffer, this.algorithm, this.key.buffer);
+        var obj = jwsDecode(this.signature.buffer, this.encoding);
+        this.emit("done", valid, obj);
+        this.emit("data", valid);
+        this.emit("end");
+        this.readable = false;
+        return valid;
+      } catch (e2) {
+        this.readable = false;
+        this.emit("error", e2);
+        this.emit("close");
+      }
+    };
+    VerifyStream.decode = jwsDecode;
+    VerifyStream.isValid = isValidJws;
+    VerifyStream.verify = jwsVerify;
+    module2.exports = VerifyStream;
+  }
+});
+
+// node_modules/jws/index.js
+var require_jws = __commonJS({
+  "node_modules/jws/index.js"(exports2) {
+    var SignStream = require_sign_stream();
+    var VerifyStream = require_verify_stream();
+    var ALGORITHMS = [
+      "HS256",
+      "HS384",
+      "HS512",
+      "RS256",
+      "RS384",
+      "RS512",
+      "PS256",
+      "PS384",
+      "PS512",
+      "ES256",
+      "ES384",
+      "ES512"
+    ];
+    exports2.ALGORITHMS = ALGORITHMS;
+    exports2.sign = SignStream.sign;
+    exports2.verify = VerifyStream.verify;
+    exports2.decode = VerifyStream.decode;
+    exports2.isValid = VerifyStream.isValid;
+    exports2.createSign = function createSign(opts) {
+      return new SignStream(opts);
+    };
+    exports2.createVerify = function createVerify(opts) {
+      return new VerifyStream(opts);
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/decode.js
+var require_decode2 = __commonJS({
+  "node_modules/jsonwebtoken/decode.js"(exports2, module2) {
+    var jws = require_jws();
+    module2.exports = function(jwt2, options) {
+      options = options || {};
+      var decoded = jws.decode(jwt2, options);
+      if (!decoded) {
+        return null;
+      }
+      var payload = decoded.payload;
+      if (typeof payload === "string") {
+        try {
+          var obj = JSON.parse(payload);
+          if (obj !== null && typeof obj === "object") {
+            payload = obj;
+          }
+        } catch (e2) {
+        }
+      }
+      if (options.complete === true) {
+        return {
+          header: decoded.header,
+          payload,
+          signature: decoded.signature
+        };
+      }
+      return payload;
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/lib/JsonWebTokenError.js
+var require_JsonWebTokenError = __commonJS({
+  "node_modules/jsonwebtoken/lib/JsonWebTokenError.js"(exports2, module2) {
+    var JsonWebTokenError = function(message, error) {
+      Error.call(this, message);
+      if (Error.captureStackTrace) {
+        Error.captureStackTrace(this, this.constructor);
+      }
+      this.name = "JsonWebTokenError";
+      this.message = message;
+      if (error) this.inner = error;
+    };
+    JsonWebTokenError.prototype = Object.create(Error.prototype);
+    JsonWebTokenError.prototype.constructor = JsonWebTokenError;
+    module2.exports = JsonWebTokenError;
+  }
+});
+
+// node_modules/jsonwebtoken/lib/NotBeforeError.js
+var require_NotBeforeError = __commonJS({
+  "node_modules/jsonwebtoken/lib/NotBeforeError.js"(exports2, module2) {
+    var JsonWebTokenError = require_JsonWebTokenError();
+    var NotBeforeError = function(message, date) {
+      JsonWebTokenError.call(this, message);
+      this.name = "NotBeforeError";
+      this.date = date;
+    };
+    NotBeforeError.prototype = Object.create(JsonWebTokenError.prototype);
+    NotBeforeError.prototype.constructor = NotBeforeError;
+    module2.exports = NotBeforeError;
+  }
+});
+
+// node_modules/jsonwebtoken/lib/TokenExpiredError.js
+var require_TokenExpiredError = __commonJS({
+  "node_modules/jsonwebtoken/lib/TokenExpiredError.js"(exports2, module2) {
+    var JsonWebTokenError = require_JsonWebTokenError();
+    var TokenExpiredError = function(message, expiredAt) {
+      JsonWebTokenError.call(this, message);
+      this.name = "TokenExpiredError";
+      this.expiredAt = expiredAt;
+    };
+    TokenExpiredError.prototype = Object.create(JsonWebTokenError.prototype);
+    TokenExpiredError.prototype.constructor = TokenExpiredError;
+    module2.exports = TokenExpiredError;
+  }
+});
+
+// node_modules/jsonwebtoken/lib/timespan.js
+var require_timespan = __commonJS({
+  "node_modules/jsonwebtoken/lib/timespan.js"(exports2, module2) {
+    var ms = require_ms5();
+    module2.exports = function(time, iat) {
+      var timestamp = iat || Math.floor(Date.now() / 1e3);
+      if (typeof time === "string") {
+        var milliseconds = ms(time);
+        if (typeof milliseconds === "undefined") {
+          return;
+        }
+        return Math.floor(timestamp + milliseconds / 1e3);
+      } else if (typeof time === "number") {
+        return timestamp + time;
+      } else {
+        return;
+      }
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/internal/constants.js
+var require_constants2 = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/internal/constants.js"(exports2, module2) {
+    "use strict";
+    var SEMVER_SPEC_VERSION = "2.0.0";
+    var MAX_LENGTH = 256;
+    var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER || /* istanbul ignore next */
+    9007199254740991;
+    var MAX_SAFE_COMPONENT_LENGTH = 16;
+    var MAX_SAFE_BUILD_LENGTH = MAX_LENGTH - 6;
+    var RELEASE_TYPES = [
+      "major",
+      "premajor",
+      "minor",
+      "preminor",
+      "patch",
+      "prepatch",
+      "prerelease"
+    ];
+    module2.exports = {
+      MAX_LENGTH,
+      MAX_SAFE_COMPONENT_LENGTH,
+      MAX_SAFE_BUILD_LENGTH,
+      MAX_SAFE_INTEGER,
+      RELEASE_TYPES,
+      SEMVER_SPEC_VERSION,
+      FLAG_INCLUDE_PRERELEASE: 1,
+      FLAG_LOOSE: 2
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/internal/debug.js
+var require_debug5 = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/internal/debug.js"(exports2, module2) {
+    "use strict";
+    var debug = typeof process === "object" && process.env && process.env.NODE_DEBUG && /\bsemver\b/i.test(process.env.NODE_DEBUG) ? (...args) => console.error("SEMVER", ...args) : () => {
+    };
+    module2.exports = debug;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/internal/re.js
+var require_re = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/internal/re.js"(exports2, module2) {
+    "use strict";
+    var {
+      MAX_SAFE_COMPONENT_LENGTH,
+      MAX_SAFE_BUILD_LENGTH,
+      MAX_LENGTH
+    } = require_constants2();
+    var debug = require_debug5();
+    exports2 = module2.exports = {};
+    var re = exports2.re = [];
+    var safeRe = exports2.safeRe = [];
+    var src = exports2.src = [];
+    var safeSrc = exports2.safeSrc = [];
+    var t2 = exports2.t = {};
+    var R = 0;
+    var LETTERDASHNUMBER = "[a-zA-Z0-9-]";
+    var safeRegexReplacements = [
+      ["\\s", 1],
+      ["\\d", MAX_LENGTH],
+      [LETTERDASHNUMBER, MAX_SAFE_BUILD_LENGTH]
+    ];
+    var makeSafeRegex = (value) => {
+      for (const [token, max] of safeRegexReplacements) {
+        value = value.split(`${token}*`).join(`${token}{0,${max}}`).split(`${token}+`).join(`${token}{1,${max}}`);
+      }
+      return value;
+    };
+    var createToken = (name, value, isGlobal) => {
+      const safe = makeSafeRegex(value);
+      const index = R++;
+      debug(name, index, value);
+      t2[name] = index;
+      src[index] = value;
+      safeSrc[index] = safe;
+      re[index] = new RegExp(value, isGlobal ? "g" : void 0);
+      safeRe[index] = new RegExp(safe, isGlobal ? "g" : void 0);
+    };
+    createToken("NUMERICIDENTIFIER", "0|[1-9]\\d*");
+    createToken("NUMERICIDENTIFIERLOOSE", "\\d+");
+    createToken("NONNUMERICIDENTIFIER", `\\d*[a-zA-Z-]${LETTERDASHNUMBER}*`);
+    createToken("MAINVERSION", `(${src[t2.NUMERICIDENTIFIER]})\\.(${src[t2.NUMERICIDENTIFIER]})\\.(${src[t2.NUMERICIDENTIFIER]})`);
+    createToken("MAINVERSIONLOOSE", `(${src[t2.NUMERICIDENTIFIERLOOSE]})\\.(${src[t2.NUMERICIDENTIFIERLOOSE]})\\.(${src[t2.NUMERICIDENTIFIERLOOSE]})`);
+    createToken("PRERELEASEIDENTIFIER", `(?:${src[t2.NONNUMERICIDENTIFIER]}|${src[t2.NUMERICIDENTIFIER]})`);
+    createToken("PRERELEASEIDENTIFIERLOOSE", `(?:${src[t2.NONNUMERICIDENTIFIER]}|${src[t2.NUMERICIDENTIFIERLOOSE]})`);
+    createToken("PRERELEASE", `(?:-(${src[t2.PRERELEASEIDENTIFIER]}(?:\\.${src[t2.PRERELEASEIDENTIFIER]})*))`);
+    createToken("PRERELEASELOOSE", `(?:-?(${src[t2.PRERELEASEIDENTIFIERLOOSE]}(?:\\.${src[t2.PRERELEASEIDENTIFIERLOOSE]})*))`);
+    createToken("BUILDIDENTIFIER", `${LETTERDASHNUMBER}+`);
+    createToken("BUILD", `(?:\\+(${src[t2.BUILDIDENTIFIER]}(?:\\.${src[t2.BUILDIDENTIFIER]})*))`);
+    createToken("FULLPLAIN", `v?${src[t2.MAINVERSION]}${src[t2.PRERELEASE]}?${src[t2.BUILD]}?`);
+    createToken("FULL", `^${src[t2.FULLPLAIN]}$`);
+    createToken("LOOSEPLAIN", `[v=\\s]*${src[t2.MAINVERSIONLOOSE]}${src[t2.PRERELEASELOOSE]}?${src[t2.BUILD]}?`);
+    createToken("LOOSE", `^${src[t2.LOOSEPLAIN]}$`);
+    createToken("GTLT", "((?:<|>)?=?)");
+    createToken("XRANGEIDENTIFIERLOOSE", `${src[t2.NUMERICIDENTIFIERLOOSE]}|x|X|\\*`);
+    createToken("XRANGEIDENTIFIER", `${src[t2.NUMERICIDENTIFIER]}|x|X|\\*`);
+    createToken("XRANGEPLAIN", `[v=\\s]*(${src[t2.XRANGEIDENTIFIER]})(?:\\.(${src[t2.XRANGEIDENTIFIER]})(?:\\.(${src[t2.XRANGEIDENTIFIER]})(?:${src[t2.PRERELEASE]})?${src[t2.BUILD]}?)?)?`);
+    createToken("XRANGEPLAINLOOSE", `[v=\\s]*(${src[t2.XRANGEIDENTIFIERLOOSE]})(?:\\.(${src[t2.XRANGEIDENTIFIERLOOSE]})(?:\\.(${src[t2.XRANGEIDENTIFIERLOOSE]})(?:${src[t2.PRERELEASELOOSE]})?${src[t2.BUILD]}?)?)?`);
+    createToken("XRANGE", `^${src[t2.GTLT]}\\s*${src[t2.XRANGEPLAIN]}$`);
+    createToken("XRANGELOOSE", `^${src[t2.GTLT]}\\s*${src[t2.XRANGEPLAINLOOSE]}$`);
+    createToken("COERCEPLAIN", `${"(^|[^\\d])(\\d{1,"}${MAX_SAFE_COMPONENT_LENGTH}})(?:\\.(\\d{1,${MAX_SAFE_COMPONENT_LENGTH}}))?(?:\\.(\\d{1,${MAX_SAFE_COMPONENT_LENGTH}}))?`);
+    createToken("COERCE", `${src[t2.COERCEPLAIN]}(?:$|[^\\d])`);
+    createToken("COERCEFULL", src[t2.COERCEPLAIN] + `(?:${src[t2.PRERELEASE]})?(?:${src[t2.BUILD]})?(?:$|[^\\d])`);
+    createToken("COERCERTL", src[t2.COERCE], true);
+    createToken("COERCERTLFULL", src[t2.COERCEFULL], true);
+    createToken("LONETILDE", "(?:~>?)");
+    createToken("TILDETRIM", `(\\s*)${src[t2.LONETILDE]}\\s+`, true);
+    exports2.tildeTrimReplace = "$1~";
+    createToken("TILDE", `^${src[t2.LONETILDE]}${src[t2.XRANGEPLAIN]}$`);
+    createToken("TILDELOOSE", `^${src[t2.LONETILDE]}${src[t2.XRANGEPLAINLOOSE]}$`);
+    createToken("LONECARET", "(?:\\^)");
+    createToken("CARETTRIM", `(\\s*)${src[t2.LONECARET]}\\s+`, true);
+    exports2.caretTrimReplace = "$1^";
+    createToken("CARET", `^${src[t2.LONECARET]}${src[t2.XRANGEPLAIN]}$`);
+    createToken("CARETLOOSE", `^${src[t2.LONECARET]}${src[t2.XRANGEPLAINLOOSE]}$`);
+    createToken("COMPARATORLOOSE", `^${src[t2.GTLT]}\\s*(${src[t2.LOOSEPLAIN]})$|^$`);
+    createToken("COMPARATOR", `^${src[t2.GTLT]}\\s*(${src[t2.FULLPLAIN]})$|^$`);
+    createToken("COMPARATORTRIM", `(\\s*)${src[t2.GTLT]}\\s*(${src[t2.LOOSEPLAIN]}|${src[t2.XRANGEPLAIN]})`, true);
+    exports2.comparatorTrimReplace = "$1$2$3";
+    createToken("HYPHENRANGE", `^\\s*(${src[t2.XRANGEPLAIN]})\\s+-\\s+(${src[t2.XRANGEPLAIN]})\\s*$`);
+    createToken("HYPHENRANGELOOSE", `^\\s*(${src[t2.XRANGEPLAINLOOSE]})\\s+-\\s+(${src[t2.XRANGEPLAINLOOSE]})\\s*$`);
+    createToken("STAR", "(<|>)?=?\\s*\\*");
+    createToken("GTE0", "^\\s*>=\\s*0\\.0\\.0\\s*$");
+    createToken("GTE0PRE", "^\\s*>=\\s*0\\.0\\.0-0\\s*$");
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/internal/parse-options.js
+var require_parse_options = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/internal/parse-options.js"(exports2, module2) {
+    "use strict";
+    var looseOption = Object.freeze({ loose: true });
+    var emptyOpts = Object.freeze({});
+    var parseOptions = (options) => {
+      if (!options) {
+        return emptyOpts;
+      }
+      if (typeof options !== "object") {
+        return looseOption;
+      }
+      return options;
+    };
+    module2.exports = parseOptions;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/internal/identifiers.js
+var require_identifiers = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/internal/identifiers.js"(exports2, module2) {
+    "use strict";
+    var numeric = /^[0-9]+$/;
+    var compareIdentifiers = (a, b) => {
+      if (typeof a === "number" && typeof b === "number") {
+        return a === b ? 0 : a < b ? -1 : 1;
+      }
+      const anum = numeric.test(a);
+      const bnum = numeric.test(b);
+      if (anum && bnum) {
+        a = +a;
+        b = +b;
+      }
+      return a === b ? 0 : anum && !bnum ? -1 : bnum && !anum ? 1 : a < b ? -1 : 1;
+    };
+    var rcompareIdentifiers = (a, b) => compareIdentifiers(b, a);
+    module2.exports = {
+      compareIdentifiers,
+      rcompareIdentifiers
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/classes/semver.js
+var require_semver = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/classes/semver.js"(exports2, module2) {
+    "use strict";
+    var debug = require_debug5();
+    var { MAX_LENGTH, MAX_SAFE_INTEGER } = require_constants2();
+    var { safeRe: re, t: t2 } = require_re();
+    var parseOptions = require_parse_options();
+    var { compareIdentifiers } = require_identifiers();
+    var isPrereleaseIdentifier = (prerelease, identifier) => {
+      const identifiers = identifier.split(".");
+      if (identifiers.length > prerelease.length) {
+        return false;
+      }
+      for (let i2 = 0; i2 < identifiers.length; i2++) {
+        if (compareIdentifiers(prerelease[i2], identifiers[i2]) !== 0) {
+          return false;
+        }
+      }
+      return true;
+    };
+    var SemVer = class _SemVer {
+      constructor(version, options) {
+        options = parseOptions(options);
+        if (version instanceof _SemVer) {
+          if (version.loose === !!options.loose && version.includePrerelease === !!options.includePrerelease) {
+            return version;
+          } else {
+            version = version.version;
+          }
+        } else if (typeof version !== "string") {
+          throw new TypeError(`Invalid version. Must be a string. Got type "${typeof version}".`);
+        }
+        if (version.length > MAX_LENGTH) {
+          throw new TypeError(
+            `version is longer than ${MAX_LENGTH} characters`
+          );
+        }
+        debug("SemVer", version, options);
+        this.options = options;
+        this.loose = !!options.loose;
+        this.includePrerelease = !!options.includePrerelease;
+        const m2 = version.trim().match(options.loose ? re[t2.LOOSE] : re[t2.FULL]);
+        if (!m2) {
+          throw new TypeError(`Invalid Version: ${version}`);
+        }
+        this.raw = version;
+        this.major = +m2[1];
+        this.minor = +m2[2];
+        this.patch = +m2[3];
+        if (this.major > MAX_SAFE_INTEGER || this.major < 0) {
+          throw new TypeError("Invalid major version");
+        }
+        if (this.minor > MAX_SAFE_INTEGER || this.minor < 0) {
+          throw new TypeError("Invalid minor version");
+        }
+        if (this.patch > MAX_SAFE_INTEGER || this.patch < 0) {
+          throw new TypeError("Invalid patch version");
+        }
+        if (!m2[4]) {
+          this.prerelease = [];
+        } else {
+          this.prerelease = m2[4].split(".").map((id) => {
+            if (/^[0-9]+$/.test(id)) {
+              const num = +id;
+              if (num >= 0 && num < MAX_SAFE_INTEGER) {
+                return num;
+              }
+            }
+            return id;
+          });
+        }
+        this.build = m2[5] ? m2[5].split(".") : [];
+        this.format();
+      }
+      format() {
+        this.version = `${this.major}.${this.minor}.${this.patch}`;
+        if (this.prerelease.length) {
+          this.version += `-${this.prerelease.join(".")}`;
+        }
+        return this.version;
+      }
+      toString() {
+        return this.version;
+      }
+      compare(other) {
+        debug("SemVer.compare", this.version, this.options, other);
+        if (!(other instanceof _SemVer)) {
+          if (typeof other === "string" && other === this.version) {
+            return 0;
+          }
+          other = new _SemVer(other, this.options);
+        }
+        if (other.version === this.version) {
+          return 0;
+        }
+        return this.compareMain(other) || this.comparePre(other);
+      }
+      compareMain(other) {
+        if (!(other instanceof _SemVer)) {
+          other = new _SemVer(other, this.options);
+        }
+        if (this.major < other.major) {
+          return -1;
+        }
+        if (this.major > other.major) {
+          return 1;
+        }
+        if (this.minor < other.minor) {
+          return -1;
+        }
+        if (this.minor > other.minor) {
+          return 1;
+        }
+        if (this.patch < other.patch) {
+          return -1;
+        }
+        if (this.patch > other.patch) {
+          return 1;
+        }
+        return 0;
+      }
+      comparePre(other) {
+        if (!(other instanceof _SemVer)) {
+          other = new _SemVer(other, this.options);
+        }
+        if (this.prerelease.length && !other.prerelease.length) {
+          return -1;
+        } else if (!this.prerelease.length && other.prerelease.length) {
+          return 1;
+        } else if (!this.prerelease.length && !other.prerelease.length) {
+          return 0;
+        }
+        let i2 = 0;
+        do {
+          const a = this.prerelease[i2];
+          const b = other.prerelease[i2];
+          debug("prerelease compare", i2, a, b);
+          if (a === void 0 && b === void 0) {
+            return 0;
+          } else if (b === void 0) {
+            return 1;
+          } else if (a === void 0) {
+            return -1;
+          } else if (a === b) {
+            continue;
+          } else {
+            return compareIdentifiers(a, b);
+          }
+        } while (++i2);
+      }
+      compareBuild(other) {
+        if (!(other instanceof _SemVer)) {
+          other = new _SemVer(other, this.options);
+        }
+        let i2 = 0;
+        do {
+          const a = this.build[i2];
+          const b = other.build[i2];
+          debug("build compare", i2, a, b);
+          if (a === void 0 && b === void 0) {
+            return 0;
+          } else if (b === void 0) {
+            return 1;
+          } else if (a === void 0) {
+            return -1;
+          } else if (a === b) {
+            continue;
+          } else {
+            return compareIdentifiers(a, b);
+          }
+        } while (++i2);
+      }
+      // preminor will bump the version up to the next minor release, and immediately
+      // down to pre-release. premajor and prepatch work the same way.
+      inc(release, identifier, identifierBase) {
+        if (release.startsWith("pre")) {
+          if (!identifier && identifierBase === false) {
+            throw new Error("invalid increment argument: identifier is empty");
+          }
+          if (identifier) {
+            const match2 = `-${identifier}`.match(this.options.loose ? re[t2.PRERELEASELOOSE] : re[t2.PRERELEASE]);
+            if (!match2 || match2[1] !== identifier) {
+              throw new Error(`invalid identifier: ${identifier}`);
+            }
+          }
+        }
+        switch (release) {
+          case "premajor":
+            this.prerelease.length = 0;
+            this.patch = 0;
+            this.minor = 0;
+            this.major++;
+            this.inc("pre", identifier, identifierBase);
+            break;
+          case "preminor":
+            this.prerelease.length = 0;
+            this.patch = 0;
+            this.minor++;
+            this.inc("pre", identifier, identifierBase);
+            break;
+          case "prepatch":
+            this.prerelease.length = 0;
+            this.inc("patch", identifier, identifierBase);
+            this.inc("pre", identifier, identifierBase);
+            break;
+          // If the input is a non-prerelease version, this acts the same as
+          // prepatch.
+          case "prerelease":
+            if (this.prerelease.length === 0) {
+              this.inc("patch", identifier, identifierBase);
+            }
+            this.inc("pre", identifier, identifierBase);
+            break;
+          case "release":
+            if (this.prerelease.length === 0) {
+              throw new Error(`version ${this.raw} is not a prerelease`);
+            }
+            this.prerelease.length = 0;
+            break;
+          case "major":
+            if (this.minor !== 0 || this.patch !== 0 || this.prerelease.length === 0) {
+              this.major++;
+            }
+            this.minor = 0;
+            this.patch = 0;
+            this.prerelease = [];
+            break;
+          case "minor":
+            if (this.patch !== 0 || this.prerelease.length === 0) {
+              this.minor++;
+            }
+            this.patch = 0;
+            this.prerelease = [];
+            break;
+          case "patch":
+            if (this.prerelease.length === 0) {
+              this.patch++;
+            }
+            this.prerelease = [];
+            break;
+          // This probably shouldn't be used publicly.
+          // 1.0.0 'pre' would become 1.0.0-0 which is the wrong direction.
+          case "pre": {
+            const base = Number(identifierBase) ? 1 : 0;
+            if (this.prerelease.length === 0) {
+              this.prerelease = [base];
+            } else {
+              let i2 = this.prerelease.length;
+              while (--i2 >= 0) {
+                if (typeof this.prerelease[i2] === "number") {
+                  this.prerelease[i2]++;
+                  i2 = -2;
+                }
+              }
+              if (i2 === -1) {
+                if (identifier === this.prerelease.join(".") && identifierBase === false) {
+                  throw new Error("invalid increment argument: identifier already exists");
+                }
+                this.prerelease.push(base);
+              }
+            }
+            if (identifier) {
+              let prerelease = [identifier, base];
+              if (identifierBase === false) {
+                prerelease = [identifier];
+              }
+              if (isPrereleaseIdentifier(this.prerelease, identifier)) {
+                const prereleaseBase = this.prerelease[identifier.split(".").length];
+                if (isNaN(prereleaseBase)) {
+                  this.prerelease = prerelease;
+                }
+              } else {
+                this.prerelease = prerelease;
+              }
+            }
+            break;
+          }
+          default:
+            throw new Error(`invalid increment argument: ${release}`);
+        }
+        this.raw = this.format();
+        if (this.build.length) {
+          this.raw += `+${this.build.join(".")}`;
+        }
+        return this;
+      }
+    };
+    module2.exports = SemVer;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/parse.js
+var require_parse2 = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/parse.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var parse = (version, options, throwErrors = false) => {
+      if (version instanceof SemVer) {
+        return version;
+      }
+      try {
+        return new SemVer(version, options);
+      } catch (er) {
+        if (!throwErrors) {
+          return null;
+        }
+        throw er;
+      }
+    };
+    module2.exports = parse;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/valid.js
+var require_valid = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/valid.js"(exports2, module2) {
+    "use strict";
+    var parse = require_parse2();
+    var valid = (version, options) => {
+      const v = parse(version, options);
+      return v ? v.version : null;
+    };
+    module2.exports = valid;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/clean.js
+var require_clean = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/clean.js"(exports2, module2) {
+    "use strict";
+    var parse = require_parse2();
+    var clean = (version, options) => {
+      const s2 = parse(version.trim().replace(/^[=v]+/, ""), options);
+      return s2 ? s2.version : null;
+    };
+    module2.exports = clean;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/inc.js
+var require_inc = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/inc.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var inc = (version, release, options, identifier, identifierBase) => {
+      if (typeof options === "string") {
+        identifierBase = identifier;
+        identifier = options;
+        options = void 0;
+      }
+      try {
+        return new SemVer(
+          version instanceof SemVer ? version.version : version,
+          options
+        ).inc(release, identifier, identifierBase).version;
+      } catch (er) {
+        return null;
+      }
+    };
+    module2.exports = inc;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/diff.js
+var require_diff = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/diff.js"(exports2, module2) {
+    "use strict";
+    var parse = require_parse2();
+    var diff = (version1, version2) => {
+      const v1 = parse(version1, null, true);
+      const v2 = parse(version2, null, true);
+      const comparison = v1.compare(v2);
+      if (comparison === 0) {
+        return null;
+      }
+      const v1Higher = comparison > 0;
+      const highVersion = v1Higher ? v1 : v2;
+      const lowVersion = v1Higher ? v2 : v1;
+      const highHasPre = !!highVersion.prerelease.length;
+      const lowHasPre = !!lowVersion.prerelease.length;
+      if (lowHasPre && !highHasPre) {
+        if (!lowVersion.patch && !lowVersion.minor) {
+          return "major";
+        }
+        if (lowVersion.compareMain(highVersion) === 0) {
+          if (lowVersion.minor && !lowVersion.patch) {
+            return "minor";
+          }
+          return "patch";
+        }
+      }
+      const prefix = highHasPre ? "pre" : "";
+      if (v1.major !== v2.major) {
+        return prefix + "major";
+      }
+      if (v1.minor !== v2.minor) {
+        return prefix + "minor";
+      }
+      if (v1.patch !== v2.patch) {
+        return prefix + "patch";
+      }
+      return "prerelease";
+    };
+    module2.exports = diff;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/major.js
+var require_major = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/major.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var major = (a, loose) => new SemVer(a, loose).major;
+    module2.exports = major;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/minor.js
+var require_minor = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/minor.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var minor = (a, loose) => new SemVer(a, loose).minor;
+    module2.exports = minor;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/patch.js
+var require_patch = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/patch.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var patch = (a, loose) => new SemVer(a, loose).patch;
+    module2.exports = patch;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/prerelease.js
+var require_prerelease = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/prerelease.js"(exports2, module2) {
+    "use strict";
+    var parse = require_parse2();
+    var prerelease = (version, options) => {
+      const parsed = parse(version, options);
+      return parsed && parsed.prerelease.length ? parsed.prerelease : null;
+    };
+    module2.exports = prerelease;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/compare.js
+var require_compare = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/compare.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var compare = (a, b, loose) => new SemVer(a, loose).compare(new SemVer(b, loose));
+    module2.exports = compare;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/rcompare.js
+var require_rcompare = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/rcompare.js"(exports2, module2) {
+    "use strict";
+    var compare = require_compare();
+    var rcompare = (a, b, loose) => compare(b, a, loose);
+    module2.exports = rcompare;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/compare-loose.js
+var require_compare_loose = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/compare-loose.js"(exports2, module2) {
+    "use strict";
+    var compare = require_compare();
+    var compareLoose = (a, b) => compare(a, b, true);
+    module2.exports = compareLoose;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/compare-build.js
+var require_compare_build = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/compare-build.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var compareBuild = (a, b, loose) => {
+      const versionA = new SemVer(a, loose);
+      const versionB = new SemVer(b, loose);
+      return versionA.compare(versionB) || versionA.compareBuild(versionB);
+    };
+    module2.exports = compareBuild;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/sort.js
+var require_sort = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/sort.js"(exports2, module2) {
+    "use strict";
+    var compareBuild = require_compare_build();
+    var sort = (list, loose) => list.sort((a, b) => compareBuild(a, b, loose));
+    module2.exports = sort;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/rsort.js
+var require_rsort = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/rsort.js"(exports2, module2) {
+    "use strict";
+    var compareBuild = require_compare_build();
+    var rsort = (list, loose) => list.sort((a, b) => compareBuild(b, a, loose));
+    module2.exports = rsort;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/gt.js
+var require_gt = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/gt.js"(exports2, module2) {
+    "use strict";
+    var compare = require_compare();
+    var gt2 = (a, b, loose) => compare(a, b, loose) > 0;
+    module2.exports = gt2;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/lt.js
+var require_lt = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/lt.js"(exports2, module2) {
+    "use strict";
+    var compare = require_compare();
+    var lt = (a, b, loose) => compare(a, b, loose) < 0;
+    module2.exports = lt;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/eq.js
+var require_eq = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/eq.js"(exports2, module2) {
+    "use strict";
+    var compare = require_compare();
+    var eq = (a, b, loose) => compare(a, b, loose) === 0;
+    module2.exports = eq;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/neq.js
+var require_neq = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/neq.js"(exports2, module2) {
+    "use strict";
+    var compare = require_compare();
+    var neq = (a, b, loose) => compare(a, b, loose) !== 0;
+    module2.exports = neq;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/gte.js
+var require_gte = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/gte.js"(exports2, module2) {
+    "use strict";
+    var compare = require_compare();
+    var gte = (a, b, loose) => compare(a, b, loose) >= 0;
+    module2.exports = gte;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/lte.js
+var require_lte = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/lte.js"(exports2, module2) {
+    "use strict";
+    var compare = require_compare();
+    var lte = (a, b, loose) => compare(a, b, loose) <= 0;
+    module2.exports = lte;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/cmp.js
+var require_cmp = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/cmp.js"(exports2, module2) {
+    "use strict";
+    var eq = require_eq();
+    var neq = require_neq();
+    var gt2 = require_gt();
+    var gte = require_gte();
+    var lt = require_lt();
+    var lte = require_lte();
+    var cmp = (a, op, b, loose) => {
+      switch (op) {
+        case "===":
+          if (typeof a === "object") {
+            a = a.version;
+          }
+          if (typeof b === "object") {
+            b = b.version;
+          }
+          return a === b;
+        case "!==":
+          if (typeof a === "object") {
+            a = a.version;
+          }
+          if (typeof b === "object") {
+            b = b.version;
+          }
+          return a !== b;
+        case "":
+        case "=":
+        case "==":
+          return eq(a, b, loose);
+        case "!=":
+          return neq(a, b, loose);
+        case ">":
+          return gt2(a, b, loose);
+        case ">=":
+          return gte(a, b, loose);
+        case "<":
+          return lt(a, b, loose);
+        case "<=":
+          return lte(a, b, loose);
+        default:
+          throw new TypeError(`Invalid operator: ${op}`);
+      }
+    };
+    module2.exports = cmp;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/coerce.js
+var require_coerce = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/coerce.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var parse = require_parse2();
+    var { safeRe: re, t: t2 } = require_re();
+    var coerce = (version, options) => {
+      if (version instanceof SemVer) {
+        return version;
+      }
+      if (typeof version === "number") {
+        version = String(version);
+      }
+      if (typeof version !== "string") {
+        return null;
+      }
+      options = options || {};
+      let match2 = null;
+      if (!options.rtl) {
+        match2 = version.match(options.includePrerelease ? re[t2.COERCEFULL] : re[t2.COERCE]);
+      } else {
+        const coerceRtlRegex = options.includePrerelease ? re[t2.COERCERTLFULL] : re[t2.COERCERTL];
+        let next;
+        while ((next = coerceRtlRegex.exec(version)) && (!match2 || match2.index + match2[0].length !== version.length)) {
+          if (!match2 || next.index + next[0].length !== match2.index + match2[0].length) {
+            match2 = next;
+          }
+          coerceRtlRegex.lastIndex = next.index + next[1].length + next[2].length;
+        }
+        coerceRtlRegex.lastIndex = -1;
+      }
+      if (match2 === null) {
+        return null;
+      }
+      const major = match2[2];
+      const minor = match2[3] || "0";
+      const patch = match2[4] || "0";
+      const prerelease = options.includePrerelease && match2[5] ? `-${match2[5]}` : "";
+      const build = options.includePrerelease && match2[6] ? `+${match2[6]}` : "";
+      return parse(`${major}.${minor}.${patch}${prerelease}${build}`, options);
+    };
+    module2.exports = coerce;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/truncate.js
+var require_truncate = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/truncate.js"(exports2, module2) {
+    "use strict";
+    var parse = require_parse2();
+    var constants = require_constants2();
+    var SemVer = require_semver();
+    var truncate = (version, truncation, options) => {
+      if (!constants.RELEASE_TYPES.includes(truncation)) {
+        return null;
+      }
+      const clonedVersion = cloneInputVersion(version, options);
+      return clonedVersion && doTruncation(clonedVersion, truncation);
+    };
+    var cloneInputVersion = (version, options) => {
+      const versionStringToParse = version instanceof SemVer ? version.version : version;
+      return parse(versionStringToParse, options);
+    };
+    var doTruncation = (version, truncation) => {
+      if (isPrerelease(truncation)) {
+        return version.version;
+      }
+      version.prerelease = [];
+      switch (truncation) {
+        case "major":
+          version.minor = 0;
+          version.patch = 0;
+          break;
+        case "minor":
+          version.patch = 0;
+          break;
+      }
+      return version.format();
+    };
+    var isPrerelease = (type) => {
+      return type.startsWith("pre");
+    };
+    module2.exports = truncate;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/internal/lrucache.js
+var require_lrucache = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/internal/lrucache.js"(exports2, module2) {
+    "use strict";
+    var LRUCache = class {
+      constructor() {
+        this.max = 1e3;
+        this.map = /* @__PURE__ */ new Map();
+      }
+      get(key) {
+        const value = this.map.get(key);
+        if (value === void 0) {
+          return void 0;
+        } else {
+          this.map.delete(key);
+          this.map.set(key, value);
+          return value;
+        }
+      }
+      delete(key) {
+        return this.map.delete(key);
+      }
+      set(key, value) {
+        const deleted = this.delete(key);
+        if (!deleted && value !== void 0) {
+          if (this.map.size >= this.max) {
+            const firstKey = this.map.keys().next().value;
+            this.delete(firstKey);
+          }
+          this.map.set(key, value);
+        }
+        return this;
+      }
+    };
+    module2.exports = LRUCache;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/classes/range.js
+var require_range2 = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/classes/range.js"(exports2, module2) {
+    "use strict";
+    var SPACE_CHARACTERS = /\s+/g;
+    var Range = class _Range {
+      constructor(range, options) {
+        options = parseOptions(options);
+        if (range instanceof _Range) {
+          if (range.loose === !!options.loose && range.includePrerelease === !!options.includePrerelease) {
+            return range;
+          } else {
+            return new _Range(range.raw, options);
+          }
+        }
+        if (range instanceof Comparator) {
+          this.raw = range.value;
+          this.set = [[range]];
+          this.formatted = void 0;
+          return this;
+        }
+        this.options = options;
+        this.loose = !!options.loose;
+        this.includePrerelease = !!options.includePrerelease;
+        this.raw = range.trim().replace(SPACE_CHARACTERS, " ");
+        this.set = this.raw.split("||").map((r2) => this.parseRange(r2.trim())).filter((c) => c.length);
+        if (!this.set.length) {
+          throw new TypeError(`Invalid SemVer Range: ${this.raw}`);
+        }
+        if (this.set.length > 1) {
+          const first = this.set[0];
+          this.set = this.set.filter((c) => !isNullSet(c[0]));
+          if (this.set.length === 0) {
+            this.set = [first];
+          } else if (this.set.length > 1) {
+            for (const c of this.set) {
+              if (c.length === 1 && isAny(c[0])) {
+                this.set = [c];
+                break;
+              }
+            }
+          }
+        }
+        this.formatted = void 0;
+      }
+      get range() {
+        if (this.formatted === void 0) {
+          this.formatted = "";
+          for (let i2 = 0; i2 < this.set.length; i2++) {
+            if (i2 > 0) {
+              this.formatted += "||";
+            }
+            const comps = this.set[i2];
+            for (let k = 0; k < comps.length; k++) {
+              if (k > 0) {
+                this.formatted += " ";
+              }
+              this.formatted += comps[k].toString().trim();
+            }
+          }
+        }
+        return this.formatted;
+      }
+      format() {
+        return this.range;
+      }
+      toString() {
+        return this.range;
+      }
+      parseRange(range) {
+        range = range.replace(BUILDSTRIPRE, "");
+        const memoOpts = (this.options.includePrerelease && FLAG_INCLUDE_PRERELEASE) | (this.options.loose && FLAG_LOOSE);
+        const memoKey = memoOpts + ":" + range;
+        const cached = cache.get(memoKey);
+        if (cached) {
+          return cached;
+        }
+        const loose = this.options.loose;
+        const hr = loose ? re[t2.HYPHENRANGELOOSE] : re[t2.HYPHENRANGE];
+        range = range.replace(hr, hyphenReplace(this.options.includePrerelease));
+        debug("hyphen replace", range);
+        range = range.replace(re[t2.COMPARATORTRIM], comparatorTrimReplace);
+        debug("comparator trim", range);
+        range = range.replace(re[t2.TILDETRIM], tildeTrimReplace);
+        debug("tilde trim", range);
+        range = range.replace(re[t2.CARETTRIM], caretTrimReplace);
+        debug("caret trim", range);
+        let rangeList = range.split(" ").map((comp) => parseComparator(comp, this.options)).join(" ").split(/\s+/).map((comp) => replaceGTE0(comp, this.options));
+        if (loose) {
+          rangeList = rangeList.filter((comp) => {
+            debug("loose invalid filter", comp, this.options);
+            return !!comp.match(re[t2.COMPARATORLOOSE]);
+          });
+        }
+        debug("range list", rangeList);
+        const rangeMap = /* @__PURE__ */ new Map();
+        const comparators = rangeList.map((comp) => new Comparator(comp, this.options));
+        for (const comp of comparators) {
+          if (isNullSet(comp)) {
+            return [comp];
+          }
+          rangeMap.set(comp.value, comp);
+        }
+        if (rangeMap.size > 1 && rangeMap.has("")) {
+          rangeMap.delete("");
+        }
+        const result = [...rangeMap.values()];
+        cache.set(memoKey, result);
+        return result;
+      }
+      intersects(range, options) {
+        if (!(range instanceof _Range)) {
+          throw new TypeError("a Range is required");
+        }
+        return this.set.some((thisComparators) => {
+          return isSatisfiable(thisComparators, options) && range.set.some((rangeComparators) => {
+            return isSatisfiable(rangeComparators, options) && thisComparators.every((thisComparator) => {
+              return rangeComparators.every((rangeComparator) => {
+                return thisComparator.intersects(rangeComparator, options);
+              });
+            });
+          });
+        });
+      }
+      // if ANY of the sets match ALL of its comparators, then pass
+      test(version) {
+        if (!version) {
+          return false;
+        }
+        if (typeof version === "string") {
+          try {
+            version = new SemVer(version, this.options);
+          } catch (er) {
+            return false;
+          }
+        }
+        for (let i2 = 0; i2 < this.set.length; i2++) {
+          if (testSet(this.set[i2], version, this.options)) {
+            return true;
+          }
+        }
+        return false;
+      }
+    };
+    module2.exports = Range;
+    var LRU = require_lrucache();
+    var cache = new LRU();
+    var parseOptions = require_parse_options();
+    var Comparator = require_comparator();
+    var debug = require_debug5();
+    var SemVer = require_semver();
+    var {
+      safeRe: re,
+      src,
+      t: t2,
+      comparatorTrimReplace,
+      tildeTrimReplace,
+      caretTrimReplace
+    } = require_re();
+    var { FLAG_INCLUDE_PRERELEASE, FLAG_LOOSE } = require_constants2();
+    var BUILDSTRIPRE = new RegExp(src[t2.BUILD], "g");
+    var isNullSet = (c) => c.value === "<0.0.0-0";
+    var isAny = (c) => c.value === "";
+    var isSatisfiable = (comparators, options) => {
+      let result = true;
+      const remainingComparators = comparators.slice();
+      let testComparator = remainingComparators.pop();
+      while (result && remainingComparators.length) {
+        result = remainingComparators.every((otherComparator) => {
+          return testComparator.intersects(otherComparator, options);
+        });
+        testComparator = remainingComparators.pop();
+      }
+      return result;
+    };
+    var parseComparator = (comp, options) => {
+      comp = comp.replace(re[t2.BUILD], "");
+      debug("comp", comp, options);
+      comp = replaceCarets(comp, options);
+      debug("caret", comp);
+      comp = replaceTildes(comp, options);
+      debug("tildes", comp);
+      comp = replaceXRanges(comp, options);
+      debug("xrange", comp);
+      comp = replaceStars(comp, options);
+      debug("stars", comp);
+      return comp;
+    };
+    var isX = (id) => !id || id.toLowerCase() === "x" || id === "*";
+    var invalidXRangeOrder = (M, m2, p) => isX(M) && !isX(m2) || isX(m2) && p && !isX(p);
+    var replaceTildes = (comp, options) => {
+      return comp.trim().split(/\s+/).map((c) => replaceTilde(c, options)).join(" ");
+    };
+    var replaceTilde = (comp, options) => {
+      const r2 = options.loose ? re[t2.TILDELOOSE] : re[t2.TILDE];
+      const z = options.includePrerelease ? "-0" : "";
+      return comp.replace(r2, (_, M, m2, p, pr) => {
+        debug("tilde", comp, _, M, m2, p, pr);
+        let ret;
+        if (isX(M)) {
+          ret = "";
+        } else if (isX(m2)) {
+          ret = `>=${M}.0.0${z} <${+M + 1}.0.0-0`;
+        } else if (isX(p)) {
+          ret = `>=${M}.${m2}.0${z} <${M}.${+m2 + 1}.0-0`;
+        } else if (pr) {
+          debug("replaceTilde pr", pr);
+          ret = `>=${M}.${m2}.${p}-${pr} <${M}.${+m2 + 1}.0-0`;
+        } else {
+          ret = `>=${M}.${m2}.${p} <${M}.${+m2 + 1}.0-0`;
+        }
+        debug("tilde return", ret);
+        return ret;
+      });
+    };
+    var replaceCarets = (comp, options) => {
+      return comp.trim().split(/\s+/).map((c) => replaceCaret(c, options)).join(" ");
+    };
+    var replaceCaret = (comp, options) => {
+      debug("caret", comp, options);
+      const r2 = options.loose ? re[t2.CARETLOOSE] : re[t2.CARET];
+      const z = options.includePrerelease ? "-0" : "";
+      return comp.replace(r2, (_, M, m2, p, pr) => {
+        debug("caret", comp, _, M, m2, p, pr);
+        let ret;
+        if (isX(M)) {
+          ret = "";
+        } else if (isX(m2)) {
+          ret = `>=${M}.0.0${z} <${+M + 1}.0.0-0`;
+        } else if (isX(p)) {
+          if (M === "0") {
+            ret = `>=${M}.${m2}.0${z} <${M}.${+m2 + 1}.0-0`;
+          } else {
+            ret = `>=${M}.${m2}.0${z} <${+M + 1}.0.0-0`;
+          }
+        } else if (pr) {
+          debug("replaceCaret pr", pr);
+          if (M === "0") {
+            if (m2 === "0") {
+              ret = `>=${M}.${m2}.${p}-${pr} <${M}.${m2}.${+p + 1}-0`;
+            } else {
+              ret = `>=${M}.${m2}.${p}-${pr} <${M}.${+m2 + 1}.0-0`;
+            }
+          } else {
+            ret = `>=${M}.${m2}.${p}-${pr} <${+M + 1}.0.0-0`;
+          }
+        } else {
+          debug("no pr");
+          if (M === "0") {
+            if (m2 === "0") {
+              ret = `>=${M}.${m2}.${p} <${M}.${m2}.${+p + 1}-0`;
+            } else {
+              ret = `>=${M}.${m2}.${p} <${M}.${+m2 + 1}.0-0`;
+            }
+          } else {
+            ret = `>=${M}.${m2}.${p} <${+M + 1}.0.0-0`;
+          }
+        }
+        debug("caret return", ret);
+        return ret;
+      });
+    };
+    var replaceXRanges = (comp, options) => {
+      debug("replaceXRanges", comp, options);
+      return comp.split(/\s+/).map((c) => replaceXRange(c, options)).join(" ");
+    };
+    var replaceXRange = (comp, options) => {
+      comp = comp.trim();
+      const r2 = options.loose ? re[t2.XRANGELOOSE] : re[t2.XRANGE];
+      return comp.replace(r2, (ret, gtlt, M, m2, p, pr) => {
+        debug("xRange", comp, ret, gtlt, M, m2, p, pr);
+        if (invalidXRangeOrder(M, m2, p)) {
+          return comp;
+        }
+        const xM = isX(M);
+        const xm = xM || isX(m2);
+        const xp = xm || isX(p);
+        const anyX = xp;
+        if (gtlt === "=" && anyX) {
+          gtlt = "";
+        }
+        pr = options.includePrerelease ? "-0" : "";
+        if (xM) {
+          if (gtlt === ">" || gtlt === "<") {
+            ret = "<0.0.0-0";
+          } else {
+            ret = "*";
+          }
+        } else if (gtlt && anyX) {
+          if (xm) {
+            m2 = 0;
+          }
+          p = 0;
+          if (gtlt === ">") {
+            gtlt = ">=";
+            if (xm) {
+              M = +M + 1;
+              m2 = 0;
+              p = 0;
+            } else {
+              m2 = +m2 + 1;
+              p = 0;
+            }
+          } else if (gtlt === "<=") {
+            gtlt = "<";
+            if (xm) {
+              M = +M + 1;
+            } else {
+              m2 = +m2 + 1;
+            }
+          }
+          if (gtlt === "<") {
+            pr = "-0";
+          }
+          ret = `${gtlt + M}.${m2}.${p}${pr}`;
+        } else if (xm) {
+          ret = `>=${M}.0.0${pr} <${+M + 1}.0.0-0`;
+        } else if (xp) {
+          ret = `>=${M}.${m2}.0${pr} <${M}.${+m2 + 1}.0-0`;
+        }
+        debug("xRange return", ret);
+        return ret;
+      });
+    };
+    var replaceStars = (comp, options) => {
+      debug("replaceStars", comp, options);
+      return comp.trim().replace(re[t2.STAR], "");
+    };
+    var replaceGTE0 = (comp, options) => {
+      debug("replaceGTE0", comp, options);
+      return comp.trim().replace(re[options.includePrerelease ? t2.GTE0PRE : t2.GTE0], "");
+    };
+    var hyphenReplace = (incPr) => ($0, from, fM, fm, fp, fpr, fb, to, tM, tm, tp, tpr) => {
+      if (isX(fM)) {
+        from = "";
+      } else if (isX(fm)) {
+        from = `>=${fM}.0.0${incPr ? "-0" : ""}`;
+      } else if (isX(fp)) {
+        from = `>=${fM}.${fm}.0${incPr ? "-0" : ""}`;
+      } else if (fpr) {
+        from = `>=${from}`;
+      } else {
+        from = `>=${from}${incPr ? "-0" : ""}`;
+      }
+      if (isX(tM)) {
+        to = "";
+      } else if (isX(tm)) {
+        to = `<${+tM + 1}.0.0-0`;
+      } else if (isX(tp)) {
+        to = `<${tM}.${+tm + 1}.0-0`;
+      } else if (tpr) {
+        to = `<=${tM}.${tm}.${tp}-${tpr}`;
+      } else if (incPr) {
+        to = `<${tM}.${tm}.${+tp + 1}-0`;
+      } else {
+        to = `<=${to}`;
+      }
+      return `${from} ${to}`.trim();
+    };
+    var testSet = (set, version, options) => {
+      for (let i2 = 0; i2 < set.length; i2++) {
+        if (!set[i2].test(version)) {
+          return false;
+        }
+      }
+      if (version.prerelease.length && !options.includePrerelease) {
+        for (let i2 = 0; i2 < set.length; i2++) {
+          debug(set[i2].semver);
+          if (set[i2].semver === Comparator.ANY) {
+            continue;
+          }
+          if (set[i2].semver.prerelease.length > 0) {
+            const allowed = set[i2].semver;
+            if (allowed.major === version.major && allowed.minor === version.minor && allowed.patch === version.patch) {
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+      return true;
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/classes/comparator.js
+var require_comparator = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/classes/comparator.js"(exports2, module2) {
+    "use strict";
+    var ANY = Symbol("SemVer ANY");
+    var Comparator = class _Comparator {
+      static get ANY() {
+        return ANY;
+      }
+      constructor(comp, options) {
+        options = parseOptions(options);
+        if (comp instanceof _Comparator) {
+          if (comp.loose === !!options.loose) {
+            return comp;
+          } else {
+            comp = comp.value;
+          }
+        }
+        comp = comp.trim().split(/\s+/).join(" ");
+        debug("comparator", comp, options);
+        this.options = options;
+        this.loose = !!options.loose;
+        this.parse(comp);
+        if (this.semver === ANY) {
+          this.value = "";
+        } else {
+          this.value = this.operator + this.semver.version;
+        }
+        debug("comp", this);
+      }
+      parse(comp) {
+        const r2 = this.options.loose ? re[t2.COMPARATORLOOSE] : re[t2.COMPARATOR];
+        const m2 = comp.match(r2);
+        if (!m2) {
+          throw new TypeError(`Invalid comparator: ${comp}`);
+        }
+        this.operator = m2[1] !== void 0 ? m2[1] : "";
+        if (this.operator === "=") {
+          this.operator = "";
+        }
+        if (!m2[2]) {
+          this.semver = ANY;
+        } else {
+          this.semver = new SemVer(m2[2], this.options.loose);
+        }
+      }
+      toString() {
+        return this.value;
+      }
+      test(version) {
+        debug("Comparator.test", version, this.options.loose);
+        if (this.semver === ANY || version === ANY) {
+          return true;
+        }
+        if (typeof version === "string") {
+          try {
+            version = new SemVer(version, this.options);
+          } catch (er) {
+            return false;
+          }
+        }
+        return cmp(version, this.operator, this.semver, this.options);
+      }
+      intersects(comp, options) {
+        if (!(comp instanceof _Comparator)) {
+          throw new TypeError("a Comparator is required");
+        }
+        if (this.operator === "") {
+          if (this.value === "") {
+            return true;
+          }
+          return new Range(comp.value, options).test(this.value);
+        } else if (comp.operator === "") {
+          if (comp.value === "") {
+            return true;
+          }
+          return new Range(this.value, options).test(comp.semver);
+        }
+        options = parseOptions(options);
+        if (options.includePrerelease && (this.value === "<0.0.0-0" || comp.value === "<0.0.0-0")) {
+          return false;
+        }
+        if (!options.includePrerelease && (this.value.startsWith("<0.0.0") || comp.value.startsWith("<0.0.0"))) {
+          return false;
+        }
+        if (this.operator.startsWith(">") && comp.operator.startsWith(">")) {
+          return true;
+        }
+        if (this.operator.startsWith("<") && comp.operator.startsWith("<")) {
+          return true;
+        }
+        if (this.semver.version === comp.semver.version && this.operator.includes("=") && comp.operator.includes("=")) {
+          return true;
+        }
+        if (cmp(this.semver, "<", comp.semver, options) && this.operator.startsWith(">") && comp.operator.startsWith("<")) {
+          return true;
+        }
+        if (cmp(this.semver, ">", comp.semver, options) && this.operator.startsWith("<") && comp.operator.startsWith(">")) {
+          return true;
+        }
+        return false;
+      }
+    };
+    module2.exports = Comparator;
+    var parseOptions = require_parse_options();
+    var { safeRe: re, t: t2 } = require_re();
+    var cmp = require_cmp();
+    var debug = require_debug5();
+    var SemVer = require_semver();
+    var Range = require_range2();
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/functions/satisfies.js
+var require_satisfies = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/functions/satisfies.js"(exports2, module2) {
+    "use strict";
+    var Range = require_range2();
+    var satisfies = (version, range, options) => {
+      try {
+        range = new Range(range, options);
+      } catch (er) {
+        return false;
+      }
+      return range.test(version);
+    };
+    module2.exports = satisfies;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/to-comparators.js
+var require_to_comparators = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/to-comparators.js"(exports2, module2) {
+    "use strict";
+    var Range = require_range2();
+    var toComparators = (range, options) => new Range(range, options).set.map((comp) => comp.map((c) => c.value).join(" ").trim().split(" "));
+    module2.exports = toComparators;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/max-satisfying.js
+var require_max_satisfying = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/max-satisfying.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var Range = require_range2();
+    var maxSatisfying = (versions, range, options) => {
+      let max = null;
+      let maxSV = null;
+      let rangeObj = null;
+      try {
+        rangeObj = new Range(range, options);
+      } catch (er) {
+        return null;
+      }
+      versions.forEach((v) => {
+        if (rangeObj.test(v)) {
+          if (!max || maxSV.compare(v) === -1) {
+            max = v;
+            maxSV = new SemVer(max, options);
+          }
+        }
+      });
+      return max;
+    };
+    module2.exports = maxSatisfying;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/min-satisfying.js
+var require_min_satisfying = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/min-satisfying.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var Range = require_range2();
+    var minSatisfying = (versions, range, options) => {
+      let min = null;
+      let minSV = null;
+      let rangeObj = null;
+      try {
+        rangeObj = new Range(range, options);
+      } catch (er) {
+        return null;
+      }
+      versions.forEach((v) => {
+        if (rangeObj.test(v)) {
+          if (!min || minSV.compare(v) === 1) {
+            min = v;
+            minSV = new SemVer(min, options);
+          }
+        }
+      });
+      return min;
+    };
+    module2.exports = minSatisfying;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/min-version.js
+var require_min_version = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/min-version.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var Range = require_range2();
+    var gt2 = require_gt();
+    var minVersion = (range, loose) => {
+      range = new Range(range, loose);
+      let minver = new SemVer("0.0.0");
+      if (range.test(minver)) {
+        return minver;
+      }
+      minver = new SemVer("0.0.0-0");
+      if (range.test(minver)) {
+        return minver;
+      }
+      minver = null;
+      for (let i2 = 0; i2 < range.set.length; ++i2) {
+        const comparators = range.set[i2];
+        let setMin = null;
+        comparators.forEach((comparator) => {
+          const compver = new SemVer(comparator.semver.version);
+          switch (comparator.operator) {
+            case ">":
+              if (compver.prerelease.length === 0) {
+                compver.patch++;
+              } else {
+                compver.prerelease.push(0);
+              }
+              compver.raw = compver.format();
+            /* fallthrough */
+            case "":
+            case ">=":
+              if (!setMin || gt2(compver, setMin)) {
+                setMin = compver;
+              }
+              break;
+            case "<":
+            case "<=":
+              break;
+            /* istanbul ignore next */
+            default:
+              throw new Error(`Unexpected operation: ${comparator.operator}`);
+          }
+        });
+        if (setMin && (!minver || gt2(minver, setMin))) {
+          minver = setMin;
+        }
+      }
+      if (minver && range.test(minver)) {
+        return minver;
+      }
+      return null;
+    };
+    module2.exports = minVersion;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/valid.js
+var require_valid2 = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/valid.js"(exports2, module2) {
+    "use strict";
+    var Range = require_range2();
+    var validRange = (range, options) => {
+      try {
+        return new Range(range, options).range || "*";
+      } catch (er) {
+        return null;
+      }
+    };
+    module2.exports = validRange;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/outside.js
+var require_outside = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/outside.js"(exports2, module2) {
+    "use strict";
+    var SemVer = require_semver();
+    var Comparator = require_comparator();
+    var { ANY } = Comparator;
+    var Range = require_range2();
+    var satisfies = require_satisfies();
+    var gt2 = require_gt();
+    var lt = require_lt();
+    var lte = require_lte();
+    var gte = require_gte();
+    var outside = (version, range, hilo, options) => {
+      version = new SemVer(version, options);
+      range = new Range(range, options);
+      let gtfn, ltefn, ltfn, comp, ecomp;
+      switch (hilo) {
+        case ">":
+          gtfn = gt2;
+          ltefn = lte;
+          ltfn = lt;
+          comp = ">";
+          ecomp = ">=";
+          break;
+        case "<":
+          gtfn = lt;
+          ltefn = gte;
+          ltfn = gt2;
+          comp = "<";
+          ecomp = "<=";
+          break;
+        default:
+          throw new TypeError('Must provide a hilo val of "<" or ">"');
+      }
+      if (satisfies(version, range, options)) {
+        return false;
+      }
+      for (let i2 = 0; i2 < range.set.length; ++i2) {
+        const comparators = range.set[i2];
+        let high = null;
+        let low = null;
+        comparators.forEach((comparator) => {
+          if (comparator.semver === ANY) {
+            comparator = new Comparator(">=0.0.0");
+          }
+          high = high || comparator;
+          low = low || comparator;
+          if (gtfn(comparator.semver, high.semver, options)) {
+            high = comparator;
+          } else if (ltfn(comparator.semver, low.semver, options)) {
+            low = comparator;
+          }
+        });
+        if (high.operator === comp || high.operator === ecomp) {
+          return false;
+        }
+        if ((!low.operator || low.operator === comp) && ltefn(version, low.semver)) {
+          return false;
+        } else if (low.operator === ecomp && ltfn(version, low.semver)) {
+          return false;
+        }
+      }
+      return true;
+    };
+    module2.exports = outside;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/gtr.js
+var require_gtr = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/gtr.js"(exports2, module2) {
+    "use strict";
+    var outside = require_outside();
+    var gtr = (version, range, options) => outside(version, range, ">", options);
+    module2.exports = gtr;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/ltr.js
+var require_ltr = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/ltr.js"(exports2, module2) {
+    "use strict";
+    var outside = require_outside();
+    var ltr = (version, range, options) => outside(version, range, "<", options);
+    module2.exports = ltr;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/intersects.js
+var require_intersects = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/intersects.js"(exports2, module2) {
+    "use strict";
+    var Range = require_range2();
+    var intersects = (r1, r2, options) => {
+      r1 = new Range(r1, options);
+      r2 = new Range(r2, options);
+      return r1.intersects(r2, options);
+    };
+    module2.exports = intersects;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/simplify.js
+var require_simplify = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/simplify.js"(exports2, module2) {
+    "use strict";
+    var satisfies = require_satisfies();
+    var compare = require_compare();
+    module2.exports = (versions, range, options) => {
+      const set = [];
+      let first = null;
+      let prev = null;
+      const v = versions.sort((a, b) => compare(a, b, options));
+      for (const version of v) {
+        const included = satisfies(version, range, options);
+        if (included) {
+          prev = version;
+          if (!first) {
+            first = version;
+          }
+        } else {
+          if (prev) {
+            set.push([first, prev]);
+          }
+          prev = null;
+          first = null;
+        }
+      }
+      if (first) {
+        set.push([first, null]);
+      }
+      const ranges = [];
+      for (const [min, max] of set) {
+        if (min === max) {
+          ranges.push(min);
+        } else if (!max && min === v[0]) {
+          ranges.push("*");
+        } else if (!max) {
+          ranges.push(`>=${min}`);
+        } else if (min === v[0]) {
+          ranges.push(`<=${max}`);
+        } else {
+          ranges.push(`${min} - ${max}`);
+        }
+      }
+      const simplified = ranges.join(" || ");
+      const original = typeof range.raw === "string" ? range.raw : String(range);
+      return simplified.length < original.length ? simplified : range;
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/ranges/subset.js
+var require_subset = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/ranges/subset.js"(exports2, module2) {
+    "use strict";
+    var Range = require_range2();
+    var Comparator = require_comparator();
+    var { ANY } = Comparator;
+    var satisfies = require_satisfies();
+    var compare = require_compare();
+    var subset = (sub, dom, options = {}) => {
+      if (sub === dom) {
+        return true;
+      }
+      sub = new Range(sub, options);
+      dom = new Range(dom, options);
+      let sawNonNull = false;
+      OUTER: for (const simpleSub of sub.set) {
+        for (const simpleDom of dom.set) {
+          const isSub = simpleSubset(simpleSub, simpleDom, options);
+          sawNonNull = sawNonNull || isSub !== null;
+          if (isSub) {
+            continue OUTER;
+          }
+        }
+        if (sawNonNull) {
+          return false;
+        }
+      }
+      return true;
+    };
+    var minimumVersionWithPreRelease = [new Comparator(">=0.0.0-0")];
+    var minimumVersion = [new Comparator(">=0.0.0")];
+    var simpleSubset = (sub, dom, options) => {
+      if (sub === dom) {
+        return true;
+      }
+      if (sub.length === 1 && sub[0].semver === ANY) {
+        if (dom.length === 1 && dom[0].semver === ANY) {
+          return true;
+        } else if (options.includePrerelease) {
+          sub = minimumVersionWithPreRelease;
+        } else {
+          sub = minimumVersion;
+        }
+      }
+      if (dom.length === 1 && dom[0].semver === ANY) {
+        if (options.includePrerelease) {
+          return true;
+        } else {
+          dom = minimumVersion;
+        }
+      }
+      const eqSet = /* @__PURE__ */ new Set();
+      let gt2, lt;
+      for (const c of sub) {
+        if (c.operator === ">" || c.operator === ">=") {
+          gt2 = higherGT(gt2, c, options);
+        } else if (c.operator === "<" || c.operator === "<=") {
+          lt = lowerLT(lt, c, options);
+        } else {
+          eqSet.add(c.semver);
+        }
+      }
+      if (eqSet.size > 1) {
+        return null;
+      }
+      let gtltComp;
+      if (gt2 && lt) {
+        gtltComp = compare(gt2.semver, lt.semver, options);
+        if (gtltComp > 0) {
+          return null;
+        } else if (gtltComp === 0 && (gt2.operator !== ">=" || lt.operator !== "<=")) {
+          return null;
+        }
+      }
+      for (const eq of eqSet) {
+        if (gt2 && !satisfies(eq, String(gt2), options)) {
+          return null;
+        }
+        if (lt && !satisfies(eq, String(lt), options)) {
+          return null;
+        }
+        for (const c of dom) {
+          if (!satisfies(eq, String(c), options)) {
+            return false;
+          }
+        }
+        return true;
+      }
+      let higher, lower2;
+      let hasDomLT, hasDomGT;
+      let needDomLTPre = lt && !options.includePrerelease && lt.semver.prerelease.length ? lt.semver : false;
+      let needDomGTPre = gt2 && !options.includePrerelease && gt2.semver.prerelease.length ? gt2.semver : false;
+      if (needDomLTPre && needDomLTPre.prerelease.length === 1 && lt.operator === "<" && needDomLTPre.prerelease[0] === 0) {
+        needDomLTPre = false;
+      }
+      for (const c of dom) {
+        hasDomGT = hasDomGT || c.operator === ">" || c.operator === ">=";
+        hasDomLT = hasDomLT || c.operator === "<" || c.operator === "<=";
+        if (gt2) {
+          if (needDomGTPre) {
+            if (c.semver.prerelease && c.semver.prerelease.length && c.semver.major === needDomGTPre.major && c.semver.minor === needDomGTPre.minor && c.semver.patch === needDomGTPre.patch) {
+              needDomGTPre = false;
+            }
+          }
+          if (c.operator === ">" || c.operator === ">=") {
+            higher = higherGT(gt2, c, options);
+            if (higher === c && higher !== gt2) {
+              return false;
+            }
+          } else if (gt2.operator === ">=" && !c.test(gt2.semver)) {
+            return false;
+          }
+        }
+        if (lt) {
+          if (needDomLTPre) {
+            if (c.semver.prerelease && c.semver.prerelease.length && c.semver.major === needDomLTPre.major && c.semver.minor === needDomLTPre.minor && c.semver.patch === needDomLTPre.patch) {
+              needDomLTPre = false;
+            }
+          }
+          if (c.operator === "<" || c.operator === "<=") {
+            lower2 = lowerLT(lt, c, options);
+            if (lower2 === c && lower2 !== lt) {
+              return false;
+            }
+          } else if (lt.operator === "<=" && !c.test(lt.semver)) {
+            return false;
+          }
+        }
+        if (!c.operator && (lt || gt2) && gtltComp !== 0) {
+          return false;
+        }
+      }
+      if (gt2 && hasDomLT && !lt && gtltComp !== 0) {
+        return false;
+      }
+      if (lt && hasDomGT && !gt2 && gtltComp !== 0) {
+        return false;
+      }
+      if (needDomGTPre || needDomLTPre) {
+        return false;
+      }
+      return true;
+    };
+    var higherGT = (a, b, options) => {
+      if (!a) {
+        return b;
+      }
+      const comp = compare(a.semver, b.semver, options);
+      return comp > 0 ? a : comp < 0 ? b : b.operator === ">" && a.operator === ">=" ? b : a;
+    };
+    var lowerLT = (a, b, options) => {
+      if (!a) {
+        return b;
+      }
+      const comp = compare(a.semver, b.semver, options);
+      return comp < 0 ? a : comp > 0 ? b : b.operator === "<" && a.operator === "<=" ? b : a;
+    };
+    module2.exports = subset;
+  }
+});
+
+// node_modules/jsonwebtoken/node_modules/semver/index.js
+var require_semver2 = __commonJS({
+  "node_modules/jsonwebtoken/node_modules/semver/index.js"(exports2, module2) {
+    "use strict";
+    var internalRe = require_re();
+    var constants = require_constants2();
+    var SemVer = require_semver();
+    var identifiers = require_identifiers();
+    var parse = require_parse2();
+    var valid = require_valid();
+    var clean = require_clean();
+    var inc = require_inc();
+    var diff = require_diff();
+    var major = require_major();
+    var minor = require_minor();
+    var patch = require_patch();
+    var prerelease = require_prerelease();
+    var compare = require_compare();
+    var rcompare = require_rcompare();
+    var compareLoose = require_compare_loose();
+    var compareBuild = require_compare_build();
+    var sort = require_sort();
+    var rsort = require_rsort();
+    var gt2 = require_gt();
+    var lt = require_lt();
+    var eq = require_eq();
+    var neq = require_neq();
+    var gte = require_gte();
+    var lte = require_lte();
+    var cmp = require_cmp();
+    var coerce = require_coerce();
+    var truncate = require_truncate();
+    var Comparator = require_comparator();
+    var Range = require_range2();
+    var satisfies = require_satisfies();
+    var toComparators = require_to_comparators();
+    var maxSatisfying = require_max_satisfying();
+    var minSatisfying = require_min_satisfying();
+    var minVersion = require_min_version();
+    var validRange = require_valid2();
+    var outside = require_outside();
+    var gtr = require_gtr();
+    var ltr = require_ltr();
+    var intersects = require_intersects();
+    var simplifyRange = require_simplify();
+    var subset = require_subset();
+    module2.exports = {
+      parse,
+      valid,
+      clean,
+      inc,
+      diff,
+      major,
+      minor,
+      patch,
+      prerelease,
+      compare,
+      rcompare,
+      compareLoose,
+      compareBuild,
+      sort,
+      rsort,
+      gt: gt2,
+      lt,
+      eq,
+      neq,
+      gte,
+      lte,
+      cmp,
+      coerce,
+      truncate,
+      Comparator,
+      Range,
+      satisfies,
+      toComparators,
+      maxSatisfying,
+      minSatisfying,
+      minVersion,
+      validRange,
+      outside,
+      gtr,
+      ltr,
+      intersects,
+      simplifyRange,
+      subset,
+      SemVer,
+      re: internalRe.re,
+      src: internalRe.src,
+      tokens: internalRe.t,
+      SEMVER_SPEC_VERSION: constants.SEMVER_SPEC_VERSION,
+      RELEASE_TYPES: constants.RELEASE_TYPES,
+      compareIdentifiers: identifiers.compareIdentifiers,
+      rcompareIdentifiers: identifiers.rcompareIdentifiers
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/lib/asymmetricKeyDetailsSupported.js
+var require_asymmetricKeyDetailsSupported = __commonJS({
+  "node_modules/jsonwebtoken/lib/asymmetricKeyDetailsSupported.js"(exports2, module2) {
+    var semver = require_semver2();
+    module2.exports = semver.satisfies(process.version, ">=15.7.0");
+  }
+});
+
+// node_modules/jsonwebtoken/lib/rsaPssKeyDetailsSupported.js
+var require_rsaPssKeyDetailsSupported = __commonJS({
+  "node_modules/jsonwebtoken/lib/rsaPssKeyDetailsSupported.js"(exports2, module2) {
+    var semver = require_semver2();
+    module2.exports = semver.satisfies(process.version, ">=16.9.0");
+  }
+});
+
+// node_modules/jsonwebtoken/lib/validateAsymmetricKey.js
+var require_validateAsymmetricKey = __commonJS({
+  "node_modules/jsonwebtoken/lib/validateAsymmetricKey.js"(exports2, module2) {
+    var ASYMMETRIC_KEY_DETAILS_SUPPORTED = require_asymmetricKeyDetailsSupported();
+    var RSA_PSS_KEY_DETAILS_SUPPORTED = require_rsaPssKeyDetailsSupported();
+    var allowedAlgorithmsForKeys = {
+      "ec": ["ES256", "ES384", "ES512"],
+      "rsa": ["RS256", "PS256", "RS384", "PS384", "RS512", "PS512"],
+      "rsa-pss": ["PS256", "PS384", "PS512"]
+    };
+    var allowedCurves = {
+      ES256: "prime256v1",
+      ES384: "secp384r1",
+      ES512: "secp521r1"
+    };
+    module2.exports = function(algorithm, key) {
+      if (!algorithm || !key) return;
+      const keyType = key.asymmetricKeyType;
+      if (!keyType) return;
+      const allowedAlgorithms = allowedAlgorithmsForKeys[keyType];
+      if (!allowedAlgorithms) {
+        throw new Error(`Unknown key type "${keyType}".`);
+      }
+      if (!allowedAlgorithms.includes(algorithm)) {
+        throw new Error(`"alg" parameter for "${keyType}" key type must be one of: ${allowedAlgorithms.join(", ")}.`);
+      }
+      if (ASYMMETRIC_KEY_DETAILS_SUPPORTED) {
+        switch (keyType) {
+          case "ec":
+            const keyCurve = key.asymmetricKeyDetails.namedCurve;
+            const allowedCurve = allowedCurves[algorithm];
+            if (keyCurve !== allowedCurve) {
+              throw new Error(`"alg" parameter "${algorithm}" requires curve "${allowedCurve}".`);
+            }
+            break;
+          case "rsa-pss":
+            if (RSA_PSS_KEY_DETAILS_SUPPORTED) {
+              const length = parseInt(algorithm.slice(-3), 10);
+              const { hashAlgorithm, mgf1HashAlgorithm, saltLength } = key.asymmetricKeyDetails;
+              if (hashAlgorithm !== `sha${length}` || mgf1HashAlgorithm !== hashAlgorithm) {
+                throw new Error(`Invalid key for this operation, its RSA-PSS parameters do not meet the requirements of "alg" ${algorithm}.`);
+              }
+              if (saltLength !== void 0 && saltLength > length >> 3) {
+                throw new Error(`Invalid key for this operation, its RSA-PSS parameter saltLength does not meet the requirements of "alg" ${algorithm}.`);
+              }
+            }
+            break;
+        }
+      }
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/lib/psSupported.js
+var require_psSupported = __commonJS({
+  "node_modules/jsonwebtoken/lib/psSupported.js"(exports2, module2) {
+    var semver = require_semver2();
+    module2.exports = semver.satisfies(process.version, "^6.12.0 || >=8.0.0");
+  }
+});
+
+// node_modules/jsonwebtoken/verify.js
+var require_verify = __commonJS({
+  "node_modules/jsonwebtoken/verify.js"(exports2, module2) {
+    var JsonWebTokenError = require_JsonWebTokenError();
+    var NotBeforeError = require_NotBeforeError();
+    var TokenExpiredError = require_TokenExpiredError();
+    var decode = require_decode2();
+    var timespan = require_timespan();
+    var validateAsymmetricKey = require_validateAsymmetricKey();
+    var PS_SUPPORTED = require_psSupported();
+    var jws = require_jws();
+    var { KeyObject, createSecretKey, createPublicKey } = require("crypto");
+    var PUB_KEY_ALGS = ["RS256", "RS384", "RS512"];
+    var EC_KEY_ALGS = ["ES256", "ES384", "ES512"];
+    var RSA_KEY_ALGS = ["RS256", "RS384", "RS512"];
+    var HS_ALGS = ["HS256", "HS384", "HS512"];
+    if (PS_SUPPORTED) {
+      PUB_KEY_ALGS.splice(PUB_KEY_ALGS.length, 0, "PS256", "PS384", "PS512");
+      RSA_KEY_ALGS.splice(RSA_KEY_ALGS.length, 0, "PS256", "PS384", "PS512");
+    }
+    module2.exports = function(jwtString, secretOrPublicKey, options, callback) {
+      if (typeof options === "function" && !callback) {
+        callback = options;
+        options = {};
+      }
+      if (!options) {
+        options = {};
+      }
+      options = Object.assign({}, options);
+      let done;
+      if (callback) {
+        done = callback;
+      } else {
+        done = function(err, data) {
+          if (err) throw err;
+          return data;
+        };
+      }
+      if (options.clockTimestamp && typeof options.clockTimestamp !== "number") {
+        return done(new JsonWebTokenError("clockTimestamp must be a number"));
+      }
+      if (options.nonce !== void 0 && (typeof options.nonce !== "string" || options.nonce.trim() === "")) {
+        return done(new JsonWebTokenError("nonce must be a non-empty string"));
+      }
+      if (options.allowInvalidAsymmetricKeyTypes !== void 0 && typeof options.allowInvalidAsymmetricKeyTypes !== "boolean") {
+        return done(new JsonWebTokenError("allowInvalidAsymmetricKeyTypes must be a boolean"));
+      }
+      const clockTimestamp = options.clockTimestamp || Math.floor(Date.now() / 1e3);
+      if (!jwtString) {
+        return done(new JsonWebTokenError("jwt must be provided"));
+      }
+      if (typeof jwtString !== "string") {
+        return done(new JsonWebTokenError("jwt must be a string"));
+      }
+      const parts = jwtString.split(".");
+      if (parts.length !== 3) {
+        return done(new JsonWebTokenError("jwt malformed"));
+      }
+      let decodedToken;
+      try {
+        decodedToken = decode(jwtString, { complete: true });
+      } catch (err) {
+        return done(err);
+      }
+      if (!decodedToken) {
+        return done(new JsonWebTokenError("invalid token"));
+      }
+      const header = decodedToken.header;
+      let getSecret;
+      if (typeof secretOrPublicKey === "function") {
+        if (!callback) {
+          return done(new JsonWebTokenError("verify must be called asynchronous if secret or public key is provided as a callback"));
+        }
+        getSecret = secretOrPublicKey;
+      } else {
+        getSecret = function(header2, secretCallback) {
+          return secretCallback(null, secretOrPublicKey);
+        };
+      }
+      return getSecret(header, function(err, secretOrPublicKey2) {
+        if (err) {
+          return done(new JsonWebTokenError("error in secret or public key callback: " + err.message));
+        }
+        const hasSignature = parts[2].trim() !== "";
+        if (!hasSignature && secretOrPublicKey2) {
+          return done(new JsonWebTokenError("jwt signature is required"));
+        }
+        if (hasSignature && !secretOrPublicKey2) {
+          return done(new JsonWebTokenError("secret or public key must be provided"));
+        }
+        if (!hasSignature && !options.algorithms) {
+          return done(new JsonWebTokenError('please specify "none" in "algorithms" to verify unsigned tokens'));
+        }
+        if (secretOrPublicKey2 != null && !(secretOrPublicKey2 instanceof KeyObject)) {
+          try {
+            secretOrPublicKey2 = createPublicKey(secretOrPublicKey2);
+          } catch (_) {
+            try {
+              secretOrPublicKey2 = createSecretKey(typeof secretOrPublicKey2 === "string" ? Buffer.from(secretOrPublicKey2) : secretOrPublicKey2);
+            } catch (_2) {
+              return done(new JsonWebTokenError("secretOrPublicKey is not valid key material"));
+            }
+          }
+        }
+        if (!options.algorithms) {
+          if (secretOrPublicKey2.type === "secret") {
+            options.algorithms = HS_ALGS;
+          } else if (["rsa", "rsa-pss"].includes(secretOrPublicKey2.asymmetricKeyType)) {
+            options.algorithms = RSA_KEY_ALGS;
+          } else if (secretOrPublicKey2.asymmetricKeyType === "ec") {
+            options.algorithms = EC_KEY_ALGS;
+          } else {
+            options.algorithms = PUB_KEY_ALGS;
+          }
+        }
+        if (options.algorithms.indexOf(decodedToken.header.alg) === -1) {
+          return done(new JsonWebTokenError("invalid algorithm"));
+        }
+        if (header.alg.startsWith("HS") && secretOrPublicKey2.type !== "secret") {
+          return done(new JsonWebTokenError(`secretOrPublicKey must be a symmetric key when using ${header.alg}`));
+        } else if (/^(?:RS|PS|ES)/.test(header.alg) && secretOrPublicKey2.type !== "public") {
+          return done(new JsonWebTokenError(`secretOrPublicKey must be an asymmetric key when using ${header.alg}`));
+        }
+        if (!options.allowInvalidAsymmetricKeyTypes) {
+          try {
+            validateAsymmetricKey(header.alg, secretOrPublicKey2);
+          } catch (e2) {
+            return done(e2);
+          }
+        }
+        let valid;
+        try {
+          valid = jws.verify(jwtString, decodedToken.header.alg, secretOrPublicKey2);
+        } catch (e2) {
+          return done(e2);
+        }
+        if (!valid) {
+          return done(new JsonWebTokenError("invalid signature"));
+        }
+        const payload = decodedToken.payload;
+        if (typeof payload.nbf !== "undefined" && !options.ignoreNotBefore) {
+          if (typeof payload.nbf !== "number") {
+            return done(new JsonWebTokenError("invalid nbf value"));
+          }
+          if (payload.nbf > clockTimestamp + (options.clockTolerance || 0)) {
+            return done(new NotBeforeError("jwt not active", new Date(payload.nbf * 1e3)));
+          }
+        }
+        if (typeof payload.exp !== "undefined" && !options.ignoreExpiration) {
+          if (typeof payload.exp !== "number") {
+            return done(new JsonWebTokenError("invalid exp value"));
+          }
+          if (clockTimestamp >= payload.exp + (options.clockTolerance || 0)) {
+            return done(new TokenExpiredError("jwt expired", new Date(payload.exp * 1e3)));
+          }
+        }
+        if (options.audience) {
+          const audiences = Array.isArray(options.audience) ? options.audience : [options.audience];
+          const target = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+          const match2 = target.some(function(targetAudience) {
+            return audiences.some(function(audience) {
+              return audience instanceof RegExp ? audience.test(targetAudience) : audience === targetAudience;
+            });
+          });
+          if (!match2) {
+            return done(new JsonWebTokenError("jwt audience invalid. expected: " + audiences.join(" or ")));
+          }
+        }
+        if (options.issuer) {
+          const invalid_issuer = typeof options.issuer === "string" && payload.iss !== options.issuer || Array.isArray(options.issuer) && options.issuer.indexOf(payload.iss) === -1;
+          if (invalid_issuer) {
+            return done(new JsonWebTokenError("jwt issuer invalid. expected: " + options.issuer));
+          }
+        }
+        if (options.subject) {
+          if (payload.sub !== options.subject) {
+            return done(new JsonWebTokenError("jwt subject invalid. expected: " + options.subject));
+          }
+        }
+        if (options.jwtid) {
+          if (payload.jti !== options.jwtid) {
+            return done(new JsonWebTokenError("jwt jwtid invalid. expected: " + options.jwtid));
+          }
+        }
+        if (options.nonce) {
+          if (payload.nonce !== options.nonce) {
+            return done(new JsonWebTokenError("jwt nonce invalid. expected: " + options.nonce));
+          }
+        }
+        if (options.maxAge) {
+          if (typeof payload.iat !== "number") {
+            return done(new JsonWebTokenError("iat required when maxAge is specified"));
+          }
+          const maxAgeTimestamp = timespan(options.maxAge, payload.iat);
+          if (typeof maxAgeTimestamp === "undefined") {
+            return done(new JsonWebTokenError('"maxAge" should be a number of seconds or string representing a timespan eg: "1d", "20h", 60'));
+          }
+          if (clockTimestamp >= maxAgeTimestamp + (options.clockTolerance || 0)) {
+            return done(new TokenExpiredError("maxAge exceeded", new Date(maxAgeTimestamp * 1e3)));
+          }
+        }
+        if (options.complete === true) {
+          const signature = decodedToken.signature;
+          return done(null, {
+            header,
+            payload,
+            signature
+          });
+        }
+        return done(null, payload);
+      });
+    };
+  }
+});
+
+// node_modules/lodash.includes/index.js
+var require_lodash = __commonJS({
+  "node_modules/lodash.includes/index.js"(exports2, module2) {
+    var INFINITY = 1 / 0;
+    var MAX_SAFE_INTEGER = 9007199254740991;
+    var MAX_INTEGER = 17976931348623157e292;
+    var NAN = 0 / 0;
+    var argsTag = "[object Arguments]";
+    var funcTag = "[object Function]";
+    var genTag = "[object GeneratorFunction]";
+    var stringTag = "[object String]";
+    var symbolTag = "[object Symbol]";
+    var reTrim = /^\s+|\s+$/g;
+    var reIsBadHex = /^[-+]0x[0-9a-f]+$/i;
+    var reIsBinary = /^0b[01]+$/i;
+    var reIsOctal = /^0o[0-7]+$/i;
+    var reIsUint = /^(?:0|[1-9]\d*)$/;
+    var freeParseInt = parseInt;
+    function arrayMap(array, iteratee) {
+      var index = -1, length = array ? array.length : 0, result = Array(length);
+      while (++index < length) {
+        result[index] = iteratee(array[index], index, array);
+      }
+      return result;
+    }
+    function baseFindIndex(array, predicate, fromIndex, fromRight) {
+      var length = array.length, index = fromIndex + (fromRight ? 1 : -1);
+      while (fromRight ? index-- : ++index < length) {
+        if (predicate(array[index], index, array)) {
+          return index;
+        }
+      }
+      return -1;
+    }
+    function baseIndexOf(array, value, fromIndex) {
+      if (value !== value) {
+        return baseFindIndex(array, baseIsNaN, fromIndex);
+      }
+      var index = fromIndex - 1, length = array.length;
+      while (++index < length) {
+        if (array[index] === value) {
+          return index;
+        }
+      }
+      return -1;
+    }
+    function baseIsNaN(value) {
+      return value !== value;
+    }
+    function baseTimes(n, iteratee) {
+      var index = -1, result = Array(n);
+      while (++index < n) {
+        result[index] = iteratee(index);
+      }
+      return result;
+    }
+    function baseValues(object, props) {
+      return arrayMap(props, function(key) {
+        return object[key];
+      });
+    }
+    function overArg(func, transform) {
+      return function(arg) {
+        return func(transform(arg));
+      };
+    }
+    var objectProto = Object.prototype;
+    var hasOwnProperty = objectProto.hasOwnProperty;
+    var objectToString = objectProto.toString;
+    var propertyIsEnumerable = objectProto.propertyIsEnumerable;
+    var nativeKeys = overArg(Object.keys, Object);
+    var nativeMax = Math.max;
+    function arrayLikeKeys(value, inherited) {
+      var result = isArray(value) || isArguments(value) ? baseTimes(value.length, String) : [];
+      var length = result.length, skipIndexes = !!length;
+      for (var key in value) {
+        if ((inherited || hasOwnProperty.call(value, key)) && !(skipIndexes && (key == "length" || isIndex(key, length)))) {
+          result.push(key);
+        }
+      }
+      return result;
+    }
+    function baseKeys(object) {
+      if (!isPrototype(object)) {
+        return nativeKeys(object);
+      }
+      var result = [];
+      for (var key in Object(object)) {
+        if (hasOwnProperty.call(object, key) && key != "constructor") {
+          result.push(key);
+        }
+      }
+      return result;
+    }
+    function isIndex(value, length) {
+      length = length == null ? MAX_SAFE_INTEGER : length;
+      return !!length && (typeof value == "number" || reIsUint.test(value)) && (value > -1 && value % 1 == 0 && value < length);
+    }
+    function isPrototype(value) {
+      var Ctor = value && value.constructor, proto = typeof Ctor == "function" && Ctor.prototype || objectProto;
+      return value === proto;
+    }
+    function includes(collection, value, fromIndex, guard) {
+      collection = isArrayLike(collection) ? collection : values(collection);
+      fromIndex = fromIndex && !guard ? toInteger(fromIndex) : 0;
+      var length = collection.length;
+      if (fromIndex < 0) {
+        fromIndex = nativeMax(length + fromIndex, 0);
+      }
+      return isString(collection) ? fromIndex <= length && collection.indexOf(value, fromIndex) > -1 : !!length && baseIndexOf(collection, value, fromIndex) > -1;
+    }
+    function isArguments(value) {
+      return isArrayLikeObject(value) && hasOwnProperty.call(value, "callee") && (!propertyIsEnumerable.call(value, "callee") || objectToString.call(value) == argsTag);
+    }
+    var isArray = Array.isArray;
+    function isArrayLike(value) {
+      return value != null && isLength(value.length) && !isFunction(value);
+    }
+    function isArrayLikeObject(value) {
+      return isObjectLike(value) && isArrayLike(value);
+    }
+    function isFunction(value) {
+      var tag = isObject(value) ? objectToString.call(value) : "";
+      return tag == funcTag || tag == genTag;
+    }
+    function isLength(value) {
+      return typeof value == "number" && value > -1 && value % 1 == 0 && value <= MAX_SAFE_INTEGER;
+    }
+    function isObject(value) {
+      var type = typeof value;
+      return !!value && (type == "object" || type == "function");
+    }
+    function isObjectLike(value) {
+      return !!value && typeof value == "object";
+    }
+    function isString(value) {
+      return typeof value == "string" || !isArray(value) && isObjectLike(value) && objectToString.call(value) == stringTag;
+    }
+    function isSymbol(value) {
+      return typeof value == "symbol" || isObjectLike(value) && objectToString.call(value) == symbolTag;
+    }
+    function toFinite(value) {
+      if (!value) {
+        return value === 0 ? value : 0;
+      }
+      value = toNumber(value);
+      if (value === INFINITY || value === -INFINITY) {
+        var sign = value < 0 ? -1 : 1;
+        return sign * MAX_INTEGER;
+      }
+      return value === value ? value : 0;
+    }
+    function toInteger(value) {
+      var result = toFinite(value), remainder = result % 1;
+      return result === result ? remainder ? result - remainder : result : 0;
+    }
+    function toNumber(value) {
+      if (typeof value == "number") {
+        return value;
+      }
+      if (isSymbol(value)) {
+        return NAN;
+      }
+      if (isObject(value)) {
+        var other = typeof value.valueOf == "function" ? value.valueOf() : value;
+        value = isObject(other) ? other + "" : other;
+      }
+      if (typeof value != "string") {
+        return value === 0 ? value : +value;
+      }
+      value = value.replace(reTrim, "");
+      var isBinary = reIsBinary.test(value);
+      return isBinary || reIsOctal.test(value) ? freeParseInt(value.slice(2), isBinary ? 2 : 8) : reIsBadHex.test(value) ? NAN : +value;
+    }
+    function keys(object) {
+      return isArrayLike(object) ? arrayLikeKeys(object) : baseKeys(object);
+    }
+    function values(object) {
+      return object ? baseValues(object, keys(object)) : [];
+    }
+    module2.exports = includes;
+  }
+});
+
+// node_modules/lodash.isboolean/index.js
+var require_lodash2 = __commonJS({
+  "node_modules/lodash.isboolean/index.js"(exports2, module2) {
+    var boolTag = "[object Boolean]";
+    var objectProto = Object.prototype;
+    var objectToString = objectProto.toString;
+    function isBoolean(value) {
+      return value === true || value === false || isObjectLike(value) && objectToString.call(value) == boolTag;
+    }
+    function isObjectLike(value) {
+      return !!value && typeof value == "object";
+    }
+    module2.exports = isBoolean;
+  }
+});
+
+// node_modules/lodash.isinteger/index.js
+var require_lodash3 = __commonJS({
+  "node_modules/lodash.isinteger/index.js"(exports2, module2) {
+    var INFINITY = 1 / 0;
+    var MAX_INTEGER = 17976931348623157e292;
+    var NAN = 0 / 0;
+    var symbolTag = "[object Symbol]";
+    var reTrim = /^\s+|\s+$/g;
+    var reIsBadHex = /^[-+]0x[0-9a-f]+$/i;
+    var reIsBinary = /^0b[01]+$/i;
+    var reIsOctal = /^0o[0-7]+$/i;
+    var freeParseInt = parseInt;
+    var objectProto = Object.prototype;
+    var objectToString = objectProto.toString;
+    function isInteger(value) {
+      return typeof value == "number" && value == toInteger(value);
+    }
+    function isObject(value) {
+      var type = typeof value;
+      return !!value && (type == "object" || type == "function");
+    }
+    function isObjectLike(value) {
+      return !!value && typeof value == "object";
+    }
+    function isSymbol(value) {
+      return typeof value == "symbol" || isObjectLike(value) && objectToString.call(value) == symbolTag;
+    }
+    function toFinite(value) {
+      if (!value) {
+        return value === 0 ? value : 0;
+      }
+      value = toNumber(value);
+      if (value === INFINITY || value === -INFINITY) {
+        var sign = value < 0 ? -1 : 1;
+        return sign * MAX_INTEGER;
+      }
+      return value === value ? value : 0;
+    }
+    function toInteger(value) {
+      var result = toFinite(value), remainder = result % 1;
+      return result === result ? remainder ? result - remainder : result : 0;
+    }
+    function toNumber(value) {
+      if (typeof value == "number") {
+        return value;
+      }
+      if (isSymbol(value)) {
+        return NAN;
+      }
+      if (isObject(value)) {
+        var other = typeof value.valueOf == "function" ? value.valueOf() : value;
+        value = isObject(other) ? other + "" : other;
+      }
+      if (typeof value != "string") {
+        return value === 0 ? value : +value;
+      }
+      value = value.replace(reTrim, "");
+      var isBinary = reIsBinary.test(value);
+      return isBinary || reIsOctal.test(value) ? freeParseInt(value.slice(2), isBinary ? 2 : 8) : reIsBadHex.test(value) ? NAN : +value;
+    }
+    module2.exports = isInteger;
+  }
+});
+
+// node_modules/lodash.isnumber/index.js
+var require_lodash4 = __commonJS({
+  "node_modules/lodash.isnumber/index.js"(exports2, module2) {
+    var numberTag = "[object Number]";
+    var objectProto = Object.prototype;
+    var objectToString = objectProto.toString;
+    function isObjectLike(value) {
+      return !!value && typeof value == "object";
+    }
+    function isNumber(value) {
+      return typeof value == "number" || isObjectLike(value) && objectToString.call(value) == numberTag;
+    }
+    module2.exports = isNumber;
+  }
+});
+
+// node_modules/lodash.isplainobject/index.js
+var require_lodash5 = __commonJS({
+  "node_modules/lodash.isplainobject/index.js"(exports2, module2) {
+    var objectTag = "[object Object]";
+    function isHostObject(value) {
+      var result = false;
+      if (value != null && typeof value.toString != "function") {
+        try {
+          result = !!(value + "");
+        } catch (e2) {
+        }
+      }
+      return result;
+    }
+    function overArg(func, transform) {
+      return function(arg) {
+        return func(transform(arg));
+      };
+    }
+    var funcProto = Function.prototype;
+    var objectProto = Object.prototype;
+    var funcToString = funcProto.toString;
+    var hasOwnProperty = objectProto.hasOwnProperty;
+    var objectCtorString = funcToString.call(Object);
+    var objectToString = objectProto.toString;
+    var getPrototype = overArg(Object.getPrototypeOf, Object);
+    function isObjectLike(value) {
+      return !!value && typeof value == "object";
+    }
+    function isPlainObject2(value) {
+      if (!isObjectLike(value) || objectToString.call(value) != objectTag || isHostObject(value)) {
+        return false;
+      }
+      var proto = getPrototype(value);
+      if (proto === null) {
+        return true;
+      }
+      var Ctor = hasOwnProperty.call(proto, "constructor") && proto.constructor;
+      return typeof Ctor == "function" && Ctor instanceof Ctor && funcToString.call(Ctor) == objectCtorString;
+    }
+    module2.exports = isPlainObject2;
+  }
+});
+
+// node_modules/lodash.isstring/index.js
+var require_lodash6 = __commonJS({
+  "node_modules/lodash.isstring/index.js"(exports2, module2) {
+    var stringTag = "[object String]";
+    var objectProto = Object.prototype;
+    var objectToString = objectProto.toString;
+    var isArray = Array.isArray;
+    function isObjectLike(value) {
+      return !!value && typeof value == "object";
+    }
+    function isString(value) {
+      return typeof value == "string" || !isArray(value) && isObjectLike(value) && objectToString.call(value) == stringTag;
+    }
+    module2.exports = isString;
+  }
+});
+
+// node_modules/lodash.once/index.js
+var require_lodash7 = __commonJS({
+  "node_modules/lodash.once/index.js"(exports2, module2) {
+    var FUNC_ERROR_TEXT = "Expected a function";
+    var INFINITY = 1 / 0;
+    var MAX_INTEGER = 17976931348623157e292;
+    var NAN = 0 / 0;
+    var symbolTag = "[object Symbol]";
+    var reTrim = /^\s+|\s+$/g;
+    var reIsBadHex = /^[-+]0x[0-9a-f]+$/i;
+    var reIsBinary = /^0b[01]+$/i;
+    var reIsOctal = /^0o[0-7]+$/i;
+    var freeParseInt = parseInt;
+    var objectProto = Object.prototype;
+    var objectToString = objectProto.toString;
+    function before(n, func) {
+      var result;
+      if (typeof func != "function") {
+        throw new TypeError(FUNC_ERROR_TEXT);
+      }
+      n = toInteger(n);
+      return function() {
+        if (--n > 0) {
+          result = func.apply(this, arguments);
+        }
+        if (n <= 1) {
+          func = void 0;
+        }
+        return result;
+      };
+    }
+    function once(func) {
+      return before(2, func);
+    }
+    function isObject(value) {
+      var type = typeof value;
+      return !!value && (type == "object" || type == "function");
+    }
+    function isObjectLike(value) {
+      return !!value && typeof value == "object";
+    }
+    function isSymbol(value) {
+      return typeof value == "symbol" || isObjectLike(value) && objectToString.call(value) == symbolTag;
+    }
+    function toFinite(value) {
+      if (!value) {
+        return value === 0 ? value : 0;
+      }
+      value = toNumber(value);
+      if (value === INFINITY || value === -INFINITY) {
+        var sign = value < 0 ? -1 : 1;
+        return sign * MAX_INTEGER;
+      }
+      return value === value ? value : 0;
+    }
+    function toInteger(value) {
+      var result = toFinite(value), remainder = result % 1;
+      return result === result ? remainder ? result - remainder : result : 0;
+    }
+    function toNumber(value) {
+      if (typeof value == "number") {
+        return value;
+      }
+      if (isSymbol(value)) {
+        return NAN;
+      }
+      if (isObject(value)) {
+        var other = typeof value.valueOf == "function" ? value.valueOf() : value;
+        value = isObject(other) ? other + "" : other;
+      }
+      if (typeof value != "string") {
+        return value === 0 ? value : +value;
+      }
+      value = value.replace(reTrim, "");
+      var isBinary = reIsBinary.test(value);
+      return isBinary || reIsOctal.test(value) ? freeParseInt(value.slice(2), isBinary ? 2 : 8) : reIsBadHex.test(value) ? NAN : +value;
+    }
+    module2.exports = once;
+  }
+});
+
+// node_modules/jsonwebtoken/sign.js
+var require_sign2 = __commonJS({
+  "node_modules/jsonwebtoken/sign.js"(exports2, module2) {
+    var timespan = require_timespan();
+    var PS_SUPPORTED = require_psSupported();
+    var validateAsymmetricKey = require_validateAsymmetricKey();
+    var jws = require_jws();
+    var includes = require_lodash();
+    var isBoolean = require_lodash2();
+    var isInteger = require_lodash3();
+    var isNumber = require_lodash4();
+    var isPlainObject2 = require_lodash5();
+    var isString = require_lodash6();
+    var once = require_lodash7();
+    var { KeyObject, createSecretKey, createPrivateKey } = require("crypto");
+    var SUPPORTED_ALGS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "HS256", "HS384", "HS512", "none"];
+    if (PS_SUPPORTED) {
+      SUPPORTED_ALGS.splice(3, 0, "PS256", "PS384", "PS512");
+    }
+    var sign_options_schema = {
+      expiresIn: { isValid: function(value) {
+        return isInteger(value) || isString(value) && value;
+      }, message: '"expiresIn" should be a number of seconds or string representing a timespan' },
+      notBefore: { isValid: function(value) {
+        return isInteger(value) || isString(value) && value;
+      }, message: '"notBefore" should be a number of seconds or string representing a timespan' },
+      audience: { isValid: function(value) {
+        return isString(value) || Array.isArray(value);
+      }, message: '"audience" must be a string or array' },
+      algorithm: { isValid: includes.bind(null, SUPPORTED_ALGS), message: '"algorithm" must be a valid string enum value' },
+      header: { isValid: isPlainObject2, message: '"header" must be an object' },
+      encoding: { isValid: isString, message: '"encoding" must be a string' },
+      issuer: { isValid: isString, message: '"issuer" must be a string' },
+      subject: { isValid: isString, message: '"subject" must be a string' },
+      jwtid: { isValid: isString, message: '"jwtid" must be a string' },
+      noTimestamp: { isValid: isBoolean, message: '"noTimestamp" must be a boolean' },
+      keyid: { isValid: isString, message: '"keyid" must be a string' },
+      mutatePayload: { isValid: isBoolean, message: '"mutatePayload" must be a boolean' },
+      allowInsecureKeySizes: { isValid: isBoolean, message: '"allowInsecureKeySizes" must be a boolean' },
+      allowInvalidAsymmetricKeyTypes: { isValid: isBoolean, message: '"allowInvalidAsymmetricKeyTypes" must be a boolean' }
+    };
+    var registered_claims_schema = {
+      iat: { isValid: isNumber, message: '"iat" should be a number of seconds' },
+      exp: { isValid: isNumber, message: '"exp" should be a number of seconds' },
+      nbf: { isValid: isNumber, message: '"nbf" should be a number of seconds' }
+    };
+    function validate(schema, allowUnknown, object, parameterName) {
+      if (!isPlainObject2(object)) {
+        throw new Error('Expected "' + parameterName + '" to be a plain object.');
+      }
+      Object.keys(object).forEach(function(key) {
+        const validator = schema[key];
+        if (!validator) {
+          if (!allowUnknown) {
+            throw new Error('"' + key + '" is not allowed in "' + parameterName + '"');
+          }
+          return;
+        }
+        if (!validator.isValid(object[key])) {
+          throw new Error(validator.message);
+        }
+      });
+    }
+    function validateOptions(options) {
+      return validate(sign_options_schema, false, options, "options");
+    }
+    function validatePayload(payload) {
+      return validate(registered_claims_schema, true, payload, "payload");
+    }
+    var options_to_payload = {
+      "audience": "aud",
+      "issuer": "iss",
+      "subject": "sub",
+      "jwtid": "jti"
+    };
+    var options_for_objects = [
+      "expiresIn",
+      "notBefore",
+      "noTimestamp",
+      "audience",
+      "issuer",
+      "subject",
+      "jwtid"
+    ];
+    module2.exports = function(payload, secretOrPrivateKey, options, callback) {
+      if (typeof options === "function") {
+        callback = options;
+        options = {};
+      } else {
+        options = options || {};
+      }
+      const isObjectPayload = typeof payload === "object" && !Buffer.isBuffer(payload);
+      const header = Object.assign({
+        alg: options.algorithm || "HS256",
+        typ: isObjectPayload ? "JWT" : void 0,
+        kid: options.keyid
+      }, options.header);
+      function failure(err) {
+        if (callback) {
+          return callback(err);
+        }
+        throw err;
+      }
+      if (!secretOrPrivateKey && options.algorithm !== "none") {
+        return failure(new Error("secretOrPrivateKey must have a value"));
+      }
+      if (secretOrPrivateKey != null && !(secretOrPrivateKey instanceof KeyObject)) {
+        try {
+          secretOrPrivateKey = createPrivateKey(secretOrPrivateKey);
+        } catch (_) {
+          try {
+            secretOrPrivateKey = createSecretKey(typeof secretOrPrivateKey === "string" ? Buffer.from(secretOrPrivateKey) : secretOrPrivateKey);
+          } catch (_2) {
+            return failure(new Error("secretOrPrivateKey is not valid key material"));
+          }
+        }
+      }
+      if (header.alg.startsWith("HS") && secretOrPrivateKey.type !== "secret") {
+        return failure(new Error(`secretOrPrivateKey must be a symmetric key when using ${header.alg}`));
+      } else if (/^(?:RS|PS|ES)/.test(header.alg)) {
+        if (secretOrPrivateKey.type !== "private") {
+          return failure(new Error(`secretOrPrivateKey must be an asymmetric key when using ${header.alg}`));
+        }
+        if (!options.allowInsecureKeySizes && !header.alg.startsWith("ES") && secretOrPrivateKey.asymmetricKeyDetails !== void 0 && //KeyObject.asymmetricKeyDetails is supported in Node 15+
+        secretOrPrivateKey.asymmetricKeyDetails.modulusLength < 2048) {
+          return failure(new Error(`secretOrPrivateKey has a minimum key size of 2048 bits for ${header.alg}`));
+        }
+      }
+      if (typeof payload === "undefined") {
+        return failure(new Error("payload is required"));
+      } else if (isObjectPayload) {
+        try {
+          validatePayload(payload);
+        } catch (error) {
+          return failure(error);
+        }
+        if (!options.mutatePayload) {
+          payload = Object.assign({}, payload);
+        }
+      } else {
+        const invalid_options = options_for_objects.filter(function(opt) {
+          return typeof options[opt] !== "undefined";
+        });
+        if (invalid_options.length > 0) {
+          return failure(new Error("invalid " + invalid_options.join(",") + " option for " + typeof payload + " payload"));
+        }
+      }
+      if (typeof payload.exp !== "undefined" && typeof options.expiresIn !== "undefined") {
+        return failure(new Error('Bad "options.expiresIn" option the payload already has an "exp" property.'));
+      }
+      if (typeof payload.nbf !== "undefined" && typeof options.notBefore !== "undefined") {
+        return failure(new Error('Bad "options.notBefore" option the payload already has an "nbf" property.'));
+      }
+      try {
+        validateOptions(options);
+      } catch (error) {
+        return failure(error);
+      }
+      if (!options.allowInvalidAsymmetricKeyTypes) {
+        try {
+          validateAsymmetricKey(header.alg, secretOrPrivateKey);
+        } catch (error) {
+          return failure(error);
+        }
+      }
+      const timestamp = payload.iat || Math.floor(Date.now() / 1e3);
+      if (options.noTimestamp) {
+        delete payload.iat;
+      } else if (isObjectPayload) {
+        payload.iat = timestamp;
+      }
+      if (typeof options.notBefore !== "undefined") {
+        try {
+          payload.nbf = timespan(options.notBefore, timestamp);
+        } catch (err) {
+          return failure(err);
+        }
+        if (typeof payload.nbf === "undefined") {
+          return failure(new Error('"notBefore" should be a number of seconds or string representing a timespan eg: "1d", "20h", 60'));
+        }
+      }
+      if (typeof options.expiresIn !== "undefined" && typeof payload === "object") {
+        try {
+          payload.exp = timespan(options.expiresIn, timestamp);
+        } catch (err) {
+          return failure(err);
+        }
+        if (typeof payload.exp === "undefined") {
+          return failure(new Error('"expiresIn" should be a number of seconds or string representing a timespan eg: "1d", "20h", 60'));
+        }
+      }
+      Object.keys(options_to_payload).forEach(function(key) {
+        const claim = options_to_payload[key];
+        if (typeof options[key] !== "undefined") {
+          if (typeof payload[claim] !== "undefined") {
+            return failure(new Error('Bad "options.' + key + '" option. The payload already has an "' + claim + '" property.'));
+          }
+          payload[claim] = options[key];
+        }
+      });
+      const encoding = options.encoding || "utf8";
+      if (typeof callback === "function") {
+        callback = callback && once(callback);
+        jws.createSign({
+          header,
+          privateKey: secretOrPrivateKey,
+          payload,
+          encoding
+        }).once("error", callback).once("done", function(signature) {
+          if (!options.allowInsecureKeySizes && /^(?:RS|PS)/.test(header.alg) && signature.length < 256) {
+            return callback(new Error(`secretOrPrivateKey has a minimum key size of 2048 bits for ${header.alg}`));
+          }
+          callback(null, signature);
+        });
+      } else {
+        let signature = jws.sign({ header, payload, secret: secretOrPrivateKey, encoding });
+        if (!options.allowInsecureKeySizes && /^(?:RS|PS)/.test(header.alg) && signature.length < 256) {
+          throw new Error(`secretOrPrivateKey has a minimum key size of 2048 bits for ${header.alg}`);
+        }
+        return signature;
+      }
+    };
+  }
+});
+
+// node_modules/jsonwebtoken/index.js
+var require_jsonwebtoken = __commonJS({
+  "node_modules/jsonwebtoken/index.js"(exports2, module2) {
+    module2.exports = {
+      decode: require_decode2(),
+      verify: require_verify(),
+      sign: require_sign2(),
+      JsonWebTokenError: require_JsonWebTokenError(),
+      NotBeforeError: require_NotBeforeError(),
+      TokenExpiredError: require_TokenExpiredError()
+    };
   }
 });
 
@@ -52598,22 +56672,22 @@ var init_from = __esm({
     init_file();
     init_fetch_blob();
     ({ stat } = import_node_fs.promises);
-    blobFromSync = (path10, type) => fromBlob((0, import_node_fs.statSync)(path10), path10, type);
-    blobFrom = (path10, type) => stat(path10).then((stat3) => fromBlob(stat3, path10, type));
-    fileFrom = (path10, type) => stat(path10).then((stat3) => fromFile(stat3, path10, type));
-    fileFromSync = (path10, type) => fromFile((0, import_node_fs.statSync)(path10), path10, type);
-    fromBlob = (stat3, path10, type = "") => new fetch_blob_default([new BlobDataItem({
-      path: path10,
+    blobFromSync = (path12, type) => fromBlob((0, import_node_fs.statSync)(path12), path12, type);
+    blobFrom = (path12, type) => stat(path12).then((stat3) => fromBlob(stat3, path12, type));
+    fileFrom = (path12, type) => stat(path12).then((stat3) => fromFile(stat3, path12, type));
+    fileFromSync = (path12, type) => fromFile((0, import_node_fs.statSync)(path12), path12, type);
+    fromBlob = (stat3, path12, type = "") => new fetch_blob_default([new BlobDataItem({
+      path: path12,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat3, path10, type = "") => new file_default([new BlobDataItem({
-      path: path10,
+    fromFile = (stat3, path12, type = "") => new file_default([new BlobDataItem({
+      path: path12,
       size: stat3.size,
       lastModified: stat3.mtimeMs,
       start: 0
-    })], (0, import_node_path.basename)(path10), { type, lastModified: stat3.mtimeMs });
+    })], (0, import_node_path.basename)(path12), { type, lastModified: stat3.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -56258,7 +60332,7 @@ var require_stringify2 = __commonJS({
 });
 
 // node_modules/json-bigint/lib/parse.js
-var require_parse2 = __commonJS({
+var require_parse3 = __commonJS({
   "node_modules/json-bigint/lib/parse.js"(exports2, module2) {
     var BigNumber = null;
     var suspectProtoRx = /(?:_|\\u005[Ff])(?:_|\\u005[Ff])(?:p|\\u0070)(?:r|\\u0072)(?:o|\\u006[Ff])(?:t|\\u0074)(?:o|\\u006[Ff])(?:_|\\u005[Ff])(?:_|\\u005[Ff])/;
@@ -56542,7 +60616,7 @@ var require_parse2 = __commonJS({
 var require_json_bigint = __commonJS({
   "node_modules/json-bigint/index.js"(exports2, module2) {
     var json_stringify = require_stringify2().stringify;
-    var json_parse = require_parse2();
+    var json_parse = require_parse3();
     module2.exports = function(options) {
       return {
         parse: json_parse(options),
@@ -57559,170 +61633,6 @@ var require_crypto3 = __commonJS({
   }
 });
 
-// node_modules/ecdsa-sig-formatter/src/param-bytes-for-alg.js
-var require_param_bytes_for_alg = __commonJS({
-  "node_modules/ecdsa-sig-formatter/src/param-bytes-for-alg.js"(exports2, module2) {
-    "use strict";
-    function getParamSize(keySize) {
-      var result = (keySize / 8 | 0) + (keySize % 8 === 0 ? 0 : 1);
-      return result;
-    }
-    var paramBytesForAlg = {
-      ES256: getParamSize(256),
-      ES384: getParamSize(384),
-      ES512: getParamSize(521)
-    };
-    function getParamBytesForAlg(alg) {
-      var paramBytes = paramBytesForAlg[alg];
-      if (paramBytes) {
-        return paramBytes;
-      }
-      throw new Error('Unknown algorithm "' + alg + '"');
-    }
-    module2.exports = getParamBytesForAlg;
-  }
-});
-
-// node_modules/ecdsa-sig-formatter/src/ecdsa-sig-formatter.js
-var require_ecdsa_sig_formatter = __commonJS({
-  "node_modules/ecdsa-sig-formatter/src/ecdsa-sig-formatter.js"(exports2, module2) {
-    "use strict";
-    var Buffer4 = require_safe_buffer().Buffer;
-    var getParamBytesForAlg = require_param_bytes_for_alg();
-    var MAX_OCTET = 128;
-    var CLASS_UNIVERSAL = 0;
-    var PRIMITIVE_BIT = 32;
-    var TAG_SEQ = 16;
-    var TAG_INT = 2;
-    var ENCODED_TAG_SEQ = TAG_SEQ | PRIMITIVE_BIT | CLASS_UNIVERSAL << 6;
-    var ENCODED_TAG_INT = TAG_INT | CLASS_UNIVERSAL << 6;
-    function base64Url(base64) {
-      return base64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-    }
-    function signatureAsBuffer(signature) {
-      if (Buffer4.isBuffer(signature)) {
-        return signature;
-      } else if ("string" === typeof signature) {
-        return Buffer4.from(signature, "base64");
-      }
-      throw new TypeError("ECDSA signature must be a Base64 string or a Buffer");
-    }
-    function derToJose(signature, alg) {
-      signature = signatureAsBuffer(signature);
-      var paramBytes = getParamBytesForAlg(alg);
-      var maxEncodedParamLength = paramBytes + 1;
-      var inputLength = signature.length;
-      var offset = 0;
-      if (signature[offset++] !== ENCODED_TAG_SEQ) {
-        throw new Error('Could not find expected "seq"');
-      }
-      var seqLength = signature[offset++];
-      if (seqLength === (MAX_OCTET | 1)) {
-        seqLength = signature[offset++];
-      }
-      if (inputLength - offset < seqLength) {
-        throw new Error('"seq" specified length of "' + seqLength + '", only "' + (inputLength - offset) + '" remaining');
-      }
-      if (signature[offset++] !== ENCODED_TAG_INT) {
-        throw new Error('Could not find expected "int" for "r"');
-      }
-      var rLength = signature[offset++];
-      if (inputLength - offset - 2 < rLength) {
-        throw new Error('"r" specified length of "' + rLength + '", only "' + (inputLength - offset - 2) + '" available');
-      }
-      if (maxEncodedParamLength < rLength) {
-        throw new Error('"r" specified length of "' + rLength + '", max of "' + maxEncodedParamLength + '" is acceptable');
-      }
-      var rOffset = offset;
-      offset += rLength;
-      if (signature[offset++] !== ENCODED_TAG_INT) {
-        throw new Error('Could not find expected "int" for "s"');
-      }
-      var sLength = signature[offset++];
-      if (inputLength - offset !== sLength) {
-        throw new Error('"s" specified length of "' + sLength + '", expected "' + (inputLength - offset) + '"');
-      }
-      if (maxEncodedParamLength < sLength) {
-        throw new Error('"s" specified length of "' + sLength + '", max of "' + maxEncodedParamLength + '" is acceptable');
-      }
-      var sOffset = offset;
-      offset += sLength;
-      if (offset !== inputLength) {
-        throw new Error('Expected to consume entire buffer, but "' + (inputLength - offset) + '" bytes remain');
-      }
-      var rPadding = paramBytes - rLength, sPadding = paramBytes - sLength;
-      var dst = Buffer4.allocUnsafe(rPadding + rLength + sPadding + sLength);
-      for (offset = 0; offset < rPadding; ++offset) {
-        dst[offset] = 0;
-      }
-      signature.copy(dst, offset, rOffset + Math.max(-rPadding, 0), rOffset + rLength);
-      offset = paramBytes;
-      for (var o = offset; offset < o + sPadding; ++offset) {
-        dst[offset] = 0;
-      }
-      signature.copy(dst, offset, sOffset + Math.max(-sPadding, 0), sOffset + sLength);
-      dst = dst.toString("base64");
-      dst = base64Url(dst);
-      return dst;
-    }
-    function countPadding(buf, start, stop) {
-      var padding = 0;
-      while (start + padding < stop && buf[start + padding] === 0) {
-        ++padding;
-      }
-      var needsSign = buf[start + padding] >= MAX_OCTET;
-      if (needsSign) {
-        --padding;
-      }
-      return padding;
-    }
-    function joseToDer(signature, alg) {
-      signature = signatureAsBuffer(signature);
-      var paramBytes = getParamBytesForAlg(alg);
-      var signatureBytes = signature.length;
-      if (signatureBytes !== paramBytes * 2) {
-        throw new TypeError('"' + alg + '" signatures must be "' + paramBytes * 2 + '" bytes, saw "' + signatureBytes + '"');
-      }
-      var rPadding = countPadding(signature, 0, paramBytes);
-      var sPadding = countPadding(signature, paramBytes, signature.length);
-      var rLength = paramBytes - rPadding;
-      var sLength = paramBytes - sPadding;
-      var rsBytes = 1 + 1 + rLength + 1 + 1 + sLength;
-      var shortLength = rsBytes < MAX_OCTET;
-      var dst = Buffer4.allocUnsafe((shortLength ? 2 : 3) + rsBytes);
-      var offset = 0;
-      dst[offset++] = ENCODED_TAG_SEQ;
-      if (shortLength) {
-        dst[offset++] = rsBytes;
-      } else {
-        dst[offset++] = MAX_OCTET | 1;
-        dst[offset++] = rsBytes & 255;
-      }
-      dst[offset++] = ENCODED_TAG_INT;
-      dst[offset++] = rLength;
-      if (rPadding < 0) {
-        dst[offset++] = 0;
-        offset += signature.copy(dst, offset, 0, paramBytes);
-      } else {
-        offset += signature.copy(dst, offset, rPadding, paramBytes);
-      }
-      dst[offset++] = ENCODED_TAG_INT;
-      dst[offset++] = sLength;
-      if (sPadding < 0) {
-        dst[offset++] = 0;
-        signature.copy(dst, offset, paramBytes);
-      } else {
-        signature.copy(dst, offset, paramBytes + sPadding);
-      }
-      return dst;
-    }
-    module2.exports = {
-      derToJose,
-      joseToDer
-    };
-  }
-});
-
 // node_modules/google-auth-library/build/src/util.js
 var require_util2 = __commonJS({
   "node_modules/google-auth-library/build/src/util.js"(exports2) {
@@ -57734,9 +61644,9 @@ var require_util2 = __commonJS({
     exports2.removeUndefinedValuesInObject = removeUndefinedValuesInObject;
     exports2.isValidFile = isValidFile;
     exports2.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;
-    var fs11 = require("fs");
+    var fs13 = require("fs");
     var os = require("os");
-    var path10 = require("path");
+    var path12 = require("path");
     var WELL_KNOWN_CERTIFICATE_CONFIG_FILE = "certificate_config.json";
     var CLOUDSDK_CONFIG_DIRECTORY = "gcloud";
     function snakeToCamel(str) {
@@ -57822,15 +61732,15 @@ var require_util2 = __commonJS({
     }
     async function isValidFile(filePath) {
       try {
-        const stats = await fs11.promises.lstat(filePath);
+        const stats = await fs13.promises.lstat(filePath);
         return stats.isFile();
       } catch (e2) {
         return false;
       }
     }
     function getWellKnownCertificateConfigFileLocation() {
-      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path10.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path10.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
-      return path10.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
+      const configDir = process.env.CLOUDSDK_CONFIG || (_isWindows() ? path12.join(process.env.APPDATA || "", CLOUDSDK_CONFIG_DIRECTORY) : path12.join(process.env.HOME || "", ".config", CLOUDSDK_CONFIG_DIRECTORY));
+      return path12.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);
     }
     function _isWindows() {
       return os.platform().startsWith("win");
@@ -59132,549 +63042,6 @@ var require_envDetect = __commonJS({
   }
 });
 
-// node_modules/jws/lib/data-stream.js
-var require_data_stream = __commonJS({
-  "node_modules/jws/lib/data-stream.js"(exports2, module2) {
-    var Buffer4 = require_safe_buffer().Buffer;
-    var Stream4 = require("stream");
-    var util = require("util");
-    function DataStream(data) {
-      this.buffer = null;
-      this.writable = true;
-      this.readable = true;
-      if (!data) {
-        this.buffer = Buffer4.alloc(0);
-        return this;
-      }
-      if (typeof data.pipe === "function") {
-        this.buffer = Buffer4.alloc(0);
-        data.pipe(this);
-        return this;
-      }
-      if (data.length || typeof data === "object") {
-        this.buffer = data;
-        this.writable = false;
-        process.nextTick(function() {
-          this.emit("end", data);
-          this.readable = false;
-          this.emit("close");
-        }.bind(this));
-        return this;
-      }
-      throw new TypeError("Unexpected data type (" + typeof data + ")");
-    }
-    util.inherits(DataStream, Stream4);
-    DataStream.prototype.write = function write(data) {
-      this.buffer = Buffer4.concat([this.buffer, Buffer4.from(data)]);
-      this.emit("data", data);
-    };
-    DataStream.prototype.end = function end(data) {
-      if (data)
-        this.write(data);
-      this.emit("end", data);
-      this.emit("close");
-      this.writable = false;
-      this.readable = false;
-    };
-    module2.exports = DataStream;
-  }
-});
-
-// node_modules/buffer-equal-constant-time/index.js
-var require_buffer_equal_constant_time = __commonJS({
-  "node_modules/buffer-equal-constant-time/index.js"(exports2, module2) {
-    "use strict";
-    var Buffer4 = require("buffer").Buffer;
-    var SlowBuffer = require("buffer").SlowBuffer;
-    module2.exports = bufferEq;
-    function bufferEq(a, b) {
-      if (!Buffer4.isBuffer(a) || !Buffer4.isBuffer(b)) {
-        return false;
-      }
-      if (a.length !== b.length) {
-        return false;
-      }
-      var c = 0;
-      for (var i2 = 0; i2 < a.length; i2++) {
-        c |= a[i2] ^ b[i2];
-      }
-      return c === 0;
-    }
-    bufferEq.install = function() {
-      Buffer4.prototype.equal = SlowBuffer.prototype.equal = function equal(that) {
-        return bufferEq(this, that);
-      };
-    };
-    var origBufEqual = Buffer4.prototype.equal;
-    var origSlowBufEqual = SlowBuffer.prototype.equal;
-    bufferEq.restore = function() {
-      Buffer4.prototype.equal = origBufEqual;
-      SlowBuffer.prototype.equal = origSlowBufEqual;
-    };
-  }
-});
-
-// node_modules/jwa/index.js
-var require_jwa = __commonJS({
-  "node_modules/jwa/index.js"(exports2, module2) {
-    var Buffer4 = require_safe_buffer().Buffer;
-    var crypto4 = require("crypto");
-    var formatEcdsa = require_ecdsa_sig_formatter();
-    var util = require("util");
-    var MSG_INVALID_ALGORITHM = '"%s" is not a valid algorithm.\n  Supported algorithms are:\n  "HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512" and "none".';
-    var MSG_INVALID_SECRET = "secret must be a string or buffer";
-    var MSG_INVALID_VERIFIER_KEY = "key must be a string or a buffer";
-    var MSG_INVALID_SIGNER_KEY = "key must be a string, a buffer or an object";
-    var supportsKeyObjects = typeof crypto4.createPublicKey === "function";
-    if (supportsKeyObjects) {
-      MSG_INVALID_VERIFIER_KEY += " or a KeyObject";
-      MSG_INVALID_SECRET += "or a KeyObject";
-    }
-    function checkIsPublicKey(key) {
-      if (Buffer4.isBuffer(key)) {
-        return;
-      }
-      if (typeof key === "string") {
-        return;
-      }
-      if (!supportsKeyObjects) {
-        throw typeError(MSG_INVALID_VERIFIER_KEY);
-      }
-      if (typeof key !== "object") {
-        throw typeError(MSG_INVALID_VERIFIER_KEY);
-      }
-      if (typeof key.type !== "string") {
-        throw typeError(MSG_INVALID_VERIFIER_KEY);
-      }
-      if (typeof key.asymmetricKeyType !== "string") {
-        throw typeError(MSG_INVALID_VERIFIER_KEY);
-      }
-      if (typeof key.export !== "function") {
-        throw typeError(MSG_INVALID_VERIFIER_KEY);
-      }
-    }
-    function checkIsPrivateKey(key) {
-      if (Buffer4.isBuffer(key)) {
-        return;
-      }
-      if (typeof key === "string") {
-        return;
-      }
-      if (typeof key === "object") {
-        return;
-      }
-      throw typeError(MSG_INVALID_SIGNER_KEY);
-    }
-    function checkIsSecretKey(key) {
-      if (Buffer4.isBuffer(key)) {
-        return;
-      }
-      if (typeof key === "string") {
-        return key;
-      }
-      if (!supportsKeyObjects) {
-        throw typeError(MSG_INVALID_SECRET);
-      }
-      if (typeof key !== "object") {
-        throw typeError(MSG_INVALID_SECRET);
-      }
-      if (key.type !== "secret") {
-        throw typeError(MSG_INVALID_SECRET);
-      }
-      if (typeof key.export !== "function") {
-        throw typeError(MSG_INVALID_SECRET);
-      }
-    }
-    function fromBase64(base64) {
-      return base64.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-    }
-    function toBase64(base64url) {
-      base64url = base64url.toString();
-      var padding = 4 - base64url.length % 4;
-      if (padding !== 4) {
-        for (var i2 = 0; i2 < padding; ++i2) {
-          base64url += "=";
-        }
-      }
-      return base64url.replace(/\-/g, "+").replace(/_/g, "/");
-    }
-    function typeError(template) {
-      var args = [].slice.call(arguments, 1);
-      var errMsg = util.format.bind(util, template).apply(null, args);
-      return new TypeError(errMsg);
-    }
-    function bufferOrString(obj) {
-      return Buffer4.isBuffer(obj) || typeof obj === "string";
-    }
-    function normalizeInput(thing) {
-      if (!bufferOrString(thing))
-        thing = JSON.stringify(thing);
-      return thing;
-    }
-    function createHmacSigner(bits) {
-      return function sign(thing, secret) {
-        checkIsSecretKey(secret);
-        thing = normalizeInput(thing);
-        var hmac = crypto4.createHmac("sha" + bits, secret);
-        var sig = (hmac.update(thing), hmac.digest("base64"));
-        return fromBase64(sig);
-      };
-    }
-    var bufferEqual;
-    var timingSafeEqual = "timingSafeEqual" in crypto4 ? function timingSafeEqual2(a, b) {
-      if (a.byteLength !== b.byteLength) {
-        return false;
-      }
-      return crypto4.timingSafeEqual(a, b);
-    } : function timingSafeEqual2(a, b) {
-      if (!bufferEqual) {
-        bufferEqual = require_buffer_equal_constant_time();
-      }
-      return bufferEqual(a, b);
-    };
-    function createHmacVerifier(bits) {
-      return function verify(thing, signature, secret) {
-        var computedSig = createHmacSigner(bits)(thing, secret);
-        return timingSafeEqual(Buffer4.from(signature), Buffer4.from(computedSig));
-      };
-    }
-    function createKeySigner(bits) {
-      return function sign(thing, privateKey) {
-        checkIsPrivateKey(privateKey);
-        thing = normalizeInput(thing);
-        var signer = crypto4.createSign("RSA-SHA" + bits);
-        var sig = (signer.update(thing), signer.sign(privateKey, "base64"));
-        return fromBase64(sig);
-      };
-    }
-    function createKeyVerifier(bits) {
-      return function verify(thing, signature, publicKey) {
-        checkIsPublicKey(publicKey);
-        thing = normalizeInput(thing);
-        signature = toBase64(signature);
-        var verifier = crypto4.createVerify("RSA-SHA" + bits);
-        verifier.update(thing);
-        return verifier.verify(publicKey, signature, "base64");
-      };
-    }
-    function createPSSKeySigner(bits) {
-      return function sign(thing, privateKey) {
-        checkIsPrivateKey(privateKey);
-        thing = normalizeInput(thing);
-        var signer = crypto4.createSign("RSA-SHA" + bits);
-        var sig = (signer.update(thing), signer.sign({
-          key: privateKey,
-          padding: crypto4.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto4.constants.RSA_PSS_SALTLEN_DIGEST
-        }, "base64"));
-        return fromBase64(sig);
-      };
-    }
-    function createPSSKeyVerifier(bits) {
-      return function verify(thing, signature, publicKey) {
-        checkIsPublicKey(publicKey);
-        thing = normalizeInput(thing);
-        signature = toBase64(signature);
-        var verifier = crypto4.createVerify("RSA-SHA" + bits);
-        verifier.update(thing);
-        return verifier.verify({
-          key: publicKey,
-          padding: crypto4.constants.RSA_PKCS1_PSS_PADDING,
-          saltLength: crypto4.constants.RSA_PSS_SALTLEN_DIGEST
-        }, signature, "base64");
-      };
-    }
-    function createECDSASigner(bits) {
-      var inner = createKeySigner(bits);
-      return function sign() {
-        var signature = inner.apply(null, arguments);
-        signature = formatEcdsa.derToJose(signature, "ES" + bits);
-        return signature;
-      };
-    }
-    function createECDSAVerifer(bits) {
-      var inner = createKeyVerifier(bits);
-      return function verify(thing, signature, publicKey) {
-        signature = formatEcdsa.joseToDer(signature, "ES" + bits).toString("base64");
-        var result = inner(thing, signature, publicKey);
-        return result;
-      };
-    }
-    function createNoneSigner() {
-      return function sign() {
-        return "";
-      };
-    }
-    function createNoneVerifier() {
-      return function verify(thing, signature) {
-        return signature === "";
-      };
-    }
-    module2.exports = function jwa(algorithm) {
-      var signerFactories = {
-        hs: createHmacSigner,
-        rs: createKeySigner,
-        ps: createPSSKeySigner,
-        es: createECDSASigner,
-        none: createNoneSigner
-      };
-      var verifierFactories = {
-        hs: createHmacVerifier,
-        rs: createKeyVerifier,
-        ps: createPSSKeyVerifier,
-        es: createECDSAVerifer,
-        none: createNoneVerifier
-      };
-      var match2 = algorithm.match(/^(RS|PS|ES|HS)(256|384|512)$|^(none)$/);
-      if (!match2)
-        throw typeError(MSG_INVALID_ALGORITHM, algorithm);
-      var algo = (match2[1] || match2[3]).toLowerCase();
-      var bits = match2[2];
-      return {
-        sign: signerFactories[algo](bits),
-        verify: verifierFactories[algo](bits)
-      };
-    };
-  }
-});
-
-// node_modules/jws/lib/tostring.js
-var require_tostring = __commonJS({
-  "node_modules/jws/lib/tostring.js"(exports2, module2) {
-    var Buffer4 = require("buffer").Buffer;
-    module2.exports = function toString(obj) {
-      if (typeof obj === "string")
-        return obj;
-      if (typeof obj === "number" || Buffer4.isBuffer(obj))
-        return obj.toString();
-      return JSON.stringify(obj);
-    };
-  }
-});
-
-// node_modules/jws/lib/sign-stream.js
-var require_sign_stream = __commonJS({
-  "node_modules/jws/lib/sign-stream.js"(exports2, module2) {
-    var Buffer4 = require_safe_buffer().Buffer;
-    var DataStream = require_data_stream();
-    var jwa = require_jwa();
-    var Stream4 = require("stream");
-    var toString = require_tostring();
-    var util = require("util");
-    function base64url(string, encoding) {
-      return Buffer4.from(string, encoding).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
-    }
-    function jwsSecuredInput(header, payload, encoding) {
-      encoding = encoding || "utf8";
-      var encodedHeader = base64url(toString(header), "binary");
-      var encodedPayload = base64url(toString(payload), encoding);
-      return util.format("%s.%s", encodedHeader, encodedPayload);
-    }
-    function jwsSign(opts) {
-      var header = opts.header;
-      var payload = opts.payload;
-      var secretOrKey = opts.secret || opts.privateKey;
-      var encoding = opts.encoding;
-      var algo = jwa(header.alg);
-      var securedInput = jwsSecuredInput(header, payload, encoding);
-      var signature = algo.sign(securedInput, secretOrKey);
-      return util.format("%s.%s", securedInput, signature);
-    }
-    function SignStream(opts) {
-      var secret = opts.secret;
-      secret = secret == null ? opts.privateKey : secret;
-      secret = secret == null ? opts.key : secret;
-      if (/^hs/i.test(opts.header.alg) === true && secret == null) {
-        throw new TypeError("secret must be a string or buffer or a KeyObject");
-      }
-      var secretStream = new DataStream(secret);
-      this.readable = true;
-      this.header = opts.header;
-      this.encoding = opts.encoding;
-      this.secret = this.privateKey = this.key = secretStream;
-      this.payload = new DataStream(opts.payload);
-      this.secret.once("close", function() {
-        if (!this.payload.writable && this.readable)
-          this.sign();
-      }.bind(this));
-      this.payload.once("close", function() {
-        if (!this.secret.writable && this.readable)
-          this.sign();
-      }.bind(this));
-    }
-    util.inherits(SignStream, Stream4);
-    SignStream.prototype.sign = function sign() {
-      try {
-        var signature = jwsSign({
-          header: this.header,
-          payload: this.payload.buffer,
-          secret: this.secret.buffer,
-          encoding: this.encoding
-        });
-        this.emit("done", signature);
-        this.emit("data", signature);
-        this.emit("end");
-        this.readable = false;
-        return signature;
-      } catch (e2) {
-        this.readable = false;
-        this.emit("error", e2);
-        this.emit("close");
-      }
-    };
-    SignStream.sign = jwsSign;
-    module2.exports = SignStream;
-  }
-});
-
-// node_modules/jws/lib/verify-stream.js
-var require_verify_stream = __commonJS({
-  "node_modules/jws/lib/verify-stream.js"(exports2, module2) {
-    var Buffer4 = require_safe_buffer().Buffer;
-    var DataStream = require_data_stream();
-    var jwa = require_jwa();
-    var Stream4 = require("stream");
-    var toString = require_tostring();
-    var util = require("util");
-    var JWS_REGEX = /^[a-zA-Z0-9\-_]+?\.[a-zA-Z0-9\-_]+?\.([a-zA-Z0-9\-_]+)?$/;
-    function isObject(thing) {
-      return Object.prototype.toString.call(thing) === "[object Object]";
-    }
-    function safeJsonParse(thing) {
-      if (isObject(thing))
-        return thing;
-      try {
-        return JSON.parse(thing);
-      } catch (e2) {
-        return void 0;
-      }
-    }
-    function headerFromJWS(jwsSig) {
-      var encodedHeader = jwsSig.split(".", 1)[0];
-      return safeJsonParse(Buffer4.from(encodedHeader, "base64").toString("binary"));
-    }
-    function securedInputFromJWS(jwsSig) {
-      return jwsSig.split(".", 2).join(".");
-    }
-    function signatureFromJWS(jwsSig) {
-      return jwsSig.split(".")[2];
-    }
-    function payloadFromJWS(jwsSig, encoding) {
-      encoding = encoding || "utf8";
-      var payload = jwsSig.split(".")[1];
-      return Buffer4.from(payload, "base64").toString(encoding);
-    }
-    function isValidJws(string) {
-      return JWS_REGEX.test(string) && !!headerFromJWS(string);
-    }
-    function jwsVerify(jwsSig, algorithm, secretOrKey) {
-      if (!algorithm) {
-        var err = new Error("Missing algorithm parameter for jws.verify");
-        err.code = "MISSING_ALGORITHM";
-        throw err;
-      }
-      jwsSig = toString(jwsSig);
-      var signature = signatureFromJWS(jwsSig);
-      var securedInput = securedInputFromJWS(jwsSig);
-      var algo = jwa(algorithm);
-      return algo.verify(securedInput, signature, secretOrKey);
-    }
-    function jwsDecode(jwsSig, opts) {
-      opts = opts || {};
-      jwsSig = toString(jwsSig);
-      if (!isValidJws(jwsSig))
-        return null;
-      var header = headerFromJWS(jwsSig);
-      if (!header)
-        return null;
-      var payload = payloadFromJWS(jwsSig);
-      if (header.typ === "JWT" || opts.json)
-        payload = JSON.parse(payload, opts.encoding);
-      return {
-        header,
-        payload,
-        signature: signatureFromJWS(jwsSig)
-      };
-    }
-    function VerifyStream(opts) {
-      opts = opts || {};
-      var secretOrKey = opts.secret;
-      secretOrKey = secretOrKey == null ? opts.publicKey : secretOrKey;
-      secretOrKey = secretOrKey == null ? opts.key : secretOrKey;
-      if (/^hs/i.test(opts.algorithm) === true && secretOrKey == null) {
-        throw new TypeError("secret must be a string or buffer or a KeyObject");
-      }
-      var secretStream = new DataStream(secretOrKey);
-      this.readable = true;
-      this.algorithm = opts.algorithm;
-      this.encoding = opts.encoding;
-      this.secret = this.publicKey = this.key = secretStream;
-      this.signature = new DataStream(opts.signature);
-      this.secret.once("close", function() {
-        if (!this.signature.writable && this.readable)
-          this.verify();
-      }.bind(this));
-      this.signature.once("close", function() {
-        if (!this.secret.writable && this.readable)
-          this.verify();
-      }.bind(this));
-    }
-    util.inherits(VerifyStream, Stream4);
-    VerifyStream.prototype.verify = function verify() {
-      try {
-        var valid = jwsVerify(this.signature.buffer, this.algorithm, this.key.buffer);
-        var obj = jwsDecode(this.signature.buffer, this.encoding);
-        this.emit("done", valid, obj);
-        this.emit("data", valid);
-        this.emit("end");
-        this.readable = false;
-        return valid;
-      } catch (e2) {
-        this.readable = false;
-        this.emit("error", e2);
-        this.emit("close");
-      }
-    };
-    VerifyStream.decode = jwsDecode;
-    VerifyStream.isValid = isValidJws;
-    VerifyStream.verify = jwsVerify;
-    module2.exports = VerifyStream;
-  }
-});
-
-// node_modules/jws/index.js
-var require_jws = __commonJS({
-  "node_modules/jws/index.js"(exports2) {
-    var SignStream = require_sign_stream();
-    var VerifyStream = require_verify_stream();
-    var ALGORITHMS = [
-      "HS256",
-      "HS384",
-      "HS512",
-      "RS256",
-      "RS384",
-      "RS512",
-      "PS256",
-      "PS384",
-      "PS512",
-      "ES256",
-      "ES384",
-      "ES512"
-    ];
-    exports2.ALGORITHMS = ALGORITHMS;
-    exports2.sign = SignStream.sign;
-    exports2.verify = VerifyStream.verify;
-    exports2.decode = VerifyStream.decode;
-    exports2.isValid = VerifyStream.isValid;
-    exports2.createSign = function createSign(opts) {
-      return new SignStream(opts);
-    };
-    exports2.createVerify = function createVerify(opts) {
-      return new VerifyStream(opts);
-    };
-  }
-});
-
 // node_modules/google-auth-library/build/src/gtoken/jwsSign.js
 var require_jwsSign = __commonJS({
   "node_modules/google-auth-library/build/src/gtoken/jwsSign.js"(exports2) {
@@ -59776,11 +63143,11 @@ var require_getCredentials = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getCredentials = getCredentials;
-    var path10 = require("path");
-    var fs11 = require("fs");
+    var path12 = require("path");
+    var fs13 = require("fs");
     var util_1 = require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile = fs11.readFile ? (0, util_1.promisify)(fs11.readFile) : async () => {
+    var readFile = fs13.readFile ? (0, util_1.promisify)(fs13.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -59848,7 +63215,7 @@ var require_getCredentials = __commonJS({
        * @returns An instance of a class that implements ICredentialsProvider.
        */
       static create(keyFilePath) {
-        const keyFileExtension = path10.extname(keyFilePath);
+        const keyFileExtension = path12.extname(keyFilePath);
         switch (keyFileExtension) {
           case ExtensionFiles.JSON:
             return new JsonCredentialsProvider(keyFilePath);
@@ -61457,12 +64824,12 @@ var require_filesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.FileSubjectTokenSupplier = void 0;
     var util_1 = require("util");
-    var fs11 = require("fs");
-    var readFile = (0, util_1.promisify)(fs11.readFile ?? (() => {
+    var fs13 = require("fs");
+    var readFile = (0, util_1.promisify)(fs13.readFile ?? (() => {
     }));
-    var realpath = (0, util_1.promisify)(fs11.realpath ?? (() => {
+    var realpath = (0, util_1.promisify)(fs13.realpath ?? (() => {
     }));
-    var lstat = (0, util_1.promisify)(fs11.lstat ?? (() => {
+    var lstat = (0, util_1.promisify)(fs13.lstat ?? (() => {
     }));
     var FileSubjectTokenSupplier = class {
       filePath;
@@ -61580,7 +64947,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.CertificateSubjectTokenSupplier = exports2.InvalidConfigurationError = exports2.CertificateSourceUnavailableError = exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = void 0;
     var util_1 = require_util2();
-    var fs11 = require("fs");
+    var fs13 = require("fs");
     var crypto_1 = require("crypto");
     var https2 = require("https");
     exports2.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = "GOOGLE_API_CERTIFICATE_CONFIG";
@@ -61674,7 +65041,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
         const configPath = this.certificateConfigPath;
         let fileContents;
         try {
-          fileContents = await fs11.promises.readFile(configPath, "utf8");
+          fileContents = await fs13.promises.readFile(configPath, "utf8");
         } catch (err) {
           throw new CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);
         }
@@ -61699,14 +65066,14 @@ var require_certificatesubjecttokensupplier = __commonJS({
       async #getKeyAndCert(certPath, keyPath) {
         let cert, key;
         try {
-          cert = await fs11.promises.readFile(certPath);
+          cert = await fs13.promises.readFile(certPath);
           new crypto_1.X509Certificate(cert);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);
         }
         try {
-          key = await fs11.promises.readFile(keyPath);
+          key = await fs13.promises.readFile(keyPath);
           (0, crypto_1.createPrivateKey)(key);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -61725,7 +65092,7 @@ var require_certificatesubjecttokensupplier = __commonJS({
           return JSON.stringify([leafCert.raw.toString("base64")]);
         }
         try {
-          const chainPems = await fs11.promises.readFile(this.trustChainPath, "utf8");
+          const chainPems = await fs13.promises.readFile(this.trustChainPath, "utf8");
           const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];
           const chainCerts = pemBlocks.map((pem, index) => {
             try {
@@ -62427,7 +65794,7 @@ var require_pluggable_auth_handler = __commonJS({
     exports2.PluggableAuthHandler = exports2.ExecutableError = void 0;
     var executable_response_1 = require_executable_response();
     var childProcess = require("child_process");
-    var fs11 = require("fs");
+    var fs13 = require("fs");
     var ExecutableError = class extends Error {
       /**
        * The exit code returned by the executable.
@@ -62512,14 +65879,14 @@ var require_pluggable_auth_handler = __commonJS({
         }
         let filePath;
         try {
-          filePath = await fs11.promises.realpath(this.outputFile);
+          filePath = await fs13.promises.realpath(this.outputFile);
         } catch {
           return void 0;
         }
-        if (!(await fs11.promises.lstat(filePath)).isFile()) {
+        if (!(await fs13.promises.lstat(filePath)).isFile()) {
           return void 0;
         }
-        const responseString = await fs11.promises.readFile(filePath, {
+        const responseString = await fs13.promises.readFile(filePath, {
           encoding: "utf8"
         });
         if (responseString === "") {
@@ -62930,7 +66297,7 @@ var require_gdchclient = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GdchClient = exports2.GDCH_SERVICE_ACCOUNT_TYPE = void 0;
     var crypto4 = require("crypto");
-    var fs11 = require("fs");
+    var fs13 = require("fs");
     var https2 = require("https");
     var oauth2client_1 = require_oauth2client();
     var DEFAULT_LIFETIME_IN_SECONDS = 3600;
@@ -63153,7 +66520,7 @@ var require_gdchclient = __commonJS({
         const currentPath = this.caCertPath;
         this.caAgentPromise = (async () => {
           try {
-            const ca = await fs11.promises.readFile(currentPath);
+            const ca = await fs13.promises.readFile(currentPath);
             return new https2.Agent({ ca });
           } catch (err) {
             if (this.cachedCaCertPath === currentPath) {
@@ -63213,11 +66580,11 @@ var require_googleauth = __commonJS({
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.GoogleAuth = exports2.GoogleAuthExceptionMessages = void 0;
     var child_process_1 = require("child_process");
-    var fs11 = require("fs");
+    var fs13 = require("fs");
     var gaxios_1 = require_src6();
     var gcpMetadata = require_src8();
     var os = require("os");
-    var path10 = require("path");
+    var path12 = require("path");
     var crypto_1 = require_crypto3();
     var computeclient_1 = require_computeclient();
     var idtokenclient_1 = require_idtokenclient();
@@ -63504,12 +66871,12 @@ var require_googleauth = __commonJS({
         } else {
           const home = process.env["HOME"];
           if (home) {
-            location = path10.join(home, ".config");
+            location = path12.join(home, ".config");
           }
         }
         if (location) {
-          location = path10.join(location, "gcloud", "application_default_credentials.json");
-          if (!fs11.existsSync(location)) {
+          location = path12.join(location, "gcloud", "application_default_credentials.json");
+          if (!fs13.existsSync(location)) {
             location = null;
           }
         }
@@ -63530,8 +66897,8 @@ var require_googleauth = __commonJS({
           throw new Error("The file path is invalid.");
         }
         try {
-          filePath = fs11.realpathSync(filePath);
-          if (!fs11.lstatSync(filePath).isFile()) {
+          filePath = fs13.realpathSync(filePath);
+          if (!fs13.lstatSync(filePath).isFile()) {
             throw new Error();
           }
         } catch (err) {
@@ -63540,7 +66907,7 @@ var require_googleauth = __commonJS({
           }
           throw err;
         }
-        const readStream = fs11.createReadStream(filePath);
+        const readStream = fs13.createReadStream(filePath);
         return this.fromStream(readStream, options);
       }
       /**
@@ -63867,8 +67234,8 @@ var require_googleauth = __commonJS({
         if (this.jsonContent) {
           return this._cacheClientFromJSON(this.jsonContent, this.clientOptions);
         } else if (this.keyFilename) {
-          const filePath = path10.resolve(this.keyFilename);
-          const stream = fs11.createReadStream(filePath);
+          const filePath = path12.resolve(this.keyFilename);
+          const stream = fs13.createReadStream(filePath);
           return await this.fromStreamAsync(stream, this.clientOptions);
         } else if (this.apiKey) {
           const client = await this.fromAPIKey(this.apiKey, this.clientOptions);
@@ -64415,7 +67782,7 @@ var require_src9 = __commonJS({
 });
 
 // node_modules/ws/lib/constants.js
-var require_constants2 = __commonJS({
+var require_constants3 = __commonJS({
   "node_modules/ws/lib/constants.js"(exports2, module2) {
     "use strict";
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
@@ -64441,7 +67808,7 @@ var require_constants2 = __commonJS({
 var require_buffer_util = __commonJS({
   "node_modules/ws/lib/buffer-util.js"(exports2, module2) {
     "use strict";
-    var { EMPTY_BUFFER } = require_constants2();
+    var { EMPTY_BUFFER } = require_constants3();
     var FastBuffer = Buffer[Symbol.species];
     function concat(list, totalLength) {
       if (list.length === 0) return EMPTY_BUFFER;
@@ -64569,7 +67936,7 @@ var require_permessage_deflate = __commonJS({
     var zlib2 = require("zlib");
     var bufferUtil = require_buffer_util();
     var Limiter = require_limiter();
-    var { kStatusCode } = require_constants2();
+    var { kStatusCode } = require_constants3();
     var FastBuffer = Buffer[Symbol.species];
     var TRAILER = Buffer.from([0, 0, 255, 255]);
     var kPerMessageDeflate = Symbol("permessage-deflate");
@@ -64950,7 +68317,7 @@ var require_validation = __commonJS({
   "node_modules/ws/lib/validation.js"(exports2, module2) {
     "use strict";
     var { isUtf8 } = require("buffer");
-    var { hasBlob } = require_constants2();
+    var { hasBlob } = require_constants3();
     var tokenChars = [
       0,
       0,
@@ -65157,7 +68524,7 @@ var require_receiver = __commonJS({
       EMPTY_BUFFER,
       kStatusCode,
       kWebSocket
-    } = require_constants2();
+    } = require_constants3();
     var { concat, toArrayBuffer, unmask } = require_buffer_util();
     var { isValidStatusCode, isValidUTF8 } = require_validation();
     var FastBuffer = Buffer[Symbol.species];
@@ -65788,7 +69155,7 @@ var require_sender = __commonJS({
       types: { isUint8Array }
     } = require("util");
     var PerMessageDeflate2 = require_permessage_deflate();
-    var { EMPTY_BUFFER, kWebSocket, NOOP } = require_constants2();
+    var { EMPTY_BUFFER, kWebSocket, NOOP } = require_constants3();
     var { isBlob: isBlob2, isValidStatusCode } = require_validation();
     var { mask: applyMask, toBuffer } = require_buffer_util();
     var kByteLength = Symbol("kByteLength");
@@ -66275,7 +69642,7 @@ var require_sender = __commonJS({
 var require_event_target = __commonJS({
   "node_modules/ws/lib/event-target.js"(exports2, module2) {
     "use strict";
-    var { kForOnEventAttribute, kListener } = require_constants2();
+    var { kForOnEventAttribute, kListener } = require_constants3();
     var kCode = Symbol("kCode");
     var kData = Symbol("kData");
     var kError = Symbol("kError");
@@ -66679,7 +70046,7 @@ var require_websocket = __commonJS({
       kStatusCode,
       kWebSocket,
       NOOP
-    } = require_constants2();
+    } = require_constants3();
     var {
       EventTarget: { addEventListener, removeEventListener }
     } = require_event_target();
@@ -67704,7 +71071,7 @@ var require_websocket_server = __commonJS({
     var PerMessageDeflate2 = require_permessage_deflate();
     var subprotocol2 = require_subprotocol();
     var WebSocket2 = require_websocket();
-    var { CLOSE_TIMEOUT, GUID, kWebSocket } = require_constants2();
+    var { CLOSE_TIMEOUT, GUID, kWebSocket } = require_constants3();
     var keyRegex = /^[+/0-9A-Za-z]{22}==$/;
     var RUNNING = 0;
     var CLOSING = 1;
@@ -68093,3386 +71460,1867 @@ var require_websocket_server = __commonJS({
   }
 });
 
-// node_modules/dotenv/lib/main.js
-var require_main = __commonJS({
-  "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs11 = require("fs");
-    var path10 = require("path");
-    var os = require("os");
-    var crypto4 = require("crypto");
-    var TIPS = [
-      "\u25C8 encrypted .env [www.dotenvx.com]",
-      "\u25C8 secrets for agents [www.dotenvx.com]",
-      "\u2301 auth for agents [www.vestauth.com]",
-      "\u2318 custom filepath { path: '/custom/path/.env' }",
-      "\u2318 enable debugging { debug: true }",
-      "\u2318 override existing { override: true }",
-      "\u2318 suppress logs { quiet: true }",
-      "\u2318 multiple files { path: ['.env.local', '.env'] }"
-    ];
-    function _getRandomTip() {
-      return TIPS[Math.floor(Math.random() * TIPS.length)];
-    }
-    function parseBoolean(value) {
-      if (typeof value === "string") {
-        return !["false", "0", "no", "off", ""].includes(value.toLowerCase());
-      }
-      return Boolean(value);
-    }
-    function supportsAnsi() {
-      return process.stdout.isTTY;
-    }
-    function dim(text) {
-      return supportsAnsi() ? `\x1B[2m${text}\x1B[0m` : text;
-    }
-    var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
-    function parse(src) {
-      const obj = {};
-      let lines = src.toString();
-      lines = lines.replace(/\r\n?/mg, "\n");
-      let match2;
-      while ((match2 = LINE.exec(lines)) != null) {
-        const key = match2[1];
-        let value = match2[2] || "";
-        value = value.trim();
-        const maybeQuote = value[0];
-        value = value.replace(/^(['"`])([\s\S]*)\1$/mg, "$2");
-        if (maybeQuote === '"') {
-          value = value.replace(/\\n/g, "\n");
-          value = value.replace(/\\r/g, "\r");
-        }
-        obj[key] = value;
-      }
-      return obj;
-    }
-    function _parseVault(options) {
-      options = options || {};
-      const vaultPath = _vaultPath(options);
-      options.path = vaultPath;
-      const result = DotenvModule.configDotenv(options);
-      if (!result.parsed) {
-        const err = new Error(`MISSING_DATA: Cannot parse ${vaultPath} for an unknown reason`);
-        err.code = "MISSING_DATA";
-        throw err;
-      }
-      const keys = _dotenvKey(options).split(",");
-      const length = keys.length;
-      let decrypted;
-      for (let i2 = 0; i2 < length; i2++) {
-        try {
-          const key = keys[i2].trim();
-          const attrs = _instructions(result, key);
-          decrypted = DotenvModule.decrypt(attrs.ciphertext, attrs.key);
-          break;
-        } catch (error) {
-          if (i2 + 1 >= length) {
-            throw error;
-          }
-        }
-      }
-      return DotenvModule.parse(decrypted);
-    }
-    function _warn(message) {
-      console.error(`\u26A0 ${message}`);
-    }
-    function _debug(message) {
-      console.log(`\u2506 ${message}`);
-    }
-    function _log(message) {
-      console.log(`\u25C7 ${message}`);
-    }
-    function _dotenvKey(options) {
-      if (options && options.DOTENV_KEY && options.DOTENV_KEY.length > 0) {
-        return options.DOTENV_KEY;
-      }
-      if (process.env.DOTENV_KEY && process.env.DOTENV_KEY.length > 0) {
-        return process.env.DOTENV_KEY;
-      }
-      return "";
-    }
-    function _instructions(result, dotenvKey) {
-      let uri;
-      try {
-        uri = new URL(dotenvKey);
-      } catch (error) {
-        if (error.code === "ERR_INVALID_URL") {
-          const err = new Error("INVALID_DOTENV_KEY: Wrong format. Must be in valid uri format like dotenv://:key_1234@dotenvx.com/vault/.env.vault?environment=development");
-          err.code = "INVALID_DOTENV_KEY";
-          throw err;
-        }
-        throw error;
-      }
-      const key = uri.password;
-      if (!key) {
-        const err = new Error("INVALID_DOTENV_KEY: Missing key part");
-        err.code = "INVALID_DOTENV_KEY";
-        throw err;
-      }
-      const environment = uri.searchParams.get("environment");
-      if (!environment) {
-        const err = new Error("INVALID_DOTENV_KEY: Missing environment part");
-        err.code = "INVALID_DOTENV_KEY";
-        throw err;
-      }
-      const environmentKey = `DOTENV_VAULT_${environment.toUpperCase()}`;
-      const ciphertext = result.parsed[environmentKey];
-      if (!ciphertext) {
-        const err = new Error(`NOT_FOUND_DOTENV_ENVIRONMENT: Cannot locate environment ${environmentKey} in your .env.vault file.`);
-        err.code = "NOT_FOUND_DOTENV_ENVIRONMENT";
-        throw err;
-      }
-      return { ciphertext, key };
-    }
-    function _vaultPath(options) {
-      let possibleVaultPath = null;
-      if (options && options.path && options.path.length > 0) {
-        if (Array.isArray(options.path)) {
-          for (const filepath of options.path) {
-            if (fs11.existsSync(filepath)) {
-              possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
-            }
-          }
-        } else {
-          possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
-        }
-      } else {
-        possibleVaultPath = path10.resolve(process.cwd(), ".env.vault");
-      }
-      if (fs11.existsSync(possibleVaultPath)) {
-        return possibleVaultPath;
-      }
-      return null;
-    }
-    function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path10.join(os.homedir(), envPath.slice(1)) : envPath;
-    }
-    function _configVault(options) {
-      const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
-      const quiet = parseBoolean(process.env.DOTENV_CONFIG_QUIET || options && options.quiet);
-      if (debug || !quiet) {
-        _log("loading env from encrypted .env.vault");
-      }
-      const parsed = DotenvModule._parseVault(options);
-      let processEnv = process.env;
-      if (options && options.processEnv != null) {
-        processEnv = options.processEnv;
-      }
-      DotenvModule.populate(processEnv, parsed, options);
-      return { parsed };
-    }
-    function configDotenv(options) {
-      const dotenvPath = path10.resolve(process.cwd(), ".env");
-      let encoding = "utf8";
-      let processEnv = process.env;
-      if (options && options.processEnv != null) {
-        processEnv = options.processEnv;
-      }
-      let debug = parseBoolean(processEnv.DOTENV_CONFIG_DEBUG || options && options.debug);
-      let quiet = parseBoolean(processEnv.DOTENV_CONFIG_QUIET || options && options.quiet);
-      if (options && options.encoding) {
-        encoding = options.encoding;
-      } else {
-        if (debug) {
-          _debug("no encoding is specified (UTF-8 is used by default)");
-        }
-      }
-      let optionPaths = [dotenvPath];
-      if (options && options.path) {
-        if (!Array.isArray(options.path)) {
-          optionPaths = [_resolveHome(options.path)];
-        } else {
-          optionPaths = [];
-          for (const filepath of options.path) {
-            optionPaths.push(_resolveHome(filepath));
-          }
-        }
-      }
-      let lastError;
-      const parsedAll = {};
-      for (const path11 of optionPaths) {
-        try {
-          const parsed = DotenvModule.parse(fs11.readFileSync(path11, { encoding }));
-          DotenvModule.populate(parsedAll, parsed, options);
-        } catch (e2) {
-          if (debug) {
-            _debug(`failed to load ${path11} ${e2.message}`);
-          }
-          lastError = e2;
-        }
-      }
-      const populated = DotenvModule.populate(processEnv, parsedAll, options);
-      debug = parseBoolean(processEnv.DOTENV_CONFIG_DEBUG || debug);
-      quiet = parseBoolean(processEnv.DOTENV_CONFIG_QUIET || quiet);
-      if (debug || !quiet) {
-        const keysCount = Object.keys(populated).length;
-        const shortPaths = [];
-        for (const filePath of optionPaths) {
-          try {
-            const relative = path10.relative(process.cwd(), filePath);
-            shortPaths.push(relative);
-          } catch (e2) {
-            if (debug) {
-              _debug(`failed to load ${filePath} ${e2.message}`);
-            }
-            lastError = e2;
-          }
-        }
-        _log(`injected env (${keysCount}) from ${shortPaths.join(",")} ${dim(`// tip: ${_getRandomTip()}`)}`);
-      }
-      if (lastError) {
-        return { parsed: parsedAll, error: lastError };
-      } else {
-        return { parsed: parsedAll };
-      }
-    }
-    function config(options) {
-      if (_dotenvKey(options).length === 0) {
-        return DotenvModule.configDotenv(options);
-      }
-      const vaultPath = _vaultPath(options);
-      if (!vaultPath) {
-        _warn(`you set DOTENV_KEY but you are missing a .env.vault file at ${vaultPath}`);
-        return DotenvModule.configDotenv(options);
-      }
-      return DotenvModule._configVault(options);
-    }
-    function decrypt(encrypted, keyStr) {
-      const key = Buffer.from(keyStr.slice(-64), "hex");
-      let ciphertext = Buffer.from(encrypted, "base64");
-      const nonce = ciphertext.subarray(0, 12);
-      const authTag = ciphertext.subarray(-16);
-      ciphertext = ciphertext.subarray(12, -16);
-      try {
-        const aesgcm = crypto4.createDecipheriv("aes-256-gcm", key, nonce);
-        aesgcm.setAuthTag(authTag);
-        return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
-      } catch (error) {
-        const isRange = error instanceof RangeError;
-        const invalidKeyLength = error.message === "Invalid key length";
-        const decryptionFailed = error.message === "Unsupported state or unable to authenticate data";
-        if (isRange || invalidKeyLength) {
-          const err = new Error("INVALID_DOTENV_KEY: It must be 64 characters long (or more)");
-          err.code = "INVALID_DOTENV_KEY";
-          throw err;
-        } else if (decryptionFailed) {
-          const err = new Error("DECRYPTION_FAILED: Please check your DOTENV_KEY");
-          err.code = "DECRYPTION_FAILED";
-          throw err;
-        } else {
-          throw error;
-        }
-      }
-    }
-    function populate(processEnv, parsed, options = {}) {
-      const debug = Boolean(options && options.debug);
-      const override = Boolean(options && options.override);
-      const populated = {};
-      if (typeof parsed !== "object") {
-        const err = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
-        err.code = "OBJECT_REQUIRED";
-        throw err;
-      }
-      for (const key of Object.keys(parsed)) {
-        if (Object.prototype.hasOwnProperty.call(processEnv, key)) {
-          if (override === true) {
-            processEnv[key] = parsed[key];
-            populated[key] = parsed[key];
-          }
-          if (debug) {
-            if (override === true) {
-              _debug(`"${key}" is already defined and WAS overwritten`);
-            } else {
-              _debug(`"${key}" is already defined and was NOT overwritten`);
-            }
-          }
-        } else {
-          processEnv[key] = parsed[key];
-          populated[key] = parsed[key];
-        }
-      }
-      return populated;
-    }
-    var DotenvModule = {
-      configDotenv,
-      _configVault,
-      _parseVault,
-      config,
-      decrypt,
-      parse,
-      populate
-    };
-    module2.exports.configDotenv = DotenvModule.configDotenv;
-    module2.exports._configVault = DotenvModule._configVault;
-    module2.exports._parseVault = DotenvModule._parseVault;
-    module2.exports.config = DotenvModule.config;
-    module2.exports.decrypt = DotenvModule.decrypt;
-    module2.exports.parse = DotenvModule.parse;
-    module2.exports.populate = DotenvModule.populate;
-    module2.exports = DotenvModule;
-  }
-});
-
-// node_modules/jsonwebtoken/decode.js
-var require_decode2 = __commonJS({
-  "node_modules/jsonwebtoken/decode.js"(exports2, module2) {
-    var jws = require_jws();
-    module2.exports = function(jwt2, options) {
-      options = options || {};
-      var decoded = jws.decode(jwt2, options);
-      if (!decoded) {
-        return null;
-      }
-      var payload = decoded.payload;
-      if (typeof payload === "string") {
-        try {
-          var obj = JSON.parse(payload);
-          if (obj !== null && typeof obj === "object") {
-            payload = obj;
-          }
-        } catch (e2) {
-        }
-      }
-      if (options.complete === true) {
-        return {
-          header: decoded.header,
-          payload,
-          signature: decoded.signature
-        };
-      }
-      return payload;
-    };
-  }
-});
-
-// node_modules/jsonwebtoken/lib/JsonWebTokenError.js
-var require_JsonWebTokenError = __commonJS({
-  "node_modules/jsonwebtoken/lib/JsonWebTokenError.js"(exports2, module2) {
-    var JsonWebTokenError = function(message, error) {
-      Error.call(this, message);
-      if (Error.captureStackTrace) {
-        Error.captureStackTrace(this, this.constructor);
-      }
-      this.name = "JsonWebTokenError";
-      this.message = message;
-      if (error) this.inner = error;
-    };
-    JsonWebTokenError.prototype = Object.create(Error.prototype);
-    JsonWebTokenError.prototype.constructor = JsonWebTokenError;
-    module2.exports = JsonWebTokenError;
-  }
-});
-
-// node_modules/jsonwebtoken/lib/NotBeforeError.js
-var require_NotBeforeError = __commonJS({
-  "node_modules/jsonwebtoken/lib/NotBeforeError.js"(exports2, module2) {
-    var JsonWebTokenError = require_JsonWebTokenError();
-    var NotBeforeError = function(message, date) {
-      JsonWebTokenError.call(this, message);
-      this.name = "NotBeforeError";
-      this.date = date;
-    };
-    NotBeforeError.prototype = Object.create(JsonWebTokenError.prototype);
-    NotBeforeError.prototype.constructor = NotBeforeError;
-    module2.exports = NotBeforeError;
-  }
-});
-
-// node_modules/jsonwebtoken/lib/TokenExpiredError.js
-var require_TokenExpiredError = __commonJS({
-  "node_modules/jsonwebtoken/lib/TokenExpiredError.js"(exports2, module2) {
-    var JsonWebTokenError = require_JsonWebTokenError();
-    var TokenExpiredError = function(message, expiredAt) {
-      JsonWebTokenError.call(this, message);
-      this.name = "TokenExpiredError";
-      this.expiredAt = expiredAt;
-    };
-    TokenExpiredError.prototype = Object.create(JsonWebTokenError.prototype);
-    TokenExpiredError.prototype.constructor = TokenExpiredError;
-    module2.exports = TokenExpiredError;
-  }
-});
-
-// node_modules/jsonwebtoken/lib/timespan.js
-var require_timespan = __commonJS({
-  "node_modules/jsonwebtoken/lib/timespan.js"(exports2, module2) {
-    var ms = require_ms5();
-    module2.exports = function(time, iat) {
-      var timestamp = iat || Math.floor(Date.now() / 1e3);
-      if (typeof time === "string") {
-        var milliseconds = ms(time);
-        if (typeof milliseconds === "undefined") {
-          return;
-        }
-        return Math.floor(timestamp + milliseconds / 1e3);
-      } else if (typeof time === "number") {
-        return timestamp + time;
-      } else {
-        return;
-      }
-    };
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/internal/constants.js
-var require_constants3 = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/internal/constants.js"(exports2, module2) {
-    "use strict";
-    var SEMVER_SPEC_VERSION = "2.0.0";
-    var MAX_LENGTH = 256;
-    var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER || /* istanbul ignore next */
-    9007199254740991;
-    var MAX_SAFE_COMPONENT_LENGTH = 16;
-    var MAX_SAFE_BUILD_LENGTH = MAX_LENGTH - 6;
-    var RELEASE_TYPES = [
-      "major",
-      "premajor",
-      "minor",
-      "preminor",
-      "patch",
-      "prepatch",
-      "prerelease"
-    ];
-    module2.exports = {
-      MAX_LENGTH,
-      MAX_SAFE_COMPONENT_LENGTH,
-      MAX_SAFE_BUILD_LENGTH,
-      MAX_SAFE_INTEGER,
-      RELEASE_TYPES,
-      SEMVER_SPEC_VERSION,
-      FLAG_INCLUDE_PRERELEASE: 1,
-      FLAG_LOOSE: 2
-    };
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/internal/debug.js
-var require_debug5 = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/internal/debug.js"(exports2, module2) {
-    "use strict";
-    var debug = typeof process === "object" && process.env && process.env.NODE_DEBUG && /\bsemver\b/i.test(process.env.NODE_DEBUG) ? (...args) => console.error("SEMVER", ...args) : () => {
-    };
-    module2.exports = debug;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/internal/re.js
-var require_re = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/internal/re.js"(exports2, module2) {
-    "use strict";
-    var {
-      MAX_SAFE_COMPONENT_LENGTH,
-      MAX_SAFE_BUILD_LENGTH,
-      MAX_LENGTH
-    } = require_constants3();
-    var debug = require_debug5();
-    exports2 = module2.exports = {};
-    var re = exports2.re = [];
-    var safeRe = exports2.safeRe = [];
-    var src = exports2.src = [];
-    var safeSrc = exports2.safeSrc = [];
-    var t2 = exports2.t = {};
-    var R = 0;
-    var LETTERDASHNUMBER = "[a-zA-Z0-9-]";
-    var safeRegexReplacements = [
-      ["\\s", 1],
-      ["\\d", MAX_LENGTH],
-      [LETTERDASHNUMBER, MAX_SAFE_BUILD_LENGTH]
-    ];
-    var makeSafeRegex = (value) => {
-      for (const [token, max] of safeRegexReplacements) {
-        value = value.split(`${token}*`).join(`${token}{0,${max}}`).split(`${token}+`).join(`${token}{1,${max}}`);
-      }
-      return value;
-    };
-    var createToken = (name, value, isGlobal) => {
-      const safe = makeSafeRegex(value);
-      const index = R++;
-      debug(name, index, value);
-      t2[name] = index;
-      src[index] = value;
-      safeSrc[index] = safe;
-      re[index] = new RegExp(value, isGlobal ? "g" : void 0);
-      safeRe[index] = new RegExp(safe, isGlobal ? "g" : void 0);
-    };
-    createToken("NUMERICIDENTIFIER", "0|[1-9]\\d*");
-    createToken("NUMERICIDENTIFIERLOOSE", "\\d+");
-    createToken("NONNUMERICIDENTIFIER", `\\d*[a-zA-Z-]${LETTERDASHNUMBER}*`);
-    createToken("MAINVERSION", `(${src[t2.NUMERICIDENTIFIER]})\\.(${src[t2.NUMERICIDENTIFIER]})\\.(${src[t2.NUMERICIDENTIFIER]})`);
-    createToken("MAINVERSIONLOOSE", `(${src[t2.NUMERICIDENTIFIERLOOSE]})\\.(${src[t2.NUMERICIDENTIFIERLOOSE]})\\.(${src[t2.NUMERICIDENTIFIERLOOSE]})`);
-    createToken("PRERELEASEIDENTIFIER", `(?:${src[t2.NONNUMERICIDENTIFIER]}|${src[t2.NUMERICIDENTIFIER]})`);
-    createToken("PRERELEASEIDENTIFIERLOOSE", `(?:${src[t2.NONNUMERICIDENTIFIER]}|${src[t2.NUMERICIDENTIFIERLOOSE]})`);
-    createToken("PRERELEASE", `(?:-(${src[t2.PRERELEASEIDENTIFIER]}(?:\\.${src[t2.PRERELEASEIDENTIFIER]})*))`);
-    createToken("PRERELEASELOOSE", `(?:-?(${src[t2.PRERELEASEIDENTIFIERLOOSE]}(?:\\.${src[t2.PRERELEASEIDENTIFIERLOOSE]})*))`);
-    createToken("BUILDIDENTIFIER", `${LETTERDASHNUMBER}+`);
-    createToken("BUILD", `(?:\\+(${src[t2.BUILDIDENTIFIER]}(?:\\.${src[t2.BUILDIDENTIFIER]})*))`);
-    createToken("FULLPLAIN", `v?${src[t2.MAINVERSION]}${src[t2.PRERELEASE]}?${src[t2.BUILD]}?`);
-    createToken("FULL", `^${src[t2.FULLPLAIN]}$`);
-    createToken("LOOSEPLAIN", `[v=\\s]*${src[t2.MAINVERSIONLOOSE]}${src[t2.PRERELEASELOOSE]}?${src[t2.BUILD]}?`);
-    createToken("LOOSE", `^${src[t2.LOOSEPLAIN]}$`);
-    createToken("GTLT", "((?:<|>)?=?)");
-    createToken("XRANGEIDENTIFIERLOOSE", `${src[t2.NUMERICIDENTIFIERLOOSE]}|x|X|\\*`);
-    createToken("XRANGEIDENTIFIER", `${src[t2.NUMERICIDENTIFIER]}|x|X|\\*`);
-    createToken("XRANGEPLAIN", `[v=\\s]*(${src[t2.XRANGEIDENTIFIER]})(?:\\.(${src[t2.XRANGEIDENTIFIER]})(?:\\.(${src[t2.XRANGEIDENTIFIER]})(?:${src[t2.PRERELEASE]})?${src[t2.BUILD]}?)?)?`);
-    createToken("XRANGEPLAINLOOSE", `[v=\\s]*(${src[t2.XRANGEIDENTIFIERLOOSE]})(?:\\.(${src[t2.XRANGEIDENTIFIERLOOSE]})(?:\\.(${src[t2.XRANGEIDENTIFIERLOOSE]})(?:${src[t2.PRERELEASELOOSE]})?${src[t2.BUILD]}?)?)?`);
-    createToken("XRANGE", `^${src[t2.GTLT]}\\s*${src[t2.XRANGEPLAIN]}$`);
-    createToken("XRANGELOOSE", `^${src[t2.GTLT]}\\s*${src[t2.XRANGEPLAINLOOSE]}$`);
-    createToken("COERCEPLAIN", `${"(^|[^\\d])(\\d{1,"}${MAX_SAFE_COMPONENT_LENGTH}})(?:\\.(\\d{1,${MAX_SAFE_COMPONENT_LENGTH}}))?(?:\\.(\\d{1,${MAX_SAFE_COMPONENT_LENGTH}}))?`);
-    createToken("COERCE", `${src[t2.COERCEPLAIN]}(?:$|[^\\d])`);
-    createToken("COERCEFULL", src[t2.COERCEPLAIN] + `(?:${src[t2.PRERELEASE]})?(?:${src[t2.BUILD]})?(?:$|[^\\d])`);
-    createToken("COERCERTL", src[t2.COERCE], true);
-    createToken("COERCERTLFULL", src[t2.COERCEFULL], true);
-    createToken("LONETILDE", "(?:~>?)");
-    createToken("TILDETRIM", `(\\s*)${src[t2.LONETILDE]}\\s+`, true);
-    exports2.tildeTrimReplace = "$1~";
-    createToken("TILDE", `^${src[t2.LONETILDE]}${src[t2.XRANGEPLAIN]}$`);
-    createToken("TILDELOOSE", `^${src[t2.LONETILDE]}${src[t2.XRANGEPLAINLOOSE]}$`);
-    createToken("LONECARET", "(?:\\^)");
-    createToken("CARETTRIM", `(\\s*)${src[t2.LONECARET]}\\s+`, true);
-    exports2.caretTrimReplace = "$1^";
-    createToken("CARET", `^${src[t2.LONECARET]}${src[t2.XRANGEPLAIN]}$`);
-    createToken("CARETLOOSE", `^${src[t2.LONECARET]}${src[t2.XRANGEPLAINLOOSE]}$`);
-    createToken("COMPARATORLOOSE", `^${src[t2.GTLT]}\\s*(${src[t2.LOOSEPLAIN]})$|^$`);
-    createToken("COMPARATOR", `^${src[t2.GTLT]}\\s*(${src[t2.FULLPLAIN]})$|^$`);
-    createToken("COMPARATORTRIM", `(\\s*)${src[t2.GTLT]}\\s*(${src[t2.LOOSEPLAIN]}|${src[t2.XRANGEPLAIN]})`, true);
-    exports2.comparatorTrimReplace = "$1$2$3";
-    createToken("HYPHENRANGE", `^\\s*(${src[t2.XRANGEPLAIN]})\\s+-\\s+(${src[t2.XRANGEPLAIN]})\\s*$`);
-    createToken("HYPHENRANGELOOSE", `^\\s*(${src[t2.XRANGEPLAINLOOSE]})\\s+-\\s+(${src[t2.XRANGEPLAINLOOSE]})\\s*$`);
-    createToken("STAR", "(<|>)?=?\\s*\\*");
-    createToken("GTE0", "^\\s*>=\\s*0\\.0\\.0\\s*$");
-    createToken("GTE0PRE", "^\\s*>=\\s*0\\.0\\.0-0\\s*$");
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/internal/parse-options.js
-var require_parse_options = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/internal/parse-options.js"(exports2, module2) {
-    "use strict";
-    var looseOption = Object.freeze({ loose: true });
-    var emptyOpts = Object.freeze({});
-    var parseOptions = (options) => {
-      if (!options) {
-        return emptyOpts;
-      }
-      if (typeof options !== "object") {
-        return looseOption;
-      }
-      return options;
-    };
-    module2.exports = parseOptions;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/internal/identifiers.js
-var require_identifiers = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/internal/identifiers.js"(exports2, module2) {
-    "use strict";
-    var numeric = /^[0-9]+$/;
-    var compareIdentifiers = (a, b) => {
-      if (typeof a === "number" && typeof b === "number") {
-        return a === b ? 0 : a < b ? -1 : 1;
-      }
-      const anum = numeric.test(a);
-      const bnum = numeric.test(b);
-      if (anum && bnum) {
-        a = +a;
-        b = +b;
-      }
-      return a === b ? 0 : anum && !bnum ? -1 : bnum && !anum ? 1 : a < b ? -1 : 1;
-    };
-    var rcompareIdentifiers = (a, b) => compareIdentifiers(b, a);
-    module2.exports = {
-      compareIdentifiers,
-      rcompareIdentifiers
-    };
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/classes/semver.js
-var require_semver = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/classes/semver.js"(exports2, module2) {
-    "use strict";
-    var debug = require_debug5();
-    var { MAX_LENGTH, MAX_SAFE_INTEGER } = require_constants3();
-    var { safeRe: re, t: t2 } = require_re();
-    var parseOptions = require_parse_options();
-    var { compareIdentifiers } = require_identifiers();
-    var isPrereleaseIdentifier = (prerelease, identifier) => {
-      const identifiers = identifier.split(".");
-      if (identifiers.length > prerelease.length) {
-        return false;
-      }
-      for (let i2 = 0; i2 < identifiers.length; i2++) {
-        if (compareIdentifiers(prerelease[i2], identifiers[i2]) !== 0) {
-          return false;
-        }
-      }
-      return true;
-    };
-    var SemVer = class _SemVer {
-      constructor(version, options) {
-        options = parseOptions(options);
-        if (version instanceof _SemVer) {
-          if (version.loose === !!options.loose && version.includePrerelease === !!options.includePrerelease) {
-            return version;
-          } else {
-            version = version.version;
-          }
-        } else if (typeof version !== "string") {
-          throw new TypeError(`Invalid version. Must be a string. Got type "${typeof version}".`);
-        }
-        if (version.length > MAX_LENGTH) {
-          throw new TypeError(
-            `version is longer than ${MAX_LENGTH} characters`
-          );
-        }
-        debug("SemVer", version, options);
-        this.options = options;
-        this.loose = !!options.loose;
-        this.includePrerelease = !!options.includePrerelease;
-        const m2 = version.trim().match(options.loose ? re[t2.LOOSE] : re[t2.FULL]);
-        if (!m2) {
-          throw new TypeError(`Invalid Version: ${version}`);
-        }
-        this.raw = version;
-        this.major = +m2[1];
-        this.minor = +m2[2];
-        this.patch = +m2[3];
-        if (this.major > MAX_SAFE_INTEGER || this.major < 0) {
-          throw new TypeError("Invalid major version");
-        }
-        if (this.minor > MAX_SAFE_INTEGER || this.minor < 0) {
-          throw new TypeError("Invalid minor version");
-        }
-        if (this.patch > MAX_SAFE_INTEGER || this.patch < 0) {
-          throw new TypeError("Invalid patch version");
-        }
-        if (!m2[4]) {
-          this.prerelease = [];
-        } else {
-          this.prerelease = m2[4].split(".").map((id) => {
-            if (/^[0-9]+$/.test(id)) {
-              const num = +id;
-              if (num >= 0 && num < MAX_SAFE_INTEGER) {
-                return num;
-              }
-            }
-            return id;
-          });
-        }
-        this.build = m2[5] ? m2[5].split(".") : [];
-        this.format();
-      }
-      format() {
-        this.version = `${this.major}.${this.minor}.${this.patch}`;
-        if (this.prerelease.length) {
-          this.version += `-${this.prerelease.join(".")}`;
-        }
-        return this.version;
-      }
-      toString() {
-        return this.version;
-      }
-      compare(other) {
-        debug("SemVer.compare", this.version, this.options, other);
-        if (!(other instanceof _SemVer)) {
-          if (typeof other === "string" && other === this.version) {
-            return 0;
-          }
-          other = new _SemVer(other, this.options);
-        }
-        if (other.version === this.version) {
-          return 0;
-        }
-        return this.compareMain(other) || this.comparePre(other);
-      }
-      compareMain(other) {
-        if (!(other instanceof _SemVer)) {
-          other = new _SemVer(other, this.options);
-        }
-        if (this.major < other.major) {
-          return -1;
-        }
-        if (this.major > other.major) {
-          return 1;
-        }
-        if (this.minor < other.minor) {
-          return -1;
-        }
-        if (this.minor > other.minor) {
-          return 1;
-        }
-        if (this.patch < other.patch) {
-          return -1;
-        }
-        if (this.patch > other.patch) {
-          return 1;
-        }
-        return 0;
-      }
-      comparePre(other) {
-        if (!(other instanceof _SemVer)) {
-          other = new _SemVer(other, this.options);
-        }
-        if (this.prerelease.length && !other.prerelease.length) {
-          return -1;
-        } else if (!this.prerelease.length && other.prerelease.length) {
-          return 1;
-        } else if (!this.prerelease.length && !other.prerelease.length) {
-          return 0;
-        }
-        let i2 = 0;
-        do {
-          const a = this.prerelease[i2];
-          const b = other.prerelease[i2];
-          debug("prerelease compare", i2, a, b);
-          if (a === void 0 && b === void 0) {
-            return 0;
-          } else if (b === void 0) {
-            return 1;
-          } else if (a === void 0) {
-            return -1;
-          } else if (a === b) {
-            continue;
-          } else {
-            return compareIdentifiers(a, b);
-          }
-        } while (++i2);
-      }
-      compareBuild(other) {
-        if (!(other instanceof _SemVer)) {
-          other = new _SemVer(other, this.options);
-        }
-        let i2 = 0;
-        do {
-          const a = this.build[i2];
-          const b = other.build[i2];
-          debug("build compare", i2, a, b);
-          if (a === void 0 && b === void 0) {
-            return 0;
-          } else if (b === void 0) {
-            return 1;
-          } else if (a === void 0) {
-            return -1;
-          } else if (a === b) {
-            continue;
-          } else {
-            return compareIdentifiers(a, b);
-          }
-        } while (++i2);
-      }
-      // preminor will bump the version up to the next minor release, and immediately
-      // down to pre-release. premajor and prepatch work the same way.
-      inc(release, identifier, identifierBase) {
-        if (release.startsWith("pre")) {
-          if (!identifier && identifierBase === false) {
-            throw new Error("invalid increment argument: identifier is empty");
-          }
-          if (identifier) {
-            const match2 = `-${identifier}`.match(this.options.loose ? re[t2.PRERELEASELOOSE] : re[t2.PRERELEASE]);
-            if (!match2 || match2[1] !== identifier) {
-              throw new Error(`invalid identifier: ${identifier}`);
-            }
-          }
-        }
-        switch (release) {
-          case "premajor":
-            this.prerelease.length = 0;
-            this.patch = 0;
-            this.minor = 0;
-            this.major++;
-            this.inc("pre", identifier, identifierBase);
-            break;
-          case "preminor":
-            this.prerelease.length = 0;
-            this.patch = 0;
-            this.minor++;
-            this.inc("pre", identifier, identifierBase);
-            break;
-          case "prepatch":
-            this.prerelease.length = 0;
-            this.inc("patch", identifier, identifierBase);
-            this.inc("pre", identifier, identifierBase);
-            break;
-          // If the input is a non-prerelease version, this acts the same as
-          // prepatch.
-          case "prerelease":
-            if (this.prerelease.length === 0) {
-              this.inc("patch", identifier, identifierBase);
-            }
-            this.inc("pre", identifier, identifierBase);
-            break;
-          case "release":
-            if (this.prerelease.length === 0) {
-              throw new Error(`version ${this.raw} is not a prerelease`);
-            }
-            this.prerelease.length = 0;
-            break;
-          case "major":
-            if (this.minor !== 0 || this.patch !== 0 || this.prerelease.length === 0) {
-              this.major++;
-            }
-            this.minor = 0;
-            this.patch = 0;
-            this.prerelease = [];
-            break;
-          case "minor":
-            if (this.patch !== 0 || this.prerelease.length === 0) {
-              this.minor++;
-            }
-            this.patch = 0;
-            this.prerelease = [];
-            break;
-          case "patch":
-            if (this.prerelease.length === 0) {
-              this.patch++;
-            }
-            this.prerelease = [];
-            break;
-          // This probably shouldn't be used publicly.
-          // 1.0.0 'pre' would become 1.0.0-0 which is the wrong direction.
-          case "pre": {
-            const base = Number(identifierBase) ? 1 : 0;
-            if (this.prerelease.length === 0) {
-              this.prerelease = [base];
-            } else {
-              let i2 = this.prerelease.length;
-              while (--i2 >= 0) {
-                if (typeof this.prerelease[i2] === "number") {
-                  this.prerelease[i2]++;
-                  i2 = -2;
-                }
-              }
-              if (i2 === -1) {
-                if (identifier === this.prerelease.join(".") && identifierBase === false) {
-                  throw new Error("invalid increment argument: identifier already exists");
-                }
-                this.prerelease.push(base);
-              }
-            }
-            if (identifier) {
-              let prerelease = [identifier, base];
-              if (identifierBase === false) {
-                prerelease = [identifier];
-              }
-              if (isPrereleaseIdentifier(this.prerelease, identifier)) {
-                const prereleaseBase = this.prerelease[identifier.split(".").length];
-                if (isNaN(prereleaseBase)) {
-                  this.prerelease = prerelease;
-                }
-              } else {
-                this.prerelease = prerelease;
-              }
-            }
-            break;
-          }
-          default:
-            throw new Error(`invalid increment argument: ${release}`);
-        }
-        this.raw = this.format();
-        if (this.build.length) {
-          this.raw += `+${this.build.join(".")}`;
-        }
-        return this;
-      }
-    };
-    module2.exports = SemVer;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/parse.js
-var require_parse3 = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/parse.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var parse = (version, options, throwErrors = false) => {
-      if (version instanceof SemVer) {
-        return version;
-      }
-      try {
-        return new SemVer(version, options);
-      } catch (er) {
-        if (!throwErrors) {
-          return null;
-        }
-        throw er;
-      }
-    };
-    module2.exports = parse;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/valid.js
-var require_valid = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/valid.js"(exports2, module2) {
-    "use strict";
-    var parse = require_parse3();
-    var valid = (version, options) => {
-      const v = parse(version, options);
-      return v ? v.version : null;
-    };
-    module2.exports = valid;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/clean.js
-var require_clean = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/clean.js"(exports2, module2) {
-    "use strict";
-    var parse = require_parse3();
-    var clean = (version, options) => {
-      const s2 = parse(version.trim().replace(/^[=v]+/, ""), options);
-      return s2 ? s2.version : null;
-    };
-    module2.exports = clean;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/inc.js
-var require_inc = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/inc.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var inc = (version, release, options, identifier, identifierBase) => {
-      if (typeof options === "string") {
-        identifierBase = identifier;
-        identifier = options;
-        options = void 0;
-      }
-      try {
-        return new SemVer(
-          version instanceof SemVer ? version.version : version,
-          options
-        ).inc(release, identifier, identifierBase).version;
-      } catch (er) {
-        return null;
-      }
-    };
-    module2.exports = inc;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/diff.js
-var require_diff = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/diff.js"(exports2, module2) {
-    "use strict";
-    var parse = require_parse3();
-    var diff = (version1, version2) => {
-      const v1 = parse(version1, null, true);
-      const v2 = parse(version2, null, true);
-      const comparison = v1.compare(v2);
-      if (comparison === 0) {
-        return null;
-      }
-      const v1Higher = comparison > 0;
-      const highVersion = v1Higher ? v1 : v2;
-      const lowVersion = v1Higher ? v2 : v1;
-      const highHasPre = !!highVersion.prerelease.length;
-      const lowHasPre = !!lowVersion.prerelease.length;
-      if (lowHasPre && !highHasPre) {
-        if (!lowVersion.patch && !lowVersion.minor) {
-          return "major";
-        }
-        if (lowVersion.compareMain(highVersion) === 0) {
-          if (lowVersion.minor && !lowVersion.patch) {
-            return "minor";
-          }
-          return "patch";
-        }
-      }
-      const prefix = highHasPre ? "pre" : "";
-      if (v1.major !== v2.major) {
-        return prefix + "major";
-      }
-      if (v1.minor !== v2.minor) {
-        return prefix + "minor";
-      }
-      if (v1.patch !== v2.patch) {
-        return prefix + "patch";
-      }
-      return "prerelease";
-    };
-    module2.exports = diff;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/major.js
-var require_major = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/major.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var major = (a, loose) => new SemVer(a, loose).major;
-    module2.exports = major;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/minor.js
-var require_minor = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/minor.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var minor = (a, loose) => new SemVer(a, loose).minor;
-    module2.exports = minor;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/patch.js
-var require_patch = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/patch.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var patch = (a, loose) => new SemVer(a, loose).patch;
-    module2.exports = patch;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/prerelease.js
-var require_prerelease = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/prerelease.js"(exports2, module2) {
-    "use strict";
-    var parse = require_parse3();
-    var prerelease = (version, options) => {
-      const parsed = parse(version, options);
-      return parsed && parsed.prerelease.length ? parsed.prerelease : null;
-    };
-    module2.exports = prerelease;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/compare.js
-var require_compare = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/compare.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var compare = (a, b, loose) => new SemVer(a, loose).compare(new SemVer(b, loose));
-    module2.exports = compare;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/rcompare.js
-var require_rcompare = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/rcompare.js"(exports2, module2) {
-    "use strict";
-    var compare = require_compare();
-    var rcompare = (a, b, loose) => compare(b, a, loose);
-    module2.exports = rcompare;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/compare-loose.js
-var require_compare_loose = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/compare-loose.js"(exports2, module2) {
-    "use strict";
-    var compare = require_compare();
-    var compareLoose = (a, b) => compare(a, b, true);
-    module2.exports = compareLoose;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/compare-build.js
-var require_compare_build = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/compare-build.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var compareBuild = (a, b, loose) => {
-      const versionA = new SemVer(a, loose);
-      const versionB = new SemVer(b, loose);
-      return versionA.compare(versionB) || versionA.compareBuild(versionB);
-    };
-    module2.exports = compareBuild;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/sort.js
-var require_sort = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/sort.js"(exports2, module2) {
-    "use strict";
-    var compareBuild = require_compare_build();
-    var sort = (list, loose) => list.sort((a, b) => compareBuild(a, b, loose));
-    module2.exports = sort;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/rsort.js
-var require_rsort = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/rsort.js"(exports2, module2) {
-    "use strict";
-    var compareBuild = require_compare_build();
-    var rsort = (list, loose) => list.sort((a, b) => compareBuild(b, a, loose));
-    module2.exports = rsort;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/gt.js
-var require_gt = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/gt.js"(exports2, module2) {
-    "use strict";
-    var compare = require_compare();
-    var gt2 = (a, b, loose) => compare(a, b, loose) > 0;
-    module2.exports = gt2;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/lt.js
-var require_lt = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/lt.js"(exports2, module2) {
-    "use strict";
-    var compare = require_compare();
-    var lt = (a, b, loose) => compare(a, b, loose) < 0;
-    module2.exports = lt;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/eq.js
-var require_eq = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/eq.js"(exports2, module2) {
-    "use strict";
-    var compare = require_compare();
-    var eq = (a, b, loose) => compare(a, b, loose) === 0;
-    module2.exports = eq;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/neq.js
-var require_neq = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/neq.js"(exports2, module2) {
-    "use strict";
-    var compare = require_compare();
-    var neq = (a, b, loose) => compare(a, b, loose) !== 0;
-    module2.exports = neq;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/gte.js
-var require_gte = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/gte.js"(exports2, module2) {
-    "use strict";
-    var compare = require_compare();
-    var gte = (a, b, loose) => compare(a, b, loose) >= 0;
-    module2.exports = gte;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/lte.js
-var require_lte = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/lte.js"(exports2, module2) {
-    "use strict";
-    var compare = require_compare();
-    var lte = (a, b, loose) => compare(a, b, loose) <= 0;
-    module2.exports = lte;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/cmp.js
-var require_cmp = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/cmp.js"(exports2, module2) {
-    "use strict";
-    var eq = require_eq();
-    var neq = require_neq();
-    var gt2 = require_gt();
-    var gte = require_gte();
-    var lt = require_lt();
-    var lte = require_lte();
-    var cmp = (a, op, b, loose) => {
-      switch (op) {
-        case "===":
-          if (typeof a === "object") {
-            a = a.version;
-          }
-          if (typeof b === "object") {
-            b = b.version;
-          }
-          return a === b;
-        case "!==":
-          if (typeof a === "object") {
-            a = a.version;
-          }
-          if (typeof b === "object") {
-            b = b.version;
-          }
-          return a !== b;
-        case "":
-        case "=":
-        case "==":
-          return eq(a, b, loose);
-        case "!=":
-          return neq(a, b, loose);
-        case ">":
-          return gt2(a, b, loose);
-        case ">=":
-          return gte(a, b, loose);
-        case "<":
-          return lt(a, b, loose);
-        case "<=":
-          return lte(a, b, loose);
-        default:
-          throw new TypeError(`Invalid operator: ${op}`);
-      }
-    };
-    module2.exports = cmp;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/coerce.js
-var require_coerce = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/coerce.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var parse = require_parse3();
-    var { safeRe: re, t: t2 } = require_re();
-    var coerce = (version, options) => {
-      if (version instanceof SemVer) {
-        return version;
-      }
-      if (typeof version === "number") {
-        version = String(version);
-      }
-      if (typeof version !== "string") {
-        return null;
-      }
-      options = options || {};
-      let match2 = null;
-      if (!options.rtl) {
-        match2 = version.match(options.includePrerelease ? re[t2.COERCEFULL] : re[t2.COERCE]);
-      } else {
-        const coerceRtlRegex = options.includePrerelease ? re[t2.COERCERTLFULL] : re[t2.COERCERTL];
-        let next;
-        while ((next = coerceRtlRegex.exec(version)) && (!match2 || match2.index + match2[0].length !== version.length)) {
-          if (!match2 || next.index + next[0].length !== match2.index + match2[0].length) {
-            match2 = next;
-          }
-          coerceRtlRegex.lastIndex = next.index + next[1].length + next[2].length;
-        }
-        coerceRtlRegex.lastIndex = -1;
-      }
-      if (match2 === null) {
-        return null;
-      }
-      const major = match2[2];
-      const minor = match2[3] || "0";
-      const patch = match2[4] || "0";
-      const prerelease = options.includePrerelease && match2[5] ? `-${match2[5]}` : "";
-      const build = options.includePrerelease && match2[6] ? `+${match2[6]}` : "";
-      return parse(`${major}.${minor}.${patch}${prerelease}${build}`, options);
-    };
-    module2.exports = coerce;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/truncate.js
-var require_truncate = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/truncate.js"(exports2, module2) {
-    "use strict";
-    var parse = require_parse3();
-    var constants = require_constants3();
-    var SemVer = require_semver();
-    var truncate = (version, truncation, options) => {
-      if (!constants.RELEASE_TYPES.includes(truncation)) {
-        return null;
-      }
-      const clonedVersion = cloneInputVersion(version, options);
-      return clonedVersion && doTruncation(clonedVersion, truncation);
-    };
-    var cloneInputVersion = (version, options) => {
-      const versionStringToParse = version instanceof SemVer ? version.version : version;
-      return parse(versionStringToParse, options);
-    };
-    var doTruncation = (version, truncation) => {
-      if (isPrerelease(truncation)) {
-        return version.version;
-      }
-      version.prerelease = [];
-      switch (truncation) {
-        case "major":
-          version.minor = 0;
-          version.patch = 0;
-          break;
-        case "minor":
-          version.patch = 0;
-          break;
-      }
-      return version.format();
-    };
-    var isPrerelease = (type) => {
-      return type.startsWith("pre");
-    };
-    module2.exports = truncate;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/internal/lrucache.js
-var require_lrucache = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/internal/lrucache.js"(exports2, module2) {
-    "use strict";
-    var LRUCache = class {
-      constructor() {
-        this.max = 1e3;
-        this.map = /* @__PURE__ */ new Map();
-      }
-      get(key) {
-        const value = this.map.get(key);
-        if (value === void 0) {
-          return void 0;
-        } else {
-          this.map.delete(key);
-          this.map.set(key, value);
-          return value;
-        }
-      }
-      delete(key) {
-        return this.map.delete(key);
-      }
-      set(key, value) {
-        const deleted = this.delete(key);
-        if (!deleted && value !== void 0) {
-          if (this.map.size >= this.max) {
-            const firstKey = this.map.keys().next().value;
-            this.delete(firstKey);
-          }
-          this.map.set(key, value);
-        }
-        return this;
-      }
-    };
-    module2.exports = LRUCache;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/classes/range.js
-var require_range2 = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/classes/range.js"(exports2, module2) {
-    "use strict";
-    var SPACE_CHARACTERS = /\s+/g;
-    var Range = class _Range {
-      constructor(range, options) {
-        options = parseOptions(options);
-        if (range instanceof _Range) {
-          if (range.loose === !!options.loose && range.includePrerelease === !!options.includePrerelease) {
-            return range;
-          } else {
-            return new _Range(range.raw, options);
-          }
-        }
-        if (range instanceof Comparator) {
-          this.raw = range.value;
-          this.set = [[range]];
-          this.formatted = void 0;
-          return this;
-        }
-        this.options = options;
-        this.loose = !!options.loose;
-        this.includePrerelease = !!options.includePrerelease;
-        this.raw = range.trim().replace(SPACE_CHARACTERS, " ");
-        this.set = this.raw.split("||").map((r2) => this.parseRange(r2.trim())).filter((c) => c.length);
-        if (!this.set.length) {
-          throw new TypeError(`Invalid SemVer Range: ${this.raw}`);
-        }
-        if (this.set.length > 1) {
-          const first = this.set[0];
-          this.set = this.set.filter((c) => !isNullSet(c[0]));
-          if (this.set.length === 0) {
-            this.set = [first];
-          } else if (this.set.length > 1) {
-            for (const c of this.set) {
-              if (c.length === 1 && isAny(c[0])) {
-                this.set = [c];
-                break;
-              }
-            }
-          }
-        }
-        this.formatted = void 0;
-      }
-      get range() {
-        if (this.formatted === void 0) {
-          this.formatted = "";
-          for (let i2 = 0; i2 < this.set.length; i2++) {
-            if (i2 > 0) {
-              this.formatted += "||";
-            }
-            const comps = this.set[i2];
-            for (let k = 0; k < comps.length; k++) {
-              if (k > 0) {
-                this.formatted += " ";
-              }
-              this.formatted += comps[k].toString().trim();
-            }
-          }
-        }
-        return this.formatted;
-      }
-      format() {
-        return this.range;
-      }
-      toString() {
-        return this.range;
-      }
-      parseRange(range) {
-        range = range.replace(BUILDSTRIPRE, "");
-        const memoOpts = (this.options.includePrerelease && FLAG_INCLUDE_PRERELEASE) | (this.options.loose && FLAG_LOOSE);
-        const memoKey = memoOpts + ":" + range;
-        const cached = cache.get(memoKey);
-        if (cached) {
-          return cached;
-        }
-        const loose = this.options.loose;
-        const hr = loose ? re[t2.HYPHENRANGELOOSE] : re[t2.HYPHENRANGE];
-        range = range.replace(hr, hyphenReplace(this.options.includePrerelease));
-        debug("hyphen replace", range);
-        range = range.replace(re[t2.COMPARATORTRIM], comparatorTrimReplace);
-        debug("comparator trim", range);
-        range = range.replace(re[t2.TILDETRIM], tildeTrimReplace);
-        debug("tilde trim", range);
-        range = range.replace(re[t2.CARETTRIM], caretTrimReplace);
-        debug("caret trim", range);
-        let rangeList = range.split(" ").map((comp) => parseComparator(comp, this.options)).join(" ").split(/\s+/).map((comp) => replaceGTE0(comp, this.options));
-        if (loose) {
-          rangeList = rangeList.filter((comp) => {
-            debug("loose invalid filter", comp, this.options);
-            return !!comp.match(re[t2.COMPARATORLOOSE]);
-          });
-        }
-        debug("range list", rangeList);
-        const rangeMap = /* @__PURE__ */ new Map();
-        const comparators = rangeList.map((comp) => new Comparator(comp, this.options));
-        for (const comp of comparators) {
-          if (isNullSet(comp)) {
-            return [comp];
-          }
-          rangeMap.set(comp.value, comp);
-        }
-        if (rangeMap.size > 1 && rangeMap.has("")) {
-          rangeMap.delete("");
-        }
-        const result = [...rangeMap.values()];
-        cache.set(memoKey, result);
-        return result;
-      }
-      intersects(range, options) {
-        if (!(range instanceof _Range)) {
-          throw new TypeError("a Range is required");
-        }
-        return this.set.some((thisComparators) => {
-          return isSatisfiable(thisComparators, options) && range.set.some((rangeComparators) => {
-            return isSatisfiable(rangeComparators, options) && thisComparators.every((thisComparator) => {
-              return rangeComparators.every((rangeComparator) => {
-                return thisComparator.intersects(rangeComparator, options);
-              });
-            });
-          });
-        });
-      }
-      // if ANY of the sets match ALL of its comparators, then pass
-      test(version) {
-        if (!version) {
-          return false;
-        }
-        if (typeof version === "string") {
-          try {
-            version = new SemVer(version, this.options);
-          } catch (er) {
-            return false;
-          }
-        }
-        for (let i2 = 0; i2 < this.set.length; i2++) {
-          if (testSet(this.set[i2], version, this.options)) {
-            return true;
-          }
-        }
-        return false;
-      }
-    };
-    module2.exports = Range;
-    var LRU = require_lrucache();
-    var cache = new LRU();
-    var parseOptions = require_parse_options();
-    var Comparator = require_comparator();
-    var debug = require_debug5();
-    var SemVer = require_semver();
-    var {
-      safeRe: re,
-      src,
-      t: t2,
-      comparatorTrimReplace,
-      tildeTrimReplace,
-      caretTrimReplace
-    } = require_re();
-    var { FLAG_INCLUDE_PRERELEASE, FLAG_LOOSE } = require_constants3();
-    var BUILDSTRIPRE = new RegExp(src[t2.BUILD], "g");
-    var isNullSet = (c) => c.value === "<0.0.0-0";
-    var isAny = (c) => c.value === "";
-    var isSatisfiable = (comparators, options) => {
-      let result = true;
-      const remainingComparators = comparators.slice();
-      let testComparator = remainingComparators.pop();
-      while (result && remainingComparators.length) {
-        result = remainingComparators.every((otherComparator) => {
-          return testComparator.intersects(otherComparator, options);
-        });
-        testComparator = remainingComparators.pop();
-      }
-      return result;
-    };
-    var parseComparator = (comp, options) => {
-      comp = comp.replace(re[t2.BUILD], "");
-      debug("comp", comp, options);
-      comp = replaceCarets(comp, options);
-      debug("caret", comp);
-      comp = replaceTildes(comp, options);
-      debug("tildes", comp);
-      comp = replaceXRanges(comp, options);
-      debug("xrange", comp);
-      comp = replaceStars(comp, options);
-      debug("stars", comp);
-      return comp;
-    };
-    var isX = (id) => !id || id.toLowerCase() === "x" || id === "*";
-    var invalidXRangeOrder = (M, m2, p) => isX(M) && !isX(m2) || isX(m2) && p && !isX(p);
-    var replaceTildes = (comp, options) => {
-      return comp.trim().split(/\s+/).map((c) => replaceTilde(c, options)).join(" ");
-    };
-    var replaceTilde = (comp, options) => {
-      const r2 = options.loose ? re[t2.TILDELOOSE] : re[t2.TILDE];
-      const z = options.includePrerelease ? "-0" : "";
-      return comp.replace(r2, (_, M, m2, p, pr) => {
-        debug("tilde", comp, _, M, m2, p, pr);
-        let ret;
-        if (isX(M)) {
-          ret = "";
-        } else if (isX(m2)) {
-          ret = `>=${M}.0.0${z} <${+M + 1}.0.0-0`;
-        } else if (isX(p)) {
-          ret = `>=${M}.${m2}.0${z} <${M}.${+m2 + 1}.0-0`;
-        } else if (pr) {
-          debug("replaceTilde pr", pr);
-          ret = `>=${M}.${m2}.${p}-${pr} <${M}.${+m2 + 1}.0-0`;
-        } else {
-          ret = `>=${M}.${m2}.${p} <${M}.${+m2 + 1}.0-0`;
-        }
-        debug("tilde return", ret);
-        return ret;
-      });
-    };
-    var replaceCarets = (comp, options) => {
-      return comp.trim().split(/\s+/).map((c) => replaceCaret(c, options)).join(" ");
-    };
-    var replaceCaret = (comp, options) => {
-      debug("caret", comp, options);
-      const r2 = options.loose ? re[t2.CARETLOOSE] : re[t2.CARET];
-      const z = options.includePrerelease ? "-0" : "";
-      return comp.replace(r2, (_, M, m2, p, pr) => {
-        debug("caret", comp, _, M, m2, p, pr);
-        let ret;
-        if (isX(M)) {
-          ret = "";
-        } else if (isX(m2)) {
-          ret = `>=${M}.0.0${z} <${+M + 1}.0.0-0`;
-        } else if (isX(p)) {
-          if (M === "0") {
-            ret = `>=${M}.${m2}.0${z} <${M}.${+m2 + 1}.0-0`;
-          } else {
-            ret = `>=${M}.${m2}.0${z} <${+M + 1}.0.0-0`;
-          }
-        } else if (pr) {
-          debug("replaceCaret pr", pr);
-          if (M === "0") {
-            if (m2 === "0") {
-              ret = `>=${M}.${m2}.${p}-${pr} <${M}.${m2}.${+p + 1}-0`;
-            } else {
-              ret = `>=${M}.${m2}.${p}-${pr} <${M}.${+m2 + 1}.0-0`;
-            }
-          } else {
-            ret = `>=${M}.${m2}.${p}-${pr} <${+M + 1}.0.0-0`;
-          }
-        } else {
-          debug("no pr");
-          if (M === "0") {
-            if (m2 === "0") {
-              ret = `>=${M}.${m2}.${p} <${M}.${m2}.${+p + 1}-0`;
-            } else {
-              ret = `>=${M}.${m2}.${p} <${M}.${+m2 + 1}.0-0`;
-            }
-          } else {
-            ret = `>=${M}.${m2}.${p} <${+M + 1}.0.0-0`;
-          }
-        }
-        debug("caret return", ret);
-        return ret;
-      });
-    };
-    var replaceXRanges = (comp, options) => {
-      debug("replaceXRanges", comp, options);
-      return comp.split(/\s+/).map((c) => replaceXRange(c, options)).join(" ");
-    };
-    var replaceXRange = (comp, options) => {
-      comp = comp.trim();
-      const r2 = options.loose ? re[t2.XRANGELOOSE] : re[t2.XRANGE];
-      return comp.replace(r2, (ret, gtlt, M, m2, p, pr) => {
-        debug("xRange", comp, ret, gtlt, M, m2, p, pr);
-        if (invalidXRangeOrder(M, m2, p)) {
-          return comp;
-        }
-        const xM = isX(M);
-        const xm = xM || isX(m2);
-        const xp = xm || isX(p);
-        const anyX = xp;
-        if (gtlt === "=" && anyX) {
-          gtlt = "";
-        }
-        pr = options.includePrerelease ? "-0" : "";
-        if (xM) {
-          if (gtlt === ">" || gtlt === "<") {
-            ret = "<0.0.0-0";
-          } else {
-            ret = "*";
-          }
-        } else if (gtlt && anyX) {
-          if (xm) {
-            m2 = 0;
-          }
-          p = 0;
-          if (gtlt === ">") {
-            gtlt = ">=";
-            if (xm) {
-              M = +M + 1;
-              m2 = 0;
-              p = 0;
-            } else {
-              m2 = +m2 + 1;
-              p = 0;
-            }
-          } else if (gtlt === "<=") {
-            gtlt = "<";
-            if (xm) {
-              M = +M + 1;
-            } else {
-              m2 = +m2 + 1;
-            }
-          }
-          if (gtlt === "<") {
-            pr = "-0";
-          }
-          ret = `${gtlt + M}.${m2}.${p}${pr}`;
-        } else if (xm) {
-          ret = `>=${M}.0.0${pr} <${+M + 1}.0.0-0`;
-        } else if (xp) {
-          ret = `>=${M}.${m2}.0${pr} <${M}.${+m2 + 1}.0-0`;
-        }
-        debug("xRange return", ret);
-        return ret;
-      });
-    };
-    var replaceStars = (comp, options) => {
-      debug("replaceStars", comp, options);
-      return comp.trim().replace(re[t2.STAR], "");
-    };
-    var replaceGTE0 = (comp, options) => {
-      debug("replaceGTE0", comp, options);
-      return comp.trim().replace(re[options.includePrerelease ? t2.GTE0PRE : t2.GTE0], "");
-    };
-    var hyphenReplace = (incPr) => ($0, from, fM, fm, fp, fpr, fb, to, tM, tm, tp, tpr) => {
-      if (isX(fM)) {
-        from = "";
-      } else if (isX(fm)) {
-        from = `>=${fM}.0.0${incPr ? "-0" : ""}`;
-      } else if (isX(fp)) {
-        from = `>=${fM}.${fm}.0${incPr ? "-0" : ""}`;
-      } else if (fpr) {
-        from = `>=${from}`;
-      } else {
-        from = `>=${from}${incPr ? "-0" : ""}`;
-      }
-      if (isX(tM)) {
-        to = "";
-      } else if (isX(tm)) {
-        to = `<${+tM + 1}.0.0-0`;
-      } else if (isX(tp)) {
-        to = `<${tM}.${+tm + 1}.0-0`;
-      } else if (tpr) {
-        to = `<=${tM}.${tm}.${tp}-${tpr}`;
-      } else if (incPr) {
-        to = `<${tM}.${tm}.${+tp + 1}-0`;
-      } else {
-        to = `<=${to}`;
-      }
-      return `${from} ${to}`.trim();
-    };
-    var testSet = (set, version, options) => {
-      for (let i2 = 0; i2 < set.length; i2++) {
-        if (!set[i2].test(version)) {
-          return false;
-        }
-      }
-      if (version.prerelease.length && !options.includePrerelease) {
-        for (let i2 = 0; i2 < set.length; i2++) {
-          debug(set[i2].semver);
-          if (set[i2].semver === Comparator.ANY) {
-            continue;
-          }
-          if (set[i2].semver.prerelease.length > 0) {
-            const allowed = set[i2].semver;
-            if (allowed.major === version.major && allowed.minor === version.minor && allowed.patch === version.patch) {
-              return true;
-            }
-          }
-        }
-        return false;
-      }
-      return true;
-    };
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/classes/comparator.js
-var require_comparator = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/classes/comparator.js"(exports2, module2) {
-    "use strict";
-    var ANY = Symbol("SemVer ANY");
-    var Comparator = class _Comparator {
-      static get ANY() {
-        return ANY;
-      }
-      constructor(comp, options) {
-        options = parseOptions(options);
-        if (comp instanceof _Comparator) {
-          if (comp.loose === !!options.loose) {
-            return comp;
-          } else {
-            comp = comp.value;
-          }
-        }
-        comp = comp.trim().split(/\s+/).join(" ");
-        debug("comparator", comp, options);
-        this.options = options;
-        this.loose = !!options.loose;
-        this.parse(comp);
-        if (this.semver === ANY) {
-          this.value = "";
-        } else {
-          this.value = this.operator + this.semver.version;
-        }
-        debug("comp", this);
-      }
-      parse(comp) {
-        const r2 = this.options.loose ? re[t2.COMPARATORLOOSE] : re[t2.COMPARATOR];
-        const m2 = comp.match(r2);
-        if (!m2) {
-          throw new TypeError(`Invalid comparator: ${comp}`);
-        }
-        this.operator = m2[1] !== void 0 ? m2[1] : "";
-        if (this.operator === "=") {
-          this.operator = "";
-        }
-        if (!m2[2]) {
-          this.semver = ANY;
-        } else {
-          this.semver = new SemVer(m2[2], this.options.loose);
-        }
-      }
-      toString() {
-        return this.value;
-      }
-      test(version) {
-        debug("Comparator.test", version, this.options.loose);
-        if (this.semver === ANY || version === ANY) {
-          return true;
-        }
-        if (typeof version === "string") {
-          try {
-            version = new SemVer(version, this.options);
-          } catch (er) {
-            return false;
-          }
-        }
-        return cmp(version, this.operator, this.semver, this.options);
-      }
-      intersects(comp, options) {
-        if (!(comp instanceof _Comparator)) {
-          throw new TypeError("a Comparator is required");
-        }
-        if (this.operator === "") {
-          if (this.value === "") {
-            return true;
-          }
-          return new Range(comp.value, options).test(this.value);
-        } else if (comp.operator === "") {
-          if (comp.value === "") {
-            return true;
-          }
-          return new Range(this.value, options).test(comp.semver);
-        }
-        options = parseOptions(options);
-        if (options.includePrerelease && (this.value === "<0.0.0-0" || comp.value === "<0.0.0-0")) {
-          return false;
-        }
-        if (!options.includePrerelease && (this.value.startsWith("<0.0.0") || comp.value.startsWith("<0.0.0"))) {
-          return false;
-        }
-        if (this.operator.startsWith(">") && comp.operator.startsWith(">")) {
-          return true;
-        }
-        if (this.operator.startsWith("<") && comp.operator.startsWith("<")) {
-          return true;
-        }
-        if (this.semver.version === comp.semver.version && this.operator.includes("=") && comp.operator.includes("=")) {
-          return true;
-        }
-        if (cmp(this.semver, "<", comp.semver, options) && this.operator.startsWith(">") && comp.operator.startsWith("<")) {
-          return true;
-        }
-        if (cmp(this.semver, ">", comp.semver, options) && this.operator.startsWith("<") && comp.operator.startsWith(">")) {
-          return true;
-        }
-        return false;
-      }
-    };
-    module2.exports = Comparator;
-    var parseOptions = require_parse_options();
-    var { safeRe: re, t: t2 } = require_re();
-    var cmp = require_cmp();
-    var debug = require_debug5();
-    var SemVer = require_semver();
-    var Range = require_range2();
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/functions/satisfies.js
-var require_satisfies = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/functions/satisfies.js"(exports2, module2) {
-    "use strict";
-    var Range = require_range2();
-    var satisfies = (version, range, options) => {
-      try {
-        range = new Range(range, options);
-      } catch (er) {
-        return false;
-      }
-      return range.test(version);
-    };
-    module2.exports = satisfies;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/to-comparators.js
-var require_to_comparators = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/to-comparators.js"(exports2, module2) {
-    "use strict";
-    var Range = require_range2();
-    var toComparators = (range, options) => new Range(range, options).set.map((comp) => comp.map((c) => c.value).join(" ").trim().split(" "));
-    module2.exports = toComparators;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/max-satisfying.js
-var require_max_satisfying = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/max-satisfying.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var Range = require_range2();
-    var maxSatisfying = (versions, range, options) => {
-      let max = null;
-      let maxSV = null;
-      let rangeObj = null;
-      try {
-        rangeObj = new Range(range, options);
-      } catch (er) {
-        return null;
-      }
-      versions.forEach((v) => {
-        if (rangeObj.test(v)) {
-          if (!max || maxSV.compare(v) === -1) {
-            max = v;
-            maxSV = new SemVer(max, options);
-          }
-        }
-      });
-      return max;
-    };
-    module2.exports = maxSatisfying;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/min-satisfying.js
-var require_min_satisfying = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/min-satisfying.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var Range = require_range2();
-    var minSatisfying = (versions, range, options) => {
-      let min = null;
-      let minSV = null;
-      let rangeObj = null;
-      try {
-        rangeObj = new Range(range, options);
-      } catch (er) {
-        return null;
-      }
-      versions.forEach((v) => {
-        if (rangeObj.test(v)) {
-          if (!min || minSV.compare(v) === 1) {
-            min = v;
-            minSV = new SemVer(min, options);
-          }
-        }
-      });
-      return min;
-    };
-    module2.exports = minSatisfying;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/min-version.js
-var require_min_version = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/min-version.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var Range = require_range2();
-    var gt2 = require_gt();
-    var minVersion = (range, loose) => {
-      range = new Range(range, loose);
-      let minver = new SemVer("0.0.0");
-      if (range.test(minver)) {
-        return minver;
-      }
-      minver = new SemVer("0.0.0-0");
-      if (range.test(minver)) {
-        return minver;
-      }
-      minver = null;
-      for (let i2 = 0; i2 < range.set.length; ++i2) {
-        const comparators = range.set[i2];
-        let setMin = null;
-        comparators.forEach((comparator) => {
-          const compver = new SemVer(comparator.semver.version);
-          switch (comparator.operator) {
-            case ">":
-              if (compver.prerelease.length === 0) {
-                compver.patch++;
-              } else {
-                compver.prerelease.push(0);
-              }
-              compver.raw = compver.format();
-            /* fallthrough */
-            case "":
-            case ">=":
-              if (!setMin || gt2(compver, setMin)) {
-                setMin = compver;
-              }
-              break;
-            case "<":
-            case "<=":
-              break;
-            /* istanbul ignore next */
-            default:
-              throw new Error(`Unexpected operation: ${comparator.operator}`);
-          }
-        });
-        if (setMin && (!minver || gt2(minver, setMin))) {
-          minver = setMin;
-        }
-      }
-      if (minver && range.test(minver)) {
-        return minver;
-      }
-      return null;
-    };
-    module2.exports = minVersion;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/valid.js
-var require_valid2 = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/valid.js"(exports2, module2) {
-    "use strict";
-    var Range = require_range2();
-    var validRange = (range, options) => {
-      try {
-        return new Range(range, options).range || "*";
-      } catch (er) {
-        return null;
-      }
-    };
-    module2.exports = validRange;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/outside.js
-var require_outside = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/outside.js"(exports2, module2) {
-    "use strict";
-    var SemVer = require_semver();
-    var Comparator = require_comparator();
-    var { ANY } = Comparator;
-    var Range = require_range2();
-    var satisfies = require_satisfies();
-    var gt2 = require_gt();
-    var lt = require_lt();
-    var lte = require_lte();
-    var gte = require_gte();
-    var outside = (version, range, hilo, options) => {
-      version = new SemVer(version, options);
-      range = new Range(range, options);
-      let gtfn, ltefn, ltfn, comp, ecomp;
-      switch (hilo) {
-        case ">":
-          gtfn = gt2;
-          ltefn = lte;
-          ltfn = lt;
-          comp = ">";
-          ecomp = ">=";
-          break;
-        case "<":
-          gtfn = lt;
-          ltefn = gte;
-          ltfn = gt2;
-          comp = "<";
-          ecomp = "<=";
-          break;
-        default:
-          throw new TypeError('Must provide a hilo val of "<" or ">"');
-      }
-      if (satisfies(version, range, options)) {
-        return false;
-      }
-      for (let i2 = 0; i2 < range.set.length; ++i2) {
-        const comparators = range.set[i2];
-        let high = null;
-        let low = null;
-        comparators.forEach((comparator) => {
-          if (comparator.semver === ANY) {
-            comparator = new Comparator(">=0.0.0");
-          }
-          high = high || comparator;
-          low = low || comparator;
-          if (gtfn(comparator.semver, high.semver, options)) {
-            high = comparator;
-          } else if (ltfn(comparator.semver, low.semver, options)) {
-            low = comparator;
-          }
-        });
-        if (high.operator === comp || high.operator === ecomp) {
-          return false;
-        }
-        if ((!low.operator || low.operator === comp) && ltefn(version, low.semver)) {
-          return false;
-        } else if (low.operator === ecomp && ltfn(version, low.semver)) {
-          return false;
-        }
-      }
-      return true;
-    };
-    module2.exports = outside;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/gtr.js
-var require_gtr = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/gtr.js"(exports2, module2) {
-    "use strict";
-    var outside = require_outside();
-    var gtr = (version, range, options) => outside(version, range, ">", options);
-    module2.exports = gtr;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/ltr.js
-var require_ltr = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/ltr.js"(exports2, module2) {
-    "use strict";
-    var outside = require_outside();
-    var ltr = (version, range, options) => outside(version, range, "<", options);
-    module2.exports = ltr;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/intersects.js
-var require_intersects = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/intersects.js"(exports2, module2) {
-    "use strict";
-    var Range = require_range2();
-    var intersects = (r1, r2, options) => {
-      r1 = new Range(r1, options);
-      r2 = new Range(r2, options);
-      return r1.intersects(r2, options);
-    };
-    module2.exports = intersects;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/simplify.js
-var require_simplify = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/simplify.js"(exports2, module2) {
-    "use strict";
-    var satisfies = require_satisfies();
-    var compare = require_compare();
-    module2.exports = (versions, range, options) => {
-      const set = [];
-      let first = null;
-      let prev = null;
-      const v = versions.sort((a, b) => compare(a, b, options));
-      for (const version of v) {
-        const included = satisfies(version, range, options);
-        if (included) {
-          prev = version;
-          if (!first) {
-            first = version;
-          }
-        } else {
-          if (prev) {
-            set.push([first, prev]);
-          }
-          prev = null;
-          first = null;
-        }
-      }
-      if (first) {
-        set.push([first, null]);
-      }
-      const ranges = [];
-      for (const [min, max] of set) {
-        if (min === max) {
-          ranges.push(min);
-        } else if (!max && min === v[0]) {
-          ranges.push("*");
-        } else if (!max) {
-          ranges.push(`>=${min}`);
-        } else if (min === v[0]) {
-          ranges.push(`<=${max}`);
-        } else {
-          ranges.push(`${min} - ${max}`);
-        }
-      }
-      const simplified = ranges.join(" || ");
-      const original = typeof range.raw === "string" ? range.raw : String(range);
-      return simplified.length < original.length ? simplified : range;
-    };
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/ranges/subset.js
-var require_subset = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/ranges/subset.js"(exports2, module2) {
-    "use strict";
-    var Range = require_range2();
-    var Comparator = require_comparator();
-    var { ANY } = Comparator;
-    var satisfies = require_satisfies();
-    var compare = require_compare();
-    var subset = (sub, dom, options = {}) => {
-      if (sub === dom) {
-        return true;
-      }
-      sub = new Range(sub, options);
-      dom = new Range(dom, options);
-      let sawNonNull = false;
-      OUTER: for (const simpleSub of sub.set) {
-        for (const simpleDom of dom.set) {
-          const isSub = simpleSubset(simpleSub, simpleDom, options);
-          sawNonNull = sawNonNull || isSub !== null;
-          if (isSub) {
-            continue OUTER;
-          }
-        }
-        if (sawNonNull) {
-          return false;
-        }
-      }
-      return true;
-    };
-    var minimumVersionWithPreRelease = [new Comparator(">=0.0.0-0")];
-    var minimumVersion = [new Comparator(">=0.0.0")];
-    var simpleSubset = (sub, dom, options) => {
-      if (sub === dom) {
-        return true;
-      }
-      if (sub.length === 1 && sub[0].semver === ANY) {
-        if (dom.length === 1 && dom[0].semver === ANY) {
-          return true;
-        } else if (options.includePrerelease) {
-          sub = minimumVersionWithPreRelease;
-        } else {
-          sub = minimumVersion;
-        }
-      }
-      if (dom.length === 1 && dom[0].semver === ANY) {
-        if (options.includePrerelease) {
-          return true;
-        } else {
-          dom = minimumVersion;
-        }
-      }
-      const eqSet = /* @__PURE__ */ new Set();
-      let gt2, lt;
-      for (const c of sub) {
-        if (c.operator === ">" || c.operator === ">=") {
-          gt2 = higherGT(gt2, c, options);
-        } else if (c.operator === "<" || c.operator === "<=") {
-          lt = lowerLT(lt, c, options);
-        } else {
-          eqSet.add(c.semver);
-        }
-      }
-      if (eqSet.size > 1) {
-        return null;
-      }
-      let gtltComp;
-      if (gt2 && lt) {
-        gtltComp = compare(gt2.semver, lt.semver, options);
-        if (gtltComp > 0) {
-          return null;
-        } else if (gtltComp === 0 && (gt2.operator !== ">=" || lt.operator !== "<=")) {
-          return null;
-        }
-      }
-      for (const eq of eqSet) {
-        if (gt2 && !satisfies(eq, String(gt2), options)) {
-          return null;
-        }
-        if (lt && !satisfies(eq, String(lt), options)) {
-          return null;
-        }
-        for (const c of dom) {
-          if (!satisfies(eq, String(c), options)) {
-            return false;
-          }
-        }
-        return true;
-      }
-      let higher, lower2;
-      let hasDomLT, hasDomGT;
-      let needDomLTPre = lt && !options.includePrerelease && lt.semver.prerelease.length ? lt.semver : false;
-      let needDomGTPre = gt2 && !options.includePrerelease && gt2.semver.prerelease.length ? gt2.semver : false;
-      if (needDomLTPre && needDomLTPre.prerelease.length === 1 && lt.operator === "<" && needDomLTPre.prerelease[0] === 0) {
-        needDomLTPre = false;
-      }
-      for (const c of dom) {
-        hasDomGT = hasDomGT || c.operator === ">" || c.operator === ">=";
-        hasDomLT = hasDomLT || c.operator === "<" || c.operator === "<=";
-        if (gt2) {
-          if (needDomGTPre) {
-            if (c.semver.prerelease && c.semver.prerelease.length && c.semver.major === needDomGTPre.major && c.semver.minor === needDomGTPre.minor && c.semver.patch === needDomGTPre.patch) {
-              needDomGTPre = false;
-            }
-          }
-          if (c.operator === ">" || c.operator === ">=") {
-            higher = higherGT(gt2, c, options);
-            if (higher === c && higher !== gt2) {
-              return false;
-            }
-          } else if (gt2.operator === ">=" && !c.test(gt2.semver)) {
-            return false;
-          }
-        }
-        if (lt) {
-          if (needDomLTPre) {
-            if (c.semver.prerelease && c.semver.prerelease.length && c.semver.major === needDomLTPre.major && c.semver.minor === needDomLTPre.minor && c.semver.patch === needDomLTPre.patch) {
-              needDomLTPre = false;
-            }
-          }
-          if (c.operator === "<" || c.operator === "<=") {
-            lower2 = lowerLT(lt, c, options);
-            if (lower2 === c && lower2 !== lt) {
-              return false;
-            }
-          } else if (lt.operator === "<=" && !c.test(lt.semver)) {
-            return false;
-          }
-        }
-        if (!c.operator && (lt || gt2) && gtltComp !== 0) {
-          return false;
-        }
-      }
-      if (gt2 && hasDomLT && !lt && gtltComp !== 0) {
-        return false;
-      }
-      if (lt && hasDomGT && !gt2 && gtltComp !== 0) {
-        return false;
-      }
-      if (needDomGTPre || needDomLTPre) {
-        return false;
-      }
-      return true;
-    };
-    var higherGT = (a, b, options) => {
-      if (!a) {
-        return b;
-      }
-      const comp = compare(a.semver, b.semver, options);
-      return comp > 0 ? a : comp < 0 ? b : b.operator === ">" && a.operator === ">=" ? b : a;
-    };
-    var lowerLT = (a, b, options) => {
-      if (!a) {
-        return b;
-      }
-      const comp = compare(a.semver, b.semver, options);
-      return comp < 0 ? a : comp > 0 ? b : b.operator === "<" && a.operator === "<=" ? b : a;
-    };
-    module2.exports = subset;
-  }
-});
-
-// node_modules/jsonwebtoken/node_modules/semver/index.js
-var require_semver2 = __commonJS({
-  "node_modules/jsonwebtoken/node_modules/semver/index.js"(exports2, module2) {
-    "use strict";
-    var internalRe = require_re();
-    var constants = require_constants3();
-    var SemVer = require_semver();
-    var identifiers = require_identifiers();
-    var parse = require_parse3();
-    var valid = require_valid();
-    var clean = require_clean();
-    var inc = require_inc();
-    var diff = require_diff();
-    var major = require_major();
-    var minor = require_minor();
-    var patch = require_patch();
-    var prerelease = require_prerelease();
-    var compare = require_compare();
-    var rcompare = require_rcompare();
-    var compareLoose = require_compare_loose();
-    var compareBuild = require_compare_build();
-    var sort = require_sort();
-    var rsort = require_rsort();
-    var gt2 = require_gt();
-    var lt = require_lt();
-    var eq = require_eq();
-    var neq = require_neq();
-    var gte = require_gte();
-    var lte = require_lte();
-    var cmp = require_cmp();
-    var coerce = require_coerce();
-    var truncate = require_truncate();
-    var Comparator = require_comparator();
-    var Range = require_range2();
-    var satisfies = require_satisfies();
-    var toComparators = require_to_comparators();
-    var maxSatisfying = require_max_satisfying();
-    var minSatisfying = require_min_satisfying();
-    var minVersion = require_min_version();
-    var validRange = require_valid2();
-    var outside = require_outside();
-    var gtr = require_gtr();
-    var ltr = require_ltr();
-    var intersects = require_intersects();
-    var simplifyRange = require_simplify();
-    var subset = require_subset();
-    module2.exports = {
-      parse,
-      valid,
-      clean,
-      inc,
-      diff,
-      major,
-      minor,
-      patch,
-      prerelease,
-      compare,
-      rcompare,
-      compareLoose,
-      compareBuild,
-      sort,
-      rsort,
-      gt: gt2,
-      lt,
-      eq,
-      neq,
-      gte,
-      lte,
-      cmp,
-      coerce,
-      truncate,
-      Comparator,
-      Range,
-      satisfies,
-      toComparators,
-      maxSatisfying,
-      minSatisfying,
-      minVersion,
-      validRange,
-      outside,
-      gtr,
-      ltr,
-      intersects,
-      simplifyRange,
-      subset,
-      SemVer,
-      re: internalRe.re,
-      src: internalRe.src,
-      tokens: internalRe.t,
-      SEMVER_SPEC_VERSION: constants.SEMVER_SPEC_VERSION,
-      RELEASE_TYPES: constants.RELEASE_TYPES,
-      compareIdentifiers: identifiers.compareIdentifiers,
-      rcompareIdentifiers: identifiers.rcompareIdentifiers
-    };
-  }
-});
-
-// node_modules/jsonwebtoken/lib/asymmetricKeyDetailsSupported.js
-var require_asymmetricKeyDetailsSupported = __commonJS({
-  "node_modules/jsonwebtoken/lib/asymmetricKeyDetailsSupported.js"(exports2, module2) {
-    var semver = require_semver2();
-    module2.exports = semver.satisfies(process.version, ">=15.7.0");
-  }
-});
-
-// node_modules/jsonwebtoken/lib/rsaPssKeyDetailsSupported.js
-var require_rsaPssKeyDetailsSupported = __commonJS({
-  "node_modules/jsonwebtoken/lib/rsaPssKeyDetailsSupported.js"(exports2, module2) {
-    var semver = require_semver2();
-    module2.exports = semver.satisfies(process.version, ">=16.9.0");
-  }
-});
-
-// node_modules/jsonwebtoken/lib/validateAsymmetricKey.js
-var require_validateAsymmetricKey = __commonJS({
-  "node_modules/jsonwebtoken/lib/validateAsymmetricKey.js"(exports2, module2) {
-    var ASYMMETRIC_KEY_DETAILS_SUPPORTED = require_asymmetricKeyDetailsSupported();
-    var RSA_PSS_KEY_DETAILS_SUPPORTED = require_rsaPssKeyDetailsSupported();
-    var allowedAlgorithmsForKeys = {
-      "ec": ["ES256", "ES384", "ES512"],
-      "rsa": ["RS256", "PS256", "RS384", "PS384", "RS512", "PS512"],
-      "rsa-pss": ["PS256", "PS384", "PS512"]
-    };
-    var allowedCurves = {
-      ES256: "prime256v1",
-      ES384: "secp384r1",
-      ES512: "secp521r1"
-    };
-    module2.exports = function(algorithm, key) {
-      if (!algorithm || !key) return;
-      const keyType = key.asymmetricKeyType;
-      if (!keyType) return;
-      const allowedAlgorithms = allowedAlgorithmsForKeys[keyType];
-      if (!allowedAlgorithms) {
-        throw new Error(`Unknown key type "${keyType}".`);
-      }
-      if (!allowedAlgorithms.includes(algorithm)) {
-        throw new Error(`"alg" parameter for "${keyType}" key type must be one of: ${allowedAlgorithms.join(", ")}.`);
-      }
-      if (ASYMMETRIC_KEY_DETAILS_SUPPORTED) {
-        switch (keyType) {
-          case "ec":
-            const keyCurve = key.asymmetricKeyDetails.namedCurve;
-            const allowedCurve = allowedCurves[algorithm];
-            if (keyCurve !== allowedCurve) {
-              throw new Error(`"alg" parameter "${algorithm}" requires curve "${allowedCurve}".`);
-            }
-            break;
-          case "rsa-pss":
-            if (RSA_PSS_KEY_DETAILS_SUPPORTED) {
-              const length = parseInt(algorithm.slice(-3), 10);
-              const { hashAlgorithm, mgf1HashAlgorithm, saltLength } = key.asymmetricKeyDetails;
-              if (hashAlgorithm !== `sha${length}` || mgf1HashAlgorithm !== hashAlgorithm) {
-                throw new Error(`Invalid key for this operation, its RSA-PSS parameters do not meet the requirements of "alg" ${algorithm}.`);
-              }
-              if (saltLength !== void 0 && saltLength > length >> 3) {
-                throw new Error(`Invalid key for this operation, its RSA-PSS parameter saltLength does not meet the requirements of "alg" ${algorithm}.`);
-              }
-            }
-            break;
-        }
-      }
-    };
-  }
-});
-
-// node_modules/jsonwebtoken/lib/psSupported.js
-var require_psSupported = __commonJS({
-  "node_modules/jsonwebtoken/lib/psSupported.js"(exports2, module2) {
-    var semver = require_semver2();
-    module2.exports = semver.satisfies(process.version, "^6.12.0 || >=8.0.0");
-  }
-});
-
-// node_modules/jsonwebtoken/verify.js
-var require_verify = __commonJS({
-  "node_modules/jsonwebtoken/verify.js"(exports2, module2) {
-    var JsonWebTokenError = require_JsonWebTokenError();
-    var NotBeforeError = require_NotBeforeError();
-    var TokenExpiredError = require_TokenExpiredError();
-    var decode = require_decode2();
-    var timespan = require_timespan();
-    var validateAsymmetricKey = require_validateAsymmetricKey();
-    var PS_SUPPORTED = require_psSupported();
-    var jws = require_jws();
-    var { KeyObject, createSecretKey, createPublicKey } = require("crypto");
-    var PUB_KEY_ALGS = ["RS256", "RS384", "RS512"];
-    var EC_KEY_ALGS = ["ES256", "ES384", "ES512"];
-    var RSA_KEY_ALGS = ["RS256", "RS384", "RS512"];
-    var HS_ALGS = ["HS256", "HS384", "HS512"];
-    if (PS_SUPPORTED) {
-      PUB_KEY_ALGS.splice(PUB_KEY_ALGS.length, 0, "PS256", "PS384", "PS512");
-      RSA_KEY_ALGS.splice(RSA_KEY_ALGS.length, 0, "PS256", "PS384", "PS512");
-    }
-    module2.exports = function(jwtString, secretOrPublicKey, options, callback) {
-      if (typeof options === "function" && !callback) {
-        callback = options;
-        options = {};
-      }
-      if (!options) {
-        options = {};
-      }
-      options = Object.assign({}, options);
-      let done;
-      if (callback) {
-        done = callback;
-      } else {
-        done = function(err, data) {
-          if (err) throw err;
-          return data;
-        };
-      }
-      if (options.clockTimestamp && typeof options.clockTimestamp !== "number") {
-        return done(new JsonWebTokenError("clockTimestamp must be a number"));
-      }
-      if (options.nonce !== void 0 && (typeof options.nonce !== "string" || options.nonce.trim() === "")) {
-        return done(new JsonWebTokenError("nonce must be a non-empty string"));
-      }
-      if (options.allowInvalidAsymmetricKeyTypes !== void 0 && typeof options.allowInvalidAsymmetricKeyTypes !== "boolean") {
-        return done(new JsonWebTokenError("allowInvalidAsymmetricKeyTypes must be a boolean"));
-      }
-      const clockTimestamp = options.clockTimestamp || Math.floor(Date.now() / 1e3);
-      if (!jwtString) {
-        return done(new JsonWebTokenError("jwt must be provided"));
-      }
-      if (typeof jwtString !== "string") {
-        return done(new JsonWebTokenError("jwt must be a string"));
-      }
-      const parts = jwtString.split(".");
-      if (parts.length !== 3) {
-        return done(new JsonWebTokenError("jwt malformed"));
-      }
-      let decodedToken;
-      try {
-        decodedToken = decode(jwtString, { complete: true });
-      } catch (err) {
-        return done(err);
-      }
-      if (!decodedToken) {
-        return done(new JsonWebTokenError("invalid token"));
-      }
-      const header = decodedToken.header;
-      let getSecret;
-      if (typeof secretOrPublicKey === "function") {
-        if (!callback) {
-          return done(new JsonWebTokenError("verify must be called asynchronous if secret or public key is provided as a callback"));
-        }
-        getSecret = secretOrPublicKey;
-      } else {
-        getSecret = function(header2, secretCallback) {
-          return secretCallback(null, secretOrPublicKey);
-        };
-      }
-      return getSecret(header, function(err, secretOrPublicKey2) {
-        if (err) {
-          return done(new JsonWebTokenError("error in secret or public key callback: " + err.message));
-        }
-        const hasSignature = parts[2].trim() !== "";
-        if (!hasSignature && secretOrPublicKey2) {
-          return done(new JsonWebTokenError("jwt signature is required"));
-        }
-        if (hasSignature && !secretOrPublicKey2) {
-          return done(new JsonWebTokenError("secret or public key must be provided"));
-        }
-        if (!hasSignature && !options.algorithms) {
-          return done(new JsonWebTokenError('please specify "none" in "algorithms" to verify unsigned tokens'));
-        }
-        if (secretOrPublicKey2 != null && !(secretOrPublicKey2 instanceof KeyObject)) {
-          try {
-            secretOrPublicKey2 = createPublicKey(secretOrPublicKey2);
-          } catch (_) {
-            try {
-              secretOrPublicKey2 = createSecretKey(typeof secretOrPublicKey2 === "string" ? Buffer.from(secretOrPublicKey2) : secretOrPublicKey2);
-            } catch (_2) {
-              return done(new JsonWebTokenError("secretOrPublicKey is not valid key material"));
-            }
-          }
-        }
-        if (!options.algorithms) {
-          if (secretOrPublicKey2.type === "secret") {
-            options.algorithms = HS_ALGS;
-          } else if (["rsa", "rsa-pss"].includes(secretOrPublicKey2.asymmetricKeyType)) {
-            options.algorithms = RSA_KEY_ALGS;
-          } else if (secretOrPublicKey2.asymmetricKeyType === "ec") {
-            options.algorithms = EC_KEY_ALGS;
-          } else {
-            options.algorithms = PUB_KEY_ALGS;
-          }
-        }
-        if (options.algorithms.indexOf(decodedToken.header.alg) === -1) {
-          return done(new JsonWebTokenError("invalid algorithm"));
-        }
-        if (header.alg.startsWith("HS") && secretOrPublicKey2.type !== "secret") {
-          return done(new JsonWebTokenError(`secretOrPublicKey must be a symmetric key when using ${header.alg}`));
-        } else if (/^(?:RS|PS|ES)/.test(header.alg) && secretOrPublicKey2.type !== "public") {
-          return done(new JsonWebTokenError(`secretOrPublicKey must be an asymmetric key when using ${header.alg}`));
-        }
-        if (!options.allowInvalidAsymmetricKeyTypes) {
-          try {
-            validateAsymmetricKey(header.alg, secretOrPublicKey2);
-          } catch (e2) {
-            return done(e2);
-          }
-        }
-        let valid;
-        try {
-          valid = jws.verify(jwtString, decodedToken.header.alg, secretOrPublicKey2);
-        } catch (e2) {
-          return done(e2);
-        }
-        if (!valid) {
-          return done(new JsonWebTokenError("invalid signature"));
-        }
-        const payload = decodedToken.payload;
-        if (typeof payload.nbf !== "undefined" && !options.ignoreNotBefore) {
-          if (typeof payload.nbf !== "number") {
-            return done(new JsonWebTokenError("invalid nbf value"));
-          }
-          if (payload.nbf > clockTimestamp + (options.clockTolerance || 0)) {
-            return done(new NotBeforeError("jwt not active", new Date(payload.nbf * 1e3)));
-          }
-        }
-        if (typeof payload.exp !== "undefined" && !options.ignoreExpiration) {
-          if (typeof payload.exp !== "number") {
-            return done(new JsonWebTokenError("invalid exp value"));
-          }
-          if (clockTimestamp >= payload.exp + (options.clockTolerance || 0)) {
-            return done(new TokenExpiredError("jwt expired", new Date(payload.exp * 1e3)));
-          }
-        }
-        if (options.audience) {
-          const audiences = Array.isArray(options.audience) ? options.audience : [options.audience];
-          const target = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-          const match2 = target.some(function(targetAudience) {
-            return audiences.some(function(audience) {
-              return audience instanceof RegExp ? audience.test(targetAudience) : audience === targetAudience;
-            });
-          });
-          if (!match2) {
-            return done(new JsonWebTokenError("jwt audience invalid. expected: " + audiences.join(" or ")));
-          }
-        }
-        if (options.issuer) {
-          const invalid_issuer = typeof options.issuer === "string" && payload.iss !== options.issuer || Array.isArray(options.issuer) && options.issuer.indexOf(payload.iss) === -1;
-          if (invalid_issuer) {
-            return done(new JsonWebTokenError("jwt issuer invalid. expected: " + options.issuer));
-          }
-        }
-        if (options.subject) {
-          if (payload.sub !== options.subject) {
-            return done(new JsonWebTokenError("jwt subject invalid. expected: " + options.subject));
-          }
-        }
-        if (options.jwtid) {
-          if (payload.jti !== options.jwtid) {
-            return done(new JsonWebTokenError("jwt jwtid invalid. expected: " + options.jwtid));
-          }
-        }
-        if (options.nonce) {
-          if (payload.nonce !== options.nonce) {
-            return done(new JsonWebTokenError("jwt nonce invalid. expected: " + options.nonce));
-          }
-        }
-        if (options.maxAge) {
-          if (typeof payload.iat !== "number") {
-            return done(new JsonWebTokenError("iat required when maxAge is specified"));
-          }
-          const maxAgeTimestamp = timespan(options.maxAge, payload.iat);
-          if (typeof maxAgeTimestamp === "undefined") {
-            return done(new JsonWebTokenError('"maxAge" should be a number of seconds or string representing a timespan eg: "1d", "20h", 60'));
-          }
-          if (clockTimestamp >= maxAgeTimestamp + (options.clockTolerance || 0)) {
-            return done(new TokenExpiredError("maxAge exceeded", new Date(maxAgeTimestamp * 1e3)));
-          }
-        }
-        if (options.complete === true) {
-          const signature = decodedToken.signature;
-          return done(null, {
-            header,
-            payload,
-            signature
-          });
-        }
-        return done(null, payload);
-      });
-    };
-  }
-});
-
-// node_modules/lodash.includes/index.js
-var require_lodash = __commonJS({
-  "node_modules/lodash.includes/index.js"(exports2, module2) {
-    var INFINITY = 1 / 0;
-    var MAX_SAFE_INTEGER = 9007199254740991;
-    var MAX_INTEGER = 17976931348623157e292;
-    var NAN = 0 / 0;
-    var argsTag = "[object Arguments]";
-    var funcTag = "[object Function]";
-    var genTag = "[object GeneratorFunction]";
-    var stringTag = "[object String]";
-    var symbolTag = "[object Symbol]";
-    var reTrim = /^\s+|\s+$/g;
-    var reIsBadHex = /^[-+]0x[0-9a-f]+$/i;
-    var reIsBinary = /^0b[01]+$/i;
-    var reIsOctal = /^0o[0-7]+$/i;
-    var reIsUint = /^(?:0|[1-9]\d*)$/;
-    var freeParseInt = parseInt;
-    function arrayMap(array, iteratee) {
-      var index = -1, length = array ? array.length : 0, result = Array(length);
-      while (++index < length) {
-        result[index] = iteratee(array[index], index, array);
-      }
-      return result;
-    }
-    function baseFindIndex(array, predicate, fromIndex, fromRight) {
-      var length = array.length, index = fromIndex + (fromRight ? 1 : -1);
-      while (fromRight ? index-- : ++index < length) {
-        if (predicate(array[index], index, array)) {
-          return index;
-        }
-      }
-      return -1;
-    }
-    function baseIndexOf(array, value, fromIndex) {
-      if (value !== value) {
-        return baseFindIndex(array, baseIsNaN, fromIndex);
-      }
-      var index = fromIndex - 1, length = array.length;
-      while (++index < length) {
-        if (array[index] === value) {
-          return index;
-        }
-      }
-      return -1;
-    }
-    function baseIsNaN(value) {
-      return value !== value;
-    }
-    function baseTimes(n, iteratee) {
-      var index = -1, result = Array(n);
-      while (++index < n) {
-        result[index] = iteratee(index);
-      }
-      return result;
-    }
-    function baseValues(object, props) {
-      return arrayMap(props, function(key) {
-        return object[key];
-      });
-    }
-    function overArg(func, transform) {
-      return function(arg) {
-        return func(transform(arg));
-      };
-    }
-    var objectProto = Object.prototype;
-    var hasOwnProperty = objectProto.hasOwnProperty;
-    var objectToString = objectProto.toString;
-    var propertyIsEnumerable = objectProto.propertyIsEnumerable;
-    var nativeKeys = overArg(Object.keys, Object);
-    var nativeMax = Math.max;
-    function arrayLikeKeys(value, inherited) {
-      var result = isArray(value) || isArguments(value) ? baseTimes(value.length, String) : [];
-      var length = result.length, skipIndexes = !!length;
-      for (var key in value) {
-        if ((inherited || hasOwnProperty.call(value, key)) && !(skipIndexes && (key == "length" || isIndex(key, length)))) {
-          result.push(key);
-        }
-      }
-      return result;
-    }
-    function baseKeys(object) {
-      if (!isPrototype(object)) {
-        return nativeKeys(object);
-      }
-      var result = [];
-      for (var key in Object(object)) {
-        if (hasOwnProperty.call(object, key) && key != "constructor") {
-          result.push(key);
-        }
-      }
-      return result;
-    }
-    function isIndex(value, length) {
-      length = length == null ? MAX_SAFE_INTEGER : length;
-      return !!length && (typeof value == "number" || reIsUint.test(value)) && (value > -1 && value % 1 == 0 && value < length);
-    }
-    function isPrototype(value) {
-      var Ctor = value && value.constructor, proto = typeof Ctor == "function" && Ctor.prototype || objectProto;
-      return value === proto;
-    }
-    function includes(collection, value, fromIndex, guard) {
-      collection = isArrayLike(collection) ? collection : values(collection);
-      fromIndex = fromIndex && !guard ? toInteger(fromIndex) : 0;
-      var length = collection.length;
-      if (fromIndex < 0) {
-        fromIndex = nativeMax(length + fromIndex, 0);
-      }
-      return isString(collection) ? fromIndex <= length && collection.indexOf(value, fromIndex) > -1 : !!length && baseIndexOf(collection, value, fromIndex) > -1;
-    }
-    function isArguments(value) {
-      return isArrayLikeObject(value) && hasOwnProperty.call(value, "callee") && (!propertyIsEnumerable.call(value, "callee") || objectToString.call(value) == argsTag);
-    }
-    var isArray = Array.isArray;
-    function isArrayLike(value) {
-      return value != null && isLength(value.length) && !isFunction(value);
-    }
-    function isArrayLikeObject(value) {
-      return isObjectLike(value) && isArrayLike(value);
-    }
-    function isFunction(value) {
-      var tag = isObject(value) ? objectToString.call(value) : "";
-      return tag == funcTag || tag == genTag;
-    }
-    function isLength(value) {
-      return typeof value == "number" && value > -1 && value % 1 == 0 && value <= MAX_SAFE_INTEGER;
-    }
-    function isObject(value) {
-      var type = typeof value;
-      return !!value && (type == "object" || type == "function");
-    }
-    function isObjectLike(value) {
-      return !!value && typeof value == "object";
-    }
-    function isString(value) {
-      return typeof value == "string" || !isArray(value) && isObjectLike(value) && objectToString.call(value) == stringTag;
-    }
-    function isSymbol(value) {
-      return typeof value == "symbol" || isObjectLike(value) && objectToString.call(value) == symbolTag;
-    }
-    function toFinite(value) {
-      if (!value) {
-        return value === 0 ? value : 0;
-      }
-      value = toNumber(value);
-      if (value === INFINITY || value === -INFINITY) {
-        var sign = value < 0 ? -1 : 1;
-        return sign * MAX_INTEGER;
-      }
-      return value === value ? value : 0;
-    }
-    function toInteger(value) {
-      var result = toFinite(value), remainder = result % 1;
-      return result === result ? remainder ? result - remainder : result : 0;
-    }
-    function toNumber(value) {
-      if (typeof value == "number") {
-        return value;
-      }
-      if (isSymbol(value)) {
-        return NAN;
-      }
-      if (isObject(value)) {
-        var other = typeof value.valueOf == "function" ? value.valueOf() : value;
-        value = isObject(other) ? other + "" : other;
-      }
-      if (typeof value != "string") {
-        return value === 0 ? value : +value;
-      }
-      value = value.replace(reTrim, "");
-      var isBinary = reIsBinary.test(value);
-      return isBinary || reIsOctal.test(value) ? freeParseInt(value.slice(2), isBinary ? 2 : 8) : reIsBadHex.test(value) ? NAN : +value;
-    }
-    function keys(object) {
-      return isArrayLike(object) ? arrayLikeKeys(object) : baseKeys(object);
-    }
-    function values(object) {
-      return object ? baseValues(object, keys(object)) : [];
-    }
-    module2.exports = includes;
-  }
-});
-
-// node_modules/lodash.isboolean/index.js
-var require_lodash2 = __commonJS({
-  "node_modules/lodash.isboolean/index.js"(exports2, module2) {
-    var boolTag = "[object Boolean]";
-    var objectProto = Object.prototype;
-    var objectToString = objectProto.toString;
-    function isBoolean(value) {
-      return value === true || value === false || isObjectLike(value) && objectToString.call(value) == boolTag;
-    }
-    function isObjectLike(value) {
-      return !!value && typeof value == "object";
-    }
-    module2.exports = isBoolean;
-  }
-});
-
-// node_modules/lodash.isinteger/index.js
-var require_lodash3 = __commonJS({
-  "node_modules/lodash.isinteger/index.js"(exports2, module2) {
-    var INFINITY = 1 / 0;
-    var MAX_INTEGER = 17976931348623157e292;
-    var NAN = 0 / 0;
-    var symbolTag = "[object Symbol]";
-    var reTrim = /^\s+|\s+$/g;
-    var reIsBadHex = /^[-+]0x[0-9a-f]+$/i;
-    var reIsBinary = /^0b[01]+$/i;
-    var reIsOctal = /^0o[0-7]+$/i;
-    var freeParseInt = parseInt;
-    var objectProto = Object.prototype;
-    var objectToString = objectProto.toString;
-    function isInteger(value) {
-      return typeof value == "number" && value == toInteger(value);
-    }
-    function isObject(value) {
-      var type = typeof value;
-      return !!value && (type == "object" || type == "function");
-    }
-    function isObjectLike(value) {
-      return !!value && typeof value == "object";
-    }
-    function isSymbol(value) {
-      return typeof value == "symbol" || isObjectLike(value) && objectToString.call(value) == symbolTag;
-    }
-    function toFinite(value) {
-      if (!value) {
-        return value === 0 ? value : 0;
-      }
-      value = toNumber(value);
-      if (value === INFINITY || value === -INFINITY) {
-        var sign = value < 0 ? -1 : 1;
-        return sign * MAX_INTEGER;
-      }
-      return value === value ? value : 0;
-    }
-    function toInteger(value) {
-      var result = toFinite(value), remainder = result % 1;
-      return result === result ? remainder ? result - remainder : result : 0;
-    }
-    function toNumber(value) {
-      if (typeof value == "number") {
-        return value;
-      }
-      if (isSymbol(value)) {
-        return NAN;
-      }
-      if (isObject(value)) {
-        var other = typeof value.valueOf == "function" ? value.valueOf() : value;
-        value = isObject(other) ? other + "" : other;
-      }
-      if (typeof value != "string") {
-        return value === 0 ? value : +value;
-      }
-      value = value.replace(reTrim, "");
-      var isBinary = reIsBinary.test(value);
-      return isBinary || reIsOctal.test(value) ? freeParseInt(value.slice(2), isBinary ? 2 : 8) : reIsBadHex.test(value) ? NAN : +value;
-    }
-    module2.exports = isInteger;
-  }
-});
-
-// node_modules/lodash.isnumber/index.js
-var require_lodash4 = __commonJS({
-  "node_modules/lodash.isnumber/index.js"(exports2, module2) {
-    var numberTag = "[object Number]";
-    var objectProto = Object.prototype;
-    var objectToString = objectProto.toString;
-    function isObjectLike(value) {
-      return !!value && typeof value == "object";
-    }
-    function isNumber(value) {
-      return typeof value == "number" || isObjectLike(value) && objectToString.call(value) == numberTag;
-    }
-    module2.exports = isNumber;
-  }
-});
-
-// node_modules/lodash.isplainobject/index.js
-var require_lodash5 = __commonJS({
-  "node_modules/lodash.isplainobject/index.js"(exports2, module2) {
-    var objectTag = "[object Object]";
-    function isHostObject(value) {
-      var result = false;
-      if (value != null && typeof value.toString != "function") {
-        try {
-          result = !!(value + "");
-        } catch (e2) {
-        }
-      }
-      return result;
-    }
-    function overArg(func, transform) {
-      return function(arg) {
-        return func(transform(arg));
-      };
-    }
-    var funcProto = Function.prototype;
-    var objectProto = Object.prototype;
-    var funcToString = funcProto.toString;
-    var hasOwnProperty = objectProto.hasOwnProperty;
-    var objectCtorString = funcToString.call(Object);
-    var objectToString = objectProto.toString;
-    var getPrototype = overArg(Object.getPrototypeOf, Object);
-    function isObjectLike(value) {
-      return !!value && typeof value == "object";
-    }
-    function isPlainObject2(value) {
-      if (!isObjectLike(value) || objectToString.call(value) != objectTag || isHostObject(value)) {
-        return false;
-      }
-      var proto = getPrototype(value);
-      if (proto === null) {
-        return true;
-      }
-      var Ctor = hasOwnProperty.call(proto, "constructor") && proto.constructor;
-      return typeof Ctor == "function" && Ctor instanceof Ctor && funcToString.call(Ctor) == objectCtorString;
-    }
-    module2.exports = isPlainObject2;
-  }
-});
-
-// node_modules/lodash.isstring/index.js
-var require_lodash6 = __commonJS({
-  "node_modules/lodash.isstring/index.js"(exports2, module2) {
-    var stringTag = "[object String]";
-    var objectProto = Object.prototype;
-    var objectToString = objectProto.toString;
-    var isArray = Array.isArray;
-    function isObjectLike(value) {
-      return !!value && typeof value == "object";
-    }
-    function isString(value) {
-      return typeof value == "string" || !isArray(value) && isObjectLike(value) && objectToString.call(value) == stringTag;
-    }
-    module2.exports = isString;
-  }
-});
-
-// node_modules/lodash.once/index.js
-var require_lodash7 = __commonJS({
-  "node_modules/lodash.once/index.js"(exports2, module2) {
-    var FUNC_ERROR_TEXT = "Expected a function";
-    var INFINITY = 1 / 0;
-    var MAX_INTEGER = 17976931348623157e292;
-    var NAN = 0 / 0;
-    var symbolTag = "[object Symbol]";
-    var reTrim = /^\s+|\s+$/g;
-    var reIsBadHex = /^[-+]0x[0-9a-f]+$/i;
-    var reIsBinary = /^0b[01]+$/i;
-    var reIsOctal = /^0o[0-7]+$/i;
-    var freeParseInt = parseInt;
-    var objectProto = Object.prototype;
-    var objectToString = objectProto.toString;
-    function before(n, func) {
-      var result;
-      if (typeof func != "function") {
-        throw new TypeError(FUNC_ERROR_TEXT);
-      }
-      n = toInteger(n);
-      return function() {
-        if (--n > 0) {
-          result = func.apply(this, arguments);
-        }
-        if (n <= 1) {
-          func = void 0;
-        }
-        return result;
-      };
-    }
-    function once(func) {
-      return before(2, func);
-    }
-    function isObject(value) {
-      var type = typeof value;
-      return !!value && (type == "object" || type == "function");
-    }
-    function isObjectLike(value) {
-      return !!value && typeof value == "object";
-    }
-    function isSymbol(value) {
-      return typeof value == "symbol" || isObjectLike(value) && objectToString.call(value) == symbolTag;
-    }
-    function toFinite(value) {
-      if (!value) {
-        return value === 0 ? value : 0;
-      }
-      value = toNumber(value);
-      if (value === INFINITY || value === -INFINITY) {
-        var sign = value < 0 ? -1 : 1;
-        return sign * MAX_INTEGER;
-      }
-      return value === value ? value : 0;
-    }
-    function toInteger(value) {
-      var result = toFinite(value), remainder = result % 1;
-      return result === result ? remainder ? result - remainder : result : 0;
-    }
-    function toNumber(value) {
-      if (typeof value == "number") {
-        return value;
-      }
-      if (isSymbol(value)) {
-        return NAN;
-      }
-      if (isObject(value)) {
-        var other = typeof value.valueOf == "function" ? value.valueOf() : value;
-        value = isObject(other) ? other + "" : other;
-      }
-      if (typeof value != "string") {
-        return value === 0 ? value : +value;
-      }
-      value = value.replace(reTrim, "");
-      var isBinary = reIsBinary.test(value);
-      return isBinary || reIsOctal.test(value) ? freeParseInt(value.slice(2), isBinary ? 2 : 8) : reIsBadHex.test(value) ? NAN : +value;
-    }
-    module2.exports = once;
-  }
-});
-
-// node_modules/jsonwebtoken/sign.js
-var require_sign2 = __commonJS({
-  "node_modules/jsonwebtoken/sign.js"(exports2, module2) {
-    var timespan = require_timespan();
-    var PS_SUPPORTED = require_psSupported();
-    var validateAsymmetricKey = require_validateAsymmetricKey();
-    var jws = require_jws();
-    var includes = require_lodash();
-    var isBoolean = require_lodash2();
-    var isInteger = require_lodash3();
-    var isNumber = require_lodash4();
-    var isPlainObject2 = require_lodash5();
-    var isString = require_lodash6();
-    var once = require_lodash7();
-    var { KeyObject, createSecretKey, createPrivateKey } = require("crypto");
-    var SUPPORTED_ALGS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "HS256", "HS384", "HS512", "none"];
-    if (PS_SUPPORTED) {
-      SUPPORTED_ALGS.splice(3, 0, "PS256", "PS384", "PS512");
-    }
-    var sign_options_schema = {
-      expiresIn: { isValid: function(value) {
-        return isInteger(value) || isString(value) && value;
-      }, message: '"expiresIn" should be a number of seconds or string representing a timespan' },
-      notBefore: { isValid: function(value) {
-        return isInteger(value) || isString(value) && value;
-      }, message: '"notBefore" should be a number of seconds or string representing a timespan' },
-      audience: { isValid: function(value) {
-        return isString(value) || Array.isArray(value);
-      }, message: '"audience" must be a string or array' },
-      algorithm: { isValid: includes.bind(null, SUPPORTED_ALGS), message: '"algorithm" must be a valid string enum value' },
-      header: { isValid: isPlainObject2, message: '"header" must be an object' },
-      encoding: { isValid: isString, message: '"encoding" must be a string' },
-      issuer: { isValid: isString, message: '"issuer" must be a string' },
-      subject: { isValid: isString, message: '"subject" must be a string' },
-      jwtid: { isValid: isString, message: '"jwtid" must be a string' },
-      noTimestamp: { isValid: isBoolean, message: '"noTimestamp" must be a boolean' },
-      keyid: { isValid: isString, message: '"keyid" must be a string' },
-      mutatePayload: { isValid: isBoolean, message: '"mutatePayload" must be a boolean' },
-      allowInsecureKeySizes: { isValid: isBoolean, message: '"allowInsecureKeySizes" must be a boolean' },
-      allowInvalidAsymmetricKeyTypes: { isValid: isBoolean, message: '"allowInvalidAsymmetricKeyTypes" must be a boolean' }
-    };
-    var registered_claims_schema = {
-      iat: { isValid: isNumber, message: '"iat" should be a number of seconds' },
-      exp: { isValid: isNumber, message: '"exp" should be a number of seconds' },
-      nbf: { isValid: isNumber, message: '"nbf" should be a number of seconds' }
-    };
-    function validate(schema, allowUnknown, object, parameterName) {
-      if (!isPlainObject2(object)) {
-        throw new Error('Expected "' + parameterName + '" to be a plain object.');
-      }
-      Object.keys(object).forEach(function(key) {
-        const validator = schema[key];
-        if (!validator) {
-          if (!allowUnknown) {
-            throw new Error('"' + key + '" is not allowed in "' + parameterName + '"');
-          }
-          return;
-        }
-        if (!validator.isValid(object[key])) {
-          throw new Error(validator.message);
-        }
-      });
-    }
-    function validateOptions(options) {
-      return validate(sign_options_schema, false, options, "options");
-    }
-    function validatePayload(payload) {
-      return validate(registered_claims_schema, true, payload, "payload");
-    }
-    var options_to_payload = {
-      "audience": "aud",
-      "issuer": "iss",
-      "subject": "sub",
-      "jwtid": "jti"
-    };
-    var options_for_objects = [
-      "expiresIn",
-      "notBefore",
-      "noTimestamp",
-      "audience",
-      "issuer",
-      "subject",
-      "jwtid"
-    ];
-    module2.exports = function(payload, secretOrPrivateKey, options, callback) {
-      if (typeof options === "function") {
-        callback = options;
-        options = {};
-      } else {
-        options = options || {};
-      }
-      const isObjectPayload = typeof payload === "object" && !Buffer.isBuffer(payload);
-      const header = Object.assign({
-        alg: options.algorithm || "HS256",
-        typ: isObjectPayload ? "JWT" : void 0,
-        kid: options.keyid
-      }, options.header);
-      function failure(err) {
-        if (callback) {
-          return callback(err);
-        }
-        throw err;
-      }
-      if (!secretOrPrivateKey && options.algorithm !== "none") {
-        return failure(new Error("secretOrPrivateKey must have a value"));
-      }
-      if (secretOrPrivateKey != null && !(secretOrPrivateKey instanceof KeyObject)) {
-        try {
-          secretOrPrivateKey = createPrivateKey(secretOrPrivateKey);
-        } catch (_) {
-          try {
-            secretOrPrivateKey = createSecretKey(typeof secretOrPrivateKey === "string" ? Buffer.from(secretOrPrivateKey) : secretOrPrivateKey);
-          } catch (_2) {
-            return failure(new Error("secretOrPrivateKey is not valid key material"));
-          }
-        }
-      }
-      if (header.alg.startsWith("HS") && secretOrPrivateKey.type !== "secret") {
-        return failure(new Error(`secretOrPrivateKey must be a symmetric key when using ${header.alg}`));
-      } else if (/^(?:RS|PS|ES)/.test(header.alg)) {
-        if (secretOrPrivateKey.type !== "private") {
-          return failure(new Error(`secretOrPrivateKey must be an asymmetric key when using ${header.alg}`));
-        }
-        if (!options.allowInsecureKeySizes && !header.alg.startsWith("ES") && secretOrPrivateKey.asymmetricKeyDetails !== void 0 && //KeyObject.asymmetricKeyDetails is supported in Node 15+
-        secretOrPrivateKey.asymmetricKeyDetails.modulusLength < 2048) {
-          return failure(new Error(`secretOrPrivateKey has a minimum key size of 2048 bits for ${header.alg}`));
-        }
-      }
-      if (typeof payload === "undefined") {
-        return failure(new Error("payload is required"));
-      } else if (isObjectPayload) {
-        try {
-          validatePayload(payload);
-        } catch (error) {
-          return failure(error);
-        }
-        if (!options.mutatePayload) {
-          payload = Object.assign({}, payload);
-        }
-      } else {
-        const invalid_options = options_for_objects.filter(function(opt) {
-          return typeof options[opt] !== "undefined";
-        });
-        if (invalid_options.length > 0) {
-          return failure(new Error("invalid " + invalid_options.join(",") + " option for " + typeof payload + " payload"));
-        }
-      }
-      if (typeof payload.exp !== "undefined" && typeof options.expiresIn !== "undefined") {
-        return failure(new Error('Bad "options.expiresIn" option the payload already has an "exp" property.'));
-      }
-      if (typeof payload.nbf !== "undefined" && typeof options.notBefore !== "undefined") {
-        return failure(new Error('Bad "options.notBefore" option the payload already has an "nbf" property.'));
-      }
-      try {
-        validateOptions(options);
-      } catch (error) {
-        return failure(error);
-      }
-      if (!options.allowInvalidAsymmetricKeyTypes) {
-        try {
-          validateAsymmetricKey(header.alg, secretOrPrivateKey);
-        } catch (error) {
-          return failure(error);
-        }
-      }
-      const timestamp = payload.iat || Math.floor(Date.now() / 1e3);
-      if (options.noTimestamp) {
-        delete payload.iat;
-      } else if (isObjectPayload) {
-        payload.iat = timestamp;
-      }
-      if (typeof options.notBefore !== "undefined") {
-        try {
-          payload.nbf = timespan(options.notBefore, timestamp);
-        } catch (err) {
-          return failure(err);
-        }
-        if (typeof payload.nbf === "undefined") {
-          return failure(new Error('"notBefore" should be a number of seconds or string representing a timespan eg: "1d", "20h", 60'));
-        }
-      }
-      if (typeof options.expiresIn !== "undefined" && typeof payload === "object") {
-        try {
-          payload.exp = timespan(options.expiresIn, timestamp);
-        } catch (err) {
-          return failure(err);
-        }
-        if (typeof payload.exp === "undefined") {
-          return failure(new Error('"expiresIn" should be a number of seconds or string representing a timespan eg: "1d", "20h", 60'));
-        }
-      }
-      Object.keys(options_to_payload).forEach(function(key) {
-        const claim = options_to_payload[key];
-        if (typeof options[key] !== "undefined") {
-          if (typeof payload[claim] !== "undefined") {
-            return failure(new Error('Bad "options.' + key + '" option. The payload already has an "' + claim + '" property.'));
-          }
-          payload[claim] = options[key];
-        }
-      });
-      const encoding = options.encoding || "utf8";
-      if (typeof callback === "function") {
-        callback = callback && once(callback);
-        jws.createSign({
-          header,
-          privateKey: secretOrPrivateKey,
-          payload,
-          encoding
-        }).once("error", callback).once("done", function(signature) {
-          if (!options.allowInsecureKeySizes && /^(?:RS|PS)/.test(header.alg) && signature.length < 256) {
-            return callback(new Error(`secretOrPrivateKey has a minimum key size of 2048 bits for ${header.alg}`));
-          }
-          callback(null, signature);
-        });
-      } else {
-        let signature = jws.sign({ header, payload, secret: secretOrPrivateKey, encoding });
-        if (!options.allowInsecureKeySizes && /^(?:RS|PS)/.test(header.alg) && signature.length < 256) {
-          throw new Error(`secretOrPrivateKey has a minimum key size of 2048 bits for ${header.alg}`);
-        }
-        return signature;
-      }
-    };
-  }
-});
-
-// node_modules/jsonwebtoken/index.js
-var require_jsonwebtoken = __commonJS({
-  "node_modules/jsonwebtoken/index.js"(exports2, module2) {
-    module2.exports = {
-      decode: require_decode2(),
-      verify: require_verify(),
-      sign: require_sign2(),
-      JsonWebTokenError: require_JsonWebTokenError(),
-      NotBeforeError: require_NotBeforeError(),
-      TokenExpiredError: require_TokenExpiredError()
-    };
-  }
-});
-
 // server.ts
-var import_express8 = __toESM(require_express2(), 1);
-var import_path8 = __toESM(require("path"), 1);
-var import_fs9 = __toESM(require("fs"), 1);
+var import_express12 = __toESM(require_express2(), 1);
+var import_path10 = __toESM(require("path"), 1);
+var import_fs11 = __toESM(require("fs"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 var import_node_module = require("node:module");
 var import_pdf_lib = __toESM(require_cjs(), 1);
+var import_dotenv2 = __toESM(require_main(), 1);
+
+// src/webhooks/shopeeWebhookHandler.ts
+var import_express = __toESM(require_express2(), 1);
+
+// src/webhooks/shopeeSignature.ts
+var import_node_crypto = __toESM(require("node:crypto"), 1);
+function normalizeSignature(value) {
+  return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
+}
+function timingSafeEqualHex(a, b) {
+  try {
+    const aBuf = Buffer.from(a, "hex");
+    const bBuf = Buffer.from(b, "hex");
+    return aBuf.length === bBuf.length && import_node_crypto.default.timingSafeEqual(aBuf, bBuf);
+  } catch {
+    return false;
+  }
+}
+function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) {
+  const secret = String(
+    process.env.SHOPEE_PARTNER_KEY || process.env.SHOPEE_WEBHOOK_TOKEN || ""
+  ).trim();
+  const supplied = typeof authorization === "string" ? normalizeSignature(authorization) : "";
+  if (!secret) {
+    console.error("[Shopee Webhook] SHOPEE_PARTNER_KEY is not configured; rejecting webhook.");
+    return false;
+  }
+  if (!supplied || !/^[a-f0-9]{64}$/.test(supplied)) {
+    console.warn("[Shopee Webhook] Authorization missing or not a 64-char hex HMAC.");
+    return false;
+  }
+  const bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : "";
+  const urlList = (Array.isArray(requestUrls) ? requestUrls : [requestUrls]).map((u) => String(u || "").trim()).filter(Boolean);
+  const seen = /* @__PURE__ */ new Set();
+  const candidates = [];
+  for (const url of urlList) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    candidates.push(url);
+  }
+  if (candidates.length === 0) {
+    console.error("[Shopee Webhook] No webhook URL candidates for HMAC base string.");
+    return false;
+  }
+  for (const url of candidates) {
+    const baseString = `${url}|${bodyStr}`;
+    const expected = import_node_crypto.default.createHmac("sha256", secret).update(baseString).digest("hex");
+    if (timingSafeEqualHex(expected, supplied)) {
+      console.log(`[Shopee Webhook] HMAC OK (url=${url})`);
+      return true;
+    }
+  }
+  console.warn("[Shopee Webhook] HMAC mismatch", {
+    bodyBytes: Buffer.byteLength(bodyStr, "utf8"),
+    urlCandidates: candidates,
+    suppliedPrefix: supplied.slice(0, 12)
+  });
+  return false;
+}
+
+// src/webhooks/shopeeWebhookHandler.ts
+var MAX_PENDING_JOBS = 500;
+var MAX_CONCURRENT_JOBS = 2;
+function webhookOrderKey(payload) {
+  const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : payload;
+  const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
+  const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? "").trim();
+  return orderSn ? `${shopId}:${orderSn}` : "";
+}
+function createBoundedQueue(processPayload) {
+  const pending = [];
+  let running = 0;
+  let scheduled = false;
+  const activeOrderKeys = /* @__PURE__ */ new Set();
+  const scheduleDrain = () => {
+    if (scheduled) return;
+    scheduled = true;
+    setImmediate(() => {
+      scheduled = false;
+      const capacity = MAX_CONCURRENT_JOBS - running;
+      if (capacity <= 0 || pending.length === 0) return;
+      const batch = [];
+      for (let i2 = 0; i2 < pending.length && batch.length < capacity; ) {
+        const payload = pending[i2];
+        const orderKey = webhookOrderKey(payload);
+        if (orderKey && activeOrderKeys.has(orderKey)) {
+          i2 += 1;
+          continue;
+        }
+        pending.splice(i2, 1);
+        if (orderKey) activeOrderKeys.add(orderKey);
+        batch.push({ payload, orderKey });
+      }
+      if (batch.length === 0) return;
+      running += batch.length;
+      void Promise.allSettled(batch.map(({ payload }) => processPayload(payload))).then((results) => {
+        for (const result of results) {
+          if (result.status === "rejected") {
+            console.error("[Shopee Webhook] Background processing failed:", result.reason);
+          }
+        }
+      }).finally(() => {
+        running -= batch.length;
+        for (const { orderKey } of batch) {
+          if (orderKey) activeOrderKeys.delete(orderKey);
+        }
+        scheduleDrain();
+      });
+    });
+  };
+  return {
+    enqueue(payload) {
+      if (pending.length >= MAX_PENDING_JOBS) {
+        console.error("[Shopee Webhook] Queue full; request must be retried by Shopee.");
+        return false;
+      }
+      pending.push(payload);
+      scheduleDrain();
+      return true;
+    }
+  };
+}
+function createShopeeWebhookRouter(processPayload) {
+  const queue = createBoundedQueue(processPayload);
+  const router11 = import_express.default.Router();
+  router11.get("/shopee", (_req, res) => {
+    res.status(200).type("text/plain").send("success");
+  });
+  router11.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const bodyPreview = rawBody.toString("utf8").slice(0, 4e3);
+    console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee \u2014 headers:", {
+      authorization: req.get("authorization") ? "(present)" : "(missing)",
+      contentLength: req.get("content-length") || "0",
+      host: req.get("host") || "",
+      xfProto: req.get("x-forwarded-proto") || ""
+    });
+    console.log("[WEBHOOK RECEIVED] incoming payload (raw):", bodyPreview);
+    try {
+      const authHeader = req.get("authorization");
+      const configured = String(process.env.SHOPEE_WEBHOOK_URL || process.env.APP_URL || process.env.API_BASE_URL || "").trim().replace(/\/$/, "");
+      const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+      const proto = forwardedProto || req.protocol || "https";
+      const host = String(req.get("x-forwarded-host") || req.get("host") || "").split(",")[0].trim();
+      const pathName = String(req.originalUrl || req.url || "/api/webhook/shopee").split("?")[0];
+      const urlCandidates = [
+        configured ? `${configured}/api/webhook/shopee` : "",
+        configured ? `${configured}${pathName}` : "",
+        host ? `${proto}://${host}${pathName}` : "",
+        host ? `https://${host}${pathName}` : "",
+        host ? `http://${host}${pathName}` : "",
+        "https://quanly.linhkienamthanh.net/api/webhook/shopee",
+        "https://api.linhkienamthanh.net/api/webhook/shopee"
+      ].filter(Boolean);
+      if (!verifyShopeeWebhookSignature(rawBody, authHeader, urlCandidates)) {
+        console.error(
+          `[Shopee Webhook] REJECTED \u2014 HMAC failure (invalid/missing Authorization). authPresent=${Boolean(authHeader)} bodyBytes=${rawBody.length} payloadPreview=${bodyPreview.slice(0, 500)}`
+        );
+        return res.status(401).type("text/plain").send("Unauthorized");
+      }
+      let payload = null;
+      try {
+        const parsed = JSON.parse(rawBody.toString("utf8"));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          payload = parsed;
+        } else {
+          console.error("[Shopee Webhook] REJECTED \u2014 payload kh\xF4ng ph\u1EA3i object:", typeof parsed);
+        }
+      } catch (parseErr) {
+        console.error("[Shopee Webhook] REJECTED \u2014 JSON parse failed:", parseErr);
+      }
+      if (!payload) {
+        return res.status(400).type("text/plain").send("Invalid JSON payload");
+      }
+      if (!queue.enqueue(payload)) {
+        console.error("[Shopee Webhook] REJECTED \u2014 queue full (503), Shopee will retry.");
+        return res.status(503).type("text/plain").send("Webhook queue busy");
+      }
+      res.status(200).type("text/plain").send("OK");
+      console.log(
+        "[WEBHOOK RECEIVED] ACK 200 sent; payload queued:",
+        JSON.stringify({
+          code: payload.code ?? null,
+          shop_id: payload.shop_id ?? null,
+          data: payload.data ?? null
+        })
+      );
+    } catch (error) {
+      console.error("[Shopee Webhook] Request handler failed:", error);
+      if (!res.headersSent) return res.status(500).type("text/plain").send("Internal Server Error");
+    }
+  });
+  return router11;
+}
+
+// src/utils/orderItemVariation.ts
+function normalizeModelId(raw) {
+  const v = String(raw ?? "").trim();
+  if (!v || v === "0") return "0";
+  return v;
+}
+function normalizeImageKey(url) {
+  if (!url) return "";
+  const cleaned = url.replace(/[?#].*$/, "").replace(/_tn(\.\w+)?$/i, "");
+  const file = cleaned.split("/").pop() || cleaned;
+  return file.trim();
+}
+function findCatalogVariants(catalogProducts, itemId) {
+  return catalogProducts.filter(
+    (p) => p.shopeeItemId === itemId || p.id === itemId || p.shopeeId && String(p.shopeeId).startsWith(`${itemId}:`)
+  );
+}
+function priceMatches(catalogPrice, orderPrice) {
+  if (!catalogPrice || !orderPrice) return false;
+  const diff = Math.abs(catalogPrice - orderPrice);
+  return diff <= Math.max(500, orderPrice * 0.1);
+}
+function stripModelSuffix(title, modelName) {
+  if (!modelName) return title;
+  const suffix = ` - ${modelName}`;
+  if (title.endsWith(suffix)) return title.slice(0, -suffix.length).trim() || title;
+  return title;
+}
+function parseModelNameFromTitle(title) {
+  if (!title.includes(" - ")) return { baseTitle: title };
+  const idx = title.lastIndexOf(" - ");
+  const maybeModel = title.slice(idx + 3).trim();
+  const maybeBase = title.slice(0, idx).trim();
+  if (maybeModel && maybeBase) return { baseTitle: maybeBase, modelName: maybeModel };
+  return { baseTitle: title };
+}
+function matchVariantsByName(variants, modelName) {
+  const lower2 = modelName.toLowerCase();
+  return variants.filter(
+    (p) => p.modelName?.toLowerCase() === lower2 || p.title.toLowerCase().endsWith(` - ${lower2}`)
+  );
+}
+function matchVariantsByPrice(variants, orderPrice) {
+  if (!orderPrice || variants.length === 0) return [];
+  return variants.filter(
+    (p) => p.shopeeModelId && priceMatches(Number(p.sellingPrice) || 0, orderPrice)
+  );
+}
+function matchVariantByImage(variants, orderImage) {
+  const orderKey = normalizeImageKey(orderImage);
+  if (!orderKey) return void 0;
+  const matches = variants.filter((v) => {
+    const variantKey = normalizeImageKey(v.avatarUrl || v.imageUrl);
+    if (!variantKey) return false;
+    if (orderKey === variantKey) return true;
+    const orderStem = orderKey.split("-")[0] || orderKey;
+    const variantStem = variantKey.split("-")[0] || variantKey;
+    return orderStem.length >= 4 && variantStem.length >= 4 && orderStem === variantStem;
+  });
+  return matches.length === 1 ? matches[0] : void 0;
+}
+function enrichOrderItemFromCatalog(item, catalogProducts = []) {
+  const itemId = String(item.productId || "").trim();
+  let modelId = normalizeModelId(item.modelId);
+  let modelSku = item.modelSku?.trim();
+  let modelName = item.modelName?.trim();
+  let productTitle = item.productTitle?.trim() || "S\u1EA3n ph\u1EA9m kh\xF4ng t\xEAn";
+  const orderPrice = Number(item.price) || 0;
+  const parsed = parseModelNameFromTitle(productTitle);
+  if (!modelName && parsed.modelName) {
+    modelName = parsed.modelName;
+    productTitle = parsed.baseTitle;
+  } else {
+    productTitle = stripModelSuffix(productTitle, modelName);
+  }
+  const variants = itemId ? findCatalogVariants(catalogProducts, itemId) : [];
+  let matched;
+  if (modelId !== "0") {
+    matched = variants.find((p) => p.shopeeModelId === modelId);
+  }
+  if (!matched && modelName) {
+    const byName = matchVariantsByName(variants, modelName);
+    if (byName.length === 1) matched = byName[0];
+  }
+  if (!matched && orderPrice > 0) {
+    const byPrice = matchVariantsByPrice(variants, orderPrice);
+    if (byPrice.length === 1) matched = byPrice[0];
+  }
+  if (!matched) {
+    matched = matchVariantByImage(variants, item.productImage);
+  }
+  if (matched) {
+    modelId = normalizeModelId(matched.shopeeModelId);
+    modelSku = modelSku || matched.sku?.trim();
+    modelName = modelName || matched.modelName?.trim();
+    productTitle = stripModelSuffix(matched.title, matched.modelName) || productTitle;
+  }
+  const enriched = {
+    ...item,
+    productTitle: modelName ? `${productTitle} - ${modelName}` : productTitle,
+    modelId: modelId !== "0" ? modelId : item.modelId,
+    modelSku: modelSku || item.modelSku,
+    modelName: modelName || item.modelName
+  };
+  return enriched;
+}
+function enrichOrdersFromCatalog(orders, catalogProducts = []) {
+  return orders.map((order) => ({
+    ...order,
+    items: (order.items || []).map((item) => enrichOrderItemFromCatalog(item, catalogProducts))
+  }));
+}
+
+// src/utils/shippingCarrier.ts
+function stripDiacritics(value) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D");
+}
+var SKIP_KEYS = /* @__PURE__ */ new Set([
+  "id",
+  "ordersn",
+  "shopid",
+  "shopname",
+  "channel",
+  "status",
+  "date",
+  "items",
+  "customername",
+  "customerphone",
+  "customeraddress",
+  "totalamount",
+  "revenue",
+  "isprepared",
+  "isprinted",
+  "notes"
+]);
+function collectCarrierDebugFields(order) {
+  const o = order;
+  const out = {};
+  const pick = (key, val) => {
+    if (val == null || val === "") return;
+    if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+      out[key] = val;
+    }
+  };
+  pick("shipping_carrier", o.shipping_carrier ?? o.shippingCarrier);
+  pick("checkout_shipping_carrier", o.checkout_shipping_carrier ?? o.checkoutShippingCarrier);
+  pick("logistics_channel_name", o.logistics_channel_name ?? o.logisticsChannelName);
+  pick("logistics_channel_id", o.logistics_channel_id ?? o.logisticsChannelId);
+  pick("shipping_type", o.shipping_type ?? o.shippingType);
+  pick("shipping_method", o.shipping_method ?? o.shippingMethod);
+  pick("fulfillment_type", o.fulfillment_type ?? o.fulfillmentType);
+  pick("ship_method", o.ship_method);
+  pick("carrier", o.carrier);
+  pick("trackingNumber", o.trackingNumber);
+  pick("tracking_no", o.tracking_no);
+  pick("packageNumber", o.packageNumber);
+  pick("channel_id", o.channel_id ?? o.channelId);
+  for (const [k, v] of Object.entries(o)) {
+    const lk = k.toLowerCase();
+    if (SKIP_KEYS.has(lk)) continue;
+    if (!/carrier|ship|logistic|fulfill|express|channel_name|shipping_type|tracking/.test(lk)) {
+      continue;
+    }
+    pick(k, v);
+  }
+  const pkgs = o.package_list ?? o.packageList;
+  if (Array.isArray(pkgs) && pkgs[0] && typeof pkgs[0] === "object") {
+    const pkg = pkgs[0];
+    pick("package_list[0].shipping_carrier", pkg.shipping_carrier ?? pkg.shippingCarrier);
+    pick(
+      "package_list[0].checkout_shipping_carrier",
+      pkg.checkout_shipping_carrier ?? pkg.checkoutShippingCarrier
+    );
+    pick("package_list[0].logistics_channel_id", pkg.logistics_channel_id);
+    pick("package_list[0].tracking_number", pkg.tracking_number ?? pkg.trackingNumber);
+  }
+  return out;
+}
+function getOrderCarrierText(order) {
+  const fields = collectCarrierDebugFields(order);
+  const parts = Object.values(fields).map((v) => String(v || "").trim()).filter(Boolean);
+  return stripDiacritics(parts.join(" | ").toLowerCase());
+}
+function isInstantCarrierText(text) {
+  if (!text) return false;
+  if (text.includes("instant")) return true;
+  if (text.includes("hoa toc")) return true;
+  if (text.includes("spx instant")) return true;
+  if (text.includes("shopee xpress instant")) return true;
+  if (text.includes("grabexpress") || text.includes("grab express") || /\bgrab\b/.test(text)) {
+    return true;
+  }
+  if (text.includes("ahamove")) return true;
+  if (text.includes("bedelivery") || text.includes("be delivery")) return true;
+  if (text.includes("green sm") || text.includes("greensm")) return true;
+  return false;
+}
+function isSpxCarrierText(text) {
+  if (!text || isInstantCarrierText(text)) return false;
+  if (text.includes("spx")) return true;
+  if (text.includes("shopee")) return true;
+  if (text.includes("standard")) return true;
+  if (text.includes("spxvn")) return true;
+  return false;
+}
+function isGhnCarrierText(text) {
+  if (!text) return false;
+  if (text.includes("giao hang nhanh") || text.includes("giaohangnhanh")) return true;
+  if (text.includes("ghn")) return true;
+  if (/\bgya[a-z0-9]{4,}\b/.test(text)) return true;
+  return false;
+}
+function getShippingCarrierGroup(order) {
+  const text = getOrderCarrierText(order);
+  if (isInstantCarrierText(text)) return "instant";
+  if (isSpxCarrierText(text)) return "spx";
+  if (isGhnCarrierText(text)) return "ghn";
+  const channel = String(order.channel || "").toLowerCase();
+  const meaningful = text.replace(/ofg[a-z0-9]*/g, " ").replace(/0fg[a-z0-9]*/g, " ").replace(/\|/g, " ").replace(/\s+/g, " ").trim();
+  if (!meaningful && channel === "shopee") return "spx";
+  return "other";
+}
+function inferShippingCarrierLabel(order) {
+  const existing = String(
+    order.shipping_carrier || order.shippingCarrier || ""
+  ).trim();
+  if (existing) return existing;
+  const group = getShippingCarrierGroup(order);
+  if (group === "spx") return "SPX Express";
+  if (group === "ghn") return "Giao H\xE0ng Nhanh";
+  if (group === "instant") {
+    const text = getOrderCarrierText(order);
+    if (text.includes("grab")) return "GrabExpress";
+    if (text.includes("ahamove")) return "Ahamove";
+    if (text.includes("bedelivery") || text.includes("be delivery")) return "beDelivery";
+    return "SPX Instant";
+  }
+  return void 0;
+}
+
+// src/utils/shopeeOrderListPagination.ts
+function parseShopeeOrderListPagination(result) {
+  const root = result && typeof result === "object" ? result : {};
+  const body = root.response && typeof root.response === "object" ? root.response : root;
+  const nextCursor = String(body.next_cursor ?? "").trim();
+  const more = body.more === true || body.more === 1 || body.more === "true";
+  return { more, nextCursor };
+}
+function extractShopeeOrderListRows(result) {
+  const root = result && typeof result === "object" ? result : {};
+  const body = root.response && typeof root.response === "object" ? root.response : root;
+  const rows = body.order_list ?? root.order_list;
+  return Array.isArray(rows) ? rows : [];
+}
+function advanceShopeeOrderListCursor(opts) {
+  const label = opts.logLabel || "get_order_list";
+  const rows = extractShopeeOrderListRows(opts.listResult);
+  const { more, nextCursor } = parseShopeeOrderListPagination(opts.listResult);
+  const prev = String(opts.currentCursor ?? "").trim();
+  if (opts.pageIndex >= opts.hardCap) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: hardCap=${opts.hardCap} reached`
+    };
+  }
+  if (!more) {
+    return { action: "break", nextCursor: null, reason: `${label}: more=false` };
+  }
+  if (rows.length === 0) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: more=true but order_list empty (Shopee quirk)`
+    };
+  }
+  if (!nextCursor) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: more=true but next_cursor empty`
+    };
+  }
+  if (nextCursor === prev) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: next_cursor unchanged ("${nextCursor.slice(0, 32)}")`
+    };
+  }
+  if (opts.seenCursors.has(nextCursor)) {
+    return {
+      action: "break",
+      nextCursor: null,
+      reason: `${label}: cursor cycle detected ("${nextCursor.slice(0, 32)}")`
+    };
+  }
+  return {
+    action: "continue",
+    nextCursor,
+    reason: `${label}: advance cursor \u2192 ${nextCursor.slice(0, 48)}`
+  };
+}
+
+// src/utils/orderWarehouseStatus.ts
+var ORDER_LOCAL_STATUS = {
+  NONE: "NONE",
+  HANDED_OVER: "HANDED_OVER",
+  CANCELLED_STORED: "CANCELLED_STORED",
+  RETURN_RECEIVED: "RETURN_RECEIVED"
+};
+var HANDED_OVER_SOURCE = {
+  QR_SCAN: "qr_scan",
+  MANUAL_BUTTON: "manual_button"
+};
+function isTruthyFlag(value) {
+  if (value === true || value === 1) return true;
+  if (typeof value === "string") {
+    const s2 = value.trim().toLowerCase();
+    return s2 === "true" || s2 === "1" || s2 === "yes";
+  }
+  return false;
+}
+function getShopeeRaw(order) {
+  return String(order.shopee_order_status || "").toUpperCase();
+}
+function getInternalStatusRaw(order) {
+  return String(
+    order.internal_status ?? order.local_status ?? order.localStatus ?? ""
+  ).toUpperCase();
+}
+function hasLeftHandedOverCarrierTab(order) {
+  const raw = getShopeeRaw(order);
+  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED") {
+    return true;
+  }
+  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
+    return true;
+  }
+  if (order.status === "cancelled" || order.status === "return_pending" || order.status === "return_received") {
+    return true;
+  }
+  const logistics = String(order.logistics_status || "").toUpperCase();
+  if (logistics && !logistics.includes("FAILED") && !logistics.includes("CANCEL") && (logistics.includes("PICKUP_DONE") || logistics.includes("LOGISTICS_SHIPPED") || logistics.includes("IN_TRANSIT") || logistics.includes("TRANSPORTING") || logistics.includes("DELIVERY_DONE"))) {
+    return true;
+  }
+  if (order.status === "shipping") return true;
+  return false;
+}
+function isOrderHandedOverToCarrier(order) {
+  if (isTruthyFlag(order.is_handed_over)) return true;
+  const internal = getInternalStatusRaw(order);
+  if (internal === ORDER_LOCAL_STATUS.HANDED_OVER) return true;
+  if (isTruthyFlag(order.isHandedOverToCarrier) || isTruthyFlag(order.is_handed_over_to_carrier) || isTruthyFlag(order.is_handed_over_to_courier)) {
+    return true;
+  }
+  return false;
+}
+function buildHandedOverWritePatch(now, source = HANDED_OVER_SOURCE.MANUAL_BUTTON) {
+  const ts = now || (/* @__PURE__ */ new Date()).toISOString();
+  return {
+    // Canonical
+    is_handed_over: true,
+    local_status: ORDER_LOCAL_STATUS.HANDED_OVER,
+    localStatus: ORDER_LOCAL_STATUS.HANDED_OVER,
+    internal_status: ORDER_LOCAL_STATUS.HANDED_OVER,
+    localStatusAt: ts,
+    local_status_updated_at: ts,
+    // Aliases legacy (đồng bộ đọc)
+    isHandedOverToCarrier: true,
+    is_handed_over_to_carrier: true,
+    is_handed_over_to_courier: true,
+    handedOverAt: ts,
+    handed_over_source: source,
+    handedOverSource: source
+  };
+}
+function applyHandedOverWrite(order, now, source) {
+  return { ...order, ...buildHandedOverWritePatch(now, source) };
+}
+function buildDefaultInternalFlagsPatch(now) {
+  const ts = now || (/* @__PURE__ */ new Date()).toISOString();
+  return {
+    is_handed_over: false,
+    local_status: ORDER_LOCAL_STATUS.NONE,
+    localStatus: ORDER_LOCAL_STATUS.NONE,
+    internal_status: ORDER_LOCAL_STATUS.NONE,
+    localStatusAt: ts,
+    local_status_updated_at: ts,
+    isHandedOverToCarrier: false,
+    is_handed_over_to_carrier: false,
+    is_handed_over_to_courier: false,
+    handed_over_source: null,
+    handedOverSource: null
+  };
+}
+function buildClearHandedOverPatch(now) {
+  return buildDefaultInternalFlagsPatch(now);
+}
+function resolveOrderLocalStatus(order) {
+  if (order.is_local_return_archived) {
+    if (isOrderHandedOverToCarrier(order)) return ORDER_LOCAL_STATUS.HANDED_OVER;
+    return ORDER_LOCAL_STATUS.NONE;
+  }
+  const raw = getInternalStatusRaw(order);
+  if (raw === ORDER_LOCAL_STATUS.HANDED_OVER || raw === ORDER_LOCAL_STATUS.CANCELLED_STORED || raw === ORDER_LOCAL_STATUS.RETURN_RECEIVED) {
+    return raw;
+  }
+  if (isOrderHandedOverToCarrier(order)) return ORDER_LOCAL_STATUS.HANDED_OVER;
+  if (order.status === "return_received" && !order.is_local_return_archived) {
+    return ORDER_LOCAL_STATUS.RETURN_RECEIVED;
+  }
+  return ORDER_LOCAL_STATUS.NONE;
+}
+function matchesHandedOverCarrierTab(order) {
+  if (!isOrderHandedOverToCarrier(order)) return false;
+  const raw = getShopeeRaw(order);
+  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED") {
+    return false;
+  }
+  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
+    return false;
+  }
+  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP" && raw !== "PROCESSED") {
+    return false;
+  }
+  return true;
+}
+
+// src/utils/orderTracking.ts
+function isShopeeInternalTrackingCode(code) {
+  return /^0FG/i.test(String(code || "").trim());
+}
+
+// src/utils/orderHandover.ts
+function getShopeeOrderRawStatus(order) {
+  return String(order.shopee_order_status || "").toUpperCase();
+}
+function getOrderTrackingNo(order) {
+  const candidates = [
+    order.trackingNumber,
+    order.tracking_no,
+    order.shopee_tracking_number
+  ];
+  for (const c of candidates) {
+    const tn = String(c || "").trim();
+    if (!tn || tn === "0" || isShopeeInternalTrackingCode(tn)) continue;
+    return tn;
+  }
+  return "";
+}
+function hasOrderTrackingNo(order) {
+  return Boolean(getOrderTrackingNo(order));
+}
+function getOrderFulfillmentType(order) {
+  const raw = String(
+    order.fulfillment_type || order.ship_method || order.shipping_method || order.fulfillmentType || ""
+  ).trim().toLowerCase();
+  if (raw === "dropoff" || raw === "drop_off" || raw === "drop-off") return "dropoff";
+  if (raw === "pickup" || raw === "pick_up" || raw === "pick-up") return "pickup";
+  return "";
+}
+function isProcessedCondition(order) {
+  if (hasOrderTrackingNo(order)) return true;
+  const raw = getShopeeOrderRawStatus(order);
+  if (raw === "PROCESSED") return true;
+  if (order.status === "processed") return true;
+  if (getOrderFulfillmentType(order) === "dropoff" && Boolean(order.isPrepared)) {
+    return true;
+  }
+  return false;
+}
+function isLogisticsHandedToCarrierStatus(order) {
+  const s2 = String(order.logistics_status || "").toUpperCase();
+  if (!s2) return false;
+  if (s2.includes("FAILED") || s2.includes("CANCEL") || s2.includes("RETURN")) return false;
+  return s2.includes("PICKUP_DONE") || s2.includes("LOGISTICS_SHIPPED") || s2.includes("LOGISTICS_DELIVERY_DONE") || s2.includes("DELIVERY_DONE") || s2.includes("IN_TRANSIT") || s2.includes("TRANSPORTING");
+}
+function isShopeeShippingStatus(order) {
+  const raw = getShopeeOrderRawStatus(order);
+  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return true;
+  if (order.status === "shipping" && isLogisticsHandedToCarrierStatus(order)) return true;
+  return isLogisticsHandedToCarrierStatus(order);
+}
+function isShopeeCompletedStatus(order) {
+  return getShopeeOrderRawStatus(order) === "COMPLETED";
+}
+function isShopeeCancelledLikeStatus(order) {
+  const raw = getShopeeOrderRawStatus(order);
+  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") return true;
+  return order.status === "cancelled" || order.status === "return_pending" || order.status === "return_received";
+}
+function isShopeeReadyToShipStatus(order) {
+  const raw = getShopeeOrderRawStatus(order);
+  return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED";
+}
+function isPickupPoolOrder(order) {
+  if (isShopeeShippingStatus(order)) return false;
+  if (isShopeeCompletedStatus(order)) return false;
+  if (isShopeeCancelledLikeStatus(order)) return false;
+  if (isShopeeReadyToShipStatus(order)) return true;
+  const status = String(order.status || "");
+  return status === "unprocessed" || status === "processed";
+}
+function matchesShippingTab(order) {
+  return isShopeeShippingStatus(order);
+}
+function matchesProcessedPickupTab(order) {
+  if (isOrderHandedOverToCarrier(order)) return false;
+  if (!isPickupPoolOrder(order)) return false;
+  return isProcessedCondition(order);
+}
+function matchesUnprocessedPickupTab(order) {
+  if (isOrderHandedOverToCarrier(order)) return false;
+  if (!isPickupPoolOrder(order)) return false;
+  const raw = getShopeeOrderRawStatus(order);
+  if (raw === "PROCESSED") return false;
+  if (isProcessedCondition(order)) return false;
+  if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") return true;
+  if (!raw && order.status === "unprocessed") return true;
+  if (order.status === "unprocessed") return true;
+  return false;
+}
+function isEligibleForHandOverToCarrier(order) {
+  if (isOrderHandedOverToCarrier(order)) return false;
+  if (hasLeftHandedOverCarrierTab(order)) return false;
+  if (!isPickupPoolOrder(order)) return false;
+  if (!isProcessedCondition(order)) return false;
+  if (!hasOrderTrackingNo(order)) return false;
+  return true;
+}
+function getHandOverIneligibleReason(order) {
+  if (isOrderHandedOverToCarrier(order)) {
+    return "\u0110\u01A1n \u0111\xE3 c\xF3 c\u1EDD b\xE0n giao \u0110VVC n\u1ED9i b\u1ED9";
+  }
+  if (hasLeftHandedOverCarrierTab(order)) {
+    return `\u0110\u01A1n \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y (status=${order.status}, shopee=${order.shopee_order_status || "-"})`;
+  }
+  if (!isPickupPoolOrder(order)) {
+    return `Kh\xF4ng c\xF2n ch\u1EDD l\u1EA5y h\xE0ng (status=${order.status}, shopee=${order.shopee_order_status || "-"})`;
+  }
+  if (!isProcessedCondition(order)) {
+    return "Ch\u01B0a \u0111\u1EE7 \u0111i\u1EC1u ki\u1EC7n \u0110\xE3 x\u1EED l\xFD (thi\u1EBFu PROCESSED/m\xE3 V\u0110)";
+  }
+  if (!hasOrderTrackingNo(order)) {
+    return "Ch\u01B0a c\xF3 m\xE3 v\u1EADn \u0111\u01A1n outbound (trackingNumber/tracking_no)";
+  }
+  return "";
+}
+
+// src/services/redis.ts
+var import_ioredis = __toESM(require("ioredis"), 1);
+var REDIS_URL = String(process.env.REDIS_URL || process.env.REDIS_URI || "").trim();
+var ADDRESS_LIST_TTL_SEC = 24 * 60 * 60;
+var ADDRESS_LIST_KEY_PREFIX = "shopee:address_list:";
+var redis = null;
+var redisDisabled = false;
+var lastWarnAt = 0;
+function warnRedis(msg, err) {
+  const now = Date.now();
+  if (now - lastWarnAt < 3e4) return;
+  lastWarnAt = now;
+  const detail = err instanceof Error ? err.message : err ? String(err) : "";
+  console.warn(`[Redis] ${msg}${detail ? `: ${detail}` : ""} \u2014 fallback (no cache).`);
+}
+function getRedis() {
+  if (redisDisabled) return null;
+  if (!REDIS_URL) {
+    redisDisabled = true;
+    return null;
+  }
+  if (redis) return redis;
+  try {
+    redis = new import_ioredis.default(REDIS_URL, {
+      maxRetriesPerRequest: 1,
+      enableReadyCheck: true,
+      lazyConnect: true,
+      connectTimeout: 3e3,
+      retryStrategy(times) {
+        if (times > 3) {
+          redisDisabled = true;
+          warnRedis("too many reconnect attempts \u2014 disabling for this process");
+          return null;
+        }
+        return Math.min(times * 200, 1e3);
+      }
+    });
+    redis.on("error", (err) => {
+      warnRedis("client error", err);
+    });
+    redis.on("end", () => {
+      warnRedis("connection ended");
+    });
+  } catch (err) {
+    warnRedis("failed to create client", err);
+    redisDisabled = true;
+    redis = null;
+  }
+  return redis;
+}
+async function ensureConnected(client) {
+  try {
+    if (client.status === "ready") return true;
+    if (client.status === "wait" || client.status === "close" || client.status === "end") {
+      await client.connect();
+    } else if (client.status === "connecting") {
+      await new Promise((resolve, reject) => {
+        const onReady = () => {
+          cleanup();
+          resolve();
+        };
+        const onError = (e2) => {
+          cleanup();
+          reject(e2);
+        };
+        const cleanup = () => {
+          client.off("ready", onReady);
+          client.off("error", onError);
+        };
+        client.once("ready", onReady);
+        client.once("error", onError);
+        setTimeout(() => {
+          cleanup();
+          reject(new Error("connect timeout"));
+        }, 3e3);
+      });
+    }
+    return client.status === "ready";
+  } catch (err) {
+    warnRedis("connect failed", err);
+    return false;
+  }
+}
+function shopeeAddressListCacheKey(shopId) {
+  return `${ADDRESS_LIST_KEY_PREFIX}${String(shopId || "").trim()}`;
+}
+async function redisGetJson(key) {
+  const client = getRedis();
+  if (!client) return null;
+  try {
+    if (!await ensureConnected(client)) return null;
+    const raw = await client.get(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (err) {
+    warnRedis(`GET ${key} failed`, err);
+    return null;
+  }
+}
+async function redisSetJson(key, value, ttlSeconds = ADDRESS_LIST_TTL_SEC) {
+  const client = getRedis();
+  if (!client) return false;
+  try {
+    if (!await ensureConnected(client)) return false;
+    const payload = JSON.stringify(value);
+    if (ttlSeconds > 0) {
+      await client.set(key, payload, "EX", ttlSeconds);
+    } else {
+      await client.set(key, payload);
+    }
+    return true;
+  } catch (err) {
+    warnRedis(`SET ${key} failed`, err);
+    return false;
+  }
+}
+async function getCachedShopeeAddressList(shopId) {
+  const sid = String(shopId || "").trim();
+  if (!sid) return null;
+  const cached = await redisGetJson(shopeeAddressListCacheKey(sid));
+  if (!cached || !cached.result) return null;
+  const list = Array.isArray(cached.list) ? cached.list : cached.result?.response?.address_list || cached.result?.address_list || [];
+  return { result: cached.result, list, cachedAt: cached.cachedAt || Date.now() };
+}
+async function setCachedShopeeAddressList(shopId, result) {
+  const sid = String(shopId || "").trim();
+  if (!sid || !result || result.error) return false;
+  const list = result.response?.address_list || result.address_list || [];
+  return redisSetJson(shopeeAddressListCacheKey(sid), {
+    result,
+    list,
+    cachedAt: Date.now()
+  }, ADDRESS_LIST_TTL_SEC);
+}
+
+// routes/scanRoutes.js
+var import_express2 = __toESM(require_express2(), 1);
+
+// models/DonHoanHuy.js
+var import_mongoose = __toESM(require("mongoose"), 1);
+var DonHoanHuySchema = new import_mongoose.default.Schema(
+  {
+    orderSn: {
+      type: String,
+      required: true,
+      index: true,
+      trim: true
+    },
+    status: {
+      type: String,
+      default: "scanned",
+      trim: true
+    },
+    scannedAt: {
+      type: Date,
+      default: Date.now,
+      expires: 1209600
+      // 14 ngày
+    },
+    note: {
+      type: String,
+      default: "",
+      trim: true
+    }
+  },
+  {
+    collection: "don_hoan_huy",
+    versionKey: false,
+    strict: false
+    // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
+  }
+);
+DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
+var DonHoanHuy = import_mongoose.default.models.DonHoanHuy || import_mongoose.default.model("DonHoanHuy", DonHoanHuySchema);
+var DonHoanHuy_default = DonHoanHuy;
+
+// config/db.js
+var import_dotenv = __toESM(require_main(), 1);
+var import_mongoose2 = __toESM(require("mongoose"), 1);
+try {
+  import_dotenv.default.config();
+} catch {
+}
+var MONGO_CONNECT_OPTIONS = {
+  serverSelectionTimeoutMS: 5e3,
+  connectTimeoutMS: 5e3,
+  socketTimeoutMS: 15e3,
+  maxPoolSize: 15,
+  minPoolSize: 1,
+  waitQueueTimeoutMS: 5e3,
+  maxIdleTimeMS: 3e4
+};
+function getMongoUri() {
+  return String(
+    process.env.MONGODB_URI || process.env.MONGO_URL || process.env.MONGO_URI || ""
+  ).trim();
+}
+async function connectDB() {
+  const uri = getMongoUri();
+  if (!uri) {
+    throw new Error("Thi\u1EBFu MONGODB_URI / MONGO_URL trong bi\u1EBFn m\xF4i tr\u01B0\u1EDDng.");
+  }
+  if (import_mongoose2.default.connection.readyState === 1) {
+    return import_mongoose2.default.connection;
+  }
+  import_mongoose2.default.set("strictQuery", true);
+  try {
+    await import_mongoose2.default.connect(uri, MONGO_CONNECT_OPTIONS);
+  } catch (err) {
+    const msg = err?.message || String(err);
+    throw new Error(
+      /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|MongoNetwork/i.test(msg) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI." : msg || "Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c MongoDB."
+    );
+  }
+  console.log("[DB] MongoDB Connected Successfully");
+  return import_mongoose2.default.connection;
+}
+function isDBReady() {
+  return import_mongoose2.default.connection.readyState === 1;
+}
+
+// controllers/scanController.js
+function normalizeOrderSn(raw) {
+  return String(raw || "").replace(/^shopee-/i, "").trim();
+}
+function describeDbError(err) {
+  const msg = String(err?.message || err || "");
+  if (/quota|space|storage|over.?space/i.test(msg)) {
+    return "Quota MongoDB \u0111\u1EA7y (Atlas Over space quota). H\xE3y d\u1ECDn d\u1EEF li\u1EC7u ho\u1EB7c n\xE2ng g\xF3i.";
+  }
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEOUT|serverSelection|connect ETIMEDOUT|MongoNetwork|Thiếu MONGODB/i.test(
+    msg
+  )) {
+    return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI.";
+  }
+  if (/duplicate key|E11000/i.test(msg)) {
+    return "Tr\xF9ng m\xE3 \u0111\u01A1n trong don_hoan_huy (\u0111\xE3 l\u01B0u tr\u01B0\u1EDBc \u0111\xF3).";
+  }
+  return msg || "L\u1ED7i Database kh\xF4ng x\xE1c \u0111\u1ECBnh.";
+}
+async function ensureDbConnected() {
+  if (isDBReady()) return true;
+  if (!getMongoUri()) {
+    throw new Error("Thi\u1EBFu MONGODB_URI / MONGO_URL trong bi\u1EBFn m\xF4i tr\u01B0\u1EDDng.");
+  }
+  await connectDB();
+  return isDBReady();
+}
+async function saveScanOrders(req, res) {
+  try {
+    try {
+      await ensureDbConnected();
+    } catch (dbErr) {
+      console.error("[POST /api/scan/save] DB connect:", dbErr);
+      return res.status(500).json({
+        success: false,
+        message: describeDbError(dbErr)
+      });
+    }
+    if (!isDBReady()) {
+      return res.status(500).json({
+        success: false,
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 ki\u1EC3m tra k\u1EBFt n\u1ED1i Atlas."
+      });
+    }
+    const body = req.body || {};
+    const codes = [];
+    const pushCode = (v, status, note) => {
+      const sn = normalizeOrderSn(v);
+      if (!sn) return;
+      codes.push({
+        orderSn: sn,
+        status: status || "scanned",
+        note: note || ""
+      });
+    };
+    if (Array.isArray(body.codes)) {
+      for (const c of body.codes) {
+        if (c && typeof c === "object") {
+          pushCode(c.orderSn || c.code || c.orderId, c.status, c.note);
+        } else {
+          pushCode(c, body.status, body.note);
+        }
+      }
+    }
+    if (Array.isArray(body.orderSns)) {
+      for (const c of body.orderSns) pushCode(c, body.status, body.note);
+    }
+    if (Array.isArray(body.items)) {
+      for (const it of body.items) {
+        const t2 = String(it?.type || it?.status || body.status || "").toLowerCase();
+        const status = t2 === "return" || t2 === "return_received" || t2 === "da_nhan_hoan" ? "return_received" : t2 === "cancelled" || t2 === "cancel" || t2 === "don_huy" ? "cancelled" : it?.status || "scanned";
+        pushCode(it?.orderSn || it?.code || it?.orderId, status, it?.note);
+      }
+    }
+    if (Array.isArray(body.donHuyCodes)) {
+      for (const c of body.donHuyCodes) pushCode(c, "cancelled", "don_huy");
+    }
+    if (Array.isArray(body.daNhanHoanCodes)) {
+      for (const c of body.daNhanHoanCodes) pushCode(c, "return_received", "da_nhan_hoan");
+    }
+    if (typeof body.code === "string" || typeof body.orderSn === "string") {
+      pushCode(body.orderSn || body.code, body.status, body.note);
+    }
+    const bySn = /* @__PURE__ */ new Map();
+    for (const row of codes) bySn.set(row.orderSn, row);
+    const unique = [...bySn.values()];
+    if (!unique.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Thi\u1EBFu m\u1EA3ng m\xE3 \u0111\u01A1n (codes / orderSns / items)."
+      });
+    }
+    const now = /* @__PURE__ */ new Date();
+    const ops = unique.map((row) => ({
+      updateOne: {
+        filter: { orderSn: row.orderSn },
+        update: {
+          $set: {
+            orderSn: row.orderSn,
+            status: row.status,
+            scannedAt: now,
+            note: row.note || "",
+            local_status: row.status === "return_received" ? "RETURN_RECEIVED" : "CANCELLED_STORED",
+            type: row.status === "return_received" ? "return" : "cancelled",
+            source: "api_scan_save"
+          },
+          $setOnInsert: {
+            createdAt: now
+          }
+        },
+        upsert: true
+      }
+    }));
+    const result = await DonHoanHuy_default.bulkWrite(ops, { ordered: false });
+    return res.json({
+      success: true,
+      message: `\u0110\xE3 l\u01B0u ${unique.length} \u0111\u01A1n v\xE0o don_hoan_huy.`,
+      saved: unique.length,
+      upserted: result.upsertedCount || 0,
+      modified: result.modifiedCount || 0,
+      matched: result.matchedCount || 0,
+      donHoanHuy: {
+        ok: unique.length,
+        failed: 0,
+        already: 0,
+        ensured: unique.length,
+        errors: []
+      },
+      orderSns: unique.map((r2) => r2.orderSn)
+    });
+  } catch (err) {
+    console.error("[POST /api/scan/save]", err);
+    return res.status(500).json({
+      success: false,
+      message: describeDbError(err)
+    });
+  }
+}
+async function listDonHoanHuy(req, res) {
+  try {
+    try {
+      await ensureDbConnected();
+    } catch (dbErr) {
+      console.error("[GET /api/scan/don-hoan-huy] DB connect:", dbErr);
+      return res.status(500).json({
+        success: false,
+        message: describeDbError(dbErr),
+        data: []
+      });
+    }
+    if (!isDBReady()) {
+      return res.status(500).json({
+        success: false,
+        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 ki\u1EC3m tra k\u1EBFt n\u1ED1i Atlas.",
+        data: []
+      });
+    }
+    const limitRaw = Number(req.query.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 5e3) : 2e3;
+    const docs = await DonHoanHuy_default.find({}).sort({ scannedAt: -1 }).limit(limit).maxTimeMS(5e3).lean();
+    const data = (docs || []).map((doc) => {
+      const sn = normalizeOrderSn(doc.orderSn);
+      const status = String(doc.status || "scanned");
+      const local = doc.local_status || (status === "return_received" ? "RETURN_RECEIVED" : "CANCELLED_STORED");
+      return {
+        id: doc._id || `dhh-${sn}`,
+        orderSn: sn,
+        status,
+        note: doc.note || "",
+        scannedAt: doc.scannedAt || null,
+        local_status: local,
+        localStatus: local,
+        internal_status: local,
+        don_hoan_huy: true,
+        type: doc.type || (status === "return_received" ? "return" : "cancelled"),
+        shopId: doc.shopId || null,
+        shopName: doc.shopName || null,
+        tracking_no: doc.tracking_no || null,
+        channel: "shopee",
+        ...doc.data && typeof doc.data === "object" ? doc.data : {}
+      };
+    });
+    return res.json({
+      success: true,
+      data,
+      total: data.length
+    });
+  } catch (err) {
+    console.error("[GET /api/scan/don-hoan-huy]", err);
+    return res.status(500).json({
+      success: false,
+      message: describeDbError(err),
+      data: []
+    });
+  }
+}
+
+// routes/scanRoutes.js
+var router = (0, import_express2.Router)();
+router.post("/save", saveScanOrders);
+router.get("/don-hoan-huy", listDonHoanHuy);
+var scanRoutes_default = router;
+
+// routes/authRoutes.js
+var import_express3 = __toESM(require_express2(), 1);
+
+// middlewares/auth.js
+var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
+
+// _lib/jwtSecret.js
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret && process.env.VERCEL) {
+    console.warn("[JWT] JWT_SECRET ch\u01B0a set tr\xEAn Vercel \u2014 token s\u1EBD kh\xF4ng kh\u1EDBp backend cPanel. Set c\xF9ng gi\xE1 tr\u1ECB v\u1EDBi cPanel (.htaccess / Node env).");
+  }
+  return secret || "omnisales-vn-super-secret-key-2026";
+}
+
+// middlewares/auth.js
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({
+      success: false,
+      error: "Y\xEAu c\u1EA7u cung c\u1EA5p Token x\xE1c th\u1EF1c h\u1EE3p l\u1EC7.",
+      message: "Y\xEAu c\u1EA7u cung c\u1EA5p Token x\xE1c th\u1EF1c h\u1EE3p l\u1EC7."
+    });
+  }
+  const token = authHeader.split(" ")[1];
+  try {
+    const decoded = import_jsonwebtoken.default.verify(token, getJwtSecret());
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      error: "Phi\xEAn \u0111\u0103ng nh\u1EADp admin \u0111\xE3 h\u1EBFt h\u1EA1n \u2014 vui l\xF2ng \u0111\u0103ng nh\u1EADp l\u1EA1i.",
+      message: "Phi\xEAn \u0111\u0103ng nh\u1EADp admin \u0111\xE3 h\u1EBFt h\u1EA1n \u2014 vui l\xF2ng \u0111\u0103ng nh\u1EADp l\u1EA1i."
+    });
+  }
+}
+function signAdminToken(username) {
+  return import_jsonwebtoken.default.sign({ username }, getJwtSecret(), { expiresIn: "24h" });
+}
+
+// controllers/authController.js
+function login(req, res) {
+  const { username, password } = req.body;
+  const expectedUsername = process.env.ADMIN_USERNAME || "admin";
+  const expectedPassword = process.env.ADMIN_PASSWORD || "password123";
+  if (username === expectedUsername && password === expectedPassword) {
+    const token = signAdminToken(username);
+    return res.json({ token, username });
+  } else {
+    return res.status(401).json({
+      error: "T\xEAn \u0111\u0103ng nh\u1EADp ho\u1EB7c m\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c."
+    });
+  }
+}
+async function verifyAuth(req, res) {
+  res.json({ valid: true, username: req.user.username });
+}
+
+// routes/authRoutes.js
+var router2 = (0, import_express3.Router)();
+router2.post("/login", login);
+router2.get("/auth/verify", authMiddleware, verifyAuth);
+var authRoutes_default = router2;
+
+// routes/healthRoutes.js
+var import_express4 = __toESM(require_express2(), 1);
+
+// controllers/healthController.js
+var import_fs2 = __toESM(require("fs"), 1);
+var import_path2 = __toESM(require("path"), 1);
+
+// utils/appPaths.js
+var import_path = __toESM(require("path"), 1);
+var import_fs = __toESM(require("fs"), 1);
+function resolveAppRoot() {
+  const candidates = [
+    process.env.PASSENGER_APP_ROOT,
+    typeof __dirname !== "undefined" ? __dirname : "",
+    process.cwd()
+  ].map((c) => String(c || "").trim()).filter(Boolean);
+  for (const candidate of candidates) {
+    const abs = import_path.default.resolve(candidate);
+    if (import_fs.default.existsSync(import_path.default.join(abs, "server.cjs")) || import_fs.default.existsSync(import_path.default.join(abs, "data")) || import_fs.default.existsSync(import_path.default.join(abs, ".htaccess")) || import_fs.default.existsSync(import_path.default.join(abs, ".env"))) {
+      return abs;
+    }
+  }
+  return import_path.default.resolve(candidates[0] || process.cwd());
+}
+var PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
+function resolveAppBaseUrl() {
+  const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  if (process.env.NODE_ENV === "production") return PRODUCTION_APP_URL;
+  return PRODUCTION_APP_URL;
+}
+
+// controllers/healthController.js
+var APP_ROOT = resolveAppRoot();
+var APP_BASE_URL = resolveAppBaseUrl();
+function resolveShopeeCallbackUrl() {
+  const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
+  if (explicit) return explicit;
+  return `${APP_BASE_URL}/api/shopee/callback`;
+}
+var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
+var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
+var deps = {
+  ensureDataDirs: () => {
+    import_fs2.default.mkdirSync(import_path2.default.join(APP_ROOT, "data"), { recursive: true });
+  },
+  listShopeeOAuthShopIds: () => [],
+  loadLastOAuthAudit: () => null,
+  tokensPath: import_path2.default.resolve(APP_ROOT, "data", "shopee_tokens.json"),
+  appRoot: APP_ROOT,
+  appBaseUrl: APP_BASE_URL,
+  shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
+  shopeeWebhookUrl: SHOPEE_WEBHOOK_URL
+};
+function initHealthController(partial) {
+  deps = { ...deps, ...partial };
+}
+function getPublicConfig(_req, res) {
+  res.json({
+    appUrl: deps.appBaseUrl,
+    apiBaseUrl: deps.appBaseUrl,
+    shopeeCallbackUrl: deps.shopeeCallbackUrl,
+    shopeeWebhookUrl: deps.shopeeWebhookUrl
+  });
+}
+function postClientLog(req, res) {
+  try {
+    deps.ensureDataDirs();
+    const logPath = import_path2.default.join(deps.appRoot, "data", "debug-556dce.ndjson");
+    const payload = {
+      sessionId: "556dce",
+      runId: req.body?.runId || "post-fix",
+      hypothesisId: req.body?.hypothesisId || null,
+      location: req.body?.location || "client",
+      message: req.body?.message || "",
+      data: req.body?.data || {},
+      timestamp: Date.now()
+    };
+    import_fs2.default.appendFileSync(logPath, `${JSON.stringify(payload)}
+`, "utf-8");
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+function getClientLog(_req, res) {
+  try {
+    const logPath = import_path2.default.join(deps.appRoot, "data", "debug-556dce.ndjson");
+    if (!import_fs2.default.existsSync(logPath)) return res.json({ ok: true, lines: [] });
+    const lines = import_fs2.default.readFileSync(logPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(-80).map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return { raw: line };
+      }
+    });
+    return res.json({ ok: true, lines });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+function getHealth(_req, res) {
+  const shopIds = deps.listShopeeOAuthShopIds();
+  let dataDirWritable = false;
+  try {
+    deps.ensureDataDirs();
+    import_fs2.default.accessSync(import_path2.default.join(deps.appRoot, "data"), import_fs2.default.constants.W_OK);
+    dataDirWritable = true;
+  } catch {
+    dataDirWritable = false;
+  }
+  res.status(200).json({
+    ok: true,
+    service: "cpanel-backend",
+    host: deps.appBaseUrl,
+    appRoot: deps.appRoot,
+    tokensPath: deps.tokensPath,
+    tokensFileExists: import_fs2.default.existsSync(deps.tokensPath),
+    dataDirWritable,
+    shopeeOAuthShopIds: shopIds,
+    lastOAuth: deps.loadLastOAuthAudit(),
+    oauthHint: shopIds.length > 0 ? "V\xE0o C\xE0i \u0111\u1EB7t \u2192 shop Shopee \u2192 b\u1EA5m OAuth (shop_id ph\u1EA3i kh\u1EDBp). Sau OAuth ki\u1EC3m tra lastOAuth.success=true." : "Ch\u01B0a c\xF3 shop OAuth \u2014 b\u1EA5m n\xFAt OAuth trong C\xE0i \u0111\u1EB7t.",
+    checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    routes: {
+      mappingProducts: true
+    }
+  });
+}
+
+// routes/healthRoutes.js
+var router3 = (0, import_express4.Router)();
+router3.get("/health", getHealth);
+router3.get("/config/public", getPublicConfig);
+router3.post("/debug/client-log", authMiddleware, postClientLog);
+router3.get("/debug/client-log", authMiddleware, getClientLog);
+var healthRoutes_default = router3;
+
+// routes/vietnamAddressRoutes.js
+var import_express5 = __toESM(require_express2(), 1);
+
+// controllers/vietnamAddressController.js
+var VN_ADDRESS_API = "https://provinces.open-api.vn/api";
+var vnProvincesCache = null;
+var vnDistrictsCache = /* @__PURE__ */ new Map();
+var vnWardsCache = /* @__PURE__ */ new Map();
+async function fetchVnJson(url) {
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`VN address API ${res.status}`);
+  return res.json();
+}
+async function getProvinces(_req, res) {
+  try {
+    if (!vnProvincesCache) {
+      vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
+    }
+    const list = (vnProvincesCache || []).map((p) => ({
+      name: p.name,
+      code: p.code
+    }));
+    return res.json(list);
+  } catch (error) {
+    console.error("[VN Address] provinces:", error);
+    return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch T\u1EC9nh/Th\xE0nh" });
+  }
+}
+async function getDistricts(req, res) {
+  try {
+    const provinceCode = Number(req.params.provinceCode);
+    if (!provinceCode) return res.json([]);
+    if (!vnDistrictsCache.has(provinceCode)) {
+      const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${provinceCode}?depth=2`);
+      const districts = Array.isArray(data?.districts) ? data.districts : [];
+      vnDistrictsCache.set(
+        provinceCode,
+        districts.map((d) => ({ name: d.name, code: d.code }))
+      );
+    }
+    return res.json(vnDistrictsCache.get(provinceCode) || []);
+  } catch (error) {
+    console.error("[VN Address] districts:", error);
+    return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Qu\u1EADn/Huy\u1EC7n" });
+  }
+}
+async function getWards(req, res) {
+  try {
+    const districtCode = Number(req.params.districtCode);
+    if (!districtCode) return res.json([]);
+    if (!vnWardsCache.has(districtCode)) {
+      const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${districtCode}?depth=2`);
+      const wards = Array.isArray(data?.wards) ? data.wards : [];
+      vnWardsCache.set(
+        districtCode,
+        wards.map((w) => ({ name: w.name, code: w.code }))
+      );
+    }
+    return res.json(vnWardsCache.get(districtCode) || []);
+  } catch (error) {
+    console.error("[VN Address] wards:", error);
+    return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Ph\u01B0\u1EDDng/X\xE3" });
+  }
+}
+
+// routes/vietnamAddressRoutes.js
+var router4 = (0, import_express5.Router)();
+router4.get("/provinces", getProvinces);
+router4.get("/districts/:provinceCode", getDistricts);
+router4.get("/wards/:districtCode", getWards);
+var vietnamAddressRoutes_default = router4;
+
+// routes/suppliersRoutes.js
+var import_express6 = __toESM(require_express2(), 1);
+
+// controllers/suppliersController.js
+var import_fs3 = __toESM(require("fs"), 1);
+var import_path3 = __toESM(require("path"), 1);
+var APP_ROOT2 = resolveAppRoot();
+var SUPPLIERS_DB_PATH = import_path3.default.join(APP_ROOT2, "data", "suppliers.json");
+function normalizeSupplier(raw) {
+  const totalOrderValue = Number(raw?.totalOrderValue) || 0;
+  const totalPaid = Number(raw?.totalPaid) || 0;
+  return {
+    id: String(raw?.id || `sup-${Date.now()}`),
+    name: String(raw?.name || "").trim(),
+    supplierCode: String(raw?.supplierCode || raw?.supplier_code || "").trim().toUpperCase(),
+    totalOrderValue,
+    totalPaid,
+    totalDebt: Number(raw?.totalDebt ?? totalOrderValue - totalPaid) || 0,
+    status: raw?.status === "inactive" ? "inactive" : "active"
+  };
+}
+function loadSuppliers() {
+  try {
+    if (!import_fs3.default.existsSync(SUPPLIERS_DB_PATH)) return [];
+    const raw = import_fs3.default.readFileSync(SUPPLIERS_DB_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map(normalizeSupplier) : [];
+  } catch (error) {
+    console.error("[Suppliers DB] Failed to read suppliers.json:", error);
+    return [];
+  }
+}
+function saveSuppliers(suppliers) {
+  try {
+    import_fs3.default.mkdirSync(import_path3.default.dirname(SUPPLIERS_DB_PATH), { recursive: true });
+    import_fs3.default.writeFileSync(SUPPLIERS_DB_PATH, JSON.stringify(suppliers, null, 2), "utf-8");
+  } catch (error) {
+    console.error(
+      "L\u1ED7i chi ti\u1EBFt khi l\u01B0u shop/OAuth:",
+      error?.response?.data || error?.message || String(error)
+    );
+    console.error("[Suppliers DB] Failed to write suppliers.json:", error);
+  }
+}
+async function listSuppliers(_req, res) {
+  return res.json(loadSuppliers());
+}
+async function createSupplier(req, res) {
+  const body = req.body || {};
+  if (!body.name?.trim() || !body.supplierCode?.trim()) {
+    return res.status(400).json({ error: "name_and_supplierCode_required" });
+  }
+  const suppliers = loadSuppliers();
+  const code = String(body.supplierCode).trim().toUpperCase();
+  if (suppliers.some((s2) => s2.supplierCode === code)) {
+    return res.status(400).json({ error: "supplier_code_duplicate" });
+  }
+  const supplier = normalizeSupplier({
+    id: `sup-${Date.now()}`,
+    name: body.name,
+    supplierCode: code,
+    totalOrderValue: 0,
+    totalPaid: 0,
+    totalDebt: 0,
+    status: body.status || "active"
+  });
+  suppliers.unshift(supplier);
+  saveSuppliers(suppliers);
+  return res.status(201).json({ supplier, suppliers });
+}
+async function updateSupplier(req, res) {
+  const suppliers = loadSuppliers();
+  const index = suppliers.findIndex((s2) => s2.id === req.params.id);
+  if (index === -1) {
+    return res.status(404).json({ error: "supplier_not_found" });
+  }
+  const body = req.body || {};
+  const code = body.supplierCode ? String(body.supplierCode).trim().toUpperCase() : suppliers[index].supplierCode;
+  if (suppliers.some((s2, i2) => i2 !== index && s2.supplierCode === code)) {
+    return res.status(400).json({ error: "supplier_code_duplicate" });
+  }
+  const updated = normalizeSupplier({
+    ...suppliers[index],
+    ...body,
+    id: suppliers[index].id,
+    supplierCode: code
+  });
+  suppliers[index] = updated;
+  saveSuppliers(suppliers);
+  return res.json({ supplier: updated, suppliers });
+}
+async function deleteSupplier(req, res) {
+  const suppliers = loadSuppliers();
+  const target = suppliers.find((s2) => s2.id === req.params.id);
+  if (!target) {
+    return res.status(404).json({ error: "supplier_not_found" });
+  }
+  if (target.totalDebt > 0) {
+    return res.status(400).json({ error: "supplier_has_debt" });
+  }
+  const next = suppliers.filter((s2) => s2.id !== req.params.id);
+  saveSuppliers(next);
+  return res.json({ deleted: req.params.id, suppliers: next });
+}
+async function clearAllSuppliers(_req, res) {
+  saveSuppliers([]);
+  console.log("[Suppliers] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 d\u1EEF li\u1EC7u nh\xE0 cung c\u1EA5p.");
+  return res.json({ success: true, cleared: true, suppliers: [] });
+}
+
+// routes/suppliersRoutes.js
+var router5 = (0, import_express6.Router)();
+router5.get("/", listSuppliers);
+router5.post("/", createSupplier);
+router5.post("/clear-all", clearAllSuppliers);
+router5.put("/:id", updateSupplier);
+router5.delete("/:id", deleteSupplier);
+var suppliersRoutes_default = router5;
+
+// routes/expensesRoutes.js
+var import_express7 = __toESM(require_express2(), 1);
+
+// controllers/expensesController.js
+var import_fs4 = __toESM(require("fs"), 1);
+var import_path4 = __toESM(require("path"), 1);
+var APP_ROOT3 = resolveAppRoot();
+var EXPENSES_DB_PATH = import_path4.default.join(APP_ROOT3, "data", "expenses.json");
+var EXPENSES_CLEAR_MARKER = import_path4.default.join(APP_ROOT3, "data", ".expenses-cleared-v2");
+function loadExpenses() {
+  try {
+    if (!import_fs4.default.existsSync(EXPENSES_DB_PATH)) return [];
+    const raw = import_fs4.default.readFileSync(EXPENSES_DB_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error("[Expenses DB] Failed to read expenses.json:", error);
+    return [];
+  }
+}
+function saveExpenses(expenses) {
+  try {
+    import_fs4.default.mkdirSync(import_path4.default.dirname(EXPENSES_DB_PATH), { recursive: true });
+    import_fs4.default.writeFileSync(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
+  } catch (error) {
+    console.error("[Expenses DB] Failed to write expenses.json:", error);
+  }
+}
+function migrateExpensesStorageOnce() {
+  if (import_fs4.default.existsSync(EXPENSES_CLEAR_MARKER)) return;
+  saveExpenses([]);
+  try {
+    import_fs4.default.mkdirSync(import_path4.default.dirname(EXPENSES_CLEAR_MARKER), { recursive: true });
+    import_fs4.default.writeFileSync(EXPENSES_CLEAR_MARKER, (/* @__PURE__ */ new Date()).toISOString(), "utf-8");
+    console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch d\u1EEF li\u1EC7u chi ph\xED c\u0169 (migration m\u1ED9t l\u1EA7n).");
+  } catch (error) {
+    console.error("[Expenses] Failed to write clear marker:", error);
+  }
+}
+migrateExpensesStorageOnce();
+async function listExpenses(_req, res) {
+  return res.json(loadExpenses());
+}
+async function createExpense(req, res) {
+  const body = req.body || {};
+  if (!body.title?.trim() || !body.amount || !body.category || !body.date) {
+    return res.status(400).json({ error: "expense_fields_required" });
+  }
+  const expenses = loadExpenses();
+  const entry = {
+    id: body.id || `exp-${Date.now()}`,
+    title: String(body.title).trim(),
+    amount: Math.max(0, Math.round(Number(body.amount))),
+    category: String(body.category),
+    date: String(body.date),
+    notes: body.notes ? String(body.notes) : void 0
+  };
+  expenses.unshift(entry);
+  saveExpenses(expenses);
+  return res.status(201).json({ expense: entry, expenses });
+}
+async function deleteExpense(req, res) {
+  const expenses = loadExpenses();
+  const next = expenses.filter((e2) => e2.id !== req.params.id);
+  if (next.length === expenses.length) {
+    return res.status(404).json({ error: "expense_not_found" });
+  }
+  saveExpenses(next);
+  return res.json({ deleted: req.params.id, expenses: next });
+}
+async function clearAllExpenses(_req, res) {
+  saveExpenses([]);
+  console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 chi ph\xED doanh nghi\u1EC7p.");
+  return res.json({ success: true, cleared: true, expenses: [] });
+}
+
+// routes/expensesRoutes.js
+var router6 = (0, import_express7.Router)();
+router6.get("/", listExpenses);
+router6.post("/", createExpense);
+router6.post("/clear-all", clearAllExpenses);
+router6.delete("/:id", deleteExpense);
+var expensesRoutes_default = router6;
+
+// routes/importsRoutes.js
+var import_express8 = __toESM(require_express2(), 1);
+
+// controllers/importsController.js
+var import_fs5 = __toESM(require("fs"), 1);
+var import_path5 = __toESM(require("path"), 1);
+var APP_ROOT4 = resolveAppRoot();
+var IMPORTS_DB_PATH = import_path5.default.join(APP_ROOT4, "data", "imports.json");
+var deps2 = {
+  loadProductById: async () => null,
+  loadProducts: async () => [],
+  applyImportStockAndPriceToMainWarehouse: async () => {
+    throw new Error("applyImportStockAndPriceToMainWarehouse_not_initialized");
+  }
+};
+function initImportsController(partial) {
+  deps2 = { ...deps2, ...partial };
+}
+function loadImports() {
+  try {
+    if (!import_fs5.default.existsSync(IMPORTS_DB_PATH)) return [];
+    const raw = import_fs5.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
+    const parsed = raw.trim() ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    console.error("[Imports DB] Failed to read imports.json:", error);
+    return [];
+  }
+}
+function saveImports(imports) {
+  try {
+    import_fs5.default.mkdirSync(import_path5.default.dirname(IMPORTS_DB_PATH), { recursive: true });
+    import_fs5.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
+  } catch (error) {
+    console.error("[Imports DB] Failed to write imports.json:", error);
+  }
+}
+async function listImports(_req, res) {
+  return res.json(loadImports());
+}
+async function getImportHistory(req, res) {
+  try {
+    const productId = String(req.params.productId || "").trim();
+    if (!productId) return res.status(400).json({ success: false, error: "missing_product_id" });
+    const product = await deps2.loadProductById(productId);
+    const sku = String(product?.sku || "").trim();
+    const imports = loadImports();
+    const history = imports.filter(
+      (imp) => String(imp.productId) === productId || sku && String(imp.productSku || "") === sku
+    ).sort((a, b) => {
+      const tb = new Date(b.date || b.createdAt || 0).getTime();
+      const ta = new Date(a.date || a.createdAt || 0).getTime();
+      if (tb !== ta) return tb - ta;
+      return String(b.id || "").localeCompare(String(a.id || ""));
+    });
+    return res.json({
+      success: true,
+      productId,
+      productSku: sku || null,
+      history,
+      total: history.length
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ success: false, error: message });
+  }
+}
+async function getImportProductContext(req, res) {
+  const productId = String(req.params.productId);
+  const product = await deps2.loadProductById(productId) || (await deps2.loadProducts()).find((p) => p.id === productId);
+  if (!product) {
+    return res.status(404).json({ error: "product_not_found" });
+  }
+  const imports = loadImports();
+  const sku = String(product.sku || "");
+  const history = imports.filter(
+    (imp) => imp.productId === productId || sku && imp.productSku === sku
+  );
+  const latest = history.length > 0 ? [...history].sort((a, b) => {
+    const tb = new Date(b.date || 0).getTime();
+    const ta = new Date(a.date || 0).getTime();
+    if (tb !== ta) return tb - ta;
+    return String(b.id || "").localeCompare(String(a.id || ""));
+  })[0] : null;
+  const stock = Math.max(0, Math.round(Number(product.stock) || 0));
+  const oldPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
+  console.log("[Imports] product-context:", { productId, sku, stock, oldPrice, title: product.title });
+  return res.json({
+    productId,
+    stock,
+    importPrice: oldPrice,
+    oldPrice,
+    sku,
+    title: product.title || "",
+    lastSupplierName: latest?.supplierName || null,
+    lastSupplierId: latest?.supplierId || null,
+    lastImportDate: latest?.date || null
+  });
+}
+async function createImport(req, res) {
+  const body = req.body || {};
+  if (!body.supplierId || !body.productId || !body.quantity || body.newImportPrice == null) {
+    return res.status(400).json({ success: false, error: "import_fields_required" });
+  }
+  const productId = String(body.productId).trim();
+  const productSku = String(body.productSku || body.sku || "").trim();
+  const qty = Math.max(1, Math.round(Number(body.quantity)));
+  const unitPrice = Math.max(0, Math.round(Number(body.newImportPrice)));
+  const importCost = Math.max(0, Math.round(Number(body.importCost) || 0));
+  const computedTotal = qty * unitPrice + importCost;
+  const warehouseId = "KhoGoc";
+  try {
+    const applied = await deps2.applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice, {
+      skuHint: productSku
+    });
+    const updatedProduct = applied.product;
+    const oldImportPrice = Math.max(0, Math.round(Number(body.oldImportPrice) || 0)) || applied.oldImportPrice;
+    const imports = loadImports();
+    const entry = {
+      id: body.id || `imp-${Date.now()}`,
+      supplierId: String(body.supplierId),
+      supplierName: String(body.supplierName || ""),
+      date: body.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      productId: String(updatedProduct?.id || productId),
+      productTitle: String(body.productTitle || updatedProduct?.title || ""),
+      productSku: String(productSku || updatedProduct?.sku || ""),
+      quantity: qty,
+      oldImportPrice,
+      newImportPrice: unitPrice,
+      importCost,
+      totalAmount: Math.max(0, Math.round(Number(body.totalAmount) || computedTotal)),
+      paidAmount: Math.max(0, Math.round(Number(body.paidAmount) || 0)),
+      status: body.status || "unpaid",
+      notes: body.notes || void 0,
+      warehouseId,
+      priceChangePercent: oldImportPrice > 0 ? Math.round((unitPrice - oldImportPrice) / oldImportPrice * 1e3) / 10 : null
+    };
+    try {
+      imports.unshift(entry);
+      saveImports(imports);
+    } catch (logErr) {
+      console.error("[Imports] Ghi log th\u1EA5t b\u1EA1i \u2014 rollback t\u1ED3n/gi\xE1 Kho G\u1ED1c:", logErr);
+      await deps2.applyImportStockAndPriceToMainWarehouse(productId, -qty, applied.oldImportPrice, {
+        skuHint: productSku
+      }).catch((rb) => console.error("[Imports] Rollback Kho G\u1ED1c failed:", rb));
+      throw logErr;
+    }
+    console.log("[Imports] PO submitted \u2192 KhoGoc", {
+      productId: entry.productId,
+      sku: entry.productSku,
+      qty,
+      oldStock: applied.oldStock,
+      newStock: applied.newStock,
+      oldImportPrice,
+      newImportPrice: unitPrice,
+      target: applied.target
+    });
+    return res.status(201).json({
+      success: true,
+      import: entry,
+      imports,
+      product: updatedProduct,
+      warehouseId,
+      warehouse: "KhoGoc",
+      collection: "products",
+      stockBefore: applied.oldStock,
+      stockAfter: applied.newStock,
+      importPriceBefore: oldImportPrice,
+      importPriceAfter: unitPrice
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[Imports] POST /api/imports failed:", err);
+    return res.status(500).json({ success: false, error: message || "import_failed" });
+  }
+}
+async function clearAllImports(_req, res) {
+  saveImports([]);
+  console.log("[Imports] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 l\u1ECBch s\u1EED nh\u1EADp h\xE0ng.");
+  return res.json({ success: true, cleared: true, imports: [] });
+}
+
+// routes/importsRoutes.js
+var router7 = (0, import_express8.Router)();
+router7.get("/", listImports);
+router7.get("/history/:productId", getImportHistory);
+router7.get("/product-context/:productId", getImportProductContext);
+router7.post("/", createImport);
+router7.post("/clear-all", clearAllImports);
+var importsRoutes_default = router7;
+
+// routes/settingsRoutes.js
+var import_express9 = __toESM(require_express2(), 1);
 
 // node_modules/@google/genai/dist/node/index.mjs
 var import_p_retry = __toESM(require_p_retry(), 1);
 var import_google_auth_library = __toESM(require_src9(), 1);
-var import_fs = require("fs");
-var fs2 = __toESM(require("fs/promises"), 1);
+var import_fs6 = require("fs");
+var fs7 = __toESM(require("fs/promises"), 1);
 var import_promises = require("fs/promises");
 var import_node_stream3 = require("node:stream");
 var import_promises2 = require("node:stream/promises");
@@ -71488,7 +73336,7 @@ var import_websocket = __toESM(require_websocket(), 1);
 var import_websocket_server = __toESM(require_websocket_server(), 1);
 
 // node_modules/@google/genai/dist/node/index.mjs
-var path = __toESM(require("path"), 1);
+var path6 = __toESM(require("path"), 1);
 var _defaultBaseGeminiUrl = void 0;
 var _defaultBaseVertexUrl = void 0;
 function getDefaultBaseUrls() {
@@ -75078,7 +76926,7 @@ var Batches = class extends BaseModule {
       params
     );
     const urlParams = body["_url"];
-    const path10 = formatMap("{model}:batchGenerateContent", urlParams);
+    const path12 = formatMap("{model}:batchGenerateContent", urlParams);
     const batch = body["batch"];
     const inputConfig = batch["inputConfig"];
     const requestsWrapper = inputConfig["requests"];
@@ -75099,7 +76947,7 @@ var Batches = class extends BaseModule {
     delete body["config"];
     delete body["_url"];
     delete body["_query"];
-    return { path: path10, body };
+    return { path: path12, body };
   }
   // Helper function to get the first GCS URI
   getGcsUri(src) {
@@ -75155,16 +77003,16 @@ var Batches = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createBatchJobParametersToVertex(this.apiClient, params);
-      path10 = formatMap("batchPredictionJobs", body["_url"]);
+      path12 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75179,12 +77027,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = createBatchJobParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{model}:batchGenerateContent", body["_url"]);
+      path12 = formatMap("{model}:batchGenerateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75209,18 +77057,18 @@ var Batches = class extends BaseModule {
   async createEmbeddingsInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createEmbeddingsBatchJobParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
+      path12 = formatMap("{model}:asyncBatchEmbedContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75249,16 +77097,16 @@ var Batches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getBatchJobParametersToVertex(this.apiClient, params);
-      path10 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path12 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75273,12 +77121,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = getBatchJobParametersToMldev(this.apiClient, params);
-      path10 = formatMap("batches/{name}", body["_url"]);
+      path12 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75306,16 +77154,16 @@ var Batches = class extends BaseModule {
    */
   async cancel(params) {
     var _a2, _b, _c, _d;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelBatchJobParametersToVertex(this.apiClient, params);
-      path10 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
+      path12 = formatMap("batchPredictionJobs/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75324,12 +77172,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = cancelBatchJobParametersToMldev(this.apiClient, params);
-      path10 = formatMap("batches/{name}:cancel", body["_url"]);
+      path12 = formatMap("batches/{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -75341,16 +77189,16 @@ var Batches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listBatchJobsParametersToVertex(params);
-      path10 = formatMap("batchPredictionJobs", body["_url"]);
+      path12 = formatMap("batchPredictionJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75373,12 +77221,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = listBatchJobsParametersToMldev(params);
-      path10 = formatMap("batches", body["_url"]);
+      path12 = formatMap("batches", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -75415,16 +77263,16 @@ var Batches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteBatchJobParametersToVertex(this.apiClient, params);
-      path10 = formatMap("batchPredictionJobs/{name}", body["_url"]);
+      path12 = formatMap("batchPredictionJobs/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -75445,12 +77293,12 @@ var Batches = class extends BaseModule {
       });
     } else {
       const body = deleteBatchJobParametersToMldev(this.apiClient, params);
-      path10 = formatMap("batches/{name}", body["_url"]);
+      path12 = formatMap("batches/{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -76374,16 +78222,16 @@ var Caches = class extends BaseModule {
   async create(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createCachedContentParametersToVertex(this.apiClient, params);
-      path10 = formatMap("cachedContents", body["_url"]);
+      path12 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -76397,12 +78245,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = createCachedContentParametersToMldev(this.apiClient, params);
-      path10 = formatMap("cachedContents", body["_url"]);
+      path12 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -76430,16 +78278,16 @@ var Caches = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getCachedContentParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -76453,12 +78301,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = getCachedContentParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -76486,16 +78334,16 @@ var Caches = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteCachedContentParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -76518,12 +78366,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = deleteCachedContentParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -76563,16 +78411,16 @@ var Caches = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateCachedContentParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -76586,12 +78434,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = updateCachedContentParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -76608,16 +78456,16 @@ var Caches = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listCachedContentsParametersToVertex(params);
-      path10 = formatMap("cachedContents", body["_url"]);
+      path12 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -76640,12 +78488,12 @@ var Caches = class extends BaseModule {
       });
     } else {
       const body = listCachedContentsParametersToMldev(params);
-      path10 = formatMap("cachedContents", body["_url"]);
+      path12 = formatMap("cachedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77241,18 +79089,18 @@ var Files = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFilesParametersToMldev(params);
-      path10 = formatMap("files", body["_url"]);
+      path12 = formatMap("files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77278,18 +79126,18 @@ var Files = class extends BaseModule {
   async createInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileParametersToMldev(params);
-      path10 = formatMap("upload/v1beta/files", body["_url"]);
+      path12 = formatMap("upload/v1beta/files", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -77324,18 +79172,18 @@ var Files = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileParametersToMldev(params);
-      path10 = formatMap("files/{file}", body["_url"]);
+      path12 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -77365,18 +79213,18 @@ var Files = class extends BaseModule {
   async delete(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileParametersToMldev(params);
-      path10 = formatMap("files/{file}", body["_url"]);
+      path12 = formatMap("files/{file}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -77402,18 +79250,18 @@ var Files = class extends BaseModule {
   async registerFilesInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = internalRegisterFilesParametersToMldev(params);
-      path10 = formatMap("files:register", body["_url"]);
+      path12 = formatMap("files:register", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -82667,13 +84515,13 @@ var ApiClient = class {
       throw new Error("HTTP options are not correctly set.");
     }
   }
-  constructUrl(path10, httpOptions, prependProjectLocation) {
+  constructUrl(path12, httpOptions, prependProjectLocation) {
     const urlElement = [this.getRequestUrlInternal(httpOptions)];
     if (prependProjectLocation) {
       urlElement.push(this.getBaseResourcePath());
     }
-    if (path10 !== "") {
-      urlElement.push(path10);
+    if (path12 !== "") {
+      urlElement.push(path12);
     }
     const url = new URL(`${urlElement.join("/")}`);
     return url;
@@ -82972,8 +84820,8 @@ var ApiClient = class {
       file: fileToUpload
     };
     const fileName = this.getFileName(file);
-    const path10 = formatMap("upload/v1beta/files", body["_url"]);
-    const uploadUrl = await this.fetchUploadUrl(path10, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const path12 = formatMap("upload/v1beta/files", body["_url"]);
+    const uploadUrl = await this.fetchUploadUrl(path12, fileToUpload.sizeBytes, fileToUpload.mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.upload(file, uploadUrl, this);
   }
   /**
@@ -82997,13 +84845,13 @@ var ApiClient = class {
     if (mimeType === void 0 || mimeType === "") {
       throw new Error("Can not determine mimeType. Please provide mimeType in the config.");
     }
-    const path10 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
+    const path12 = `upload/v1beta/${fileSearchStoreName}:uploadToFileSearchStore`;
     const fileName = this.getFileName(file);
     const body = {};
     if (config != null) {
       uploadToFileSearchStoreConfigToMldev(config, body);
     }
-    const uploadUrl = await this.fetchUploadUrl(path10, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
+    const uploadUrl = await this.fetchUploadUrl(path12, sizeBytes, mimeType, fileName, body, config === null || config === void 0 ? void 0 : config.httpOptions);
     return uploader.uploadToFileSearchStore(file, uploadUrl, this);
   }
   /**
@@ -83016,7 +84864,7 @@ var ApiClient = class {
     const downloader = this.clientOptions.downloader;
     await downloader.download(params, this);
   }
-  async fetchUploadUrl(path10, sizeBytes, mimeType, fileName, body, configHttpOptions) {
+  async fetchUploadUrl(path12, sizeBytes, mimeType, fileName, body, configHttpOptions) {
     var _a2;
     let httpOptions = {};
     if (configHttpOptions) {
@@ -83029,7 +84877,7 @@ var ApiClient = class {
       };
     }
     const httpResponse = await this.request({
-      path: path10,
+      path: path12,
       body: JSON.stringify(body),
       httpMethod: "POST",
       httpOptions
@@ -84225,16 +86073,16 @@ var Models = class extends BaseModule {
   async generateContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:generateContent", body["_url"]);
+      path12 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84257,12 +86105,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{model}:generateContent", body["_url"]);
+      path12 = formatMap("{model}:generateContent", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84288,17 +86136,17 @@ var Models = class extends BaseModule {
   async generateContentStreamInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateContentParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path12 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84334,13 +86182,13 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateContentParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
+      path12 = formatMap("{model}:streamGenerateContent?alt=sse", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       const apiClient = this.apiClient;
       response = apiClient.requestStream({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84400,17 +86248,17 @@ var Models = class extends BaseModule {
   async embedContentInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = embedContentParametersPrivateToVertex(this.apiClient, params, params);
       const endpointUrl = tIsVertexEmbedContentModel(params.model) ? "{model}:embedContent" : "{model}:predict";
-      path10 = formatMap(endpointUrl, body["_url"]);
+      path12 = formatMap(endpointUrl, body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84433,12 +86281,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = embedContentParametersPrivateToMldev(this.apiClient, params);
-      path10 = formatMap("{model}:batchEmbedContents", body["_url"]);
+      path12 = formatMap("{model}:batchEmbedContents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84467,16 +86315,16 @@ var Models = class extends BaseModule {
   async generateImagesInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateImagesParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:predict", body["_url"]);
+      path12 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84499,12 +86347,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateImagesParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{model}:predict", body["_url"]);
+      path12 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84533,16 +86381,16 @@ var Models = class extends BaseModule {
   async editImageInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = editImageParametersInternalToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:predict", body["_url"]);
+      path12 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84573,16 +86421,16 @@ var Models = class extends BaseModule {
   async upscaleImageInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = upscaleImageAPIParametersInternalToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:predict", body["_url"]);
+      path12 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84634,16 +86482,16 @@ var Models = class extends BaseModule {
   async recontextImage(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = recontextImageParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:predict", body["_url"]);
+      path12 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84685,16 +86533,16 @@ var Models = class extends BaseModule {
   async segmentImage(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = segmentImageParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:predict", body["_url"]);
+      path12 = formatMap("{model}:predict", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -84724,16 +86572,16 @@ var Models = class extends BaseModule {
   async get(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getModelParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84748,12 +86596,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = getModelParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84771,16 +86619,16 @@ var Models = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listModelsParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{models_url}", body["_url"]);
+      path12 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84803,12 +86651,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = listModelsParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{models_url}", body["_url"]);
+      path12 = formatMap("{models_url}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -84851,16 +86699,16 @@ var Models = class extends BaseModule {
   async update(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = updateModelParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{model}", body["_url"]);
+      path12 = formatMap("{model}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -84875,12 +86723,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = updateModelParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "PATCH",
@@ -84909,16 +86757,16 @@ var Models = class extends BaseModule {
   async delete(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = deleteModelParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -84941,12 +86789,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = deleteModelParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -84988,16 +86836,16 @@ var Models = class extends BaseModule {
   async countTokens(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = countTokensParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:countTokens", body["_url"]);
+      path12 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85020,12 +86868,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = countTokensParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{model}:countTokens", body["_url"]);
+      path12 = formatMap("{model}:countTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85069,16 +86917,16 @@ var Models = class extends BaseModule {
   async computeTokens(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = computeTokensParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:computeTokens", body["_url"]);
+      path12 = formatMap("{model}:computeTokens", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85109,16 +86957,16 @@ var Models = class extends BaseModule {
   async generateVideosInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = generateVideosParametersToVertex(this.apiClient, params);
-      path10 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path12 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85135,12 +86983,12 @@ var Models = class extends BaseModule {
       });
     } else {
       const body = generateVideosParametersToMldev(this.apiClient, params);
-      path10 = formatMap("{model}:predictLongRunning", body["_url"]);
+      path12 = formatMap("{model}:predictLongRunning", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85242,16 +87090,16 @@ var Operations = class extends BaseModule {
   async getVideosOperationInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getOperationParametersToVertex(params);
-      path10 = formatMap("{operationName}", body["_url"]);
+      path12 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -85263,12 +87111,12 @@ var Operations = class extends BaseModule {
       return response;
     } else {
       const body = getOperationParametersToMldev(params);
-      path10 = formatMap("{operationName}", body["_url"]);
+      path12 = formatMap("{operationName}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -85283,16 +87131,16 @@ var Operations = class extends BaseModule {
   async fetchPredictVideosOperationInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = fetchPredictOperationParametersToVertex(params);
-      path10 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
+      path12 = formatMap("{resourceName}:fetchPredictOperation", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -85980,20 +87828,20 @@ var Tokens = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("The client.tokens.create method is only supported by the Gemini Developer API.");
     } else {
       const body = createAuthTokenParametersToMldev(this.apiClient, params);
-      path10 = formatMap("auth_tokens", body["_url"]);
+      path12 = formatMap("auth_tokens", body["_url"]);
       queryParams = body["_query"];
       delete body["config"];
       delete body["_url"];
       delete body["_query"];
       const transformedBody = convertBidiSetupToTokenSetup(body, params.config);
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(transformedBody),
         httpMethod: "POST",
@@ -86103,18 +87951,18 @@ var Documents = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getDocumentParametersToMldev(params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86135,18 +87983,18 @@ var Documents = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteDocumentParametersToMldev(params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86158,18 +88006,18 @@ var Documents = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listDocumentsParametersToMldev(params);
-      path10 = formatMap("{parent}/documents", body["_url"]);
+      path12 = formatMap("{parent}/documents", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86286,18 +88134,18 @@ var FileSearchStores = class extends BaseModule {
   async create(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createFileSearchStoreParametersToMldev(this.apiClient, params);
-      path10 = formatMap("fileSearchStores", body["_url"]);
+      path12 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86320,18 +88168,18 @@ var FileSearchStores = class extends BaseModule {
   async get(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = getFileSearchStoreParametersToMldev(params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86352,18 +88200,18 @@ var FileSearchStores = class extends BaseModule {
    */
   async delete(params) {
     var _a2, _b;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = deleteFileSearchStoreParametersToMldev(params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       await this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "DELETE",
@@ -86375,18 +88223,18 @@ var FileSearchStores = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = listFileSearchStoresParametersToMldev(params);
-      path10 = formatMap("fileSearchStores", body["_url"]);
+      path12 = formatMap("fileSearchStores", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -86406,18 +88254,18 @@ var FileSearchStores = class extends BaseModule {
   async uploadToFileSearchStoreInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = uploadToFileSearchStoreParametersToMldev(params);
-      path10 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
+      path12 = formatMap("upload/v1beta/{file_search_store_name}:uploadToFileSearchStore", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -86445,18 +88293,18 @@ var FileSearchStores = class extends BaseModule {
   async importFile(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = importFileParametersToMldev(params);
-      path10 = formatMap("{file_search_store_name}:importFile", body["_url"]);
+      path12 = formatMap("{file_search_store_name}:importFile", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -87592,16 +89440,16 @@ var ClientSDK = class {
   }
   _createRequest(context, conf, options) {
     var _a2, _b, _c, _d, _e;
-    const { method, path: path10, query, headers: opHeaders, security } = conf;
+    const { method, path: path12, query, headers: opHeaders, security } = conf;
     const base = (_a2 = conf.baseURL) !== null && _a2 !== void 0 ? _a2 : this._baseURL;
     if (!base) {
       return ERR(new InvalidRequestError("No base URL provided for operation"));
     }
     const baseURL = new URL(base);
     let reqURL;
-    if (path10) {
+    if (path12) {
       baseURL.pathname = baseURL.pathname.replace(/\/+$/, "") + "/";
-      reqURL = new URL(path10, baseURL);
+      reqURL = new URL(path12, baseURL);
       if (!reqURL.search && baseURL.search) {
         reqURL.search = baseURL.search;
       }
@@ -88417,7 +90265,7 @@ async function $do$e(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path10 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path12 = pathToFunc("/{api_version}/agents")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -88448,7 +90296,7 @@ async function $do$e(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -88492,7 +90340,7 @@ async function $do$d(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path12 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -88522,7 +90370,7 @@ async function $do$d(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -88566,7 +90414,7 @@ async function $do$c(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
+  const path12 = pathToFunc("/{api_version}/agents/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -88596,7 +90444,7 @@ async function $do$c(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -88638,7 +90486,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path10 = pathToFunc("/{api_version}/agents")(pathParams);
+  const path12 = pathToFunc("/{api_version}/agents")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token,
@@ -88673,7 +90521,7 @@ async function $do$b(client, api_version, page_size, page_token, parent, options
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     query,
     body,
@@ -88825,7 +90673,7 @@ async function $do$a(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
+  const path12 = pathToFunc("/{api_version}/interactions/{id}/cancel")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -88855,7 +90703,7 @@ async function $do$a(client, id, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -88898,7 +90746,7 @@ async function $do$9(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path10 = pathToFunc("/{api_version}/interactions")(pathParams);
+  const path12 = pathToFunc("/{api_version}/interactions")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: ((_b = input === null || input === void 0 ? void 0 : input.body) === null || _b === void 0 ? void 0 : _b.stream) ? "text/event-stream" : "application/json"
@@ -88929,7 +90777,7 @@ async function $do$9(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -88979,7 +90827,7 @@ async function $do$8(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path12 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -89009,7 +90857,7 @@ async function $do$8(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -89059,7 +90907,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
+  const path12 = pathToFunc("/{api_version}/interactions/{id}")(pathParams);
   const query = encodeFormQuery({
     "include_input": payload.include_input,
     "last_event_id": payload.last_event_id,
@@ -89094,7 +90942,7 @@ async function $do$7(client, id, stream, last_event_id, include_input, api_versi
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     query,
     body,
@@ -89168,7 +91016,7 @@ async function $do$6(client, body, api_version, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path10 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path12 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -89199,7 +91047,7 @@ async function $do$6(client, body, api_version, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -89243,7 +91091,7 @@ async function $do$5(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path12 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -89273,7 +91121,7 @@ async function $do$5(client, id, api_version, options) {
     security: requestSecurity,
     method: "DELETE",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -89317,7 +91165,7 @@ async function $do$4(client, id, api_version, options) {
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path12 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const headers = new Headers(compactMap({
     Accept: "application/json"
   }));
@@ -89347,7 +91195,7 @@ async function $do$4(client, id, api_version, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body,
     userAgent: client._options.user_agent,
@@ -89388,7 +91236,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
   const pathParams = {
     api_version: encodeSimple("api_version", (_a2 = payload === null || payload === void 0 ? void 0 : payload.api_version) !== null && _a2 !== void 0 ? _a2 : client._options.api_version, { explode: false, charEncoding: "percent" })
   };
-  const path10 = pathToFunc("/{api_version}/webhooks")(pathParams);
+  const path12 = pathToFunc("/{api_version}/webhooks")(pathParams);
   const query = encodeFormQuery({
     "page_size": payload === null || payload === void 0 ? void 0 : payload.page_size,
     "page_token": payload === null || payload === void 0 ? void 0 : payload.page_token
@@ -89422,7 +91270,7 @@ async function $do$3(client, api_version, page_size, page_token, options) {
     security: requestSecurity,
     method: "GET",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     query,
     body,
@@ -89468,7 +91316,7 @@ async function $do$2(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
+  const path12 = pathToFunc("/{api_version}/webhooks/{id}:ping")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -89499,7 +91347,7 @@ async function $do$2(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -89544,7 +91392,7 @@ async function $do$1(client, id, api_version, body, options) {
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
+  const path12 = pathToFunc("/{api_version}/webhooks/{id}:rotateSigningSecret")(pathParams);
   const headers = new Headers(compactMap({
     "Content-Type": "application/json",
     Accept: "application/json"
@@ -89575,7 +91423,7 @@ async function $do$1(client, id, api_version, body, options) {
     security: requestSecurity,
     method: "POST",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     body: body$,
     userAgent: client._options.user_agent,
@@ -89621,7 +91469,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
       charEncoding: "percent"
     })
   };
-  const path10 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
+  const path12 = pathToFunc("/{api_version}/webhooks/{id}")(pathParams);
   const query = encodeFormQuery({
     "update_mask": payload.update_mask
   });
@@ -89655,7 +91503,7 @@ async function $do(client, id, api_version, update_mask, body, options) {
     security: requestSecurity,
     method: "PATCH",
     baseURL: options === null || options === void 0 ? void 0 : options.server_url,
-    path: path10,
+    path: path12,
     headers,
     query,
     body: body$,
@@ -90159,7 +92007,7 @@ var NodeDownloader = class {
     if (params.downloadPath) {
       const response = await downloadFile(params, apiClient);
       if (response instanceof HttpResponse) {
-        const writer = (0, import_fs.createWriteStream)(params.downloadPath);
+        const writer = (0, import_fs6.createWriteStream)(params.downloadPath);
         const body = import_node_stream3.Readable.fromWeb(response.responseInternal.body);
         body.pipe(writer);
         await (0, import_promises2.finished)(writer);
@@ -91671,16 +93519,16 @@ var Tunings = class extends BaseModule {
   async getInternal(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = getTuningJobParametersToVertex(params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91701,12 +93549,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = getTuningJobParametersToMldev(params);
-      path10 = formatMap("{name}", body["_url"]);
+      path12 = formatMap("{name}", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91730,16 +93578,16 @@ var Tunings = class extends BaseModule {
   async listInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = listTuningJobsParametersToVertex(params);
-      path10 = formatMap("tuningJobs", body["_url"]);
+      path12 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "GET",
@@ -91778,16 +93626,16 @@ var Tunings = class extends BaseModule {
   async cancel(params) {
     var _a2, _b, _c, _d;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = cancelTuningJobParametersToVertex(params);
-      path10 = formatMap("{name}:cancel", body["_url"]);
+      path12 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91810,12 +93658,12 @@ var Tunings = class extends BaseModule {
       });
     } else {
       const body = cancelTuningJobParametersToMldev(params);
-      path10 = formatMap("{name}:cancel", body["_url"]);
+      path12 = formatMap("{name}:cancel", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91841,16 +93689,16 @@ var Tunings = class extends BaseModule {
   async tuneInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = createTuningJobParametersPrivateToVertex(params, params);
-      path10 = formatMap("tuningJobs", body["_url"]);
+      path12 = formatMap("tuningJobs", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91876,18 +93724,18 @@ var Tunings = class extends BaseModule {
   async tuneMldevInternal(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       throw new Error("This method is only supported by the Gemini Developer API.");
     } else {
       const body = createTuningJobParametersPrivateToMldev(params);
-      path10 = formatMap("tunedModels", body["_url"]);
+      path12 = formatMap("tunedModels", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -91911,16 +93759,16 @@ var Tunings = class extends BaseModule {
   async validateReward(params) {
     var _a2, _b;
     let response;
-    let path10 = "";
+    let path12 = "";
     let queryParams = {};
     if (this.apiClient.isVertexAI()) {
       const body = validateRewardParametersToVertex(params);
-      path10 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
+      path12 = formatMap("{parent}/tuningJobs:validateReinforcementTuningReward", body["_url"]);
       queryParams = body["_query"];
       delete body["_url"];
       delete body["_query"];
       response = this.apiClient.request({
-        path: path10,
+        path: path12,
         queryParams,
         body: JSON.stringify(body),
         httpMethod: "POST",
@@ -92033,7 +93881,7 @@ var NodeUploader = class {
   async stat(file) {
     const fileStat = { size: 0, type: void 0 };
     if (typeof file === "string") {
-      const originalStat = await fs2.stat(file);
+      const originalStat = await fs7.stat(file);
       fileStat.size = originalStat.size;
       fileStat.type = this.inferMimeType(file);
       return fileStat;
@@ -92179,9 +94027,9 @@ var NodeUploader = class {
     let response = new HttpResponse(new Response());
     let uploadCommand = "upload";
     let fileHandle;
-    const fileName = path.basename(file);
+    const fileName = path6.basename(file);
     try {
-      fileHandle = await fs2.open(file, "r");
+      fileHandle = await fs7.open(file, "r");
       if (!fileHandle) {
         throw new Error(`Failed to open file`);
       }
@@ -92412,1660 +94260,672 @@ function getApiKeyFromEnv() {
   return envGoogleApiKey || envGeminiApiKey || void 0;
 }
 
-// server.ts
-var import_dotenv2 = __toESM(require_main(), 1);
-
-// src/webhooks/shopeeWebhookHandler.ts
-var import_express = __toESM(require_express2(), 1);
-
-// src/webhooks/shopeeSignature.ts
-var import_node_crypto = __toESM(require("node:crypto"), 1);
-function normalizeSignature(value) {
-  return value.trim().replace(/^(?:Bearer|HMAC)\s+/i, "").replace(/^sha256=/i, "").trim().toLowerCase();
-}
-function timingSafeEqualHex(a, b) {
-  try {
-    const aBuf = Buffer.from(a, "hex");
-    const bBuf = Buffer.from(b, "hex");
-    return aBuf.length === bBuf.length && import_node_crypto.default.timingSafeEqual(aBuf, bBuf);
-  } catch {
-    return false;
+// utils/env.js
+var import_fs7 = __toESM(require("fs"), 1);
+var import_path6 = __toESM(require("path"), 1);
+var APP_ROOT5 = resolveAppRoot();
+var ENV_PATH = import_path6.default.join(APP_ROOT5, ".env");
+function updateEnvVar(key, value) {
+  let content = "";
+  if (import_fs7.default.existsSync(ENV_PATH)) {
+    content = import_fs7.default.readFileSync(ENV_PATH, "utf-8");
   }
-}
-function verifyShopeeWebhookSignature(rawBody, authorization, requestUrls = []) {
-  const secret = String(
-    process.env.SHOPEE_PARTNER_KEY || process.env.SHOPEE_WEBHOOK_TOKEN || ""
-  ).trim();
-  const supplied = typeof authorization === "string" ? normalizeSignature(authorization) : "";
-  if (!secret) {
-    console.error("[Shopee Webhook] SHOPEE_PARTNER_KEY is not configured; rejecting webhook.");
-    return false;
-  }
-  if (!supplied || !/^[a-f0-9]{64}$/.test(supplied)) {
-    console.warn("[Shopee Webhook] Authorization missing or not a 64-char hex HMAC.");
-    return false;
-  }
-  const bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : "";
-  const urlList = (Array.isArray(requestUrls) ? requestUrls : [requestUrls]).map((u) => String(u || "").trim()).filter(Boolean);
-  const seen = /* @__PURE__ */ new Set();
-  const candidates = [];
-  for (const url of urlList) {
-    if (seen.has(url)) continue;
-    seen.add(url);
-    candidates.push(url);
-  }
-  if (candidates.length === 0) {
-    console.error("[Shopee Webhook] No webhook URL candidates for HMAC base string.");
-    return false;
-  }
-  for (const url of candidates) {
-    const baseString = `${url}|${bodyStr}`;
-    const expected = import_node_crypto.default.createHmac("sha256", secret).update(baseString).digest("hex");
-    if (timingSafeEqualHex(expected, supplied)) {
-      console.log(`[Shopee Webhook] HMAC OK (url=${url})`);
-      return true;
-    }
-  }
-  console.warn("[Shopee Webhook] HMAC mismatch", {
-    bodyBytes: Buffer.byteLength(bodyStr, "utf8"),
-    urlCandidates: candidates,
-    suppliedPrefix: supplied.slice(0, 12)
-  });
-  return false;
-}
-
-// src/webhooks/shopeeWebhookHandler.ts
-var MAX_PENDING_JOBS = 500;
-var MAX_CONCURRENT_JOBS = 2;
-function webhookOrderKey(payload) {
-  const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : payload;
-  const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
-  const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? "").trim();
-  return orderSn ? `${shopId}:${orderSn}` : "";
-}
-function createBoundedQueue(processPayload) {
-  const pending = [];
-  let running = 0;
-  let scheduled = false;
-  const activeOrderKeys = /* @__PURE__ */ new Set();
-  const scheduleDrain = () => {
-    if (scheduled) return;
-    scheduled = true;
-    setImmediate(() => {
-      scheduled = false;
-      const capacity = MAX_CONCURRENT_JOBS - running;
-      if (capacity <= 0 || pending.length === 0) return;
-      const batch = [];
-      for (let i2 = 0; i2 < pending.length && batch.length < capacity; ) {
-        const payload = pending[i2];
-        const orderKey = webhookOrderKey(payload);
-        if (orderKey && activeOrderKeys.has(orderKey)) {
-          i2 += 1;
-          continue;
-        }
-        pending.splice(i2, 1);
-        if (orderKey) activeOrderKeys.add(orderKey);
-        batch.push({ payload, orderKey });
-      }
-      if (batch.length === 0) return;
-      running += batch.length;
-      void Promise.allSettled(batch.map(({ payload }) => processPayload(payload))).then((results) => {
-        for (const result of results) {
-          if (result.status === "rejected") {
-            console.error("[Shopee Webhook] Background processing failed:", result.reason);
-          }
-        }
-      }).finally(() => {
-        running -= batch.length;
-        for (const { orderKey } of batch) {
-          if (orderKey) activeOrderKeys.delete(orderKey);
-        }
-        scheduleDrain();
-      });
-    });
-  };
-  return {
-    enqueue(payload) {
-      if (pending.length >= MAX_PENDING_JOBS) {
-        console.error("[Shopee Webhook] Queue full; request must be retried by Shopee.");
-        return false;
-      }
-      pending.push(payload);
-      scheduleDrain();
-      return true;
-    }
-  };
-}
-function createShopeeWebhookRouter(processPayload) {
-  const queue = createBoundedQueue(processPayload);
-  const router7 = import_express.default.Router();
-  router7.get("/shopee", (_req, res) => {
-    res.status(200).type("text/plain").send("success");
-  });
-  router7.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
-    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-    const bodyPreview = rawBody.toString("utf8").slice(0, 4e3);
-    console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee \u2014 headers:", {
-      authorization: req.get("authorization") ? "(present)" : "(missing)",
-      contentLength: req.get("content-length") || "0",
-      host: req.get("host") || "",
-      xfProto: req.get("x-forwarded-proto") || ""
-    });
-    console.log("[WEBHOOK RECEIVED] incoming payload (raw):", bodyPreview);
-    try {
-      const authHeader = req.get("authorization");
-      const configured = String(process.env.SHOPEE_WEBHOOK_URL || process.env.APP_URL || process.env.API_BASE_URL || "").trim().replace(/\/$/, "");
-      const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
-      const proto = forwardedProto || req.protocol || "https";
-      const host = String(req.get("x-forwarded-host") || req.get("host") || "").split(",")[0].trim();
-      const pathName = String(req.originalUrl || req.url || "/api/webhook/shopee").split("?")[0];
-      const urlCandidates = [
-        configured ? `${configured}/api/webhook/shopee` : "",
-        configured ? `${configured}${pathName}` : "",
-        host ? `${proto}://${host}${pathName}` : "",
-        host ? `https://${host}${pathName}` : "",
-        host ? `http://${host}${pathName}` : "",
-        "https://quanly.linhkienamthanh.net/api/webhook/shopee",
-        "https://api.linhkienamthanh.net/api/webhook/shopee"
-      ].filter(Boolean);
-      if (!verifyShopeeWebhookSignature(rawBody, authHeader, urlCandidates)) {
-        console.error(
-          `[Shopee Webhook] REJECTED \u2014 HMAC failure (invalid/missing Authorization). authPresent=${Boolean(authHeader)} bodyBytes=${rawBody.length} payloadPreview=${bodyPreview.slice(0, 500)}`
-        );
-        return res.status(401).type("text/plain").send("Unauthorized");
-      }
-      let payload = null;
-      try {
-        const parsed = JSON.parse(rawBody.toString("utf8"));
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          payload = parsed;
-        } else {
-          console.error("[Shopee Webhook] REJECTED \u2014 payload kh\xF4ng ph\u1EA3i object:", typeof parsed);
-        }
-      } catch (parseErr) {
-        console.error("[Shopee Webhook] REJECTED \u2014 JSON parse failed:", parseErr);
-      }
-      if (!payload) {
-        return res.status(400).type("text/plain").send("Invalid JSON payload");
-      }
-      if (!queue.enqueue(payload)) {
-        console.error("[Shopee Webhook] REJECTED \u2014 queue full (503), Shopee will retry.");
-        return res.status(503).type("text/plain").send("Webhook queue busy");
-      }
-      res.status(200).type("text/plain").send("OK");
-      console.log(
-        "[WEBHOOK RECEIVED] ACK 200 sent; payload queued:",
-        JSON.stringify({
-          code: payload.code ?? null,
-          shop_id: payload.shop_id ?? null,
-          data: payload.data ?? null
-        })
-      );
-    } catch (error) {
-      console.error("[Shopee Webhook] Request handler failed:", error);
-      if (!res.headersSent) return res.status(500).type("text/plain").send("Internal Server Error");
-    }
-  });
-  return router7;
-}
-
-// src/utils/orderItemVariation.ts
-function normalizeModelId(raw) {
-  const v = String(raw ?? "").trim();
-  if (!v || v === "0") return "0";
-  return v;
-}
-function normalizeImageKey(url) {
-  if (!url) return "";
-  const cleaned = url.replace(/[?#].*$/, "").replace(/_tn(\.\w+)?$/i, "");
-  const file = cleaned.split("/").pop() || cleaned;
-  return file.trim();
-}
-function findCatalogVariants(catalogProducts, itemId) {
-  return catalogProducts.filter(
-    (p) => p.shopeeItemId === itemId || p.id === itemId || p.shopeeId && String(p.shopeeId).startsWith(`${itemId}:`)
-  );
-}
-function priceMatches(catalogPrice, orderPrice) {
-  if (!catalogPrice || !orderPrice) return false;
-  const diff = Math.abs(catalogPrice - orderPrice);
-  return diff <= Math.max(500, orderPrice * 0.1);
-}
-function stripModelSuffix(title, modelName) {
-  if (!modelName) return title;
-  const suffix = ` - ${modelName}`;
-  if (title.endsWith(suffix)) return title.slice(0, -suffix.length).trim() || title;
-  return title;
-}
-function parseModelNameFromTitle(title) {
-  if (!title.includes(" - ")) return { baseTitle: title };
-  const idx = title.lastIndexOf(" - ");
-  const maybeModel = title.slice(idx + 3).trim();
-  const maybeBase = title.slice(0, idx).trim();
-  if (maybeModel && maybeBase) return { baseTitle: maybeBase, modelName: maybeModel };
-  return { baseTitle: title };
-}
-function matchVariantsByName(variants, modelName) {
-  const lower2 = modelName.toLowerCase();
-  return variants.filter(
-    (p) => p.modelName?.toLowerCase() === lower2 || p.title.toLowerCase().endsWith(` - ${lower2}`)
-  );
-}
-function matchVariantsByPrice(variants, orderPrice) {
-  if (!orderPrice || variants.length === 0) return [];
-  return variants.filter(
-    (p) => p.shopeeModelId && priceMatches(Number(p.sellingPrice) || 0, orderPrice)
-  );
-}
-function matchVariantByImage(variants, orderImage) {
-  const orderKey = normalizeImageKey(orderImage);
-  if (!orderKey) return void 0;
-  const matches = variants.filter((v) => {
-    const variantKey = normalizeImageKey(v.avatarUrl || v.imageUrl);
-    if (!variantKey) return false;
-    if (orderKey === variantKey) return true;
-    const orderStem = orderKey.split("-")[0] || orderKey;
-    const variantStem = variantKey.split("-")[0] || variantKey;
-    return orderStem.length >= 4 && variantStem.length >= 4 && orderStem === variantStem;
-  });
-  return matches.length === 1 ? matches[0] : void 0;
-}
-function enrichOrderItemFromCatalog(item, catalogProducts = []) {
-  const itemId = String(item.productId || "").trim();
-  let modelId = normalizeModelId(item.modelId);
-  let modelSku = item.modelSku?.trim();
-  let modelName = item.modelName?.trim();
-  let productTitle = item.productTitle?.trim() || "S\u1EA3n ph\u1EA9m kh\xF4ng t\xEAn";
-  const orderPrice = Number(item.price) || 0;
-  const parsed = parseModelNameFromTitle(productTitle);
-  if (!modelName && parsed.modelName) {
-    modelName = parsed.modelName;
-    productTitle = parsed.baseTitle;
+  const regex = new RegExp(`^${key}\\s*=.*$`, "m");
+  const line = `${key}=${value}`;
+  if (regex.test(content)) {
+    content = content.replace(regex, line);
   } else {
-    productTitle = stripModelSuffix(productTitle, modelName);
+    content = (content.trimEnd() ? content.trimEnd() + "\n" : "") + line + "\n";
   }
-  const variants = itemId ? findCatalogVariants(catalogProducts, itemId) : [];
-  let matched;
-  if (modelId !== "0") {
-    matched = variants.find((p) => p.shopeeModelId === modelId);
-  }
-  if (!matched && modelName) {
-    const byName = matchVariantsByName(variants, modelName);
-    if (byName.length === 1) matched = byName[0];
-  }
-  if (!matched && orderPrice > 0) {
-    const byPrice = matchVariantsByPrice(variants, orderPrice);
-    if (byPrice.length === 1) matched = byPrice[0];
-  }
-  if (!matched) {
-    matched = matchVariantByImage(variants, item.productImage);
-  }
-  if (matched) {
-    modelId = normalizeModelId(matched.shopeeModelId);
-    modelSku = modelSku || matched.sku?.trim();
-    modelName = modelName || matched.modelName?.trim();
-    productTitle = stripModelSuffix(matched.title, matched.modelName) || productTitle;
-  }
-  const enriched = {
-    ...item,
-    productTitle: modelName ? `${productTitle} - ${modelName}` : productTitle,
-    modelId: modelId !== "0" ? modelId : item.modelId,
-    modelSku: modelSku || item.modelSku,
-    modelName: modelName || item.modelName
-  };
-  return enriched;
+  import_fs7.default.writeFileSync(ENV_PATH, content, "utf-8");
+  process.env[key] = value;
 }
-function enrichOrdersFromCatalog(orders, catalogProducts = []) {
-  return orders.map((order) => ({
-    ...order,
-    items: (order.items || []).map((item) => enrichOrderItemFromCatalog(item, catalogProducts))
-  }));
+function maskApiKey(key) {
+  if (!key || key.length < 8) return "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+  return key.slice(0, 4) + "\u2022\u2022\u2022\u2022" + key.slice(-4);
 }
 
-// src/utils/shippingCarrier.ts
-function stripDiacritics(value) {
-  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D");
+// controllers/settingsController.js
+var ai = null;
+function getGeminiClient() {
+  return ai;
 }
-var SKIP_KEYS = /* @__PURE__ */ new Set([
-  "id",
-  "ordersn",
-  "shopid",
-  "shopname",
-  "channel",
-  "status",
-  "date",
-  "items",
-  "customername",
-  "customerphone",
-  "customeraddress",
-  "totalamount",
-  "revenue",
-  "isprepared",
-  "isprinted",
-  "notes"
-]);
-function collectCarrierDebugFields(order) {
-  const o = order;
-  const out = {};
-  const pick = (key, val) => {
-    if (val == null || val === "") return;
-    if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
-      out[key] = val;
+function setGeminiClient(client) {
+  ai = client;
+}
+function initGeminiClient(apiKey) {
+  return new GoogleGenAI2({
+    apiKey,
+    httpOptions: {
+      headers: { "User-Agent": "aistudio-build" }
     }
-  };
-  pick("shipping_carrier", o.shipping_carrier ?? o.shippingCarrier);
-  pick("checkout_shipping_carrier", o.checkout_shipping_carrier ?? o.checkoutShippingCarrier);
-  pick("logistics_channel_name", o.logistics_channel_name ?? o.logisticsChannelName);
-  pick("logistics_channel_id", o.logistics_channel_id ?? o.logisticsChannelId);
-  pick("shipping_type", o.shipping_type ?? o.shippingType);
-  pick("shipping_method", o.shipping_method ?? o.shippingMethod);
-  pick("fulfillment_type", o.fulfillment_type ?? o.fulfillmentType);
-  pick("ship_method", o.ship_method);
-  pick("carrier", o.carrier);
-  pick("trackingNumber", o.trackingNumber);
-  pick("tracking_no", o.tracking_no);
-  pick("packageNumber", o.packageNumber);
-  pick("channel_id", o.channel_id ?? o.channelId);
-  for (const [k, v] of Object.entries(o)) {
-    const lk = k.toLowerCase();
-    if (SKIP_KEYS.has(lk)) continue;
-    if (!/carrier|ship|logistic|fulfill|express|channel_name|shipping_type|tracking/.test(lk)) {
-      continue;
-    }
-    pick(k, v);
-  }
-  const pkgs = o.package_list ?? o.packageList;
-  if (Array.isArray(pkgs) && pkgs[0] && typeof pkgs[0] === "object") {
-    const pkg = pkgs[0];
-    pick("package_list[0].shipping_carrier", pkg.shipping_carrier ?? pkg.shippingCarrier);
-    pick(
-      "package_list[0].checkout_shipping_carrier",
-      pkg.checkout_shipping_carrier ?? pkg.checkoutShippingCarrier
-    );
-    pick("package_list[0].logistics_channel_id", pkg.logistics_channel_id);
-    pick("package_list[0].tracking_number", pkg.tracking_number ?? pkg.trackingNumber);
-  }
-  return out;
+  });
 }
-function getOrderCarrierText(order) {
-  const fields = collectCarrierDebugFields(order);
-  const parts = Object.values(fields).map((v) => String(v || "").trim()).filter(Boolean);
-  return stripDiacritics(parts.join(" | ").toLowerCase());
-}
-function isInstantCarrierText(text) {
-  if (!text) return false;
-  if (text.includes("instant")) return true;
-  if (text.includes("hoa toc")) return true;
-  if (text.includes("spx instant")) return true;
-  if (text.includes("shopee xpress instant")) return true;
-  if (text.includes("grabexpress") || text.includes("grab express") || /\bgrab\b/.test(text)) {
-    return true;
+function ensureGeminiClientFromEnv() {
+  if (process.env.GEMINI_API_KEY) {
+    ai = initGeminiClient(process.env.GEMINI_API_KEY);
+  } else {
+    console.warn("Warning: GEMINI_API_KEY is not configured in .env");
   }
-  if (text.includes("ahamove")) return true;
-  if (text.includes("bedelivery") || text.includes("be delivery")) return true;
-  if (text.includes("green sm") || text.includes("greensm")) return true;
-  return false;
+  return ai;
 }
-function isSpxCarrierText(text) {
-  if (!text || isInstantCarrierText(text)) return false;
-  if (text.includes("spx")) return true;
-  if (text.includes("shopee")) return true;
-  if (text.includes("standard")) return true;
-  if (text.includes("spxvn")) return true;
-  return false;
-}
-function isGhnCarrierText(text) {
-  if (!text) return false;
-  if (text.includes("giao hang nhanh") || text.includes("giaohangnhanh")) return true;
-  if (text.includes("ghn")) return true;
-  if (/\bgya[a-z0-9]{4,}\b/.test(text)) return true;
-  return false;
-}
-function getShippingCarrierGroup(order) {
-  const text = getOrderCarrierText(order);
-  if (isInstantCarrierText(text)) return "instant";
-  if (isSpxCarrierText(text)) return "spx";
-  if (isGhnCarrierText(text)) return "ghn";
-  const channel = String(order.channel || "").toLowerCase();
-  const meaningful = text.replace(/ofg[a-z0-9]*/g, " ").replace(/0fg[a-z0-9]*/g, " ").replace(/\|/g, " ").replace(/\s+/g, " ").trim();
-  if (!meaningful && channel === "shopee") return "spx";
-  return "other";
-}
-function inferShippingCarrierLabel(order) {
-  const existing = String(
-    order.shipping_carrier || order.shippingCarrier || ""
-  ).trim();
-  if (existing) return existing;
-  const group = getShippingCarrierGroup(order);
-  if (group === "spx") return "SPX Express";
-  if (group === "ghn") return "Giao H\xE0ng Nhanh";
-  if (group === "instant") {
-    const text = getOrderCarrierText(order);
-    if (text.includes("grab")) return "GrabExpress";
-    if (text.includes("ahamove")) return "Ahamove";
-    if (text.includes("bedelivery") || text.includes("be delivery")) return "beDelivery";
-    return "SPX Instant";
-  }
-  return void 0;
-}
-
-// src/utils/shopeeOrderListPagination.ts
-function parseShopeeOrderListPagination(result) {
-  const root = result && typeof result === "object" ? result : {};
-  const body = root.response && typeof root.response === "object" ? root.response : root;
-  const nextCursor = String(body.next_cursor ?? "").trim();
-  const more = body.more === true || body.more === 1 || body.more === "true";
-  return { more, nextCursor };
-}
-function extractShopeeOrderListRows(result) {
-  const root = result && typeof result === "object" ? result : {};
-  const body = root.response && typeof root.response === "object" ? root.response : root;
-  const rows = body.order_list ?? root.order_list;
-  return Array.isArray(rows) ? rows : [];
-}
-function advanceShopeeOrderListCursor(opts) {
-  const label = opts.logLabel || "get_order_list";
-  const rows = extractShopeeOrderListRows(opts.listResult);
-  const { more, nextCursor } = parseShopeeOrderListPagination(opts.listResult);
-  const prev = String(opts.currentCursor ?? "").trim();
-  if (opts.pageIndex >= opts.hardCap) {
-    return {
-      action: "break",
-      nextCursor: null,
-      reason: `${label}: hardCap=${opts.hardCap} reached`
-    };
-  }
-  if (!more) {
-    return { action: "break", nextCursor: null, reason: `${label}: more=false` };
-  }
-  if (rows.length === 0) {
-    return {
-      action: "break",
-      nextCursor: null,
-      reason: `${label}: more=true but order_list empty (Shopee quirk)`
-    };
-  }
-  if (!nextCursor) {
-    return {
-      action: "break",
-      nextCursor: null,
-      reason: `${label}: more=true but next_cursor empty`
-    };
-  }
-  if (nextCursor === prev) {
-    return {
-      action: "break",
-      nextCursor: null,
-      reason: `${label}: next_cursor unchanged ("${nextCursor.slice(0, 32)}")`
-    };
-  }
-  if (opts.seenCursors.has(nextCursor)) {
-    return {
-      action: "break",
-      nextCursor: null,
-      reason: `${label}: cursor cycle detected ("${nextCursor.slice(0, 32)}")`
-    };
-  }
-  return {
-    action: "continue",
-    nextCursor,
-    reason: `${label}: advance cursor \u2192 ${nextCursor.slice(0, 48)}`
-  };
-}
-
-// src/utils/orderWarehouseStatus.ts
-var ORDER_LOCAL_STATUS = {
-  NONE: "NONE",
-  HANDED_OVER: "HANDED_OVER",
-  CANCELLED_STORED: "CANCELLED_STORED",
-  RETURN_RECEIVED: "RETURN_RECEIVED"
+var deps3 = {
+  CHANNEL_SETTINGS_PATH: "",
+  DEFAULT_CHANNEL_SETTINGS: {},
+  loadChannelSettings: () => ({ shops: [] }),
+  saveChannelSettings: () => false,
+  upsertShopsInChannelSettings: (_a2, b) => Array.isArray(b) ? b : [],
+  logOAuthSaveError: (ctx, err) => console.error(ctx, err),
+  checkShopConnectionStatus: async () => ({ online: false, message: "not_initialized" })
 };
-var HANDED_OVER_SOURCE = {
-  QR_SCAN: "qr_scan",
-  MANUAL_BUTTON: "manual_button"
-};
-function isTruthyFlag(value) {
-  if (value === true || value === 1) return true;
-  if (typeof value === "string") {
-    const s2 = value.trim().toLowerCase();
-    return s2 === "true" || s2 === "1" || s2 === "yes";
-  }
-  return false;
+function initSettingsController(partial) {
+  deps3 = { ...deps3, ...partial };
 }
-function getShopeeRaw(order) {
-  return String(order.shopee_order_status || "").toUpperCase();
-}
-function getInternalStatusRaw(order) {
-  return String(
-    order.internal_status ?? order.local_status ?? order.localStatus ?? ""
-  ).toUpperCase();
-}
-function hasLeftHandedOverCarrierTab(order) {
-  const raw = getShopeeRaw(order);
-  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED") {
-    return true;
-  }
-  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
-    return true;
-  }
-  if (order.status === "cancelled" || order.status === "return_pending" || order.status === "return_received") {
-    return true;
-  }
-  const logistics = String(order.logistics_status || "").toUpperCase();
-  if (logistics && !logistics.includes("FAILED") && !logistics.includes("CANCEL") && (logistics.includes("PICKUP_DONE") || logistics.includes("LOGISTICS_SHIPPED") || logistics.includes("IN_TRANSIT") || logistics.includes("TRANSPORTING") || logistics.includes("DELIVERY_DONE"))) {
-    return true;
-  }
-  if (order.status === "shipping") return true;
-  return false;
-}
-function isOrderHandedOverToCarrier(order) {
-  if (isTruthyFlag(order.is_handed_over)) return true;
-  const internal = getInternalStatusRaw(order);
-  if (internal === ORDER_LOCAL_STATUS.HANDED_OVER) return true;
-  if (isTruthyFlag(order.isHandedOverToCarrier) || isTruthyFlag(order.is_handed_over_to_carrier) || isTruthyFlag(order.is_handed_over_to_courier)) {
-    return true;
-  }
-  return false;
-}
-function buildHandedOverWritePatch(now, source = HANDED_OVER_SOURCE.MANUAL_BUTTON) {
-  const ts = now || (/* @__PURE__ */ new Date()).toISOString();
-  return {
-    // Canonical
-    is_handed_over: true,
-    local_status: ORDER_LOCAL_STATUS.HANDED_OVER,
-    localStatus: ORDER_LOCAL_STATUS.HANDED_OVER,
-    internal_status: ORDER_LOCAL_STATUS.HANDED_OVER,
-    localStatusAt: ts,
-    local_status_updated_at: ts,
-    // Aliases legacy (đồng bộ đọc)
-    isHandedOverToCarrier: true,
-    is_handed_over_to_carrier: true,
-    is_handed_over_to_courier: true,
-    handedOverAt: ts,
-    handed_over_source: source,
-    handedOverSource: source
-  };
-}
-function applyHandedOverWrite(order, now, source) {
-  return { ...order, ...buildHandedOverWritePatch(now, source) };
-}
-function buildDefaultInternalFlagsPatch(now) {
-  const ts = now || (/* @__PURE__ */ new Date()).toISOString();
-  return {
-    is_handed_over: false,
-    local_status: ORDER_LOCAL_STATUS.NONE,
-    localStatus: ORDER_LOCAL_STATUS.NONE,
-    internal_status: ORDER_LOCAL_STATUS.NONE,
-    localStatusAt: ts,
-    local_status_updated_at: ts,
-    isHandedOverToCarrier: false,
-    is_handed_over_to_carrier: false,
-    is_handed_over_to_courier: false,
-    handed_over_source: null,
-    handedOverSource: null
-  };
-}
-function buildClearHandedOverPatch(now) {
-  return buildDefaultInternalFlagsPatch(now);
-}
-function resolveOrderLocalStatus(order) {
-  if (order.is_local_return_archived) {
-    if (isOrderHandedOverToCarrier(order)) return ORDER_LOCAL_STATUS.HANDED_OVER;
-    return ORDER_LOCAL_STATUS.NONE;
-  }
-  const raw = getInternalStatusRaw(order);
-  if (raw === ORDER_LOCAL_STATUS.HANDED_OVER || raw === ORDER_LOCAL_STATUS.CANCELLED_STORED || raw === ORDER_LOCAL_STATUS.RETURN_RECEIVED) {
-    return raw;
-  }
-  if (isOrderHandedOverToCarrier(order)) return ORDER_LOCAL_STATUS.HANDED_OVER;
-  if (order.status === "return_received" && !order.is_local_return_archived) {
-    return ORDER_LOCAL_STATUS.RETURN_RECEIVED;
-  }
-  return ORDER_LOCAL_STATUS.NONE;
-}
-function matchesHandedOverCarrierTab(order) {
-  if (!isOrderHandedOverToCarrier(order)) return false;
-  const raw = getShopeeRaw(order);
-  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED") {
-    return false;
-  }
-  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
-    return false;
-  }
-  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP" && raw !== "PROCESSED") {
-    return false;
-  }
-  return true;
-}
-
-// src/utils/orderTracking.ts
-function isShopeeInternalTrackingCode(code) {
-  return /^0FG/i.test(String(code || "").trim());
-}
-
-// src/utils/orderHandover.ts
-function getShopeeOrderRawStatus(order) {
-  return String(order.shopee_order_status || "").toUpperCase();
-}
-function getOrderTrackingNo(order) {
-  const candidates = [
-    order.trackingNumber,
-    order.tracking_no,
-    order.shopee_tracking_number
-  ];
-  for (const c of candidates) {
-    const tn = String(c || "").trim();
-    if (!tn || tn === "0" || isShopeeInternalTrackingCode(tn)) continue;
-    return tn;
-  }
-  return "";
-}
-function hasOrderTrackingNo(order) {
-  return Boolean(getOrderTrackingNo(order));
-}
-function getOrderFulfillmentType(order) {
-  const raw = String(
-    order.fulfillment_type || order.ship_method || order.shipping_method || order.fulfillmentType || ""
-  ).trim().toLowerCase();
-  if (raw === "dropoff" || raw === "drop_off" || raw === "drop-off") return "dropoff";
-  if (raw === "pickup" || raw === "pick_up" || raw === "pick-up") return "pickup";
-  return "";
-}
-function isProcessedCondition(order) {
-  if (hasOrderTrackingNo(order)) return true;
-  const raw = getShopeeOrderRawStatus(order);
-  if (raw === "PROCESSED") return true;
-  if (order.status === "processed") return true;
-  if (getOrderFulfillmentType(order) === "dropoff" && Boolean(order.isPrepared)) {
-    return true;
-  }
-  return false;
-}
-function isLogisticsHandedToCarrierStatus(order) {
-  const s2 = String(order.logistics_status || "").toUpperCase();
-  if (!s2) return false;
-  if (s2.includes("FAILED") || s2.includes("CANCEL") || s2.includes("RETURN")) return false;
-  return s2.includes("PICKUP_DONE") || s2.includes("LOGISTICS_SHIPPED") || s2.includes("LOGISTICS_DELIVERY_DONE") || s2.includes("DELIVERY_DONE") || s2.includes("IN_TRANSIT") || s2.includes("TRANSPORTING");
-}
-function isShopeeShippingStatus(order) {
-  const raw = getShopeeOrderRawStatus(order);
-  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return true;
-  if (order.status === "shipping" && isLogisticsHandedToCarrierStatus(order)) return true;
-  return isLogisticsHandedToCarrierStatus(order);
-}
-function isShopeeCompletedStatus(order) {
-  return getShopeeOrderRawStatus(order) === "COMPLETED";
-}
-function isShopeeCancelledLikeStatus(order) {
-  const raw = getShopeeOrderRawStatus(order);
-  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") return true;
-  return order.status === "cancelled" || order.status === "return_pending" || order.status === "return_received";
-}
-function isShopeeReadyToShipStatus(order) {
-  const raw = getShopeeOrderRawStatus(order);
-  return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED";
-}
-function isPickupPoolOrder(order) {
-  if (isShopeeShippingStatus(order)) return false;
-  if (isShopeeCompletedStatus(order)) return false;
-  if (isShopeeCancelledLikeStatus(order)) return false;
-  if (isShopeeReadyToShipStatus(order)) return true;
-  const status = String(order.status || "");
-  return status === "unprocessed" || status === "processed";
-}
-function matchesShippingTab(order) {
-  return isShopeeShippingStatus(order);
-}
-function matchesProcessedPickupTab(order) {
-  if (isOrderHandedOverToCarrier(order)) return false;
-  if (!isPickupPoolOrder(order)) return false;
-  return isProcessedCondition(order);
-}
-function matchesUnprocessedPickupTab(order) {
-  if (isOrderHandedOverToCarrier(order)) return false;
-  if (!isPickupPoolOrder(order)) return false;
-  const raw = getShopeeOrderRawStatus(order);
-  if (raw === "PROCESSED") return false;
-  if (isProcessedCondition(order)) return false;
-  if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") return true;
-  if (!raw && order.status === "unprocessed") return true;
-  if (order.status === "unprocessed") return true;
-  return false;
-}
-function isEligibleForHandOverToCarrier(order) {
-  if (isOrderHandedOverToCarrier(order)) return false;
-  if (hasLeftHandedOverCarrierTab(order)) return false;
-  if (!isPickupPoolOrder(order)) return false;
-  if (!isProcessedCondition(order)) return false;
-  if (!hasOrderTrackingNo(order)) return false;
-  return true;
-}
-function getHandOverIneligibleReason(order) {
-  if (isOrderHandedOverToCarrier(order)) {
-    return "\u0110\u01A1n \u0111\xE3 c\xF3 c\u1EDD b\xE0n giao \u0110VVC n\u1ED9i b\u1ED9";
-  }
-  if (hasLeftHandedOverCarrierTab(order)) {
-    return `\u0110\u01A1n \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y (status=${order.status}, shopee=${order.shopee_order_status || "-"})`;
-  }
-  if (!isPickupPoolOrder(order)) {
-    return `Kh\xF4ng c\xF2n ch\u1EDD l\u1EA5y h\xE0ng (status=${order.status}, shopee=${order.shopee_order_status || "-"})`;
-  }
-  if (!isProcessedCondition(order)) {
-    return "Ch\u01B0a \u0111\u1EE7 \u0111i\u1EC1u ki\u1EC7n \u0110\xE3 x\u1EED l\xFD (thi\u1EBFu PROCESSED/m\xE3 V\u0110)";
-  }
-  if (!hasOrderTrackingNo(order)) {
-    return "Ch\u01B0a c\xF3 m\xE3 v\u1EADn \u0111\u01A1n outbound (trackingNumber/tracking_no)";
-  }
-  return "";
-}
-
-// src/services/redis.ts
-var import_ioredis = __toESM(require("ioredis"), 1);
-var REDIS_URL = String(process.env.REDIS_URL || process.env.REDIS_URI || "").trim();
-var ADDRESS_LIST_TTL_SEC = 24 * 60 * 60;
-var ADDRESS_LIST_KEY_PREFIX = "shopee:address_list:";
-var redis = null;
-var redisDisabled = false;
-var lastWarnAt = 0;
-function warnRedis(msg, err) {
-  const now = Date.now();
-  if (now - lastWarnAt < 3e4) return;
-  lastWarnAt = now;
-  const detail = err instanceof Error ? err.message : err ? String(err) : "";
-  console.warn(`[Redis] ${msg}${detail ? `: ${detail}` : ""} \u2014 fallback (no cache).`);
-}
-function getRedis() {
-  if (redisDisabled) return null;
-  if (!REDIS_URL) {
-    redisDisabled = true;
-    return null;
-  }
-  if (redis) return redis;
+async function getChannelSettings(_req, res) {
   try {
-    redis = new import_ioredis.default(REDIS_URL, {
-      maxRetriesPerRequest: 1,
-      enableReadyCheck: true,
-      lazyConnect: true,
-      connectTimeout: 3e3,
-      retryStrategy(times) {
-        if (times > 3) {
-          redisDisabled = true;
-          warnRedis("too many reconnect attempts \u2014 disabling for this process");
-          return null;
-        }
-        return Math.min(times * 200, 1e3);
-      }
+    const settings = deps3.loadChannelSettings();
+    return res.json({
+      success: true,
+      settings,
+      path: deps3.CHANNEL_SETTINGS_PATH,
+      shopCount: Array.isArray(settings.shops) ? settings.shops.length : 0
     });
-    redis.on("error", (err) => {
-      warnRedis("client error", err);
+  } catch (error) {
+    deps3.logOAuthSaveError("GET /api/settings/channels", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "load_failed",
+      message: "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c c\u1EA5u h\xECnh gian h\xE0ng"
     });
-    redis.on("end", () => {
-      warnRedis("connection ended");
-    });
-  } catch (err) {
-    warnRedis("failed to create client", err);
-    redisDisabled = true;
-    redis = null;
   }
-  return redis;
 }
-async function ensureConnected(client) {
+async function putChannelSettings(req, res) {
   try {
-    if (client.status === "ready") return true;
-    if (client.status === "wait" || client.status === "close" || client.status === "end") {
-      await client.connect();
-    } else if (client.status === "connecting") {
-      await new Promise((resolve, reject) => {
-        const onReady = () => {
-          cleanup();
-          resolve();
-        };
-        const onError = (e2) => {
-          cleanup();
-          reject(e2);
-        };
-        const cleanup = () => {
-          client.off("ready", onReady);
-          client.off("error", onError);
-        };
-        client.once("ready", onReady);
-        client.once("error", onError);
-        setTimeout(() => {
-          cleanup();
-          reject(new Error("connect timeout"));
-        }, 3e3);
-      });
-    }
-    return client.status === "ready";
-  } catch (err) {
-    warnRedis("connect failed", err);
-    return false;
-  }
-}
-function shopeeAddressListCacheKey(shopId) {
-  return `${ADDRESS_LIST_KEY_PREFIX}${String(shopId || "").trim()}`;
-}
-async function redisGetJson(key) {
-  const client = getRedis();
-  if (!client) return null;
-  try {
-    if (!await ensureConnected(client)) return null;
-    const raw = await client.get(key);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch (err) {
-    warnRedis(`GET ${key} failed`, err);
-    return null;
-  }
-}
-async function redisSetJson(key, value, ttlSeconds = ADDRESS_LIST_TTL_SEC) {
-  const client = getRedis();
-  if (!client) return false;
-  try {
-    if (!await ensureConnected(client)) return false;
-    const payload = JSON.stringify(value);
-    if (ttlSeconds > 0) {
-      await client.set(key, payload, "EX", ttlSeconds);
-    } else {
-      await client.set(key, payload);
-    }
-    return true;
-  } catch (err) {
-    warnRedis(`SET ${key} failed`, err);
-    return false;
-  }
-}
-async function getCachedShopeeAddressList(shopId) {
-  const sid = String(shopId || "").trim();
-  if (!sid) return null;
-  const cached = await redisGetJson(shopeeAddressListCacheKey(sid));
-  if (!cached || !cached.result) return null;
-  const list = Array.isArray(cached.list) ? cached.list : cached.result?.response?.address_list || cached.result?.address_list || [];
-  return { result: cached.result, list, cachedAt: cached.cachedAt || Date.now() };
-}
-async function setCachedShopeeAddressList(shopId, result) {
-  const sid = String(shopId || "").trim();
-  if (!sid || !result || result.error) return false;
-  const list = result.response?.address_list || result.address_list || [];
-  return redisSetJson(shopeeAddressListCacheKey(sid), {
-    result,
-    list,
-    cachedAt: Date.now()
-  }, ADDRESS_LIST_TTL_SEC);
-}
-
-// routes/scanRoutes.js
-var import_express2 = __toESM(require_express2(), 1);
-
-// models/DonHoanHuy.js
-var import_mongoose = __toESM(require("mongoose"), 1);
-var DonHoanHuySchema = new import_mongoose.default.Schema(
-  {
-    orderSn: {
-      type: String,
-      required: true,
-      index: true,
-      trim: true
-    },
-    status: {
-      type: String,
-      default: "scanned",
-      trim: true
-    },
-    scannedAt: {
-      type: Date,
-      default: Date.now,
-      expires: 1209600
-      // 14 ngày
-    },
-    note: {
-      type: String,
-      default: "",
-      trim: true
-    }
-  },
-  {
-    collection: "don_hoan_huy",
-    versionKey: false,
-    strict: false
-    // giữ field legacy (local_status, type, ...) nếu đã có trên Atlas
-  }
-);
-DonHoanHuySchema.index({ orderSn: 1 }, { unique: true, name: "don_hoan_huy_orderSn_unique" });
-var DonHoanHuy = import_mongoose.default.models.DonHoanHuy || import_mongoose.default.model("DonHoanHuy", DonHoanHuySchema);
-var DonHoanHuy_default = DonHoanHuy;
-
-// config/db.js
-var import_dotenv = __toESM(require_main(), 1);
-var import_mongoose2 = __toESM(require("mongoose"), 1);
-try {
-  import_dotenv.default.config();
-} catch {
-}
-var MONGO_CONNECT_OPTIONS = {
-  serverSelectionTimeoutMS: 5e3,
-  connectTimeoutMS: 5e3,
-  socketTimeoutMS: 15e3,
-  maxPoolSize: 15,
-  minPoolSize: 1,
-  waitQueueTimeoutMS: 5e3,
-  maxIdleTimeMS: 3e4
-};
-function getMongoUri() {
-  return String(
-    process.env.MONGODB_URI || process.env.MONGO_URL || process.env.MONGO_URI || ""
-  ).trim();
-}
-async function connectDB() {
-  const uri = getMongoUri();
-  if (!uri) {
-    throw new Error("Thi\u1EBFu MONGODB_URI / MONGO_URL trong bi\u1EBFn m\xF4i tr\u01B0\u1EDDng.");
-  }
-  if (import_mongoose2.default.connection.readyState === 1) {
-    return import_mongoose2.default.connection;
-  }
-  import_mongoose2.default.set("strictQuery", true);
-  try {
-    await import_mongoose2.default.connect(uri, MONGO_CONNECT_OPTIONS);
-  } catch (err) {
-    const msg = err?.message || String(err);
-    throw new Error(
-      /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|MongoNetwork/i.test(msg) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI." : msg || "Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c MongoDB."
-    );
-  }
-  console.log("[DB] MongoDB Connected Successfully");
-  return import_mongoose2.default.connection;
-}
-function isDBReady() {
-  return import_mongoose2.default.connection.readyState === 1;
-}
-
-// controllers/scanController.js
-function normalizeOrderSn(raw) {
-  return String(raw || "").replace(/^shopee-/i, "").trim();
-}
-function describeDbError(err) {
-  const msg = String(err?.message || err || "");
-  if (/quota|space|storage|over.?space/i.test(msg)) {
-    return "Quota MongoDB \u0111\u1EA7y (Atlas Over space quota). H\xE3y d\u1ECDn d\u1EEF li\u1EC7u ho\u1EB7c n\xE2ng g\xF3i.";
-  }
-  if (/ECONNREFUSED|ENOTFOUND|ETIMEOUT|serverSelection|connect ETIMEDOUT|MongoNetwork|Thiếu MONGODB/i.test(
-    msg
-  )) {
-    return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI.";
-  }
-  if (/duplicate key|E11000/i.test(msg)) {
-    return "Tr\xF9ng m\xE3 \u0111\u01A1n trong don_hoan_huy (\u0111\xE3 l\u01B0u tr\u01B0\u1EDBc \u0111\xF3).";
-  }
-  return msg || "L\u1ED7i Database kh\xF4ng x\xE1c \u0111\u1ECBnh.";
-}
-async function ensureDbConnected() {
-  if (isDBReady()) return true;
-  if (!getMongoUri()) {
-    throw new Error("Thi\u1EBFu MONGODB_URI / MONGO_URL trong bi\u1EBFn m\xF4i tr\u01B0\u1EDDng.");
-  }
-  await connectDB();
-  return isDBReady();
-}
-async function saveScanOrders(req, res) {
-  try {
-    try {
-      await ensureDbConnected();
-    } catch (dbErr) {
-      console.error("[POST /api/scan/save] DB connect:", dbErr);
-      return res.status(500).json({
-        success: false,
-        message: describeDbError(dbErr)
-      });
-    }
-    if (!isDBReady()) {
-      return res.status(500).json({
-        success: false,
-        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 ki\u1EC3m tra k\u1EBFt n\u1ED1i Atlas."
-      });
-    }
-    const body = req.body || {};
-    const codes = [];
-    const pushCode = (v, status, note) => {
-      const sn = normalizeOrderSn(v);
-      if (!sn) return;
-      codes.push({
-        orderSn: sn,
-        status: status || "scanned",
-        note: note || ""
-      });
-    };
-    if (Array.isArray(body.codes)) {
-      for (const c of body.codes) {
-        if (c && typeof c === "object") {
-          pushCode(c.orderSn || c.code || c.orderId, c.status, c.note);
-        } else {
-          pushCode(c, body.status, body.note);
-        }
-      }
-    }
-    if (Array.isArray(body.orderSns)) {
-      for (const c of body.orderSns) pushCode(c, body.status, body.note);
-    }
-    if (Array.isArray(body.items)) {
-      for (const it of body.items) {
-        const t2 = String(it?.type || it?.status || body.status || "").toLowerCase();
-        const status = t2 === "return" || t2 === "return_received" || t2 === "da_nhan_hoan" ? "return_received" : t2 === "cancelled" || t2 === "cancel" || t2 === "don_huy" ? "cancelled" : it?.status || "scanned";
-        pushCode(it?.orderSn || it?.code || it?.orderId, status, it?.note);
-      }
-    }
-    if (Array.isArray(body.donHuyCodes)) {
-      for (const c of body.donHuyCodes) pushCode(c, "cancelled", "don_huy");
-    }
-    if (Array.isArray(body.daNhanHoanCodes)) {
-      for (const c of body.daNhanHoanCodes) pushCode(c, "return_received", "da_nhan_hoan");
-    }
-    if (typeof body.code === "string" || typeof body.orderSn === "string") {
-      pushCode(body.orderSn || body.code, body.status, body.note);
-    }
-    const bySn = /* @__PURE__ */ new Map();
-    for (const row of codes) bySn.set(row.orderSn, row);
-    const unique = [...bySn.values()];
-    if (!unique.length) {
+    const incoming = req.body?.settings;
+    if (!incoming || typeof incoming !== "object") {
       return res.status(400).json({
         success: false,
-        message: "Thi\u1EBFu m\u1EA3ng m\xE3 \u0111\u01A1n (codes / orderSns / items)."
+        error: "invalid_settings",
+        message: "Thi\u1EBFu tr\u01B0\u1EDDng settings trong body"
       });
     }
-    const now = /* @__PURE__ */ new Date();
-    const ops = unique.map((row) => ({
-      updateOne: {
-        filter: { orderSn: row.orderSn },
-        update: {
-          $set: {
-            orderSn: row.orderSn,
-            status: row.status,
-            scannedAt: now,
-            note: row.note || "",
-            local_status: row.status === "return_received" ? "RETURN_RECEIVED" : "CANCELLED_STORED",
-            type: row.status === "return_received" ? "return" : "cancelled",
-            source: "api_scan_save"
-          },
-          $setOnInsert: {
-            createdAt: now
-          }
-        },
-        upsert: true
-      }
-    }));
-    const result = await DonHoanHuy_default.bulkWrite(ops, { ordered: false });
-    return res.json({
-      success: true,
-      message: `\u0110\xE3 l\u01B0u ${unique.length} \u0111\u01A1n v\xE0o don_hoan_huy.`,
-      saved: unique.length,
-      upserted: result.upsertedCount || 0,
-      modified: result.modifiedCount || 0,
-      matched: result.matchedCount || 0,
-      donHoanHuy: {
-        ok: unique.length,
-        failed: 0,
-        already: 0,
-        ensured: unique.length,
-        errors: []
-      },
-      orderSns: unique.map((r2) => r2.orderSn)
-    });
-  } catch (err) {
-    console.error("[POST /api/scan/save]", err);
+    const onDisk = deps3.loadChannelSettings();
+    const incomingShops = Array.isArray(incoming.shops) ? incoming.shops : [];
+    const mergedShops = deps3.upsertShopsInChannelSettings(onDisk.shops || [], incomingShops);
+    if (incomingShops.length > 0 && mergedShops.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "invalid_shop_schema",
+        message: "D\u1EEF li\u1EC7u shop thi\u1EBFu tr\u01B0\u1EDDng b\u1EAFt bu\u1ED9c (platform, shopId, shopName, apiKey)"
+      });
+    }
+    const payload = { ...deps3.DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...incoming, shops: mergedShops };
+    if (!deps3.saveChannelSettings(payload)) {
+      return res.status(500).json({
+        success: false,
+        error: "save_failed",
+        message: "Kh\xF4ng ghi \u0111\u01B0\u1EE3c file channel_settings.json tr\xEAn m\xE1y ch\u1EE7"
+      });
+    }
+    const saved = deps3.loadChannelSettings();
+    console.log(
+      "[Channel Settings] PUT OK \u2014 shop_ids:",
+      (saved.shops || []).map((s2) => s2.shopId).join(", ") || "(tr\u1ED1ng)"
+    );
+    return res.json({ success: true, settings: saved, shopCount: saved.shops?.length ?? 0 });
+  } catch (error) {
+    deps3.logOAuthSaveError("PUT /api/settings/channels", error);
     return res.status(500).json({
       success: false,
-      message: describeDbError(err)
+      error: error?.message || "save_failed",
+      message: "L\u01B0u c\u1EA5u h\xECnh gian h\xE0ng th\u1EA5t b\u1EA1i"
     });
   }
 }
-async function listDonHoanHuy(req, res) {
+async function getGeminiStatus(_req, res) {
+  const key = process.env.GEMINI_API_KEY || "";
+  const configured = Boolean(key && key !== "chua_co_key_tam_thoi");
+  return res.json({
+    success: true,
+    configured,
+    maskedKey: configured ? maskApiKey(key) : ""
+  });
+}
+async function updateGeminiKey(req, res) {
   try {
-    try {
-      await ensureDbConnected();
-    } catch (dbErr) {
-      console.error("[GET /api/scan/don-hoan-huy] DB connect:", dbErr);
-      return res.status(500).json({
-        success: false,
-        message: describeDbError(dbErr),
-        data: []
+    const { apiKey } = req.body || {};
+    const trimmed = String(apiKey || "").trim();
+    if (!trimmed) {
+      return res.status(400).json({ success: false, error: "Vui l\xF2ng nh\u1EADp Gemini API Key." });
+    }
+    updateEnvVar("GEMINI_API_KEY", trimmed);
+    ai = initGeminiClient(trimmed);
+    return res.json({ success: true, message: "\u0110\xE3 c\u1EADp nh\u1EADt API Key th\xE0nh c\xF4ng!" });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message || "L\u01B0u API Key th\u1EA5t b\u1EA1i" });
+  }
+}
+async function testGeminiKey(req, res) {
+  try {
+    const testKey = String(req.body?.apiKey || process.env.GEMINI_API_KEY || "").trim();
+    if (!testKey || testKey === "chua_co_key_tam_thoi") {
+      return res.status(400).json({ success: false, error: "API Key kh\xF4ng h\u1EE3p l\u1EC7" });
+    }
+    const testAi = initGeminiClient(testKey);
+    await testAi.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: "Reply with exactly: OK"
+    });
+    return res.json({ success: true, message: "K\u1EBFt n\u1ED1i th\xE0nh c\xF4ng!" });
+  } catch (error) {
+    console.error("[Gemini test]", error);
+    return res.status(400).json({ success: false, error: "API Key kh\xF4ng h\u1EE3p l\u1EC7" });
+  }
+}
+async function postShopConnectionStatus(req, res) {
+  try {
+    const shops = Array.isArray(req.body?.shops) ? req.body.shops : [];
+    const statuses = {};
+    for (const shop of shops) {
+      if (!shop?.id) continue;
+      try {
+        statuses[shop.id] = await Promise.race([
+          deps3.checkShopConnectionStatus(shop),
+          new Promise((_, reject) => {
+            setTimeout(() => reject(new Error("Timeout ki\u1EC3m tra k\u1EBFt n\u1ED1i (15s)")), 15e3);
+          })
+        ]);
+      } catch (shopErr) {
+        console.error("[Shop connection-status] shop failed:", shop?.id, shopErr);
+        statuses[shop.id] = {
+          online: false,
+          message: shopErr?.message || "L\u1ED7i ki\u1EC3m tra k\u1EBFt n\u1ED1i gian h\xE0ng"
+        };
+      }
+    }
+    return res.json({ success: true, statuses });
+  } catch (error) {
+    console.error("[Shop connection-status] fatal:", error);
+    return res.status(500).json({
+      success: false,
+      error: error?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i th\u1EA5t b\u1EA1i",
+      message: error?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i th\u1EA5t b\u1EA1i"
+    });
+  }
+}
+
+// routes/settingsRoutes.js
+var router8 = (0, import_express9.Router)();
+router8.get("/channels", getChannelSettings);
+router8.put("/channels", putChannelSettings);
+router8.get("/gemini-status", getGeminiStatus);
+router8.post("/update-gemini-key", updateGeminiKey);
+router8.post("/test-gemini-key", testGeminiKey);
+router8.post("/shop-connection-status", postShopConnectionStatus);
+var settingsRoutes_default = router8;
+
+// routes/aiRoutes.js
+var import_express10 = __toESM(require_express2(), 1);
+
+// controllers/aiController.js
+function markdownToHtml(text) {
+  if (!text) return "";
+  if (/<[a-z][\s\S]*>/i.test(text)) return text;
+  const lines = text.split("\n");
+  const parts = [];
+  let inList = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (inList) {
+        parts.push("</ul>");
+        inList = false;
+      }
+      continue;
+    }
+    if (trimmed.startsWith("### ")) {
+      if (inList) {
+        parts.push("</ul>");
+        inList = false;
+      }
+      parts.push(`<h3>${trimmed.slice(4)}</h3>`);
+    } else if (trimmed.startsWith("## ")) {
+      if (inList) {
+        parts.push("</ul>");
+        inList = false;
+      }
+      parts.push(`<h2>${trimmed.slice(3)}</h2>`);
+    } else if (trimmed.startsWith("# ")) {
+      if (inList) {
+        parts.push("</ul>");
+        inList = false;
+      }
+      parts.push(`<h1>${trimmed.slice(2)}</h1>`);
+    } else if (/^[-*]\s+/.test(trimmed)) {
+      if (!inList) {
+        parts.push("<ul>");
+        inList = true;
+      }
+      parts.push(`<li>${trimmed.replace(/^[-*]\s+/, "")}</li>`);
+    } else {
+      if (inList) {
+        parts.push("</ul>");
+        inList = false;
+      }
+      parts.push(`<p>${trimmed}</p>`);
+    }
+  }
+  if (inList) parts.push("</ul>");
+  return parts.join("");
+}
+function ensureAi() {
+  let ai2 = getGeminiClient();
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!ai2 && apiKey) {
+    ai2 = new GoogleGenAI2({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build"
+        }
+      }
+    });
+    setGeminiClient(ai2);
+  }
+  return ai2;
+}
+async function geminiOptimize(req, res) {
+  try {
+    const { action, text, context } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({
+        error: "Ch\u01B0a c\u1EA5u h\xECnh API Key c\u1EE7a Gemini AI. Vui l\xF2ng c\xE0i \u0111\u1EB7t trong m\u1EE5c Settings ho\u1EB7c Secrets."
       });
     }
-    if (!isDBReady()) {
-      return res.status(500).json({
-        success: false,
-        message: "MongoDB ch\u01B0a s\u1EB5n s\xE0ng \u2014 ki\u1EC3m tra k\u1EBFt n\u1ED1i Atlas.",
-        data: []
+    const ai2 = ensureAi();
+    let prompt = "";
+    if (action === "optimize-title") {
+      prompt = `B\u1EA1n l\xE0 m\u1ED9t chuy\xEAn gia t\u1ED1i \u01B0u h\xF3a SEO tr\xEAn Shopee v\xE0 TikTok Shop t\u1EA1i Vi\u1EC7t Nam.
+H\xE3y vi\u1EBFt l\u1EA1i ti\xEAu \u0111\u1EC1 s\u1EA3n ph\u1EA9m sau \u0111\xE2y \u0111\u1EC3 thu h\xFAt kh\xE1ch h\xE0ng, k\xEDch th\xEDch click, t\u0103ng t\u1EF7 l\u1EC7 chuy\u1EC3n \u0111\u1ED5i v\xE0 ch\u1EE9a c\xE1c t\u1EEB kh\xF3a t\xECm ki\u1EBFm ph\u1ED5 bi\u1EBFn (SEO).
+Ti\xEAu \u0111\u1EC1 g\u1ED1c: "${text}"
+${context ? `Y\xEAu c\u1EA7u th\xEAm: ${context}` : ""}
+
+Quy t\u1EAFc vi\u1EBFt ti\xEAu \u0111\u1EC1:
+- \u0110\u1ED9 d\xE0i t\u1EEB 50-120 k\xFD t\u1EF1.
+- Vi\u1EBFt hoa ch\u1EEF c\xE1i \u0111\u1EA7u c\u1EE7a m\u1ED7i t\u1EEB quan tr\u1ECDng (nh\u01B0 t\xEAn th\u01B0\u01A1ng hi\u1EC7u, t\xEDnh n\u0103ng ch\xEDnh).
+- Ch\u1EE9a th\u01B0\u01A1ng hi\u1EC7u, ch\u1EA5t li\u1EC7u, dung t\xEDch/k\xEDch th\u01B0\u1EDBc, c\xF4ng d\u1EE5ng n\u1ED5i b\u1EADt.
+- KH\xD4NG d\xF9ng k\xFD t\u1EF1 \u0111\u1EB7c bi\u1EC7t g\xE2y l\u1ED7i t\xECm ki\u1EBFm.
+- Ch\u1EC9 tr\u1EA3 v\u1EC1 danh s\xE1ch 3 ph\u01B0\u01A1ng \xE1n ti\xEAu \u0111\u1EC1 t\u1ED1i \u01B0u nh\u1EA5t d\u01B0\u1EDBi d\u1EA1ng danh s\xE1ch, m\u1ED7i ph\u01B0\u01A1ng \xE1n tr\xEAn 1 d\xF2ng. Kh\xF4ng gi\u1EA3i th\xEDch th\xEAm.`;
+    } else if (action === "generate-description") {
+      prompt = `B\u1EA1n l\xE0 m\u1ED9t chuy\xEAn gia Copywriter vi\u1EBFt b\xE0i m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m b\xE1n h\xE0ng (Product Description) \u0111\u1EC9nh cao tr\xEAn s\xE0n th\u01B0\u01A1ng m\u1EA1i \u0111i\u1EC7n t\u1EED Shopee v\xE0 TikTok Shop Vi\u1EC7t Nam.
+H\xE3y vi\u1EBFt m\u1ED9t b\xE0i m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m chi ti\u1EBFt, chuy\xEAn nghi\u1EC7p, thu h\xFAt ng\u01B0\u1EDDi mua d\u1EF1a tr\xEAn th\xF4ng tin s\u1EA3n ph\u1EA9m sau \u0111\xE2y.
+T\xEAn s\u1EA3n ph\u1EA9m: "${text}"
+${context ? `Th\xF4ng tin b\u1ED5 sung / Gi\xE1 c\u1EA3 / T\xEDnh n\u0103ng: ${context}` : ""}
+
+C\u1EA5u tr\xFAc b\xE0i vi\u1EBFt m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m c\u1EA7n c\xF3:
+1. Slogan thu h\xFAt & Gi\u1EDBi thi\u1EC7u ng\u1EAFn v\u1EC1 s\u1EA3n ph\u1EA9m.
+2. C\xE1c \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EADt nh\u1EA5t (g\u1EA1ch \u0111\u1EA7u d\xF2ng d\u1EC5 \u0111\u1ECDc).
+3. Th\xF4ng s\u1ED1 k\u1EF9 thu\u1EADt / H\u01B0\u1EDBng d\u1EABn s\u1EED d\u1EE5ng chi ti\u1EBFt.
+4. Cam k\u1EBFt c\u1EE7a Shop (H\xE0ng ch\xEDnh h\xE3ng, b\u1EA3o h\xE0nh, \u0111\u1ED5i tr\u1EA3 1-1 trong 7 ng\xE0y).
+5. Hashtag li\xEAn quan chu\u1EA9n SEO (8-12 hashtags \u1EDF cu\u1ED1i b\xE0i, v\xED d\u1EE5: #noichien #giadung).
+
+Phong c\xE1ch vi\u1EBFt: Th\xE2n thi\u1EC7n, thuy\u1EBFt ph\u1EE5c, \u0111\xE1ng tin c\u1EADy. \u0110\u1ECBnh d\u1EA1ng Markdown \u0111\u1EB9p m\u1EAFt, ph\xE2n c\u1EA5p r\xF5 r\xE0ng. H\xE3y ch\u1EC9 tr\u1EA3 v\u1EC1 b\xE0i vi\u1EBFt m\xF4 t\u1EA3 b\u1EB1ng Markdown. Kh\xF4ng ch\xE0o h\u1ECFi hay gi\u1EA3i th\xEDch th\xEAm.`;
+    } else if (action === "suggest-prices") {
+      const importP = typeof context === "object" ? context.importPrice : 0;
+      const sellP = typeof context === "object" ? context.sellingPrice : 0;
+      prompt = `B\u1EA1n l\xE0 chuy\xEAn gia c\u1ED1 v\u1EA5n t\xE0i ch\xEDnh v\xE0 \u0111\u1ECBnh gi\xE1 s\u1EA3n ph\u1EA9m E-commerce tr\xEAn Shopee & TikTok Shop.
+D\u1EF1a tr\xEAn th\xF4ng tin s\u1EA3n ph\u1EA9m n\xE0y:
+T\xEAn s\u1EA3n ph\u1EA9m: "${text}"
+Gi\xE1 nh\u1EADp g\u1ED1c: ${importP.toLocaleString("vi-VN")} VN\u0110.
+Gi\xE1 b\xE1n d\u1EF1 ki\u1EBFn hi\u1EC7n t\u1EA1i: ${sellP.toLocaleString("vi-VN")} VN\u0110.
+
+H\xE3y t\xEDnh to\xE1n v\xE0 ph\xE2n t\xEDch chi ti\u1EBFt b\u1EB1ng ti\u1EBFng Vi\u1EC7t:
+1. T\u1EF7 su\u1EA5t l\u1EE3i nhu\u1EADn g\u1ED9p (Gross Profit Margin %) c\u1EE7a gi\xE1 b\xE1n d\u1EF1 ki\u1EBFn hi\u1EC7n t\u1EA1i.
+2. \u0110\u1EC1 xu\u1EA5t 3 m\u1EE9c gi\xE1 b\xE1n t\u1ED1i \u01B0u (Gi\xE1 th\xE2m nh\u1EADp th\u1ECB tr\u01B0\u1EDDng, Gi\xE1 t\u1ED1i \u0111a h\xF3a l\u1EE3i nhu\u1EADn, Gi\xE1 khuy\u1EBFn m\xE3i Flash Sale) k\xE8m ph\xE2n t\xEDch l\u1EE3i nhu\u1EADn th\u1EF1c t\u1EBF (\u0111\xE3 tr\u1EEB kho\u1EA3ng 10-12% ph\xED s\xE0n Shopee/TikTok th\xF4ng th\u01B0\u1EDDng bao g\u1ED3m ph\xED thanh to\xE1n, ph\xED c\u1ED1 \u0111\u1ECBnh, ph\xED Freeship Xtra).
+3. Ph\xE2n t\xEDch t\xEDnh c\u1EA1nh tranh c\u1EE7a gi\xE1 nh\u1EADp v\xE0 \u0111\u1EC1 xu\u1EA5t chi\u1EBFn l\u01B0\u1EE3c t\u1ED1i \u01B0u chi ph\xED hi\u1EC7u qu\u1EA3.
+
+H\xE3y tr\u1EA3 v\u1EC1 k\u1EBFt qu\u1EA3 chi ti\u1EBFt b\u1EB1ng ti\u1EBFng Vi\u1EC7t, vi\u1EBFt ng\u1EAFn g\u1ECDn d\u01B0\u1EDBi d\u1EA1ng Markdown, s\u1EED d\u1EE5ng b\u1EA3ng \u0111\u1EC3 so s\xE1nh r\xF5 r\xE0ng c\xE1c m\u1EE9c gi\xE1 \u0111\u1EC1 xu\u1EA5t v\xE0 l\u1EE3i nhu\u1EADn th\u1EF1c nh\u1EADn.`;
+    } else if (action === "bulk-tag") {
+      prompt = `B\u1EA1n l\xE0 chuy\xEAn gia t\u1EEB kh\xF3a SEO cho Shopee v\xE0 TikTok Shop t\u1EA1i Vi\u1EC7t Nam.
+H\xE3y g\u1EE3i \xFD m\u1ED9t danh s\xE1ch g\u1ED3m 10-15 hashtags b\xE1n ch\u1EA1y nh\u1EA5t li\xEAn quan \u0111\u1EBFn s\u1EA3n ph\u1EA9m: "${text}".
+C\xE1c t\u1EEB kh\xF3a ph\u1EA3i ph\xF9 h\u1EE3p v\u1EDBi xu h\u01B0\u1EDBng t\xECm ki\u1EBFm h\xE0ng \u0111\u1EA7u c\u1EE7a ng\u01B0\u1EDDi Vi\u1EC7t.
+Tr\u1EA3 v\u1EC1 k\u1EBFt qu\u1EA3 d\u01B0\u1EDBi d\u1EA1ng: c\xE1c hashtags c\xE1ch nhau b\u1EB1ng d\u1EA5u c\xE1ch, k\xE8m theo 3 g\u1EE3i \xFD c\u1EE5m t\u1EEB kh\xF3a t\xECm ki\u1EBFm ch\xEDnh (search volume cao) \u0111\u1EC3 ch\xE8n v\xE0o ph\u1EA7n \u0111\u1EA7u ti\xEAu \u0111\u1EC1 ho\u1EB7c m\xF4 t\u1EA3. Tr\u1EA3 v\u1EC1 d\u01B0\u1EDBi d\u1EA1ng v\u0103n b\u1EA3n Markdown ng\u1EAFn g\u1ECDn.`;
+    } else if (action === "avoid-duplication-title") {
+      prompt = `B\u1EA1n l\xE0 chuy\xEAn gia t\u01B0 v\u1EA5n SEO v\xE0 b\xE1n h\xE0ng th\u01B0\u01A1ng m\u1EA1i \u0111i\u1EC7n t\u1EED chuy\xEAn nghi\u1EC7p t\u1EA1i Vi\u1EC7t Nam.
+Nhi\u1EC7m v\u1EE5 c\u1EE7a b\u1EA1n l\xE0 vi\u1EBFt l\u1EA1i t\xEAn s\u1EA3n ph\u1EA9m g\u1ED1c th\xE0nh 3 ph\u01B0\u01A1ng \xE1n ti\xEAu \u0111\u1EC1 kh\xE1c nhau ho\xE0n to\xE0n v\u1EC1 m\u1EB7t c\u1EA5u tr\xFAc ch\u1EEF vi\u1EBFt v\xE0 c\u1EE5m t\u1EEB b\u1ED5 tr\u1EE3, nh\u01B0ng v\u1EABn gi\u1EEF nguy\xEAn b\u1EA3n ch\u1EA5t s\u1EA3n ph\u1EA9m \u0111\u1EC3 \u0111\u0103ng l\xEAn nhi\u1EC1u gian h\xE0ng kh\xE1c nhau (Shopee, TikTok, Lazada) m\xE0 KH\xD4NG b\u1ECB qu\xE9t tr\xF9ng l\u1EB7p n\u1ED9i dung (tr\xE1nh thu\u1EADt to\xE1n spam/duplicate listings).
+
+Ti\xEAu \u0111\u1EC1 g\u1ED1c: "${text}"
+${context ? `T\u1EEB kh\xF3a/Y\xEAu c\u1EA7u th\xEAm: ${context}` : ""}
+
+Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
+- Ph\u01B0\u01A1ng \xE1n 1 (S\u1EED d\u1EE5ng c\u1EE5m t\u1EEB gi\u1EADt t\xEDt \u0111\u1EA7u trang, c\u1EA5u tr\xFAc k\u1EF9 thu\u1EADt): V\xED d\u1EE5: "[Ch\xEDnh H\xE3ng] + T\xEAn s\u1EA3n ph\u1EA9m + Th\xF4ng s\u1ED1 k\u1EF9 thu\u1EADt n\u1ED5i b\u1EADt + C\xF4ng d\u1EE5ng ch\xEDnh".
+- Ph\u01B0\u01A1ng \xE1n 2 (\u0110\xE1nh v\xE0o gi\xE1 tr\u1ECB/m\xF4 t\u1EA3 c\u1EA3m x\xFAc ng\u01B0\u1EDDi mua, qu\xE0 t\u1EB7ng k\xE8m): V\xED d\u1EE5: "T\xEAn s\u1EA3n ph\u1EA9m + [T\u1EB7ng K\xE8m Qu\xE0 / Freeship Xtra] + Ph\xE2n lo\u1EA1i/M\xE0u s\u1EAFc hot + B\u1EA3o h\xE0nh 12T".
+- Ph\u01B0\u01A1ng \xE1n 3 (T\u1EADp trung t\u1EEB kh\xF3a SEO ng\xE1ch, ph\xE2n kh\xFAc \u0111\u1ED1i t\u01B0\u1EE3ng): V\xED d\u1EE5: "T\xEAn s\u1EA3n ph\u1EA9m + Gi\u1EA3i ph\xE1p cho... + Ch\u1EA5t li\u1EC7u + [\u1EA2nh Th\u1EADt T\u1EF1 Ch\u1EE5p]".
+- \u0110\u1EA3m b\u1EA3o \u0111\u1ED9 d\xE0i m\u1ED7i ti\xEAu \u0111\u1EC1 t\u1EEB 75 \u0111\u1EBFn 115 k\xFD t\u1EF1.
+- Ch\u1EE9a c\xE1c t\u1EEB kh\xF3a \u0111\u1ED3ng ngh\u0129a phong ph\xFA \u0111\u1EC3 c\xF4ng c\u1EE5 t\xECm ki\u1EBFm kh\xF4ng nh\u1EADn d\u1EA1ng tr\xF9ng l\u1EB7p.
+- Ch\u1EC9 tr\u1EA3 v\u1EC1 danh s\xE1ch \u0111\xFAng 3 d\xF2ng ti\xEAu \u0111\u1EC1 \u0111\xE3 ch\u1EC9nh s\u1EEDa, m\u1ED7i d\xF2ng m\u1ED9t ph\u01B0\u01A1ng \xE1n, kh\xF4ng c\xF3 s\u1ED1 th\u1EE9 t\u1EF1 \u1EDF \u0111\u1EA7u d\xF2ng, kh\xF4ng gi\u1EA3i th\xEDch th\xEAm b\u1EA5t k\u1EF3 \u0111i\u1EC1u g\xEC.`;
+    } else {
+      return res.status(400).json({ error: "H\xE0nh \u0111\u1ED9ng kh\xF4ng h\u1EE3p l\u1EC7." });
+    }
+    const response = await ai2.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt
+    });
+    return res.json({ result: response.text });
+  } catch (error) {
+    console.error("Gemini API Error:", error);
+    return res.status(500).json({ error: error.message || "L\u1ED7i x\u1EED l\xFD AI t\u1EEB server" });
+  }
+}
+async function parseAddress(req, res) {
+  try {
+    const { address } = req.body || {};
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({
+        error: "Ch\u01B0a c\u1EA5u h\xECnh API Key c\u1EE7a Gemini AI."
       });
     }
-    const limitRaw = Number(req.query.limit);
-    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 5e3) : 2e3;
-    const docs = await DonHoanHuy_default.find({}).sort({ scannedAt: -1 }).limit(limit).maxTimeMS(5e3).lean();
-    const data = (docs || []).map((doc) => {
-      const sn = normalizeOrderSn(doc.orderSn);
-      const status = String(doc.status || "scanned");
-      const local = doc.local_status || (status === "return_received" ? "RETURN_RECEIVED" : "CANCELLED_STORED");
+    if (!address?.trim()) {
+      return res.status(400).json({ error: "Thi\u1EBFu chu\u1ED7i \u0111\u1ECBa ch\u1EC9 c\u1EA7n ph\xE2n t\xEDch." });
+    }
+    const ai2 = ensureAi();
+    const prompt = `B\u1EA1n l\xE0 chuy\xEAn gia ph\xE2n t\xEDch \u0111\u1ECBa ch\u1EC9 giao h\xE0ng Vi\u1EC7t Nam.
+Ph\xE2n t\xEDch chu\u1ED7i \u0111\u1ECBa ch\u1EC9 sau v\xE0 tr\u1EA3 v\u1EC1 JSON thu\u1EA7n (KH\xD4NG markdown, KH\xD4NG gi\u1EA3i th\xEDch):
+{"province":"...","district":"...","ward":"...","street":"..."}
+
+Y\xEAu c\u1EA7u:
+- province: t\xEAn T\u1EC9nh/Th\xE0nh ph\u1ED1 chu\u1EA9n (VD: "Th\xE0nh ph\u1ED1 H\u1ED3 Ch\xED Minh", "H\xE0 N\u1ED9i")
+- district: t\xEAn Qu\u1EADn/Huy\u1EC7n/Th\u1ECB x\xE3 chu\u1EA9n (VD: "Qu\u1EADn 1", "Huy\u1EC7n \u0110\xF4ng Anh")
+- ward: t\xEAn Ph\u01B0\u1EDDng/X\xE3/Th\u1ECB tr\u1EA5n chu\u1EA9n
+- street: ph\u1EA7n \u0111\u1ECBa ch\u1EC9 chi ti\u1EBFt c\xF2n l\u1EA1i (s\u1ED1 nh\xE0, t\xEAn \u0111\u01B0\u1EDDng, ng\xF5 ng\xE1ch)
+- Chu\u1EA9n h\xF3a vi\u1EBFt t\u1EAFt: HCM/TPHCM -> Th\xE0nh ph\u1ED1 H\u1ED3 Ch\xED Minh, Q1 -> Qu\u1EADn 1, P. -> Ph\u01B0\u1EDDng
+
+\u0110\u1ECBa ch\u1EC9 c\u1EA7n ph\xE2n t\xEDch: "${String(address).trim()}"`;
+    const response = await ai2.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt
+    });
+    const raw = (response.text || "").trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(422).json({ error: "AI kh\xF4ng tr\u1EA3 v\u1EC1 JSON h\u1EE3p l\u1EC7." });
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    return res.json({
+      success: true,
+      parsed: {
+        province: String(parsed.province || "").trim(),
+        district: String(parsed.district || "").trim(),
+        ward: String(parsed.ward || "").trim(),
+        street: String(parsed.street || "").trim()
+      }
+    });
+  } catch (error) {
+    console.error("[AI parse-address]", error);
+    const msg = String(error?.message || "");
+    const lower2 = msg.toLowerCase();
+    if (lower2.includes("api key") || lower2.includes("api_key") || lower2.includes("invalid api") || lower2.includes("invalid") && lower2.includes("key")) {
+      return res.status(401).json({
+        error: "Gemini API Key kh\xF4ng h\u1EE3p l\u1EC7. V\xE0o C\xE0i \u0111\u1EB7t \u2192 C\u1EA5u h\xECnh AI \u0111\u1EC3 c\u1EADp nh\u1EADt key."
+      });
+    }
+    if (msg.startsWith("{") || msg.includes("GoogleGenerativeAI")) {
+      return res.status(502).json({
+        error: "AI t\u1EA1m th\u1EDDi kh\xF4ng ph\u1EA3n h\u1ED3i. Vui l\xF2ng nh\u1EADp \u0111\u1ECBa ch\u1EC9 th\u1EE7 c\xF4ng ho\u1EB7c th\u1EED l\u1EA1i sau."
+      });
+    }
+    return res.status(500).json({ error: msg || "L\u1ED7i ph\xE2n t\xEDch \u0111\u1ECBa ch\u1EC9 AI" });
+  }
+}
+async function generateDescription(req, res) {
+  try {
+    const { title, keywords, context } = req.body || {};
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({
+        error: "Ch\u01B0a c\u1EA5u h\xECnh API Key c\u1EE7a Gemini AI."
+      });
+    }
+    const ai2 = ensureAi();
+    const prompt = `B\u1EA1n l\xE0 chuy\xEAn gia Copywriter vi\u1EBFt m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m b\xE1n h\xE0ng tr\xEAn Shopee, Lazada v\xE0 TikTok Shop Vi\u1EC7t Nam.
+H\xE3y vi\u1EBFt m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m d\u1EA1ng HTML (d\xF9ng th\u1EBB h2, h3, p, ul, li, strong) \u2014 KH\xD4NG d\xF9ng markdown, KH\xD4NG b\u1ECDc trong \`\`\`html.
+T\xEAn s\u1EA3n ph\u1EA9m: "${title || ""}"
+T\u1EEB kh\xF3a / T\xEDnh n\u0103ng: "${keywords || ""}"
+${context ? `Th\xF4ng tin th\xEAm: ${context}` : ""}
+
+C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EADt (ul/li), th\xF4ng s\u1ED1, cam k\u1EBFt shop, hashtags cu\u1ED1i b\xE0i. Ch\u1EC9 tr\u1EA3 v\u1EC1 HTML thu\u1EA7n.`;
+    const response = await ai2.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt
+    });
+    const raw = (response.text || "").trim();
+    const html = markdownToHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, ""));
+    return res.json({ success: true, html });
+  } catch (error) {
+    console.error("[AI generate-description]", error);
+    return res.status(500).json({ error: error.message || "L\u1ED7i t\u1EA1o m\xF4 t\u1EA3 AI" });
+  }
+}
+
+// routes/aiRoutes.js
+var router9 = (0, import_express10.Router)();
+router9.post("/gemini/optimize", authMiddleware, geminiOptimize);
+router9.post("/ai/parse-address", authMiddleware, parseAddress);
+router9.post("/ai/generate-description", authMiddleware, generateDescription);
+var aiRoutes_default = router9;
+
+// routes/dashboardRoutes.js
+var import_express11 = __toESM(require_express2(), 1);
+
+// utils/dashboard.js
+function toDateKey(d) {
+  const y = d.getFullYear();
+  const m2 = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m2}-${day}`;
+}
+function getDashboardDateRange(rangeKey) {
+  const now = /* @__PURE__ */ new Date();
+  const y = now.getFullYear();
+  const m2 = now.getMonth();
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  switch (rangeKey) {
+    case "this_month":
+      return { start: new Date(y, m2, 1), end, key: "this_month", label: "Th\xE1ng n\xE0y" };
+    case "last_month":
       return {
-        id: doc._id || `dhh-${sn}`,
-        orderSn: sn,
-        status,
-        note: doc.note || "",
-        scannedAt: doc.scannedAt || null,
-        local_status: local,
-        localStatus: local,
-        internal_status: local,
-        don_hoan_huy: true,
-        type: doc.type || (status === "return_received" ? "return" : "cancelled"),
-        shopId: doc.shopId || null,
-        shopName: doc.shopName || null,
-        tracking_no: doc.tracking_no || null,
-        channel: "shopee",
-        ...doc.data && typeof doc.data === "object" ? doc.data : {}
+        start: new Date(y, m2 - 1, 1),
+        end: new Date(y, m2, 0, 23, 59, 59, 999),
+        key: "last_month",
+        label: "Th\xE1ng tr\u01B0\u1EDBc"
+      };
+    case "this_quarter": {
+      const qStart = Math.floor(m2 / 3) * 3;
+      return { start: new Date(y, qStart, 1), end, key: "this_quarter", label: "Qu\xFD n\xE0y" };
+    }
+    case "this_year":
+      return { start: new Date(y, 0, 1), end, key: "this_year", label: "N\u0103m nay" };
+    case "today": {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      return { start, end, key: "today", label: "H\xF4m nay" };
+    }
+    case "last_7_days":
+    default: {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - 6);
+      return { start, end, key: "last_7_days", label: "7 ng\xE0y qua" };
+    }
+  }
+}
+function buildDashboardChart(dailyRevenue, range) {
+  const buckets = /* @__PURE__ */ new Map();
+  if (range.key === "this_year" || range.key === "this_quarter") {
+    const cursor = new Date(range.start.getFullYear(), range.start.getMonth(), 1);
+    const endMonth = new Date(range.end.getFullYear(), range.end.getMonth(), 1);
+    while (cursor <= endMonth) {
+      const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
+      buckets.set(key, {
+        key,
+        label: `T${cursor.getMonth() + 1}`,
+        amount: 0
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+  } else {
+    const cursor = new Date(range.start);
+    cursor.setHours(0, 0, 0, 0);
+    const endDay = new Date(range.end);
+    endDay.setHours(0, 0, 0, 0);
+    while (cursor <= endDay) {
+      const key = toDateKey(cursor);
+      buckets.set(key, {
+        key,
+        label: `${String(cursor.getDate()).padStart(2, "0")}/${String(cursor.getMonth() + 1).padStart(2, "0")}`,
+        amount: 0
+      });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+  for (const row of dailyRevenue) {
+    const dateStr = String(row?.date || "");
+    let bucketKey = dateStr;
+    if (range.key === "this_year" || range.key === "this_quarter") {
+      bucketKey = dateStr.slice(0, 7);
+    }
+    const bucket = buckets.get(bucketKey);
+    if (bucket) {
+      bucket.amount += Number(row?.amount) || 0;
+    }
+  }
+  return Array.from(buckets.values());
+}
+
+// controllers/dashboardController.js
+var deps4 = {
+  isMongoReady: () => false,
+  withLocalDbTimeout: async (promise) => promise,
+  getDashboardStatsFromStore: async () => ({
+    totalOrdersInDb: 0,
+    dashboardOrdersCount: 0,
+    ordersInRangeCount: 0,
+    revenue: 0,
+    newOrders: 0,
+    returns: 0,
+    cancelled: 0,
+    pendingOrders: {},
+    dailyRevenue: [],
+    topProducts: []
+  }),
+  getLowStockProductsFromStore: async () => [],
+  loadProductsByIdsFromStore: async () => []
+};
+function initDashboardController(partial) {
+  deps4 = { ...deps4, ...partial };
+}
+async function getDashboard(req, res) {
+  try {
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    const dateRange = String(req.query.date_range || "last_7_days");
+    const range = getDashboardDateRange(dateRange);
+    const startKey = toDateKey(range.start);
+    const endKey = toDateKey(range.end);
+    if (!deps4.isMongoReady()) {
+      return res.status(200).json({
+        dateRange: range.key,
+        dateRangeLabel: range.label,
+        startDate: startKey,
+        endDate: endKey,
+        meta: { totalOrdersInDb: 0, dashboardOrders: 0, ordersInRange: 0 },
+        kpi: { revenue: 0, newOrders: 0, returns: 0, cancelled: 0 },
+        pendingOrders: {
+          pendingApproval: 0,
+          pendingPayment: 0,
+          pendingPack: 0,
+          pendingPickup: 0,
+          shipping: 0,
+          returnPending: 0
+        },
+        chart: [],
+        topProducts: [],
+        inventory: { lowStockThreshold: 5, lowStockProducts: [] },
+        message: "mongodb_not_ready"
+      });
+    }
+    const LOW_STOCK_THRESHOLD = 5;
+    const [stats, lowStockRows] = await Promise.all([
+      deps4.withLocalDbTimeout(deps4.getDashboardStatsFromStore(startKey, endKey), 8e3, "dashboard_stats"),
+      deps4.withLocalDbTimeout(
+        deps4.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
+        8e3,
+        "dashboard_low_stock"
+      )
+    ]);
+    const wantedProductIds = stats.topProducts.map((p) => p.productId).filter(Boolean);
+    const topProductDocs = wantedProductIds.length ? await deps4.withLocalDbTimeout(
+      deps4.loadProductsByIdsFromStore(wantedProductIds, []),
+      8e3,
+      "dashboard_top_products"
+    ) : [];
+    const topProducts = stats.topProducts.map((entry, idx) => {
+      const prod = topProductDocs.find((p) => p.id === entry.productId);
+      return {
+        rank: idx + 1,
+        productId: entry.productId,
+        title: prod?.title || entry.title || entry.productId,
+        sku: prod?.sku || "\u2014",
+        imageUrl: prod?.avatarUrl || prod?.imageUrl || entry.image || null,
+        quantitySold: entry.quantitySold
       };
     });
+    const lowStockProducts = lowStockRows.map((p) => ({
+      id: p.id,
+      title: p.title || p.sku || p.id,
+      sku: p.sku,
+      stock: p.stock
+    }));
+    const chart = buildDashboardChart(stats.dailyRevenue, range);
     return res.json({
-      success: true,
-      data,
-      total: data.length
-    });
-  } catch (err) {
-    console.error("[GET /api/scan/don-hoan-huy]", err);
-    return res.status(500).json({
-      success: false,
-      message: describeDbError(err),
-      data: []
-    });
-  }
-}
-
-// routes/scanRoutes.js
-var router = (0, import_express2.Router)();
-router.post("/save", saveScanOrders);
-router.get("/don-hoan-huy", listDonHoanHuy);
-var scanRoutes_default = router;
-
-// routes/authRoutes.js
-var import_express3 = __toESM(require_express2(), 1);
-
-// middlewares/auth.js
-var import_jsonwebtoken = __toESM(require_jsonwebtoken(), 1);
-
-// _lib/jwtSecret.js
-function getJwtSecret() {
-  const secret = process.env.JWT_SECRET;
-  if (!secret && process.env.VERCEL) {
-    console.warn("[JWT] JWT_SECRET ch\u01B0a set tr\xEAn Vercel \u2014 token s\u1EBD kh\xF4ng kh\u1EDBp backend cPanel. Set c\xF9ng gi\xE1 tr\u1ECB v\u1EDBi cPanel (.htaccess / Node env).");
-  }
-  return secret || "omnisales-vn-super-secret-key-2026";
-}
-
-// middlewares/auth.js
-function authMiddleware(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({
-      success: false,
-      error: "Y\xEAu c\u1EA7u cung c\u1EA5p Token x\xE1c th\u1EF1c h\u1EE3p l\u1EC7.",
-      message: "Y\xEAu c\u1EA7u cung c\u1EA5p Token x\xE1c th\u1EF1c h\u1EE3p l\u1EC7."
-    });
-  }
-  const token = authHeader.split(" ")[1];
-  try {
-    const decoded = import_jsonwebtoken.default.verify(token, getJwtSecret());
-    req.user = decoded;
-    next();
-  } catch (error) {
-    return res.status(401).json({
-      success: false,
-      error: "Phi\xEAn \u0111\u0103ng nh\u1EADp admin \u0111\xE3 h\u1EBFt h\u1EA1n \u2014 vui l\xF2ng \u0111\u0103ng nh\u1EADp l\u1EA1i.",
-      message: "Phi\xEAn \u0111\u0103ng nh\u1EADp admin \u0111\xE3 h\u1EBFt h\u1EA1n \u2014 vui l\xF2ng \u0111\u0103ng nh\u1EADp l\u1EA1i."
-    });
-  }
-}
-function signAdminToken(username) {
-  return import_jsonwebtoken.default.sign({ username }, getJwtSecret(), { expiresIn: "24h" });
-}
-
-// controllers/authController.js
-function login(req, res) {
-  const { username, password } = req.body;
-  const expectedUsername = process.env.ADMIN_USERNAME || "admin";
-  const expectedPassword = process.env.ADMIN_PASSWORD || "password123";
-  if (username === expectedUsername && password === expectedPassword) {
-    const token = signAdminToken(username);
-    return res.json({ token, username });
-  } else {
-    return res.status(401).json({
-      error: "T\xEAn \u0111\u0103ng nh\u1EADp ho\u1EB7c m\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c."
-    });
-  }
-}
-async function verifyAuth(req, res) {
-  res.json({ valid: true, username: req.user.username });
-}
-
-// routes/authRoutes.js
-var router2 = (0, import_express3.Router)();
-router2.post("/login", login);
-router2.get("/auth/verify", authMiddleware, verifyAuth);
-var authRoutes_default = router2;
-
-// routes/healthRoutes.js
-var import_express4 = __toESM(require_express2(), 1);
-
-// controllers/healthController.js
-var import_fs3 = __toESM(require("fs"), 1);
-var import_path2 = __toESM(require("path"), 1);
-
-// utils/appPaths.js
-var import_path = __toESM(require("path"), 1);
-var import_fs2 = __toESM(require("fs"), 1);
-function resolveAppRoot() {
-  const candidates = [
-    process.env.PASSENGER_APP_ROOT,
-    typeof __dirname !== "undefined" ? __dirname : "",
-    process.cwd()
-  ].map((c) => String(c || "").trim()).filter(Boolean);
-  for (const candidate of candidates) {
-    const abs = import_path.default.resolve(candidate);
-    if (import_fs2.default.existsSync(import_path.default.join(abs, "server.cjs")) || import_fs2.default.existsSync(import_path.default.join(abs, "data")) || import_fs2.default.existsSync(import_path.default.join(abs, ".htaccess")) || import_fs2.default.existsSync(import_path.default.join(abs, ".env"))) {
-      return abs;
-    }
-  }
-  return import_path.default.resolve(candidates[0] || process.cwd());
-}
-var PRODUCTION_APP_URL = "https://quanly.linhkienamthanh.net";
-function resolveAppBaseUrl() {
-  const fromEnv = String(process.env.APP_URL || process.env.API_BASE_URL || "").trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
-  if (process.env.NODE_ENV === "production") return PRODUCTION_APP_URL;
-  return PRODUCTION_APP_URL;
-}
-
-// controllers/healthController.js
-var APP_ROOT = resolveAppRoot();
-var APP_BASE_URL = resolveAppBaseUrl();
-function resolveShopeeCallbackUrl() {
-  const explicit = String(process.env.SHOPEE_CALLBACK_URL || "").trim().replace(/\/$/, "");
-  if (explicit) return explicit;
-  return `${APP_BASE_URL}/api/shopee/callback`;
-}
-var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
-var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
-var deps = {
-  ensureDataDirs: () => {
-    import_fs3.default.mkdirSync(import_path2.default.join(APP_ROOT, "data"), { recursive: true });
-  },
-  listShopeeOAuthShopIds: () => [],
-  loadLastOAuthAudit: () => null,
-  tokensPath: import_path2.default.resolve(APP_ROOT, "data", "shopee_tokens.json"),
-  appRoot: APP_ROOT,
-  appBaseUrl: APP_BASE_URL,
-  shopeeCallbackUrl: SHOPEE_CALLBACK_URL,
-  shopeeWebhookUrl: SHOPEE_WEBHOOK_URL
-};
-function initHealthController(partial) {
-  deps = { ...deps, ...partial };
-}
-function getPublicConfig(_req, res) {
-  res.json({
-    appUrl: deps.appBaseUrl,
-    apiBaseUrl: deps.appBaseUrl,
-    shopeeCallbackUrl: deps.shopeeCallbackUrl,
-    shopeeWebhookUrl: deps.shopeeWebhookUrl
-  });
-}
-function postClientLog(req, res) {
-  try {
-    deps.ensureDataDirs();
-    const logPath = import_path2.default.join(deps.appRoot, "data", "debug-556dce.ndjson");
-    const payload = {
-      sessionId: "556dce",
-      runId: req.body?.runId || "post-fix",
-      hypothesisId: req.body?.hypothesisId || null,
-      location: req.body?.location || "client",
-      message: req.body?.message || "",
-      data: req.body?.data || {},
-      timestamp: Date.now()
-    };
-    import_fs3.default.appendFileSync(logPath, `${JSON.stringify(payload)}
-`, "utf-8");
-    return res.status(200).json({ ok: true });
-  } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
-    });
-  }
-}
-function getClientLog(_req, res) {
-  try {
-    const logPath = import_path2.default.join(deps.appRoot, "data", "debug-556dce.ndjson");
-    if (!import_fs3.default.existsSync(logPath)) return res.json({ ok: true, lines: [] });
-    const lines = import_fs3.default.readFileSync(logPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(-80).map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return { raw: line };
+      dateRange: range.key,
+      dateRangeLabel: range.label,
+      startDate: startKey,
+      endDate: endKey,
+      meta: {
+        totalOrdersInDb: stats.totalOrdersInDb,
+        dashboardOrders: stats.dashboardOrdersCount,
+        ordersInRange: stats.ordersInRangeCount
+      },
+      kpi: {
+        revenue: stats.revenue,
+        newOrders: stats.newOrders,
+        returns: stats.returns,
+        cancelled: stats.cancelled
+      },
+      pendingOrders: stats.pendingOrders,
+      chart,
+      topProducts,
+      inventory: {
+        lowStockThreshold: LOW_STOCK_THRESHOLD,
+        lowStockProducts
       }
     });
-    return res.json({ ok: true, lines });
   } catch (error) {
+    console.error("[Dashboard API] Error:", error);
     return res.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
+      error: "dashboard_query_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 t\u1EA3i d\u1EEF li\u1EC7u dashboard."
     });
   }
 }
-function getHealth(_req, res) {
-  const shopIds = deps.listShopeeOAuthShopIds();
-  let dataDirWritable = false;
-  try {
-    deps.ensureDataDirs();
-    import_fs3.default.accessSync(import_path2.default.join(deps.appRoot, "data"), import_fs3.default.constants.W_OK);
-    dataDirWritable = true;
-  } catch {
-    dataDirWritable = false;
-  }
-  res.status(200).json({
-    ok: true,
-    service: "cpanel-backend",
-    host: deps.appBaseUrl,
-    appRoot: deps.appRoot,
-    tokensPath: deps.tokensPath,
-    tokensFileExists: import_fs3.default.existsSync(deps.tokensPath),
-    dataDirWritable,
-    shopeeOAuthShopIds: shopIds,
-    lastOAuth: deps.loadLastOAuthAudit(),
-    oauthHint: shopIds.length > 0 ? "V\xE0o C\xE0i \u0111\u1EB7t \u2192 shop Shopee \u2192 b\u1EA5m OAuth (shop_id ph\u1EA3i kh\u1EDBp). Sau OAuth ki\u1EC3m tra lastOAuth.success=true." : "Ch\u01B0a c\xF3 shop OAuth \u2014 b\u1EA5m n\xFAt OAuth trong C\xE0i \u0111\u1EB7t.",
-    checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    routes: {
-      mappingProducts: true
-    }
-  });
-}
 
-// routes/healthRoutes.js
-var router3 = (0, import_express4.Router)();
-router3.get("/health", getHealth);
-router3.get("/config/public", getPublicConfig);
-router3.post("/debug/client-log", authMiddleware, postClientLog);
-router3.get("/debug/client-log", authMiddleware, getClientLog);
-var healthRoutes_default = router3;
-
-// routes/vietnamAddressRoutes.js
-var import_express5 = __toESM(require_express2(), 1);
-
-// controllers/vietnamAddressController.js
-var VN_ADDRESS_API = "https://provinces.open-api.vn/api";
-var vnProvincesCache = null;
-var vnDistrictsCache = /* @__PURE__ */ new Map();
-var vnWardsCache = /* @__PURE__ */ new Map();
-async function fetchVnJson(url) {
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!res.ok) throw new Error(`VN address API ${res.status}`);
-  return res.json();
-}
-async function getProvinces(_req, res) {
-  try {
-    if (!vnProvincesCache) {
-      vnProvincesCache = await fetchVnJson(`${VN_ADDRESS_API}/p/`);
-    }
-    const list = (vnProvincesCache || []).map((p) => ({
-      name: p.name,
-      code: p.code
-    }));
-    return res.json(list);
-  } catch (error) {
-    console.error("[VN Address] provinces:", error);
-    return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch T\u1EC9nh/Th\xE0nh" });
-  }
-}
-async function getDistricts(req, res) {
-  try {
-    const provinceCode = Number(req.params.provinceCode);
-    if (!provinceCode) return res.json([]);
-    if (!vnDistrictsCache.has(provinceCode)) {
-      const data = await fetchVnJson(`${VN_ADDRESS_API}/p/${provinceCode}?depth=2`);
-      const districts = Array.isArray(data?.districts) ? data.districts : [];
-      vnDistrictsCache.set(
-        provinceCode,
-        districts.map((d) => ({ name: d.name, code: d.code }))
-      );
-    }
-    return res.json(vnDistrictsCache.get(provinceCode) || []);
-  } catch (error) {
-    console.error("[VN Address] districts:", error);
-    return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Qu\u1EADn/Huy\u1EC7n" });
-  }
-}
-async function getWards(req, res) {
-  try {
-    const districtCode = Number(req.params.districtCode);
-    if (!districtCode) return res.json([]);
-    if (!vnWardsCache.has(districtCode)) {
-      const data = await fetchVnJson(`${VN_ADDRESS_API}/d/${districtCode}?depth=2`);
-      const wards = Array.isArray(data?.wards) ? data.wards : [];
-      vnWardsCache.set(
-        districtCode,
-        wards.map((w) => ({ name: w.name, code: w.code }))
-      );
-    }
-    return res.json(vnWardsCache.get(districtCode) || []);
-  } catch (error) {
-    console.error("[VN Address] wards:", error);
-    return res.status(502).json({ error: "Kh\xF4ng t\u1EA3i \u0111\u01B0\u1EE3c danh s\xE1ch Ph\u01B0\u1EDDng/X\xE3" });
-  }
-}
-
-// routes/vietnamAddressRoutes.js
-var router4 = (0, import_express5.Router)();
-router4.get("/provinces", getProvinces);
-router4.get("/districts/:provinceCode", getDistricts);
-router4.get("/wards/:districtCode", getWards);
-var vietnamAddressRoutes_default = router4;
-
-// routes/suppliersRoutes.js
-var import_express6 = __toESM(require_express2(), 1);
-
-// controllers/suppliersController.js
-var import_fs4 = __toESM(require("fs"), 1);
-var import_path3 = __toESM(require("path"), 1);
-var APP_ROOT2 = resolveAppRoot();
-var SUPPLIERS_DB_PATH = import_path3.default.join(APP_ROOT2, "data", "suppliers.json");
-function normalizeSupplier(raw) {
-  const totalOrderValue = Number(raw?.totalOrderValue) || 0;
-  const totalPaid = Number(raw?.totalPaid) || 0;
-  return {
-    id: String(raw?.id || `sup-${Date.now()}`),
-    name: String(raw?.name || "").trim(),
-    supplierCode: String(raw?.supplierCode || raw?.supplier_code || "").trim().toUpperCase(),
-    totalOrderValue,
-    totalPaid,
-    totalDebt: Number(raw?.totalDebt ?? totalOrderValue - totalPaid) || 0,
-    status: raw?.status === "inactive" ? "inactive" : "active"
-  };
-}
-function loadSuppliers() {
-  try {
-    if (!import_fs4.default.existsSync(SUPPLIERS_DB_PATH)) return [];
-    const raw = import_fs4.default.readFileSync(SUPPLIERS_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.map(normalizeSupplier) : [];
-  } catch (error) {
-    console.error("[Suppliers DB] Failed to read suppliers.json:", error);
-    return [];
-  }
-}
-function saveSuppliers(suppliers) {
-  try {
-    import_fs4.default.mkdirSync(import_path3.default.dirname(SUPPLIERS_DB_PATH), { recursive: true });
-    import_fs4.default.writeFileSync(SUPPLIERS_DB_PATH, JSON.stringify(suppliers, null, 2), "utf-8");
-  } catch (error) {
-    console.error(
-      "L\u1ED7i chi ti\u1EBFt khi l\u01B0u shop/OAuth:",
-      error?.response?.data || error?.message || String(error)
-    );
-    console.error("[Suppliers DB] Failed to write suppliers.json:", error);
-  }
-}
-async function listSuppliers(_req, res) {
-  return res.json(loadSuppliers());
-}
-async function createSupplier(req, res) {
-  const body = req.body || {};
-  if (!body.name?.trim() || !body.supplierCode?.trim()) {
-    return res.status(400).json({ error: "name_and_supplierCode_required" });
-  }
-  const suppliers = loadSuppliers();
-  const code = String(body.supplierCode).trim().toUpperCase();
-  if (suppliers.some((s2) => s2.supplierCode === code)) {
-    return res.status(400).json({ error: "supplier_code_duplicate" });
-  }
-  const supplier = normalizeSupplier({
-    id: `sup-${Date.now()}`,
-    name: body.name,
-    supplierCode: code,
-    totalOrderValue: 0,
-    totalPaid: 0,
-    totalDebt: 0,
-    status: body.status || "active"
-  });
-  suppliers.unshift(supplier);
-  saveSuppliers(suppliers);
-  return res.status(201).json({ supplier, suppliers });
-}
-async function updateSupplier(req, res) {
-  const suppliers = loadSuppliers();
-  const index = suppliers.findIndex((s2) => s2.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: "supplier_not_found" });
-  }
-  const body = req.body || {};
-  const code = body.supplierCode ? String(body.supplierCode).trim().toUpperCase() : suppliers[index].supplierCode;
-  if (suppliers.some((s2, i2) => i2 !== index && s2.supplierCode === code)) {
-    return res.status(400).json({ error: "supplier_code_duplicate" });
-  }
-  const updated = normalizeSupplier({
-    ...suppliers[index],
-    ...body,
-    id: suppliers[index].id,
-    supplierCode: code
-  });
-  suppliers[index] = updated;
-  saveSuppliers(suppliers);
-  return res.json({ supplier: updated, suppliers });
-}
-async function deleteSupplier(req, res) {
-  const suppliers = loadSuppliers();
-  const target = suppliers.find((s2) => s2.id === req.params.id);
-  if (!target) {
-    return res.status(404).json({ error: "supplier_not_found" });
-  }
-  if (target.totalDebt > 0) {
-    return res.status(400).json({ error: "supplier_has_debt" });
-  }
-  const next = suppliers.filter((s2) => s2.id !== req.params.id);
-  saveSuppliers(next);
-  return res.json({ deleted: req.params.id, suppliers: next });
-}
-async function clearAllSuppliers(_req, res) {
-  saveSuppliers([]);
-  console.log("[Suppliers] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 d\u1EEF li\u1EC7u nh\xE0 cung c\u1EA5p.");
-  return res.json({ success: true, cleared: true, suppliers: [] });
-}
-
-// routes/suppliersRoutes.js
-var router5 = (0, import_express6.Router)();
-router5.get("/", listSuppliers);
-router5.post("/", createSupplier);
-router5.post("/clear-all", clearAllSuppliers);
-router5.put("/:id", updateSupplier);
-router5.delete("/:id", deleteSupplier);
-var suppliersRoutes_default = router5;
-
-// routes/expensesRoutes.js
-var import_express7 = __toESM(require_express2(), 1);
-
-// controllers/expensesController.js
-var import_fs5 = __toESM(require("fs"), 1);
-var import_path4 = __toESM(require("path"), 1);
-var APP_ROOT3 = resolveAppRoot();
-var EXPENSES_DB_PATH = import_path4.default.join(APP_ROOT3, "data", "expenses.json");
-var EXPENSES_CLEAR_MARKER = import_path4.default.join(APP_ROOT3, "data", ".expenses-cleared-v2");
-function loadExpenses() {
-  try {
-    if (!import_fs5.default.existsSync(EXPENSES_DB_PATH)) return [];
-    const raw = import_fs5.default.readFileSync(EXPENSES_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error("[Expenses DB] Failed to read expenses.json:", error);
-    return [];
-  }
-}
-function saveExpenses(expenses) {
-  try {
-    import_fs5.default.mkdirSync(import_path4.default.dirname(EXPENSES_DB_PATH), { recursive: true });
-    import_fs5.default.writeFileSync(EXPENSES_DB_PATH, JSON.stringify(expenses, null, 2), "utf-8");
-  } catch (error) {
-    console.error("[Expenses DB] Failed to write expenses.json:", error);
-  }
-}
-function migrateExpensesStorageOnce() {
-  if (import_fs5.default.existsSync(EXPENSES_CLEAR_MARKER)) return;
-  saveExpenses([]);
-  try {
-    import_fs5.default.mkdirSync(import_path4.default.dirname(EXPENSES_CLEAR_MARKER), { recursive: true });
-    import_fs5.default.writeFileSync(EXPENSES_CLEAR_MARKER, (/* @__PURE__ */ new Date()).toISOString(), "utf-8");
-    console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch d\u1EEF li\u1EC7u chi ph\xED c\u0169 (migration m\u1ED9t l\u1EA7n).");
-  } catch (error) {
-    console.error("[Expenses] Failed to write clear marker:", error);
-  }
-}
-migrateExpensesStorageOnce();
-async function listExpenses(_req, res) {
-  return res.json(loadExpenses());
-}
-async function createExpense(req, res) {
-  const body = req.body || {};
-  if (!body.title?.trim() || !body.amount || !body.category || !body.date) {
-    return res.status(400).json({ error: "expense_fields_required" });
-  }
-  const expenses = loadExpenses();
-  const entry = {
-    id: body.id || `exp-${Date.now()}`,
-    title: String(body.title).trim(),
-    amount: Math.max(0, Math.round(Number(body.amount))),
-    category: String(body.category),
-    date: String(body.date),
-    notes: body.notes ? String(body.notes) : void 0
-  };
-  expenses.unshift(entry);
-  saveExpenses(expenses);
-  return res.status(201).json({ expense: entry, expenses });
-}
-async function deleteExpense(req, res) {
-  const expenses = loadExpenses();
-  const next = expenses.filter((e2) => e2.id !== req.params.id);
-  if (next.length === expenses.length) {
-    return res.status(404).json({ error: "expense_not_found" });
-  }
-  saveExpenses(next);
-  return res.json({ deleted: req.params.id, expenses: next });
-}
-async function clearAllExpenses(_req, res) {
-  saveExpenses([]);
-  console.log("[Expenses] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 chi ph\xED doanh nghi\u1EC7p.");
-  return res.json({ success: true, cleared: true, expenses: [] });
-}
-
-// routes/expensesRoutes.js
-var router6 = (0, import_express7.Router)();
-router6.get("/", listExpenses);
-router6.post("/", createExpense);
-router6.post("/clear-all", clearAllExpenses);
-router6.delete("/:id", deleteExpense);
-var expensesRoutes_default = router6;
+// routes/dashboardRoutes.js
+var router10 = (0, import_express11.Router)();
+router10.get("/", getDashboard);
+var dashboardRoutes_default = router10;
 
 // middlewares/errorHandler.js
 function errorHandler(err, req, res, next) {
@@ -94225,12 +95085,12 @@ function resetHeavyJob() {
 
 // src/db/mongoStore.ts
 var import_mongoose4 = __toESM(require("mongoose"), 1);
-var import_fs8 = __toESM(require("fs"), 1);
-var import_path7 = __toESM(require("path"), 1);
+var import_fs10 = __toESM(require("fs"), 1);
+var import_path9 = __toESM(require("path"), 1);
 
 // src/db/productsDiskStore.ts
-var import_fs6 = __toESM(require("fs"), 1);
-var import_path5 = __toESM(require("path"), 1);
+var import_fs8 = __toESM(require("fs"), 1);
+var import_path7 = __toESM(require("path"), 1);
 function isProductsDiskMode() {
   const raw = process.env.PRODUCTS_STORAGE ?? process.env.PRODUCTS_DISK;
   if (raw == null || String(raw).trim() === "") return true;
@@ -94251,11 +95111,11 @@ function resolveAppRoot2() {
   return process.cwd();
 }
 function getProductsDiskPath() {
-  return import_path5.default.join(resolveAppRoot2(), "data", "products.json");
+  return import_path7.default.join(resolveAppRoot2(), "data", "products.json");
 }
 function ensureDataDir() {
-  const dir = import_path5.default.dirname(getProductsDiskPath());
-  if (!import_fs6.default.existsSync(dir)) import_fs6.default.mkdirSync(dir, { recursive: true });
+  const dir = import_path7.default.dirname(getProductsDiskPath());
+  if (!import_fs8.default.existsSync(dir)) import_fs8.default.mkdirSync(dir, { recursive: true });
 }
 function normalizeProduct(p) {
   if (!p || typeof p !== "object") return null;
@@ -94279,16 +95139,16 @@ function inheritShopeeLinkFromParent(child, parent) {
 }
 function readProductsFromDisk() {
   const file = getProductsDiskPath();
-  if (!import_fs6.default.existsSync(file)) {
+  if (!import_fs8.default.existsSync(file)) {
     productsCache = { mtimeMs: 0, products: [] };
     return [];
   }
-  const st = import_fs6.default.statSync(file);
+  const st = import_fs8.default.statSync(file);
   if (productsCache && productsCache.mtimeMs === st.mtimeMs) {
     return productsCache.products;
   }
   try {
-    const raw = import_fs6.default.readFileSync(file, "utf-8");
+    const raw = import_fs8.default.readFileSync(file, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const products = (Array.isArray(parsed) ? parsed : []).map(normalizeProduct).filter(Boolean);
     productsCache = { mtimeMs: st.mtimeMs, products };
@@ -94303,10 +95163,10 @@ function writeProductsToDiskSync(products) {
   const file = getProductsDiskPath();
   const list = (Array.isArray(products) ? products : []).map(normalizeProduct).filter(Boolean);
   const tmp = `${file}.tmp.${process.pid}`;
-  import_fs6.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
-  import_fs6.default.renameSync(tmp, file);
+  import_fs8.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
+  import_fs8.default.renameSync(tmp, file);
   try {
-    const st = import_fs6.default.statSync(file);
+    const st = import_fs8.default.statSync(file);
     productsCache = { mtimeMs: st.mtimeMs, products: list };
   } catch {
     productsCache = { mtimeMs: Date.now(), products: list };
@@ -94530,8 +95390,8 @@ async function applyImportStockAndPriceOnDisk(productId, quantityDelta, importPr
 }
 
 // src/db/channelListingsDiskStore.ts
-var import_fs7 = __toESM(require("fs"), 1);
-var import_path6 = __toESM(require("path"), 1);
+var import_fs9 = __toESM(require("fs"), 1);
+var import_path8 = __toESM(require("path"), 1);
 var appRootResolved2 = "";
 var listingsCache = null;
 var writeChain2 = Promise.resolve();
@@ -94543,11 +95403,11 @@ function resolveAppRoot3() {
   return process.cwd();
 }
 function getChannelListingsDiskPath() {
-  return import_path6.default.join(resolveAppRoot3(), "data", "channel_listings.json");
+  return import_path8.default.join(resolveAppRoot3(), "data", "channel_listings.json");
 }
 function ensureDataDir2() {
-  const dir = import_path6.default.dirname(getChannelListingsDiskPath());
-  if (!import_fs7.default.existsSync(dir)) import_fs7.default.mkdirSync(dir, { recursive: true });
+  const dir = import_path8.default.dirname(getChannelListingsDiskPath());
+  if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
 }
 function normalizeListing(row) {
   if (!row || typeof row !== "object") return null;
@@ -94557,16 +95417,16 @@ function normalizeListing(row) {
 }
 function readChannelListingsFromDisk() {
   const file = getChannelListingsDiskPath();
-  if (!import_fs7.default.existsSync(file)) {
+  if (!import_fs9.default.existsSync(file)) {
     listingsCache = { mtimeMs: 0, listings: [] };
     return [];
   }
-  const st = import_fs7.default.statSync(file);
+  const st = import_fs9.default.statSync(file);
   if (listingsCache && listingsCache.mtimeMs === st.mtimeMs) {
     return listingsCache.listings;
   }
   try {
-    const raw = import_fs7.default.readFileSync(file, "utf-8");
+    const raw = import_fs9.default.readFileSync(file, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const listings = (Array.isArray(parsed) ? parsed : []).map(normalizeListing).filter(Boolean);
     listingsCache = { mtimeMs: st.mtimeMs, listings };
@@ -94584,10 +95444,10 @@ function writeChannelListingsToDiskSync(listings) {
   const file = getChannelListingsDiskPath();
   const list = (Array.isArray(listings) ? listings : []).map(normalizeListing).filter(Boolean);
   const tmp = `${file}.tmp.${process.pid}`;
-  import_fs7.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
-  import_fs7.default.renameSync(tmp, file);
+  import_fs9.default.writeFileSync(tmp, JSON.stringify(list), "utf-8");
+  import_fs9.default.renameSync(tmp, file);
   try {
-    const st = import_fs7.default.statSync(file);
+    const st = import_fs9.default.statSync(file);
     listingsCache = { mtimeMs: st.mtimeMs, listings: list };
   } catch {
     listingsCache = { mtimeMs: Date.now(), listings: list };
@@ -94864,8 +95724,8 @@ async function initMongo(appRoot) {
     if (import_mongoose4.default.connection.readyState === 0) {
       await connectDB();
       try {
-        import_fs8.default.writeFileSync(
-          import_path7.default.join(appRootResolved3, "db_status.txt"),
+        import_fs10.default.writeFileSync(
+          import_path9.default.join(appRootResolved3, "db_status.txt"),
           "KET_NOI_THANH_CONG_LUC: " + (/* @__PURE__ */ new Date()).toISOString()
         );
       } catch {
@@ -94947,8 +95807,8 @@ async function initMongo(appRoot) {
     mongoReady = false;
     const msg = err instanceof Error ? err.message : String(err);
     const code = err && typeof err === "object" && "code" in err ? String(err.code) : "undefined";
-    import_fs8.default.writeFileSync(
-      import_path7.default.join(appRootResolved3, "db_status.txt"),
+    import_fs10.default.writeFileSync(
+      import_path9.default.join(appRootResolved3, "db_status.txt"),
       "LOI_KET_NOI: " + msg + " | CODE: " + code
     );
     console.error("L\u1ED6I MONGODB STARTUP:", msg);
@@ -95031,17 +95891,17 @@ async function maybeDropMongoListingsWhenDiskReady(mongoListingCount) {
   }
 }
 async function maybeMigrateJsonFallbackToMongo() {
-  const productsPath = import_path7.default.join(appRootResolved3, "data", "products.json");
-  const listingsPath = import_path7.default.join(appRootResolved3, "data", "channel_listings.json");
+  const productsPath = import_path9.default.join(appRootResolved3, "data", "products.json");
+  const listingsPath = import_path9.default.join(appRootResolved3, "data", "channel_listings.json");
   let products = [];
   let listings = [];
   try {
-    if (import_fs8.default.existsSync(productsPath)) {
-      const parsed = JSON.parse(import_fs8.default.readFileSync(productsPath, "utf-8"));
+    if (import_fs10.default.existsSync(productsPath)) {
+      const parsed = JSON.parse(import_fs10.default.readFileSync(productsPath, "utf-8"));
       products = Array.isArray(parsed) ? parsed : [];
     }
-    if (import_fs8.default.existsSync(listingsPath)) {
-      const parsed = JSON.parse(import_fs8.default.readFileSync(listingsPath, "utf-8"));
+    if (import_fs10.default.existsSync(listingsPath)) {
+      const parsed = JSON.parse(import_fs10.default.readFileSync(listingsPath, "utf-8"));
       listings = Array.isArray(parsed) ? parsed : [];
     }
   } catch (err) {
@@ -97366,6 +98226,10 @@ var healthRoutes = asRouter(healthRoutes_default);
 var vietnamAddressRoutes = asRouter(vietnamAddressRoutes_default);
 var suppliersRoutes = asRouter(suppliersRoutes_default);
 var expensesRoutes = asRouter(expensesRoutes_default);
+var importsRoutes = asRouter(importsRoutes_default);
+var settingsRoutes = asRouter(settingsRoutes_default);
+var aiRoutes = asRouter(aiRoutes_default);
+var dashboardRoutes = asRouter(dashboardRoutes_default);
 function writeCpanelCrashLog(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
@@ -97374,12 +98238,12 @@ function writeCpanelCrashLog(kind, err) {
 ${(/* @__PURE__ */ new Date()).toISOString()}
 `;
     const targets = [
-      import_path8.default.join(process.cwd(), "cpanel_error_log.txt"),
-      typeof __dirname !== "undefined" ? import_path8.default.join(__dirname, "cpanel_error_log.txt") : ""
+      import_path10.default.join(process.cwd(), "cpanel_error_log.txt"),
+      typeof __dirname !== "undefined" ? import_path10.default.join(__dirname, "cpanel_error_log.txt") : ""
     ].filter(Boolean);
     for (const file of targets) {
       try {
-        import_fs9.default.writeFileSync(file, line);
+        import_fs11.default.writeFileSync(file, line);
       } catch {
       }
     }
@@ -97393,7 +98257,7 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (err) => {
   writeCpanelCrashLog("Rejection", err);
 });
-var APP_ROOT4 = resolveAppRoot();
+var APP_ROOT6 = resolveAppRoot();
 var isCpanelPassengerRuntime = Boolean(
   String(
     process.env.PASSENGER_APP_ROOT || process.env.PASSENGER_APP_ENV || process.env.CPANEL_APP_NAME || process.env.CPANEL_RUNTIME || ""
@@ -97404,12 +98268,12 @@ if (isCpanelPassengerRuntime) {
   console.log(`[Boot] runtime=cpanel-production pid=${process.pid}; static dist only, dev middleware disabled.`);
 }
 var dotenvCandidates = [
-  import_path8.default.join(APP_ROOT4, ".env"),
-  import_path8.default.join(process.cwd(), ".env"),
-  import_path8.default.resolve(".env")
+  import_path10.default.join(APP_ROOT6, ".env"),
+  import_path10.default.join(process.cwd(), ".env"),
+  import_path10.default.resolve(".env")
 ];
 for (const envPath of dotenvCandidates) {
-  if (import_fs9.default.existsSync(envPath)) {
+  if (import_fs11.default.existsSync(envPath)) {
     const loaded = import_dotenv2.default.config({ path: envPath });
     if (loaded.error) {
       console.error(`[Config] dotenv l\u1ED7i khi \u0111\u1ECDc ${envPath}:`, loaded.error.message);
@@ -97420,17 +98284,17 @@ for (const envPath of dotenvCandidates) {
 }
 import_dotenv2.default.config();
 console.log(
-  `[Config] APP_ROOT=${APP_ROOT4} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
+  `[Config] APP_ROOT=${APP_ROOT6} cwd=${process.cwd()} | MONGODB_URI=${process.env.MONGODB_URI || process.env.MONGO_URL ? "set" : "MISSING"}`
 );
-setProductsDiskAppRoot(APP_ROOT4);
+setProductsDiskAppRoot(APP_ROOT6);
 console.log(
   `[Products] storage=${isProductsDiskMode() ? "disk" : "mongo"} path=${getProductsDiskPath()}`
 );
 function writeCpanelCrashLogToAppRoot(kind, err) {
   try {
     const stack = err instanceof Error ? err.stack || err.message : typeof err === "string" ? err : JSON.stringify(err);
-    import_fs9.default.writeFileSync(
-      import_path8.default.join(APP_ROOT4, "cpanel_error_log.txt"),
+    import_fs11.default.writeFileSync(
+      import_path10.default.join(APP_ROOT6, "cpanel_error_log.txt"),
       `${kind}: ${stack}
 ---
 ${(/* @__PURE__ */ new Date()).toISOString()}
@@ -97441,10 +98305,10 @@ ${(/* @__PURE__ */ new Date()).toISOString()}
 }
 process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
 process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
-var WAYBILLS_DIR = import_path8.default.join(APP_ROOT4, "storage", "waybills");
-var LEGACY_PUBLIC_PRINTS_DIR = import_path8.default.join(APP_ROOT4, "public", "prints");
+var WAYBILLS_DIR = import_path10.default.join(APP_ROOT6, "storage", "waybills");
+var LEGACY_PUBLIC_PRINTS_DIR = import_path10.default.join(APP_ROOT6, "public", "prints");
 var WAYBILL_FILE_RE = /\.(pdf|zip|html)$/i;
-var LABELS_DIR = import_path8.default.join(APP_ROOT4, "storage", "labels");
+var LABELS_DIR = import_path10.default.join(APP_ROOT6, "storage", "labels");
 var LABEL_DISK_TTL_MS = 24 * 60 * 60 * 1e3;
 var LABEL_RAM_TTL_MS = 60 * 60 * 1e3;
 var labelMemCache = /* @__PURE__ */ new Map();
@@ -97452,24 +98316,24 @@ var LABEL_MEM_MAX_ENTRIES = 48;
 var LABEL_MEM_MAX_BYTES = 96 * 1024 * 1024;
 function ensureLabelsDir() {
   try {
-    if (!import_fs9.default.existsSync(LABELS_DIR)) import_fs9.default.mkdirSync(LABELS_DIR, { recursive: true });
+    if (!import_fs11.default.existsSync(LABELS_DIR)) import_fs11.default.mkdirSync(LABELS_DIR, { recursive: true });
   } catch (err) {
     console.error("[Labels] Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
   }
 }
 function assertLabelsDirWritable() {
   ensureLabelsDir();
-  const probe = import_path8.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
+  const probe = import_path10.default.join(LABELS_DIR, `.write_probe_${process.pid}`);
   try {
-    import_fs9.default.writeFileSync(probe, "ok");
-    import_fs9.default.unlinkSync(probe);
+    import_fs11.default.writeFileSync(probe, "ok");
+    import_fs11.default.unlinkSync(probe);
   } catch (err) {
     console.error("[Labels] Kh\xF4ng ghi \u0111\u01B0\u1EE3c th\u01B0 m\u1EE5c storage/labels:", err);
     throw err instanceof Error ? err : new Error(String(err));
   }
 }
 function safeLabelFilename(raw) {
-  const base = import_path8.default.basename(String(raw || "").trim());
+  const base = import_path10.default.basename(String(raw || "").trim());
   if (!base || base.includes("..") || !/\.pdf$/i.test(base)) return null;
   return base;
 }
@@ -97506,14 +98370,14 @@ function removeExistingLabelFilesForOrderSns(orderSns) {
   if (sns.length === 0) return 0;
   let deleted = 0;
   try {
-    for (const name of import_fs9.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs11.default.readdirSync(LABELS_DIR)) {
       if (!/\.pdf$/i.test(name)) continue;
       const hit = sns.some(
         (sn) => name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`)
       );
       if (!hit) continue;
       try {
-        import_fs9.default.unlinkSync(import_path8.default.join(LABELS_DIR, name));
+        import_fs11.default.unlinkSync(import_path10.default.join(LABELS_DIR, name));
         labelMemCache.delete(name);
         deleted += 1;
       } catch {
@@ -97551,16 +98415,16 @@ function putLabelMem(filename, buffer, contentType) {
     cleanupExpiredLabelFiles();
     const snMatch = safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) || safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
     if (snMatch?.[1]) removeExistingLabelFilesForOrderSns([snMatch[1]]);
-    const dest = import_path8.default.join(LABELS_DIR, safe);
+    const dest = import_path10.default.join(LABELS_DIR, safe);
     console.log(`[Labels] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${dest}`);
-    import_fs9.default.writeFileSync(dest, buffer);
-    if (!import_fs9.default.existsSync(dest)) {
+    import_fs11.default.writeFileSync(dest, buffer);
+    if (!import_fs11.default.existsSync(dest)) {
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file kh\xF4ng t\u1ED3n t\u1EA1i sau writeFileSync: ${dest}`);
     }
-    const st = import_fs9.default.statSync(dest);
+    const st = import_fs11.default.statSync(dest);
     if (!st.isFile() || st.size <= 0) {
       try {
-        import_fs9.default.unlinkSync(dest);
+        import_fs11.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`Ghi PDF th\u1EA5t b\u1EA1i \u2014 file tr\xEAn \u0111\u0129a r\u1ED7ng: ${dest}`);
@@ -97569,15 +98433,15 @@ function putLabelMem(filename, buffer, contentType) {
       console.warn(`[Labels] C\u1EA3nh b\xE1o size l\u1EC7ch: buffer=${buffer.length} disk=${st.size} \u2192 ${dest}`);
     }
     const head = Buffer.alloc(5);
-    const fd = import_fs9.default.openSync(dest, "r");
+    const fd = import_fs11.default.openSync(dest, "r");
     try {
-      import_fs9.default.readSync(fd, head, 0, 5, 0);
+      import_fs11.default.readSync(fd, head, 0, 5, 0);
     } finally {
-      import_fs9.default.closeSync(fd);
+      import_fs11.default.closeSync(fd);
     }
     if (head.toString("utf8", 0, 4) !== "%PDF") {
       try {
-        import_fs9.default.unlinkSync(dest);
+        import_fs11.default.unlinkSync(dest);
       } catch {
       }
       throw new Error(`File ghi ra kh\xF4ng c\xF2n l\xE0 PDF h\u1EE3p l\u1EC7: ${safe}`);
@@ -97605,19 +98469,19 @@ function getLabelMem(filename) {
       return { buf: ram.buf, contentType: ram.contentType || "application/pdf" };
     }
   }
-  const filePath = import_path8.default.join(LABELS_DIR, safe);
+  const filePath = import_path10.default.join(LABELS_DIR, safe);
   try {
-    if (!import_fs9.default.existsSync(filePath)) return null;
-    const st = import_fs9.default.statSync(filePath);
+    if (!import_fs11.default.existsSync(filePath)) return null;
+    const st = import_fs11.default.statSync(filePath);
     if (!st.isFile() || st.size <= 0) {
       console.warn(`[Labels] B\u1ECF qua file r\u1ED7ng tr\xEAn \u0111\u0129a: ${filePath}`);
       try {
-        import_fs9.default.unlinkSync(filePath);
+        import_fs11.default.unlinkSync(filePath);
       } catch {
       }
       return null;
     }
-    const buf = import_fs9.default.readFileSync(filePath);
+    const buf = import_fs11.default.readFileSync(filePath);
     if (!buf.length || !isPdfBuffer(buf)) return null;
     labelMemCache.set(safe, {
       buf,
@@ -97644,9 +98508,9 @@ function assertLabelFileReady(filename) {
   if (!isPdfBuffer(hit.buf)) {
     throw new Error(`File v\u1EADn \u0111\u01A1n kh\xF4ng ph\u1EA3i PDF h\u1EE3p l\u1EC7: ${safe}`);
   }
-  const diskPath = import_path8.default.join(LABELS_DIR, safe);
-  if (import_fs9.default.existsSync(diskPath)) {
-    const st = import_fs9.default.statSync(diskPath);
+  const diskPath = import_path10.default.join(LABELS_DIR, safe);
+  if (import_fs11.default.existsSync(diskPath)) {
+    const st = import_fs11.default.statSync(diskPath);
     if (st.size <= 0) {
       throw new Error(`File v\u1EADn \u0111\u01A1n tr\xEAn \u0111\u0129a r\u1ED7ng (0 bytes): ${diskPath}`);
     }
@@ -97665,13 +98529,13 @@ function cleanupExpiredLabelFiles() {
   try {
     ensureLabelsDir();
     const cutoff = now - LABEL_DISK_TTL_MS;
-    for (const name of import_fs9.default.readdirSync(LABELS_DIR)) {
+    for (const name of import_fs11.default.readdirSync(LABELS_DIR)) {
       if (!WAYBILL_FILE_RE.test(name)) continue;
-      const full = import_path8.default.join(LABELS_DIR, name);
+      const full = import_path10.default.join(LABELS_DIR, name);
       try {
-        const st = import_fs9.default.statSync(full);
+        const st = import_fs11.default.statSync(full);
         if (st.size <= 0 || st.mtimeMs < cutoff) {
-          import_fs9.default.unlinkSync(full);
+          import_fs11.default.unlinkSync(full);
           labelMemCache.delete(name);
           deleted += 1;
         }
@@ -97693,11 +98557,11 @@ function wipeLegacyPublicPrints() {
   let deleted = 0;
   for (const dir of [LEGACY_PUBLIC_PRINTS_DIR, WAYBILLS_DIR]) {
     try {
-      if (!import_fs9.default.existsSync(dir)) continue;
-      for (const name of import_fs9.default.readdirSync(dir)) {
+      if (!import_fs11.default.existsSync(dir)) continue;
+      for (const name of import_fs11.default.readdirSync(dir)) {
         if (!WAYBILL_FILE_RE.test(name)) continue;
         try {
-          import_fs9.default.unlinkSync(import_path8.default.join(dir, name));
+          import_fs11.default.unlinkSync(import_path10.default.join(dir, name));
           deleted += 1;
         } catch {
         }
@@ -97787,7 +98651,7 @@ function serveLabelPdfFromMem(filename, res) {
     return "invalid";
   }
 }
-var ENV_PATH = import_path8.default.join(APP_ROOT4, ".env");
+var ENV_PATH2 = import_path10.default.join(APP_ROOT6, ".env");
 var APP_BASE_URL2 = resolveAppBaseUrl();
 function resolveLabelsPublicBaseUrl() {
   const explicit = String(
@@ -97808,7 +98672,7 @@ function absoluteLabelUrl(relativePath) {
   } else {
     const p = relativePath.startsWith("/") ? relativePath : `/${relativePath}`;
     const fnMatch = p.match(/\/(?:api\/(?:public\/)?labels|labels|prints)\/([^/?#]+)$/i);
-    fn = decodeURIComponent(fnMatch?.[1] || import_path8.default.basename(p));
+    fn = decodeURIComponent(fnMatch?.[1] || import_path10.default.basename(p));
   }
   if (!safeLabelFilename(fn)) return null;
   try {
@@ -97829,25 +98693,6 @@ function resolveShopeeCallbackUrl2() {
 var SHOPEE_CALLBACK_URL2 = resolveShopeeCallbackUrl2();
 var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL2}/api/webhook/shopee`;
 var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
-function updateEnvVar(key, value) {
-  let content = "";
-  if (import_fs9.default.existsSync(ENV_PATH)) {
-    content = import_fs9.default.readFileSync(ENV_PATH, "utf-8");
-  }
-  const regex = new RegExp(`^${key}\\s*=.*$`, "m");
-  const line = `${key}=${value}`;
-  if (regex.test(content)) {
-    content = content.replace(regex, line);
-  } else {
-    content = (content.trimEnd() ? content.trimEnd() + "\n" : "") + line + "\n";
-  }
-  import_fs9.default.writeFileSync(ENV_PATH, content, "utf-8");
-  process.env[key] = value;
-}
-function maskApiKey(key) {
-  if (!key || key.length < 8) return "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
-  return key.slice(0, 4) + "\u2022\u2022\u2022\u2022" + key.slice(-4);
-}
 var SHOPEE_ENV = (process.env.SHOPEE_ENV || "live").toLowerCase();
 var SHOPEE_HOST = "https://partner.shopeemobile.com";
 if (SHOPEE_ENV !== "live") {
@@ -97863,19 +98708,19 @@ if (!isShopeeConfigValid()) {
     `[Shopee API] \u26A0\uFE0F SHOPEE_PARTNER_ID (hi\u1EC7n t\u1EA1i: "${SHOPEE_PARTNER_ID || "(r\u1ED7ng)"}") ho\u1EB7c SHOPEE_PARTNER_KEY ch\u01B0a \u0111\u01B0\u1EE3c \u0111i\u1EC1n \u0111\xFAng trong .env. Partner_id ph\u1EA3i l\xE0 m\u1ED9t s\u1ED1 nguy\xEAn (v\xED d\u1EE5: 2001234), l\u1EA5y t\u1EEB App PRODUCTION (Live) tr\xEAn open.shopee.com, KH\xD4NG d\xF9ng Sandbox. M\u1ECDi l\u1EA7n g\u1ECDi API Shopee s\u1EBD b\u1EC3 tr\u1EA3 l\u1ED7i error_param cho \u0111\u1EBFn khi s\u1EEDa \u0111\xFAng gi\xE1 tr\u1ECB n\xE0y.`
   );
 }
-var SHOPEE_TOKENS_PATH = import_path8.default.resolve(APP_ROOT4, "data", "shopee_tokens.json");
-var SHOPEE_OAUTH_LAST_PATH = import_path8.default.resolve(APP_ROOT4, "data", "shopee_oauth_last.json");
+var SHOPEE_TOKENS_PATH = import_path10.default.resolve(APP_ROOT6, "data", "shopee_tokens.json");
+var SHOPEE_OAUTH_LAST_PATH = import_path10.default.resolve(APP_ROOT6, "data", "shopee_oauth_last.json");
 function ensureDataDirs() {
-  const dataDir = import_path8.default.join(APP_ROOT4, "data");
-  import_fs9.default.mkdirSync(dataDir, { recursive: true });
-  if (!import_fs9.default.existsSync(SHOPEE_TOKENS_PATH)) {
-    import_fs9.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
+  const dataDir = import_path10.default.join(APP_ROOT6, "data");
+  import_fs11.default.mkdirSync(dataDir, { recursive: true });
+  if (!import_fs11.default.existsSync(SHOPEE_TOKENS_PATH)) {
+    import_fs11.default.writeFileSync(SHOPEE_TOKENS_PATH, "{}\n", "utf-8");
   }
 }
 function saveOAuthAudit(entry) {
   try {
     ensureDataDirs();
-    import_fs9.default.writeFileSync(
+    import_fs11.default.writeFileSync(
       SHOPEE_OAUTH_LAST_PATH,
       JSON.stringify({ ...entry, at: (/* @__PURE__ */ new Date()).toISOString() }, null, 2),
       "utf-8"
@@ -97886,8 +98731,8 @@ function saveOAuthAudit(entry) {
 }
 function loadLastOAuthAudit() {
   try {
-    if (!import_fs9.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
-    return JSON.parse(import_fs9.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
+    if (!import_fs11.default.existsSync(SHOPEE_OAUTH_LAST_PATH)) return null;
+    return JSON.parse(import_fs11.default.readFileSync(SHOPEE_OAUTH_LAST_PATH, "utf-8"));
   } catch {
     return null;
   }
@@ -97903,12 +98748,12 @@ try {
   console.error("[Boot] Failed to normalize shopee_tokens.json:", error);
 }
 console.log(
-  `[Boot] APP_ROOT=${APP_ROOT4} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs9.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
+  `[Boot] APP_ROOT=${APP_ROOT6} | cwd=${process.cwd()} | SHOPEE_TOKENS_PATH=${SHOPEE_TOKENS_PATH} | exists=${import_fs11.default.existsSync(SHOPEE_TOKENS_PATH)} | SHOPEE_CALLBACK_URL=${SHOPEE_CALLBACK_URL2}`
 );
 function loadShopeeTokens() {
   try {
-    if (!import_fs9.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
-    const raw = import_fs9.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
+    if (!import_fs11.default.existsSync(SHOPEE_TOKENS_PATH)) return {};
+    const raw = import_fs11.default.readFileSync(SHOPEE_TOKENS_PATH, "utf-8");
     if (!raw.trim()) return {};
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
@@ -97942,7 +98787,7 @@ function maskTokenStoreForLog(tokens) {
   return masked;
 }
 function saveShopeeTokens(tokensToWrite) {
-  const absPath = import_path8.default.resolve(SHOPEE_TOKENS_PATH);
+  const absPath = import_path10.default.resolve(SHOPEE_TOKENS_PATH);
   try {
     ensureDataDirs();
     const onDisk = normalizeTokenStore(loadShopeeTokens());
@@ -97974,15 +98819,15 @@ function saveShopeeTokens(tokensToWrite) {
       JSON.stringify({
         absPath,
         SHOPEE_TOKENS_PATH,
-        APP_ROOT: APP_ROOT4,
+        APP_ROOT: APP_ROOT6,
         keys: keysAfter,
         byteLength: Buffer.byteLength(payload, "utf-8")
       })
     );
-    import_fs9.default.writeFileSync(absPath, payload, "utf-8");
+    import_fs11.default.writeFileSync(absPath, payload, "utf-8");
     console.log(
       "[Shopee Tokens] fs.writeFileSync \u2014 GHI TH\xC0NH C\xD4NG",
-      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs9.default.statSync(absPath).size })
+      JSON.stringify({ absPath, keys: keysAfter, fileSize: import_fs11.default.statSync(absPath).size })
     );
     return true;
   } catch (error) {
@@ -98212,7 +99057,7 @@ async function completeShopeeOAuthFlow(code, params) {
     shopee_shop_id_list: tokenResult.shop_id_list || [],
     file_keys_after: Object.keys(loadShopeeTokens()),
     tokens_path: SHOPEE_TOKENS_PATH,
-    app_root: APP_ROOT4
+    app_root: APP_ROOT6
   });
   return {
     success: Boolean(tokenResult.access_token) && verified && !shopMismatch,
@@ -98834,7 +99679,7 @@ function resolveCreateRequireFilename() {
     if (metaUrl && metaUrl !== "undefined") return metaUrl;
   } catch {
   }
-  return import_path8.default.resolve(process.cwd(), "server.cjs");
+  return import_path10.default.resolve(process.cwd(), "server.cjs");
 }
 var shopeeHttpDispatcher = void 0;
 try {
@@ -100598,9 +101443,9 @@ async function resolvePublishImageBuffer(src) {
   }
   const framedMatch = raw.match(/\/api\/framed-images\/([^/?#]+)/i);
   if (framedMatch) {
-    const filePath = import_path8.default.join(APP_ROOT4, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
-    if (import_fs9.default.existsSync(filePath)) {
-      return { buf: import_fs9.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
+    const filePath = import_path10.default.join(APP_ROOT6, "data", "framed_images", `${decodeURIComponent(framedMatch[1])}.jpg`);
+    if (import_fs11.default.existsSync(filePath)) {
+      return { buf: import_fs11.default.readFileSync(filePath), filename: "item.jpg", mime: "image/jpeg" };
     }
   }
   let fetchUrl = raw;
@@ -101564,7 +102409,7 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
 var shopeeSyncQueue = [];
 var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
 var shopeeSyncQueueRunning = false;
-var SCAN_BG_QUEUE_PATH = import_path8.default.join(APP_ROOT4, "data", "scan-bg-queue.json");
+var SCAN_BG_QUEUE_PATH = import_path10.default.join(APP_ROOT6, "data", "scan-bg-queue.json");
 var scanBgJobs = [];
 var scanBgJobKeys = /* @__PURE__ */ new Set();
 var scanBgWorkerRunning = false;
@@ -101574,8 +102419,8 @@ function normalizeScanBgKey(code) {
 }
 function loadScanBgQueueFromDisk() {
   try {
-    if (!import_fs9.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
-    const raw = JSON.parse(import_fs9.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
+    if (!import_fs11.default.existsSync(SCAN_BG_QUEUE_PATH)) return;
+    const raw = JSON.parse(import_fs11.default.readFileSync(SCAN_BG_QUEUE_PATH, "utf-8"));
     const list = Array.isArray(raw?.jobs) ? raw.jobs : Array.isArray(raw) ? raw : [];
     for (const j of list) {
       const code = String(j?.code || "").trim();
@@ -101618,11 +102463,11 @@ function persistScanBgQueueSoon() {
   scanBgPersistTimer = setTimeout(() => {
     scanBgPersistTimer = null;
     try {
-      import_fs9.default.mkdirSync(import_path8.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
+      import_fs11.default.mkdirSync(import_path10.default.dirname(SCAN_BG_QUEUE_PATH), { recursive: true });
       const pending = scanBgJobs.filter((j) => j.status === "pending" || j.status === "running");
       const recent = scanBgJobs.filter((j) => j.status !== "pending" && j.status !== "running").slice(-80);
       const jobs = [...pending, ...recent];
-      import_fs9.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
+      import_fs11.default.writeFileSync(SCAN_BG_QUEUE_PATH, JSON.stringify({ jobs }, null, 0), "utf-8");
     } catch (err) {
       console.warn("[Scan BG] persist failed:", err?.message || err);
     }
@@ -104003,7 +104848,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
   const sources = [];
   let carrier;
   let internal;
-  const consider = (key, value, path10) => {
+  const consider = (key, value, path12) => {
     if (!SHOPEE_TRACKING_KEY_RE.test(key) && key.toLowerCase() !== "tracking_number" && key.toLowerCase() !== "tracking_no") {
       if (!/tracking/i.test(key) || /time|date|url|info|hint|status|type/i.test(key)) return;
     }
@@ -104013,7 +104858,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (isShopeeInternalTrackingCode2(s2)) {
       if (!internal) {
         internal = s2;
-        sources.push(`${path10}=${s2}(internal)`);
+        sources.push(`${path12}=${s2}(internal)`);
       }
       return;
     }
@@ -104021,20 +104866,20 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
     if (!carrier || isCarrierTrackingCode(s2)) {
       if (!carrier || isCarrierTrackingCode(s2) && !isCarrierTrackingCode(carrier)) {
         carrier = s2;
-        sources.push(`${path10}=${s2}`);
+        sources.push(`${path12}=${s2}`);
       } else if (!carrier) {
         carrier = s2;
-        sources.push(`${path10}=${s2}`);
+        sources.push(`${path12}=${s2}`);
       }
     } else if (!carrier && s2.length >= 6) {
       carrier = s2;
-      sources.push(`${path10}=${s2}`);
+      sources.push(`${path12}=${s2}`);
     }
   };
-  const walk = (node, path10, depth) => {
+  const walk = (node, path12, depth) => {
     if (node == null || depth > 8) return;
     if (Array.isArray(node)) {
-      node.forEach((item, i2) => walk(item, `${path10}[${i2}]`, depth + 1));
+      node.forEach((item, i2) => walk(item, `${path12}[${i2}]`, depth + 1));
       return;
     }
     if (typeof node !== "object") return;
@@ -104043,7 +104888,7 @@ function deepExtractShopeeTrackingCodes(payload, opts) {
       if (nodeSn && nodeSn !== wantSn) return;
     }
     for (const [k, v] of Object.entries(node)) {
-      const childPath = path10 ? `${path10}.${k}` : k;
+      const childPath = path12 ? `${path12}.${k}` : k;
       if (v != null && (typeof v === "string" || typeof v === "number")) {
         consider(k, v, childPath);
       } else {
@@ -105001,7 +105846,7 @@ function agentDebugLogAc966f(payload) {
     timestamp: Date.now()
   };
   try {
-    import_fs9.default.appendFileSync(import_path8.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
+    import_fs11.default.appendFileSync(import_path10.default.join(process.cwd(), "debug-ac966f.log"), JSON.stringify(body) + "\n");
   } catch {
   }
   fetch("http://127.0.0.1:7554/ingest/bc993c61-1b63-4f42-8c97-c42133e3ec03", {
@@ -105953,7 +106798,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
   }
   return { added, updated };
 }
-var ORDERS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "orders.json");
+var ORDERS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "orders.json");
 var orderLookupIndex = null;
 function normalizeOrderIndexKey(raw) {
   return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
@@ -105997,11 +106842,11 @@ function withLocalDbTimeout(promise, timeoutMs, label) {
 }
 function loadOrders() {
   try {
-    if (!import_fs9.default.existsSync(ORDERS_DB_PATH)) {
+    if (!import_fs11.default.existsSync(ORDERS_DB_PATH)) {
       orderLookupIndex = rebuildOrderLookupIndex([]);
       return [];
     }
-    const raw = import_fs9.default.readFileSync(ORDERS_DB_PATH, "utf-8");
+    const raw = import_fs11.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
     const orders = Array.isArray(parsed) ? parsed.map(repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
@@ -106136,8 +106981,8 @@ function saveOrders(orders) {
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
       );
     }
-    import_fs9.default.mkdirSync(import_path8.default.dirname(ORDERS_DB_PATH), { recursive: true });
-    import_fs9.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
+    import_fs11.default.mkdirSync(import_path10.default.dirname(ORDERS_DB_PATH), { recursive: true });
+    import_fs11.default.writeFileSync(ORDERS_DB_PATH, JSON.stringify(sanitized), "utf-8");
     orderLookupIndex = rebuildOrderLookupIndex(sanitized);
     console.log(
       `[Orders DB] WRITE OK \u2014 path=${ORDERS_DB_PATH} count=${sanitized.length}`
@@ -106155,12 +107000,12 @@ function saveOrders(orders) {
 function isHandedOverGarbageOrder(order) {
   return matchesHandedOverCarrierTabOrder(order);
 }
-var HANDED_OVER_CLEANUP_MARKER = import_path8.default.join(APP_ROOT4, "data", ".cleanup-handed-over-v2");
+var HANDED_OVER_CLEANUP_MARKER = import_path10.default.join(APP_ROOT6, "data", ".cleanup-handed-over-v2");
 async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
   const orders = loadOrders();
   const garbage = orders.filter(isHandedOverGarbageOrder);
-  if (!force && garbage.length === 0 && import_fs9.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
+  if (!force && garbage.length === 0 && import_fs11.default.existsSync(HANDED_OVER_CLEANUP_MARKER)) {
     return { removed: 0, sns: [], skipped: true };
   }
   const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
@@ -106190,10 +107035,10 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   const stillLeft = loadOrders().filter(isHandedOverGarbageOrder).length;
   if (stillLeft === 0) {
     try {
-      const v1 = import_path8.default.join(APP_ROOT4, "data", ".cleanup-handed-over-v1");
-      if (import_fs9.default.existsSync(v1)) import_fs9.default.unlinkSync(v1);
-      import_fs9.default.mkdirSync(import_path8.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
-      import_fs9.default.writeFileSync(
+      const v1 = import_path10.default.join(APP_ROOT6, "data", ".cleanup-handed-over-v1");
+      if (import_fs11.default.existsSync(v1)) import_fs11.default.unlinkSync(v1);
+      import_fs11.default.mkdirSync(import_path10.default.dirname(HANDED_OVER_CLEANUP_MARKER), { recursive: true });
+      import_fs11.default.writeFileSync(
         HANDED_OVER_CLEANUP_MARKER,
         JSON.stringify(
           {
@@ -106218,93 +107063,9 @@ async function purgeHandedOverGarbageOrdersOnce(opts) {
   );
   return { removed, sns: allSns, skipped: false };
 }
-function toDateKey(d) {
-  const y = d.getFullYear();
-  const m2 = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m2}-${day}`;
-}
-function getDashboardDateRange(rangeKey) {
-  const now = /* @__PURE__ */ new Date();
-  const y = now.getFullYear();
-  const m2 = now.getMonth();
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
-  switch (rangeKey) {
-    case "this_month":
-      return { start: new Date(y, m2, 1), end, key: "this_month", label: "Th\xE1ng n\xE0y" };
-    case "last_month":
-      return {
-        start: new Date(y, m2 - 1, 1),
-        end: new Date(y, m2, 0, 23, 59, 59, 999),
-        key: "last_month",
-        label: "Th\xE1ng tr\u01B0\u1EDBc"
-      };
-    case "this_quarter": {
-      const qStart = Math.floor(m2 / 3) * 3;
-      return { start: new Date(y, qStart, 1), end, key: "this_quarter", label: "Qu\xFD n\xE0y" };
-    }
-    case "this_year":
-      return { start: new Date(y, 0, 1), end, key: "this_year", label: "N\u0103m nay" };
-    case "today": {
-      const start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-      return { start, end, key: "today", label: "H\xF4m nay" };
-    }
-    case "last_7_days":
-    default: {
-      const start = new Date(now);
-      start.setHours(0, 0, 0, 0);
-      start.setDate(start.getDate() - 6);
-      return { start, end, key: "last_7_days", label: "7 ng\xE0y qua" };
-    }
-  }
-}
-function buildDashboardChart(dailyRevenue, range) {
-  const buckets = /* @__PURE__ */ new Map();
-  if (range.key === "this_year" || range.key === "this_quarter") {
-    const cursor = new Date(range.start.getFullYear(), range.start.getMonth(), 1);
-    const endMonth = new Date(range.end.getFullYear(), range.end.getMonth(), 1);
-    while (cursor <= endMonth) {
-      const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`;
-      buckets.set(key, {
-        key,
-        label: `T${cursor.getMonth() + 1}`,
-        amount: 0
-      });
-      cursor.setMonth(cursor.getMonth() + 1);
-    }
-  } else {
-    const cursor = new Date(range.start);
-    cursor.setHours(0, 0, 0, 0);
-    const endDay = new Date(range.end);
-    endDay.setHours(0, 0, 0, 0);
-    while (cursor <= endDay) {
-      const key = toDateKey(cursor);
-      buckets.set(key, {
-        key,
-        label: `${String(cursor.getDate()).padStart(2, "0")}/${String(cursor.getMonth() + 1).padStart(2, "0")}`,
-        amount: 0
-      });
-      cursor.setDate(cursor.getDate() + 1);
-    }
-  }
-  for (const row of dailyRevenue) {
-    const dateStr = String(row?.date || "");
-    let bucketKey = dateStr;
-    if (range.key === "this_year" || range.key === "this_quarter") {
-      bucketKey = dateStr.slice(0, 7);
-    }
-    const bucket = buckets.get(bucketKey);
-    if (bucket) {
-      bucket.amount += Number(row?.amount) || 0;
-    }
-  }
-  return Array.from(buckets.values());
-}
-var PRODUCTS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "products.json");
-var LOCAL_INVENTORY_CACHE_PATH = import_path8.default.join(APP_ROOT4, "data", "local_inventory.json");
-var SQLITE_LEGACY_PATH = import_path8.default.join(APP_ROOT4, "database.sqlite");
+var PRODUCTS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "products.json");
+var LOCAL_INVENTORY_CACHE_PATH = import_path10.default.join(APP_ROOT6, "data", "local_inventory.json");
+var SQLITE_LEGACY_PATH = import_path10.default.join(APP_ROOT6, "database.sqlite");
 function getProductChildrenList(p) {
   try {
     if (Array.isArray(p?.children) && p.children.length > 0) return p.children;
@@ -106400,18 +107161,18 @@ async function saveProducts(products) {
     throw error instanceof Error ? error : new Error(String(error));
   }
 }
-var INVENTORY_AUDIT_PATH = import_path8.default.join(APP_ROOT4, "data", "inventory_audit.json");
-var INVENTORY_BACKUP_DIR = import_path8.default.join(APP_ROOT4, "data", "inventory_backups");
+var INVENTORY_AUDIT_PATH = import_path10.default.join(APP_ROOT6, "data", "inventory_audit.json");
+var INVENTORY_BACKUP_DIR = import_path10.default.join(APP_ROOT6, "data", "inventory_backups");
 function writeInventoryAudit(event, details = {}) {
   try {
     ensureDataDirs();
     let existing = [];
-    if (import_fs9.default.existsSync(INVENTORY_AUDIT_PATH)) {
-      const parsed = JSON.parse(import_fs9.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
+    if (import_fs11.default.existsSync(INVENTORY_AUDIT_PATH)) {
+      const parsed = JSON.parse(import_fs11.default.readFileSync(INVENTORY_AUDIT_PATH, "utf-8"));
       if (Array.isArray(parsed)) existing = parsed;
     }
     const entry = { id: `inventory-audit-${Date.now()}`, event, at: (/* @__PURE__ */ new Date()).toISOString(), ...details };
-    import_fs9.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
+    import_fs11.default.writeFileSync(INVENTORY_AUDIT_PATH, JSON.stringify([...existing.slice(-199), entry], null, 2), "utf-8");
     console.warn(`[Inventory Audit] ${event}`, details);
   } catch (error) {
     console.error("[Inventory Audit] Kh\xF4ng th\u1EC3 ghi audit:", error);
@@ -106419,36 +107180,36 @@ function writeInventoryAudit(event, details = {}) {
 }
 async function backupInventoryBeforeDestructiveAction(reason) {
   ensureDataDirs();
-  import_fs9.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
+  import_fs11.default.mkdirSync(INVENTORY_BACKUP_DIR, { recursive: true });
   const [products, listings] = await Promise.all([loadProducts(), readChannelListingsDb()]);
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const fileName = `inventory-${reason}-${stamp}.json`;
-  import_fs9.default.writeFileSync(
-    import_path8.default.join(INVENTORY_BACKUP_DIR, fileName),
+  import_fs11.default.writeFileSync(
+    import_path10.default.join(INVENTORY_BACKUP_DIR, fileName),
     JSON.stringify({ createdAt: (/* @__PURE__ */ new Date()).toISOString(), reason, products, listings }, null, 2),
     "utf-8"
   );
   writeInventoryAudit("backup_created", { reason, fileName, productCount: products.length, listingCount: listings.length });
   return fileName;
 }
-var CHANNEL_LISTINGS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "channel_listings.json");
-var SHOPEE_SYNC_ERRORS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "shopee_sync_errors.json");
+var CHANNEL_LISTINGS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "channel_listings.json");
+var SHOPEE_SYNC_ERRORS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "shopee_sync_errors.json");
 var SHOPEE_SYNC_ERRORS_MAX_ROWS = 500;
 function renameLegacyJsonIfExists(filePath) {
-  if (!import_fs9.default.existsSync(filePath)) return;
+  if (!import_fs11.default.existsSync(filePath)) return;
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
   const dest = `${filePath}.migrated.${stamp}`;
   try {
-    import_fs9.default.renameSync(filePath, dest);
-    console.log(`[Mongo Migrate] Renamed ${import_path8.default.basename(filePath)} \u2192 ${import_path8.default.basename(dest)}`);
+    import_fs11.default.renameSync(filePath, dest);
+    console.log(`[Mongo Migrate] Renamed ${import_path10.default.basename(filePath)} \u2192 ${import_path10.default.basename(dest)}`);
   } catch (err) {
     console.warn(`[Mongo Migrate] Kh\xF4ng rename \u0111\u01B0\u1EE3c ${filePath}:`, err);
   }
 }
 function readLegacyJsonArray(filePath) {
   try {
-    if (!import_fs9.default.existsSync(filePath)) return [];
-    const raw = import_fs9.default.readFileSync(filePath, "utf-8");
+    if (!import_fs11.default.existsSync(filePath)) return [];
+    const raw = import_fs11.default.readFileSync(filePath, "utf-8");
     if (!raw || !raw.trim()) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -106457,26 +107218,26 @@ function readLegacyJsonArray(filePath) {
   }
 }
 function findLatestMigratedJson(baseName) {
-  const dataDir = import_path8.default.join(APP_ROOT4, "data");
-  if (!import_fs9.default.existsSync(dataDir)) return null;
+  const dataDir = import_path10.default.join(APP_ROOT6, "data");
+  if (!import_fs11.default.existsSync(dataDir)) return null;
   const prefix = `${baseName}.migrated.`;
-  const matches = import_fs9.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
+  const matches = import_fs11.default.readdirSync(dataDir).filter((f3) => f3.startsWith(prefix)).sort();
   if (matches.length === 0) return null;
-  return import_path8.default.join(dataDir, matches[matches.length - 1]);
+  return import_path10.default.join(dataDir, matches[matches.length - 1]);
 }
 async function maybeMigrateJsonToMongoOnBoot() {
   if (isProductsDiskMode()) {
     try {
-      const existing = import_fs9.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs9.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
+      const existing = import_fs11.default.existsSync(getProductsDiskPath()) ? JSON.parse(import_fs11.default.readFileSync(getProductsDiskPath(), "utf-8") || "[]") : [];
       if (!Array.isArray(existing) || existing.length === 0) {
-        const dataDir = import_path8.default.join(APP_ROOT4, "data");
-        if (import_fs9.default.existsSync(dataDir)) {
-          const migrated = import_fs9.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
+        const dataDir = import_path10.default.join(APP_ROOT6, "data");
+        if (import_fs11.default.existsSync(dataDir)) {
+          const migrated = import_fs11.default.readdirSync(dataDir).filter((n) => /^products\.json\.migrated\./i.test(n)).sort();
           const latest = migrated[migrated.length - 1];
           if (latest) {
-            const src = import_path8.default.join(dataDir, latest);
+            const src = import_path10.default.join(dataDir, latest);
             const dest = getProductsDiskPath();
-            import_fs9.default.copyFileSync(src, dest);
+            import_fs11.default.copyFileSync(src, dest);
             console.log(`[Products Disk] Kh\xF4i ph\u1EE5c Kho G\u1ED1c t\u1EEB ${latest} \u2192 products.json`);
           }
         }
@@ -106493,9 +107254,9 @@ async function maybeMigrateJsonToMongoOnBoot() {
   try {
     const productCount = await countProducts();
     const listingCount = await countChannelListings();
-    const legacyProducts = PRODUCTS_DB_PATH && import_fs9.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
-    const legacyListings = import_fs9.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
-    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs9.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
+    const legacyProducts = PRODUCTS_DB_PATH && import_fs11.default.existsSync(PRODUCTS_DB_PATH) ? PRODUCTS_DB_PATH : findLatestMigratedJson("products.json");
+    const legacyListings = import_fs11.default.existsSync(CHANNEL_LISTINGS_DB_PATH) ? CHANNEL_LISTINGS_DB_PATH : findLatestMigratedJson("channel_listings.json");
+    const hasLegacy = !!legacyProducts || !!legacyListings || import_fs11.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) || !!findLatestMigratedJson("local_inventory.json");
     if (!hasLegacy) {
       console.log(
         `[MongoDB] Ready \u2014 products=${productCount}, listings=${listingCount} @ ${getMongoUriMasked()} (ready=${isMongoReady()})`
@@ -106514,10 +107275,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     console.log("[Mongo Migrate] Mongo tr\u1ED1ng + c\xF2n JSON legacy \u2014 b\u1EAFt \u0111\u1EA7u migrate...");
     let products = legacyProducts ? readLegacyJsonArray(legacyProducts) : [];
     let listings = legacyListings ? readLegacyJsonArray(legacyListings) : [];
-    const invPath = import_fs9.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
+    const invPath = import_fs11.default.existsSync(LOCAL_INVENTORY_CACHE_PATH) ? LOCAL_INVENTORY_CACHE_PATH : findLatestMigratedJson("local_inventory.json");
     if (invPath) {
       try {
-        const inv = JSON.parse(import_fs9.default.readFileSync(invPath, "utf-8"));
+        const inv = JSON.parse(import_fs11.default.readFileSync(invPath, "utf-8"));
         const invProducts = Array.isArray(inv?.products) ? inv.products : [];
         const invListings = Array.isArray(inv?.listings) ? inv.listings : [];
         const byId = /* @__PURE__ */ new Map();
@@ -106543,10 +107304,10 @@ async function maybeMigrateJsonToMongoOnBoot() {
     renameLegacyJsonIfExists(PRODUCTS_DB_PATH);
     renameLegacyJsonIfExists(CHANNEL_LISTINGS_DB_PATH);
     renameLegacyJsonIfExists(LOCAL_INVENTORY_CACHE_PATH);
-    if (import_fs9.default.existsSync(SQLITE_LEGACY_PATH)) {
+    if (import_fs11.default.existsSync(SQLITE_LEGACY_PATH)) {
       try {
         const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-        import_fs9.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
+        import_fs11.default.renameSync(SQLITE_LEGACY_PATH, `${SQLITE_LEGACY_PATH}.legacy.${stamp}`);
         console.log("[Mongo Migrate] Archived database.sqlite (kh\xF4ng c\xF2n d\xF9ng)");
       } catch {
       }
@@ -106557,8 +107318,8 @@ async function maybeMigrateJsonToMongoOnBoot() {
 }
 function readShopeeSyncErrorsDb() {
   try {
-    if (!import_fs9.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
-    const raw = import_fs9.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
+    if (!import_fs11.default.existsSync(SHOPEE_SYNC_ERRORS_DB_PATH)) return [];
+    const raw = import_fs11.default.readFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, "utf-8");
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch (err) {
@@ -106582,8 +107343,8 @@ async function appendShopeeSyncErrorToDb(entry) {
   try {
     const prev = readShopeeSyncErrorsDb();
     const next = [row, ...prev].slice(0, SHOPEE_SYNC_ERRORS_MAX_ROWS);
-    import_fs9.default.mkdirSync(import_path8.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
-    import_fs9.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
+    import_fs11.default.mkdirSync(import_path10.default.dirname(SHOPEE_SYNC_ERRORS_DB_PATH), { recursive: true });
+    import_fs11.default.writeFileSync(SHOPEE_SYNC_ERRORS_DB_PATH, JSON.stringify(next, null, 2), "utf-8");
   } catch (err) {
     console.error("[Shopee Sync Errors DB] Failed to write:", err);
   }
@@ -107261,7 +108022,7 @@ async function bulkAutoLinkAllPending(opts) {
     masterProductCount
   };
 }
-var CHANNEL_SETTINGS_PATH = import_path8.default.join(APP_ROOT4, "data", "channel_settings.json");
+var CHANNEL_SETTINGS_PATH = import_path10.default.join(APP_ROOT6, "data", "channel_settings.json");
 var DEFAULT_CHANNEL_SETTINGS = {
   shopeeConnected: false,
   shopeeShopId: "",
@@ -107412,8 +108173,8 @@ function dedupeShopsByPlatformId(shops) {
 }
 function loadChannelSettings() {
   try {
-    if (!import_fs9.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
-    const raw = import_fs9.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
+    if (!import_fs11.default.existsSync(CHANNEL_SETTINGS_PATH)) return { ...DEFAULT_CHANNEL_SETTINGS, shops: [] };
+    const raw = import_fs11.default.readFileSync(CHANNEL_SETTINGS_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : {};
     const rawShops = Array.isArray(parsed?.shops) ? parsed.shops : [];
     const shops = upsertShopsInChannelSettings([], rawShops);
@@ -107435,7 +108196,7 @@ function saveChannelSettings(settings) {
     const incoming = Array.isArray(settings?.shops) ? settings.shops : [];
     const shops = upsertShopsInChannelSettings(onDisk.shops || [], incoming);
     const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...settings, shops };
-    import_fs9.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
+    import_fs11.default.writeFileSync(CHANNEL_SETTINGS_PATH, JSON.stringify(payload, null, 2), "utf-8");
     console.log(
       `[Channel Settings] UPSERT ${shops.length} shop(s) \u2192 ${CHANNEL_SETTINGS_PATH}`,
       shops.map((s2) => s2.shopId).join(", ")
@@ -107480,26 +108241,6 @@ function syncOAuthShopsToChannelSettings(savedShopIds, opts) {
     }
   } catch (error) {
     logOAuthSaveError("syncOAuthShopsToChannelSettings", error);
-  }
-}
-var IMPORTS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "imports.json");
-function loadImports() {
-  try {
-    if (!import_fs9.default.existsSync(IMPORTS_DB_PATH)) return [];
-    const raw = import_fs9.default.readFileSync(IMPORTS_DB_PATH, "utf-8");
-    const parsed = raw.trim() ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error("[Imports DB] Failed to read imports.json:", error);
-    return [];
-  }
-}
-function saveImports(imports) {
-  try {
-    import_fs9.default.mkdirSync(import_path8.default.dirname(IMPORTS_DB_PATH), { recursive: true });
-    import_fs9.default.writeFileSync(IMPORTS_DB_PATH, JSON.stringify(imports, null, 2), "utf-8");
-  } catch (error) {
-    console.error("[Imports DB] Failed to write imports.json:", error);
   }
 }
 function applyBulkProductUpdate(product, opts) {
@@ -108349,7 +109090,7 @@ async function processShopeeWebhookPayload(body) {
   }
 }
 async function startServer() {
-  const app = (0, import_express8.default)();
+  const app = (0, import_express12.default)();
   const PORT = process.env.PORT || 3e3;
   const appWithRouteMethods = app;
   for (const method of ["get", "post", "put", "patch", "delete"]) {
@@ -108379,8 +109120,8 @@ async function startServer() {
   }
   app.use(cors_default);
   app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload));
-  app.use(import_express8.default.json({ limit: "50mb" }));
-  app.use(import_express8.default.urlencoded({ limit: "50mb", extended: true }));
+  app.use(import_express12.default.json({ limit: "50mb" }));
+  app.use(import_express12.default.urlencoded({ limit: "50mb", extended: true }));
   try {
     ensureLabelsDir();
   } catch (err) {
@@ -108403,7 +109144,7 @@ async function startServer() {
     listShopeeOAuthShopIds,
     loadLastOAuthAudit,
     tokensPath: SHOPEE_TOKENS_PATH,
-    appRoot: APP_ROOT4,
+    appRoot: APP_ROOT6,
     appBaseUrl: APP_BASE_URL2,
     shopeeCallbackUrl: SHOPEE_CALLBACK_URL2,
     shopeeWebhookUrl: SHOPEE_WEBHOOK_URL2
@@ -108773,7 +109514,7 @@ async function startServer() {
         query: req.query || {},
         SHOPEE_TOKENS_PATH,
         SHOPEE_CALLBACK_URL: SHOPEE_CALLBACK_URL2,
-        APP_ROOT: APP_ROOT4,
+        APP_ROOT: APP_ROOT6,
         cwd: process.cwd()
       })
     );
@@ -108829,7 +109570,7 @@ async function startServer() {
         success: false,
         error: error?.message || "unknown_error",
         tokens_path: SHOPEE_TOKENS_PATH,
-        app_root: APP_ROOT4
+        app_root: APP_ROOT6
       });
       const failResult = {
         success: false,
@@ -109680,250 +110421,31 @@ async function startServer() {
   app.delete("/api/suppliers/:id", authMiddleware, deleteSupplier);
   app.post("/api/suppliers/clear-all", authMiddleware, clearAllSuppliers);
   app.use("/api/suppliers", authMiddleware, suppliersRoutes);
-  app.get("/api/imports", authMiddleware, async (_req, res) => {
-    return res.json(loadImports());
+  initImportsController({
+    loadProductById,
+    loadProducts,
+    applyImportStockAndPriceToMainWarehouse
   });
-  app.get("/api/imports/history/:productId", authMiddleware, async (req, res) => {
-    try {
-      const productId = String(req.params.productId || "").trim();
-      if (!productId) return res.status(400).json({ success: false, error: "missing_product_id" });
-      const product = await loadProductById(productId);
-      const sku = String(product?.sku || "").trim();
-      const imports = loadImports();
-      const history = imports.filter(
-        (imp) => String(imp.productId) === productId || sku && String(imp.productSku || "") === sku
-      ).sort((a, b) => {
-        const tb = new Date(b.date || b.createdAt || 0).getTime();
-        const ta = new Date(a.date || a.createdAt || 0).getTime();
-        if (tb !== ta) return tb - ta;
-        return String(b.id || "").localeCompare(String(a.id || ""));
-      });
-      return res.json({
-        success: true,
-        productId,
-        productSku: sku || null,
-        history,
-        total: history.length
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return res.status(500).json({ success: false, error: message });
-    }
-  });
-  app.get("/api/imports/product-context/:productId", authMiddleware, async (req, res) => {
-    const productId = String(req.params.productId);
-    const product = await loadProductById(productId) || (await loadProducts()).find((p) => p.id === productId);
-    if (!product) {
-      return res.status(404).json({ error: "product_not_found" });
-    }
-    const imports = loadImports();
-    const sku = String(product.sku || "");
-    const history = imports.filter(
-      (imp) => imp.productId === productId || sku && imp.productSku === sku
-    );
-    const latest = history.length > 0 ? [...history].sort((a, b) => {
-      const tb = new Date(b.date || 0).getTime();
-      const ta = new Date(a.date || 0).getTime();
-      if (tb !== ta) return tb - ta;
-      return String(b.id || "").localeCompare(String(a.id || ""));
-    })[0] : null;
-    const stock = Math.max(0, Math.round(Number(product.stock) || 0));
-    const oldPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
-    console.log("[Imports] product-context:", { productId, sku, stock, oldPrice, title: product.title });
-    return res.json({
-      productId,
-      stock,
-      importPrice: oldPrice,
-      oldPrice,
-      sku,
-      title: product.title || "",
-      lastSupplierName: latest?.supplierName || null,
-      lastSupplierId: latest?.supplierId || null,
-      lastImportDate: latest?.date || null
-    });
-  });
-  app.post("/api/imports", authMiddleware, async (req, res) => {
-    const body = req.body || {};
-    if (!body.supplierId || !body.productId || !body.quantity || body.newImportPrice == null) {
-      return res.status(400).json({ success: false, error: "import_fields_required" });
-    }
-    const productId = String(body.productId).trim();
-    const productSku = String(body.productSku || body.sku || "").trim();
-    const qty = Math.max(1, Math.round(Number(body.quantity)));
-    const unitPrice = Math.max(0, Math.round(Number(body.newImportPrice)));
-    const importCost = Math.max(0, Math.round(Number(body.importCost) || 0));
-    const computedTotal = qty * unitPrice + importCost;
-    const warehouseId = "KhoGoc";
-    try {
-      const applied = await applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice, {
-        skuHint: productSku
-      });
-      const updatedProduct = applied.product;
-      const oldImportPrice = Math.max(0, Math.round(Number(body.oldImportPrice) || 0)) || applied.oldImportPrice;
-      const imports = loadImports();
-      const entry = {
-        id: body.id || `imp-${Date.now()}`,
-        supplierId: String(body.supplierId),
-        supplierName: String(body.supplierName || ""),
-        date: body.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
-        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-        productId: String(updatedProduct?.id || productId),
-        productTitle: String(body.productTitle || updatedProduct?.title || ""),
-        productSku: String(productSku || updatedProduct?.sku || ""),
-        quantity: qty,
-        oldImportPrice,
-        newImportPrice: unitPrice,
-        importCost,
-        totalAmount: Math.max(0, Math.round(Number(body.totalAmount) || computedTotal)),
-        paidAmount: Math.max(0, Math.round(Number(body.paidAmount) || 0)),
-        status: body.status || "unpaid",
-        notes: body.notes || void 0,
-        warehouseId,
-        priceChangePercent: oldImportPrice > 0 ? Math.round((unitPrice - oldImportPrice) / oldImportPrice * 1e3) / 10 : null
-      };
-      try {
-        imports.unshift(entry);
-        saveImports(imports);
-      } catch (logErr) {
-        console.error("[Imports] Ghi log th\u1EA5t b\u1EA1i \u2014 rollback t\u1ED3n/gi\xE1 Kho G\u1ED1c:", logErr);
-        await applyImportStockAndPriceToMainWarehouse(productId, -qty, applied.oldImportPrice, {
-          skuHint: productSku
-        }).catch((rb) => console.error("[Imports] Rollback Kho G\u1ED1c failed:", rb));
-        throw logErr;
-      }
-      console.log("[Imports] PO submitted \u2192 KhoGoc", {
-        productId: entry.productId,
-        sku: entry.productSku,
-        qty,
-        oldStock: applied.oldStock,
-        newStock: applied.newStock,
-        oldImportPrice,
-        newImportPrice: unitPrice,
-        target: applied.target
-      });
-      return res.status(201).json({
-        success: true,
-        import: entry,
-        imports,
-        product: updatedProduct,
-        warehouseId,
-        warehouse: "KhoGoc",
-        collection: "products",
-        stockBefore: applied.oldStock,
-        stockAfter: applied.newStock,
-        importPriceBefore: oldImportPrice,
-        importPriceAfter: unitPrice
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error("[Imports] POST /api/imports failed:", err);
-      return res.status(500).json({ success: false, error: message || "import_failed" });
-    }
-  });
-  app.post("/api/imports/clear-all", authMiddleware, async (_req, res) => {
-    saveImports([]);
-    console.log("[Imports] \u0110\xE3 x\xF3a s\u1EA1ch to\xE0n b\u1ED9 l\u1ECBch s\u1EED nh\u1EADp h\xE0ng.");
-    return res.json({ success: true, cleared: true, imports: [] });
-  });
+  app.get("/api/imports", authMiddleware, listImports);
+  app.get("/api/imports/history/:productId", authMiddleware, getImportHistory);
+  app.get("/api/imports/product-context/:productId", authMiddleware, getImportProductContext);
+  app.post("/api/imports", authMiddleware, createImport);
+  app.post("/api/imports/clear-all", authMiddleware, clearAllImports);
+  app.use("/api/imports", authMiddleware, importsRoutes);
   app.get("/api/expenses", authMiddleware, listExpenses);
   app.post("/api/expenses", authMiddleware, createExpense);
   app.delete("/api/expenses/:id", authMiddleware, deleteExpense);
   app.post("/api/expenses/clear-all", authMiddleware, clearAllExpenses);
   app.use("/api/expenses", authMiddleware, expensesRoutes);
-  app.get("/api/dashboard", authMiddleware, async (req, res) => {
-    try {
-      res.setHeader("Content-Type", "application/json; charset=utf-8");
-      const dateRange = String(req.query.date_range || "last_7_days");
-      const range = getDashboardDateRange(dateRange);
-      const startKey = toDateKey(range.start);
-      const endKey = toDateKey(range.end);
-      if (!isMongoReady()) {
-        return res.status(200).json({
-          dateRange: range.key,
-          dateRangeLabel: range.label,
-          startDate: startKey,
-          endDate: endKey,
-          meta: { totalOrdersInDb: 0, dashboardOrders: 0, ordersInRange: 0 },
-          kpi: { revenue: 0, newOrders: 0, returns: 0, cancelled: 0 },
-          pendingOrders: {
-            pendingApproval: 0,
-            pendingPayment: 0,
-            pendingPack: 0,
-            pendingPickup: 0,
-            shipping: 0,
-            returnPending: 0
-          },
-          chart: [],
-          topProducts: [],
-          inventory: { lowStockThreshold: 5, lowStockProducts: [] },
-          message: "mongodb_not_ready"
-        });
-      }
-      const LOW_STOCK_THRESHOLD = 5;
-      const [stats, lowStockRows] = await Promise.all([
-        withLocalDbTimeout(getDashboardStatsFromStore(startKey, endKey), 8e3, "dashboard_stats"),
-        withLocalDbTimeout(
-          getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
-          8e3,
-          "dashboard_low_stock"
-        )
-      ]);
-      const wantedProductIds = stats.topProducts.map((p) => p.productId).filter(Boolean);
-      const topProductDocs = wantedProductIds.length ? await withLocalDbTimeout(
-        loadProductsByIdsFromStore(wantedProductIds, []),
-        8e3,
-        "dashboard_top_products"
-      ) : [];
-      const topProducts = stats.topProducts.map((entry, idx) => {
-        const prod = topProductDocs.find((p) => p.id === entry.productId);
-        return {
-          rank: idx + 1,
-          productId: entry.productId,
-          title: prod?.title || entry.title || entry.productId,
-          sku: prod?.sku || "\u2014",
-          imageUrl: prod?.avatarUrl || prod?.imageUrl || entry.image || null,
-          quantitySold: entry.quantitySold
-        };
-      });
-      const lowStockProducts = lowStockRows.map((p) => ({
-        id: p.id,
-        title: p.title || p.sku || p.id,
-        sku: p.sku,
-        stock: p.stock
-      }));
-      const chart = buildDashboardChart(stats.dailyRevenue, range);
-      return res.json({
-        dateRange: range.key,
-        dateRangeLabel: range.label,
-        startDate: startKey,
-        endDate: endKey,
-        meta: {
-          totalOrdersInDb: stats.totalOrdersInDb,
-          dashboardOrders: stats.dashboardOrdersCount,
-          ordersInRange: stats.ordersInRangeCount
-        },
-        kpi: {
-          revenue: stats.revenue,
-          newOrders: stats.newOrders,
-          returns: stats.returns,
-          cancelled: stats.cancelled
-        },
-        pendingOrders: stats.pendingOrders,
-        chart,
-        topProducts,
-        inventory: {
-          lowStockThreshold: LOW_STOCK_THRESHOLD,
-          lowStockProducts
-        }
-      });
-    } catch (error) {
-      console.error("[Dashboard API] Error:", error);
-      return res.status(500).json({
-        error: "dashboard_query_failed",
-        message: error?.message || "Kh\xF4ng th\u1EC3 t\u1EA3i d\u1EEF li\u1EC7u dashboard."
-      });
-    }
+  initDashboardController({
+    isMongoReady,
+    withLocalDbTimeout,
+    getDashboardStatsFromStore,
+    getLowStockProductsFromStore,
+    loadProductsByIdsFromStore
   });
+  app.get("/api/dashboard", authMiddleware, getDashboard);
+  app.use("/api/dashboard", authMiddleware, dashboardRoutes);
   let ordersRefreshInFlight = null;
   let ordersRefreshCache = null;
   async function readOrdersForRefresh(limit) {
@@ -110230,8 +110752,8 @@ async function startServer() {
     try {
       for (const name of [".cleanup-handed-over-v1", ".cleanup-handed-over-v2"]) {
         try {
-          const p = import_path8.default.join(APP_ROOT4, "data", name);
-          if (import_fs9.default.existsSync(p)) import_fs9.default.unlinkSync(p);
+          const p = import_path10.default.join(APP_ROOT6, "data", name);
+          if (import_fs11.default.existsSync(p)) import_fs11.default.unlinkSync(p);
         } catch {
         }
       }
@@ -112340,11 +112862,11 @@ async function startServer() {
     if (!sn) return null;
     try {
       ensureLabelsDir();
-      const matches = import_fs9.default.readdirSync(LABELS_DIR).filter(
+      const matches = import_fs11.default.readdirSync(LABELS_DIR).filter(
         (name) => /\.pdf$/i.test(name) && (name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`))
       ).map((name) => {
-        const full = import_path8.default.join(LABELS_DIR, name);
-        return { name, mtime: import_fs9.default.statSync(full).mtimeMs, size: import_fs9.default.statSync(full).size };
+        const full = import_path10.default.join(LABELS_DIR, name);
+        return { name, mtime: import_fs11.default.statSync(full).mtimeMs, size: import_fs11.default.statSync(full).size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
       const newest = matches[0]?.name;
       if (!newest) return null;
@@ -112808,7 +113330,7 @@ async function startServer() {
     const savedFromDownload = "savedFiles" in downloadResult && Array.isArray(downloadResult.savedFiles) ? downloadResult.savedFiles.filter((n) => safeLabelFilename(n) && hasLabelMem(n)) : [];
     let filename = savedFromDownload[savedFromDownload.length - 1] || (ext === "pdf" ? buildMergedLabelFilename(orderSns) : `${orderSns[0] || `shop-${shopId}`}.${ext}`);
     console.log(`[Shopee Print] B\u1EAFt \u0111\u1EA7u in cho \u0111\u01A1n ${orderSns.join(",")}`);
-    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path8.default.join(LABELS_DIR, filename)}`);
+    console.log(`[Shopee Print] \u0110\u01B0\u1EDDng d\u1EABn l\u01B0u file d\u1EF1 ki\u1EBFn: ${import_path10.default.join(LABELS_DIR, filename)}`);
     if (!hasLabelMem(filename)) {
       filename = saveLabelFile(downloadResult.buffer, filename, downloadResult.contentType);
     }
@@ -112938,7 +113460,7 @@ async function startServer() {
     } else if (savedFilenames.length > 0) {
       const relative = await mergeLabelFilesToSingleUrl(savedFilenames, printedOrderSns);
       if (relative) {
-        const fn = import_path8.default.basename(relative);
+        const fn = import_path10.default.basename(relative);
         assertLabelFileReady(fn);
         primaryUrl = absoluteLabelUrl(relative);
         pdfFilename = fn;
@@ -113674,128 +114196,6 @@ async function startServer() {
     }
     return res.json(job);
   });
-  let ai = null;
-  if (process.env.GEMINI_API_KEY) {
-    ai = new GoogleGenAI2({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build"
-        }
-      }
-    });
-  } else {
-    console.warn("Warning: GEMINI_API_KEY is not configured in .env");
-  }
-  const initGeminiClient = (apiKey) => {
-    return new GoogleGenAI2({
-      apiKey,
-      httpOptions: {
-        headers: { "User-Agent": "aistudio-build" }
-      }
-    });
-  };
-  app.get("/api/settings/channels", authMiddleware, async (_req, res) => {
-    try {
-      const settings = loadChannelSettings();
-      return res.json({
-        success: true,
-        settings,
-        path: CHANNEL_SETTINGS_PATH,
-        shopCount: Array.isArray(settings.shops) ? settings.shops.length : 0
-      });
-    } catch (error) {
-      logOAuthSaveError("GET /api/settings/channels", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "load_failed",
-        message: "Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c c\u1EA5u h\xECnh gian h\xE0ng"
-      });
-    }
-  });
-  app.put("/api/settings/channels", authMiddleware, async (req, res) => {
-    try {
-      const incoming = req.body?.settings;
-      if (!incoming || typeof incoming !== "object") {
-        return res.status(400).json({
-          success: false,
-          error: "invalid_settings",
-          message: "Thi\u1EBFu tr\u01B0\u1EDDng settings trong body"
-        });
-      }
-      const onDisk = loadChannelSettings();
-      const incomingShops = Array.isArray(incoming.shops) ? incoming.shops : [];
-      const mergedShops = upsertShopsInChannelSettings(onDisk.shops || [], incomingShops);
-      if (incomingShops.length > 0 && mergedShops.length === 0) {
-        return res.status(400).json({
-          success: false,
-          error: "invalid_shop_schema",
-          message: "D\u1EEF li\u1EC7u shop thi\u1EBFu tr\u01B0\u1EDDng b\u1EAFt bu\u1ED9c (platform, shopId, shopName, apiKey)"
-        });
-      }
-      const payload = { ...DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...incoming, shops: mergedShops };
-      if (!saveChannelSettings(payload)) {
-        return res.status(500).json({
-          success: false,
-          error: "save_failed",
-          message: "Kh\xF4ng ghi \u0111\u01B0\u1EE3c file channel_settings.json tr\xEAn m\xE1y ch\u1EE7"
-        });
-      }
-      const saved = loadChannelSettings();
-      console.log(
-        "[Channel Settings] PUT OK \u2014 shop_ids:",
-        (saved.shops || []).map((s2) => s2.shopId).join(", ") || "(tr\u1ED1ng)"
-      );
-      return res.json({ success: true, settings: saved, shopCount: saved.shops?.length ?? 0 });
-    } catch (error) {
-      logOAuthSaveError("PUT /api/settings/channels", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "save_failed",
-        message: "L\u01B0u c\u1EA5u h\xECnh gian h\xE0ng th\u1EA5t b\u1EA1i"
-      });
-    }
-  });
-  app.get("/api/settings/gemini-status", authMiddleware, async (_req, res) => {
-    const key = process.env.GEMINI_API_KEY || "";
-    const configured = Boolean(key && key !== "chua_co_key_tam_thoi");
-    return res.json({
-      success: true,
-      configured,
-      maskedKey: configured ? maskApiKey(key) : ""
-    });
-  });
-  app.post("/api/settings/update-gemini-key", authMiddleware, async (req, res) => {
-    try {
-      const { apiKey } = req.body || {};
-      const trimmed = String(apiKey || "").trim();
-      if (!trimmed) {
-        return res.status(400).json({ success: false, error: "Vui l\xF2ng nh\u1EADp Gemini API Key." });
-      }
-      updateEnvVar("GEMINI_API_KEY", trimmed);
-      ai = initGeminiClient(trimmed);
-      return res.json({ success: true, message: "\u0110\xE3 c\u1EADp nh\u1EADt API Key th\xE0nh c\xF4ng!" });
-    } catch (error) {
-      return res.status(500).json({ success: false, error: error.message || "L\u01B0u API Key th\u1EA5t b\u1EA1i" });
-    }
-  });
-  app.post("/api/settings/test-gemini-key", authMiddleware, async (req, res) => {
-    try {
-      const testKey = String(req.body?.apiKey || process.env.GEMINI_API_KEY || "").trim();
-      if (!testKey || testKey === "chua_co_key_tam_thoi") {
-        return res.status(400).json({ success: false, error: "API Key kh\xF4ng h\u1EE3p l\u1EC7" });
-      }
-      const testAi = initGeminiClient(testKey);
-      await testAi.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: "Reply with exactly: OK"
-      });
-      return res.json({ success: true, message: "K\u1EBFt n\u1ED1i th\xE0nh c\xF4ng!" });
-    } catch (error) {
-      console.error("[Gemini test]", error);
-      return res.status(400).json({ success: false, error: "API Key kh\xF4ng h\u1EE3p l\u1EC7" });
-    }
-  });
   async function checkShopConnectionStatus(shop) {
     if (!shop?.connected) {
       return { online: false, message: "\u0110\u1ED3ng b\u1ED9 \u0111ang t\u1EAFt" };
@@ -113872,6 +114272,23 @@ async function startServer() {
     }
     return { online: false, message: "N\u1EC1n t\u1EA3ng kh\xF4ng h\u1ED7 tr\u1EE3" };
   }
+  ensureGeminiClientFromEnv();
+  initSettingsController({
+    CHANNEL_SETTINGS_PATH,
+    DEFAULT_CHANNEL_SETTINGS,
+    loadChannelSettings,
+    saveChannelSettings,
+    upsertShopsInChannelSettings,
+    logOAuthSaveError,
+    checkShopConnectionStatus
+  });
+  app.get("/api/settings/channels", authMiddleware, getChannelSettings);
+  app.put("/api/settings/channels", authMiddleware, putChannelSettings);
+  app.get("/api/settings/gemini-status", authMiddleware, getGeminiStatus);
+  app.post("/api/settings/update-gemini-key", authMiddleware, updateGeminiKey);
+  app.post("/api/settings/test-gemini-key", authMiddleware, testGeminiKey);
+  app.post("/api/settings/shop-connection-status", authMiddleware, postShopConnectionStatus);
+  app.use("/api/settings", authMiddleware, settingsRoutes);
   app.get("/api/shopee/oauth-shops", authMiddleware, async (_req, res) => {
     ensureShopeeLinkedShopTokenKeys();
     const tokens = loadShopeeTokens();
@@ -113893,7 +114310,7 @@ async function startServer() {
       shopIds,
       details,
       tokensPath: SHOPEE_TOKENS_PATH,
-      appRoot: APP_ROOT4,
+      appRoot: APP_ROOT6,
       lastOAuth,
       count: shopIds.length
     });
@@ -113921,135 +114338,11 @@ async function startServer() {
       callback: SHOPEE_CALLBACK_URL2
     });
   });
-  app.post("/api/settings/shop-connection-status", authMiddleware, async (req, res) => {
-    try {
-      const shops = Array.isArray(req.body?.shops) ? req.body.shops : [];
-      const statuses = {};
-      for (const shop of shops) {
-        if (!shop?.id) continue;
-        try {
-          statuses[shop.id] = await Promise.race([
-            checkShopConnectionStatus(shop),
-            new Promise((_, reject) => {
-              setTimeout(() => reject(new Error("Timeout ki\u1EC3m tra k\u1EBFt n\u1ED1i (15s)")), 15e3);
-            })
-          ]);
-        } catch (shopErr) {
-          console.error("[Shop connection-status] shop failed:", shop?.id, shopErr);
-          statuses[shop.id] = {
-            online: false,
-            message: shopErr?.message || "L\u1ED7i ki\u1EC3m tra k\u1EBFt n\u1ED1i gian h\xE0ng"
-          };
-        }
-      }
-      return res.json({ success: true, statuses });
-    } catch (error) {
-      console.error("[Shop connection-status] fatal:", error);
-      return res.status(500).json({
-        success: false,
-        error: error?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i th\u1EA5t b\u1EA1i",
-        message: error?.message || "Ki\u1EC3m tra k\u1EBFt n\u1ED1i th\u1EA5t b\u1EA1i"
-      });
-    }
-  });
-  app.post("/api/gemini/optimize", authMiddleware, async (req, res) => {
-    try {
-      const { action, text, context } = req.body;
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return res.status(503).json({
-          error: "Ch\u01B0a c\u1EA5u h\xECnh API Key c\u1EE7a Gemini AI. Vui l\xF2ng c\xE0i \u0111\u1EB7t trong m\u1EE5c Settings ho\u1EB7c Secrets."
-        });
-      }
-      if (!ai) {
-        ai = new GoogleGenAI2({
-          apiKey,
-          httpOptions: {
-            headers: {
-              "User-Agent": "aistudio-build"
-            }
-          }
-        });
-      }
-      let prompt = "";
-      if (action === "optimize-title") {
-        prompt = `B\u1EA1n l\xE0 m\u1ED9t chuy\xEAn gia t\u1ED1i \u01B0u h\xF3a SEO tr\xEAn Shopee v\xE0 TikTok Shop t\u1EA1i Vi\u1EC7t Nam.
-H\xE3y vi\u1EBFt l\u1EA1i ti\xEAu \u0111\u1EC1 s\u1EA3n ph\u1EA9m sau \u0111\xE2y \u0111\u1EC3 thu h\xFAt kh\xE1ch h\xE0ng, k\xEDch th\xEDch click, t\u0103ng t\u1EF7 l\u1EC7 chuy\u1EC3n \u0111\u1ED5i v\xE0 ch\u1EE9a c\xE1c t\u1EEB kh\xF3a t\xECm ki\u1EBFm ph\u1ED5 bi\u1EBFn (SEO).
-Ti\xEAu \u0111\u1EC1 g\u1ED1c: "${text}"
-${context ? `Y\xEAu c\u1EA7u th\xEAm: ${context}` : ""}
-
-Quy t\u1EAFc vi\u1EBFt ti\xEAu \u0111\u1EC1:
-- \u0110\u1ED9 d\xE0i t\u1EEB 50-120 k\xFD t\u1EF1.
-- Vi\u1EBFt hoa ch\u1EEF c\xE1i \u0111\u1EA7u c\u1EE7a m\u1ED7i t\u1EEB quan tr\u1ECDng (nh\u01B0 t\xEAn th\u01B0\u01A1ng hi\u1EC7u, t\xEDnh n\u0103ng ch\xEDnh).
-- Ch\u1EE9a th\u01B0\u01A1ng hi\u1EC7u, ch\u1EA5t li\u1EC7u, dung t\xEDch/k\xEDch th\u01B0\u1EDBc, c\xF4ng d\u1EE5ng n\u1ED5i b\u1EADt.
-- KH\xD4NG d\xF9ng k\xFD t\u1EF1 \u0111\u1EB7c bi\u1EC7t g\xE2y l\u1ED7i t\xECm ki\u1EBFm.
-- Ch\u1EC9 tr\u1EA3 v\u1EC1 danh s\xE1ch 3 ph\u01B0\u01A1ng \xE1n ti\xEAu \u0111\u1EC1 t\u1ED1i \u01B0u nh\u1EA5t d\u01B0\u1EDBi d\u1EA1ng danh s\xE1ch, m\u1ED7i ph\u01B0\u01A1ng \xE1n tr\xEAn 1 d\xF2ng. Kh\xF4ng gi\u1EA3i th\xEDch th\xEAm.`;
-      } else if (action === "generate-description") {
-        prompt = `B\u1EA1n l\xE0 m\u1ED9t chuy\xEAn gia Copywriter vi\u1EBFt b\xE0i m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m b\xE1n h\xE0ng (Product Description) \u0111\u1EC9nh cao tr\xEAn s\xE0n th\u01B0\u01A1ng m\u1EA1i \u0111i\u1EC7n t\u1EED Shopee v\xE0 TikTok Shop Vi\u1EC7t Nam.
-H\xE3y vi\u1EBFt m\u1ED9t b\xE0i m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m chi ti\u1EBFt, chuy\xEAn nghi\u1EC7p, thu h\xFAt ng\u01B0\u1EDDi mua d\u1EF1a tr\xEAn th\xF4ng tin s\u1EA3n ph\u1EA9m sau \u0111\xE2y.
-T\xEAn s\u1EA3n ph\u1EA9m: "${text}"
-${context ? `Th\xF4ng tin b\u1ED5 sung / Gi\xE1 c\u1EA3 / T\xEDnh n\u0103ng: ${context}` : ""}
-
-C\u1EA5u tr\xFAc b\xE0i vi\u1EBFt m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m c\u1EA7n c\xF3:
-1. Slogan thu h\xFAt & Gi\u1EDBi thi\u1EC7u ng\u1EAFn v\u1EC1 s\u1EA3n ph\u1EA9m.
-2. C\xE1c \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EADt nh\u1EA5t (g\u1EA1ch \u0111\u1EA7u d\xF2ng d\u1EC5 \u0111\u1ECDc).
-3. Th\xF4ng s\u1ED1 k\u1EF9 thu\u1EADt / H\u01B0\u1EDBng d\u1EABn s\u1EED d\u1EE5ng chi ti\u1EBFt.
-4. Cam k\u1EBFt c\u1EE7a Shop (H\xE0ng ch\xEDnh h\xE3ng, b\u1EA3o h\xE0nh, \u0111\u1ED5i tr\u1EA3 1-1 trong 7 ng\xE0y).
-5. Hashtag li\xEAn quan chu\u1EA9n SEO (8-12 hashtags \u1EDF cu\u1ED1i b\xE0i, v\xED d\u1EE5: #noichien #giadung).
-
-Phong c\xE1ch vi\u1EBFt: Th\xE2n thi\u1EC7n, thuy\u1EBFt ph\u1EE5c, \u0111\xE1ng tin c\u1EADy. \u0110\u1ECBnh d\u1EA1ng Markdown \u0111\u1EB9p m\u1EAFt, ph\xE2n c\u1EA5p r\xF5 r\xE0ng. H\xE3y ch\u1EC9 tr\u1EA3 v\u1EC1 b\xE0i vi\u1EBFt m\xF4 t\u1EA3 b\u1EB1ng Markdown. Kh\xF4ng ch\xE0o h\u1ECFi hay gi\u1EA3i th\xEDch th\xEAm.`;
-      } else if (action === "suggest-prices") {
-        const importP = typeof context === "object" ? context.importPrice : 0;
-        const sellP = typeof context === "object" ? context.sellingPrice : 0;
-        prompt = `B\u1EA1n l\xE0 chuy\xEAn gia c\u1ED1 v\u1EA5n t\xE0i ch\xEDnh v\xE0 \u0111\u1ECBnh gi\xE1 s\u1EA3n ph\u1EA9m E-commerce tr\xEAn Shopee & TikTok Shop.
-D\u1EF1a tr\xEAn th\xF4ng tin s\u1EA3n ph\u1EA9m n\xE0y:
-T\xEAn s\u1EA3n ph\u1EA9m: "${text}"
-Gi\xE1 nh\u1EADp g\u1ED1c: ${importP.toLocaleString("vi-VN")} VN\u0110.
-Gi\xE1 b\xE1n d\u1EF1 ki\u1EBFn hi\u1EC7n t\u1EA1i: ${sellP.toLocaleString("vi-VN")} VN\u0110.
-
-H\xE3y t\xEDnh to\xE1n v\xE0 ph\xE2n t\xEDch chi ti\u1EBFt b\u1EB1ng ti\u1EBFng Vi\u1EC7t:
-1. T\u1EF7 su\u1EA5t l\u1EE3i nhu\u1EADn g\u1ED9p (Gross Profit Margin %) c\u1EE7a gi\xE1 b\xE1n d\u1EF1 ki\u1EBFn hi\u1EC7n t\u1EA1i.
-2. \u0110\u1EC1 xu\u1EA5t 3 m\u1EE9c gi\xE1 b\xE1n t\u1ED1i \u01B0u (Gi\xE1 th\xE2m nh\u1EADp th\u1ECB tr\u01B0\u1EDDng, Gi\xE1 t\u1ED1i \u0111a h\xF3a l\u1EE3i nhu\u1EADn, Gi\xE1 khuy\u1EBFn m\xE3i Flash Sale) k\xE8m ph\xE2n t\xEDch l\u1EE3i nhu\u1EADn th\u1EF1c t\u1EBF (\u0111\xE3 tr\u1EEB kho\u1EA3ng 10-12% ph\xED s\xE0n Shopee/TikTok th\xF4ng th\u01B0\u1EDDng bao g\u1ED3m ph\xED thanh to\xE1n, ph\xED c\u1ED1 \u0111\u1ECBnh, ph\xED Freeship Xtra).
-3. Ph\xE2n t\xEDch t\xEDnh c\u1EA1nh tranh c\u1EE7a gi\xE1 nh\u1EADp v\xE0 \u0111\u1EC1 xu\u1EA5t chi\u1EBFn l\u01B0\u1EE3c t\u1ED1i \u01B0u chi ph\xED hi\u1EC7u qu\u1EA3.
-
-H\xE3y tr\u1EA3 v\u1EC1 k\u1EBFt qu\u1EA3 chi ti\u1EBFt b\u1EB1ng ti\u1EBFng Vi\u1EC7t, vi\u1EBFt ng\u1EAFn g\u1ECDn d\u01B0\u1EDBi d\u1EA1ng Markdown, s\u1EED d\u1EE5ng b\u1EA3ng \u0111\u1EC3 so s\xE1nh r\xF5 r\xE0ng c\xE1c m\u1EE9c gi\xE1 \u0111\u1EC1 xu\u1EA5t v\xE0 l\u1EE3i nhu\u1EADn th\u1EF1c nh\u1EADn.`;
-      } else if (action === "bulk-tag") {
-        prompt = `B\u1EA1n l\xE0 chuy\xEAn gia t\u1EEB kh\xF3a SEO cho Shopee v\xE0 TikTok Shop t\u1EA1i Vi\u1EC7t Nam.
-H\xE3y g\u1EE3i \xFD m\u1ED9t danh s\xE1ch g\u1ED3m 10-15 hashtags b\xE1n ch\u1EA1y nh\u1EA5t li\xEAn quan \u0111\u1EBFn s\u1EA3n ph\u1EA9m: "${text}".
-C\xE1c t\u1EEB kh\xF3a ph\u1EA3i ph\xF9 h\u1EE3p v\u1EDBi xu h\u01B0\u1EDBng t\xECm ki\u1EBFm h\xE0ng \u0111\u1EA7u c\u1EE7a ng\u01B0\u1EDDi Vi\u1EC7t.
-Tr\u1EA3 v\u1EC1 k\u1EBFt qu\u1EA3 d\u01B0\u1EDBi d\u1EA1ng: c\xE1c hashtags c\xE1ch nhau b\u1EB1ng d\u1EA5u c\xE1ch, k\xE8m theo 3 g\u1EE3i \xFD c\u1EE5m t\u1EEB kh\xF3a t\xECm ki\u1EBFm ch\xEDnh (search volume cao) \u0111\u1EC3 ch\xE8n v\xE0o ph\u1EA7n \u0111\u1EA7u ti\xEAu \u0111\u1EC1 ho\u1EB7c m\xF4 t\u1EA3. Tr\u1EA3 v\u1EC1 d\u01B0\u1EDBi d\u1EA1ng v\u0103n b\u1EA3n Markdown ng\u1EAFn g\u1ECDn.`;
-      } else if (action === "avoid-duplication-title") {
-        prompt = `B\u1EA1n l\xE0 chuy\xEAn gia t\u01B0 v\u1EA5n SEO v\xE0 b\xE1n h\xE0ng th\u01B0\u01A1ng m\u1EA1i \u0111i\u1EC7n t\u1EED chuy\xEAn nghi\u1EC7p t\u1EA1i Vi\u1EC7t Nam.
-Nhi\u1EC7m v\u1EE5 c\u1EE7a b\u1EA1n l\xE0 vi\u1EBFt l\u1EA1i t\xEAn s\u1EA3n ph\u1EA9m g\u1ED1c th\xE0nh 3 ph\u01B0\u01A1ng \xE1n ti\xEAu \u0111\u1EC1 kh\xE1c nhau ho\xE0n to\xE0n v\u1EC1 m\u1EB7t c\u1EA5u tr\xFAc ch\u1EEF vi\u1EBFt v\xE0 c\u1EE5m t\u1EEB b\u1ED5 tr\u1EE3, nh\u01B0ng v\u1EABn gi\u1EEF nguy\xEAn b\u1EA3n ch\u1EA5t s\u1EA3n ph\u1EA9m \u0111\u1EC3 \u0111\u0103ng l\xEAn nhi\u1EC1u gian h\xE0ng kh\xE1c nhau (Shopee, TikTok, Lazada) m\xE0 KH\xD4NG b\u1ECB qu\xE9t tr\xF9ng l\u1EB7p n\u1ED9i dung (tr\xE1nh thu\u1EADt to\xE1n spam/duplicate listings).
-
-Ti\xEAu \u0111\u1EC1 g\u1ED1c: "${text}"
-${context ? `T\u1EEB kh\xF3a/Y\xEAu c\u1EA7u th\xEAm: ${context}` : ""}
-
-Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
-- Ph\u01B0\u01A1ng \xE1n 1 (S\u1EED d\u1EE5ng c\u1EE5m t\u1EEB gi\u1EADt t\xEDt \u0111\u1EA7u trang, c\u1EA5u tr\xFAc k\u1EF9 thu\u1EADt): V\xED d\u1EE5: "[Ch\xEDnh H\xE3ng] + T\xEAn s\u1EA3n ph\u1EA9m + Th\xF4ng s\u1ED1 k\u1EF9 thu\u1EADt n\u1ED5i b\u1EADt + C\xF4ng d\u1EE5ng ch\xEDnh".
-- Ph\u01B0\u01A1ng \xE1n 2 (\u0110\xE1nh v\xE0o gi\xE1 tr\u1ECB/m\xF4 t\u1EA3 c\u1EA3m x\xFAc ng\u01B0\u1EDDi mua, qu\xE0 t\u1EB7ng k\xE8m): V\xED d\u1EE5: "T\xEAn s\u1EA3n ph\u1EA9m + [T\u1EB7ng K\xE8m Qu\xE0 / Freeship Xtra] + Ph\xE2n lo\u1EA1i/M\xE0u s\u1EAFc hot + B\u1EA3o h\xE0nh 12T".
-- Ph\u01B0\u01A1ng \xE1n 3 (T\u1EADp trung t\u1EEB kh\xF3a SEO ng\xE1ch, ph\xE2n kh\xFAc \u0111\u1ED1i t\u01B0\u1EE3ng): V\xED d\u1EE5: "T\xEAn s\u1EA3n ph\u1EA9m + Gi\u1EA3i ph\xE1p cho... + Ch\u1EA5t li\u1EC7u + [\u1EA2nh Th\u1EADt T\u1EF1 Ch\u1EE5p]".
-- \u0110\u1EA3m b\u1EA3o \u0111\u1ED9 d\xE0i m\u1ED7i ti\xEAu \u0111\u1EC1 t\u1EEB 75 \u0111\u1EBFn 115 k\xFD t\u1EF1.
-- Ch\u1EE9a c\xE1c t\u1EEB kh\xF3a \u0111\u1ED3ng ngh\u0129a phong ph\xFA \u0111\u1EC3 c\xF4ng c\u1EE5 t\xECm ki\u1EBFm kh\xF4ng nh\u1EADn d\u1EA1ng tr\xF9ng l\u1EB7p.
-- Ch\u1EC9 tr\u1EA3 v\u1EC1 danh s\xE1ch \u0111\xFAng 3 d\xF2ng ti\xEAu \u0111\u1EC1 \u0111\xE3 ch\u1EC9nh s\u1EEDa, m\u1ED7i d\xF2ng m\u1ED9t ph\u01B0\u01A1ng \xE1n, kh\xF4ng c\xF3 s\u1ED1 th\u1EE9 t\u1EF1 \u1EDF \u0111\u1EA7u d\xF2ng, kh\xF4ng gi\u1EA3i th\xEDch th\xEAm b\u1EA5t k\u1EF3 \u0111i\u1EC1u g\xEC.`;
-      } else {
-        return res.status(400).json({ error: "H\xE0nh \u0111\u1ED9ng kh\xF4ng h\u1EE3p l\u1EC7." });
-      }
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt
-      });
-      return res.json({ result: response.text });
-    } catch (error) {
-      console.error("Gemini API Error:", error);
-      return res.status(500).json({ error: error.message || "L\u1ED7i x\u1EED l\xFD AI t\u1EEB server" });
-    }
-  });
-  const LISTINGS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "multi_channel_listings.json");
+  const LISTINGS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "multi_channel_listings.json");
   const readListingsDb = () => {
     try {
-      if (!import_fs9.default.existsSync(LISTINGS_DB_PATH)) return [];
-      const raw = import_fs9.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs11.default.existsSync(LISTINGS_DB_PATH)) return [];
+      const raw = import_fs11.default.readFileSync(LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -114057,160 +114350,14 @@ Quy t\u1EAFc t\u1ED1i \u01B0u h\xF3a ch\u1ED1ng tr\xF9ng l\u1EB7p:
     }
   };
   const writeListingsDb = (listings) => {
-    const dir = import_path8.default.dirname(LISTINGS_DB_PATH);
-    if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
-    import_fs9.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
+    const dir = import_path10.default.dirname(LISTINGS_DB_PATH);
+    if (!import_fs11.default.existsSync(dir)) import_fs11.default.mkdirSync(dir, { recursive: true });
+    import_fs11.default.writeFileSync(LISTINGS_DB_PATH, JSON.stringify(listings, null, 2), "utf-8");
   };
-  const markdownToHtml = (text) => {
-    if (!text) return "";
-    if (/<[a-z][\s\S]*>/i.test(text)) return text;
-    const lines = text.split("\n");
-    const parts = [];
-    let inList = false;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        if (inList) {
-          parts.push("</ul>");
-          inList = false;
-        }
-        continue;
-      }
-      if (trimmed.startsWith("### ")) {
-        if (inList) {
-          parts.push("</ul>");
-          inList = false;
-        }
-        parts.push(`<h3>${trimmed.slice(4)}</h3>`);
-      } else if (trimmed.startsWith("## ")) {
-        if (inList) {
-          parts.push("</ul>");
-          inList = false;
-        }
-        parts.push(`<h2>${trimmed.slice(3)}</h2>`);
-      } else if (trimmed.startsWith("# ")) {
-        if (inList) {
-          parts.push("</ul>");
-          inList = false;
-        }
-        parts.push(`<h1>${trimmed.slice(2)}</h1>`);
-      } else if (/^[-*]\s+/.test(trimmed)) {
-        if (!inList) {
-          parts.push("<ul>");
-          inList = true;
-        }
-        parts.push(`<li>${trimmed.replace(/^[-*]\s+/, "")}</li>`);
-      } else {
-        if (inList) {
-          parts.push("</ul>");
-          inList = false;
-        }
-        parts.push(`<p>${trimmed}</p>`);
-      }
-    }
-    if (inList) parts.push("</ul>");
-    return parts.join("");
-  };
-  app.post("/api/ai/parse-address", authMiddleware, async (req, res) => {
-    try {
-      const { address } = req.body || {};
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return res.status(503).json({
-          error: "Ch\u01B0a c\u1EA5u h\xECnh API Key c\u1EE7a Gemini AI."
-        });
-      }
-      if (!address?.trim()) {
-        return res.status(400).json({ error: "Thi\u1EBFu chu\u1ED7i \u0111\u1ECBa ch\u1EC9 c\u1EA7n ph\xE2n t\xEDch." });
-      }
-      if (!ai) {
-        ai = new GoogleGenAI2({
-          apiKey,
-          httpOptions: { headers: { "User-Agent": "aistudio-build" } }
-        });
-      }
-      const prompt = `B\u1EA1n l\xE0 chuy\xEAn gia ph\xE2n t\xEDch \u0111\u1ECBa ch\u1EC9 giao h\xE0ng Vi\u1EC7t Nam.
-Ph\xE2n t\xEDch chu\u1ED7i \u0111\u1ECBa ch\u1EC9 sau v\xE0 tr\u1EA3 v\u1EC1 JSON thu\u1EA7n (KH\xD4NG markdown, KH\xD4NG gi\u1EA3i th\xEDch):
-{"province":"...","district":"...","ward":"...","street":"..."}
-
-Y\xEAu c\u1EA7u:
-- province: t\xEAn T\u1EC9nh/Th\xE0nh ph\u1ED1 chu\u1EA9n (VD: "Th\xE0nh ph\u1ED1 H\u1ED3 Ch\xED Minh", "H\xE0 N\u1ED9i")
-- district: t\xEAn Qu\u1EADn/Huy\u1EC7n/Th\u1ECB x\xE3 chu\u1EA9n (VD: "Qu\u1EADn 1", "Huy\u1EC7n \u0110\xF4ng Anh")
-- ward: t\xEAn Ph\u01B0\u1EDDng/X\xE3/Th\u1ECB tr\u1EA5n chu\u1EA9n
-- street: ph\u1EA7n \u0111\u1ECBa ch\u1EC9 chi ti\u1EBFt c\xF2n l\u1EA1i (s\u1ED1 nh\xE0, t\xEAn \u0111\u01B0\u1EDDng, ng\xF5 ng\xE1ch)
-- Chu\u1EA9n h\xF3a vi\u1EBFt t\u1EAFt: HCM/TPHCM -> Th\xE0nh ph\u1ED1 H\u1ED3 Ch\xED Minh, Q1 -> Qu\u1EADn 1, P. -> Ph\u01B0\u1EDDng
-
-\u0110\u1ECBa ch\u1EC9 c\u1EA7n ph\xE2n t\xEDch: "${String(address).trim()}"`;
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt
-      });
-      const raw = (response.text || "").trim();
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        return res.status(422).json({ error: "AI kh\xF4ng tr\u1EA3 v\u1EC1 JSON h\u1EE3p l\u1EC7." });
-      }
-      const parsed = JSON.parse(jsonMatch[0]);
-      return res.json({
-        success: true,
-        parsed: {
-          province: String(parsed.province || "").trim(),
-          district: String(parsed.district || "").trim(),
-          ward: String(parsed.ward || "").trim(),
-          street: String(parsed.street || "").trim()
-        }
-      });
-    } catch (error) {
-      console.error("[AI parse-address]", error);
-      const msg = String(error?.message || "");
-      const lower2 = msg.toLowerCase();
-      if (lower2.includes("api key") || lower2.includes("api_key") || lower2.includes("invalid api") || lower2.includes("invalid") && lower2.includes("key")) {
-        return res.status(401).json({
-          error: "Gemini API Key kh\xF4ng h\u1EE3p l\u1EC7. V\xE0o C\xE0i \u0111\u1EB7t \u2192 C\u1EA5u h\xECnh AI \u0111\u1EC3 c\u1EADp nh\u1EADt key."
-        });
-      }
-      if (msg.startsWith("{") || msg.includes("GoogleGenerativeAI")) {
-        return res.status(502).json({
-          error: "AI t\u1EA1m th\u1EDDi kh\xF4ng ph\u1EA3n h\u1ED3i. Vui l\xF2ng nh\u1EADp \u0111\u1ECBa ch\u1EC9 th\u1EE7 c\xF4ng ho\u1EB7c th\u1EED l\u1EA1i sau."
-        });
-      }
-      return res.status(500).json({ error: msg || "L\u1ED7i ph\xE2n t\xEDch \u0111\u1ECBa ch\u1EC9 AI" });
-    }
-  });
-  app.post("/api/ai/generate-description", authMiddleware, async (req, res) => {
-    try {
-      const { title, keywords, context } = req.body || {};
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return res.status(503).json({
-          error: "Ch\u01B0a c\u1EA5u h\xECnh API Key c\u1EE7a Gemini AI."
-        });
-      }
-      if (!ai) {
-        ai = new GoogleGenAI2({
-          apiKey,
-          httpOptions: { headers: { "User-Agent": "aistudio-build" } }
-        });
-      }
-      const prompt = `B\u1EA1n l\xE0 chuy\xEAn gia Copywriter vi\u1EBFt m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m b\xE1n h\xE0ng tr\xEAn Shopee, Lazada v\xE0 TikTok Shop Vi\u1EC7t Nam.
-H\xE3y vi\u1EBFt m\xF4 t\u1EA3 s\u1EA3n ph\u1EA9m d\u1EA1ng HTML (d\xF9ng th\u1EBB h2, h3, p, ul, li, strong) \u2014 KH\xD4NG d\xF9ng markdown, KH\xD4NG b\u1ECDc trong \`\`\`html.
-T\xEAn s\u1EA3n ph\u1EA9m: "${title || ""}"
-T\u1EEB kh\xF3a / T\xEDnh n\u0103ng: "${keywords || ""}"
-${context ? `Th\xF4ng tin th\xEAm: ${context}` : ""}
-
-C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EADt (ul/li), th\xF4ng s\u1ED1, cam k\u1EBFt shop, hashtags cu\u1ED1i b\xE0i. Ch\u1EC9 tr\u1EA3 v\u1EC1 HTML thu\u1EA7n.`;
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: prompt
-      });
-      const raw = (response.text || "").trim();
-      const html = markdownToHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, ""));
-      return res.json({ success: true, html });
-    } catch (error) {
-      console.error("[AI generate-description]", error);
-      return res.status(500).json({ error: error.message || "L\u1ED7i t\u1EA1o m\xF4 t\u1EA3 AI" });
-    }
-  });
+  app.post("/api/gemini/optimize", authMiddleware, geminiOptimize);
+  app.post("/api/ai/parse-address", authMiddleware, parseAddress);
+  app.post("/api/ai/generate-description", authMiddleware, generateDescription);
+  app.use("/api", aiRoutes);
   app.get("/api/multi-channel/listing", authMiddleware, async (_req, res) => {
     return res.json({ success: true, listings: readListingsDb() });
   });
@@ -114230,11 +114377,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       return res.status(500).json({ success: false, error: error.message || "L\u01B0u th\u1EA5t b\u1EA1i" });
     }
   });
-  const PRODUCT_LISTINGS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "product_listings.json");
+  const PRODUCT_LISTINGS_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "product_listings.json");
   const readProductListingsDb = () => {
     try {
-      if (!import_fs9.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
-      const raw = import_fs9.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
+      if (!import_fs11.default.existsSync(PRODUCT_LISTINGS_DB_PATH)) return [];
+      const raw = import_fs11.default.readFileSync(PRODUCT_LISTINGS_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
@@ -114242,9 +114389,9 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   };
   const writeProductListingsDb = (rows) => {
-    const dir = import_path8.default.dirname(PRODUCT_LISTINGS_DB_PATH);
-    if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
-    import_fs9.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
+    const dir = import_path10.default.dirname(PRODUCT_LISTINGS_DB_PATH);
+    if (!import_fs11.default.existsSync(dir)) import_fs11.default.mkdirSync(dir, { recursive: true });
+    import_fs11.default.writeFileSync(PRODUCT_LISTINGS_DB_PATH, JSON.stringify(rows, null, 2), "utf-8");
   };
   const computeOverallListingStatus = (statuses) => {
     if (!statuses.length) return "pending";
@@ -114501,12 +114648,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       });
     }
   });
-  const PUBLISH_EDIT_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "publish_edit.json");
-  const FRAMED_IMAGES_DIR = import_path8.default.join(APP_ROOT4, "data", "framed_images");
+  const PUBLISH_EDIT_DB_PATH = import_path10.default.join(APP_ROOT6, "data", "publish_edit.json");
+  const FRAMED_IMAGES_DIR = import_path10.default.join(APP_ROOT6, "data", "framed_images");
   const readPublishEditDb = () => {
     try {
-      if (!import_fs9.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
-      const raw = import_fs9.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
+      if (!import_fs11.default.existsSync(PUBLISH_EDIT_DB_PATH)) return { config: {}, meta: {} };
+      const raw = import_fs11.default.readFileSync(PUBLISH_EDIT_DB_PATH, "utf-8");
       const parsed = JSON.parse(raw);
       return { config: parsed.config || {}, meta: parsed.meta || {} };
     } catch {
@@ -114514,9 +114661,9 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   };
   const writePublishEditDb = (data) => {
-    const dir = import_path8.default.dirname(PUBLISH_EDIT_DB_PATH);
-    if (!import_fs9.default.existsSync(dir)) import_fs9.default.mkdirSync(dir, { recursive: true });
-    import_fs9.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
+    const dir = import_path10.default.dirname(PUBLISH_EDIT_DB_PATH);
+    if (!import_fs11.default.existsSync(dir)) import_fs11.default.mkdirSync(dir, { recursive: true });
+    import_fs11.default.writeFileSync(PUBLISH_EDIT_DB_PATH, JSON.stringify(data, null, 2), "utf-8");
   };
   app.get("/api/publish-edit", authMiddleware, async (_req, res) => {
     const db = readPublishEditDb();
@@ -114557,11 +114704,11 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       if (!productId || !imageDataUrl) {
         return res.status(400).json({ success: false, error: "Thi\u1EBFu productId ho\u1EB7c \u1EA3nh" });
       }
-      if (!import_fs9.default.existsSync(FRAMED_IMAGES_DIR)) import_fs9.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
+      if (!import_fs11.default.existsSync(FRAMED_IMAGES_DIR)) import_fs11.default.mkdirSync(FRAMED_IMAGES_DIR, { recursive: true });
       const base64 = String(imageDataUrl).replace(/^data:image\/\w+;base64,/, "");
       const buf = Buffer.from(base64, "base64");
       const filename = `${productId}.jpg`;
-      import_fs9.default.writeFileSync(import_path8.default.join(FRAMED_IMAGES_DIR, filename), buf);
+      import_fs11.default.writeFileSync(import_path10.default.join(FRAMED_IMAGES_DIR, filename), buf);
       const imageUrl = `/api/framed-images/${productId}`;
       const products = await loadProducts();
       const idx = products.findIndex((p) => p.id === productId);
@@ -114583,12 +114730,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     }
   });
   app.get("/api/framed-images/:productId", (req, res) => {
-    const filePath = import_path8.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
-    if (!import_fs9.default.existsSync(filePath)) {
+    const filePath = import_path10.default.join(FRAMED_IMAGES_DIR, `${req.params.productId}.jpg`);
+    if (!import_fs11.default.existsSync(filePath)) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u1EA3nh" });
     }
     res.setHeader("Content-Type", "image/jpeg");
-    return res.send(import_fs9.default.readFileSync(filePath));
+    return res.send(import_fs11.default.readFileSync(filePath));
   });
   app.use("/api", (req, res) => {
     res.status(404).json({
@@ -114606,8 +114753,8 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");
     }
-    const distPath = import_path8.default.join(APP_ROOT4, "dist");
-    app.use(import_express8.default.static(distPath, {
+    const distPath = import_path10.default.join(APP_ROOT6, "dist");
+    app.use(import_express12.default.static(distPath, {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -114632,12 +114779,12 @@ C\u1EA5u tr\xFAc: slogan ng\u1EAFn, \u0111\u1EB7c \u0111i\u1EC3m n\u1ED5i b\u1EA
       }
       res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.sendFile(import_path8.default.join(distPath, "index.html"));
+      return res.sendFile(import_path10.default.join(distPath, "index.html"));
     });
   }
   async function connectDB2() {
     try {
-      const ok = await initMongo(APP_ROOT4);
+      const ok = await initMongo(APP_ROOT6);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();

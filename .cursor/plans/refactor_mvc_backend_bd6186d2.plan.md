@@ -7,10 +7,10 @@ todos:
     status: pending
   - id: phase-1-independent
     content: "Phase 1: Bóc Auth, Health/Config, Vietnam Address, Suppliers, Expenses"
-    status: pending
+    status: completed
   - id: phase-2-crud
     content: "Phase 2: Bóc Imports, Settings, AI/Gemini, Dashboard"
-    status: pending
+    status: completed
   - id: phase-3-scan-remainder
     content: "Phase 3: Bóc scan-bg + scan-bulk; dọn alias; một model DonHoanHuy"
     status: pending
