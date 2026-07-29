@@ -235,6 +235,9 @@ export interface Order {
   localStatusAt?: string;
   /** Đã đưa ra khỏi tab đối soát hủy/hoàn sau 14 ngày (không xóa đơn) */
   is_local_return_archived?: boolean;
+  /** Bản ghi thuộc collection don_hoan_huy (tab Đã nhận hủy/hoàn) */
+  don_hoan_huy?: boolean;
+  scannedAt?: string;
   handedOverAt?: string;
   handed_over_source?: 'qr_scan' | 'manual_button' | string | null;
   handedOverSource?: 'qr_scan' | 'manual_button' | string | null;
