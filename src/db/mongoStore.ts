@@ -42,6 +42,10 @@ import {
   buildAccentFlexibleRegex,
   normalizeProductSearchText,
 } from "../utils/productSearch.ts";
+import {
+  isCarrierTrackingCode,
+  isShopeeInternalTrackingCode,
+} from "../utils/orderTracking.ts";
 
 export { isProductsDiskMode, getProductsDiskPath, setProductsDiskAppRoot, inheritShopeeLinkFromParent };
 export { getChannelListingsDiskPath };
@@ -3154,6 +3158,31 @@ function donHoanHuyDocToOrder(doc: any): any {
     : Array.isArray(doc?.items)
       ? doc.items
       : [];
+
+  const note = String(doc?.note || base.note || "").trim();
+  const scanCodeRaw = String(
+    doc?.scan_code || base.scan_code || (note.startsWith("scan:") ? note.slice(5) : ""),
+  ).trim();
+  const scanFallback =
+    scanCodeRaw &&
+    scanCodeRaw !== sn &&
+    !isShopeeInternalTrackingCode(scanCodeRaw) &&
+    isCarrierTrackingCode(scanCodeRaw)
+      ? scanCodeRaw
+      : "";
+
+  const tn =
+    String(
+      doc?.tracking_no ||
+        base.tracking_no ||
+        base.trackingNumber ||
+        scanFallback ||
+        "",
+    ).trim() || undefined;
+  const rtn =
+    String(doc?.return_tracking_no || base.return_tracking_no || "").trim() ||
+    (local === "RETURN_RECEIVED" ? scanFallback || undefined : undefined);
+
   return {
     ...base,
     id: base.id || (sn ? `shopee-${sn}` : undefined),
@@ -3162,10 +3191,11 @@ function donHoanHuyDocToOrder(doc: any): any {
     shopName: doc?.shopName || base.shopName,
     status,
     note: doc?.note || "",
+    scan_code: scanCodeRaw || undefined,
     shopee_order_status: doc?.shopee_order_status || base.shopee_order_status,
-    tracking_no: doc?.tracking_no || base.tracking_no || base.trackingNumber,
-    trackingNumber: doc?.tracking_no || base.trackingNumber || base.tracking_no,
-    return_tracking_no: doc?.return_tracking_no || base.return_tracking_no,
+    tracking_no: tn,
+    trackingNumber: tn,
+    return_tracking_no: rtn || undefined,
     items,
     local_status: local,
     localStatus: local,
@@ -3270,42 +3300,67 @@ export async function upsertDonHoanHuy(
   const now = opts?.scannedAt ? new Date(opts.scannedAt) : new Date();
   const scannedAt = Number.isNaN(now.getTime()) ? new Date() : now;
 
-  const tn = String(order?.tracking_no || order?.trackingNumber || "").trim() || null;
-  const rtn = String(order?.return_tracking_no || "").trim() || null;
+  const scanCode = String(opts?.scanCode || "").trim();
+  const usableScan =
+    scanCode &&
+    scanCode !== sn &&
+    !isShopeeInternalTrackingCode(scanCode) &&
+    isCarrierTrackingCode(scanCode)
+      ? scanCode
+      : "";
+
+  let tn = String(order?.tracking_no || order?.trackingNumber || "").trim();
+  if ((!tn || isShopeeInternalTrackingCode(tn)) && usableScan) tn = usableScan;
+  if (tn && isShopeeInternalTrackingCode(tn)) tn = "";
+
+  let rtn = String(order?.return_tracking_no || "").trim();
+  if ((!rtn || isShopeeInternalTrackingCode(rtn)) && type === "return" && usableScan) {
+    rtn = usableScan;
+  }
+  if (rtn && isShopeeInternalTrackingCode(rtn)) rtn = "";
+
   const DON_HOAN_HUY_MAX_MS = 5000;
 
   try {
     // Collection don_hoan_huy — unique theo orderSn, TTL 14d trên scannedAt.
+    // Không $set tracking = null để tránh đè mất mã đã lưu khi re-upsert thiếu TN.
+    const $set: Record<string, unknown> = {
+      orderSn: sn,
+      status: type === "return" ? "return_received" : "cancelled",
+      scannedAt,
+      shopId: order?.shopId != null ? String(order.shopId) : null,
+      type,
+      local_status,
+      shopee_order_status: order?.shopee_order_status
+        ? String(order.shopee_order_status)
+        : null,
+      shopName: order?.shopName != null ? String(order.shopName) : null,
+      source: opts?.source || "qr_scan",
+      data: {
+        id: order?.id || `shopee-${sn}`,
+        orderSn: sn,
+        items: Array.isArray(order?.items) ? order.items.slice(0, 20) : [],
+        date: order?.date || null,
+        totalAmount: order?.totalAmount ?? null,
+        channel: order?.channel || "shopee",
+        shipping_carrier: order?.shipping_carrier || null,
+        packageNumber: order?.packageNumber || null,
+        ...(tn ? { tracking_no: tn, trackingNumber: tn } : {}),
+        ...(rtn ? { return_tracking_no: rtn } : {}),
+        ...(scanCode ? { scan_code: scanCode } : {}),
+      },
+    };
+    if (tn) $set.tracking_no = tn;
+    if (rtn) $set.return_tracking_no = rtn;
+    if (scanCode) {
+      $set.scan_code = scanCode;
+      $set.note = `scan:${scanCode}`;
+    }
+
     const writePromise = DonHoanHuyModel.findOneAndUpdate(
       { orderSn: sn },
       {
-        $set: {
-          orderSn: sn,
-          status: type === "return" ? "return_received" : "cancelled",
-          scannedAt,
-          note: opts?.scanCode ? `scan:${opts.scanCode}` : "",
-          shopId: order?.shopId != null ? String(order.shopId) : null,
-          type,
-          local_status,
-          tracking_no: tn,
-          return_tracking_no: rtn,
-          shopee_order_status: order?.shopee_order_status
-            ? String(order.shopee_order_status)
-            : null,
-          shopName: order?.shopName != null ? String(order.shopName) : null,
-          scan_code: opts?.scanCode ? String(opts.scanCode) : null,
-          source: opts?.source || "qr_scan",
-          data: {
-            id: order?.id || `shopee-${sn}`,
-            orderSn: sn,
-            items: Array.isArray(order?.items) ? order.items.slice(0, 20) : [],
-            date: order?.date || null,
-            totalAmount: order?.totalAmount ?? null,
-            channel: order?.channel || "shopee",
-            shipping_carrier: order?.shipping_carrier || null,
-            packageNumber: order?.packageNumber || null,
-          },
-        },
+        $set,
         $setOnInsert: {
           createdAt: scannedAt,
         },
@@ -3370,16 +3425,33 @@ export async function mergeDonHoanHuyIntoOrders(orders: any[]): Promise<any[]> {
       const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
       if (sn) bySn.set(sn, i);
     });
+    const pickTn = (...vals: unknown[]) => {
+      for (const v of vals) {
+        const t = String(v || "").trim();
+        if (t && !isShopeeInternalTrackingCode(t)) return t;
+      }
+      return "";
+    };
     for (const row of dhh) {
       const sn = String(row.orderSn || "").replace(/^shopee-/i, "").trim();
       if (!sn) continue;
       const idx = bySn.get(sn);
       if (idx !== undefined) {
         const cur = list[idx];
+        const tn = pickTn(
+          row.tracking_no,
+          row.trackingNumber,
+          cur.tracking_no,
+          cur.trackingNumber,
+        );
+        const rtn = pickTn(row.return_tracking_no, cur.return_tracking_no);
         list[idx] = {
           ...cur,
           ...row,
           items: cur.items?.length ? cur.items : row.items,
+          tracking_no: tn || cur.tracking_no || row.tracking_no,
+          trackingNumber: tn || cur.trackingNumber || row.trackingNumber,
+          return_tracking_no: rtn || cur.return_tracking_no || row.return_tracking_no,
           local_status: row.local_status,
           localStatus: row.local_status,
           internal_status: row.local_status,

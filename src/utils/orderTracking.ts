@@ -17,21 +17,30 @@ export function isCarrierTrackingCode(code: unknown): boolean {
 
 /**
  * Mã vận đơn hiển thị — ưu tiên outbound (tracking_no / trackingNumber).
- * return_tracking_no chỉ fallback khi thiếu mã đi (đồng bộ UI ↔ Backend).
+ * return_tracking_no / scan_code / note scan:… chỉ fallback khi thiếu mã đi.
  */
 export function getCarrierWaybillDisplay(
   order: Pick<Order, 'trackingNumber' | 'internalTrackingCode' | 'return_tracking_no'> & {
     tracking_no?: string;
+    scan_code?: string;
+    note?: string;
+    orderSn?: string;
   },
 ): string {
+  const note = String(order.note || '').trim();
+  const fromNote = note.startsWith('scan:') ? note.slice(5).trim() : '';
   const candidates = [
     order.trackingNumber,
     order.tracking_no,
     order.return_tracking_no,
+    order.scan_code,
+    fromNote,
   ];
+  const orderSn = String(order.orderSn || '').trim();
   for (const c of candidates) {
     const tn = String(c || '').trim();
     if (!tn || isShopeeInternalTrackingCode(tn)) continue;
+    if (orderSn && tn === orderSn) continue;
     return tn;
   }
   return '';
