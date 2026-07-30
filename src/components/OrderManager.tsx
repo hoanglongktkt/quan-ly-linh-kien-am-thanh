@@ -2373,9 +2373,31 @@ export default function OrderManager({
     const trackingMissing = failedDocs.some((d) => d.error === 'tracking_number_missing')
       || data.error === 'tracking_number_missing';
 
-    if (Array.isArray(data.orders)) {
-      onUpdateOrders(data.orders);
-      ordersRef.current = data.orders;
+    if (Array.isArray(data.orders) && data.orders.length > 0) {
+      // Backend có thể chỉ trả đơn vừa in (scoped Mongo) — merge vào list hiện có, không thay cả danh sách.
+      const patchByKey = new Map<string, Order>();
+      for (const o of data.orders as Order[]) {
+        if (!o) continue;
+        const id = String(o.id || '').trim();
+        const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
+        if (id) patchByKey.set(id, o);
+        if (sn) {
+          patchByKey.set(sn, o);
+          patchByKey.set(`shopee-${sn}`, o);
+        }
+      }
+      const merged = ordersRef.current.map((cur) => {
+        const id = String(cur.id || '').trim();
+        const sn = String(cur.orderSn || '').replace(/^shopee-/i, '').trim();
+        const patch =
+          (id && patchByKey.get(id)) ||
+          (sn && patchByKey.get(sn)) ||
+          (sn && patchByKey.get(`shopee-${sn}`)) ||
+          null;
+        return patch ? { ...cur, ...patch } : cur;
+      });
+      ordersRef.current = merged;
+      onUpdateOrders(merged, { persist: false });
     }
 
     // Cache label URL lên order state — lần in sau window.open ngay, không fetch lại.
@@ -2505,7 +2527,31 @@ export default function OrderManager({
       if (!ok) {
         closeReservedPrintWindow(reservedWindow);
         if (data.error === 'tracking_number_missing' || status === 409) {
-          if (Array.isArray(data.orders)) onUpdateOrders(data.orders);
+          if (Array.isArray(data.orders) && data.orders.length > 0) {
+            const patchByKey = new Map<string, Order>();
+            for (const o of data.orders as Order[]) {
+              if (!o) continue;
+              const id = String(o.id || '').trim();
+              const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
+              if (id) patchByKey.set(id, o);
+              if (sn) {
+                patchByKey.set(sn, o);
+                patchByKey.set(`shopee-${sn}`, o);
+              }
+            }
+            const merged = ordersRef.current.map((cur) => {
+              const id = String(cur.id || '').trim();
+              const sn = String(cur.orderSn || '').replace(/^shopee-/i, '').trim();
+              const patch =
+                (id && patchByKey.get(id)) ||
+                (sn && patchByKey.get(sn)) ||
+                (sn && patchByKey.get(`shopee-${sn}`)) ||
+                null;
+              return patch ? { ...cur, ...patch } : cur;
+            });
+            ordersRef.current = merged;
+            onUpdateOrders(merged, { persist: false });
+          }
           return { success: false, message: data.message || TRACKING_MISSING_TOAST };
         }
         return {
@@ -3149,8 +3195,25 @@ export default function OrderManager({
     }
     setShowBulkActionsDropdown(false);
 
-    const shopeeAll = selected.filter(o => o.channel === 'shopee' && o.shopId).map(o => o.id);
-    const others = selected.filter(o => !(o.channel === 'shopee' && o.shopId));
+    const resolveShopIdForPrint = (o: Order): string => {
+      const direct = String(o.shopId || '').trim();
+      if (direct) return direct;
+      const name = String(o.shopName || '').trim().toLowerCase();
+      if (!name) return '';
+      const match = shops.find(
+        (s) =>
+          String(s.platform || '').toLowerCase() === 'shopee' &&
+          String(s.shopName || '').trim().toLowerCase() === name,
+      );
+      return String(match?.shopId || '').trim();
+    };
+
+    const shopeeAll = selected
+      .filter((o) => o.channel === 'shopee' && (o.shopId || resolveShopIdForPrint(o)))
+      .map((o) => o.id || `shopee-${o.orderSn}`);
+    const others = selected.filter(
+      (o) => !(o.channel === 'shopee' && (o.shopId || resolveShopIdForPrint(o))),
+    );
 
     setIsBulkPrinting(true);
     if (shopeeAll.length > 0) {

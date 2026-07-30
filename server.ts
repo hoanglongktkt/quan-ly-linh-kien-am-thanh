@@ -8692,7 +8692,14 @@ async function ensureTrackingBeforePrint(
       }
     });
   }
-  if (filled > 0) saveOrders(orders);
+  if (filled > 0) {
+    try {
+      await persistChangedOrdersPatch(targetOrders.filter((o) => hasUsableShopeeTrackingNumber(o)));
+    } catch (err: any) {
+      console.warn("[Shopee Print Gate] persistChangedOrdersPatch:", err?.message || err);
+      // Không gọi saveOrders(orders) khi `orders` là scoped — sẽ ghi đè mất toàn bộ JSON.
+    }
+  }
   return filled;
 }
 
@@ -11917,7 +11924,28 @@ function resolveOrderShopId(order: any): string | undefined {
   if (order?.shopId) return normalizeShopIdKey(order.shopId) || undefined;
   if (order?.channel !== "shopee") return undefined;
   const shopIds = listShopeeOAuthShopIds();
-  return shopIds.length === 1 ? shopIds[0] : undefined;
+  if (shopIds.length === 1) return shopIds[0];
+  // Multi-shop: cố gắng khớp theo tên gian hàng đã cache trên đơn.
+  const name = String(order?.shopName || order?.shop_name || "")
+    .trim()
+    .toLowerCase();
+  if (name) {
+    try {
+      const channelSettings = loadChannelSettings();
+      const match = asShopeeArray(channelSettings?.shops).find((shop: any) => {
+        if (!shop || shop.connected === false) return false;
+        if (String(shop.platform || "").toLowerCase() !== "shopee") return false;
+        return String(shop.shopName || "")
+          .trim()
+          .toLowerCase() === name;
+      });
+      const matchedId = normalizeShopIdKey(match?.shopId);
+      if (matchedId) return matchedId;
+    } catch {
+      /* ignore */
+    }
+  }
+  return undefined;
 }
 
 /** Kiểm tra shopId đơn có khớp token OAuth — không tự sửa/migrate hàng loạt. */
@@ -14724,11 +14752,42 @@ async function startServer() {
       await new Promise((r) => setTimeout(r, waitMs));
     }
 
-    const orders = loadOrders();
-    const idSet = new Set(orderIds.map(String));
-    const targetOrders = orders.filter(
-      (o: any) => idSet.has(String(o.id)) || idSet.has(String(o.orderSn)) || idSet.has(`shopee-${o.orderSn}`),
-    );
+    // Mongo là SSOT (giống ship-order) — KHÔNG dùng orders.json legacy (dễ thiếu shopId / miss đơn sau sync ngầm).
+    const idList = orderIds.map((id: any) => String(id || "").trim()).filter(Boolean);
+    const snList = idList.map((id: string) => id.replace(/^shopee-/i, "").trim()).filter(Boolean);
+    let orders: any[] = [];
+    try {
+      orders = await loadOrdersForShipScoped(idList, snList);
+    } catch (loadErr: any) {
+      console.warn("[Shopee Print] loadOrdersForShipScoped failed:", loadErr?.message || loadErr);
+      orders = [];
+    }
+    if (!orders.length && isMongoReady()) {
+      try {
+        const loaded = await loadOrdersForApi({ readOnly: true });
+        const idSet = new Set(idList);
+        orders = (loaded.orders || []).filter(
+          (o: any) =>
+            idSet.has(String(o.id || "")) ||
+            idSet.has(String(o.orderSn || "")) ||
+            idSet.has(`shopee-${o.orderSn}`),
+        );
+      } catch (apiErr: any) {
+        console.warn("[Shopee Print] loadOrdersForApi fallback failed:", apiErr?.message || apiErr);
+      }
+    }
+    if (!orders.length) {
+      // Legacy fallback cuối cùng — chỉ khi Mongo trống/lỗi.
+      const legacy = loadOrders();
+      const idSet = new Set(idList);
+      orders = legacy.filter(
+        (o: any) =>
+          idSet.has(String(o.id || "")) ||
+          idSet.has(String(o.orderSn || "")) ||
+          idSet.has(`shopee-${o.orderSn}`),
+      );
+    }
+    const targetOrders = orders;
 
     // Self-heal orders that lost shop_id from the old webhook-normalization bug —
     // resolveOrderShopId() falls back to the single connected Shopee shop when
@@ -14751,8 +14810,18 @@ async function startServer() {
     // doesn't, Shopee's own API call below will return its own real error/message,
     // which is already logged and surfaced to the frontend as-is (no more local
     // "orders_not_prepared" pre-check blocking the request beforehand).
+    if (targetOrders.length === 0) {
+      return res.status(400).json({
+        error: "orders_not_found",
+        message: "Không tìm thấy đơn hàng trong database khớp danh sách in.",
+      });
+    }
     if (shopeeCandidates.length === 0) {
-      return res.status(400).json({ error: "Kh\xF4ng c\xF3 \u0111\u01A1n Shopee th\u1EADt n\xE0o (c\xF3 shop_id) trong danh s\xE1ch \u0111\u01B0\u1EE3c ch\u1ECDn \u0111\u1EC3 in v\u1EAD n." });
+      return res.status(400).json({
+        error: "missing_shop_id",
+        message:
+          "Không có đơn Shopee thật nào (có shop_id) trong danh sách được chọn để in vận đơn.",
+      });
     }
 
     // Group by shop_id — create_shipping_document is per-shop.
@@ -14766,7 +14835,12 @@ async function startServer() {
     markPrintPhase("tracking", "Đang kiểm tra mã vận đơn từ Shopee...");
     console.log(`[Shopee Print] Gate: đảm bảo tracking_no cho ${shopeeCandidates.length} đơn trước khi tạo PDF...`);
     await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 2 });
-    saveOrders(orders);
+    // Chỉ patch các đơn đã load (Mongo scoped) — tuyệt đối không saveOrders full JSON.
+    try {
+      await persistChangedOrdersPatch(shopeeCandidates);
+    } catch (persistErr: any) {
+      console.warn("[Shopee Print] persist after tracking gate:", persistErr?.message || persistErr);
+    }
 
     // Refresh groups from mutated candidates
     for (const key of Object.keys(groups)) delete groups[key];
@@ -14973,16 +15047,10 @@ async function startServer() {
               if (!token) continue;
               await enrichShopeeOrderTrackingFromApi(String(o.shopId), token, o, { retries: 4 });
             }
-            const fresh = loadOrders();
-            for (const o of missingTrackingOrders) {
-              const idx = fresh.findIndex((x: any) => x.orderSn === o.orderSn);
-              if (idx >= 0 && hasUsableShopeeTrackingNumber(o)) {
-                fresh[idx].trackingNumber = o.trackingNumber;
-                fresh[idx].tracking_no = o.tracking_no || o.trackingNumber;
-                fresh[idx].internalTrackingCode = o.internalTrackingCode;
-              }
+            const patched = missingTrackingOrders.filter((o) => hasUsableShopeeTrackingNumber(o));
+            if (patched.length > 0) {
+              await persistChangedOrdersPatch(patched);
             }
-            saveOrders(fresh);
           } catch (bgErr) {
             console.warn("[Shopee Print] Background tracking sync failed:", bgErr);
           }
@@ -15069,7 +15137,12 @@ async function startServer() {
         ...(hasTn ? { status: "processed" } : {}),
       };
     });
-    saveOrders(updatedOrders);
+    const printedChanged = updatedOrders.filter((o: any) => printedOrderSns.has(String(o.orderSn)));
+    try {
+      await persistChangedOrdersPatch(printedChanged);
+    } catch (persistErr: any) {
+      console.warn("[Shopee Print] persist printed flags:", persistErr?.message || persistErr);
+    }
     markPrintPhase("done", "PDF vận đơn đã sẵn sàng.");
     printPhaseMs.done = (printPhaseMs.done || 0) + (Date.now() - printPhaseStartedAt);
     console.log(
