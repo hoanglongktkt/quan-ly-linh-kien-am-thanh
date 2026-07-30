@@ -525,8 +525,22 @@ function writeCpanelCrashLogToAppRoot(kind: string, err: unknown): void {
     /* ignore */
   }
 }
-process.on("uncaughtException", (err) => writeCpanelCrashLogToAppRoot("Exception", err));
-process.on("unhandledRejection", (err) => writeCpanelCrashLogToAppRoot("Rejection", err));
+process.on("uncaughtException", (err) => {
+  try {
+    console.error("[Background Sync Error]:", err instanceof Error ? err.message : String(err));
+    writeCpanelCrashLogToAppRoot("Exception", err);
+  } catch {
+    /* never rethrow */
+  }
+});
+process.on("unhandledRejection", (err) => {
+  try {
+    console.error("[Background Sync Error]:", err instanceof Error ? err.message : String(err));
+    writeCpanelCrashLogToAppRoot("Rejection", err);
+  } catch {
+    /* never rethrow */
+  }
+});
 /** Legacy /prints — chỉ dọn file rỗng cũ, KHÔNG còn dùng để lưu/phục vụ PDF. */
 const WAYBILLS_DIR = path.join(APP_ROOT, "storage", "waybills");
 const LEGACY_PUBLIC_PRINTS_DIR = path.join(APP_ROOT, "public", "prints");
