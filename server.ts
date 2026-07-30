@@ -8135,8 +8135,8 @@ async function enrichShopeeOrderTrackingFromApi(
     );
     applyShopeeGetTrackingResponse(order, result);
 
-    // Retry không kèm package_number — một số shop Shopee trả rỗng khi OFG package_number lệch.
-    if (!hasUsableShopeeTrackingNumber(order) && pkgNum) {
+    // Retry không kèm package_number — bỏ qua khi light (print) để tránh +1–2 API/đơn.
+    if (!light && !hasUsableShopeeTrackingNumber(order) && pkgNum) {
       result = await shopeeGetTrackingNumberWithRetry(
         shopId,
         accessToken,
@@ -8148,19 +8148,22 @@ async function enrichShopeeOrderTrackingFromApi(
     }
 
     if (!hasUsableShopeeTrackingNumber(order)) {
-      try {
-        const docInfo = await shopeeGetShippingDocumentDataInfo(
-          shopId,
-          accessToken,
-          order.orderSn,
-          order.packageNumber,
-        );
-        applyDeepShopeeTrackingPayload(order, docInfo, "get_shipping_document_data_info");
-      } catch (docErr: any) {
-        console.warn(
-          `[Shopee Tracking] shipping_document_data_info ${order.orderSn}:`,
-          docErr?.message || docErr,
-        );
+      // light/print: bỏ get_shipping_document_data_info — chỉ cần get_tracking_number.
+      if (!light) {
+        try {
+          const docInfo = await shopeeGetShippingDocumentDataInfo(
+            shopId,
+            accessToken,
+            order.orderSn,
+            order.packageNumber,
+          );
+          applyDeepShopeeTrackingPayload(order, docInfo, "get_shipping_document_data_info");
+        } catch (docErr: any) {
+          console.warn(
+            `[Shopee Tracking] shipping_document_data_info ${order.orderSn}:`,
+            docErr?.message || docErr,
+          );
+        }
       }
     }
 
@@ -8786,9 +8789,8 @@ async function ensureOrderTrackingNoForPrint(
       order.isPrepared = true;
     }
 
-    // Chỉ chờ thời gian lan truyền dài hơn khi vừa ship_order. Đơn đã prepared
-    // chỉ cần một nhịp ngắn trước khi xin lại tracking.
-    await sleep(shipResult ? 500 : 300);
+    // Chỉ chờ lan truyền khi VỪA ship_order. Đơn đã prepared: gọi tracking ngay (0ms).
+    if (shipResult) await sleep(400);
 
     console.log(
       `[Shopee Print Gate] get_tracking_number order_sn=${order.orderSn} package=${order.packageNumber || "-"}`,
@@ -8798,7 +8800,7 @@ async function ensureOrderTrackingNoForPrint(
       accessToken,
       String(order.orderSn),
       order.packageNumber,
-      2,
+      1,
     );
     console.log(
       "=== KẾT QUẢ API TRACKING ===",
@@ -13698,9 +13700,8 @@ async function startServer() {
       console.warn(`[Shopee Print] Batch download exception:`, err?.message || err);
     }
 
-    // 2) Fallback: tải song song từng đơn (concurrency 3) + gap 250ms — tránh sleep 1s tuần tự.
+    // 2) Fallback: tải song song từng đơn (concurrency 3) — không sleep cứng giữa request.
     const PRINT_DOWNLOAD_FALLBACK_CONCURRENCY = 3;
-    const PRINT_DOWNLOAD_GAP_MS = 250;
     const perOrderBuffers = await mapWithConcurrency(
       cleanOrderList,
       PRINT_DOWNLOAD_FALLBACK_CONCURRENCY,
@@ -13719,8 +13720,6 @@ async function startServer() {
         } catch (err: any) {
           console.warn(`[Shopee Print] Download failed ${order.order_sn}:`, err?.message || err);
           return null;
-        } finally {
-          await delay(PRINT_DOWNLOAD_GAP_MS);
         }
       },
     );
@@ -13815,10 +13814,10 @@ async function startServer() {
       throw err;
     }
 
-    // In vận đơn chạy NGẦM (job async): ưu tiên 1 lần create + poll dài (~8s),
-    // chỉ recreate khi lỗi create/token — không recreate vì document_not_ready.
+    // In vận đơn: 1 lần create (hoặc primed) + poll ngắn; recreate 1 lần nếu chưa READY.
+    // Tránh poll 20 lần rồi break (hồi quy chậm khi primed miss).
     const MAX_RETRIES = 1;
-    const RETRY_DELAY_MS = 1000;
+    const RETRY_DELAY_MS = 600;
     let lastError: { error?: string; message?: string } = {};
     let didForceRefresh = false;
     let usePrimedDocument = hasPrimedShippingDocuments(shopId, orderList);
@@ -13849,8 +13848,7 @@ async function startServer() {
         clearPrimedShippingDocuments(shopId, orderList);
         return result;
       }
-      // Chứng từ đã được chuẩn bị nền nhưng Shopee chưa trả READY: lần retry
-      // sau tạo lại như luồng cũ để không bỏ sót chứng từ thất bại ở nền.
+      // Primed miss / chưa READY → clear primed và recreate ở lần tiếp (không break).
       if (usePrimedDocument) {
         clearPrimedShippingDocuments(shopId, orderList);
         usePrimedDocument = false;
@@ -13882,14 +13880,6 @@ async function startServer() {
       // out immediately instead of wasting 3 more x3s round-trips to Shopee.
       if (result.permanent) {
         console.error(`[Shopee Print] L\u1ED7i "${result.error}" l\xE0 l\u1ED7i VĨNH VI\u1EC4N (\u0111\u01A1n ch\u01B0a th\u1EF1c s\u1EF1 \u0111\u01B0\u1EE3c "Chu\u1EA9n b\u1EB1 h\xE0ng"/ship_order th\xE0nh c\xF4ng tr\xEAn Shopee) — b\u1ECF qua c\xE1c l\u1EA7n th\u1EED l\u1EA1i.`);
-        break;
-      }
-
-      // document_not_ready: đã poll dài trong tryGenerateOnce — không recreate + sleep.
-      if (String(result.error || "") === "document_not_ready") {
-        console.warn(
-          `[Shopee Print] document_not_ready sau poll dài — không recreate create_shipping_document.`,
-        );
         break;
       }
 
@@ -13935,32 +13925,42 @@ async function startServer() {
     // Luồng in chính đã hoàn tất tracking gate trước khi gọi hàm này. Phần
     // fallback chỉ xử lý dữ liệu cũ/đường gọi nội bộ và chạy có giới hạn, tránh
     // vòng lặp tuần tự ship_order + chờ 1,5 giây cho từng đơn.
-    // Chỉ enrich đơn còn thiếu tracking_number — không gọi lại nếu đã có từ print gate.
-    const enrichedOrderList = await mapWithConcurrency(orderList, 4, async (row) => {
-      const orderSn = String(row.order_sn || "").trim();
-      let trackingNo = String(row.tracking_number || "").trim();
-      if (trackingNo && isShopeeInternalTrackingCode(trackingNo)) trackingNo = "";
-
-      if (!trackingNo) {
-        const ordersStore = loadOrders();
-        let order = ordersStore.find((item: any) => String(item.orderSn) === orderSn);
-        if (!order) {
-          order = { orderSn, shopId, channel: "shopee", packageNumber: row.package_number };
-        }
-        if (!order.shopId) order.shopId = shopId;
-        const ensured = await ensureOrderTrackingNoForPrint(order, ordersStore);
-        trackingNo = ensured.trackingNo;
-      }
-
-      if (!trackingNo || isShopeeInternalTrackingCode(trackingNo)) {
-        throw new Error(`Lỗi tự động lấy mã từ Shopee: ${JSON.stringify({ order_sn: orderSn, error: "empty_tracking_number" })}`);
-      }
-      return {
-        order_sn: orderSn,
-        package_number: row.package_number,
-        tracking_number: trackingNo,
-      };
+    // Fast path: mọi đơn đã có tracking_number từ print gate → bỏ enrich/ship lại.
+    const allHaveTn = orderList.every((row) => {
+      const tn = String(row.tracking_number || "").trim();
+      return tn && !isShopeeInternalTrackingCode(tn);
     });
+    const enrichedOrderList = allHaveTn
+      ? orderList.map((row) => ({
+          order_sn: String(row.order_sn || "").trim(),
+          package_number: row.package_number,
+          tracking_number: String(row.tracking_number || "").trim(),
+        }))
+      : await mapWithConcurrency(orderList, 4, async (row) => {
+          const orderSn = String(row.order_sn || "").trim();
+          let trackingNo = String(row.tracking_number || "").trim();
+          if (trackingNo && isShopeeInternalTrackingCode(trackingNo)) trackingNo = "";
+
+          if (!trackingNo) {
+            const ordersStore = loadOrders();
+            let order = ordersStore.find((item: any) => String(item.orderSn) === orderSn);
+            if (!order) {
+              order = { orderSn, shopId, channel: "shopee", packageNumber: row.package_number };
+            }
+            if (!order.shopId) order.shopId = shopId;
+            const ensured = await ensureOrderTrackingNoForPrint(order, ordersStore);
+            trackingNo = ensured.trackingNo;
+          }
+
+          if (!trackingNo || isShopeeInternalTrackingCode(trackingNo)) {
+            throw new Error(`Lỗi tự động lấy mã từ Shopee: ${JSON.stringify({ order_sn: orderSn, error: "empty_tracking_number" })}`);
+          }
+          return {
+            order_sn: orderSn,
+            package_number: row.package_number,
+            tracking_number: trackingNo,
+          };
+        });
 
     const createResult = usePrimedDocument
       ? { response: { result_list: [] } }
@@ -14065,11 +14065,10 @@ async function startServer() {
       `[Shopee Print] create_shipping_document OK ${cleanOrderList.length}/${enrichedOrderList.length} đơn (mọi ĐVVC, không lọc SPX): ${cleanOrderList.map((o) => o.order_sn).join(", ")}`,
     );
 
-    // Poll get_shipping_document_result until MỌI order_sn READY/FAILED.
-    // Check NGAY lần đầu (không sleep trước). Interval 400ms × 20 ≈ 8s max —
-    // đủ cho SPX/GHN sẵn sàng; ưu tiên poll dài hơn recreate create_shipping_document.
-    const MAX_POLL_ATTEMPTS = 20;
-    const POLL_INTERVAL_MS = 400;
+    // Poll get_shipping_document_result — lần đầu ngay; 350ms × 10 ≈ 3.5s rồi recreate.
+    // Tránh poll 20× (hồi quy chậm khi primed/create chưa READY).
+    const MAX_POLL_ATTEMPTS = 10;
+    const POLL_INTERVAL_MS = 350;
     let pendingList = [...cleanOrderList];
     let readyDownloadList: typeof cleanOrderList = [];
     let pollFailed: any[] = [];
@@ -14284,7 +14283,7 @@ async function startServer() {
       const printedSet = new Set(printedOrderSns);
       const stillMissing = ready.filter((o: any) => !printedSet.has(o.orderSn));
       if (stillMissing.length > 0) {
-        await sleep(400);
+        await sleep(200);
         const retryList = stillMissing.map((o: any) => ({
           order_sn: o.orderSn,
           package_number: o.packageNumber,
@@ -14811,15 +14810,18 @@ async function startServer() {
       groups[o.shopId].push(o);
     }
 
-    // BẮT BUỘC: trước khi render PDF — await check + fetch mã vận đơn (retry).
+    // BẮT BUỘC: trước khi render PDF — chỉ gọi Shopee khi còn thiếu mã VĐ.
     markPrintPhase("tracking", "Đang kiểm tra mã vận đơn từ Shopee...");
-    console.log(`[Shopee Print] Gate: đảm bảo tracking_no cho ${shopeeCandidates.length} đơn trước khi tạo PDF...`);
-    await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 1 });
-    // Chỉ patch các đơn đã load (Mongo scoped) — tuyệt đối không saveOrders full JSON.
-    try {
-      await persistChangedOrdersPatch(shopeeCandidates);
-    } catch (persistErr: any) {
-      console.warn("[Shopee Print] persist after tracking gate:", persistErr?.message || persistErr);
+    const needTracking = shopeeCandidates.filter((o: any) => !hasUsableShopeeTrackingNumber(o));
+    if (needTracking.length === 0) {
+      console.log(
+        `[Shopee Print] Gate SKIP — ${shopeeCandidates.length} đơn đã có tracking_no, tạo PDF ngay.`,
+      );
+    } else {
+      console.log(
+        `[Shopee Print] Gate: ${needTracking.length}/${shopeeCandidates.length} đơn thiếu tracking_no...`,
+      );
+      await ensureTrackingBeforePrint(orders, needTracking, { retries: 1 });
     }
 
     // Refresh groups from mutated candidates
@@ -14959,7 +14961,7 @@ async function startServer() {
       const printedSet = new Set(allPrintedSns);
       const stillMissing = readyToPrint.filter((o: any) => !printedSet.has(o.orderSn));
       if (stillMissing.length > 0) {
-        await sleep(400);
+        await sleep(200);
         const retryList = stillMissing.map((o: any) => ({
           order_sn: o.orderSn,
           package_number: o.packageNumber,
