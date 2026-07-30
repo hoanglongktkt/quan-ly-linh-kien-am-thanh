@@ -210,6 +210,8 @@ OrderSchema.index(
 );
 // Giữ compound index cho các truy vấn theo shop trong luồng reconciliation.
 OrderSchema.index({ orderSn: 1, shopId: 1 });
+// Quét kiện hoàn theo return_tracking_no (barcode chiều về).
+OrderSchema.index({ "data.return_tracking_no": 1 });
 // Hỗ trợ Dashboard aggregation lọc theo ngày / doanh thu mà không quét toàn bộ collection.
 OrderSchema.index({ "data.date": 1 });
 OrderSchema.index({ status: 1, "data.date": 1 });
@@ -1504,6 +1506,8 @@ const INTERNAL_FLAG_KEYS = new Set([
   "localStatusAt",
   "local_status_updated_at",
   "is_local_return_archived",
+  "stock_restored",
+  "stock_restored_at",
 ]);
 
 /**
@@ -1989,6 +1993,8 @@ export async function markOrderLocalStatusInStore(
     shopId?: string;
     clearHandedOver?: boolean;
     status?: string;
+    stockRestored?: boolean;
+    stockRestoredAt?: string;
   },
 ): Promise<boolean> {
   if (!isMongoReady()) return false;
@@ -2017,6 +2023,11 @@ export async function markOrderLocalStatusInStore(
     $set["data.isHandedOverToCarrier"] = false;
     $set["data.is_handed_over_to_carrier"] = false;
     $set["data.is_handed_over_to_courier"] = false;
+  }
+  if (meta?.stockRestored) {
+    const restoredAt = String(meta.stockRestoredAt || now);
+    $set["data.stock_restored"] = true;
+    $set["data.stock_restored_at"] = restoredAt;
   }
   if (status === "RETURN_RECEIVED") {
     $set.status = "return_received";

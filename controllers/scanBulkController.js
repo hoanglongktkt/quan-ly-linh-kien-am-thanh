@@ -6,6 +6,7 @@
 /** Deps từ server.ts (order helpers / mongoStore chưa tách hết). */
 let deps = {
   findOrderByScanCodeInStore: async () => null,
+  resolveOrderFromShopeeByScanCode: async () => null,
   isValidOrder: () => false,
   mirrorTrackingFieldsForRead: (o) => o,
   resolveOrderLocalStatus: () => "",
@@ -24,6 +25,8 @@ let deps = {
   isMongoConnectionError: () => false,
   persistChangedOrdersPatch: async () => 0,
   markOrderHandedOverInStore: async () => false,
+  markOrderLocalStatusInStore: async () => false,
+  restoreLocalStockOnCancelReturnScan: async () => ({ restored: false }),
   loadProductsForOrders: async () => [],
   enrichOrdersFromCatalog: (orders) => orders,
   invalidateOrdersRefreshCache: () => {},
@@ -60,7 +63,7 @@ export async function scanBulkUpdate(req, res) {
     const forceCancelCodes = toCodeSet(req.body?.donHuyCodes);
     const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
 
-    // Lookup theo mã quét (Mongo indexed) — không loadOrdersForApi() full collection.
+    // Lookup theo mã quét (Mongo indexed) — miss → Shopee on-demand (CANCELLED/TO_RETURN).
     const lookupPairs = await Promise.all(
       codes.map(async (code) => {
         let found = null;
@@ -73,6 +76,18 @@ export async function scanBulkUpdate(req, res) {
             `[Orders Scan Bulk] lookup miss code=${code}:`,
             lookupErr?.message || lookupErr,
           );
+        }
+        if (!found) {
+          try {
+            found = await deps.resolveOrderFromShopeeByScanCode(code);
+            if (found && !deps.isValidOrder(found)) found = null;
+            if (found) found = deps.mirrorTrackingFieldsForRead(found);
+          } catch (shopeeErr) {
+            console.warn(
+              `[Orders Scan Bulk] Shopee resolve code=${code}:`,
+              shopeeErr?.message || shopeeErr,
+            );
+          }
         }
         return { code, found };
       }),
@@ -257,9 +272,28 @@ export async function scanBulkUpdate(req, res) {
 
       // FE / raw Shopee: nhận hoàn (kể cả sau HANDED_OVER).
       if (forceReturn || isReturnLike) {
+        const wasHandedOver =
+          existingLocal === "HANDED_OVER" ||
+          order.is_handed_over === true ||
+          order.isHandedOverToCarrier === true;
         const updated = { ...order };
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "RETURN_RECEIVED");
+        try {
+          const restock = await deps.restoreLocalStockOnCancelReturnScan(updated, {
+            wasHandedOver,
+          });
+          if (restock?.restored) {
+            console.log(
+              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`,
+            );
+          }
+        } catch (restockErr) {
+          console.warn(
+            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
+            restockErr?.message || restockErr,
+          );
+        }
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -271,16 +305,36 @@ export async function scanBulkUpdate(req, res) {
           orderSn: updated.orderSn,
           message: `Đã nhận hàng hoàn — đơn #${updated.orderSn}`,
           local_status: "RETURN_RECEIVED",
+          stock_restored: Boolean(updated.stock_restored),
         });
         continue;
       }
 
       // FE / raw Shopee: đơn hủy (CANCELLED / IN_CANCEL), kể cả sau HANDED_OVER.
       if (forceCancel || isCancelLike) {
+        const wasHandedOver =
+          existingLocal === "HANDED_OVER" ||
+          order.is_handed_over === true ||
+          order.isHandedOverToCarrier === true;
         const updated = { ...order };
         if (updated.status !== "cancelled") updated.status = "cancelled";
         deps.clearHandedOverLocalForCancelReturn(updated);
         deps.setOrderLocalStatus(updated, "CANCELLED_STORED");
+        try {
+          const restock = await deps.restoreLocalStockOnCancelReturnScan(updated, {
+            wasHandedOver,
+          });
+          if (restock?.restored) {
+            console.log(
+              `[Orders Scan Bulk] Restock +${restock.qty || 0} order_sn=${updated.orderSn}`,
+            );
+          }
+        } catch (restockErr) {
+          console.warn(
+            `[Orders Scan Bulk] Restock fail order_sn=${updated.orderSn}:`,
+            restockErr?.message || restockErr,
+          );
+        }
         orders[index] = updated;
         changedOrders.push(updated);
         updatedById.set(updated.id, updated);
@@ -292,6 +346,7 @@ export async function scanBulkUpdate(req, res) {
           orderSn: updated.orderSn,
           message: `Đơn hủy #${updated.orderSn} → CANCELLED_STORED`,
           local_status: "CANCELLED_STORED",
+          stock_restored: Boolean(updated.stock_restored),
         });
         continue;
       }
@@ -455,8 +510,18 @@ export async function scanBulkUpdate(req, res) {
               shopId,
             });
             if (ok) flagOk += 1;
+          } else if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") {
+            const ok = await deps.markOrderLocalStatusInStore(sn, local, {
+              shopId,
+              clearHandedOver: true,
+              status: local === "RETURN_RECEIVED" ? "return_received" : "cancelled",
+              stockRestored: Boolean(o.stock_restored),
+              stockRestoredAt: o.stock_restored_at
+                ? String(o.stock_restored_at)
+                : undefined,
+            });
+            if (ok) flagOk += 1;
           }
-          // CANCELLED_STORED / RETURN_RECEIVED: đã ghi don_hoan_huy ở trên.
         } catch (flagErr) {
           console.error(
             `[Orders Scan Bulk] mark flag fail order_sn=${sn}:`,

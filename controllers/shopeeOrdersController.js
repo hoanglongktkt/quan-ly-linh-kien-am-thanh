@@ -29,6 +29,15 @@ let deps = {
     errors: [],
     message: "not_initialized",
   }),
+  pullShopeeCancelReturnOrders: async () => ({
+    success: false,
+    pulled: 0,
+    added: 0,
+    updated: 0,
+    shops: 0,
+    errors: [],
+    message: "not_initialized",
+  }),
   invalidateOrdersRefreshCache: () => {},
   shopeeGetReturnList: async () => ({}),
   shopeeGetReturnDetail: async () => ({}),
@@ -84,34 +93,60 @@ export async function pullOrders(req, res) {
       reconcileActive: true,
       shopIds: shopIds?.length ? shopIds : undefined,
     });
+    let cancelPull = { pulled: 0, added: 0, updated: 0, errors: [], message: "", skipped: false };
+    try {
+      cancelPull = await deps.pullShopeeCancelReturnOrders({
+        lookbackSec: Math.max(lookbackSec, 48 * 3600),
+        shopIds: shopIds?.length ? shopIds : undefined,
+      });
+    } catch (cancelErr) {
+      console.warn("[Orders Pull] cancel/return follow-up:", cancelErr?.message || cancelErr);
+    }
     deps.invalidateOrdersRefreshCache();
+    const pulled = result.pulled + (cancelPull.pulled || 0);
+    const added = result.added + (cancelPull.added || 0);
+    const updated = result.updated + (cancelPull.updated || 0);
+    const errors = [...(result.errors || []), ...(cancelPull.errors || [])];
+    const success = result.success || cancelPull.pulled > 0;
+    const message =
+      result.message +
+      (cancelPull.pulled > 0 || cancelPull.message
+        ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}`
+        : "");
     await deps.finishSyncJob(
       jobId,
-      result.success ? "succeeded" : "failed",
+      success ? "succeeded" : "failed",
       {
-        pulled: result.pulled,
-        added: result.added,
-        updated: result.updated,
+        pulled,
+        added,
+        updated,
         shops: result.shops,
-        errors: result.errors.length,
+        errors: errors.length,
+        cancel_return_pulled: cancelPull.pulled || 0,
         retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
       },
-      result.success ? undefined : result.message,
+      success ? undefined : message,
     );
     return res.status(200).json({
-      success: result.success,
+      success,
       job_id: jobId,
-      pulled: result.pulled,
-      added: result.added,
-      updated: result.updated,
+      pulled,
+      added,
+      updated,
       shops: result.shops,
-      errors: result.errors.slice(0, 20),
-      message: result.message,
+      errors: errors.slice(0, 20),
+      message,
       truncatedShops: result.truncatedShops || 0,
       maxOrderSnsPerShop: result.maxOrderSnsPerShop,
       lookbackSec: result.lookbackSec,
       elapsedMs: result.elapsedMs,
       warnings: result.warnings || [],
+      cancelReturn: {
+        pulled: cancelPull.pulled || 0,
+        added: cancelPull.added || 0,
+        updated: cancelPull.updated || 0,
+        skipped: Boolean(cancelPull.skipped),
+      },
     });
   } catch (error) {
     console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);
@@ -152,29 +187,49 @@ export async function syncOrders(req, res) {
       reconcileActive: true,
       shopIds: shopIds?.length ? shopIds : undefined,
     });
+    let cancelPull = { pulled: 0, added: 0, updated: 0, errors: [], message: "" };
+    try {
+      cancelPull = await deps.pullShopeeCancelReturnOrders({
+        lookbackSec: Math.max(Math.floor(hours * 60 * 60), 48 * 3600),
+        shopIds: shopIds?.length ? shopIds : undefined,
+      });
+    } catch (cancelErr) {
+      console.warn("[Orders Sync] cancel/return follow-up:", cancelErr?.message || cancelErr);
+    }
     deps.invalidateOrdersRefreshCache();
+    const pulled = result.pulled + (cancelPull.pulled || 0);
+    const added = result.added + (cancelPull.added || 0);
+    const updated = result.updated + (cancelPull.updated || 0);
+    const errors = [...(result.errors || []), ...(cancelPull.errors || [])];
+    const success = result.success || cancelPull.pulled > 0;
+    const message =
+      result.message +
+      (cancelPull.pulled > 0 || cancelPull.message
+        ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}`
+        : "");
     await deps.finishSyncJob(
       jobId,
-      result.success ? "succeeded" : "failed",
+      success ? "succeeded" : "failed",
       {
-        pulled: result.pulled,
-        added: result.added,
-        updated: result.updated,
+        pulled,
+        added,
+        updated,
         shops: result.shops,
-        errors: result.errors.length,
+        errors: errors.length,
+        cancel_return_pulled: cancelPull.pulled || 0,
         retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
       },
-      result.success ? undefined : result.message,
+      success ? undefined : message,
     );
     return res.status(200).json({
-      success: result.success,
+      success,
       job_id: jobId,
-      pulled: result.pulled,
-      added: result.added,
-      updated: result.updated,
+      pulled,
+      added,
+      updated,
       shops: result.shops,
-      errors: result.errors.slice(0, 20),
-      message: result.message,
+      errors: errors.slice(0, 20),
+      message,
     });
   } catch (error) {
     console.error(

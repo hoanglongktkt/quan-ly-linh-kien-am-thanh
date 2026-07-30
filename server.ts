@@ -1883,7 +1883,7 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
     }
   }
 
-  // B) Mã vận đơn — kéo CANCELLED / IN_CANCEL / TO_RETURN / SHIPPED 7 ngày rồi khớp tracking.
+  // B) Mã vận đơn — kéo CANCELLED / IN_CANCEL / TO_RETURN / SHIPPED 14 ngày rồi khớp tracking.
   if (looksLikeTracking || !looksLikeOrderSn) {
     const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED", "PROCESSED"];
     for (const shopId of shopIds) {
@@ -1895,10 +1895,10 @@ async function resolveOrderFromShopeeByScanCode(rawCode: string): Promise<any | 
         for (const st of statuses) {
           if (Date.now() > deadlineAt) break;
           const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
-            lookbackSec: 7 * 24 * 60 * 60,
+            lookbackSec: 14 * 24 * 60 * 60,
             deadlineAt,
-            maxOrderSns: 60,
-            pageHardCap: 3,
+            maxOrderSns: 80,
+            pageHardCap: 4,
           });
           for (const sn of sns) snSet.add(sn);
         }
@@ -2005,12 +2005,20 @@ async function reconcileActiveShopeeOrdersFromStore(
     const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
     const raw = String(order?.shopee_order_status || "").toUpperCase();
     const local = String(order?.status || "").toLowerCase();
+    // Mở rộng: shipping / return_pending / SHIPPED / TO_RETURN / IN_CANCEL
+    // để bắt SHIPPED→CANCELLED và hoàn hàng khi webhook miss.
     const requiresReconcile =
       raw === "READY_TO_SHIP" ||
       raw === "RETRY_SHIP" ||
       raw === "PROCESSED" ||
+      raw === "SHIPPED" ||
+      raw === "TO_CONFIRM_RECEIVE" ||
+      raw === "IN_CANCEL" ||
+      raw === "TO_RETURN" ||
       local === "unprocessed" ||
-      local === "processed";
+      local === "processed" ||
+      local === "shipping" ||
+      local === "return_pending";
     if (!requiresReconcile || !shopId || !orderSn || !allowedShops.has(shopId)) continue;
     const sns = byShop.get(shopId) || [];
     if (sns.length < SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP && !sns.includes(orderSn)) {
@@ -2104,6 +2112,10 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   message: string;
   skipped?: boolean;
   elapsedMs?: number;
+  truncatedShops?: number;
+  maxOrderSnsPerShop?: number;
+  lookbackSec?: number;
+  warnings?: any[];
 }> {
   if (ordersPullInFlight) {
     syncDiag("Pull SKIPPED — already in flight", "mutex busy");
@@ -2220,10 +2232,16 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           pageHardCap,
         });
 
-        // lookback ≥ 168h: bổ sung CANCELLED / IN_CANCEL / TO_RETURN / SHIPPED
-        // — tránh bị đơn RTS/PROCESSED chiếm hết cap  khiến lệch Seller Center.
-        if (longLookback && Date.now() < shopDeadlineAt) {
-          const statusExtra = ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED"];
+        // MỌI pull: bổ sung CANCELLED / IN_CANCEL / TO_RETURN (không chỉ ≥7 ngày).
+        // longLookback: thêm SHIPPED + nới cap để khớp Seller Center.
+        if (Date.now() < shopDeadlineAt) {
+          const statusExtra = longLookback
+            ? ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED"]
+            : ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
+          const statusMaxSn = longLookback
+            ? Math.min(120, maxOrderSnsPerShop)
+            : Math.min(80, maxOrderSnsPerShop);
+          const statusPageCap = longLookback ? Math.min(6, pageHardCap) : Math.min(3, pageHardCap);
           const snSet = new Set(orderSnList);
           let addedByStatus = 0;
           for (const st of statusExtra) {
@@ -2232,8 +2250,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
               const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
                 lookbackSec,
                 deadlineAt: shopDeadlineAt,
-                maxOrderSns: Math.min(120, maxOrderSnsPerShop),
-                pageHardCap: Math.min(6, pageHardCap),
+                maxOrderSns: statusMaxSn,
+                pageHardCap: statusPageCap,
               });
               for (const sn of sns) {
                 if (snSet.has(sn)) continue;
@@ -2252,13 +2270,13 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             orderSnList = [...snSet];
             syncDiag(
               "Status list merged",
-              `shop=${shopId} +${addedByStatus} order_sn from CANCELLED/IN_CANCEL/TO_RETURN/SHIPPED (total=${orderSnList.length})`,
+              `shop=${shopId} +${addedByStatus} order_sn from ${statusExtra.join("/")} (total=${orderSnList.length})`,
             );
           }
         }
 
-        // lookback ≥ 168h: bổ sung order_sn từ get_return_list (TO_RETURN / tracking hoàn).
-        if (longLookback && Date.now() < shopDeadlineAt) {
+        // MỌI pull: bổ sung order_sn từ get_return_list (TO_RETURN / tracking hoàn).
+        if (Date.now() < shopDeadlineAt) {
           try {
             const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
               mode: "incremental",
@@ -2465,7 +2483,192 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   }
 }
 
-/** Quét riêng CANCELLED / IN_CANCEL / TO_RETURN — cửa sổ rộng hơn sync thường. */
+/**
+ * Quét riêng CANCELLED / IN_CANCEL / TO_RETURN (+ return_list) — cửa sổ rộng hơn sync thường.
+ * Bật enrichTracking để gắn mã vận đơn ngay (phục vụ quét kiện hoàn).
+ */
+async function pullShopeeCancelReturnOrders(opts?: {
+  lookbackSec?: number;
+  shopIds?: string[];
+}): Promise<{
+  success: boolean;
+  pulled: number;
+  added: number;
+  updated: number;
+  shops: number;
+  errors: any[];
+  message: string;
+  skipped?: boolean;
+  elapsedMs?: number;
+}> {
+  if (ordersPullInFlight) {
+    return {
+      success: false,
+      pulled: 0,
+      added: 0,
+      updated: 0,
+      shops: 0,
+      errors: [{ error: "pull_in_flight", message: "Pull đang chạy — bỏ qua cancel/return sync." }],
+      message: "Pull đang chạy — skip cancel/return.",
+      skipped: true,
+      elapsedMs: 0,
+    };
+  }
+
+  ordersPullInFlight = true;
+  const startedAt = Date.now();
+  const lookbackSec = Math.max(
+    60,
+    Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || 48 * 3600),
+  );
+  ensureShopeeLinkedShopTokenKeys();
+  const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
+    .map((id) => normalizeShopIdKey(id))
+    .filter(Boolean);
+  const deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 120_000);
+  const errors: any[] = [];
+  let pulled = 0;
+  let added = 0;
+  let updated = 0;
+  const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
+
+  try {
+    if (shopIds.length === 0) {
+      return {
+        success: false,
+        pulled: 0,
+        added: 0,
+        updated: 0,
+        shops: 0,
+        errors: [{ error: "no_oauth_shop", message: "Chưa có shop Shopee OAuth." }],
+        message: "Chưa có shop Shopee OAuth.",
+        elapsedMs: Date.now() - startedAt,
+      };
+    }
+
+    const orders = isMongoReady() ? await loadOrdersFromStore() : [];
+    const perShopBudgetMs = Math.max(25_000, Math.floor((deadlineAt - startedAt) / Math.max(1, shopIds.length)));
+
+    for (const shopId of shopIds) {
+      if (Date.now() >= deadlineAt) break;
+      const shopDeadlineAt = Math.min(deadlineAt, Date.now() + perShopBudgetMs);
+      try {
+        let accessToken = await getValidShopeeAccessToken(shopId);
+        if (!accessToken) {
+          errors.push({ shopId, error: "no_valid_access_token", message: `Shop ${shopId}: thiếu token` });
+          continue;
+        }
+
+        const snSet = new Set<string>();
+        for (const st of statuses) {
+          if (Date.now() >= shopDeadlineAt || snSet.size >= 200) break;
+          try {
+            const sns = await collectShopeeOrderSnsByStatus(shopId, accessToken, st, {
+              lookbackSec,
+              deadlineAt: shopDeadlineAt,
+              maxOrderSns: 100,
+              pageHardCap: 4,
+            });
+            for (const sn of sns) snSet.add(sn);
+          } catch (stErr: any) {
+            console.warn(
+              `[CancelReturn Pull] status=${st} shop=${shopId}:`,
+              stErr?.message || stErr,
+            );
+          }
+        }
+
+        if (Date.now() < shopDeadlineAt) {
+          try {
+            const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
+              mode: "incremental",
+            });
+            for (const row of returnRows) {
+              const sn = String(row?.orderSn || "").trim();
+              if (sn) snSet.add(sn);
+              if (snSet.size >= 200) break;
+            }
+          } catch (returnErr: any) {
+            console.warn(
+              `[CancelReturn Pull] return_list shop=${shopId}:`,
+              returnErr?.message || returnErr,
+            );
+          }
+        }
+
+        const orderSnList = [...snSet];
+        syncDiag(
+          "CancelReturn list",
+          `shop=${shopId} sn=${orderSnList.length} lookback=${lookbackSec}s`,
+        );
+        if (!orderSnList.length) continue;
+
+        for (let i = 0; i < orderSnList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+          if (Date.now() >= shopDeadlineAt) break;
+          const chunkSns = orderSnList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+          const fresh = await getValidShopeeAccessToken(shopId);
+          if (fresh) accessToken = fresh;
+          const { normalized, errors: chunkErrors } = await fetchNormalizeShopeeOrderChunk(
+            shopId,
+            accessToken,
+            shopId,
+            chunkSns,
+            { enrichTracking: true, skipEscrow: true },
+          );
+          if (chunkErrors.length) errors.push(...chunkErrors);
+          if (!normalized.length) continue;
+          try {
+            const upsert = await persistShopeeOrderChunk(orders, normalized, {
+              apiShopId: shopId,
+              accessToken,
+              skipTracking: false,
+            });
+            added += upsert.added;
+            updated += upsert.updated;
+            pulled += normalized.length;
+          } catch (saveErr: any) {
+            errors.push({
+              shopId,
+              error: "db_upsert_failed",
+              message: saveErr?.message || String(saveErr),
+            });
+          }
+          if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
+            await shopeeSyncDelay(Math.min(SHOPEE_SYNC_CHUNK_DELAY_MS, 400));
+          }
+        }
+      } catch (shopErr: any) {
+        errors.push({
+          shopId,
+          error: "cancel_return_pull_failed",
+          message: shopErr?.message || String(shopErr),
+        });
+      }
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    const message =
+      pulled > 0
+        ? `Cancel/return: kéo/cập nhật ${pulled} đơn (+${added}/~${updated}) trong ${elapsedMs}ms`
+        : errors.length
+          ? `Cancel/return 0 đơn — ${errors[0]?.message || errors[0]?.error}`
+          : "Cancel/return: 0 order_sn trong cửa sổ.";
+    syncDiag("CancelReturn Pull DONE", message);
+    return {
+      success: pulled > 0 || errors.length === 0,
+      pulled,
+      added,
+      updated,
+      shops: shopIds.length,
+      errors,
+      message,
+      elapsedMs,
+    };
+  } finally {
+    ordersPullInFlight = false;
+  }
+}
+
 // v2.order.get_order_detail
 async function shopeeGetOrderDetail(shopId: string, accessToken: string, orderSnList: string[]) {
   if (orderSnList.length === 0 || orderSnList.length > SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS) {
@@ -6777,6 +6980,102 @@ async function restoreLocalStockForPartialCancel(
   }
 }
 
+/**
+ * Cộng lại tồn local khi quét nhận hủy/hoàn lần đầu (đơn đã ship / có mã VĐ / từng HANDED_OVER).
+ * Idempotent qua stock_restored / stock_restored_at — không cộng 2 lần; không đẩy update_stock Shopee.
+ */
+async function restoreLocalStockOnCancelReturnScan(
+  order: any,
+  opts?: { wasHandedOver?: boolean },
+): Promise<{ restored: boolean; skipped?: string; qty?: number }> {
+  if (!order?.orderSn) return { restored: false, skipped: "no_order" };
+  if (order.stock_restored === true || order.stock_restored_at) {
+    return { restored: false, skipped: "already_restored" };
+  }
+
+  const hasTn = Boolean(
+    String(
+      order.trackingNumber ||
+        order.tracking_no ||
+        order.return_tracking_no ||
+        order.shopee_tracking_number ||
+        "",
+    ).trim(),
+  );
+  const wasHandedOver =
+    opts?.wasHandedOver === true ||
+    order.is_handed_over === true ||
+    order.isHandedOverToCarrier === true ||
+    String(order.local_status || order.localStatus || "").toUpperCase() === "HANDED_OVER";
+
+  // Hủy trước khi ship (chưa có TN, chưa bàn giao) → không cộng tồn.
+  if (!hasTn && !wasHandedOver) {
+    return { restored: false, skipped: "not_shipped" };
+  }
+
+  const items = Array.isArray(order.items) ? order.items : [];
+  if (!items.length) return { restored: false, skipped: "no_items" };
+
+  let listings: any[] = [];
+  let products: any[] = [];
+  try {
+    listings = await readChannelListingsDb();
+    products = await loadProductsFromStore();
+  } catch {
+    return { restored: false, skipped: "catalog_unavailable" };
+  }
+
+  const shopId = order.shopId ? String(order.shopId) : undefined;
+  const restoreByProduct = new Map<string, number>();
+  for (const item of items) {
+    // Kiện về kho: cộng theo SL đã xuất trên dòng (không trừ cancelledQty — đơn full cancel thường cancelled=purchased).
+    const restoreQty = Math.max(
+      0,
+      Number(item?.originalQuantity) || Number(item?.quantity) || 0,
+    );
+    if (restoreQty <= 0) continue;
+    const productId = String(item?.productId || "");
+    if (!productId) continue;
+    const modelId = item?.modelId ? String(item.modelId) : undefined;
+    const linkedId =
+      findLinkedProductIdForShopeeLine(listings, shopId, productId, modelId) ||
+      findLinkedProductIdForShopeeLine(listings, shopId, productId, undefined) ||
+      (item?.linkedProductId ? String(item.linkedProductId) : "");
+    if (!linkedId) continue;
+    restoreByProduct.set(linkedId, (restoreByProduct.get(linkedId) || 0) + restoreQty);
+  }
+
+  if (restoreByProduct.size === 0) return { restored: false, skipped: "no_linked_products" };
+
+  let changed = false;
+  let totalQty = 0;
+  for (const [linkedId, restoreQty] of restoreByProduct) {
+    const idx = products.findIndex((p) => String(p?.id) === linkedId);
+    if (idx < 0) continue;
+    products[idx] = applyBulkProductUpdate(products[idx], { stock: { mode: "increase", value: restoreQty } });
+    changed = true;
+    totalQty += restoreQty;
+    console.log(
+      `[Scan Restock] +${restoreQty} tồn cho ${linkedId} (order ${order.orderSn})`,
+    );
+  }
+
+  if (!changed) return { restored: false, skipped: "product_not_found" };
+
+  try {
+    await saveProductsToStoreAsync(products);
+    invalidateMasterSkuIndexCache("scan_cancel_return_restock");
+  } catch (err) {
+    console.warn("[Scan Restock] Lưu tồn kho thất bại:", err);
+    return { restored: false, skipped: "save_failed" };
+  }
+
+  const now = new Date().toISOString();
+  order.stock_restored = true;
+  order.stock_restored_at = now;
+  return { restored: true, qty: totalQty };
+}
+
 function mapShopeeOrderLineItem(it: any) {
   if (!it || typeof it !== "object") return null;
   try {
@@ -8023,7 +8322,36 @@ async function enrichMissingShopeeTracking(): Promise<{
     });
     const candidates = orders
       .filter((order: any) => needsBackgroundShopeeTrackingEnrichment(order, cutoffMs))
-      .sort((a: any, b: any) => getShopeeTrackingCandidateTime(b) - getShopeeTrackingCandidateTime(a))
+      .sort((a: any, b: any) => {
+        const priorityScore = (o: any): number => {
+          const s = String(o?.status || "").toLowerCase();
+          const raw = String(o?.shopee_order_status || "").toUpperCase();
+          if (
+            s === "cancelled" ||
+            s === "return_pending" ||
+            s === "return_received" ||
+            raw === "CANCELLED" ||
+            raw === "IN_CANCEL" ||
+            raw === "TO_RETURN" ||
+            Boolean(o?.return_sn)
+          ) {
+            return 3;
+          }
+          if (
+            s === "shipping" ||
+            s === "processed" ||
+            raw === "SHIPPED" ||
+            raw === "PROCESSED" ||
+            raw === "TO_CONFIRM_RECEIVE"
+          ) {
+            return 2;
+          }
+          return 1;
+        };
+        const d = priorityScore(b) - priorityScore(a);
+        if (d !== 0) return d;
+        return getShopeeTrackingCandidateTime(b) - getShopeeTrackingCandidateTime(a);
+      })
       .slice(0, SHOPEE_TRACKING_ENRICH_BATCH_LIMIT);
     candidatesCount = candidates.length;
     if (candidates.length === 0) {
@@ -8204,6 +8532,46 @@ function scheduleMissingShopeeTrackingEnrichment(): void {
     (shopeeTrackingEnrichTimer as any).unref();
   }
   console.log("[Shopee Tracking Enrich] Scheduler ON — mỗi 10 phút, tối đa 40 đơn / lượt.");
+}
+
+/** Cron bù CANCELLED / TO_RETURN khi webhook miss — mỗi 45 phút. */
+const SHOPEE_CANCEL_RETURN_CRON_MS = 45 * 60 * 1000;
+let shopeeCancelReturnCronTimer: ReturnType<typeof setInterval> | undefined;
+
+function scheduleShopeeCancelReturnReconcile(): void {
+  if (shopeeCancelReturnCronTimer) return;
+  shopeeCancelReturnCronTimer = setInterval(() => {
+    void (async () => {
+      if (!isMongoReady() || ordersPullInFlight) return;
+      try {
+        const result = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
+        console.log(
+          `[CancelReturn Cron] pulled=${result.pulled} +${result.added}/~${result.updated} skipped=${Boolean(result.skipped)} — ${result.message}`,
+        );
+        // Đối soát pool shipping/processed/return_pending trong Mongo.
+        if (!ordersPullInFlight && isMongoReady()) {
+          ensureShopeeLinkedShopTokenKeys();
+          const shopIds = listShopeeSyncShopIds();
+          if (shopIds.length) {
+            const orders = await loadOrdersFromStore();
+            const deadlineAt = Date.now() + 90_000;
+            const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
+            if (reconciled.pulled > 0 || reconciled.errors.length) {
+              console.log(
+                `[CancelReturn Cron] reconcile pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} err=${reconciled.errors.length}`,
+              );
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn("[CancelReturn Cron] FAILED:", err?.message || err);
+      }
+    })();
+  }, SHOPEE_CANCEL_RETURN_CRON_MS);
+  if (typeof (shopeeCancelReturnCronTimer as any).unref === "function") {
+    (shopeeCancelReturnCronTimer as any).unref();
+  }
+  console.log("[CancelReturn Cron] Scheduler ON — mỗi 45 phút (CANCELLED/TO_RETURN + reconcile shipping).");
 }
 
 /**
@@ -9508,15 +9876,48 @@ async function persistShopeeOrderChunk(
     );
   }
 
-  // ——— BƯỚC 2: tracking tuần tự (350ms+/đơn) — CHỈ khi không skipTracking ———
-  // Pull incremental mặc định skipTracking=true để tránh cảm giác "quay vòng".
-  if (syncCtx && syncCtx.skipTracking !== true) {
-    const needTn = touched.filter((o) => needsShopeeTrackingEnrichment(o));
-    if (needTn.length > 0) {
+  // ——— BƯỚC 2: tracking tuần tự ———
+  // skipTracking=true vẫn ưu tiên enrich PROCESSED/SHIPPED/CANCELLED/TO_RETURN thiếu mã
+  // (cap nhỏ) — tránh kiện hoàn về kho mà DB trống tracking_no.
+  if (syncCtx && touched.length > 0) {
+    const PRIORITY_RAW = new Set([
+      "PROCESSED",
+      "SHIPPED",
+      "TO_CONFIRM_RECEIVE",
+      "CANCELLED",
+      "IN_CANCEL",
+      "TO_RETURN",
+    ]);
+    const PRIORITY_LOCAL = new Set([
+      "processed",
+      "shipping",
+      "cancelled",
+      "return_pending",
+      "return_received",
+    ]);
+    const isPriorityTn = (o: any) => {
+      const raw = String(o?.shopee_order_status || "").toUpperCase();
+      const st = String(o?.status || "").toLowerCase();
+      return PRIORITY_RAW.has(raw) || PRIORITY_LOCAL.has(st) || Boolean(o?.return_sn);
+    };
+    let needTn = touched.filter((o) => needsShopeeTrackingEnrichment(o));
+    if (syncCtx.skipTracking === true) {
+      needTn = needTn.filter(isPriorityTn).slice(0, 12);
+      if (needTn.length === 0) {
+        syncDiag("Tracking enrich SKIPPED", "fast-path — không có đơn ưu tiên thiếu mã");
+      } else {
+        syncDiag(
+          "Tracking enrich (priority)",
+          `${needTn.length} đơn ưu tiên (skipTracking nhưng vẫn lấy mã)`,
+        );
+      }
+    } else {
       syncDiag(
         "Tracking enrich (sequential)",
         `${needTn.length} đơn → get_tracking_number (delay=${SHOPEE_TRACKING_FETCH_DELAY_MS}ms)`,
       );
+    }
+    if (needTn.length > 0) {
       for (const row of needTn) {
         try {
           await fetchAndForceSaveTrackingNumber(
@@ -9539,8 +9940,6 @@ async function persistShopeeOrderChunk(
       }
       queueOrdersJsonMirror(orders);
     }
-  } else if (syncCtx?.skipTracking) {
-    syncDiag("Tracking enrich SKIPPED", "fast-path pull — webhook/enrich riêng sẽ bổ sung mã");
   }
 
   return { added, updated };
@@ -12696,6 +13095,7 @@ async function startServer() {
     createSyncJob,
     finishSyncJob,
     pullIncrementalOrdersFromShopee,
+    pullShopeeCancelReturnOrders,
     invalidateOrdersRefreshCache,
     shopeeGetReturnList,
     shopeeGetReturnDetail,
@@ -12741,9 +13141,12 @@ async function startServer() {
     setOrderLocalStatus,
     upsertDonHoanHuy,
     describeMongoWriteError,
+    restoreLocalStockOnCancelReturnScan,
+    markOrderLocalStatusInStore,
   });
   initScanBulkController({
     findOrderByScanCodeInStore,
+    resolveOrderFromShopeeByScanCode,
     isValidOrder,
     mirrorTrackingFieldsForRead,
     resolveOrderLocalStatus,
@@ -12762,6 +13165,8 @@ async function startServer() {
     isMongoConnectionError,
     persistChangedOrdersPatch,
     markOrderHandedOverInStore,
+    markOrderLocalStatusInStore,
+    restoreLocalStockOnCancelReturnScan,
     loadProductsForOrders,
     enrichOrdersFromCatalog,
     invalidateOrdersRefreshCache,
@@ -15271,6 +15676,7 @@ async function startServer() {
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
+        scheduleShopeeCancelReturnReconcile();
         scheduleClosedOrdersRetentionCleanup();
         scheduleMongoTempCollectionsCleanup();
       }
@@ -15335,6 +15741,11 @@ async function startServer() {
           });
           console.log(
             `[Boot] Recovery pull xong: pulled=${result.pulled} +${result.added}/~${result.updated} err=${result.errors.length} — ${result.message}`,
+          );
+          console.log("[Boot] Chạy recovery pullShopeeCancelReturnOrders (48h)...");
+          const cancelResult = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
+          console.log(
+            `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} — ${cancelResult.message}`,
           );
         } catch (bootPullErr: any) {
           console.error(

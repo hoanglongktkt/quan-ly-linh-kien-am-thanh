@@ -29,6 +29,8 @@ let deps = {
   setOrderLocalStatus: () => {},
   upsertDonHoanHuy: async () => ({ ok: false, error: "upsertDonHoanHuy_not_initialized" }),
   describeMongoWriteError: (err) => String(err?.message || err || ""),
+  restoreLocalStockOnCancelReturnScan: async () => ({ restored: false }),
+  markOrderLocalStatusInStore: async () => false,
 };
 
 export function initScanBgQueue(partial) {
@@ -251,8 +253,21 @@ async function processOneScanBgJob(job) {
     const target = isReturn
       ? deps.ORDER_LOCAL_STATUS.RETURN_RECEIVED
       : deps.ORDER_LOCAL_STATUS.CANCELLED_STORED;
+    const wasHandedOver =
+      existingLocal === "HANDED_OVER" ||
+      found.is_handed_over === true ||
+      found.isHandedOverToCarrier === true;
     deps.clearHandedOverLocalForCancelReturn(found);
     deps.setOrderLocalStatus(found, target);
+
+    try {
+      const restock = await deps.restoreLocalStockOnCancelReturnScan(found, { wasHandedOver });
+      if (restock?.restored) {
+        console.log(`[Scan BG] Restock +${restock.qty || 0} order_sn=${found.orderSn}`);
+      }
+    } catch (restockErr) {
+      console.warn(`[Scan BG] Restock fail order_sn=${found.orderSn}:`, restockErr?.message || restockErr);
+    }
 
     // SSOT tab hủy/hoàn: ghi collection don_hoan_huy (TTL 14 ngày) — models/DonHoanHuy.js.
     const dhh = await deps.upsertDonHoanHuy(found, {
@@ -262,6 +277,18 @@ async function processOneScanBgJob(job) {
     });
     if (!dhh.ok) {
       throw new Error(dhh.error || "Ghi don_hoan_huy thất bại");
+    }
+
+    try {
+      await deps.markOrderLocalStatusInStore(String(found.orderSn || ""), target, {
+        shopId: found.shopId != null ? String(found.shopId) : undefined,
+        clearHandedOver: true,
+        status: isReturn ? "return_received" : "cancelled",
+        stockRestored: Boolean(found.stock_restored),
+        stockRestoredAt: found.stock_restored_at ? String(found.stock_restored_at) : undefined,
+      });
+    } catch (flagErr) {
+      console.warn(`[Scan BG] mark local_status fail order_sn=${found.orderSn}:`, flagErr?.message || flagErr);
     }
 
     job.status = "done";
