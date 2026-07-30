@@ -8,8 +8,8 @@ import { sleep } from "../../utils/concurrency.js";
 
 export const SHOPEE_API_MAX_RETRY = 3;
 export const SHOPEE_API_RETRY_BASE_MS = 1500;
-/** Timeout mọi HTTP Shopee — tối đa 15s, tránh treo process vô hạn trên cPanel. */
-export const SHOPEE_HTTP_TIMEOUT_MS = 15_000;
+/** Timeout mọi HTTP Shopee — tối đa 30s, tránh treo process vô hạn trên cPanel. */
+export const SHOPEE_HTTP_TIMEOUT_MS = 30_000;
 /** TLS tối thiểu cho Shopee OpenAPI (cPanel Node ≥20) — tránh ECONNRESET do handshake cũ. */
 export const SHOPEE_TLS_MIN_VERSION = String(process.env.SHOPEE_TLS_MIN_VERSION || "TLSv1.2").trim();
 export const SHOPEE_TLS_MAX_VERSION = String(process.env.SHOPEE_TLS_MAX_VERSION || "TLSv1.3").trim();

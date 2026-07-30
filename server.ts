@@ -4,7 +4,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { PDFDocument } from "pdf-lib";
 import dotenv from "dotenv";
-import cron from "node-cron";
+import { scheduleAutoIncrementalOrdersSync } from "./cron/index.js";
 import { createShopeeWebhookRouter } from "./src/webhooks/shopeeWebhookHandler.ts";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
@@ -448,10 +448,21 @@ function writeCpanelCrashLog(kind: string, err: unknown): void {
   }
 }
 process.on("uncaughtException", (err) => {
-  writeCpanelCrashLog("Exception", err);
+  try {
+    console.error("[Background Sync Error]:", err instanceof Error ? err.message : String(err));
+    writeCpanelCrashLog("Exception", err);
+  } catch {
+    /* never rethrow */
+  }
 });
 process.on("unhandledRejection", (err) => {
-  writeCpanelCrashLog("Rejection", err);
+  try {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Background Sync Error]:", msg);
+    writeCpanelCrashLog("Rejection", err);
+  } catch {
+    /* never rethrow — Unhandled Rejection không được làm sập process */
+  }
 });
 
 const APP_ROOT = resolveAppRoot();
@@ -8541,32 +8552,36 @@ let shopeeCancelReturnCronTimer: ReturnType<typeof setInterval> | undefined;
 function scheduleShopeeCancelReturnReconcile(): void {
   if (shopeeCancelReturnCronTimer) return;
   shopeeCancelReturnCronTimer = setInterval(() => {
-    void (async () => {
-      if (!isMongoReady() || ordersPullInFlight) return;
-      try {
-        const result = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
-        console.log(
-          `[CancelReturn Cron] pulled=${result.pulled} +${result.added}/~${result.updated} skipped=${Boolean(result.skipped)} — ${result.message}`,
-        );
-        // Đối soát pool shipping/processed/return_pending trong Mongo.
-        if (!ordersPullInFlight && isMongoReady()) {
-          ensureShopeeLinkedShopTokenKeys();
-          const shopIds = listShopeeSyncShopIds();
-          if (shopIds.length) {
-            const orders = await loadOrdersFromStore();
-            const deadlineAt = Date.now() + 90_000;
-            const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
-            if (reconciled.pulled > 0 || reconciled.errors.length) {
-              console.log(
-                `[CancelReturn Cron] reconcile pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} err=${reconciled.errors.length}`,
-              );
+    Promise.resolve()
+      .then(async () => {
+        try {
+          if (!isMongoReady() || ordersPullInFlight) return;
+          const result = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
+          console.log(
+            `[CancelReturn Cron] pulled=${result.pulled} +${result.added}/~${result.updated} skipped=${Boolean(result.skipped)} — ${result.message}`,
+          );
+          if (!ordersPullInFlight && isMongoReady()) {
+            ensureShopeeLinkedShopTokenKeys();
+            const shopIds = listShopeeSyncShopIds();
+            if (shopIds.length) {
+              const orders = await loadOrdersFromStore();
+              const deadlineAt = Date.now() + 90_000;
+              const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
+              if (reconciled.pulled > 0 || reconciled.errors.length) {
+                console.log(
+                  `[CancelReturn Cron] reconcile pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} err=${reconciled.errors.length}`,
+                );
+              }
             }
           }
+        } catch (err: any) {
+          console.error("[Background Sync Error]:", err?.message || err);
+          return;
         }
-      } catch (err: any) {
-        console.warn("[CancelReturn Cron] FAILED:", err?.message || err);
-      }
-    })();
+      })
+      .catch((err: any) => {
+        console.error("[Background Sync Error]:", err?.message || err);
+      });
   }, SHOPEE_CANCEL_RETURN_CRON_MS);
   if (typeof (shopeeCancelReturnCronTimer as any).unref === "function") {
     (shopeeCancelReturnCronTimer as any).unref();
@@ -8577,49 +8592,50 @@ function scheduleShopeeCancelReturnReconcile(): void {
 /**
  * Auto Incremental Sync mỗi 30 phút — chỉ lấy đơn thay đổi trong 45 phút gần nhất
  * (30 phút chu kỳ + 15 phút buffer an toàn để không miss đơn).
+ * Error boundary: mọi lỗi chỉ log, không throw (tránh crash Passenger).
  */
 const AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = 45 * 60;
-let autoIncrementalOrdersSyncScheduled = false;
 
-function scheduleAutoIncrementalOrdersSync(): void {
-  if (autoIncrementalOrdersSyncScheduled) return;
-  if (!cron.validate("*/30 * * * *")) {
-    console.error("[CRON] Invalid cron expression */30 * * * * — auto sync NOT scheduled.");
-    return;
-  }
-  cron.schedule("*/30 * * * *", () => {
-    void (async () => {
-      if (!isMongoReady()) {
-        console.log("[CRON] Auto sync 30m skipped — Mongo not ready.");
-        return;
-      }
-      if (ordersPullInFlight) {
-        console.log("[CRON] Auto sync 30m skipped — pull already in flight.");
-        return;
-      }
-      try {
-        console.log(
-          `[CRON] Auto sync 30m start — lookbackSec=${AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC} (45m window)`,
-        );
-        const result = await pullIncrementalOrdersFromShopee({
-          lookbackSec: AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC,
-          reconcileActive: false,
-        });
-        if (!result.skipped) {
-          invalidateOrdersRefreshCache();
+function scheduleAutoIncrementalOrdersSyncSafe(): void {
+  try {
+    scheduleAutoIncrementalOrdersSync({
+      lookbackSec: AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC,
+      isMongoReady: () => {
+        try {
+          return isMongoReady();
+        } catch {
+          return false;
         }
-        console.log(
-          `[CRON] Auto sync 30m finished successfully pulled=${result.pulled} +${result.added}/~${result.updated} err=${result.errors.length} — ${result.message}`,
-        );
-      } catch (err: any) {
-        console.warn("[CRON] Auto sync 30m FAILED:", err?.message || err);
-      }
-    })();
-  });
-  autoIncrementalOrdersSyncScheduled = true;
-  console.log(
-    "[CRON] Auto Incremental Sync ON — mỗi 30 phút (lookback 45 phút, không kéo nhiều ngày).",
-  );
+      },
+      isPullInFlight: () => Boolean(ordersPullInFlight),
+      pullIncrementalOrdersFromShopee: async (opts) => {
+        try {
+          return await pullIncrementalOrdersFromShopee(opts);
+        } catch (error: any) {
+          console.error("[Background Sync Error]:", error?.message || error);
+          return {
+            success: false,
+            pulled: 0,
+            added: 0,
+            updated: 0,
+            shops: 0,
+            errors: [{ error: "background_sync_failed", message: String(error?.message || error) }],
+            message: String(error?.message || error),
+            skipped: true,
+          };
+        }
+      },
+      invalidateOrdersRefreshCache: () => {
+        try {
+          invalidateOrdersRefreshCache();
+        } catch (error: any) {
+          console.error("[Background Sync Error]:", error?.message || error);
+        }
+      },
+    });
+  } catch (error: any) {
+    console.error("[Background Sync Error]:", error?.message || error);
+  }
 }
 
 /**
@@ -15806,7 +15822,7 @@ async function startServer() {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
-        scheduleAutoIncrementalOrdersSync();
+        scheduleAutoIncrementalOrdersSyncSafe();
         scheduleClosedOrdersRetentionCleanup();
         scheduleMongoTempCollectionsCleanup();
       }
@@ -15878,13 +15894,12 @@ async function startServer() {
             `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} — ${cancelResult.message}`,
           );
         } catch (bootPullErr: any) {
-          console.error(
-            "[Boot] Recovery pull FAILED:",
-            bootPullErr?.message || bootPullErr,
-            bootPullErr?.stack || "",
-          );
+          console.error("[Background Sync Error]:", bootPullErr?.message || bootPullErr);
+          return;
         }
-      })();
+      })().catch((err: any) => {
+        console.error("[Background Sync Error]:", err?.message || err);
+      });
     };
 
     if (process.env.PORT) {
