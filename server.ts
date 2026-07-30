@@ -255,6 +255,7 @@ import {
   resolveShopeeApiShopId,
   getValidShopeeAccessToken,
   withShopeeAccessTokenRetry,
+  refreshShopeeAccessTokenLocked,
   resolveShopeeTokenShopId,
   describeShopeeTokenFailure,
   getShopeeTokenRecord,
@@ -1797,13 +1798,38 @@ async function collectShopeeOrderSnsByStatus(
   while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
     if (Date.now() > deadlineAt) break;
     page += 1;
-    const listResult = await shopeeGetOrderList(shopId, accessToken, {
+    let listResult = await shopeeGetOrderList(shopId, accessToken, {
       timeRangeField: "update_time",
       timeFrom,
       timeTo,
       cursor,
       orderStatus: status,
     });
+    if (
+      listResult?.httpStatus === 401 ||
+      listResult?.httpStatus === 403 ||
+      isShopeeInvalidTokenError(listResult?.error, listResult?.message)
+    ) {
+      try {
+        const refreshed = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+        if (refreshed) {
+          accessToken = refreshed;
+          listResult = await shopeeGetOrderList(shopId, accessToken, {
+            timeRangeField: "update_time",
+            timeFrom,
+            timeTo,
+            cursor,
+            orderStatus: status,
+          });
+        }
+      } catch (refreshErr: any) {
+        console.error(
+          `[Orders Pull] Token refresh thất bại (status=${status}) shop=${shopId}:`,
+          refreshErr?.message || refreshErr,
+        );
+        break;
+      }
+    }
     if (listResult?.error) break;
     const rows = extractShopeeOrderListRows(listResult) as any[];
     for (const row of rows) {
@@ -2092,59 +2118,77 @@ async function reconcileActiveShopeeOrdersFromStore(
   }
 
   for (const [shopId, orderSns] of byShop) {
-    assertOrdersPullDeadline(deadlineAt, `active reconcile shop=${shopId}`);
-    const auth = await getShopeeAccessTokenForApi(shopId);
-    if (!auth?.token) {
-      result.errors.push({
-        shopId,
-        error: "no_valid_access_token",
-        message: `Shop ${shopId}: không lấy được access_token để đối soát đơn cũ.`,
-      });
-      continue;
-    }
-
-    syncDiag("Active status reconcile START", `shop=${shopId} candidates=${orderSns.length}`);
-    for (let i = 0; i < orderSns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
-      assertOrdersPullDeadline(deadlineAt, `active reconcile chunk shop=${shopId} offset=${i}`);
-      const chunk = orderSns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
-      try {
-        const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
-          auth.apiShopId,
-          auth.token,
-          auth.fileKey || shopId,
-          chunk,
-          { enrichTracking: false, skipEscrow: true },
-        );
-        if (errors.length) result.errors.push(...errors);
-        if (normalized.length === 0) continue;
-        const persisted = await persistShopeeOrderChunk(orders, normalized, {
-          apiShopId: auth.apiShopId,
-          accessToken: auth.token,
-          skipTracking: true,
-        });
-        result.pulled += normalized.length;
-        result.added += persisted.added;
-        result.updated += persisted.updated;
-        syncDiag(
-          "Active status reconcile SAVED",
-          `shop=${shopId} chunk=${Math.floor(i / SHOPEE_SYNC_CHUNK_SIZE) + 1} ` +
-            `pulled=${normalized.length} +${persisted.added}/~${persisted.updated}`,
-        );
-      } catch (error: any) {
+    try {
+      assertOrdersPullDeadline(deadlineAt, `active reconcile shop=${shopId}`);
+      const auth = await getShopeeAccessTokenForApi(shopId);
+      if (!auth?.token) {
         result.errors.push({
           shopId,
-          error: "active_reconcile_chunk_failed",
-          message: error?.message || String(error),
-          orderSns: chunk,
+          error: "no_valid_access_token",
+          message: `Shop ${shopId}: không lấy được access_token để đối soát đơn cũ.`,
         });
-        console.error(
-          `[Shopee Reconcile] active orders failed shop=${shopId}:`,
-          error?.stack || error?.message || error,
-        );
+        continue;
       }
-      if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSns.length) {
-        await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+
+      syncDiag("Active status reconcile START", `shop=${shopId} candidates=${orderSns.length}`);
+      for (let i = 0; i < orderSns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+        assertOrdersPullDeadline(deadlineAt, `active reconcile chunk shop=${shopId} offset=${i}`);
+        const chunk = orderSns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+        try {
+          const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+            auth.apiShopId,
+            auth.token,
+            auth.fileKey || shopId,
+            chunk,
+            { enrichTracking: false, skipEscrow: true },
+          );
+          if (errors.length) result.errors.push(...errors);
+          if (normalized.length === 0) continue;
+          const persisted = await persistShopeeOrderChunk(orders, normalized, {
+            apiShopId: auth.apiShopId,
+            accessToken: auth.token,
+            skipTracking: true,
+          });
+          result.pulled += normalized.length;
+          result.added += persisted.added;
+          result.updated += persisted.updated;
+          syncDiag(
+            "Active status reconcile SAVED",
+            `shop=${shopId} chunk=${Math.floor(i / SHOPEE_SYNC_CHUNK_SIZE) + 1} ` +
+              `pulled=${normalized.length} +${persisted.added}/~${persisted.updated}`,
+          );
+        } catch (error: any) {
+          if (String(error?.message || "").includes("ORDERS_PULL_DEADLINE")) throw error;
+          result.errors.push({
+            shopId,
+            error: "active_reconcile_chunk_failed",
+            message: error?.message || String(error),
+            orderSns: chunk,
+          });
+          console.error(
+            `[Shopee Reconcile] active orders failed shop=${shopId}:`,
+            error?.stack || error?.message || error,
+          );
+        }
+        if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSns.length) {
+          await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+        }
       }
+    } catch (shopErr: any) {
+      if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
+        syncDiag("Active reconcile SHOP DEADLINE — continue next shop", shopErr.message);
+        result.errors.push({ shopId, error: "pull_shop_deadline", message: shopErr.message });
+        continue;
+      }
+      console.error(
+        `[Shopee Reconcile] shop=${shopId} exception (isolated):`,
+        shopErr?.message || shopErr,
+      );
+      result.errors.push({
+        shopId,
+        error: "active_reconcile_shop_failed",
+        message: shopErr?.message || String(shopErr),
+      });
     }
   }
   return result;
@@ -15276,13 +15320,44 @@ async function startServer() {
         const oauthShopIds = listShopeeOAuthShopIds();
         const tokens = loadShopeeTokens();
         const record = configuredId ? getShopeeTokenRecord(tokens, configuredId) : null;
-        const token = configuredId ? await getValidShopeeAccessToken(configuredId) : null;
+        let token = configuredId ? await getValidShopeeAccessToken(configuredId) : null;
 
         if (token && record) {
           const apiShopId = resolveShopeeApiShopId(record, configuredId);
-          const ping = await verifyShopeeShopToken(apiShopId, token);
+          let ping = await verifyShopeeShopToken(apiShopId, token);
           if (ping.ok) {
             return { online: true, message: `OAuth token hợp lệ (Shopee API OK, shop_id=${apiShopId})` };
+          }
+          // Auth fail → refresh đúng shop_id + retry 1 lần, KHÔNG Offline ngay.
+          if (
+            isShopeeInvalidTokenError(ping.error, ping.error) ||
+            /invalid|expire|auth|unauthorized/i.test(String(ping.error || ""))
+          ) {
+            try {
+              console.warn(
+                `[Shop connection] shop_id=${configuredId} ping fail (${ping.error}) — refresh + retry 1 lần`,
+              );
+              token = await refreshShopeeAccessTokenLocked(configuredId, { force: true });
+              ping = await verifyShopeeShopToken(apiShopId, token);
+              if (ping.ok) {
+                return {
+                  online: true,
+                  message: `OAuth token hợp lệ sau auto-refresh (Shopee API OK, shop_id=${apiShopId})`,
+                };
+              }
+            } catch (refreshErr: any) {
+              console.error(
+                `[Shop connection] Refresh thất bại shop_id=${configuredId}:`,
+                refreshErr?.message || refreshErr,
+              );
+              return {
+                online: false,
+                message:
+                  refreshErr instanceof ShopeeRefreshTokenExpiredError
+                    ? refreshErr.message
+                    : `Refresh token thất bại shop_id=${configuredId}: ${refreshErr?.message || ping.error || "unknown"}`,
+              };
+            }
           }
           return {
             online: false,

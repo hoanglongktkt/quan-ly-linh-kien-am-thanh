@@ -163,32 +163,43 @@ export async function postShopConnectionStatus(req, res) {
   try {
     const shops = Array.isArray(req.body?.shops) ? req.body.shops : [];
     const statuses = {};
-    for (const shop of shops) {
-      if (!shop?.id) continue;
-      try {
-        statuses[shop.id] = await new Promise((resolve, reject) => {
-          const timer = setTimeout(
-            () => reject(new Error("Timeout kiểm tra kết nối (15s)")),
-            15_000,
-          );
-          Promise.resolve(deps.checkShopConnectionStatus(shop)).then(
-            (v) => {
-              clearTimeout(timer);
-              resolve(v);
+    // Cách ly từng shop — 1 shop lỗi không làm fail toàn bộ (Promise.allSettled).
+    const settled = await Promise.allSettled(
+      shops.map(async (shop) => {
+        if (!shop?.id) return null;
+        try {
+          const result = await new Promise((resolve, reject) => {
+            const timer = setTimeout(
+              () => reject(new Error("Timeout kiểm tra kết nối (15s)")),
+              15_000,
+            );
+            Promise.resolve(deps.checkShopConnectionStatus(shop)).then(
+              (v) => {
+                clearTimeout(timer);
+                resolve(v);
+              },
+              (e) => {
+                clearTimeout(timer);
+                reject(e);
+              },
+            );
+          });
+          return { id: shop.id, status: result };
+        } catch (shopErr) {
+          console.error("[Shop connection-status] shop failed:", shop?.id, shopErr);
+          return {
+            id: shop.id,
+            status: {
+              online: false,
+              message: shopErr?.message || "Lỗi kiểm tra kết nối gian hàng",
             },
-            (e) => {
-              clearTimeout(timer);
-              reject(e);
-            },
-          );
-        });
-      } catch (shopErr) {
-        console.error("[Shop connection-status] shop failed:", shop?.id, shopErr);
-        statuses[shop.id] = {
-          online: false,
-          message: shopErr?.message || "Lỗi kiểm tra kết nối gian hàng",
-        };
-      }
+          };
+        }
+      }),
+    );
+    for (const item of settled) {
+      if (item.status !== "fulfilled" || !item.value?.id) continue;
+      statuses[item.value.id] = item.value.status;
     }
     return res.json({ success: true, statuses });
   } catch (error) {

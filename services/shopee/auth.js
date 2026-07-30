@@ -328,9 +328,14 @@ export function normalizeTokenStore(tokens) {
 export function getShopeeTokenRecord(tokens, shopId) {
   const key = normalizeShopIdKey(shopId);
   if (!key) return null;
-  if (tokens[key]) return tokens[key];
+  // Ưu tiên đúng key shop_id — tuyệt đối không lấy nhầm token shop khác khi đã có record riêng.
+  if (tokens[key]?.access_token || tokens[key]?.refresh_token) return tokens[key];
   for (const [k, v] of Object.entries(tokens)) {
     if (normalizeShopIdKey(k) === key) return v;
+  }
+  // Fallback linked chỉ khi shop chưa có record riêng (main-account OAuth).
+  for (const [k, v] of Object.entries(tokens)) {
+    if (normalizeShopIdKey(k) === key) continue;
     const linked = Array.isArray(v?.shop_id_list) ? v.shop_id_list : [];
     if (linked.some((id) => normalizeShopIdKey(id) === key)) return v;
   }
@@ -540,6 +545,9 @@ export function saveShopeeTokenForShop(shopId, record) {
     existing,
   );
   saveShopeeTokens(tokens);
+  if (tokens[key]?.access_token) {
+    tokenCacheSet(key, tokens[key].access_token, tokens[key].expire_in);
+  }
   console.log(`[Shopee Tokens] Saved token for shop_id=${key}. All shops: [${Object.keys(tokens).join(", ")}]`);
 }
 
@@ -626,13 +634,14 @@ export function ensureShopeeLinkedShopTokenKeys() {
   return listShopeeSyncShopIds();
 }
 
-export function propagateShopeeTokenToLinkedShops(sourceShopId, patch) {
+export function propagateShopeeTokenToLinkedShops(sourceShopId, patch, opts) {
   const key = normalizeShopIdKey(sourceShopId);
   if (!key || !patch?.access_token) return;
   const tokens = normalizeTokenStore(loadShopeeTokens());
-  const record = getShopeeTokenRecord(tokens, key);
+  const record = getShopeeTokenRecord(tokens, key) || tokens[key];
   if (!record) {
     saveShopeeTokenForShop(key, patch);
+    tokenCacheSet(key, patch.access_token, patch.expire_in);
     return;
   }
   const linked = new Set([key]);
@@ -644,18 +653,33 @@ export function propagateShopeeTokenToLinkedShops(sourceShopId, patch) {
     const id = normalizeShopIdKey(raw);
     if (id) linked.add(id);
   }
+  const onlyMatchingRefresh = opts?.onlyMatchingRefreshToken
+    ? String(opts.onlyMatchingRefreshToken)
+    : "";
   const updates = {};
   for (const id of linked) {
+    const existing = tokens[id] || (id === key ? record : null);
+    // Chỉ ghi đè shop đang dùng cùng refresh_token cũ — tránh đè token độc lập của shop khác.
+    if (
+      onlyMatchingRefresh &&
+      existing?.refresh_token &&
+      String(existing.refresh_token) !== onlyMatchingRefresh &&
+      id !== key
+    ) {
+      continue;
+    }
     updates[id] = buildShopeeTokenRecord(
       id,
       {
-        ...record,
+        ...(existing || record),
         ...patch,
+        shop_id: id,
         shop_id_list: [...linked],
       },
-      oauth || key,
-      tokens[id] || record,
+      normalizeShopIdKey(existing?.oauth_shop_id) || oauth || key,
+      existing || record,
     );
+    tokenCacheSet(id, patch.access_token, patch.expire_in);
   }
   saveShopeeTokens(updates);
 }
@@ -770,7 +794,15 @@ async function exchangeShopeeCodeForToken(code, opts) {
   return json;
 }
 
+/**
+ * Refresh token cho ĐÚNG shop_id truyền vào — lưu DB map theo shop_id, không dùng biến global.
+ */
 async function refreshShopeeToken(shopId, refreshToken) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !refreshToken) {
+    return { error: "invalid_refresh_params", message: `Thiếu shop_id hoặc refresh_token (shop_id=${shopId})` };
+  }
+
   const apiPath = "/api/v2/auth/access_token/get";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp);
@@ -780,30 +812,39 @@ async function refreshShopeeToken(shopId, refreshToken) {
     const res = await fetchWithTimeout(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken, shop_id: Number(shopId), partner_id: Number(SHOPEE_PARTNER_ID) }),
+      body: JSON.stringify({
+        refresh_token: String(refreshToken),
+        shop_id: Number(key),
+        partner_id: Number(SHOPEE_PARTNER_ID),
+      }),
     });
     const json = await res.json();
-    console.log(`[Shopee API] POST ${apiPath} (refresh) -> HTTP ${res.status}:`, JSON.stringify(json));
+    console.log(
+      `[Shopee API] POST ${apiPath} (refresh shop_id=${key}) -> HTTP ${res.status}:`,
+      JSON.stringify(json),
+    );
 
     const normalized = normalizeShopeeTokenResponse(json);
     if (normalized.access_token) {
-      saveShopeeTokenForShop(shopId, {
+      // Chỉ UPSERT đúng key shop_id đang refresh — không ghi nhầm sang shop khác.
+      saveShopeeTokenForShop(key, {
         access_token: normalized.access_token,
-        refresh_token: normalized.refresh_token,
+        refresh_token: normalized.refresh_token || refreshToken,
         expire_in: normalized.expire_in,
         obtained_at: Math.floor(Date.now() / 1000),
       });
-      return normalized;
+      tokenCacheSet(key, normalized.access_token, normalized.expire_in);
+      return { ...normalized, shop_id: key };
     }
     console.error(
-      `[Shopee API] Refresh token thất bại shop_id=${shopId}:`,
+      `[Shopee API] Refresh token thất bại shop_id=${key}:`,
       normalized.error || json.error,
       normalized.message || json.message,
     );
-    return normalized;
+    return { ...normalized, shop_id: key };
   } catch (error) {
-    deps.logOAuthSaveError(`refreshShopeeToken shop_id=${shopId}`, error);
-    return { error: "refresh_failed", message: error?.message || String(error) };
+    deps.logOAuthSaveError(`refreshShopeeToken shop_id=${key}`, error);
+    return { error: "refresh_failed", message: error?.message || String(error), shop_id: key };
   }
 }
 
@@ -830,28 +871,89 @@ function isShopeeRefreshPermanentlyFailed(error, message) {
   );
 }
 
+/**
+ * Mutex refresh theo "chủ token" (oauth_shop_id / fingerprint refresh_token).
+ * Tránh 2 shop dùng chung refresh_token refresh song song → 1 shop invalid_refresh_token → Offline.
+ */
 const shopeeTokenRefreshLocks = new Map();
 
-function readShopeeAccessTokenIfFresh(shopId) {
-  const tokens = loadShopeeTokens();
+/** Cache access_token trên RAM — key = shop_id (không dùng biến global đơn). */
+const shopeeAccessTokenCache = new Map();
+
+function tokenCacheGet(shopId) {
   const key = normalizeShopIdKey(shopId);
+  if (!key) return null;
+  const entry = shopeeAccessTokenCache.get(key);
+  if (!entry?.token) return null;
+  if (Math.floor(Date.now() / 1000) >= Number(entry.expiresAt || 0)) {
+    shopeeAccessTokenCache.delete(key);
+    return null;
+  }
+  return String(entry.token);
+}
+
+function tokenCacheSet(shopId, token, expireIn) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key || !token) return;
+  const ttl = Math.max(60, Number(expireIn) || 14400) - 60;
+  shopeeAccessTokenCache.set(key, {
+    token: String(token),
+    expiresAt: Math.floor(Date.now() / 1000) + ttl,
+  });
+}
+
+function tokenCacheClear(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (key) shopeeAccessTokenCache.delete(key);
+}
+
+function resolveRefreshLockKey(shopId, record) {
+  const key = normalizeShopIdKey(shopId);
+  const oauth = normalizeShopIdKey(record?.oauth_shop_id);
+  if (oauth) return `oauth:${oauth}`;
+  const rt = record?.refresh_token ? String(record.refresh_token) : "";
+  if (rt) return `rt:${rt.slice(0, 32)}`;
+  return `shop:${key}`;
+}
+
+function readShopeeAccessTokenIfFresh(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  const cached = tokenCacheGet(key);
+  if (cached) return cached;
+
+  const tokens = loadShopeeTokens();
   const record = getShopeeTokenRecord(tokens, key);
   if (!record?.access_token) return null;
   const now = Math.floor(Date.now() / 1000);
   const obtainedAt = Number(record.obtained_at) || 0;
   const expireIn = Number(record.expire_in) || 14400;
   if (obtainedAt > 0 && now - obtainedAt >= expireIn - 60) return null;
+  tokenCacheSet(key, record.access_token, expireIn - (now - obtainedAt));
   return String(record.access_token);
 }
 
-async function refreshShopeeAccessTokenLocked(shopId, opts) {
+export async function refreshShopeeAccessTokenLocked(shopId, opts) {
   const key = normalizeShopIdKey(shopId);
   if (!key) throw new ShopeeRefreshTokenExpiredError(String(shopId || "?"));
 
-  const inflight = shopeeTokenRefreshLocks.get(key);
+  const tokensPeek = loadShopeeTokens();
+  const recordPeek = getShopeeTokenRecord(tokensPeek, key);
+  const lockKey = resolveRefreshLockKey(key, recordPeek);
+
+  const inflight = shopeeTokenRefreshLocks.get(lockKey);
   if (inflight) {
-    console.log(`[Shopee Token] Mutex: chờ refresh đang chạy shop_id=${key}`);
-    return inflight;
+    console.log(`[Shopee Token] Mutex: chờ refresh lock=${lockKey} (shop_id=${key})`);
+    await inflight;
+    const afterWait = readShopeeAccessTokenIfFresh(key);
+    if (afterWait) return afterWait;
+    // Sibling refresh xong nhưng shop này chưa có token fresh — đọc lại từ DB.
+    const tokensAfter = loadShopeeTokens();
+    const recAfter = getShopeeTokenRecord(tokensAfter, key);
+    if (recAfter?.access_token) {
+      tokenCacheSet(key, recAfter.access_token, recAfter.expire_in);
+      return String(recAfter.access_token);
+    }
+    throw new ShopeeRefreshTokenExpiredError(key);
   }
 
   const run = (async () => {
@@ -872,50 +974,45 @@ async function refreshShopeeAccessTokenLocked(shopId, opts) {
       const obtainedAt = Number(record.obtained_at) || 0;
       if (obtainedAt > 0 && now - obtainedAt < 15 && record.access_token) {
         console.log(`[Shopee Token] Bỏ qua force refresh — token vừa mới (${now - obtainedAt}s) shop_id=${key}`);
+        tokenCacheSet(key, record.access_token, record.expire_in);
         return String(record.access_token);
       }
     }
 
+    const oldRefresh = String(record.refresh_token);
     console.log(
-      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)}...`,
+      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)} lock=${lockKey}...`,
     );
-    const refreshAsShopId =
-      normalizeShopIdKey(record?.oauth_shop_id) ||
-      normalizeShopIdKey(record?.shop_id) ||
-      resolveShopeeApiShopId(record, key) ||
-      key;
-    const refreshed = await refreshShopeeToken(refreshAsShopId, String(record.refresh_token));
+    // Luôn refresh với ĐÚNG shop_id đang xử lý — không thay bằng oauth_shop_id của shop khác.
+    const refreshed = await refreshShopeeToken(key, oldRefresh);
     if (refreshed.access_token) {
       const obtainedAt = Math.floor(Date.now() / 1000);
-      propagateShopeeTokenToLinkedShops(key, {
-        access_token: refreshed.access_token,
-        refresh_token: refreshed.refresh_token || record.refresh_token,
-        expire_in: refreshed.expire_in,
-        obtained_at: obtainedAt,
-      });
-      console.log(
-        `[Shopee Token] Refresh OK shop_id=${key} (refreshAs=${refreshAsShopId}) — propagated linked shops`,
+      propagateShopeeTokenToLinkedShops(
+        key,
+        {
+          access_token: refreshed.access_token,
+          refresh_token: refreshed.refresh_token || oldRefresh,
+          expire_in: refreshed.expire_in,
+          obtained_at: obtainedAt,
+        },
+        { onlyMatchingRefreshToken: oldRefresh },
       );
+      tokenCacheSet(key, refreshed.access_token, refreshed.expire_in);
+      console.log(`[Shopee Token] Refresh OK shop_id=${key} — DB + cache cập nhật theo shop_id`);
       return String(refreshed.access_token);
     }
 
+    tokenCacheClear(key);
     console.error(
       `[Shopee Token] Refresh THẤT BẠI shop_id=${key}:`,
       refreshed.error || refreshed.message,
     );
-    if (
-      isShopeeRefreshPermanentlyFailed(refreshed.error, refreshed.message) ||
-      isShopeeInvalidTokenError(refreshed.error, refreshed.message) ||
-      !refreshed.access_token
-    ) {
-      throw new ShopeeRefreshTokenExpiredError(key);
-    }
     throw new ShopeeRefreshTokenExpiredError(key);
   })().finally(() => {
-    shopeeTokenRefreshLocks.delete(key);
+    shopeeTokenRefreshLocks.delete(lockKey);
   });
 
-  shopeeTokenRefreshLocks.set(key, run);
+  shopeeTokenRefreshLocks.set(lockKey, run);
   return run;
 }
 
@@ -1028,11 +1125,15 @@ export async function withShopeeAccessTokenRetry(shopId, runner, isAuthFailure) 
     (isAuthFailure && isAuthFailure(result)) ||
     (result &&
       typeof result === "object" &&
-      isShopeeInvalidTokenError(result.error, result.message));
+      (Number(result.httpStatus) === 401 ||
+        Number(result.httpStatus) === 403 ||
+        isShopeeInvalidTokenError(result.error, result.message)));
 
   if (!failed) return result;
 
+  // Không đánh Offline ngay — force refresh đúng shop_id rồi retry API 1 lần.
   console.warn(`[Shopee Token] API báo token hết hạn shop_id=${key} — force refresh + retry 1 lần`);
+  tokenCacheClear(key);
   token = await refreshShopeeAccessTokenLocked(key, { force: true });
   return runner(token);
 }
@@ -1044,10 +1145,13 @@ export function resolveShopeeTokenShopId(requested) {
   const req = String(requested || "").trim();
   if (req && tokens[req]) return req;
   if (req) {
-    const digits = req.match(/(\d{5,})/)?.[1];
+    const digits = normalizeShopIdKey(req) || req.match(/(\d{5,})/)?.[1] || "";
     if (digits && tokens[digits]) return digits;
+    // Có shop_id yêu cầu nhưng không có token riêng — KHÔNG fallback sang shop khác.
+    if (digits || req) return digits || null;
   }
-  return keys[0];
+  // Chỉ khi không truyền shop_id mới lấy shop đầu (single-shop legacy).
+  return keys.length === 1 ? keys[0] : null;
 }
 
 export function describeShopeeTokenFailure(shopKey) {
