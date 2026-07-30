@@ -657,16 +657,14 @@ export default function OrderManager({
     setIsRefreshing(true);
     try {
       const token = localStorage.getItem('admin_token') || '';
-      console.log('[Orders Sync] Làm mới → POST /api/orders/pull (Shopee → Mongo)...');
+      console.log('[Orders Sync] Làm mới → POST /api/orders/pull (background)...');
+      const pullBody: Record<string, unknown> = { lookback_hours: 168 };
+      if (selectedShopId && selectedShopId !== 'all') {
+        pullBody.shop_ids = [String(selectedShopId)];
+      }
       const pullController = new AbortController();
-      // Proxy long-running 240s; client cắt ~245s để nút không kẹt "Đang đồng bộ...".
-      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 245_000);
+      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 15_000);
       try {
-        const pullBody: Record<string, unknown> = { lookback_hours: 168 };
-        // Đang lọc 1 shop (VD: AuDIO 831052930) → ưu tiên kéo đúng shop đó, tránh bị shop khác chiếm deadline.
-        if (selectedShopId && selectedShopId !== 'all') {
-          pullBody.shop_ids = [String(selectedShopId)];
-        }
         const pullRes = await fetch('/api/orders/pull', {
           method: 'POST',
           signal: pullController.signal,
@@ -674,122 +672,47 @@ export default function OrderManager({
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          // 7 ngày — đủ bắt đơn đã quét ĐVVC trên App mà webhook/local chưa kịp cập nhật.
           body: JSON.stringify(pullBody),
         });
         const pullJson = await pullRes.json().catch(() => ({} as Record<string, unknown>));
-        const pullErrors = Array.isArray(pullJson?.errors) ? pullJson.errors : [];
-        const tokenErr = pullErrors.find(
-          (e: { error?: string; shopId?: string; message?: string }) =>
-            String(e?.error || '') === 'no_valid_access_token',
-        );
-        if (tokenErr) {
-          const shopHint = String(tokenErr.shopId || selectedShopId || '');
-          const audioHint =
-            shopHint === '831052930' || String(selectedShopId) === '831052930'
-              ? ' (shop AuDIO 831052930)'
-              : shopHint
-                ? ` (shop ${shopHint})`
-                : '';
+        if (pullRes.ok && (pullJson?.background === true || pullJson?.success !== false)) {
+          setLastSyncSummary('Đã đưa vào tiến trình đồng bộ ngầm');
           showToast(
-            `Thiếu access_token hợp lệ${audioHint} — ủy quyền lại Shopee rồi Làm mới.`,
+            'Tiến trình đồng bộ đang chạy ngầm, đơn hàng sẽ tự động xuất hiện sau ít phút...',
             7000,
           );
-          setLastSyncSummary(
-            `Đồng bộ thất bại: không có access_token hợp lệ${audioHint}`,
-          );
-        } else if (!pullRes.ok || pullJson?.success === false) {
-          const softDeadline = pullErrors.some(
-            (e: { error?: string }) =>
-              String(e?.error || '') === 'pull_deadline' ||
-              String(e?.error || '') === 'pull_shop_deadline',
-          );
-          const inFlight = pullErrors.some(
-            (e: { error?: string }) => String(e?.error || '') === 'pull_in_flight',
-          ) || String(pullJson?.error || '') === 'pull_in_flight';
-          const pulledN = Number(pullJson?.pulled || 0);
-          if (inFlight) {
-            setLastSyncSummary('Đồng bộ đang chạy — vui lòng đợi xong rồi Làm mới lại.');
-            showToast('Đồng bộ đang chạy nền — đợi vài phút rồi bấm Làm mới lại.', 7000);
-          } else if (softDeadline && pulledN > 0) {
-            setLastSyncSummary(
-              `Đồng bộ một phần: ${pulledN} đơn (hết thời gian). Cập nhật ${pullJson?.updated ?? 0}, mới ${pullJson?.added ?? 0}.`,
-            );
-            showToast('Đồng bộ một phần — bấm Làm mới lại (lọc 1 shop) để kéo tiếp.', 7000);
-          } else {
-            console.warn('[Orders Sync] Pull Shopee không thành công:', pullJson);
-            setLastSyncSummary(
-              `Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`,
-            );
-            showToast(
-              String(pullJson?.message || pullJson?.error || 'Không đồng bộ được với dữ liệu Shopee'),
-              7000,
-            );
-          }
+          console.log('[Orders Sync] Background sync queued:', pullJson?.message || 'ok');
         } else {
-          const truncated = Number(pullJson?.truncatedShops || 0);
+          console.warn('[Orders Sync] Queue sync thất bại:', pullJson);
           setLastSyncSummary(
-            `Đồng bộ xong: kiểm tra ${pullJson.pulled ?? 0}, cập nhật ${pullJson.updated ?? 0}, mới ${pullJson.added ?? 0}` +
-              (truncated > 0 ? ` — ${truncated} shop chưa kéo hết (chạm trần)` : ''),
+            `Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`,
           );
-          if (truncated > 0) {
-            showToast(
-              `Đã đồng bộ ${pullJson.pulled ?? 0} đơn, nhưng ${truncated} shop chưa kéo hết so với Shopee. Lọc 1 shop rồi Làm mới lại.`,
-              7000,
-            );
-          } else {
-            showToast(
-              `Đồng bộ thành công: ${pullJson.pulled ?? 0} đơn (+${pullJson.added ?? 0} mới).`,
-              4500,
-            );
-          }
-          console.log(
-            `[Orders Sync] Pull OK — pulled=${pullJson.pulled ?? 0} added=${pullJson.added ?? 0} updated=${pullJson.updated ?? 0} truncated=${truncated}`,
+          showToast(
+            String(pullJson?.message || pullJson?.error || 'Không đồng bộ được với dữ liệu Shopee'),
+            7000,
           );
         }
       } catch (pullErr) {
-        const aborted =
-          (pullErr instanceof DOMException && pullErr.name === 'AbortError') ||
-          (pullErr instanceof Error && pullErr.name === 'AbortError');
-        console.warn('[Orders Sync] Pull lỗi/timeout — vẫn đọc Mongo hiện có:', pullErr);
-        setLastSyncSummary(
-          aborted
-            ? 'Đồng bộ quá lâu — đang tải danh sách từ Database.'
-            : 'Đồng bộ thất bại: lỗi kết nối máy chủ.',
-        );
+        console.warn('[Orders Sync] Queue sync lỗi:', pullErr);
+        setLastSyncSummary('Đồng bộ thất bại: lỗi kết nối máy chủ.');
+        showToast('Không gửi được lệnh đồng bộ ngầm — thử lại.', 5000);
       } finally {
         window.clearTimeout(pullTimeoutId);
       }
-      // Bù mã vận đơn từ Shopee (pull nhanh thường skipTracking → nhiều đơn "Chưa có mã vận đơn").
-      try {
-        const enrichController = new AbortController();
-        const enrichTimeoutId = window.setTimeout(() => enrichController.abort(), 180_000);
-        try {
-          const enrichRes = await fetch('/api/orders/enrich-tracking', {
-            method: 'POST',
-            signal: enrichController.signal,
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({ max: 120 }),
-          });
-          const enrichJson = await enrichRes.json().catch(() => ({} as Record<string, unknown>));
-          const filled = Number(enrichJson?.filled || 0);
-          if (filled > 0) {
-            setLastSyncSummary((prev) =>
-              prev ? `${prev} · đã bù ${filled} mã VĐ` : `Đã bù ${filled} mã vận đơn từ Shopee`,
-            );
-          }
-        } finally {
-          window.clearTimeout(enrichTimeoutId);
-        }
-      } catch (enrichErr) {
+      // Fire-and-forget: bù mã VĐ ngầm, không block UI.
+      void fetch('/api/orders/enrich-tracking', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ max: 120 }),
+      }).catch((enrichErr) => {
         console.warn('[Orders Sync] enrich-tracking skip/fail:', enrichErr);
-      }
-      // Luôn refresh Mongo full sau pull — không silent limit 50.
-      await onFetchOrders?.({ silent: false, bustCache: true });
-      console.log('[FRONTEND FETCHED] Làm mới đơn hàng thành công.');
+      });
+      // Đọc ngay danh sách từ Mongo (đơn cũ); polling sẽ bắt đơn mới khi sync xong.
+      void onFetchOrders?.({ silent: true, bustCache: true });
+      console.log('[FRONTEND FETCHED] Đã queue đồng bộ ngầm + refresh DB.');
     } catch (err) {
       console.error('[FRONTEND FETCHED] Làm mới đơn hàng thất bại:', err);
       setLastSyncSummary('Đồng bộ thất bại: lỗi kết nối máy chủ.');
@@ -2942,8 +2865,8 @@ export default function OrderManager({
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   /**
-   * Auto-refresh mỗi 60 giây khi tab trình duyệt đang hiển thị — đọc lại DB nội bộ
-   * (silent, KHÔNG gọi Shopee).
+   * Auto-refresh mỗi 12 giây khi tab trình duyệt đang hiển thị — đọc lại DB nội bộ
+   * (silent, KHÔNG gọi Shopee). Phù hợp đồng bộ ngầm: đơn mới tự hiện sau ít phút.
    * `silent: true` → onFetchOrders (App.tsx) không set ordersLoading, không hiện overlay,
    * chỉ cập nhật mảng `orders` ở App — filter/lựa chọn cục bộ của OrderManager không bị reset.
    */
@@ -2951,7 +2874,7 @@ export default function OrderManager({
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
       void onFetchOrders?.({ silent: true });
-    }, 60000);
+    }, 12_000);
     return () => window.clearInterval(intervalId);
     // onFetchOrders không ổn định reference — chỉ setup 1 lần khi mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps

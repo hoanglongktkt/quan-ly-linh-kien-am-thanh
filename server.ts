@@ -4,6 +4,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { PDFDocument } from "pdf-lib";
 import dotenv from "dotenv";
+import cron from "node-cron";
 import { createShopeeWebhookRouter } from "./src/webhooks/shopeeWebhookHandler.ts";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
@@ -8575,6 +8576,54 @@ function scheduleShopeeCancelReturnReconcile(): void {
 }
 
 /**
+ * Auto Incremental Sync mỗi 30 phút — chỉ lấy đơn thay đổi trong 45 phút gần nhất
+ * (30 phút chu kỳ + 15 phút buffer an toàn để không miss đơn).
+ */
+const AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = 45 * 60;
+let autoIncrementalOrdersSyncScheduled = false;
+
+function scheduleAutoIncrementalOrdersSync(): void {
+  if (autoIncrementalOrdersSyncScheduled) return;
+  if (!cron.validate("*/30 * * * *")) {
+    console.error("[CRON] Invalid cron expression */30 * * * * — auto sync NOT scheduled.");
+    return;
+  }
+  cron.schedule("*/30 * * * *", () => {
+    void (async () => {
+      if (!isMongoReady()) {
+        console.log("[CRON] Auto sync 30m skipped — Mongo not ready.");
+        return;
+      }
+      if (ordersPullInFlight) {
+        console.log("[CRON] Auto sync 30m skipped — pull already in flight.");
+        return;
+      }
+      try {
+        console.log(
+          `[CRON] Auto sync 30m start — lookbackSec=${AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC} (45m window)`,
+        );
+        const result = await pullIncrementalOrdersFromShopee({
+          lookbackSec: AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC,
+          reconcileActive: false,
+        });
+        if (!result.skipped) {
+          invalidateOrdersRefreshCache();
+        }
+        console.log(
+          `[CRON] Auto sync 30m finished successfully pulled=${result.pulled} +${result.added}/~${result.updated} err=${result.errors.length} — ${result.message}`,
+        );
+      } catch (err: any) {
+        console.warn("[CRON] Auto sync 30m FAILED:", err?.message || err);
+      }
+    })();
+  });
+  autoIncrementalOrdersSyncScheduled = true;
+  console.log(
+    "[CRON] Auto Incremental Sync ON — mỗi 30 phút (lookback 45 phút, không kéo nhiều ngày).",
+  );
+}
+
+/**
  * Scanner chuyên trị mã vận đơn:
  * Query mọi đơn READY_TO_SHIP / SHIPPING / CANCELLED / TO_RETURN (và PROCESSED…) thiếu tracking_no,
  * gọi v2.logistics.get_tracking_number + retry.
@@ -15685,6 +15734,7 @@ async function startServer() {
         await hydrateChannelListingsOnBoot();
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
+        scheduleAutoIncrementalOrdersSync();
         scheduleClosedOrdersRetentionCleanup();
         scheduleMongoTempCollectionsCleanup();
       }

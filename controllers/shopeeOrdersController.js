@@ -68,13 +68,9 @@ export function initShopeeOrdersController(partial) {
   deps = { ...deps, ...partial };
 }
 
-/** POST /api/orders/pull */
+/** POST /api/orders/pull — fire-and-forget: HTTP trả ngay, sync chạy ngầm. */
 export async function pullOrders(req, res) {
-  let jobId = "";
-  const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
   try {
-    const job = await deps.createSyncJob("shopee_orders_pull", String(req.user?.username || ""));
-    jobId = job.id;
     const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
     const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
     const lookbackSec = Math.floor(hours * 60 * 60);
@@ -84,172 +80,204 @@ export async function pullOrders(req, res) {
       : shopIdsRaw
         ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean)
         : undefined;
+    const username = String(req.user?.username || "");
     console.log(
-      `[Orders Pull] POST /api/orders/pull lookback_hours=${hours}` +
+      `[Orders Pull] POST /api/orders/pull (background) lookback_hours=${hours}` +
         (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all"),
     );
-    const result = await deps.pullIncrementalOrdersFromShopee({
-      lookbackSec,
-      reconcileActive: true,
-      shopIds: shopIds?.length ? shopIds : undefined,
+
+    res.status(200).json({
+      status: 200,
+      success: true,
+      background: true,
+      message: "Đã đưa vào tiến trình đồng bộ ngầm",
     });
-    let cancelPull = { pulled: 0, added: 0, updated: 0, errors: [], message: "", skipped: false };
-    try {
-      cancelPull = await deps.pullShopeeCancelReturnOrders({
-        lookbackSec: Math.max(lookbackSec, 48 * 3600),
-        shopIds: shopIds?.length ? shopIds : undefined,
-      });
-    } catch (cancelErr) {
-      console.warn("[Orders Pull] cancel/return follow-up:", cancelErr?.message || cancelErr);
-    }
-    deps.invalidateOrdersRefreshCache();
-    const pulled = result.pulled + (cancelPull.pulled || 0);
-    const added = result.added + (cancelPull.added || 0);
-    const updated = result.updated + (cancelPull.updated || 0);
-    const errors = [...(result.errors || []), ...(cancelPull.errors || [])];
-    const success = result.success || cancelPull.pulled > 0;
-    const message =
-      result.message +
-      (cancelPull.pulled > 0 || cancelPull.message
-        ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}`
-        : "");
-    await deps.finishSyncJob(
-      jobId,
-      success ? "succeeded" : "failed",
-      {
-        pulled,
-        added,
-        updated,
-        shops: result.shops,
-        errors: errors.length,
-        cancel_return_pulled: cancelPull.pulled || 0,
-        retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
-      },
-      success ? undefined : message,
-    );
-    return res.status(200).json({
-      success,
-      job_id: jobId,
-      pulled,
-      added,
-      updated,
-      shops: result.shops,
-      errors: errors.slice(0, 20),
-      message,
-      truncatedShops: result.truncatedShops || 0,
-      maxOrderSnsPerShop: result.maxOrderSnsPerShop,
-      lookbackSec: result.lookbackSec,
-      elapsedMs: result.elapsedMs,
-      warnings: result.warnings || [],
-      cancelReturn: {
-        pulled: cancelPull.pulled || 0,
-        added: cancelPull.added || 0,
-        updated: cancelPull.updated || 0,
-        skipped: Boolean(cancelPull.skipped),
-      },
-    });
+
+    void (async () => {
+      let jobId = "";
+      const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
+      try {
+        const job = await deps.createSyncJob("shopee_orders_pull", username);
+        jobId = job.id;
+        const result = await deps.pullIncrementalOrdersFromShopee({
+          lookbackSec,
+          reconcileActive: true,
+          shopIds: shopIds?.length ? shopIds : undefined,
+        });
+        let cancelPull = { pulled: 0, added: 0, updated: 0, errors: [], message: "", skipped: false };
+        try {
+          cancelPull = await deps.pullShopeeCancelReturnOrders({
+            lookbackSec: Math.max(lookbackSec, 48 * 3600),
+            shopIds: shopIds?.length ? shopIds : undefined,
+          });
+        } catch (cancelErr) {
+          console.warn("[Orders Pull] BG cancel/return follow-up:", cancelErr?.message || cancelErr);
+        }
+        deps.invalidateOrdersRefreshCache();
+        const pulled = result.pulled + (cancelPull.pulled || 0);
+        const added = result.added + (cancelPull.added || 0);
+        const updated = result.updated + (cancelPull.updated || 0);
+        const errors = [...(result.errors || []), ...(cancelPull.errors || [])];
+        const success = result.success || cancelPull.pulled > 0;
+        const message =
+          result.message +
+          (cancelPull.pulled > 0 || cancelPull.message
+            ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}`
+            : "");
+        await deps.finishSyncJob(
+          jobId,
+          success ? "succeeded" : "failed",
+          {
+            pulled,
+            added,
+            updated,
+            shops: result.shops,
+            errors: errors.length,
+            cancel_return_pulled: cancelPull.pulled || 0,
+            retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
+          },
+          success ? undefined : message,
+        );
+        console.log(
+          `[Orders Pull] BG done pulled=${pulled} +${added}/~${updated} err=${errors.length} — ${message}`,
+        );
+      } catch (error) {
+        console.error(
+          "[Orders Pull] BG exception:",
+          error?.stack || error?.message || error,
+        );
+        if (jobId) {
+          try {
+            await deps.finishSyncJob(
+              jobId,
+              "failed",
+              { retry: diffShopeeRetryTelemetry(retryTelemetryBefore) },
+              error?.message || String(error),
+            );
+          } catch (finishErr) {
+            console.warn("[Orders Pull] BG finishSyncJob failed:", finishErr?.message || finishErr);
+          }
+        }
+      }
+    })();
   } catch (error) {
     console.error("[Orders Pull] /api/orders/pull exception:", error?.stack || error?.message || error);
-    if (jobId) {
-      await deps.finishSyncJob(
-        jobId,
-        "failed",
-        { retry: diffShopeeRetryTelemetry(retryTelemetryBefore) },
-        error?.message || String(error),
-      );
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        pulled: 0,
+        error: "orders_pull_failed",
+        message: error?.message || "Không thể kéo đơn từ Shopee.",
+      });
     }
-    return res.status(500).json({
-      success: false,
-      pulled: 0,
-      error: "orders_pull_failed",
-      message: error?.message || "Không thể kéo đơn từ Shopee.",
-    });
   }
 }
 
-/** POST /api/shopee/orders/sync */
+/** POST /api/shopee/orders/sync — fire-and-forget: HTTP trả ngay, sync chạy ngầm. */
 export async function syncOrders(req, res) {
-  let jobId = "";
-  const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
   try {
-    const job = await deps.createSyncJob("shopee_orders_sync", String(req.user?.username || ""));
-    jobId = job.id;
     const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
     const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
+    const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = Array.isArray(shopIdsRaw)
       ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean)
       : shopIdsRaw
         ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean)
         : undefined;
-    const result = await deps.pullIncrementalOrdersFromShopee({
-      lookbackSec: Math.floor(hours * 60 * 60),
-      reconcileActive: true,
-      shopIds: shopIds?.length ? shopIds : undefined,
-    });
-    let cancelPull = { pulled: 0, added: 0, updated: 0, errors: [], message: "" };
-    try {
-      cancelPull = await deps.pullShopeeCancelReturnOrders({
-        lookbackSec: Math.max(Math.floor(hours * 60 * 60), 48 * 3600),
-        shopIds: shopIds?.length ? shopIds : undefined,
-      });
-    } catch (cancelErr) {
-      console.warn("[Orders Sync] cancel/return follow-up:", cancelErr?.message || cancelErr);
-    }
-    deps.invalidateOrdersRefreshCache();
-    const pulled = result.pulled + (cancelPull.pulled || 0);
-    const added = result.added + (cancelPull.added || 0);
-    const updated = result.updated + (cancelPull.updated || 0);
-    const errors = [...(result.errors || []), ...(cancelPull.errors || [])];
-    const success = result.success || cancelPull.pulled > 0;
-    const message =
-      result.message +
-      (cancelPull.pulled > 0 || cancelPull.message
-        ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}`
-        : "");
-    await deps.finishSyncJob(
-      jobId,
-      success ? "succeeded" : "failed",
-      {
-        pulled,
-        added,
-        updated,
-        shops: result.shops,
-        errors: errors.length,
-        cancel_return_pulled: cancelPull.pulled || 0,
-        retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
-      },
-      success ? undefined : message,
+    const username = String(req.user?.username || "");
+    console.log(
+      `[Orders Sync] POST /api/shopee/orders/sync (background) lookback_hours=${hours}` +
+        (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all"),
     );
-    return res.status(200).json({
-      success,
-      job_id: jobId,
-      pulled,
-      added,
-      updated,
-      shops: result.shops,
-      errors: errors.slice(0, 20),
-      message,
+
+    res.status(200).json({
+      status: 200,
+      success: true,
+      background: true,
+      message: "Đã đưa vào tiến trình đồng bộ ngầm",
     });
+
+    void (async () => {
+      let jobId = "";
+      const retryTelemetryBefore = snapshotShopeeRetryTelemetry();
+      try {
+        const job = await deps.createSyncJob("shopee_orders_sync", username);
+        jobId = job.id;
+        const result = await deps.pullIncrementalOrdersFromShopee({
+          lookbackSec,
+          reconcileActive: true,
+          shopIds: shopIds?.length ? shopIds : undefined,
+        });
+        let cancelPull = { pulled: 0, added: 0, updated: 0, errors: [], message: "" };
+        try {
+          cancelPull = await deps.pullShopeeCancelReturnOrders({
+            lookbackSec: Math.max(lookbackSec, 48 * 3600),
+            shopIds: shopIds?.length ? shopIds : undefined,
+          });
+        } catch (cancelErr) {
+          console.warn("[Orders Sync] BG cancel/return follow-up:", cancelErr?.message || cancelErr);
+        }
+        deps.invalidateOrdersRefreshCache();
+        const pulled = result.pulled + (cancelPull.pulled || 0);
+        const added = result.added + (cancelPull.added || 0);
+        const updated = result.updated + (cancelPull.updated || 0);
+        const errors = [...(result.errors || []), ...(cancelPull.errors || [])];
+        const success = result.success || cancelPull.pulled > 0;
+        const message =
+          result.message +
+          (cancelPull.pulled > 0 || cancelPull.message
+            ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}`
+            : "");
+        await deps.finishSyncJob(
+          jobId,
+          success ? "succeeded" : "failed",
+          {
+            pulled,
+            added,
+            updated,
+            shops: result.shops,
+            errors: errors.length,
+            cancel_return_pulled: cancelPull.pulled || 0,
+            retry: diffShopeeRetryTelemetry(retryTelemetryBefore),
+          },
+          success ? undefined : message,
+        );
+        console.log(
+          `[Orders Sync] BG done pulled=${pulled} +${added}/~${updated} err=${errors.length} — ${message}`,
+        );
+      } catch (error) {
+        console.error(
+          "[Orders Sync] BG exception:",
+          error?.stack || error?.message || error,
+        );
+        if (jobId) {
+          try {
+            await deps.finishSyncJob(
+              jobId,
+              "failed",
+              { retry: diffShopeeRetryTelemetry(retryTelemetryBefore) },
+              error?.message || String(error),
+            );
+          } catch (finishErr) {
+            console.warn("[Orders Sync] BG finishSyncJob failed:", finishErr?.message || finishErr);
+          }
+        }
+      }
+    })();
   } catch (error) {
     console.error(
-      "[Orders Pull] /api/shopee/orders/sync exception:",
+      "[Orders Sync] /api/shopee/orders/sync exception:",
       error?.stack || error?.message || error,
     );
-    if (jobId) {
-      await deps.finishSyncJob(
-        jobId,
-        "failed",
-        { retry: diffShopeeRetryTelemetry(retryTelemetryBefore) },
-        error?.message || String(error),
-      );
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        pulled: 0,
+        error: "orders_pull_failed",
+        message: error?.message || "Không thể kéo đơn từ Shopee.",
+      });
     }
-    return res.status(500).json({
-      success: false,
-      pulled: 0,
-      error: "orders_pull_failed",
-      message: error?.message || "Không thể kéo đơn từ Shopee.",
-    });
   }
 }
 
