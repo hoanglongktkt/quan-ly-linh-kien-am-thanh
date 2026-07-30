@@ -675,8 +675,15 @@ export default function OrderManager({
           body: JSON.stringify(pullBody),
         });
         const pullJson = await pullRes.json().catch(() => ({} as Record<string, unknown>));
-        if (pullRes.ok && (pullJson?.background === true || pullJson?.success !== false)) {
-          setLastSyncSummary('Đã đưa vào tiến trình đồng bộ ngầm');
+        if (pullRes.ok && pullJson?.warning === true) {
+          const warnMsg = String(
+            pullJson?.message ||
+              'Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát',
+          );
+          setLastSyncSummary(warnMsg);
+          showToast(warnMsg, 7000);
+        } else if (pullRes.ok && (pullJson?.background === true || pullJson?.success !== false)) {
+          setLastSyncSummary(String(pullJson?.message || 'Đã đưa vào tiến trình đồng bộ ngầm'));
           showToast(
             'Tiến trình đồng bộ đang chạy ngầm, đơn hàng sẽ tự động xuất hiện sau ít phút...',
             7000,

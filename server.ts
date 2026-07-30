@@ -1042,7 +1042,45 @@ const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
 /** Deadline tường cho cả phiên pull — quá hạn thì BREAK (không treo process). */
 const ORDERS_PULL_HARD_DEADLINE_MS = 180_000;
 /** Mutex in-process: chặn boot pull + manual pull chạy chồng lên nhau. */
+const ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1000;
 let ordersPullInFlight = false;
+let ordersPullStartedAt = 0;
+
+function releaseOrdersPullLock(reason = "finally"): void {
+  if (ordersPullInFlight) {
+    const elapsed = ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : 0;
+    console.log(`[Orders Pull] Lock RELEASED (${reason}) after ${elapsed}ms`);
+  }
+  ordersPullInFlight = false;
+  ordersPullStartedAt = 0;
+}
+
+/** true = đang khóa thật; false = rảnh (kèm auto-unlock nếu khóa quá 15 phút). */
+function isOrdersPullLocked(): boolean {
+  if (!ordersPullInFlight) return false;
+  const elapsed = ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : 0;
+  if (ordersPullStartedAt > 0 && elapsed >= ORDERS_PULL_LOCK_TIMEOUT_MS) {
+    console.warn(
+      `[Orders Pull] Lock STALE (${elapsed}ms >= ${ORDERS_PULL_LOCK_TIMEOUT_MS}ms) — force unlock failsafe`,
+    );
+    releaseOrdersPullLock("stale_timeout");
+    return false;
+  }
+  return true;
+}
+
+/** @returns true nếu chiếm được khóa */
+function tryAcquireOrdersPullLock(): boolean {
+  if (isOrdersPullLocked()) return false;
+  ordersPullInFlight = true;
+  ordersPullStartedAt = Date.now();
+  console.log("[Orders Pull] Lock ACQUIRED");
+  return true;
+}
+
+const ORDERS_PULL_IN_FLIGHT_SOFT_MESSAGE =
+  "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát";
+
 /** Delay tối thiểu giữa mỗi lần gọi API sản phẩm Shopee */
 const SHOPEE_PRODUCT_API_DELAY_MS = 1000;
 /** Hàng đợi sync stock/price → Shopee (tránh 429). */
@@ -2143,66 +2181,80 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   lookbackSec?: number;
   warnings?: any[];
 }> {
-  if (ordersPullInFlight) {
+  if (!tryAcquireOrdersPullLock()) {
     syncDiag("Pull SKIPPED — already in flight", "mutex busy");
     return {
-      success: false,
+      success: true,
       pulled: 0,
       added: 0,
       updated: 0,
       shops: 0,
-      errors: [{ error: "pull_in_flight", message: "Pull đang chạy — bỏ qua request trùng." }],
-      message: "Pull đang chạy — không chồng vòng lặp.",
+      errors: [],
+      warnings: [
+        {
+          error: "pull_in_flight",
+          message: ORDERS_PULL_IN_FLIGHT_SOFT_MESSAGE,
+        },
+      ],
+      message: ORDERS_PULL_IN_FLIGHT_SOFT_MESSAGE,
       skipped: true,
       elapsedMs: 0,
     };
   }
 
-  ordersPullInFlight = true;
   const startedAt = Date.now();
   const enrichTracking = opts?.enrichTracking === true;
-  // Materialize shop con (VD: 831052930) trước khi liệt kê — tránh bỏ sót pull/UI.
-  ensureShopeeLinkedShopTokenKeys();
-  const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
-    .map((id) => normalizeShopIdKey(id))
-    .filter(Boolean);
-  const singleShopPull = shopIds.length === 1;
-  const lookbackSec = Math.max(
-    60,
-    Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC),
-  );
-  const longLookback = lookbackSec >= 168 * 3600;
-  // 7 ngày / Làm mới: nới cap để không lệch số đơn với Seller Center.
-  // 1 shop: ưu tiên kéo đủ; nhiều shop: vẫn cao hơn mặc định cũ (80/5/90s).
-  const pullDeadlineMs = singleShopPull
-    ? longLookback
-      ? 240_000
-      : 180_000
-    : longLookback
-      ? 240_000
-      : ORDERS_PULL_HARD_DEADLINE_MS;
-  const maxOrderSnsPerShop = singleShopPull
-    ? longLookback
-      ? 400
-      : 250
-    : longLookback
-      ? 300
-      : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
-  const pageHardCap = singleShopPull
-    ? longLookback
-      ? 15
-      : 12
-    : longLookback
-      ? 12
-      : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
-  const deadlineAt = startedAt + pullDeadlineMs;
   const errors: any[] = [];
   let pulled = 0;
   let added = 0;
   let updated = 0;
   let truncatedShops = 0;
+  let shopIds: string[] = [];
+  let lookbackSec = SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+  let maxOrderSnsPerShop = SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
+  let pullDeadlineMs = ORDERS_PULL_HARD_DEADLINE_MS;
+  let pageHardCap = SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+  let longLookback = false;
+  let singleShopPull = false;
+  let deadlineAt = startedAt + pullDeadlineMs;
 
   try {
+    // Materialize shop con (VD: 831052930) trước khi liệt kê — tránh bỏ sót pull/UI.
+    ensureShopeeLinkedShopTokenKeys();
+    shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
+      .map((id) => normalizeShopIdKey(id))
+      .filter(Boolean);
+    singleShopPull = shopIds.length === 1;
+    lookbackSec = Math.max(
+      60,
+      Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC),
+    );
+    longLookback = lookbackSec >= 168 * 3600;
+    // 7 ngày / Làm mới: nới cap để không lệch số đơn với Seller Center.
+    // 1 shop: ưu tiên kéo đủ; nhiều shop: vẫn cao hơn mặc định cũ (80/5/90s).
+    pullDeadlineMs = singleShopPull
+      ? longLookback
+        ? 240_000
+        : 180_000
+      : longLookback
+        ? 240_000
+        : ORDERS_PULL_HARD_DEADLINE_MS;
+    maxOrderSnsPerShop = singleShopPull
+      ? longLookback
+        ? 400
+        : 250
+      : longLookback
+        ? 300
+        : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
+    pageHardCap = singleShopPull
+      ? longLookback
+        ? 15
+        : 12
+      : longLookback
+        ? 12
+        : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+    deadlineAt = startedAt + pullDeadlineMs;
+
     if (shopIds.length === 0) {
       return {
         success: false,
@@ -2505,21 +2557,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       lookbackSec,
     };
   } finally {
-    ordersPullInFlight = false;
+    releaseOrdersPullLock("pullIncremental_finally");
   }
 }
-
-/**
- * Quét riêng CANCELLED / IN_CANCEL / TO_RETURN (+ return_list) — cửa sổ rộng hơn sync thường.
- * Bật enrichTracking để gắn mã vận đơn ngay (phục vụ quét kiện hoàn).
- */
-async function pullShopeeCancelReturnOrders(opts?: {
-  lookbackSec?: number;
-  shopIds?: string[];
-}): Promise<{
-  success: boolean;
-  pulled: number;
-  added: number;
   updated: number;
   shops: number;
   errors: any[];
@@ -2527,38 +2567,41 @@ async function pullShopeeCancelReturnOrders(opts?: {
   skipped?: boolean;
   elapsedMs?: number;
 }> {
-  if (ordersPullInFlight) {
+  if (!tryAcquireOrdersPullLock()) {
     return {
-      success: false,
+      success: true,
       pulled: 0,
       added: 0,
       updated: 0,
       shops: 0,
-      errors: [{ error: "pull_in_flight", message: "Pull đang chạy — bỏ qua cancel/return sync." }],
-      message: "Pull đang chạy — skip cancel/return.",
+      errors: [],
+      message: ORDERS_PULL_IN_FLIGHT_SOFT_MESSAGE,
       skipped: true,
       elapsedMs: 0,
     };
   }
 
-  ordersPullInFlight = true;
   const startedAt = Date.now();
-  const lookbackSec = Math.max(
-    60,
-    Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || 48 * 3600),
-  );
-  ensureShopeeLinkedShopTokenKeys();
-  const shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
-    .map((id) => normalizeShopIdKey(id))
-    .filter(Boolean);
-  const deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 120_000);
   const errors: any[] = [];
   let pulled = 0;
   let added = 0;
   let updated = 0;
+  let shopIds: string[] = [];
+  let lookbackSec = 48 * 3600;
+  let deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 120_000);
   const statuses = ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
 
   try {
+    lookbackSec = Math.max(
+      60,
+      Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || 48 * 3600),
+    );
+    ensureShopeeLinkedShopTokenKeys();
+    shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
+      .map((id) => normalizeShopIdKey(id))
+      .filter(Boolean);
+    deadlineAt = startedAt + Math.min(ORDERS_PULL_HARD_DEADLINE_MS, 120_000);
+
     if (shopIds.length === 0) {
       return {
         success: false,
@@ -2691,7 +2734,7 @@ async function pullShopeeCancelReturnOrders(opts?: {
       elapsedMs,
     };
   } finally {
-    ordersPullInFlight = false;
+    releaseOrdersPullLock("pullCancelReturn_finally");
   }
 }
 
@@ -8569,12 +8612,12 @@ function scheduleShopeeCancelReturnReconcile(): void {
     Promise.resolve()
       .then(async () => {
         try {
-          if (!isMongoReady() || ordersPullInFlight) return;
+          if (!isMongoReady() || isOrdersPullLocked()) return;
           const result = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
           console.log(
             `[CancelReturn Cron] pulled=${result.pulled} +${result.added}/~${result.updated} skipped=${Boolean(result.skipped)} — ${result.message}`,
           );
-          if (!ordersPullInFlight && isMongoReady()) {
+          if (!isOrdersPullLocked() && isMongoReady()) {
             ensureShopeeLinkedShopTokenKeys();
             const shopIds = listShopeeSyncShopIds();
             if (shopIds.length) {
@@ -8621,7 +8664,7 @@ function scheduleAutoIncrementalOrdersSyncSafe(): void {
           return false;
         }
       },
-      isPullInFlight: () => Boolean(ordersPullInFlight),
+      isPullInFlight: () => isOrdersPullLocked(),
       pullIncrementalOrdersFromShopee: async (opts) => {
         try {
           return await pullIncrementalOrdersFromShopee(opts);
@@ -13197,6 +13240,7 @@ async function startServer() {
     readChannelListingsDb,
     refreshCache,
     isMongoReady,
+    isOrdersPullLocked,
     SHOPEE_ITEM_LIST_PAGE_SIZE,
   });
   initShopeeProductsController({

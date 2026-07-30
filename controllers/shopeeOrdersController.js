@@ -61,6 +61,7 @@ let deps = {
   readChannelListingsDb: async () => [],
   refreshCache: async () => {},
   isMongoReady: () => false,
+  isOrdersPullLocked: () => false,
   SHOPEE_ITEM_LIST_PAGE_SIZE: 10,
 };
 
@@ -181,6 +182,17 @@ export async function pullOrders(req, res) {
         (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all"),
     );
 
+    // Đã có pull đang chạy — HTTP 200 warning, không báo lỗi đỏ.
+    if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
+      return res.status(200).json({
+        status: 200,
+        success: true,
+        background: true,
+        warning: true,
+        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
+      });
+    }
+
     // Trả HTTP ngay — không await pull Shopee.
     res.status(200).json({
       status: 200,
@@ -208,7 +220,8 @@ export async function pullOrders(req, res) {
         status: 200,
         success: true,
         background: true,
-        message: "Đang đồng bộ ngầm...",
+        warning: true,
+        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
       });
     }
     return;
@@ -232,6 +245,16 @@ export async function syncOrders(req, res) {
       `[Orders Sync] POST /api/shopee/orders/sync (background) lookback_hours=${hours}` +
         (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all"),
     );
+
+    if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
+      return res.status(200).json({
+        status: 200,
+        success: true,
+        background: true,
+        warning: true,
+        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
+      });
+    }
 
     res.status(200).json({
       status: 200,
@@ -259,7 +282,8 @@ export async function syncOrders(req, res) {
         status: 200,
         success: true,
         background: true,
-        message: "Đang đồng bộ ngầm...",
+        warning: true,
+        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
       });
     }
     return;
