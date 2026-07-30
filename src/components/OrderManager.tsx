@@ -2327,10 +2327,11 @@ export default function OrderManager({
       let pollCount = 0;
       opts?.onStatus?.('Đang chuẩn bị tạo PDF vận đơn...');
       while (Date.now() < deadline) {
-        // Kiểm tra nhanh ở các nhịp đầu, sau đó backoff để giảm request polling
-        // trong khi Shopee vẫn đang tạo chứng từ.
-        const pollDelay = pollCount < 3 ? 500 : pollCount < 8 ? 1000 : 1500;
-        await new Promise((r) => setTimeout(r, pollDelay));
+        // Lần đầu poll ngay (delay 0); sau đó backoff 400/800/1200 để giảm request thừa.
+        const pollDelay = pollCount === 0 ? 0 : pollCount < 3 ? 400 : pollCount < 8 ? 800 : 1200;
+        if (pollDelay > 0) {
+          await new Promise((r) => setTimeout(r, pollDelay));
+        }
         pollCount += 1;
         const jobRes = await fetch(`/api/shopee/print-document/job/${jobId}`, {
           headers: authHeaders(),
@@ -2468,9 +2469,16 @@ export default function OrderManager({
           String(x.orderSn) === id ||
           `shopee-${x.orderSn}` === id,
       );
+      if (!o) return { opened: false };
+      // Ưu tiên pdfFilename (ổn định sau F5 nếu Mongo còn field) → labelUrl/pdfUrl.
+      const filename = String(o.pdfFilename || '').trim();
+      const fromFile =
+        filename && !filename.includes('..') && !filename.includes('/')
+          ? `/api/public/labels/${encodeURIComponent(filename)}`
+          : '';
       const raw =
-        String(o?.labelUrl || o?.pdfUrl || '').trim() ||
-        (o?.pdfFilename ? `/api/public/labels/${encodeURIComponent(String(o.pdfFilename))}` : '');
+        fromFile ||
+        String(o.labelUrl || o.pdfUrl || '').trim();
       if (!raw) return { opened: false };
       urls.push(resolveLabelFetchUrl(raw));
     }
