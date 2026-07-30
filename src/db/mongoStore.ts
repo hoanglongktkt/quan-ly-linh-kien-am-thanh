@@ -3119,7 +3119,20 @@ export function isMongoConnectionError(err: unknown): boolean {
 }
 
 function donHoanHuyDocToOrder(doc: any): any {
-  const sn = String(doc?.orderSn || "").replace(/^shopee-/i, "").trim();
+  const looksLikeTracking = (code: string) =>
+    /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(String(code || "").trim());
+
+  const base = doc?.data && typeof doc.data === "object" ? { ...doc.data } : {};
+  let sn = String(doc?.orderSn || "").replace(/^shopee-/i, "").trim();
+  const dataSn = String(base.orderSn || base.order_sn || "")
+    .replace(/^shopee-/i, "")
+    .trim();
+  // Bản ghi lỗi cũ: top-level orderSn = mã VĐ — ưu tiên orderSn thật trong data.
+  if (looksLikeTracking(sn) && dataSn && !looksLikeTracking(dataSn)) {
+    sn = dataSn;
+  }
+  if (!sn && dataSn) sn = dataSn;
+
   const statusRaw = String(doc?.status || "").toLowerCase();
   const local =
     String(doc?.local_status || "").toUpperCase() === "RETURN_RECEIVED" ||
@@ -3136,10 +3149,14 @@ function donHoanHuyDocToOrder(doc: any): any {
     : doc?.createdAt
       ? new Date(doc.createdAt).toISOString()
       : new Date().toISOString();
-  const base = doc?.data && typeof doc.data === "object" ? { ...doc.data } : {};
+  const items = Array.isArray(base.items)
+    ? base.items
+    : Array.isArray(doc?.items)
+      ? doc.items
+      : [];
   return {
     ...base,
-    id: base.id || `shopee-${sn}`,
+    id: base.id || (sn ? `shopee-${sn}` : undefined),
     orderSn: sn,
     shopId: doc?.shopId != null ? doc.shopId : base.shopId,
     shopName: doc?.shopName || base.shopName,
@@ -3149,6 +3166,7 @@ function donHoanHuyDocToOrder(doc: any): any {
     tracking_no: doc?.tracking_no || base.tracking_no || base.trackingNumber,
     trackingNumber: doc?.tracking_no || base.trackingNumber || base.tracking_no,
     return_tracking_no: doc?.return_tracking_no || base.return_tracking_no,
+    items,
     local_status: local,
     localStatus: local,
     internal_status: local,
@@ -3175,7 +3193,17 @@ export async function loadDonHoanHuyAsOrders(limit = 2000): Promise<any[]> {
     .limit(safeLimit)
     .maxTimeMS(5000)
     .lean();
-  return (docs || []).map(donHoanHuyDocToOrder);
+  return (docs || [])
+    .map(donHoanHuyDocToOrder)
+    .filter((o) => {
+      const sn = String(o?.orderSn || "").trim();
+      if (!sn) return false;
+      // Ẩn bản ghi giả cũ (orderSn = mã VĐ).
+      if (/^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(sn)) {
+        return false;
+      }
+      return true;
+    });
 }
 
 export async function existsDonHoanHuy(orderSn: string): Promise<boolean> {
@@ -3215,6 +3243,20 @@ export async function upsertDonHoanHuy(
     .trim();
   if (!sn) {
     return { ok: false, orderSn: "", error: "Thiếu orderSn — không ghi được don_hoan_huy." };
+  }
+  if (/^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(sn)) {
+    return {
+      ok: false,
+      orderSn: sn,
+      error: "orderSn không hợp lệ (đang là mã vận đơn). Cần resolve đơn Shopee trước khi lưu.",
+    };
+  }
+  if (!Array.isArray(order?.items) || order.items.length === 0) {
+    return {
+      ok: false,
+      orderSn: sn,
+      error: "Thiếu danh sách sản phẩm (items) — không lưu đơn rỗng vào don_hoan_huy.",
+    };
   }
 
   const inferredReturn =

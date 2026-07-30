@@ -1339,23 +1339,42 @@ export default function OrderManager({
     );
   };
 
-  /** Ghi ngay đơn hủy/hoàn vào collection don_hoan_huy (POST /api/scan/save). */
+  /** Ghi đơn hủy/hoàn qua scan-bulk-update (resolve orderSn + items, không tạo đơn giả). */
   const persistCancelReturnScanFlag = React.useCallback(
-    async (code: string, kind: 'cancel' | 'return') => {
+    async (
+      order: Order,
+      kind: 'cancel' | 'return',
+      scannedCode?: string,
+    ) => {
       const token = localStorage.getItem('admin_token');
-      if (!token || !code) return;
+      const orderSn = String(order?.orderSn || '').replace(/^shopee-/i, '').trim();
+      if (!token || !orderSn) return;
+      const codes = [
+        ...new Set(
+          [
+            orderSn,
+            scannedCode,
+            order.trackingNumber,
+            order.tracking_no,
+            order.return_tracking_no,
+            order.id,
+          ]
+            .map((c) => String(c || '').trim())
+            .filter(Boolean),
+        ),
+      ];
       try {
-        const res = await fetch('/api/scan/save', {
+        const res = await fetch('/api/orders/scan-bulk-update', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            codes: [code],
-            donHuyCodes: kind === 'cancel' ? [code] : [],
-            daNhanHoanCodes: kind === 'return' ? [code] : [],
-            status: kind === 'return' ? 'return_received' : 'cancelled',
+            codes,
+            scannedCodes: codes,
+            donHuyCodes: kind === 'cancel' ? codes : [],
+            daNhanHoanCodes: kind === 'return' ? codes : [],
           }),
         });
         const data = await res.json().catch(() => ({} as Record<string, unknown>));
@@ -1365,7 +1384,9 @@ export default function OrderManager({
             String(data?.message || `HTTP ${res.status} — không lưu được đơn hủy/hoàn`),
             'error',
           );
+          return;
         }
+        // Refresh danh sách để tab hủy/hoàn có orderSn + items — parent tự poll/reload.
       } catch (err) {
         console.warn('[Scan] persist cancel/return flag error:', err);
         showScanToast(
@@ -1374,7 +1395,7 @@ export default function OrderManager({
         );
       }
     },
-    [onUpdateOrders],
+    [],
   );
 
   /** Đẩy mã miss lên Backend queue — worker dò Shopee + ghi cờ độc lập FE. */
@@ -1599,7 +1620,7 @@ export default function OrderManager({
             return next;
           });
           // Ghi ngay local_status=RETURN_RECEIVED xuống Mongo (tab lọc theo field này).
-          void persistCancelReturnScanFlag(trimmed, 'return');
+          void persistCancelReturnScanFlag(order, 'return', trimmed);
           setCameraScanResult(
             waybill
               ? `✓ Nhận hoàn · VĐ ${waybill} · #${order.orderSn}`
@@ -1625,7 +1646,7 @@ export default function OrderManager({
             return next;
           });
           // Ghi ngay local_status=CANCELLED_STORED xuống Mongo (tab lọc theo field này).
-          void persistCancelReturnScanFlag(trimmed, 'cancel');
+          void persistCancelReturnScanFlag(order, 'cancel', trimmed);
           setCameraScanResult(
             waybill
               ? isFailedDelivery
@@ -3617,101 +3638,48 @@ export default function OrderManager({
       } | null = null;
 
       try {
-        // 1) Lưu hủy/hoàn qua MVC API /api/scan/save
-        if (huyCodes.length + hoanCodes.length > 0) {
-          const saveRes = await fetch('/api/scan/save', {
-            method: 'POST',
-            signal: controller.signal,
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              codes: [...huyCodes, ...hoanCodes],
-              donHuyCodes: huyCodes,
-              daNhanHoanCodes: hoanCodes,
-            }),
-          });
-          const saveData = (await saveRes.json().catch(() => ({}))) as Record<
-            string,
-            unknown
-          >;
-          if (!saveRes.ok || saveData?.success === false) {
-            throw new Error(
-              String(
-                saveData?.message ||
-                  saveData?.error ||
-                  `HTTP ${saveRes.status} — lưu don_hoan_huy thất bại`,
-              ),
-            );
-          }
-          dhhFromSave = (saveData?.donHoanHuy || {
-            ok: Number(saveData?.saved) || huyCodes.length + hoanCodes.length,
-            ensured: Number(saveData?.saved) || huyCodes.length + hoanCodes.length,
-            failed: 0,
-            already: 0,
-            errors: [],
-          }) as typeof dhhFromSave;
-          data = { ...saveData, donHoanHuy: dhhFromSave };
-        }
-
-        // 2) Xuất kho / bàn giao ĐVVC (nếu có) — vẫn qua scan-bulk-update
-        if (xuatCodes.length > 0) {
-          const res = await fetch('/api/orders/scan-bulk-update', {
-            method: 'POST',
-            signal: controller.signal,
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              codes: xuatCodes,
-              scannedCodes: xuatCodes,
-              daXuatKhoCodes: xuatCodes,
-              donHuyCodes: [],
-              daNhanHoanCodes: [],
-            }),
-          });
-          const bulkData = (await res.json().catch(() => ({}))) as Record<
-            string,
-            unknown
-          >;
-          if (!res.ok || bulkData?.success === false) {
-            throw new Error(
-              String(
-                bulkData?.message ||
-                  bulkData?.error ||
-                  `HTTP ${res.status} — lưu xuất kho thất bại`,
-              ),
-            );
-          }
-          data = {
-            ...bulkData,
-            donHoanHuy: dhhFromSave || bulkData.donHoanHuy,
-            summary: {
-              daXuatKho: xuatCodes.length,
-              donHuy: huyCodes.length,
-              daNhanHoan: hoanCodes.length,
-              ...((bulkData.summary as object) || {}),
-            },
-            processedCount:
-              xuatCodes.length + huyCodes.length + hoanCodes.length,
-          };
-        } else if (!dhhFromSave) {
+        // Hủy/hoàn + xuất kho đều qua scan-bulk-update (resolve orderSn + items, không tạo đơn giả).
+        const allCodes = [...new Set([...huyCodes, ...hoanCodes, ...xuatCodes])];
+        if (allCodes.length === 0) {
           throw new Error('Không có mã đơn để lưu.');
-        } else {
-          data = {
-            ...data,
-            success: true,
-            summary: {
-              daXuatKho: 0,
-              donHuy: huyCodes.length,
-              daNhanHoan: hoanCodes.length,
-            },
-            processedCount: huyCodes.length + hoanCodes.length,
-            donHoanHuy: dhhFromSave,
-          };
         }
+        const res = await fetch('/api/orders/scan-bulk-update', {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            codes: allCodes,
+            scannedCodes: allCodes,
+            daXuatKhoCodes: xuatCodes,
+            donHuyCodes: huyCodes,
+            daNhanHoanCodes: hoanCodes,
+          }),
+        });
+        const bulkData = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!res.ok || bulkData?.success === false) {
+          throw new Error(
+            String(
+              bulkData?.message ||
+                bulkData?.error ||
+                `HTTP ${res.status} — lưu đơn đã quét thất bại`,
+            ),
+          );
+        }
+        dhhFromSave = (bulkData?.donHoanHuy || null) as typeof dhhFromSave;
+        data = {
+          ...bulkData,
+          donHoanHuy: dhhFromSave || bulkData.donHoanHuy,
+          summary: {
+            daXuatKho: xuatCodes.length,
+            donHuy: huyCodes.length,
+            daNhanHoan: hoanCodes.length,
+            ...((bulkData.summary as object) || {}),
+          },
+          processedCount: xuatCodes.length + huyCodes.length + hoanCodes.length,
+        };
       } catch (fetchErr: unknown) {
         const aborted =
           (fetchErr instanceof DOMException && fetchErr.name === 'AbortError') ||

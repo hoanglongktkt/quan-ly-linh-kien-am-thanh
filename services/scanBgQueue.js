@@ -198,11 +198,31 @@ async function processOneScanBgJob(job) {
     } catch {
       found = null;
     }
-    if (!found) {
+    const snLocal = String(found?.orderSn || "").replace(/^shopee-/i, "").trim();
+    const looksLikeTn = /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(
+      snLocal,
+    );
+    const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
+    if (!found || looksLikeTn || missingItems) {
       try {
-        found = await deps.resolveOrderFromShopeeByScanCode(job.code);
-        if (found) {
-          found = deps.mirrorTrackingFieldsForRead(found);
+        const fromShopee = await deps.resolveOrderFromShopeeByScanCode(job.code);
+        if (fromShopee) {
+          const mirrored = deps.mirrorTrackingFieldsForRead(fromShopee);
+          if (!found) {
+            found = mirrored;
+          } else {
+            found = {
+              ...found,
+              ...mirrored,
+              items:
+                Array.isArray(mirrored?.items) && mirrored.items.length
+                  ? mirrored.items
+                  : found.items,
+              orderSn: String(mirrored?.orderSn || found.orderSn || "")
+                .replace(/^shopee-/i, "")
+                .trim(),
+            };
+          }
         }
       } catch (err) {
         console.warn(`[Scan BG] Shopee resolve code=${job.code}:`, err?.message || err);
@@ -245,6 +265,27 @@ async function processOneScanBgJob(job) {
       job.status = "done";
       job.action = "found_other";
       job.message = `Đơn #${found.orderSn} không phải hủy/hoàn — bỏ qua ghi cờ`;
+      job.finishedAt = new Date().toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+
+    const sn = String(found.orderSn || "").replace(/^shopee-/i, "").trim();
+    if (
+      !sn ||
+      /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(sn)
+    ) {
+      job.status = "failed";
+      job.action = "error";
+      job.message = `Mã "${job.code}" chưa resolve được order_sn Shopee — không lưu đơn giả`;
+      job.finishedAt = new Date().toISOString();
+      scanBgJobKeys.delete(job.codeKey);
+      return;
+    }
+    if (!Array.isArray(found.items) || found.items.length === 0) {
+      job.status = "failed";
+      job.action = "error";
+      job.message = `Đơn #${sn} thiếu danh sách sản phẩm — không lưu`;
       job.finishedAt = new Date().toISOString();
       scanBgJobKeys.delete(job.codeKey);
       return;

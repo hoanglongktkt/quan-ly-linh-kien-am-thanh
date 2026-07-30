@@ -50,7 +50,7 @@ import errorHandler from "./middlewares/errorHandler.js";
 import { authMiddleware } from "./middlewares/auth.js";
 import corsMiddleware from "./middlewares/cors.js";
 import dbReadyMiddleware from "./middlewares/dbReady.js";
-import { saveScanOrders, listDonHoanHuy } from "./controllers/scanController.js";
+import { saveScanOrders, listDonHoanHuy, initScanController } from "./controllers/scanController.js";
 import {
   enqueueScanBg,
   getScanBgStatus,
@@ -13125,6 +13125,14 @@ async function startServer() {
     replaceProductsForShopeeItem,
     getProductChildrenList,
     extractHttpClientError,
+  });
+
+  // --- Scan save / list don_hoan_huy — resolve Shopee đầy đủ trước khi ghi ---
+  initScanController({
+    findOrderByScanCodeInStore,
+    resolveOrderFromShopeeByScanCode,
+    isValidOrder,
+    mirrorTrackingFieldsForRead,
   });
 
   // --- Scan BG + Scan Bulk — Phase 3 MVC ---

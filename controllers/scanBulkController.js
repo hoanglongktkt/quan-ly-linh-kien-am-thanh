@@ -63,7 +63,7 @@ export async function scanBulkUpdate(req, res) {
     const forceCancelCodes = toCodeSet(req.body?.donHuyCodes);
     const forceReturnCodes = toCodeSet(req.body?.daNhanHoanCodes);
 
-    // Lookup theo mã quét (Mongo indexed) — miss → Shopee on-demand (CANCELLED/TO_RETURN).
+    // Lookup theo mã quét (Mongo indexed) — miss / thiếu items → Shopee on-demand.
     const lookupPairs = await Promise.all(
       codes.map(async (code) => {
         let found = null;
@@ -77,16 +77,45 @@ export async function scanBulkUpdate(req, res) {
             lookupErr?.message || lookupErr,
           );
         }
-        if (!found) {
+        const sn = String(found?.orderSn || "").replace(/^shopee-/i, "").trim();
+        const looksLikeTn = /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(sn);
+        const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
+        if (!found || looksLikeTn || missingItems) {
           try {
-            found = await deps.resolveOrderFromShopeeByScanCode(code);
-            if (found && !deps.isValidOrder(found)) found = null;
-            if (found) found = deps.mirrorTrackingFieldsForRead(found);
+            const fromShopee = await deps.resolveOrderFromShopeeByScanCode(code);
+            if (fromShopee && deps.isValidOrder(fromShopee)) {
+              const mirrored = deps.mirrorTrackingFieldsForRead(fromShopee);
+              if (!found) {
+                found = mirrored;
+              } else {
+                found = {
+                  ...found,
+                  ...mirrored,
+                  items:
+                    Array.isArray(mirrored?.items) && mirrored.items.length
+                      ? mirrored.items
+                      : found.items,
+                  orderSn: String(mirrored?.orderSn || found.orderSn || "")
+                    .replace(/^shopee-/i, "")
+                    .trim(),
+                };
+              }
+            }
           } catch (shopeeErr) {
             console.warn(
               `[Orders Scan Bulk] Shopee resolve code=${code}:`,
               shopeeErr?.message || shopeeErr,
             );
+          }
+        }
+        // Chặn đơn giả: orderSn = mã VĐ hoặc thiếu items khi ghi hủy/hoàn.
+        if (found) {
+          const finalSn = String(found.orderSn || "").replace(/^shopee-/i, "").trim();
+          if (
+            !finalSn ||
+            /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(finalSn)
+          ) {
+            found = null;
           }
         }
         return { code, found };
@@ -272,6 +301,37 @@ export async function scanBulkUpdate(req, res) {
 
       // FE / raw Shopee: nhận hoàn (kể cả sau HANDED_OVER).
       if (forceReturn || isReturnLike) {
+        const finalSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (
+          !finalSn ||
+          /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(finalSn)
+        ) {
+          results.push({
+            code,
+            action: "not_found",
+            message: `Mã "${code}" chưa resolve được order_sn Shopee — không lưu đơn giả.`,
+          });
+          failed_scans.push({
+            code,
+            reason: "Thiếu order_sn thật sau khi gọi Shopee",
+          });
+          continue;
+        }
+        if (!Array.isArray(order.items) || order.items.length === 0) {
+          results.push({
+            code,
+            action: "rejected",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Đơn #${order.orderSn} thiếu danh sách sản phẩm — không lưu.`,
+          });
+          failed_scans.push({
+            code,
+            orderSn: order.orderSn,
+            reason: "Thiếu items",
+          });
+          continue;
+        }
         const wasHandedOver =
           existingLocal === "HANDED_OVER" ||
           order.is_handed_over === true ||
@@ -312,6 +372,37 @@ export async function scanBulkUpdate(req, res) {
 
       // FE / raw Shopee: đơn hủy (CANCELLED / IN_CANCEL), kể cả sau HANDED_OVER.
       if (forceCancel || isCancelLike) {
+        const finalSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
+        if (
+          !finalSn ||
+          /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(finalSn)
+        ) {
+          results.push({
+            code,
+            action: "not_found",
+            message: `Mã "${code}" chưa resolve được order_sn Shopee — không lưu đơn giả.`,
+          });
+          failed_scans.push({
+            code,
+            reason: "Thiếu order_sn thật sau khi gọi Shopee",
+          });
+          continue;
+        }
+        if (!Array.isArray(order.items) || order.items.length === 0) {
+          results.push({
+            code,
+            action: "rejected",
+            orderId: order.id,
+            orderSn: order.orderSn,
+            message: `Đơn #${order.orderSn} thiếu danh sách sản phẩm — không lưu.`,
+          });
+          failed_scans.push({
+            code,
+            orderSn: order.orderSn,
+            reason: "Thiếu items",
+          });
+          continue;
+        }
         const wasHandedOver =
           existingLocal === "HANDED_OVER" ||
           order.is_handed_over === true ||
@@ -407,15 +498,29 @@ export async function scanBulkUpdate(req, res) {
 
     // Persist: hủy/hoàn → collection don_hoan_huy (SSOT tab);
     // xuất kho → markOrderHandedOver. Không phụ thuộc order_events.
+    const scanCodeByOrderSn = new Map();
+    for (const r of results) {
+      const sn = String(r?.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (sn && r?.code) scanCodeByOrderSn.set(sn, String(r.code));
+    }
     const cancelReturnRows = [];
     for (const o of changedOrders) {
       const local = String(
         o?.local_status || o?.localStatus || o?.internal_status || "",
       ).toUpperCase();
+      const sn = String(o?.orderSn || "").replace(/^shopee-/i, "").trim();
       if (local === "CANCELLED_STORED") {
-        cancelReturnRows.push({ order: o, type: "cancelled" });
+        cancelReturnRows.push({
+          order: o,
+          type: "cancelled",
+          scanCode: scanCodeByOrderSn.get(sn),
+        });
       } else if (local === "RETURN_RECEIVED") {
-        cancelReturnRows.push({ order: o, type: "return" });
+        cancelReturnRows.push({
+          order: o,
+          type: "return",
+          scanCode: scanCodeByOrderSn.get(sn),
+        });
       }
     }
 
@@ -438,7 +543,7 @@ export async function scanBulkUpdate(req, res) {
           cancelReturnRows.map((r) => ({
             order: r.order,
             type: r.type,
-            scanCode: undefined,
+            scanCode: r.scanCode,
             source: "qr_scan",
           })),
         );

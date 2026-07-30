@@ -1,10 +1,33 @@
 import DonHoanHuy from "../models/DonHoanHuy.js";
 import { connectDB, isDBReady, getMongoUri } from "../config/db.js";
+import {
+  loadDonHoanHuyAsOrders,
+  upsertDonHoanHuy,
+} from "../src/db/mongoStore.ts";
+
+/** Deps từ server.ts — resolve đơn thật (orderSn + items) trước khi ghi don_hoan_huy. */
+let deps = {
+  findOrderByScanCodeInStore: async () => null,
+  resolveOrderFromShopeeByScanCode: async () => null,
+  isValidOrder: () => false,
+  mirrorTrackingFieldsForRead: (o) => o,
+};
+
+export function initScanController(partial) {
+  deps = { ...deps, ...partial };
+}
 
 function normalizeOrderSn(raw) {
   return String(raw || "")
     .replace(/^shopee-/i, "")
     .trim();
+}
+
+/** Mã vận đơn carrier — tuyệt đối không dùng làm orderSn. */
+function isCarrierTrackingCode(code) {
+  const c = String(code || "").trim();
+  if (!c) return false;
+  return /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX|SHOPEE\s*X)/i.test(c);
 }
 
 function describeDbError(err) {
@@ -34,9 +57,66 @@ async function ensureDbConnected() {
   return isDBReady();
 }
 
+function orderHasItems(order) {
+  return Array.isArray(order?.items) && order.items.length > 0;
+}
+
+/**
+ * Local → Shopee on-demand. Bắt buộc có orderSn thật (không phải mã VĐ).
+ * Ưu tiên đơn có items; nếu local thiếu items thì vẫn gọi Shopee để bổ sung.
+ */
+async function resolveFullOrderForScan(rawCode) {
+  const code = String(rawCode || "").trim();
+  if (!code) return null;
+
+  let found = null;
+  try {
+    found = await deps.findOrderByScanCodeInStore(code);
+    if (found && !deps.isValidOrder(found)) found = null;
+    if (found) found = deps.mirrorTrackingFieldsForRead(found);
+  } catch (err) {
+    console.warn(`[Scan Save] local lookup fail code=${code}:`, err?.message || err);
+  }
+
+  const needsShopee =
+    !found ||
+    !normalizeOrderSn(found.orderSn) ||
+    isCarrierTrackingCode(found.orderSn) ||
+    !orderHasItems(found);
+
+  if (needsShopee) {
+    try {
+      const fromShopee = await deps.resolveOrderFromShopeeByScanCode(code);
+      if (fromShopee && deps.isValidOrder(fromShopee)) {
+        const mirrored = deps.mirrorTrackingFieldsForRead(fromShopee);
+        // Giữ items từ Shopee nếu local thiếu.
+        if (!found) {
+          found = mirrored;
+        } else {
+          found = {
+            ...found,
+            ...mirrored,
+            items:
+              orderHasItems(mirrored) ? mirrored.items : found.items,
+            orderSn: normalizeOrderSn(mirrored.orderSn) || normalizeOrderSn(found.orderSn),
+          };
+        }
+      }
+    } catch (err) {
+      console.warn(`[Scan Save] Shopee resolve fail code=${code}:`, err?.message || err);
+    }
+  }
+
+  if (!found) return null;
+  const sn = normalizeOrderSn(found.orderSn);
+  if (!sn || isCarrierTrackingCode(sn)) return null;
+  return found;
+}
+
 /**
  * POST /api/scan/save
  * Body: { codes: string[] } | { orderSns: string[] } | { items: [...] }
+ * Mỗi mã phải resolve ra đơn Shopee thật (orderSn + items) — không tạo đơn giả từ mã VĐ.
  */
 export async function saveScanOrders(req, res) {
   try {
@@ -58,56 +138,62 @@ export async function saveScanOrders(req, res) {
     }
 
     const body = req.body || {};
-    const codes = [];
+    /** @type {Array<{ code: string, kind: 'cancel'|'return' }>} */
+    const jobs = [];
 
-    const pushCode = (v, status, note) => {
-      const sn = normalizeOrderSn(v);
-      if (!sn) return;
-      codes.push({
-        orderSn: sn,
-        status: status || "scanned",
-        note: note || "",
-      });
+    const pushJob = (raw, kind) => {
+      const code = String(raw || "").trim();
+      if (!code) return;
+      jobs.push({ code, kind: kind === "return" ? "return" : "cancel" });
+    };
+
+    const inferKind = (statusOrType) => {
+      const t = String(statusOrType || "").toLowerCase();
+      if (
+        t === "return" ||
+        t === "return_received" ||
+        t === "da_nhan_hoan" ||
+        t === "return_pending"
+      ) {
+        return "return";
+      }
+      return "cancel";
     };
 
     if (Array.isArray(body.codes)) {
       for (const c of body.codes) {
         if (c && typeof c === "object") {
-          pushCode(c.orderSn || c.code || c.orderId, c.status, c.note);
+          pushJob(
+            c.orderSn || c.code || c.orderId,
+            inferKind(c.status || c.type || body.status),
+          );
         } else {
-          pushCode(c, body.status, body.note);
+          pushJob(c, inferKind(body.status));
         }
       }
     }
     if (Array.isArray(body.orderSns)) {
-      for (const c of body.orderSns) pushCode(c, body.status, body.note);
+      for (const c of body.orderSns) pushJob(c, inferKind(body.status));
     }
     if (Array.isArray(body.items)) {
       for (const it of body.items) {
-        const t = String(it?.type || it?.status || body.status || "").toLowerCase();
-        const status =
-          t === "return" || t === "return_received" || t === "da_nhan_hoan"
-            ? "return_received"
-            : t === "cancelled" || t === "cancel" || t === "don_huy"
-              ? "cancelled"
-              : it?.status || "scanned";
-        pushCode(it?.orderSn || it?.code || it?.orderId, status, it?.note);
+        pushJob(it?.orderSn || it?.code || it?.orderId, inferKind(it?.type || it?.status || body.status));
       }
     }
     if (Array.isArray(body.donHuyCodes)) {
-      for (const c of body.donHuyCodes) pushCode(c, "cancelled", "don_huy");
+      for (const c of body.donHuyCodes) pushJob(c, "cancel");
     }
     if (Array.isArray(body.daNhanHoanCodes)) {
-      for (const c of body.daNhanHoanCodes) pushCode(c, "return_received", "da_nhan_hoan");
+      for (const c of body.daNhanHoanCodes) pushJob(c, "return");
     }
     if (typeof body.code === "string" || typeof body.orderSn === "string") {
-      pushCode(body.orderSn || body.code, body.status, body.note);
+      pushJob(body.orderSn || body.code, inferKind(body.status));
     }
 
-    // Deduplicate by orderSn (last wins)
-    const bySn = new Map();
-    for (const row of codes) bySn.set(row.orderSn, row);
-    const unique = [...bySn.values()];
+    // Deduplicate by code (last kind wins)
+    const byCode = new Map();
+    for (const job of jobs) byCode.set(job.code, job);
+    const unique = [...byCode.values()];
 
     if (!unique.length) {
       return res.status(400).json({
@@ -116,46 +202,78 @@ export async function saveScanOrders(req, res) {
       });
     }
 
-    const now = new Date();
-    const ops = unique.map((row) => ({
-      updateOne: {
-        filter: { orderSn: row.orderSn },
-        update: {
-          $set: {
-            orderSn: row.orderSn,
-            status: row.status,
-            scannedAt: now,
-            note: row.note || "",
-            local_status:
-              row.status === "return_received" ? "RETURN_RECEIVED" : "CANCELLED_STORED",
-            type: row.status === "return_received" ? "return" : "cancelled",
-            source: "api_scan_save",
-          },
-          $setOnInsert: {
-            createdAt: now,
-          },
-        },
-        upsert: true,
-      },
-    }));
+    const saved = [];
+    const failed = [];
+    const orderSns = [];
 
-    const result = await DonHoanHuy.bulkWrite(ops, { ordered: false });
+    for (const job of unique) {
+      const order = await resolveFullOrderForScan(job.code);
+      if (!order) {
+        failed.push({
+          code: job.code,
+          reason:
+            "Không tìm thấy đơn Shopee khớp mã (thiếu order_sn/items). Không lưu đơn giả.",
+        });
+        continue;
+      }
+      if (!orderHasItems(order)) {
+        failed.push({
+          code: job.code,
+          orderSn: order.orderSn,
+          reason: `Đơn #${order.orderSn} thiếu danh sách sản phẩm — không lưu.`,
+        });
+        continue;
+      }
+
+      const r = await upsertDonHoanHuy(order, {
+        type: job.kind === "return" ? "return" : "cancelled",
+        scanCode: job.code,
+        source: "api_scan_save",
+      });
+      if (!r.ok) {
+        failed.push({
+          code: job.code,
+          orderSn: order.orderSn,
+          reason: r.error || "Ghi don_hoan_huy thất bại",
+        });
+        continue;
+      }
+      saved.push(r.orderSn);
+      orderSns.push(r.orderSn);
+    }
+
+    if (saved.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message:
+          failed[0]?.reason ||
+          "Không resolve được đơn Shopee nào — không tạo đơn giả từ mã quét.",
+        saved: 0,
+        failed: failed.length,
+        errors: failed.slice(0, 20),
+        donHoanHuy: { ok: 0, failed: failed.length, already: 0, ensured: 0, errors: failed.map((f) => f.reason) },
+      });
+    }
 
     return res.json({
       success: true,
-      message: `Đã lưu ${unique.length} đơn vào don_hoan_huy.`,
-      saved: unique.length,
-      upserted: result.upsertedCount || 0,
-      modified: result.modifiedCount || 0,
-      matched: result.matchedCount || 0,
+      message: `Đã lưu ${saved.length} đơn vào don_hoan_huy` +
+        (failed.length ? ` (${failed.length} mã lỗi)` : "") +
+        ".",
+      saved: saved.length,
+      failed: failed.length,
+      errors: failed.slice(0, 20),
+      upserted: saved.length,
+      modified: 0,
+      matched: 0,
       donHoanHuy: {
-        ok: unique.length,
-        failed: 0,
+        ok: saved.length,
+        failed: failed.length,
         already: 0,
-        ensured: unique.length,
-        errors: [],
+        ensured: saved.length,
+        errors: failed.map((f) => f.reason).slice(0, 10),
       },
-      orderSns: unique.map((r) => r.orderSn),
+      orderSns,
     });
   } catch (err) {
     console.error("[POST /api/scan/save]", err);
@@ -168,7 +286,7 @@ export async function saveScanOrders(req, res) {
 
 /**
  * GET /api/scan/don-hoan-huy
- * Truy vấn collection don_hoan_huy, sort scannedAt desc.
+ * Dùng cùng mapper với tab orders (orderSn thật + items từ data).
  */
 export async function listDonHoanHuy(req, res) {
   try {
@@ -197,35 +315,55 @@ export async function listDonHoanHuy(req, res) {
         ? Math.min(Math.floor(limitRaw), 5000)
         : 2000;
 
-    const docs = await DonHoanHuy.find({})
-      .sort({ scannedAt: -1 })
-      .limit(limit)
-      .maxTimeMS(5000)
-      .lean();
+    let data = [];
+    try {
+      data = await loadDonHoanHuyAsOrders(limit);
+    } catch (loadErr) {
+      // Fallback lean map nếu mongoStore chưa sẵn sàng trong môi trường serverless.
+      console.warn("[GET /api/scan/don-hoan-huy] loadDonHoanHuyAsOrders:", loadErr?.message || loadErr);
+      const docs = await DonHoanHuy.find({})
+        .sort({ scannedAt: -1 })
+        .limit(limit)
+        .maxTimeMS(5000)
+        .lean();
+      data = (docs || []).map((doc) => {
+        const base = doc.data && typeof doc.data === "object" ? { ...doc.data } : {};
+        let sn = normalizeOrderSn(doc.orderSn);
+        const dataSn = normalizeOrderSn(base.orderSn || base.order_sn);
+        if (isCarrierTrackingCode(sn) && dataSn && !isCarrierTrackingCode(dataSn)) {
+          sn = dataSn;
+        }
+        const status = String(doc.status || "scanned");
+        const local =
+          doc.local_status ||
+          (status === "return_received" ? "RETURN_RECEIVED" : "CANCELLED_STORED");
+        return {
+          ...base,
+          id: base.id || `shopee-${sn}`,
+          orderSn: sn,
+          status,
+          note: doc.note || "",
+          scannedAt: doc.scannedAt || null,
+          local_status: local,
+          localStatus: local,
+          internal_status: local,
+          don_hoan_huy: true,
+          type: doc.type || (status === "return_received" ? "return" : "cancelled"),
+          shopId: doc.shopId || base.shopId || null,
+          shopName: doc.shopName || base.shopName || null,
+          tracking_no: doc.tracking_no || base.tracking_no || null,
+          trackingNumber: doc.tracking_no || base.trackingNumber || base.tracking_no || null,
+          items: Array.isArray(base.items) ? base.items : [],
+          channel: base.channel || "shopee",
+        };
+      });
+    }
 
-    const data = (docs || []).map((doc) => {
-      const sn = normalizeOrderSn(doc.orderSn);
-      const status = String(doc.status || "scanned");
-      const local =
-        doc.local_status ||
-        (status === "return_received" ? "RETURN_RECEIVED" : "CANCELLED_STORED");
-      return {
-        id: doc._id || `dhh-${sn}`,
-        orderSn: sn,
-        status,
-        note: doc.note || "",
-        scannedAt: doc.scannedAt || null,
-        local_status: local,
-        localStatus: local,
-        internal_status: local,
-        don_hoan_huy: true,
-        type: doc.type || (status === "return_received" ? "return" : "cancelled"),
-        shopId: doc.shopId || null,
-        shopName: doc.shopName || null,
-        tracking_no: doc.tracking_no || null,
-        channel: "shopee",
-        ...(doc.data && typeof doc.data === "object" ? doc.data : {}),
-      };
+    // Lọc bỏ bản ghi giả (orderSn = mã VĐ, không có items) khỏi UI.
+    data = data.filter((o) => {
+      const sn = normalizeOrderSn(o?.orderSn);
+      if (!sn || isCarrierTrackingCode(sn)) return false;
+      return true;
     });
 
     return res.json({
