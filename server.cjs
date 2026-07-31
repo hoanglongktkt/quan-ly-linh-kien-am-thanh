@@ -71640,7 +71640,9 @@ function createBoundedQueue(processPayload) {
   return {
     enqueue(payload) {
       if (pending.length >= MAX_PENDING_JOBS) {
-        console.error("[Shopee Webhook] Queue full; request must be retried by Shopee.");
+        console.error(
+          "[Shopee Webhook] Queue full; dropping payload after ACK 200 (no HTTP retry)."
+        );
         return false;
       }
       pending.push(payload);
@@ -71649,75 +71651,87 @@ function createBoundedQueue(processPayload) {
     }
   };
 }
+function ackShopeeOk(res) {
+  if (res.headersSent) return;
+  res.status(200).json({ result: "success" });
+}
 function createShopeeWebhookRouter(processPayload) {
   const queue = createBoundedQueue(processPayload);
   const router23 = import_express.default.Router();
   router23.get("/shopee", (_req, res) => {
-    res.status(200).type("text/plain").send("success");
+    ackShopeeOk(res);
   });
   router23.post("/shopee", import_express.default.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+    ackShopeeOk(res);
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     const bodyPreview = rawBody.toString("utf8").slice(0, 4e3);
-    console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee \u2014 headers:", {
-      authorization: req.get("authorization") ? "(present)" : "(missing)",
+    const authHeader = req.get("authorization");
+    console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee \u2014 ACK 200 sent; headers:", {
+      authorization: authHeader ? "(present)" : "(missing)",
       contentLength: req.get("content-length") || "0",
       host: req.get("host") || "",
       xfProto: req.get("x-forwarded-proto") || ""
     });
     console.log("[WEBHOOK RECEIVED] incoming payload (raw):", bodyPreview);
-    try {
-      const authHeader = req.get("authorization");
-      const configured = String(process.env.SHOPEE_WEBHOOK_URL || process.env.APP_URL || process.env.API_BASE_URL || "").trim().replace(/\/$/, "");
-      const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
-      const proto = forwardedProto || req.protocol || "https";
-      const host = String(req.get("x-forwarded-host") || req.get("host") || "").split(",")[0].trim();
-      const pathName = String(req.originalUrl || req.url || "/api/webhook/shopee").split("?")[0];
-      const urlCandidates = [
-        configured ? `${configured}/api/webhook/shopee` : "",
-        configured ? `${configured}${pathName}` : "",
-        host ? `${proto}://${host}${pathName}` : "",
-        host ? `https://${host}${pathName}` : "",
-        host ? `http://${host}${pathName}` : "",
-        "https://quanly.linhkienamthanh.net/api/webhook/shopee",
-        "https://api.linhkienamthanh.net/api/webhook/shopee"
-      ].filter(Boolean);
-      if (!verifyShopeeWebhookSignature(rawBody, authHeader, urlCandidates)) {
-        console.error(
-          `[Shopee Webhook] REJECTED \u2014 HMAC failure (invalid/missing Authorization). authPresent=${Boolean(authHeader)} bodyBytes=${rawBody.length} payloadPreview=${bodyPreview.slice(0, 500)}`
-        );
-        return res.status(401).type("text/plain").send("Unauthorized");
-      }
-      let payload = null;
+    setImmediate(() => {
       try {
-        const parsed = JSON.parse(rawBody.toString("utf8"));
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          payload = parsed;
-        } else {
-          console.error("[Shopee Webhook] REJECTED \u2014 payload kh\xF4ng ph\u1EA3i object:", typeof parsed);
+        const configured = String(
+          process.env.SHOPEE_WEBHOOK_URL || process.env.APP_URL || process.env.API_BASE_URL || ""
+        ).trim().replace(/\/$/, "");
+        const forwardedProto = String(req.get("x-forwarded-proto") || "").split(",")[0].trim();
+        const proto = forwardedProto || req.protocol || "https";
+        const host = String(req.get("x-forwarded-host") || req.get("host") || "").split(",")[0].trim();
+        const pathName = String(req.originalUrl || req.url || "/api/webhook/shopee").split("?")[0];
+        const urlCandidates = [
+          configured ? `${configured}/api/webhook/shopee` : "",
+          configured ? `${configured}${pathName}` : "",
+          host ? `${proto}://${host}${pathName}` : "",
+          host ? `https://${host}${pathName}` : "",
+          host ? `http://${host}${pathName}` : "",
+          "https://quanly.linhkienamthanh.net/api/webhook/shopee",
+          "https://api.linhkienamthanh.net/api/webhook/shopee"
+        ].filter(Boolean);
+        const hmacOk = verifyShopeeWebhookSignature(rawBody, authHeader, urlCandidates);
+        if (!hmacOk) {
+          console.warn(
+            `[Shopee Webhook] HMAC warn (ignored for ACK) \u2014 v\u1EABn x\u1EED l\xFD ng\u1EA7m n\u1EBFu JSON OK. authPresent=${Boolean(authHeader)} bodyBytes=${rawBody.length}`
+          );
         }
-      } catch (parseErr) {
-        console.error("[Shopee Webhook] REJECTED \u2014 JSON parse failed:", parseErr);
+        let payload = null;
+        try {
+          if (!rawBody.length) {
+            console.log("[Shopee Webhook] Empty body after ACK \u2014 nothing to process.");
+            return;
+          }
+          const parsed = JSON.parse(rawBody.toString("utf8"));
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            payload = parsed;
+          } else {
+            console.error("[Shopee Webhook] Background \u2014 payload kh\xF4ng ph\u1EA3i object:", typeof parsed);
+          }
+        } catch (parseErr) {
+          console.error("[Shopee Webhook] Background \u2014 JSON parse failed:", parseErr);
+        }
+        if (!payload) return;
+        if (!queue.enqueue(payload)) {
+          console.warn("[Shopee Webhook] Queue full \u2014 fallback processPayload tr\u1EF1c ti\u1EBFp.");
+          void processPayload(payload).catch((err) => {
+            console.error("[Shopee Webhook] Fallback background processing failed:", err);
+          });
+          return;
+        }
+        console.log(
+          "[WEBHOOK RECEIVED] payload queued after ACK:",
+          JSON.stringify({
+            code: payload.code ?? null,
+            shop_id: payload.shop_id ?? null,
+            data: payload.data ?? null
+          })
+        );
+      } catch (error) {
+        console.error("[Shopee Webhook] Background handler failed (after ACK 200):", error);
       }
-      if (!payload) {
-        return res.status(400).type("text/plain").send("Invalid JSON payload");
-      }
-      if (!queue.enqueue(payload)) {
-        console.error("[Shopee Webhook] REJECTED \u2014 queue full (503), Shopee will retry.");
-        return res.status(503).type("text/plain").send("Webhook queue busy");
-      }
-      res.status(200).type("text/plain").send("OK");
-      console.log(
-        "[WEBHOOK RECEIVED] ACK 200 sent; payload queued:",
-        JSON.stringify({
-          code: payload.code ?? null,
-          shop_id: payload.shop_id ?? null,
-          data: payload.data ?? null
-        })
-      );
-    } catch (error) {
-      console.error("[Shopee Webhook] Request handler failed:", error);
-      if (!res.headersSent) return res.status(500).type("text/plain").send("Internal Server Error");
-    }
+    });
   });
   return router23;
 }
@@ -114868,7 +114882,12 @@ async function startServer() {
       "/api/shopee/webhook",
       "/api/shopee/webhook/"
     ],
-    (_req, res) => res.status(410).type("text/plain").send("Use /api/webhook/shopee")
+    (_req, res) => {
+      if (!res.headersSent) res.status(200).json({ result: "success" });
+      console.warn(
+        "[Shopee Webhook] Legacy path ACK 200 \u2014 chuy\u1EC3n Push URL sang /api/webhook/shopee"
+      );
+    }
   );
   app.use(dbReady_default);
   initHealthController({

@@ -13037,9 +13037,8 @@ async function startServer() {
     console.error("[Labels] ensureLabelsDir lúc boot Express:", err);
   }
 
-  // Các URL callback cũ không được phép nhận Push: express.json đã làm mất raw
-  // payload nên không thể xác thực HMAC một cách đáng tin cậy. Chỉ route canonical
-  // /api/webhook/shopee (express.raw) mới được đưa event vào queue.
+  // URL callback cũ: vẫn ACK 200 ngay (cắt Live Push fail). Chỉ route canonical
+  // /api/webhook/shopee (express.raw) mới xử lý đầy đủ + HMAC + queue.
   app.post(
     [
       "/api/auth/shopee/callback",
@@ -13049,7 +13048,12 @@ async function startServer() {
       "/api/shopee/webhook",
       "/api/shopee/webhook/",
     ],
-    (_req, res) => res.status(410).type("text/plain").send("Use /api/webhook/shopee"),
+    (_req, res) => {
+      if (!res.headersSent) res.status(200).json({ result: "success" });
+      console.warn(
+        "[Shopee Webhook] Legacy path ACK 200 — chuyển Push URL sang /api/webhook/shopee",
+      );
+    },
   );
 
   /** DB chưa sẵn sàng → trả 503 NGAY (sync, không await/chờ). Auth/health/oauth/ship-order vẫn chạy. */

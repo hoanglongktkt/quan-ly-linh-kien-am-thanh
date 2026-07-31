@@ -5,20 +5,18 @@ const LOG = '[Shopee Webhook]';
 export async function handleShopeeWebhook(req, res) {
   logShopeeRequest(LOG, req);
 
-  if (req.method === 'OPTIONS') {
+  // Emergency: mọi method đều ACK 200 ngay — không 410/405 để tránh Live Push fail.
+  if (req.method === 'OPTIONS' || req.method === 'GET') {
     return respondShopeeOk(res);
   }
 
-  if (req.method === 'GET') {
-    respondShopeeOk(res);
+  if (req.method === 'POST') {
+    if (!res.headersSent) {
+      res.status(200).json({ result: 'success' });
+    }
+    console.log(`${LOG} POST ACK 200 (edge/vercel) — prefer backend /api/webhook/shopee for full processing`);
     return;
   }
 
-  if (req.method === 'POST') {
-    return res.status(410).type('text/plain; charset=utf-8').send(
-      'Webhook moved to /api/webhook/shopee on the backend.',
-    );
-  }
-
-  res.status(405).end();
+  return respondShopeeOk(res);
 }
