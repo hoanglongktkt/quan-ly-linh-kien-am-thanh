@@ -285,19 +285,11 @@ export async function listOrders(req, res) {
     tab === "ready_to_ship" ||
     tab === "cho-lay-hang"
   ) {
-    // Tab "Chờ lấy hàng (Chưa xử lý)" = READY_TO_SHIP|RETRY_SHIP (raw Shopee), chưa có mã VĐ
-    rawOrders = rawOrders.filter((o) => {
-      if (deps.matchesUnprocessedPickupTabShared(o)) return true;
-      // Fallback cứng nếu matcher chưa inject: khớp chuẩn Shopee READY_TO_SHIP
-      const raw = String(o?.shopee_order_status || o?.order_status || "").toUpperCase();
-      if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return false;
-      if (o?.is_handed_over === true || o?.isHandedOverToCarrier === true) return false;
-      const tn = String(o?.tracking_no || o?.trackingNumber || "").trim();
-      if (tn && tn !== "0" && !/^0FG/i.test(tn)) return false;
-      return true;
-    });
+    // SSOT: matchesUnprocessedPickupTab (READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking) —
+    // cùng bộ điều kiện với Dashboard pendingPack / OrderManager tab Chưa xử lý.
+    rawOrders = rawOrders.filter((o) => deps.matchesUnprocessedPickupTabShared(o));
     console.log(
-      `[GET /api/orders] query.tab=${tab} filter=READY_TO_SHIP|RETRY_SHIP (unprocessed) → ${rawOrders.length} đơn` +
+      `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab → ${rawOrders.length} đơn` +
         ` | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound }`,
     );
   } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
@@ -328,9 +320,34 @@ export async function listOrders(req, res) {
     tab === "dang_kiem_tra_shopee" ||
     tab === "shopee_check"
   ) {
+    // Khớp isPendingConfirmOrder / orderTabFilter("pending_confirm")
     rawOrders = rawOrders.filter((o) => {
       const raw = String(o.shopee_order_status || "").toUpperCase();
-      if (raw === "CANCELLED" || raw === "IN_CANCEL" || o.status === "cancelled") {
+      if (
+        raw === "READY_TO_SHIP" ||
+        raw === "RETRY_SHIP" ||
+        raw === "PROCESSED" ||
+        raw === "SHIPPED" ||
+        raw === "TO_CONFIRM_RECEIVE" ||
+        raw === "COMPLETED" ||
+        raw === "CANCELLED" ||
+        raw === "IN_CANCEL" ||
+        raw === "TO_RETURN"
+      ) {
+        return false;
+      }
+      if (
+        o.status === "unprocessed" ||
+        o.status === "processed" ||
+        o.status === "shipping" ||
+        o.status === "completed" ||
+        o.status === "cancelled" ||
+        o.status === "return_pending" ||
+        o.status === "return_received"
+      ) {
+        return false;
+      }
+      if (deps.matchesProcessedPickupTabShared(o) || deps.matchesUnprocessedPickupTabShared(o)) {
         return false;
       }
       return (

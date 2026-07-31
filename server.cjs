@@ -75028,77 +75028,176 @@ async function loadShopeeTrackingEnrichCandidatesFromStore(opts) {
   if (!docs.length) return [];
   return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
 }
+var ORDER_TAB_LEFT_PICKUP_RAW = [
+  "SHIPPED",
+  "TO_CONFIRM_RECEIVE",
+  "COMPLETED",
+  "CANCELLED",
+  "IN_CANCEL",
+  "TO_RETURN"
+];
+var ORDER_TAB_TRACKING_PRESENT = {
+  $or: [
+    { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
+    { "data.tracking_no": { $exists: true, $nin: [null, "", "0"] } },
+    { "data.trackingNumber": { $exists: true, $nin: [null, "", "0"] } },
+    { "data.shopee_tracking_number": { $exists: true, $nin: [null, "", "0"] } }
+  ]
+};
+var ORDER_TAB_TRACKING_EMPTY = {
+  $and: [
+    { $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }] },
+    { $or: [{ "data.tracking_no": { $exists: false } }, { "data.tracking_no": { $in: [null, "", "0"] } }] },
+    {
+      $or: [
+        { "data.trackingNumber": { $exists: false } },
+        { "data.trackingNumber": { $in: [null, "", "0"] } }
+      ]
+    },
+    {
+      $or: [
+        { "data.shopee_tracking_number": { $exists: false } },
+        { "data.shopee_tracking_number": { $in: [null, "", "0"] } }
+      ]
+    }
+  ]
+};
+var ORDER_TAB_DROPOFF_PREPARED = {
+  $and: [
+    {
+      $or: [
+        { fulfillment_type: { $in: ["dropoff", "drop_off", "drop-off"] } },
+        { "data.fulfillment_type": { $in: ["dropoff", "drop_off", "drop-off"] } },
+        { ship_method: { $in: ["dropoff", "drop_off", "drop-off"] } },
+        { "data.ship_method": { $in: ["dropoff", "drop_off", "drop-off"] } },
+        { "data.shipping_method": { $in: ["dropoff", "drop_off", "drop-off"] } }
+      ]
+    },
+    {
+      $or: [{ isPrepared: true }, { "data.isPrepared": true }]
+    }
+  ]
+};
+var ORDER_TAB_NOT_HANDED_OVER = {
+  $and: [
+    { is_handed_over: { $ne: true } },
+    { "data.is_handed_over": { $ne: true } }
+  ]
+};
 function orderTabFilter(tab) {
-  switch (String(tab || "").trim()) {
+  const key = String(tab || "").trim().toLowerCase();
+  switch (key) {
     case "shipping":
+    case "shipped":
+    case "dang-giao":
       return {
         $or: [
           { status: "shipping" },
-          { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } }
+          { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
+          { "data.shopee_order_status": { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
+          {
+            logistics_status: {
+              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
+              $options: "i"
+            }
+          },
+          {
+            "data.logistics_status": {
+              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
+              $options: "i"
+            }
+          }
         ]
       };
     case "completed":
       return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
     case "cancelled":
       return { $or: [{ status: "cancelled" }, { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }] };
+    case "return_pending":
+    case "return-pending":
+      return { status: "return_pending" };
     case "processed":
+    case "da-xu-ly":
+    case "processed_pickup":
       return {
         $and: [
+          ORDER_TAB_NOT_HANDED_OVER,
+          {
+            shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] }
+          },
           {
             $or: [
-              { status: "processed" },
               { shopee_order_status: "PROCESSED" },
+              { "data.shopee_order_status": "PROCESSED" },
               {
-                shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
-                $or: [
-                  { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
-                  { "data.tracking_no": { $exists: true, $nin: [null, "", "0"] } },
-                  { "data.trackingNumber": { $exists: true, $nin: [null, "", "0"] } }
-                ]
-              }
-            ]
-          },
-          { shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED", "CANCELLED", "IN_CANCEL"] } },
-          { is_handed_over: { $ne: true } }
-        ]
-      };
-    case "unprocessed":
-      return {
-        $and: [
-          {
-            $or: [
-              { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
-              {
-                status: "unprocessed",
-                shopee_order_status: {
-                  $nin: [
-                    "PROCESSED",
-                    "SHIPPED",
-                    "TO_CONFIRM_RECEIVE",
-                    "COMPLETED",
-                    "CANCELLED",
-                    "IN_CANCEL",
-                    "TO_RETURN"
-                  ]
-                }
-              }
-            ]
-          },
-          { shopee_order_status: { $ne: "PROCESSED" } },
-          { is_handed_over: { $ne: true } },
-          {
-            $and: [
-              { $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }] },
-              {
-                $or: [
-                  { "data.tracking_no": { $exists: false } },
-                  { "data.tracking_no": { $in: [null, "", "0"] } }
+                $and: [
+                  {
+                    $or: [
+                      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+                      { "data.shopee_order_status": { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+                      { status: { $in: ["processed", "unprocessed"] } }
+                    ]
+                  },
+                  ORDER_TAB_TRACKING_PRESENT
                 ]
               },
               {
+                $and: [
+                  {
+                    $or: [
+                      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+                      { "data.shopee_order_status": { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+                      { status: { $in: ["processed", "unprocessed"] } }
+                    ]
+                  },
+                  ORDER_TAB_DROPOFF_PREPARED
+                ]
+              },
+              {
+                $and: [
+                  { status: "processed" },
+                  {
+                    shopee_order_status: {
+                      $nin: ["READY_TO_SHIP", "RETRY_SHIP", ...ORDER_TAB_LEFT_PICKUP_RAW]
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+    case "unprocessed":
+    case "chua-xu-ly":
+    case "ready_to_ship":
+    case "cho-lay-hang":
+      return {
+        $and: [
+          ORDER_TAB_NOT_HANDED_OVER,
+          { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
+          {
+            $or: [
+              { "data.shopee_order_status": { $exists: false } },
+              { "data.shopee_order_status": { $in: [null, ""] } },
+              { "data.shopee_order_status": { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } }
+            ]
+          },
+          ORDER_TAB_TRACKING_EMPTY,
+          { $nor: [ORDER_TAB_DROPOFF_PREPARED] },
+          {
+            $or: [
+              { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
+              { "data.shopee_order_status": { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
+              {
+                status: "unprocessed",
                 $or: [
-                  { "data.trackingNumber": { $exists: false } },
-                  { "data.trackingNumber": { $in: [null, "", "0"] } }
+                  { shopee_order_status: { $in: [null, ""] } },
+                  { shopee_order_status: { $exists: false } },
+                  {
+                    shopee_order_status: {
+                      $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW]
+                    }
+                  }
                 ]
               }
             ]
@@ -75106,9 +75205,50 @@ function orderTabFilter(tab) {
         ]
       };
     case "pending_confirm":
-      return { status: { $in: ["pending_confirm", "pending_verification"] } };
+    case "pending_verification":
+    case "cho-xac-nhan":
+      return {
+        $and: [
+          {
+            $or: [
+              { status: { $in: ["pending_confirm", "pending_verification"] } },
+              {
+                shopee_order_status: {
+                  $in: ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"]
+                }
+              }
+            ]
+          },
+          {
+            shopee_order_status: {
+              $nin: [
+                "READY_TO_SHIP",
+                "RETRY_SHIP",
+                "PROCESSED",
+                ...ORDER_TAB_LEFT_PICKUP_RAW
+              ]
+            }
+          },
+          {
+            status: {
+              $nin: [
+                "unprocessed",
+                "processed",
+                "shipping",
+                "completed",
+                "cancelled",
+                "return_pending",
+                "return_received"
+              ]
+            }
+          }
+        ]
+      };
     case "handed_over_carrier":
-      return { is_handed_over: true, shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+      return {
+        is_handed_over: true,
+        shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] }
+      };
     case "stale":
       return {
         "data.channel": "shopee",
@@ -75153,23 +75293,29 @@ async function queryOrdersPageFromStore(opts) {
     });
   }
   const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
-  const [total, docs, grouped] = await Promise.all([
+  const countTabs = [
+    "pending_confirm",
+    "unprocessed",
+    "processed",
+    "shipping",
+    "return_pending"
+  ];
+  const [total, docs, allCount, ...tabCounts] = await Promise.all([
     OrderModel.countDocuments(filter).maxTimeMS(8e3),
     OrderModel.find(filter).sort({ "data.date": -1, _id: -1 }).skip((page - 1) * pageSize).limit(pageSize).select({ _id: 1 }).maxTimeMS(8e3).lean(),
-    OrderModel.aggregate([
-      { $group: { _id: "$status", count: { $sum: 1 } } }
-    ]).option({ maxTimeMS: 8e3 })
+    OrderModel.countDocuments({}).maxTimeMS(8e3),
+    ...countTabs.map(
+      (t2) => OrderModel.countDocuments(orderTabFilter(t2)).maxTimeMS(8e3)
+    )
   ]);
   const ids = docs.map((doc) => String(doc._id));
   const hydrated = await loadOrdersFromStore({ ids });
   const rowById = new Map(hydrated.map((row) => [String(row.id || ""), row]));
   const rows = ids.map((id) => rowById.get(id)).filter(Boolean);
-  const counts = { all: 0 };
-  for (const row of grouped) {
-    const key = String(row?._id || "");
-    if (key) counts[key] = Number(row?.count || 0);
-    counts.all += Number(row?.count || 0);
-  }
+  const counts = { all: Number(allCount) || 0 };
+  countTabs.forEach((t2, i2) => {
+    counts[t2] = Number(tabCounts[i2]) || 0;
+  });
   return { rows, total, page, pageSize, hasMore: page * pageSize < total, counts };
 }
 async function createSyncJob(type, requestedBy) {
@@ -75636,69 +75782,23 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey) {
       }
     }
   };
-  const [totalOrdersInDb, facetResult] = await Promise.all([
+  const withDashboard = (tabFilter) => {
+    const parts = Object.keys(tabFilter).length ? [isDashboardOrderMatch, tabFilter] : [isDashboardOrderMatch];
+    return parts.length === 1 ? parts[0] : { $and: parts };
+  };
+  const [totalOrdersInDb, facetResult, pendingApproval, pendingPayment, pendingPack, pendingPickup, shipping, returnPending] = await Promise.all([
     OrderModel.estimatedDocumentCount().maxTimeMS(3e3),
     OrderModel.aggregate([
       { $match: isDashboardOrderMatch },
       {
         $addFields: {
           // So khớp theo NGÀY (10 ký tự đầu ISO) — đúng hành vi isDateInRange cũ.
-          _dateKey: { $substrCP: [{ $ifNull: ["$data.date", ""] }, 0, 10] },
-          // Ưu tiên data.isPrepared (được cập nhật khi gán tracking) hơn cờ top-level
-          // (top-level chỉ set 1 lần lúc insert nên luôn "false" — không phản ánh trạng thái mới).
-          _isPrepared: {
-            $ifNull: ["$data.isPrepared", { $ifNull: ["$isPrepared", false] }]
-          }
+          _dateKey: { $substrCP: [{ $ifNull: ["$data.date", ""] }, 0, 10] }
         }
       },
       {
-        // LƯU Ý: MongoDB CẤM lồng $facet trong $facet — nên mỗi nhánh range-dependent
-        // (kpi/dailyRevenue/topProducts) tự $match theo _dateKey ở đầu nhánh của nó,
-        // thay vì dùng $facet lồng bên trong nhánh "inRange".
         $facet: {
           dashboardOrdersCount: [{ $count: "count" }],
-          pendingOrders: [
-            {
-              $group: {
-                _id: null,
-                pendingApproval: { $sum: { $cond: [{ $eq: ["$status", "pending_confirm"] }, 1, 0] } },
-                pendingPayment: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $eq: ["$status", "pending_confirm"] }, { $eq: ["$data.channel", "manual"] }] },
-                      1,
-                      0
-                    ]
-                  }
-                },
-                pendingPack: {
-                  $sum: {
-                    $cond: [
-                      { $and: [{ $eq: ["$status", "unprocessed"] }, { $ne: ["$_isPrepared", true] }] },
-                      1,
-                      0
-                    ]
-                  }
-                },
-                pendingPickup: {
-                  $sum: {
-                    $cond: [
-                      {
-                        $or: [
-                          { $and: [{ $eq: ["$status", "unprocessed"] }, { $eq: ["$_isPrepared", true] }] },
-                          { $eq: ["$status", "processed"] }
-                        ]
-                      },
-                      1,
-                      0
-                    ]
-                  }
-                },
-                shipping: { $sum: { $cond: [{ $eq: ["$status", "shipping"] }, 1, 0] } },
-                returnPending: { $sum: { $cond: [{ $eq: ["$status", "return_pending"] }, 1, 0] } }
-              }
-            }
-          ],
           kpi: [
             { $match: { _dateKey: { $gte: rangeStartKey, $lte: rangeEndKey } } },
             {
@@ -75720,7 +75820,13 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey) {
                   }
                 },
                 newOrders: {
-                  $sum: { $cond: [{ $in: ["$status", ["pending_confirm", "unprocessed"]] }, 1, 0] }
+                  $sum: {
+                    $cond: [
+                      { $in: ["$status", ["pending_confirm", "pending_verification", "unprocessed"]] },
+                      1,
+                      0
+                    ]
+                  }
                 },
                 returns: {
                   $sum: { $cond: [{ $in: ["$status", ["return_pending", "return_received"]] }, 1, 0] }
@@ -75753,10 +75859,20 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey) {
           ]
         }
       }
-    ]).option({ maxTimeMS: 6e3 }).exec()
+    ]).option({ maxTimeMS: 6e3 }).exec(),
+    // Cùng orderTabFilter với list đơn — pendingPack=unprocessed, pendingPickup=processed.
+    OrderModel.countDocuments(withDashboard(orderTabFilter("pending_confirm"))).maxTimeMS(6e3),
+    OrderModel.countDocuments(
+      withDashboard({
+        $and: [orderTabFilter("pending_confirm"), { "data.channel": "manual" }]
+      })
+    ).maxTimeMS(6e3),
+    OrderModel.countDocuments(withDashboard(orderTabFilter("unprocessed"))).maxTimeMS(6e3),
+    OrderModel.countDocuments(withDashboard(orderTabFilter("processed"))).maxTimeMS(6e3),
+    OrderModel.countDocuments(withDashboard(orderTabFilter("shipping"))).maxTimeMS(6e3),
+    OrderModel.countDocuments(withDashboard(orderTabFilter("return_pending"))).maxTimeMS(6e3)
   ]);
   const facet = facetResult?.[0] || {};
-  const pending = facet.pendingOrders?.[0] || {};
   const kpi = facet.kpi?.[0] || {};
   return {
     totalOrdersInDb,
@@ -75767,12 +75883,12 @@ async function getDashboardStatsFromStore(rangeStartKey, rangeEndKey) {
     returns: kpi.returns || 0,
     cancelled: kpi.cancelled || 0,
     pendingOrders: {
-      pendingApproval: pending.pendingApproval || 0,
-      pendingPayment: pending.pendingPayment || 0,
-      pendingPack: pending.pendingPack || 0,
-      pendingPickup: pending.pendingPickup || 0,
-      shipping: pending.shipping || 0,
-      returnPending: pending.returnPending || 0
+      pendingApproval: Number(pendingApproval) || 0,
+      pendingPayment: Number(pendingPayment) || 0,
+      pendingPack: Number(pendingPack) || 0,
+      pendingPickup: Number(pendingPickup) || 0,
+      shipping: Number(shipping) || 0,
+      returnPending: Number(returnPending) || 0
     },
     dailyRevenue: Array.isArray(facet.dailyRevenue) ? facet.dailyRevenue : [],
     topProducts: Array.isArray(facet.topProducts) ? facet.topProducts.map((row) => ({
@@ -103488,17 +103604,9 @@ async function listOrders(req, res) {
       `[GET /api/orders] query.tab=${tab} filter=matchesProcessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n`
     );
   } else if (tab === "unprocessed" || tab === "chua-xu-ly" || tab === "ready_to_ship" || tab === "cho-lay-hang") {
-    rawOrders = rawOrders.filter((o) => {
-      if (deps14.matchesUnprocessedPickupTabShared(o)) return true;
-      const raw = String(o?.shopee_order_status || o?.order_status || "").toUpperCase();
-      if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return false;
-      if (o?.is_handed_over === true || o?.isHandedOverToCarrier === true) return false;
-      const tn = String(o?.tracking_no || o?.trackingNumber || "").trim();
-      if (tn && tn !== "0" && !/^0FG/i.test(tn)) return false;
-      return true;
-    });
+    rawOrders = rawOrders.filter((o) => deps14.matchesUnprocessedPickupTabShared(o));
     console.log(
-      `[GET /api/orders] query.tab=${tab} filter=READY_TO_SHIP|RETRY_SHIP (unprocessed) \u2192 ${rawOrders.length} \u0111\u01A1n | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound }`
+      `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound }`
     );
   } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
     rawOrders = rawOrders.filter((o) => deps14.matchesShippingTabShared(o));
@@ -103517,7 +103625,13 @@ async function listOrders(req, res) {
   } else if (tab === "pending_confirm" || tab === "pending_verification" || tab === "cho-xac-nhan" || tab === "pending_shopee_check" || tab === "dang_kiem_tra_shopee" || tab === "shopee_check") {
     rawOrders = rawOrders.filter((o) => {
       const raw = String(o.shopee_order_status || "").toUpperCase();
-      if (raw === "CANCELLED" || raw === "IN_CANCEL" || o.status === "cancelled") {
+      if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED" || raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
+        return false;
+      }
+      if (o.status === "unprocessed" || o.status === "processed" || o.status === "shipping" || o.status === "completed" || o.status === "cancelled" || o.status === "return_pending" || o.status === "return_received") {
+        return false;
+      }
+      if (deps14.matchesProcessedPickupTabShared(o) || deps14.matchesUnprocessedPickupTabShared(o)) {
         return false;
       }
       return o.status === "pending_confirm" || o.status === "pending_verification" || ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw);

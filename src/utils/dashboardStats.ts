@@ -1,5 +1,10 @@
 import { Order, Product } from '../types';
 import type { DashboardDateRange } from '../components/Dashboard';
+import {
+  matchesProcessedPickupTab,
+  matchesShippingTab,
+  matchesUnprocessedPickupTab,
+} from './orderHandover';
 
 export interface DashboardStats {
   dateRange: string;
@@ -43,6 +48,44 @@ const RANGE_LABELS: Record<DashboardDateRange, string> = {
   this_quarter: 'Quý này',
   this_year: 'Năm nay',
 };
+
+/** Khớp isPendingConfirmOrder (OrderManager) — dùng chung cho ô Chờ duyệt. */
+function isPendingConfirmOrder(order: Order): boolean {
+  const raw = String(order.shopee_order_status || '').toUpperCase();
+  if (
+    raw === 'READY_TO_SHIP' ||
+    raw === 'RETRY_SHIP' ||
+    raw === 'PROCESSED' ||
+    raw === 'SHIPPED' ||
+    raw === 'TO_CONFIRM_RECEIVE' ||
+    raw === 'COMPLETED' ||
+    raw === 'CANCELLED' ||
+    raw === 'IN_CANCEL' ||
+    raw === 'TO_RETURN'
+  ) {
+    return false;
+  }
+  if (
+    order.status === 'unprocessed' ||
+    order.status === 'processed' ||
+    order.status === 'shipping' ||
+    order.status === 'completed' ||
+    order.status === 'cancelled' ||
+    order.status === 'return_pending' ||
+    order.status === 'return_received'
+  ) {
+    return false;
+  }
+  if (matchesProcessedPickupTab(order) || matchesUnprocessedPickupTab(order)) return false;
+  if (order.status === 'pending_confirm' || order.status === 'pending_verification') return true;
+  return (
+    raw === 'UNPAID' ||
+    raw === 'PENDING' ||
+    raw === 'IN_REVIEW' ||
+    raw === 'FRAUD_CHECK' ||
+    raw === 'INVOICE_PENDING'
+  );
+}
 
 function toDateKey(d: Date): string {
   const y = d.getFullYear();
@@ -227,13 +270,16 @@ export function computeDashboardStats(
       cancelled: inRange.filter((o) => o.status === 'cancelled').length,
     },
     pendingOrders: {
-      pendingApproval: eligible.filter((o) => o.status === 'pending_verification' || o.status === 'pending_confirm').length,
-      pendingPayment: eligible.filter((o) => o.status === 'pending_confirm' && o.channel === 'manual').length,
-      pendingPack: eligible.filter((o) => o.status === 'unprocessed' && !o.isPrepared).length,
-      pendingPickup: eligible.filter(
-        (o) => (o.status === 'unprocessed' && o.isPrepared) || o.status === 'processed'
+      // Cùng matcher với OrderManager / GET /api/orders?tab=…
+      pendingApproval: eligible.filter((o) => isPendingConfirmOrder(o)).length,
+      pendingPayment: eligible.filter((o) => isPendingConfirmOrder(o) && o.channel === 'manual').length,
+      pendingPack: eligible.filter(
+        (o) => matchesUnprocessedPickupTab(o) && !isPendingConfirmOrder(o),
       ).length,
-      shipping: eligible.filter((o) => o.status === 'shipping').length,
+      pendingPickup: eligible.filter(
+        (o) => matchesProcessedPickupTab(o) && !isPendingConfirmOrder(o),
+      ).length,
+      shipping: eligible.filter((o) => matchesShippingTab(o)).length,
       returnPending: eligible.filter((o) => o.status === 'return_pending').length,
     },
     chart: buildChart(revenueOrders, rangeKey, start, end),
