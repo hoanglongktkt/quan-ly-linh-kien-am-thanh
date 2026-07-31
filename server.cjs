@@ -103435,6 +103435,11 @@ var deps14 = {
     healed: 0,
     results: []
   }),
+  triggerFixStuckOrders: async () => ({
+    attempted: 0,
+    healed: 0,
+    results: []
+  }),
   repairMisassignedTracking: (o) => o,
   buildHandedOverWritePatch: () => ({}),
   buildClearHandedOverPatch: () => ({}),
@@ -103903,7 +103908,7 @@ async function forceResyncStuck(req, res) {
     const body = req.body || {};
     const orderSns = Array.isArray(body.orderSns) ? body.orderSns : Array.isArray(body.order_sns) ? body.order_sns : typeof body.orderSn === "string" ? [body.orderSn] : [];
     const maxRaw = Number(body.maxAutoDetect ?? body.max ?? 30);
-    const maxAutoDetect = Number.isFinite(maxRaw) ? Math.min(Math.max(0, Math.floor(maxRaw)), 80) : 30;
+    const maxAutoDetect = Number.isFinite(maxRaw) ? Math.min(Math.max(0, Math.floor(maxRaw)), 200) : 30;
     const tryShip = body.tryShip !== false && body.try_ship !== false;
     const includePinned = body.includePinned !== false;
     const result = await deps14.forceResyncStuckOrdersWithoutTracking({
@@ -103928,6 +103933,40 @@ async function forceResyncStuck(req, res) {
       success: false,
       error: err?.message || String(err),
       message: "Kh\xF4ng th\u1EC3 \xE9p \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n k\u1EB9t thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n."
+    });
+  }
+}
+async function triggerFixStuckOrders(req, res) {
+  try {
+    const body = req.body || {};
+    const orderSns = Array.isArray(body.orderSns) ? body.orderSns : Array.isArray(body.order_sns) ? body.order_sns : typeof body.orderSn === "string" ? [body.orderSn] : [];
+    const maxRaw = Number(body.maxAutoDetect ?? body.max ?? 100);
+    const maxAutoDetect = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 100;
+    const tryShip = body.tryShip !== false && body.try_ship !== false;
+    const lookbackDaysRaw = Number(body.lookbackDays ?? body.lookback_days ?? 30);
+    const lookbackDays = Number.isFinite(lookbackDaysRaw) ? Math.min(Math.max(1, Math.floor(lookbackDaysRaw)), 90) : 30;
+    const result = await deps14.triggerFixStuckOrders({
+      orderSns,
+      maxAutoDetect,
+      tryShip,
+      lookbackMs: lookbackDays * 24 * 3600 * 1e3
+    });
+    ordersRefreshCache = null;
+    const message = result.healed > 0 ? `\u0110\xE3 s\u1EEDa ${result.healed}/${result.attempted} \u0111\u01A1n k\u1EB9t (thi\u1EBFu m\xE3 V\u0110 / ch\u01B0a x\u1EED l\xFD).` : `\u0110\xE3 qu\xE9t ${result.attempted} \u0111\u01A1n \u2014 Shopee ch\u01B0a tr\u1EA3 m\xE3 ho\u1EB7c kh\xF4ng c\xF2n \u0111\u01A1n k\u1EB9t.`;
+    console.log(
+      `[Orders] trigger-fix-stuck-orders attempted=${result.attempted} healed=${result.healed}`
+    );
+    return res.json({
+      success: true,
+      ...result,
+      message
+    });
+  } catch (err) {
+    console.error("[Orders] trigger-fix-stuck-orders failed:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err),
+      message: "Kh\xF4ng th\u1EC3 trigger s\u1EEDa \u0111\u01A1n k\u1EB9t thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n."
     });
   }
 }
@@ -105299,6 +105338,7 @@ router13.post("/cleanup-mock", h2(cleanupMockOrders));
 router13.post("/hydrate-tracking", h2(hydrateTracking));
 router13.post("/enrich-tracking", h2(enrichTracking));
 router13.post("/force-resync-stuck", h2(forceResyncStuck));
+router13.post("/trigger-fix-stuck-orders", h2(triggerFixStuckOrders));
 router13.post("/hand-over-carrier/bulk", h2(handOverCarrierBulk));
 router13.post("/hand-over-carrier", h2(handOverCarrierByCode));
 router13.post("/heal-handed-over", h2(healHandedOver));
@@ -111582,13 +111622,17 @@ async function forceResyncStuckOrdersWithoutTracking(opts) {
     const n = normalizeSn(sn);
     if (n) snSet.add(n);
   }
-  const maxAuto = Math.min(Math.max(Number(opts?.maxAutoDetect ?? 30) || 0, 0), 80);
+  const maxAuto = Math.min(Math.max(Number(opts?.maxAutoDetect ?? 30) || 0, 0), 200);
   const tryShip = opts?.tryShip !== false;
+  const lookbackMs = Math.max(
+    6e4,
+    Number(opts?.lookbackMs) || 14 * 24 * 3600 * 1e3
+  );
   if (isMongoReady() && maxAuto > 0) {
     try {
       const candidates = await loadShopeeTrackingEnrichCandidatesFromStore({
-        lookbackMs: 7 * 24 * 3600 * 1e3,
-        limit: Math.max(maxAuto * 2, 20),
+        lookbackMs,
+        limit: Math.min(Math.max(maxAuto * 2, 20), 200),
         localStatuses: [
           "unprocessed",
           "processed",
@@ -111749,6 +111793,26 @@ async function forceResyncStuckOrdersWithoutTracking(opts) {
     `[Force Resync] DONE attempted=${results.length} healed=${healed} ok=${results.filter((r2) => r2.ok).length}`
   );
   return { attempted: results.length, healed, results };
+}
+async function triggerFixStuckOrders2(opts) {
+  const maxAutoDetect = Math.min(
+    Math.max(Number(opts?.maxAutoDetect ?? 100) || 100, 1),
+    200
+  );
+  console.log(
+    `[Trigger Fix Stuck] START max=${maxAutoDetect} tryShip=${opts?.tryShip !== false}`
+  );
+  const result = await forceResyncStuckOrdersWithoutTracking({
+    orderSns: opts?.orderSns,
+    maxAutoDetect,
+    tryShip: opts?.tryShip !== false,
+    includePinned: true,
+    lookbackMs: opts?.lookbackMs ?? 30 * 24 * 3600 * 1e3
+  });
+  console.log(
+    `[Trigger Fix Stuck] DONE attempted=${result.attempted} healed=${result.healed}`
+  );
+  return result;
 }
 function applyShopeeGetTrackingResponse(order, trackResult) {
   const sn = String(order?.orderSn || "").trim();
@@ -115440,6 +115504,7 @@ async function startServer() {
     enrichMissingShopeeTracking,
     repairMissingShopeeTrackingInOrders,
     forceResyncStuckOrdersWithoutTracking,
+    triggerFixStuckOrders: triggerFixStuckOrders2,
     repairMisassignedTracking,
     buildHandedOverWritePatch,
     buildClearHandedOverPatch,
@@ -115536,6 +115601,8 @@ async function startServer() {
     invalidateOrdersRefreshCache
   });
   app.use("/api/orders", authMiddleware, ordersRoutes);
+  app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
+  app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrders);
   app.use("/api", apiSystemRoutes);
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
   app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);
@@ -117950,14 +118017,14 @@ async function startServer() {
           console.log(
             `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} \u2014 ${cancelResult.message}`
           );
-          console.log("[Boot] Ch\u1EA1y forceResyncStuckOrdersWithoutTracking...");
-          const stuck = await forceResyncStuckOrdersWithoutTracking({
-            includePinned: true,
-            maxAutoDetect: 20,
-            tryShip: true
+          console.log("[Boot] Ch\u1EA1y triggerFixStuckOrders...");
+          const stuck = await triggerFixStuckOrders2({
+            maxAutoDetect: 50,
+            tryShip: true,
+            lookbackMs: 30 * 24 * 3600 * 1e3
           });
           console.log(
-            `[Boot] Force resync stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`
+            `[Boot] Trigger fix stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`
           );
         } catch (bootPullErr) {
           console.error("[Background Sync Error]:", bootPullErr?.message || bootPullErr);

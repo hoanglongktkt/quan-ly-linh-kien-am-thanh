@@ -171,6 +171,7 @@ import {
   cleanupMockOrders,
   hydrateTracking,
   enrichTracking,
+  triggerFixStuckOrders as triggerFixStuckOrdersRoute,
   patchOrder,
   deleteOrder,
   handOverCarrierById,
@@ -7971,6 +7972,7 @@ async function forceResyncStuckOrdersWithoutTracking(opts?: {
   maxAutoDetect?: number;
   tryShip?: boolean;
   includePinned?: boolean;
+  lookbackMs?: number;
 }): Promise<{
   attempted: number;
   healed: number;
@@ -7994,14 +7996,18 @@ async function forceResyncStuckOrdersWithoutTracking(opts?: {
     if (n) snSet.add(n);
   }
 
-  const maxAuto = Math.min(Math.max(Number(opts?.maxAutoDetect ?? 30) || 0, 0), 80);
+  const maxAuto = Math.min(Math.max(Number(opts?.maxAutoDetect ?? 30) || 0, 0), 200);
   const tryShip = opts?.tryShip !== false;
+  const lookbackMs = Math.max(
+    60_000,
+    Number(opts?.lookbackMs) || 14 * 24 * 3600 * 1000,
+  );
 
   if (isMongoReady() && maxAuto > 0) {
     try {
       const candidates = await loadShopeeTrackingEnrichCandidatesFromStore({
-        lookbackMs: 7 * 24 * 3600 * 1000,
-        limit: Math.max(maxAuto * 2, 20),
+        lookbackMs,
+        limit: Math.min(Math.max(maxAuto * 2, 20), 200),
         localStatuses: [
           "unprocessed",
           "processed",
@@ -8207,6 +8213,40 @@ async function forceResyncStuckOrdersWithoutTracking(opts?: {
     `[Force Resync] DONE attempted=${results.length} healed=${healed} ok=${results.filter((r) => r.ok).length}`,
   );
   return { attempted: results.length, healed, results };
+}
+
+/**
+ * Endpoint tạm: quét DB đơn thiếu tracking_no / kẹt unprocessed → get_order_detail cập nhật ngay.
+ * POST /api/orders/trigger-fix-stuck-orders  hoặc  POST /trigger-fix-stuck-orders
+ */
+async function triggerFixStuckOrders(opts?: {
+  orderSns?: string[];
+  maxAutoDetect?: number;
+  tryShip?: boolean;
+  lookbackMs?: number;
+}): Promise<{
+  attempted: number;
+  healed: number;
+  results: ForceResyncStuckResultItem[];
+}> {
+  const maxAutoDetect = Math.min(
+    Math.max(Number(opts?.maxAutoDetect ?? 100) || 100, 1),
+    200,
+  );
+  console.log(
+    `[Trigger Fix Stuck] START max=${maxAutoDetect} tryShip=${opts?.tryShip !== false}`,
+  );
+  const result = await forceResyncStuckOrdersWithoutTracking({
+    orderSns: opts?.orderSns,
+    maxAutoDetect,
+    tryShip: opts?.tryShip !== false,
+    includePinned: true,
+    lookbackMs: opts?.lookbackMs ?? 30 * 24 * 3600 * 1000,
+  });
+  console.log(
+    `[Trigger Fix Stuck] DONE attempted=${result.attempted} healed=${result.healed}`,
+  );
+  return result;
 }
 
 function applyShopeeGetTrackingResponse(order: any, trackResult: any): void {
@@ -13597,6 +13637,7 @@ async function startServer() {
     enrichMissingShopeeTracking,
     repairMissingShopeeTrackingInOrders,
     forceResyncStuckOrdersWithoutTracking,
+    triggerFixStuckOrders,
     repairMisassignedTracking,
     buildHandedOverWritePatch,
     buildClearHandedOverPatch,
@@ -13700,6 +13741,9 @@ async function startServer() {
 
   // Orders + system + Vietnam + Shopee (routers) — sau init scan/bulk deps
   app.use("/api/orders", authMiddleware, ordersRoutes);
+  // Endpoint tạm: quét đơn thiếu mã VĐ / kẹt unprocessed → get_order_detail
+  app.post("/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);
+  app.post("/api/trigger-fix-stuck-orders", authMiddleware, triggerFixStuckOrdersRoute);
   app.use("/api", apiSystemRoutes);
   app.use("/api/vietnam-address", authMiddleware, vietnamAddressRoutes);
   app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);
@@ -16638,15 +16682,15 @@ async function startServer() {
             `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} — ${cancelResult.message}`,
           );
 
-          // Ép heal các đơn kẹt thiếu mã VĐ (pinned + auto-detect nhẹ).
-          console.log("[Boot] Chạy forceResyncStuckOrdersWithoutTracking...");
-          const stuck = await forceResyncStuckOrdersWithoutTracking({
-            includePinned: true,
-            maxAutoDetect: 20,
+          // Ép heal các đơn kẹt thiếu mã VĐ / unprocessed (pinned + auto-detect).
+          console.log("[Boot] Chạy triggerFixStuckOrders...");
+          const stuck = await triggerFixStuckOrders({
+            maxAutoDetect: 50,
             tryShip: true,
+            lookbackMs: 30 * 24 * 3600 * 1000,
           });
           console.log(
-            `[Boot] Force resync stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`,
+            `[Boot] Trigger fix stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`,
           );
         } catch (bootPullErr: any) {
           console.error("[Background Sync Error]:", bootPullErr?.message || bootPullErr);

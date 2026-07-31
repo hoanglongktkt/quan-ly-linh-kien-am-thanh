@@ -56,6 +56,11 @@ let deps = {
     healed: 0,
     results: [],
   }),
+  triggerFixStuckOrders: async () => ({
+    attempted: 0,
+    healed: 0,
+    results: [],
+  }),
   repairMisassignedTracking: (o) => o,
   buildHandedOverWritePatch: () => ({}),
   buildClearHandedOverPatch: () => ({}),
@@ -638,7 +643,7 @@ export async function forceResyncStuck(req, res) {
           : [];
     const maxRaw = Number(body.maxAutoDetect ?? body.max ?? 30);
     const maxAutoDetect = Number.isFinite(maxRaw)
-      ? Math.min(Math.max(0, Math.floor(maxRaw)), 80)
+      ? Math.min(Math.max(0, Math.floor(maxRaw)), 200)
       : 30;
     const tryShip = body.tryShip !== false && body.try_ship !== false;
     const includePinned = body.includePinned !== false;
@@ -670,6 +675,62 @@ export async function forceResyncStuck(req, res) {
       success: false,
       error: err?.message || String(err),
       message: "Không thể ép đồng bộ đơn kẹt thiếu mã vận đơn.",
+    });
+  }
+}
+
+/**
+ * POST /api/orders/trigger-fix-stuck-orders  (alias: POST /trigger-fix-stuck-orders)
+ * Endpoint tạm: tìm đơn thiếu tracking_no / kẹt unprocessed → get_order_detail cập nhật ngay.
+ * Body: { orderSns?: string[], maxAutoDetect?: number, tryShip?: boolean, lookbackDays?: number }
+ */
+export async function triggerFixStuckOrders(req, res) {
+  try {
+    const body = req.body || {};
+    const orderSns = Array.isArray(body.orderSns)
+      ? body.orderSns
+      : Array.isArray(body.order_sns)
+        ? body.order_sns
+        : typeof body.orderSn === "string"
+          ? [body.orderSn]
+          : [];
+    const maxRaw = Number(body.maxAutoDetect ?? body.max ?? 100);
+    const maxAutoDetect = Number.isFinite(maxRaw)
+      ? Math.min(Math.max(1, Math.floor(maxRaw)), 200)
+      : 100;
+    const tryShip = body.tryShip !== false && body.try_ship !== false;
+    const lookbackDaysRaw = Number(body.lookbackDays ?? body.lookback_days ?? 30);
+    const lookbackDays = Number.isFinite(lookbackDaysRaw)
+      ? Math.min(Math.max(1, Math.floor(lookbackDaysRaw)), 90)
+      : 30;
+
+    const result = await deps.triggerFixStuckOrders({
+      orderSns,
+      maxAutoDetect,
+      tryShip,
+      lookbackMs: lookbackDays * 24 * 3600 * 1000,
+    });
+
+    ordersRefreshCache = null;
+    const message =
+      result.healed > 0
+        ? `Đã sửa ${result.healed}/${result.attempted} đơn kẹt (thiếu mã VĐ / chưa xử lý).`
+        : `Đã quét ${result.attempted} đơn — Shopee chưa trả mã hoặc không còn đơn kẹt.`;
+
+    console.log(
+      `[Orders] trigger-fix-stuck-orders attempted=${result.attempted} healed=${result.healed}`,
+    );
+    return res.json({
+      success: true,
+      ...result,
+      message,
+    });
+  } catch (err) {
+    console.error("[Orders] trigger-fix-stuck-orders failed:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err),
+      message: "Không thể trigger sửa đơn kẹt thiếu mã vận đơn.",
     });
   }
 }
