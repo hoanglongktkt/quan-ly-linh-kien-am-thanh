@@ -31,7 +31,10 @@ export function initShopeeWebhookController(partial) {
   deps = { ...deps, ...partial };
 }
 
-/** Load working set cho 1 order_sn: ưu tiên Mongo, bổ sung từ orders.json nếu thiếu. */
+/** Hard cap xử lý 1 webhook — tránh hang vô hạn giữ slot queue / socket nội bộ. */
+const WEBHOOK_PROCESS_TIMEOUT_MS = 40_000;
+
+/** Load working set cho 1 order_sn: ưu tiên Mongo theo order_sn (KHÔNG full-scan orders.json). */
 async function loadWorkingOrdersForWebhook(orderSn) {
   const sn = String(orderSn || "").trim();
   const orders = [];
@@ -49,6 +52,8 @@ async function loadWorkingOrdersForWebhook(orderSn) {
     try {
       const mongoRows = await deps.loadOrdersFromStore({ orderSns: [sn] });
       for (const row of Array.isArray(mongoRows) ? mongoRows : []) pushUnique(row);
+      // Mongo SSOT: đã có hoặc không có — không full-scan orders.json (tránh spike I/O/process).
+      return orders;
     } catch (err) {
       console.warn(
         `[Shopee Webhook] loadOrdersFromStore ${sn}:`,
@@ -57,6 +62,7 @@ async function loadWorkingOrdersForWebhook(orderSn) {
     }
   }
 
+  // Fallback chỉ khi Mongo chưa sẵn sàng — vẫn lọc theo 1 order_sn, không giữ toàn bộ file.
   try {
     const jsonRows = deps.loadOrders() || [];
     for (const row of jsonRows) {
@@ -97,250 +103,277 @@ async function upsertOrderToDb(order, label = "") {
 }
 
 /**
+ * Core xử lý 1 payload (sau ACK 200). Caller bọc timeout.
+ */
+async function processShopeeWebhookPayloadInner(body) {
+  if (!body || typeof body !== "object") return;
+
+  console.log(
+    "[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:",
+    JSON.stringify(body),
+  );
+
+  if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
+    const peek = deps.parseShopeePushEvent(body);
+    console.log(
+      `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`,
+    );
+    return;
+  }
+
+  const parsed = deps.parseShopeePushEvent(body);
+  console.log(
+    "[Shopee Webhook] Push event",
+    JSON.stringify({
+      code: parsed.code,
+      eventKind: parsed.eventKind,
+      shopId: parsed.shopId || null,
+      orderSn: parsed.orderSn || null,
+      status: parsed.status || null,
+      logisticsStatus: parsed.logisticsStatus || null,
+      trackingNo: parsed.trackingNo || null,
+      packageNumber: parsed.packageNumber || null,
+      returnSn: parsed.returnSn || null,
+    }),
+  );
+
+  // Push không gắn đơn (auth/product/chat…) — chỉ log, đã ACK 200.
+  if (!parsed.orderSn) {
+    console.log(
+      `[Shopee Webhook] Non-order push skipped code=${parsed.code} kind=${parsed.eventKind}`,
+    );
+    return;
+  }
+
+  // Real-time: mọi event có order_sn đều persist (tạo mới / đổi trạng thái / hủy / TN…).
+  const isOrderLifecycleEvent =
+    parsed.eventKind === "order_status_update" ||
+    parsed.eventKind === "tracking_no_update" ||
+    parsed.eventKind === "shipping_document" ||
+    parsed.eventKind === "return_refund" ||
+    parsed.eventKind === "package_update" ||
+    deps.SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) ||
+    deps.isLogisticsHandedToCarrier(parsed.logisticsStatus) ||
+    Boolean(parsed.trackingNo) ||
+    Boolean(parsed.status);
+
+  if (!isOrderLifecycleEvent) {
+    console.log(
+      `[Shopee Webhook] order_sn=${parsed.orderSn} kind=${parsed.eventKind} — vẫn xử lý real-time (fallback)`,
+    );
+  }
+
+  const orders = await loadWorkingOrdersForWebhook(parsed.orderSn);
+  const shopId =
+    String(parsed.shopId || "").trim() ||
+    String(orders[0]?.shopId || "").trim();
+
+  let accessToken = null;
+  if (shopId) {
+    try {
+      accessToken = await getValidShopeeAccessToken(shopId);
+    } catch (tokenErr) {
+      console.warn(
+        `[Shopee Webhook] getValidShopeeAccessToken shop=${shopId}:`,
+        tokenErr?.message || tokenErr,
+      );
+    }
+  }
+
+  let fetchedDetail = false;
+
+  // Luôn gọi get_order_detail khi có token — payload push thường thiếu items/amount.
+  if (shopId && accessToken) {
+    try {
+      const { normalized, errors } = await deps.fetchNormalizeShopeeOrderChunk(
+        shopId,
+        accessToken,
+        shopId,
+        [parsed.orderSn],
+        { enrichTracking: true },
+      );
+      if (normalized.length > 0) {
+        try {
+          // skipTracking nặng ở persist — webhook tự enrich light bên dưới nếu cần.
+          await deps.persistShopeeOrderChunk(orders, normalized, {
+            apiShopId: shopId,
+            accessToken,
+            skipTracking: true,
+          });
+          fetchedDetail = true;
+          console.log(
+            `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn}` +
+              ` status=${normalized[0]?.shopee_order_status || ""}` +
+              ` tn=${normalized[0]?.trackingNumber || "—"}`,
+          );
+        } catch (persistErr) {
+          console.warn(
+            `[Shopee Webhook] persistShopeeOrderChunk fail — fallback shallow+upsert:`,
+            persistErr?.message || persistErr,
+          );
+          // Merge tay rồi upsert Mongo (tránh mất event khi persist throw mongodb_not_ready).
+          const row = normalized[0];
+          const idx = orders.findIndex(
+            (o) => String(o.orderSn) === String(row.orderSn),
+          );
+          if (idx >= 0) orders[idx] = { ...orders[idx], ...row };
+          else orders.unshift(row);
+          fetchedDetail = true;
+          await upsertOrderToDb(orders[0] || row, "detail-fallback");
+        }
+      } else {
+        console.warn(
+          `[Shopee Webhook] get_order_detail rỗng order_sn=${parsed.orderSn}`,
+          errors?.[0] || "",
+        );
+      }
+    } catch (detailErr) {
+      console.warn(
+        `[Shopee Webhook] get_order_detail error order_sn=${parsed.orderSn}:`,
+        detailErr?.message || detailErr,
+      );
+    }
+  } else {
+    console.warn(
+      `[Shopee Webhook] Thiếu shop_id/token — fallback normalize thô order_sn=${parsed.orderSn}`,
+    );
+  }
+
+  if (!fetchedDetail) {
+    try {
+      await deps.upsertShopeeWebhookShallow(body, orders);
+    } catch (shallowErr) {
+      console.warn(
+        `[Shopee Webhook] upsertShopeeWebhookShallow:`,
+        shallowErr?.message || shallowErr,
+      );
+    }
+  }
+
+  let idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
+  if (idx < 0 && (parsed.trackingNo || parsed.status || parsed.orderSn)) {
+    try {
+      await deps.upsertShopeeWebhookShallow(body, orders);
+    } catch {
+      /* ignore */
+    }
+    idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
+  }
+
+  if (idx >= 0) {
+    const beforeTn = String(
+      orders[idx].trackingNumber || orders[idx].tracking_no || "",
+    );
+    try {
+      deps.applyShopeePushFieldsToOrder(orders[idx], parsed);
+    } catch (applyErr) {
+      console.warn(
+        `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
+        applyErr?.message || applyErr,
+      );
+    }
+
+    // Chỉ enrich light (1–2 lần get_tracking) — không escrow/returns (tránh hang process).
+    if (
+      shopId &&
+      accessToken &&
+      (parsed.eventKind === "tracking_no_update" ||
+        parsed.eventKind === "shipping_document" ||
+        parsed.eventKind === "package_update" ||
+        !deps.hasUsableShopeeTrackingNumber(orders[idx]))
+    ) {
+      try {
+        await deps.enrichShopeeOrderTrackingFromApi(
+          shopId,
+          accessToken,
+          orders[idx],
+          { retries: 1, light: true },
+        );
+        deps.applyShopeePushFieldsToOrder(orders[idx], parsed);
+      } catch (trackErr) {
+        console.warn(
+          `[Shopee Webhook] Force get_tracking_number ${parsed.orderSn}:`,
+          trackErr?.message || trackErr,
+        );
+      }
+    }
+
+    const afterTn = String(
+      orders[idx].trackingNumber || orders[idx].tracking_no || "",
+    );
+    console.log(
+      `[Shopee Webhook] Apply push fields order_sn=${parsed.orderSn}` +
+        ` status=${orders[idx].status}` +
+        ` raw=${orders[idx].shopee_order_status || "—"}` +
+        ` tn=${afterTn || "—"} (before=${beforeTn || "—"})`,
+    );
+
+    await upsertOrderToDb(orders[idx], parsed.eventKind);
+  } else {
+    console.error(
+      `[Shopee Webhook] Không tạo/được đơn sau xử lý order_sn=${parsed.orderSn}`,
+    );
+  }
+
+  const orderAfter = orders.find((o) => String(o.orderSn) === parsed.orderSn);
+  const needReturnFallback =
+    parsed.eventKind === "return_refund" ||
+    Boolean(parsed.returnSn) ||
+    parsed.status === "TO_RETURN" ||
+    (orderAfter != null &&
+      String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN") ||
+    (orderAfter != null &&
+      (orderAfter.status === "return_pending" ||
+        orderAfter.status === "return_received"));
+
+  if (needReturnFallback && shopId && accessToken) {
+    try {
+      await deps.applyWebhookReturnFallback(
+        shopId,
+        accessToken,
+        parsed.orderSn,
+        orders,
+        parsed.returnSn,
+      );
+      const row = orders.find((o) => String(o.orderSn) === parsed.orderSn);
+      if (row) await upsertOrderToDb(row, "return/cancel");
+    } catch (retErr) {
+      console.warn(
+        `[Shopee Webhook] applyWebhookReturnFallback:`,
+        retErr?.message || retErr,
+      );
+    }
+  }
+
+  console.log(
+    `[Shopee Webhook] Order ${parsed.orderSn} processed (event=${parsed.eventKind}).`,
+  );
+}
+
+/**
  * Xử lý ngầm sau ACK 200 — không throw ra ngoài HTTP.
+ * Hard timeout: quá hạn thì dừng (slot queue được giải phóng ở router).
  */
 export async function processShopeeWebhookPayload(body) {
+  let timer;
   try {
-    if (!body || typeof body !== "object") return;
-
-    console.log(
-      "[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:",
-      JSON.stringify(body),
-    );
-
-    if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
-      const peek = deps.parseShopeePushEvent(body);
-      console.log(
-        `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`,
-      );
-      return;
-    }
-
-    const parsed = deps.parseShopeePushEvent(body);
-    console.log(
-      "[Shopee Webhook] Push event",
-      JSON.stringify({
-        code: parsed.code,
-        eventKind: parsed.eventKind,
-        shopId: parsed.shopId || null,
-        orderSn: parsed.orderSn || null,
-        status: parsed.status || null,
-        logisticsStatus: parsed.logisticsStatus || null,
-        trackingNo: parsed.trackingNo || null,
-        packageNumber: parsed.packageNumber || null,
-        returnSn: parsed.returnSn || null,
+    await Promise.race([
+      processShopeeWebhookPayloadInner(body),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `webhook_process timeout sau ${WEBHOOK_PROCESS_TIMEOUT_MS / 1000}s`,
+              ),
+            ),
+          WEBHOOK_PROCESS_TIMEOUT_MS,
+        );
       }),
-    );
-
-    // Push không gắn đơn (auth/product/chat…) — chỉ log, đã ACK 200.
-    if (!parsed.orderSn) {
-      console.log(
-        `[Shopee Webhook] Non-order push skipped code=${parsed.code} kind=${parsed.eventKind}`,
-      );
-      return;
-    }
-
-    // Real-time: mọi event có order_sn đều persist (tạo mới / đổi trạng thái / hủy / TN…).
-    const isOrderLifecycleEvent =
-      parsed.eventKind === "order_status_update" ||
-      parsed.eventKind === "tracking_no_update" ||
-      parsed.eventKind === "shipping_document" ||
-      parsed.eventKind === "return_refund" ||
-      parsed.eventKind === "package_update" ||
-      deps.SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) ||
-      deps.isLogisticsHandedToCarrier(parsed.logisticsStatus) ||
-      Boolean(parsed.trackingNo) ||
-      Boolean(parsed.status);
-
-    if (!isOrderLifecycleEvent) {
-      console.log(
-        `[Shopee Webhook] order_sn=${parsed.orderSn} kind=${parsed.eventKind} — vẫn xử lý real-time (fallback)`,
-      );
-    }
-
-    const orders = await loadWorkingOrdersForWebhook(parsed.orderSn);
-    const shopId =
-      String(parsed.shopId || "").trim() ||
-      String(orders[0]?.shopId || "").trim();
-
-    let accessToken = null;
-    if (shopId) {
-      try {
-        accessToken = await getValidShopeeAccessToken(shopId);
-      } catch (tokenErr) {
-        console.warn(
-          `[Shopee Webhook] getValidShopeeAccessToken shop=${shopId}:`,
-          tokenErr?.message || tokenErr,
-        );
-      }
-    }
-
-    let fetchedDetail = false;
-
-    // Luôn gọi get_order_detail khi có token — payload push thường thiếu items/amount.
-    if (shopId && accessToken) {
-      try {
-        const { normalized, errors } = await deps.fetchNormalizeShopeeOrderChunk(
-          shopId,
-          accessToken,
-          shopId,
-          [parsed.orderSn],
-          { enrichTracking: true },
-        );
-        if (normalized.length > 0) {
-          try {
-            await deps.persistShopeeOrderChunk(orders, normalized, {
-              apiShopId: shopId,
-              accessToken,
-            });
-            fetchedDetail = true;
-            console.log(
-              `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn}` +
-                ` status=${normalized[0]?.shopee_order_status || ""}` +
-                ` tn=${normalized[0]?.trackingNumber || "—"}`,
-            );
-          } catch (persistErr) {
-            console.warn(
-              `[Shopee Webhook] persistShopeeOrderChunk fail — fallback shallow+upsert:`,
-              persistErr?.message || persistErr,
-            );
-            // Merge tay rồi upsert Mongo (tránh mất event khi persist throw mongodb_not_ready).
-            const row = normalized[0];
-            const idx = orders.findIndex(
-              (o) => String(o.orderSn) === String(row.orderSn),
-            );
-            if (idx >= 0) orders[idx] = { ...orders[idx], ...row };
-            else orders.unshift(row);
-            fetchedDetail = true;
-            await upsertOrderToDb(orders[0] || row, "detail-fallback");
-          }
-        } else {
-          console.warn(
-            `[Shopee Webhook] get_order_detail rỗng order_sn=${parsed.orderSn}`,
-            errors?.[0] || "",
-          );
-        }
-      } catch (detailErr) {
-        console.warn(
-          `[Shopee Webhook] get_order_detail error order_sn=${parsed.orderSn}:`,
-          detailErr?.message || detailErr,
-        );
-      }
-    } else {
-      console.warn(
-        `[Shopee Webhook] Thiếu shop_id/token — fallback normalize thô order_sn=${parsed.orderSn}`,
-      );
-    }
-
-    if (!fetchedDetail) {
-      try {
-        await deps.upsertShopeeWebhookShallow(body, orders);
-      } catch (shallowErr) {
-        console.warn(
-          `[Shopee Webhook] upsertShopeeWebhookShallow:`,
-          shallowErr?.message || shallowErr,
-        );
-      }
-    }
-
-    let idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
-    if (idx < 0 && (parsed.trackingNo || parsed.status || parsed.orderSn)) {
-      try {
-        await deps.upsertShopeeWebhookShallow(body, orders);
-      } catch {
-        /* ignore */
-      }
-      idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
-    }
-
-    if (idx >= 0) {
-      const beforeTn = String(
-        orders[idx].trackingNumber || orders[idx].tracking_no || "",
-      );
-      try {
-        deps.applyShopeePushFieldsToOrder(orders[idx], parsed);
-      } catch (applyErr) {
-        console.warn(
-          `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
-          applyErr?.message || applyErr,
-        );
-      }
-
-      if (
-        shopId &&
-        accessToken &&
-        (parsed.eventKind === "tracking_no_update" ||
-          parsed.eventKind === "shipping_document" ||
-          parsed.eventKind === "package_update" ||
-          !deps.hasUsableShopeeTrackingNumber(orders[idx]))
-      ) {
-        try {
-          await deps.enrichShopeeOrderTrackingFromApi(
-            shopId,
-            accessToken,
-            orders[idx],
-            { retries: 4 },
-          );
-          deps.applyShopeePushFieldsToOrder(orders[idx], parsed);
-        } catch (trackErr) {
-          console.warn(
-            `[Shopee Webhook] Force get_tracking_number ${parsed.orderSn}:`,
-            trackErr?.message || trackErr,
-          );
-        }
-      }
-
-      const afterTn = String(
-        orders[idx].trackingNumber || orders[idx].tracking_no || "",
-      );
-      console.log(
-        `[Shopee Webhook] Apply push fields order_sn=${parsed.orderSn}` +
-          ` status=${orders[idx].status}` +
-          ` raw=${orders[idx].shopee_order_status || "—"}` +
-          ` tn=${afterTn || "—"} (before=${beforeTn || "—"})`,
-      );
-
-      await upsertOrderToDb(orders[idx], parsed.eventKind);
-    } else {
-      console.error(
-        `[Shopee Webhook] Không tạo/được đơn sau xử lý order_sn=${parsed.orderSn}`,
-      );
-    }
-
-    const orderAfter = orders.find((o) => String(o.orderSn) === parsed.orderSn);
-    const needReturnFallback =
-      parsed.eventKind === "return_refund" ||
-      Boolean(parsed.returnSn) ||
-      parsed.status === "TO_RETURN" ||
-      (orderAfter != null &&
-        String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN") ||
-      (orderAfter != null &&
-        (orderAfter.status === "return_pending" ||
-          orderAfter.status === "return_received"));
-
-    if (needReturnFallback && shopId && accessToken) {
-      try {
-        await deps.applyWebhookReturnFallback(
-          shopId,
-          accessToken,
-          parsed.orderSn,
-          orders,
-          parsed.returnSn,
-        );
-        const row = orders.find((o) => String(o.orderSn) === parsed.orderSn);
-        if (row) await upsertOrderToDb(row, "return/cancel");
-      } catch (retErr) {
-        console.warn(
-          `[Shopee Webhook] applyWebhookReturnFallback:`,
-          retErr?.message || retErr,
-        );
-      }
-    }
-
-    console.log(
-      `[Shopee Webhook] Order ${parsed.orderSn} processed (event=${parsed.eventKind}).`,
-    );
+    ]);
   } catch (error) {
     console.error("[Shopee Webhook] Async processing error:", error);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }

@@ -2224,6 +2224,11 @@ async function pullIncrementalOrdersFromShopee(opts?: {
    * không trả lại các đơn cũ bị kẹt trạng thái.
    */
   reconcileActive?: boolean;
+  /**
+   * Cron/auto: cho phép cửa sổ ngắn (< 3 ngày) — webhook đã real-time;
+   * tránh mỗi 30 phút kéo 5 ngày → chồng job / process spike cPanel.
+   */
+  allowShortLookback?: boolean;
 }): Promise<{
   success: boolean;
   pulled: number;
@@ -2283,10 +2288,13 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       .map((id) => normalizeShopIdKey(id))
       .filter(Boolean);
     singleShopPull = shopIds.length === 1;
-    lookbackSec = Math.max(
-      SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
-      Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC),
-    );
+    const rawLookback = Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+    lookbackSec = opts?.allowShortLookback
+      ? Math.max(60, Math.min(15 * 24 * 60 * 60, rawLookback))
+      : Math.max(
+          SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
+          Math.min(15 * 24 * 60 * 60, rawLookback),
+        );
     longLookback = lookbackSec >= 168 * 3600;
     // 7 ngày / Làm mới: nới cap để không lệch số đơn với Seller Center.
     // 1 shop: ưu tiên kéo đủ; nhiều shop: vẫn cao hơn mặc định cũ (80/5/90s).
@@ -8531,6 +8539,9 @@ async function enrichShopeeOrderTrackingFromApi(
   repairMisassignedTracking(order);
   const light = opts?.light === true;
   const retries = opts?.retries ?? (light ? 2 : 3);
+  const existingTn = String(
+    order?.trackingNumber || order?.tracking_no || order?.shopee_tracking_number || "",
+  ).trim();
   if (!needsShopeeTrackingEnrichment(order) && hasUsableShopeeTrackingNumber(order)) {
     return order;
   }
@@ -9016,10 +9027,11 @@ function scheduleShopeeCancelReturnReconcile(): void {
 }
 
 /**
- * Auto Incremental Sync — cửa sổ update_time tối thiểu 5 ngày (không dùng 45 phút).
+ * Auto Incremental Sync — cửa sổ ngắn (2h): webhook là real-time;
+ * cron chỉ bù miss, không kéo 5 ngày mỗi 30 phút (tránh process spike).
  * Error boundary: mọi lỗi chỉ log, không throw (tránh crash Passenger).
  */
-const AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+const AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = 2 * 60 * 60;
 
 function scheduleAutoIncrementalOrdersSyncSafe(): void {
   try {
@@ -9035,7 +9047,11 @@ function scheduleAutoIncrementalOrdersSyncSafe(): void {
       isPullInFlight: () => isOrdersPullLocked(),
       pullIncrementalOrdersFromShopee: async (opts) => {
         try {
-          return await pullIncrementalOrdersFromShopee(opts);
+          return await pullIncrementalOrdersFromShopee({
+            ...opts,
+            allowShortLookback: true,
+            reconcileActive: false,
+          });
         } catch (error: any) {
           console.error("[Background Sync Error]:", error?.message || error);
           return {
@@ -16682,12 +16698,12 @@ async function startServer() {
             `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} — ${cancelResult.message}`,
           );
 
-          // Ép heal các đơn kẹt thiếu mã VĐ / unprocessed (pinned + auto-detect).
-          console.log("[Boot] Chạy triggerFixStuckOrders...");
+          // Heal nhẹ lúc boot: không tryShip (tránh spawn ship_order hàng loạt → process spike).
+          console.log("[Boot] Chạy triggerFixStuckOrders (light, no ship)...");
           const stuck = await triggerFixStuckOrders({
-            maxAutoDetect: 50,
-            tryShip: true,
-            lookbackMs: 30 * 24 * 3600 * 1000,
+            maxAutoDetect: 10,
+            tryShip: false,
+            lookbackMs: 7 * 24 * 3600 * 1000,
           });
           console.log(
             `[Boot] Trigger fix stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`,

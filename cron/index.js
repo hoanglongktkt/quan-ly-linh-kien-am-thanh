@@ -7,18 +7,20 @@ import cron from "node-cron";
 let autoIncrementalScheduled = false;
 
 /**
- * Auto Incremental Sync mỗi 30 phút — lookback 45 phút.
+ * Auto Incremental Sync mỗi 30 phút — lookback ngắn (mặc định 2h qua deps).
+ * Webhook lo real-time; cron chỉ bù miss, không kéo nhiều ngày.
  * @param {{
  *   isMongoReady: () => boolean,
  *   isPullInFlight: () => boolean,
- *   pullIncrementalOrdersFromShopee: (opts: { lookbackSec: number, reconcileActive?: boolean }) => Promise<any>,
+ *   pullIncrementalOrdersFromShopee: (opts: { lookbackSec: number, reconcileActive?: boolean, allowShortLookback?: boolean }) => Promise<any>,
  *   invalidateOrdersRefreshCache?: () => void,
  *   lookbackSec?: number,
  * }} deps
  */
 export function scheduleAutoIncrementalOrdersSync(deps) {
   if (autoIncrementalScheduled) return;
-  const lookbackSec = Math.max(60, Number(deps.lookbackSec) || 45 * 60);
+  // Mặc định 2h — caller có thể override; pull có allowShortLookback ở server.ts.
+  const lookbackSec = Math.max(60, Number(deps.lookbackSec) || 2 * 60 * 60);
   const expression = "*/30 * * * *";
 
   try {
@@ -42,7 +44,7 @@ export function scheduleAutoIncrementalOrdersSync(deps) {
     });
     autoIncrementalScheduled = true;
     console.log(
-      "[CRON] Auto Incremental Sync ON — mỗi 30 phút (lookback 45 phút, không kéo nhiều ngày).",
+      `[CRON] Auto Incremental Sync ON — mỗi 30 phút (lookback ${lookbackSec}s, short window).`,
     );
   } catch (error) {
     console.error("[Background Sync Error]:", error?.message || error);
@@ -60,10 +62,11 @@ async function runAutoIncrementalOnce(deps, lookbackSec) {
       return;
     }
 
-    console.log(`[CRON] Auto sync 30m start — lookbackSec=${lookbackSec} (45m window)`);
+    console.log(`[CRON] Auto sync 30m start — lookbackSec=${lookbackSec}`);
     const result = await deps.pullIncrementalOrdersFromShopee({
       lookbackSec,
       reconcileActive: false,
+      allowShortLookback: true,
     });
 
     if (result && !result.skipped && typeof deps.invalidateOrdersRefreshCache === "function") {

@@ -4,10 +4,12 @@ import express, { type Router } from "express";
 
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 
-const MAX_PENDING_JOBS = 500;
+const MAX_PENDING_JOBS = 200;
 // Hai event cho CÙNG một đơn phải chạy theo thứ tự; các đơn khác nhau có thể xử lý
 // song song. Giới hạn 2 giữ số request get_order_detail trong ngưỡng an toàn.
 const MAX_CONCURRENT_JOBS = 2;
+/** Hard cap mỗi job nền — quá hạn thì nhả slot (tránh hang → process leak cPanel). */
+const WEBHOOK_JOB_TIMEOUT_MS = 45_000;
 
 function webhookOrderKey(payload: Record<string, unknown>): string {
   const data =
@@ -19,9 +21,25 @@ function webhookOrderKey(payload: Record<string, unknown>): string {
   return orderSn ? `${shopId}:${orderSn}` : "";
 }
 
+function withJobTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    work,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label} timeout sau ${Math.round(ms / 1000)}s`)),
+        ms,
+      );
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 /**
  * Hàng đợi in-process có giới hạn để một đợt retry bất thường không giữ vô hạn
  * payload/promise trong RAM. Không spawn process/worker nên không tạo zombie process.
+ * Mỗi job có hard timeout — slot luôn được giải phóng.
  */
 function createBoundedQueue(processPayload: WebhookProcessor) {
   const pending: Array<Record<string, unknown>> = [];
@@ -52,7 +70,15 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
       if (batch.length === 0) return;
 
       running += batch.length;
-      void Promise.allSettled(batch.map(({ payload }) => processPayload(payload)))
+      void Promise.allSettled(
+        batch.map(({ payload }) =>
+          withJobTimeout(
+            processPayload(payload),
+            WEBHOOK_JOB_TIMEOUT_MS,
+            "webhook_job",
+          ),
+        ),
+      )
         .then((results) => {
           for (const result of results) {
             if (result.status === "rejected") {
@@ -74,8 +100,9 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
     enqueue(payload: Record<string, unknown>): boolean {
       if (pending.length >= MAX_PENDING_JOBS) {
         // Emergency: không reject HTTP — drop + log, vẫn đã ACK 200 cho Shopee.
+        // KHÔNG spawn processPayload unbounded (gây process leak trên cPanel).
         console.error(
-          "[Shopee Webhook] Queue full; dropping payload after ACK 200 (no HTTP retry).",
+          "[Shopee Webhook] Queue full; dropping payload after ACK 200 (no unbounded fallback).",
         );
         return false;
       }
@@ -87,9 +114,19 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
 }
 
 function ackShopeeOk(res: express.Response): void {
-  if (res.headersSent) return;
-  // Shopee Live Push: HTTP 200 (+ body success) = push thành công.
-  res.status(200).json({ status: "success" });
+  if (res.headersSent || res.writableEnded) return;
+  try {
+    // Shopee Live Push: HTTP 200 (+ body success) = push thành công.
+    // Kết thúc response ngay — không giữ socket chờ xử lý nền.
+    res.status(200).json({ status: "success" });
+  } catch (ackErr) {
+    console.warn("[Shopee Webhook] ACK send failed:", ackErr);
+    try {
+      if (!res.writableEnded) res.end();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /**
@@ -163,11 +200,7 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
         if (!payload) return;
 
         if (!queue.enqueue(payload)) {
-          // Queue đầy: cố xử lý trực tiếp để không mất event (đã ACK 200).
-          console.warn("[Shopee Webhook] Queue full — fallback processPayload trực tiếp.");
-          void processPayload(payload).catch((err) => {
-            console.error("[Shopee Webhook] Fallback background processing failed:", err);
-          });
+          // Queue đầy: đã ACK 200 — CHỈ drop, không spawn job unbounded.
           return;
         }
 

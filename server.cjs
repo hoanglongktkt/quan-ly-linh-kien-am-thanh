@@ -71472,7 +71472,7 @@ var import_node_cron = __toESM(require("node-cron"), 1);
 var autoIncrementalScheduled = false;
 function scheduleAutoIncrementalOrdersSync(deps20) {
   if (autoIncrementalScheduled) return;
-  const lookbackSec = Math.max(60, Number(deps20.lookbackSec) || 45 * 60);
+  const lookbackSec = Math.max(60, Number(deps20.lookbackSec) || 2 * 60 * 60);
   const expression = "*/30 * * * *";
   try {
     if (typeof import_node_cron.default.validate !== "function" || !import_node_cron.default.validate(expression)) {
@@ -71491,7 +71491,7 @@ function scheduleAutoIncrementalOrdersSync(deps20) {
     });
     autoIncrementalScheduled = true;
     console.log(
-      "[CRON] Auto Incremental Sync ON \u2014 m\u1ED7i 30 ph\xFAt (lookback 45 ph\xFAt, kh\xF4ng k\xE9o nhi\u1EC1u ng\xE0y)."
+      `[CRON] Auto Incremental Sync ON \u2014 m\u1ED7i 30 ph\xFAt (lookback ${lookbackSec}s, short window).`
     );
   } catch (error) {
     console.error("[Background Sync Error]:", error?.message || error);
@@ -71507,10 +71507,11 @@ async function runAutoIncrementalOnce(deps20, lookbackSec) {
       console.log("[CRON] Auto sync 30m skipped \u2014 pull already in flight.");
       return;
     }
-    console.log(`[CRON] Auto sync 30m start \u2014 lookbackSec=${lookbackSec} (45m window)`);
+    console.log(`[CRON] Auto sync 30m start \u2014 lookbackSec=${lookbackSec}`);
     const result = await deps20.pullIncrementalOrdersFromShopee({
       lookbackSec,
-      reconcileActive: false
+      reconcileActive: false,
+      allowShortLookback: true
     });
     if (result && !result.skipped && typeof deps20.invalidateOrdersRefreshCache === "function") {
       try {
@@ -71530,13 +71531,28 @@ async function runAutoIncrementalOnce(deps20, lookbackSec) {
 
 // src/webhooks/shopeeWebhookHandler.ts
 var import_express = __toESM(require_express2(), 1);
-var MAX_PENDING_JOBS = 500;
+var MAX_PENDING_JOBS = 200;
 var MAX_CONCURRENT_JOBS = 2;
+var WEBHOOK_JOB_TIMEOUT_MS = 45e3;
 function webhookOrderKey(payload) {
   const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data) ? payload.data : payload;
   const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
   const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? "").trim();
   return orderSn ? `${shopId}:${orderSn}` : "";
+}
+function withJobTimeout(work, ms, label) {
+  let timer;
+  return Promise.race([
+    work,
+    new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label} timeout sau ${Math.round(ms / 1e3)}s`)),
+        ms
+      );
+    })
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 function createBoundedQueue(processPayload) {
   const pending = [];
@@ -71564,7 +71580,15 @@ function createBoundedQueue(processPayload) {
       }
       if (batch.length === 0) return;
       running += batch.length;
-      void Promise.allSettled(batch.map(({ payload }) => processPayload(payload))).then((results) => {
+      void Promise.allSettled(
+        batch.map(
+          ({ payload }) => withJobTimeout(
+            processPayload(payload),
+            WEBHOOK_JOB_TIMEOUT_MS,
+            "webhook_job"
+          )
+        )
+      ).then((results) => {
         for (const result of results) {
           if (result.status === "rejected") {
             console.error("[Shopee Webhook] Background processing failed:", result.reason);
@@ -71583,7 +71607,7 @@ function createBoundedQueue(processPayload) {
     enqueue(payload) {
       if (pending.length >= MAX_PENDING_JOBS) {
         console.error(
-          "[Shopee Webhook] Queue full; dropping payload after ACK 200 (no HTTP retry)."
+          "[Shopee Webhook] Queue full; dropping payload after ACK 200 (no unbounded fallback)."
         );
         return false;
       }
@@ -71594,8 +71618,16 @@ function createBoundedQueue(processPayload) {
   };
 }
 function ackShopeeOk(res) {
-  if (res.headersSent) return;
-  res.status(200).json({ status: "success" });
+  if (res.headersSent || res.writableEnded) return;
+  try {
+    res.status(200).json({ status: "success" });
+  } catch (ackErr) {
+    console.warn("[Shopee Webhook] ACK send failed:", ackErr);
+    try {
+      if (!res.writableEnded) res.end();
+    } catch {
+    }
+  }
 }
 function createShopeeWebhookRouter(processPayload) {
   const queue = createBoundedQueue(processPayload);
@@ -71648,10 +71680,6 @@ function createShopeeWebhookRouter(processPayload) {
         }
         if (!payload) return;
         if (!queue.enqueue(payload)) {
-          console.warn("[Shopee Webhook] Queue full \u2014 fallback processPayload tr\u1EF1c ti\u1EBFp.");
-          void processPayload(payload).catch((err) => {
-            console.error("[Shopee Webhook] Fallback background processing failed:", err);
-          });
           return;
         }
         console.log(
@@ -103845,29 +103873,37 @@ async function forceResyncStuck(req, res) {
     const maxAutoDetect = Number.isFinite(maxRaw) ? Math.min(Math.max(0, Math.floor(maxRaw)), 200) : 30;
     const tryShip = body.tryShip !== false && body.try_ship !== false;
     const includePinned = body.includePinned !== false;
-    const result = await deps14.forceResyncStuckOrdersWithoutTracking({
-      orderSns,
-      maxAutoDetect: orderSns.length > 0 ? maxAutoDetect : Math.max(maxAutoDetect, 2),
-      tryShip,
-      includePinned
-    });
-    ordersRefreshCache = null;
-    const message = result.healed > 0 ? `\u0110\xE3 \xE9p l\u1EA5y l\u1EA1i m\xE3 v\u1EADn \u0111\u01A1n cho ${result.healed}/${result.attempted} \u0111\u01A1n.` : `\u0110\xE3 x\u1EED l\xFD ${result.attempted} \u0111\u01A1n \u2014 Shopee ch\u01B0a tr\u1EA3 m\xE3 ho\u1EB7c \u0111\u01A1n kh\xF4ng t\xECm th\u1EA5y.`;
-    console.log(
-      `[Orders] force-resync-stuck attempted=${result.attempted} healed=${result.healed}`
-    );
-    return res.json({
+    res.status(200).json({
       success: true,
-      ...result,
-      message
+      background: true,
+      message: "\u0110ang \xE9p \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n k\u1EB9t ng\u1EA7m..."
     });
+    setImmediate(() => {
+      deps14.forceResyncStuckOrdersWithoutTracking({
+        orderSns,
+        maxAutoDetect: orderSns.length > 0 ? maxAutoDetect : Math.max(maxAutoDetect, 2),
+        tryShip,
+        includePinned
+      }).then((result) => {
+        ordersRefreshCache = null;
+        console.log(
+          `[Orders] force-resync-stuck BG attempted=${result.attempted} healed=${result.healed}`
+        );
+      }).catch((err) => {
+        console.error("[Orders] force-resync-stuck BG failed:", err?.message || err);
+      });
+    });
+    return;
   } catch (err) {
     console.error("[Orders] force-resync-stuck failed:", err?.message || err);
-    return res.status(500).json({
-      success: false,
-      error: err?.message || String(err),
-      message: "Kh\xF4ng th\u1EC3 \xE9p \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n k\u1EB9t thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n."
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Kh\xF4ng th\u1EC3 \xE9p \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n k\u1EB9t thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n."
+      });
+    }
+    return;
   }
 }
 async function triggerFixStuckOrders(req, res) {
@@ -103879,76 +103915,92 @@ async function triggerFixStuckOrders(req, res) {
     const tryShip = body.tryShip !== false && body.try_ship !== false;
     const lookbackDaysRaw = Number(body.lookbackDays ?? body.lookback_days ?? 30);
     const lookbackDays = Number.isFinite(lookbackDaysRaw) ? Math.min(Math.max(1, Math.floor(lookbackDaysRaw)), 90) : 30;
-    const result = await deps14.triggerFixStuckOrders({
-      orderSns,
-      maxAutoDetect,
-      tryShip,
-      lookbackMs: lookbackDays * 24 * 3600 * 1e3
-    });
-    ordersRefreshCache = null;
-    const message = result.healed > 0 ? `\u0110\xE3 s\u1EEDa ${result.healed}/${result.attempted} \u0111\u01A1n k\u1EB9t (thi\u1EBFu m\xE3 V\u0110 / ch\u01B0a x\u1EED l\xFD).` : `\u0110\xE3 qu\xE9t ${result.attempted} \u0111\u01A1n \u2014 Shopee ch\u01B0a tr\u1EA3 m\xE3 ho\u1EB7c kh\xF4ng c\xF2n \u0111\u01A1n k\u1EB9t.`;
-    console.log(
-      `[Orders] trigger-fix-stuck-orders attempted=${result.attempted} healed=${result.healed}`
-    );
-    return res.json({
+    res.status(200).json({
       success: true,
-      ...result,
-      message
+      background: true,
+      message: "\u0110ang s\u1EEDa \u0111\u01A1n k\u1EB9t ng\u1EA7m..."
     });
+    setImmediate(() => {
+      deps14.triggerFixStuckOrders({
+        orderSns,
+        maxAutoDetect,
+        tryShip,
+        lookbackMs: lookbackDays * 24 * 3600 * 1e3
+      }).then((result) => {
+        ordersRefreshCache = null;
+        console.log(
+          `[Orders] trigger-fix-stuck-orders BG attempted=${result.attempted} healed=${result.healed}`
+        );
+      }).catch((err) => {
+        console.error("[Orders] trigger-fix-stuck-orders BG failed:", err?.message || err);
+      });
+    });
+    return;
   } catch (err) {
     console.error("[Orders] trigger-fix-stuck-orders failed:", err?.message || err);
-    return res.status(500).json({
-      success: false,
-      error: err?.message || String(err),
-      message: "Kh\xF4ng th\u1EC3 trigger s\u1EEDa \u0111\u01A1n k\u1EB9t thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n."
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Kh\xF4ng th\u1EC3 trigger s\u1EEDa \u0111\u01A1n k\u1EB9t thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n."
+      });
+    }
+    return;
   }
 }
 async function enrichTracking(req, res) {
   try {
     const maxRaw = Number(req.body?.max ?? req.query?.max ?? 100);
     const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 100;
-    let enrichResult = null;
-    try {
-      enrichResult = await deps14.enrichMissingShopeeTracking();
-    } catch (enrichErr) {
-      console.warn(
-        "[Orders] enrich-tracking enrichMissingShopeeTracking:",
-        enrichErr?.message || enrichErr
-      );
-    }
-    let repaired = 0;
-    try {
-      const { orders } = await loadOrdersForApi();
-      repaired = await deps14.repairMissingShopeeTrackingInOrders(orders, {
-        max,
-        retries: 2
-      });
-    } catch (repairErr) {
-      console.warn(
-        "[Orders] enrich-tracking repairMissing:",
-        repairErr?.message || repairErr
-      );
-    }
-    ordersRefreshCache = null;
-    const filled = Number(enrichResult?.filled || 0) + Number(enrichResult?.returnFilled || 0) + repaired;
-    console.log(
-      `[Orders] enrich-tracking filled=${filled} scheduler=${JSON.stringify(enrichResult)} repaired=${repaired}`
-    );
-    return res.json({
+    res.status(200).json({
       success: true,
-      filled,
-      repaired,
-      scheduler: enrichResult || void 0,
-      message: filled > 0 ? `\u0110\xE3 b\xF9 ${filled} m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee.` : "Kh\xF4ng c\xF3 \u0111\u01A1n n\xE0o c\u1EA7n b\xF9 m\xE3 (ho\u1EB7c Shopee ch\u01B0a tr\u1EA3 tracking)."
+      background: true,
+      message: "\u0110ang b\xF9 m\xE3 v\u1EADn \u0111\u01A1n ng\u1EA7m..."
     });
+    setImmediate(() => {
+      (async () => {
+        let enrichResult = null;
+        try {
+          enrichResult = await deps14.enrichMissingShopeeTracking();
+        } catch (enrichErr) {
+          console.warn(
+            "[Orders] enrich-tracking enrichMissingShopeeTracking:",
+            enrichErr?.message || enrichErr
+          );
+        }
+        let repaired = 0;
+        try {
+          const { orders } = await loadOrdersForApi();
+          repaired = await deps14.repairMissingShopeeTrackingInOrders(orders, {
+            max,
+            retries: 2
+          });
+        } catch (repairErr) {
+          console.warn(
+            "[Orders] enrich-tracking repairMissing:",
+            repairErr?.message || repairErr
+          );
+        }
+        ordersRefreshCache = null;
+        const filled = Number(enrichResult?.filled || 0) + Number(enrichResult?.returnFilled || 0) + repaired;
+        console.log(
+          `[Orders] enrich-tracking BG filled=${filled} repaired=${repaired}`
+        );
+      })().catch((err) => {
+        console.error("[Orders] enrich-tracking BG failed:", err?.message || err);
+      });
+    });
+    return;
   } catch (err) {
     console.error("[Orders] enrich-tracking failed:", err?.message || err);
-    return res.status(500).json({
-      success: false,
-      error: err?.message || String(err),
-      message: "Kh\xF4ng th\u1EC3 b\xF9 m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee."
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Kh\xF4ng th\u1EC3 b\xF9 m\xE3 v\u1EADn \u0111\u01A1n t\u1EEB Shopee."
+      });
+    }
+    return;
   }
 }
 async function patchOrder(req, res) {
@@ -105714,6 +105766,7 @@ var deps19 = {
 function initShopeeWebhookController(partial) {
   deps19 = { ...deps19, ...partial };
 }
+var WEBHOOK_PROCESS_TIMEOUT_MS = 4e4;
 async function loadWorkingOrdersForWebhook(orderSn) {
   const sn = String(orderSn || "").trim();
   const orders = [];
@@ -105729,6 +105782,7 @@ async function loadWorkingOrdersForWebhook(orderSn) {
     try {
       const mongoRows = await deps19.loadOrdersFromStore({ orderSns: [sn] });
       for (const row of Array.isArray(mongoRows) ? mongoRows : []) pushUnique(row);
+      return orders;
     } catch (err) {
       console.warn(
         `[Shopee Webhook] loadOrdersFromStore ${sn}:`,
@@ -105770,194 +105824,213 @@ async function upsertOrderToDb(order, label = "") {
     );
   }
 }
-async function processShopeeWebhookPayload(body) {
-  try {
-    if (!body || typeof body !== "object") return;
+async function processShopeeWebhookPayloadInner(body) {
+  if (!body || typeof body !== "object") return;
+  console.log(
+    "[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:",
+    JSON.stringify(body)
+  );
+  if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
+    const peek = deps19.parseShopeePushEvent(body);
     console.log(
-      "[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:",
-      JSON.stringify(body)
+      `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`
     );
-    if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
-      const peek = deps19.parseShopeePushEvent(body);
-      console.log(
-        `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`
-      );
-      return;
-    }
-    const parsed = deps19.parseShopeePushEvent(body);
+    return;
+  }
+  const parsed = deps19.parseShopeePushEvent(body);
+  console.log(
+    "[Shopee Webhook] Push event",
+    JSON.stringify({
+      code: parsed.code,
+      eventKind: parsed.eventKind,
+      shopId: parsed.shopId || null,
+      orderSn: parsed.orderSn || null,
+      status: parsed.status || null,
+      logisticsStatus: parsed.logisticsStatus || null,
+      trackingNo: parsed.trackingNo || null,
+      packageNumber: parsed.packageNumber || null,
+      returnSn: parsed.returnSn || null
+    })
+  );
+  if (!parsed.orderSn) {
     console.log(
-      "[Shopee Webhook] Push event",
-      JSON.stringify({
-        code: parsed.code,
-        eventKind: parsed.eventKind,
-        shopId: parsed.shopId || null,
-        orderSn: parsed.orderSn || null,
-        status: parsed.status || null,
-        logisticsStatus: parsed.logisticsStatus || null,
-        trackingNo: parsed.trackingNo || null,
-        packageNumber: parsed.packageNumber || null,
-        returnSn: parsed.returnSn || null
-      })
+      `[Shopee Webhook] Non-order push skipped code=${parsed.code} kind=${parsed.eventKind}`
     );
-    if (!parsed.orderSn) {
-      console.log(
-        `[Shopee Webhook] Non-order push skipped code=${parsed.code} kind=${parsed.eventKind}`
-      );
-      return;
-    }
-    const isOrderLifecycleEvent = parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund" || parsed.eventKind === "package_update" || deps19.SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) || deps19.isLogisticsHandedToCarrier(parsed.logisticsStatus) || Boolean(parsed.trackingNo) || Boolean(parsed.status);
-    if (!isOrderLifecycleEvent) {
-      console.log(
-        `[Shopee Webhook] order_sn=${parsed.orderSn} kind=${parsed.eventKind} \u2014 v\u1EABn x\u1EED l\xFD real-time (fallback)`
-      );
-    }
-    const orders = await loadWorkingOrdersForWebhook(parsed.orderSn);
-    const shopId = String(parsed.shopId || "").trim() || String(orders[0]?.shopId || "").trim();
-    let accessToken = null;
-    if (shopId) {
-      try {
-        accessToken = await getValidShopeeAccessToken(shopId);
-      } catch (tokenErr) {
-        console.warn(
-          `[Shopee Webhook] getValidShopeeAccessToken shop=${shopId}:`,
-          tokenErr?.message || tokenErr
-        );
-      }
-    }
-    let fetchedDetail = false;
-    if (shopId && accessToken) {
-      try {
-        const { normalized, errors } = await deps19.fetchNormalizeShopeeOrderChunk(
-          shopId,
-          accessToken,
-          shopId,
-          [parsed.orderSn],
-          { enrichTracking: true }
-        );
-        if (normalized.length > 0) {
-          try {
-            await deps19.persistShopeeOrderChunk(orders, normalized, {
-              apiShopId: shopId,
-              accessToken
-            });
-            fetchedDetail = true;
-            console.log(
-              `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
-            );
-          } catch (persistErr) {
-            console.warn(
-              `[Shopee Webhook] persistShopeeOrderChunk fail \u2014 fallback shallow+upsert:`,
-              persistErr?.message || persistErr
-            );
-            const row = normalized[0];
-            const idx2 = orders.findIndex(
-              (o) => String(o.orderSn) === String(row.orderSn)
-            );
-            if (idx2 >= 0) orders[idx2] = { ...orders[idx2], ...row };
-            else orders.unshift(row);
-            fetchedDetail = true;
-            await upsertOrderToDb(orders[0] || row, "detail-fallback");
-          }
-        } else {
-          console.warn(
-            `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${parsed.orderSn}`,
-            errors?.[0] || ""
-          );
-        }
-      } catch (detailErr) {
-        console.warn(
-          `[Shopee Webhook] get_order_detail error order_sn=${parsed.orderSn}:`,
-          detailErr?.message || detailErr
-        );
-      }
-    } else {
+    return;
+  }
+  const isOrderLifecycleEvent = parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund" || parsed.eventKind === "package_update" || deps19.SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) || deps19.isLogisticsHandedToCarrier(parsed.logisticsStatus) || Boolean(parsed.trackingNo) || Boolean(parsed.status);
+  if (!isOrderLifecycleEvent) {
+    console.log(
+      `[Shopee Webhook] order_sn=${parsed.orderSn} kind=${parsed.eventKind} \u2014 v\u1EABn x\u1EED l\xFD real-time (fallback)`
+    );
+  }
+  const orders = await loadWorkingOrdersForWebhook(parsed.orderSn);
+  const shopId = String(parsed.shopId || "").trim() || String(orders[0]?.shopId || "").trim();
+  let accessToken = null;
+  if (shopId) {
+    try {
+      accessToken = await getValidShopeeAccessToken(shopId);
+    } catch (tokenErr) {
       console.warn(
-        `[Shopee Webhook] Thi\u1EBFu shop_id/token \u2014 fallback normalize th\xF4 order_sn=${parsed.orderSn}`
+        `[Shopee Webhook] getValidShopeeAccessToken shop=${shopId}:`,
+        tokenErr?.message || tokenErr
       );
     }
-    if (!fetchedDetail) {
-      try {
-        await deps19.upsertShopeeWebhookShallow(body, orders);
-      } catch (shallowErr) {
-        console.warn(
-          `[Shopee Webhook] upsertShopeeWebhookShallow:`,
-          shallowErr?.message || shallowErr
-        );
-      }
-    }
-    let idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
-    if (idx < 0 && (parsed.trackingNo || parsed.status || parsed.orderSn)) {
-      try {
-        await deps19.upsertShopeeWebhookShallow(body, orders);
-      } catch {
-      }
-      idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
-    }
-    if (idx >= 0) {
-      const beforeTn = String(
-        orders[idx].trackingNumber || orders[idx].tracking_no || ""
+  }
+  let fetchedDetail = false;
+  if (shopId && accessToken) {
+    try {
+      const { normalized, errors } = await deps19.fetchNormalizeShopeeOrderChunk(
+        shopId,
+        accessToken,
+        shopId,
+        [parsed.orderSn],
+        { enrichTracking: true }
       );
-      try {
-        deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
-      } catch (applyErr) {
-        console.warn(
-          `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
-          applyErr?.message || applyErr
-        );
-      }
-      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps19.hasUsableShopeeTrackingNumber(orders[idx]))) {
+      if (normalized.length > 0) {
         try {
-          await deps19.enrichShopeeOrderTrackingFromApi(
-            shopId,
+          await deps19.persistShopeeOrderChunk(orders, normalized, {
+            apiShopId: shopId,
             accessToken,
-            orders[idx],
-            { retries: 4 }
+            skipTracking: true
+          });
+          fetchedDetail = true;
+          console.log(
+            `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
           );
-          deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
-        } catch (trackErr) {
+        } catch (persistErr) {
           console.warn(
-            `[Shopee Webhook] Force get_tracking_number ${parsed.orderSn}:`,
-            trackErr?.message || trackErr
+            `[Shopee Webhook] persistShopeeOrderChunk fail \u2014 fallback shallow+upsert:`,
+            persistErr?.message || persistErr
           );
+          const row = normalized[0];
+          const idx2 = orders.findIndex(
+            (o) => String(o.orderSn) === String(row.orderSn)
+          );
+          if (idx2 >= 0) orders[idx2] = { ...orders[idx2], ...row };
+          else orders.unshift(row);
+          fetchedDetail = true;
+          await upsertOrderToDb(orders[0] || row, "detail-fallback");
         }
+      } else {
+        console.warn(
+          `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${parsed.orderSn}`,
+          errors?.[0] || ""
+        );
       }
-      const afterTn = String(
-        orders[idx].trackingNumber || orders[idx].tracking_no || ""
-      );
-      console.log(
-        `[Shopee Webhook] Apply push fields order_sn=${parsed.orderSn} status=${orders[idx].status} raw=${orders[idx].shopee_order_status || "\u2014"} tn=${afterTn || "\u2014"} (before=${beforeTn || "\u2014"})`
-      );
-      await upsertOrderToDb(orders[idx], parsed.eventKind);
-    } else {
-      console.error(
-        `[Shopee Webhook] Kh\xF4ng t\u1EA1o/\u0111\u01B0\u1EE3c \u0111\u01A1n sau x\u1EED l\xFD order_sn=${parsed.orderSn}`
+    } catch (detailErr) {
+      console.warn(
+        `[Shopee Webhook] get_order_detail error order_sn=${parsed.orderSn}:`,
+        detailErr?.message || detailErr
       );
     }
-    const orderAfter = orders.find((o) => String(o.orderSn) === parsed.orderSn);
-    const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
-    if (needReturnFallback && shopId && accessToken) {
+  } else {
+    console.warn(
+      `[Shopee Webhook] Thi\u1EBFu shop_id/token \u2014 fallback normalize th\xF4 order_sn=${parsed.orderSn}`
+    );
+  }
+  if (!fetchedDetail) {
+    try {
+      await deps19.upsertShopeeWebhookShallow(body, orders);
+    } catch (shallowErr) {
+      console.warn(
+        `[Shopee Webhook] upsertShopeeWebhookShallow:`,
+        shallowErr?.message || shallowErr
+      );
+    }
+  }
+  let idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
+  if (idx < 0 && (parsed.trackingNo || parsed.status || parsed.orderSn)) {
+    try {
+      await deps19.upsertShopeeWebhookShallow(body, orders);
+    } catch {
+    }
+    idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
+  }
+  if (idx >= 0) {
+    const beforeTn = String(
+      orders[idx].trackingNumber || orders[idx].tracking_no || ""
+    );
+    try {
+      deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
+    } catch (applyErr) {
+      console.warn(
+        `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
+        applyErr?.message || applyErr
+      );
+    }
+    if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps19.hasUsableShopeeTrackingNumber(orders[idx]))) {
       try {
-        await deps19.applyWebhookReturnFallback(
+        await deps19.enrichShopeeOrderTrackingFromApi(
           shopId,
           accessToken,
-          parsed.orderSn,
-          orders,
-          parsed.returnSn
+          orders[idx],
+          { retries: 1, light: true }
         );
-        const row = orders.find((o) => String(o.orderSn) === parsed.orderSn);
-        if (row) await upsertOrderToDb(row, "return/cancel");
-      } catch (retErr) {
+        deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
+      } catch (trackErr) {
         console.warn(
-          `[Shopee Webhook] applyWebhookReturnFallback:`,
-          retErr?.message || retErr
+          `[Shopee Webhook] Force get_tracking_number ${parsed.orderSn}:`,
+          trackErr?.message || trackErr
         );
       }
     }
-    console.log(
-      `[Shopee Webhook] Order ${parsed.orderSn} processed (event=${parsed.eventKind}).`
+    const afterTn = String(
+      orders[idx].trackingNumber || orders[idx].tracking_no || ""
     );
+    console.log(
+      `[Shopee Webhook] Apply push fields order_sn=${parsed.orderSn} status=${orders[idx].status} raw=${orders[idx].shopee_order_status || "\u2014"} tn=${afterTn || "\u2014"} (before=${beforeTn || "\u2014"})`
+    );
+    await upsertOrderToDb(orders[idx], parsed.eventKind);
+  } else {
+    console.error(
+      `[Shopee Webhook] Kh\xF4ng t\u1EA1o/\u0111\u01B0\u1EE3c \u0111\u01A1n sau x\u1EED l\xFD order_sn=${parsed.orderSn}`
+    );
+  }
+  const orderAfter = orders.find((o) => String(o.orderSn) === parsed.orderSn);
+  const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
+  if (needReturnFallback && shopId && accessToken) {
+    try {
+      await deps19.applyWebhookReturnFallback(
+        shopId,
+        accessToken,
+        parsed.orderSn,
+        orders,
+        parsed.returnSn
+      );
+      const row = orders.find((o) => String(o.orderSn) === parsed.orderSn);
+      if (row) await upsertOrderToDb(row, "return/cancel");
+    } catch (retErr) {
+      console.warn(
+        `[Shopee Webhook] applyWebhookReturnFallback:`,
+        retErr?.message || retErr
+      );
+    }
+  }
+  console.log(
+    `[Shopee Webhook] Order ${parsed.orderSn} processed (event=${parsed.eventKind}).`
+  );
+}
+async function processShopeeWebhookPayload(body) {
+  let timer;
+  try {
+    await Promise.race([
+      processShopeeWebhookPayloadInner(body),
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(
+            new Error(
+              `webhook_process timeout sau ${WEBHOOK_PROCESS_TIMEOUT_MS / 1e3}s`
+            )
+          ),
+          WEBHOOK_PROCESS_TIMEOUT_MS
+        );
+      })
+    ]);
   } catch (error) {
     console.error("[Shopee Webhook] Async processing error:", error);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -107427,9 +107500,10 @@ async function pullIncrementalOrdersFromShopee(opts) {
     ensureShopeeLinkedShopTokenKeys();
     shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => normalizeShopIdKey(id)).filter(Boolean);
     singleShopPull = shopIds.length === 1;
-    lookbackSec = Math.max(
+    const rawLookback = Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+    lookbackSec = opts?.allowShortLookback ? Math.max(60, Math.min(15 * 24 * 60 * 60, rawLookback)) : Math.max(
       SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
-      Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC)
+      Math.min(15 * 24 * 60 * 60, rawLookback)
     );
     longLookback = lookbackSec >= 168 * 3600;
     pullDeadlineMs = singleShopPull ? longLookback ? 24e4 : 18e4 : longLookback ? 24e4 : ORDERS_PULL_HARD_DEADLINE_MS;
@@ -111313,11 +111387,11 @@ function isCancelOrReturnOrderStatus(order) {
 }
 function preserveExistingTrackingIfIncomingEmpty(target, existing) {
   if (!target || !existing) return;
-  const existingTn2 = String(existing.trackingNumber || existing.tracking_no || "").trim();
+  const existingTn = String(existing.trackingNumber || existing.tracking_no || "").trim();
   const incomingTn = String(target.trackingNumber || target.tracking_no || "").trim();
-  if (existingTn2 && !incomingTn) {
-    target.trackingNumber = existingTn2;
-    target.tracking_no = existingTn2;
+  if (existingTn && !incomingTn) {
+    target.trackingNumber = existingTn;
+    target.tracking_no = existingTn;
   }
   const existingInternal = String(existing.internalTrackingCode || "").trim();
   const incomingInternal = String(target.internalTrackingCode || "").trim();
@@ -111347,7 +111421,7 @@ function mergeShopeeTrackingFields(merged, existing, incoming) {
     }
     return void 0;
   };
-  const existingTn2 = String(existing?.trackingNumber || existing?.tracking_no || "").trim();
+  const existingTn = String(existing?.trackingNumber || existing?.tracking_no || "").trim();
   const incomingTn = String(incoming?.trackingNumber || incoming?.tracking_no || "").trim();
   const cancelReturn = isCancelOrReturnOrderStatus(incoming) || isCancelOrReturnOrderStatus(merged);
   if (incoming?.return_sn) merged.return_sn = incoming.return_sn;
@@ -111361,10 +111435,10 @@ function mergeShopeeTrackingFields(merged, existing, incoming) {
   }
   if (incoming?.return_tracking_no) merged.return_tracking_no = incoming.return_tracking_no;
   else if (existing?.return_tracking_no) merged.return_tracking_no = existing.return_tracking_no;
-  if (cancelReturn && existingTn2 && !incomingTn) {
-    merged.trackingNumber = existingTn2;
-    merged.tracking_no = existingTn2;
-    merged.return_tracking_no = merged.return_tracking_no || existing?.return_tracking_no || existingTn2;
+  if (cancelReturn && existingTn && !incomingTn) {
+    merged.trackingNumber = existingTn;
+    merged.tracking_no = existingTn;
+    merged.return_tracking_no = merged.return_tracking_no || existing?.return_tracking_no || existingTn;
     const existingInternal = String(existing?.internalTrackingCode || "").trim();
     if (existingInternal) merged.internalTrackingCode = existingInternal;
     if (!merged.packageNumber && existing?.packageNumber) {
@@ -111380,11 +111454,11 @@ function mergeShopeeTrackingFields(merged, existing, incoming) {
     existing.tracking_no,
     existing.lastMileTrackingNumber
   );
-  merged.trackingNumber = nextTracking || existingTn2 || incomingTn || void 0;
+  merged.trackingNumber = nextTracking || existingTn || incomingTn || void 0;
   merged.tracking_no = merged.trackingNumber;
-  if (!merged.trackingNumber && existingTn2) {
-    merged.trackingNumber = existingTn2;
-    merged.tracking_no = existingTn2;
+  if (!merged.trackingNumber && existingTn) {
+    merged.trackingNumber = existingTn;
+    merged.tracking_no = existingTn;
   }
   const nextInternal = pickInternal(
     incoming.internalTrackingCode,
@@ -111941,6 +112015,9 @@ async function enrichShopeeOrderTrackingFromApi(shopId, accessToken, order, opts
   repairMisassignedTracking(order);
   const light = opts?.light === true;
   const retries = opts?.retries ?? (light ? 2 : 3);
+  const existingTn = String(
+    order?.trackingNumber || order?.tracking_no || order?.shopee_tracking_number || ""
+  ).trim();
   if (!needsShopeeTrackingEnrichment(order) && hasUsableShopeeTrackingNumber(order)) {
     return order;
   }
@@ -112331,7 +112408,7 @@ function scheduleShopeeCancelReturnReconcile() {
   }
   console.log("[CancelReturn Cron] Scheduler ON \u2014 m\u1ED7i 45 ph\xFAt (CANCELLED/TO_RETURN + reconcile shipping).");
 }
-var AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+var AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = 2 * 60 * 60;
 function scheduleAutoIncrementalOrdersSyncSafe() {
   try {
     scheduleAutoIncrementalOrdersSync({
@@ -112346,7 +112423,11 @@ function scheduleAutoIncrementalOrdersSyncSafe() {
       isPullInFlight: () => isOrdersPullLocked(),
       pullIncrementalOrdersFromShopee: async (opts) => {
         try {
-          return await pullIncrementalOrdersFromShopee(opts);
+          return await pullIncrementalOrdersFromShopee({
+            ...opts,
+            allowShortLookback: true,
+            reconcileActive: false
+          });
         } catch (error) {
           console.error("[Background Sync Error]:", error?.message || error);
           return {
@@ -117951,11 +118032,11 @@ async function startServer() {
           console.log(
             `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} \u2014 ${cancelResult.message}`
           );
-          console.log("[Boot] Ch\u1EA1y triggerFixStuckOrders...");
+          console.log("[Boot] Ch\u1EA1y triggerFixStuckOrders (light, no ship)...");
           const stuck = await triggerFixStuckOrders2({
-            maxAutoDetect: 50,
-            tryShip: true,
-            lookbackMs: 30 * 24 * 3600 * 1e3
+            maxAutoDetect: 10,
+            tryShip: false,
+            lookbackMs: 7 * 24 * 3600 * 1e3
           });
           console.log(
             `[Boot] Trigger fix stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`

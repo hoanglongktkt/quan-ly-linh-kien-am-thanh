@@ -628,7 +628,7 @@ export async function hydrateTracking(_req, res) {
 
 /**
  * POST /api/orders/force-resync-stuck
- * Ép get_order_detail + (ship_order nếu cần) + get_tracking_number cho đơn kẹt thiếu mã VĐ.
+ * Fire-and-forget: ACK 200 ngay — xử lý nặng chạy nền (tránh hanging request / process leak).
  * Body: { orderSns?: string[], maxAutoDetect?: number, tryShip?: boolean, includePinned?: boolean }
  */
 export async function forceResyncStuck(req, res) {
@@ -648,40 +648,47 @@ export async function forceResyncStuck(req, res) {
     const tryShip = body.tryShip !== false && body.try_ship !== false;
     const includePinned = body.includePinned !== false;
 
-    const result = await deps.forceResyncStuckOrdersWithoutTracking({
-      orderSns,
-      maxAutoDetect: orderSns.length > 0 ? maxAutoDetect : Math.max(maxAutoDetect, 2),
-      tryShip,
-      includePinned,
-    });
-
-    ordersRefreshCache = null;
-    const message =
-      result.healed > 0
-        ? `Đã ép lấy lại mã vận đơn cho ${result.healed}/${result.attempted} đơn.`
-        : `Đã xử lý ${result.attempted} đơn — Shopee chưa trả mã hoặc đơn không tìm thấy.`;
-
-    console.log(
-      `[Orders] force-resync-stuck attempted=${result.attempted} healed=${result.healed}`,
-    );
-    return res.json({
+    res.status(200).json({
       success: true,
-      ...result,
-      message,
+      background: true,
+      message: "Đang ép đồng bộ đơn kẹt ngầm...",
     });
+
+    setImmediate(() => {
+      deps
+        .forceResyncStuckOrdersWithoutTracking({
+          orderSns,
+          maxAutoDetect: orderSns.length > 0 ? maxAutoDetect : Math.max(maxAutoDetect, 2),
+          tryShip,
+          includePinned,
+        })
+        .then((result) => {
+          ordersRefreshCache = null;
+          console.log(
+            `[Orders] force-resync-stuck BG attempted=${result.attempted} healed=${result.healed}`,
+          );
+        })
+        .catch((err) => {
+          console.error("[Orders] force-resync-stuck BG failed:", err?.message || err);
+        });
+    });
+    return;
   } catch (err) {
     console.error("[Orders] force-resync-stuck failed:", err?.message || err);
-    return res.status(500).json({
-      success: false,
-      error: err?.message || String(err),
-      message: "Không thể ép đồng bộ đơn kẹt thiếu mã vận đơn.",
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Không thể ép đồng bộ đơn kẹt thiếu mã vận đơn.",
+      });
+    }
+    return;
   }
 }
 
 /**
  * POST /api/orders/trigger-fix-stuck-orders  (alias: POST /trigger-fix-stuck-orders)
- * Endpoint tạm: tìm đơn thiếu tracking_no / kẹt unprocessed → get_order_detail cập nhật ngay.
+ * Fire-and-forget: ACK 200 ngay — không await job nặng (tránh treo request cPanel).
  * Body: { orderSns?: string[], maxAutoDetect?: number, tryShip?: boolean, lookbackDays?: number }
  */
 export async function triggerFixStuckOrders(req, res) {
@@ -704,92 +711,105 @@ export async function triggerFixStuckOrders(req, res) {
       ? Math.min(Math.max(1, Math.floor(lookbackDaysRaw)), 90)
       : 30;
 
-    const result = await deps.triggerFixStuckOrders({
-      orderSns,
-      maxAutoDetect,
-      tryShip,
-      lookbackMs: lookbackDays * 24 * 3600 * 1000,
-    });
-
-    ordersRefreshCache = null;
-    const message =
-      result.healed > 0
-        ? `Đã sửa ${result.healed}/${result.attempted} đơn kẹt (thiếu mã VĐ / chưa xử lý).`
-        : `Đã quét ${result.attempted} đơn — Shopee chưa trả mã hoặc không còn đơn kẹt.`;
-
-    console.log(
-      `[Orders] trigger-fix-stuck-orders attempted=${result.attempted} healed=${result.healed}`,
-    );
-    return res.json({
+    res.status(200).json({
       success: true,
-      ...result,
-      message,
+      background: true,
+      message: "Đang sửa đơn kẹt ngầm...",
     });
+
+    setImmediate(() => {
+      deps
+        .triggerFixStuckOrders({
+          orderSns,
+          maxAutoDetect,
+          tryShip,
+          lookbackMs: lookbackDays * 24 * 3600 * 1000,
+        })
+        .then((result) => {
+          ordersRefreshCache = null;
+          console.log(
+            `[Orders] trigger-fix-stuck-orders BG attempted=${result.attempted} healed=${result.healed}`,
+          );
+        })
+        .catch((err) => {
+          console.error("[Orders] trigger-fix-stuck-orders BG failed:", err?.message || err);
+        });
+    });
+    return;
   } catch (err) {
     console.error("[Orders] trigger-fix-stuck-orders failed:", err?.message || err);
-    return res.status(500).json({
-      success: false,
-      error: err?.message || String(err),
-      message: "Không thể trigger sửa đơn kẹt thiếu mã vận đơn.",
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Không thể trigger sửa đơn kẹt thiếu mã vận đơn.",
+      });
+    }
+    return;
   }
 }
 
-/** POST /api/orders/enrich-tracking */
+/** POST /api/orders/enrich-tracking — ACK ngay, enrich chạy nền. */
 export async function enrichTracking(req, res) {
   try {
     const maxRaw = Number(req.body?.max ?? req.query?.max ?? 100);
     const max = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 200) : 100;
 
-    let enrichResult = null;
-    try {
-      enrichResult = await deps.enrichMissingShopeeTracking();
-    } catch (enrichErr) {
-      console.warn(
-        "[Orders] enrich-tracking enrichMissingShopeeTracking:",
-        enrichErr?.message || enrichErr,
-      );
-    }
-
-    let repaired = 0;
-    try {
-      const { orders } = await loadOrdersForApi();
-      repaired = await deps.repairMissingShopeeTrackingInOrders(orders, {
-        max,
-        retries: 2,
-      });
-    } catch (repairErr) {
-      console.warn(
-        "[Orders] enrich-tracking repairMissing:",
-        repairErr?.message || repairErr,
-      );
-    }
-
-    ordersRefreshCache = null;
-    const filled =
-      Number(enrichResult?.filled || 0) +
-      Number(enrichResult?.returnFilled || 0) +
-      repaired;
-    console.log(
-      `[Orders] enrich-tracking filled=${filled} scheduler=${JSON.stringify(enrichResult)} repaired=${repaired}`,
-    );
-    return res.json({
+    res.status(200).json({
       success: true,
-      filled,
-      repaired,
-      scheduler: enrichResult || undefined,
-      message:
-        filled > 0
-          ? `Đã bù ${filled} mã vận đơn từ Shopee.`
-          : "Không có đơn nào cần bù mã (hoặc Shopee chưa trả tracking).",
+      background: true,
+      message: "Đang bù mã vận đơn ngầm...",
     });
+
+    setImmediate(() => {
+      (async () => {
+        let enrichResult = null;
+        try {
+          enrichResult = await deps.enrichMissingShopeeTracking();
+        } catch (enrichErr) {
+          console.warn(
+            "[Orders] enrich-tracking enrichMissingShopeeTracking:",
+            enrichErr?.message || enrichErr,
+          );
+        }
+
+        let repaired = 0;
+        try {
+          const { orders } = await loadOrdersForApi();
+          repaired = await deps.repairMissingShopeeTrackingInOrders(orders, {
+            max,
+            retries: 2,
+          });
+        } catch (repairErr) {
+          console.warn(
+            "[Orders] enrich-tracking repairMissing:",
+            repairErr?.message || repairErr,
+          );
+        }
+
+        ordersRefreshCache = null;
+        const filled =
+          Number(enrichResult?.filled || 0) +
+          Number(enrichResult?.returnFilled || 0) +
+          repaired;
+        console.log(
+          `[Orders] enrich-tracking BG filled=${filled} repaired=${repaired}`,
+        );
+      })().catch((err) => {
+        console.error("[Orders] enrich-tracking BG failed:", err?.message || err);
+      });
+    });
+    return;
   } catch (err) {
     console.error("[Orders] enrich-tracking failed:", err?.message || err);
-    return res.status(500).json({
-      success: false,
-      error: err?.message || String(err),
-      message: "Không thể bù mã vận đơn từ Shopee.",
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Không thể bù mã vận đơn từ Shopee.",
+      });
+    }
+    return;
   }
 }
 
