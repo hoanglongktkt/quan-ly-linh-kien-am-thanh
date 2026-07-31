@@ -103430,6 +103430,11 @@ var deps14 = {
   resolveOrderFromShopeeByScanCode: async () => null,
   enrichMissingShopeeTracking: async () => null,
   repairMissingShopeeTrackingInOrders: async () => 0,
+  forceResyncStuckOrdersWithoutTracking: async () => ({
+    attempted: 0,
+    healed: 0,
+    results: []
+  }),
   repairMisassignedTracking: (o) => o,
   buildHandedOverWritePatch: () => ({}),
   buildClearHandedOverPatch: () => ({}),
@@ -103890,6 +103895,39 @@ async function hydrateTracking(_req, res) {
     return res.status(500).json({
       success: false,
       error: err?.message || String(err)
+    });
+  }
+}
+async function forceResyncStuck(req, res) {
+  try {
+    const body = req.body || {};
+    const orderSns = Array.isArray(body.orderSns) ? body.orderSns : Array.isArray(body.order_sns) ? body.order_sns : typeof body.orderSn === "string" ? [body.orderSn] : [];
+    const maxRaw = Number(body.maxAutoDetect ?? body.max ?? 30);
+    const maxAutoDetect = Number.isFinite(maxRaw) ? Math.min(Math.max(0, Math.floor(maxRaw)), 80) : 30;
+    const tryShip = body.tryShip !== false && body.try_ship !== false;
+    const includePinned = body.includePinned !== false;
+    const result = await deps14.forceResyncStuckOrdersWithoutTracking({
+      orderSns,
+      maxAutoDetect: orderSns.length > 0 ? maxAutoDetect : Math.max(maxAutoDetect, 2),
+      tryShip,
+      includePinned
+    });
+    ordersRefreshCache = null;
+    const message = result.healed > 0 ? `\u0110\xE3 \xE9p l\u1EA5y l\u1EA1i m\xE3 v\u1EADn \u0111\u01A1n cho ${result.healed}/${result.attempted} \u0111\u01A1n.` : `\u0110\xE3 x\u1EED l\xFD ${result.attempted} \u0111\u01A1n \u2014 Shopee ch\u01B0a tr\u1EA3 m\xE3 ho\u1EB7c \u0111\u01A1n kh\xF4ng t\xECm th\u1EA5y.`;
+    console.log(
+      `[Orders] force-resync-stuck attempted=${result.attempted} healed=${result.healed}`
+    );
+    return res.json({
+      success: true,
+      ...result,
+      message
+    });
+  } catch (err) {
+    console.error("[Orders] force-resync-stuck failed:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err),
+      message: "Kh\xF4ng th\u1EC3 \xE9p \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n k\u1EB9t thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n."
     });
   }
 }
@@ -105260,6 +105298,7 @@ router13.post("/cleanup-processed-pickup", h2(cleanupProcessedPickup));
 router13.post("/cleanup-mock", h2(cleanupMockOrders));
 router13.post("/hydrate-tracking", h2(hydrateTracking));
 router13.post("/enrich-tracking", h2(enrichTracking));
+router13.post("/force-resync-stuck", h2(forceResyncStuck));
 router13.post("/hand-over-carrier/bulk", h2(handOverCarrierBulk));
 router13.post("/hand-over-carrier", h2(handOverCarrierByCode));
 router13.post("/heal-handed-over", h2(healHandedOver));
@@ -111514,6 +111553,203 @@ function repairFalseProcessedReadyToShip(order) {
   order.is_pending_shopee_check = false;
   return true;
 }
+function isStuckShopeePickupOrder(order) {
+  if (!order || String(order.channel || "") !== "shopee") return false;
+  const raw = String(order.shopee_order_status || "").toUpperCase();
+  const status = String(order.status || "");
+  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED" || raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN" || status === "shipping" || status === "completed" || status === "cancelled" || status === "return_pending" || status === "return_received") {
+    return false;
+  }
+  const pickupLike = raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || status === "unprocessed" || status === "processed" || !raw;
+  if (!pickupLike) return false;
+  if (resolveOrderHandoverFlag(order)) return false;
+  if (!hasUsableShopeeTrackingNumber(order)) return true;
+  if (status === "unprocessed" || status === "pending_verification") return true;
+  if (status === "processed" || raw === "PROCESSED") return true;
+  return false;
+}
+var FORCE_RESYNC_PINNED_ORDER_SNS = ["2607315FFJ7TDH", "26073155AN9G9B"];
+async function forceResyncStuckOrdersWithoutTracking(opts) {
+  const normalizeSn = (s2) => String(s2 || "").replace(/^#/, "").replace(/^shopee-/i, "").trim();
+  const snSet = /* @__PURE__ */ new Set();
+  if (opts?.includePinned !== false) {
+    for (const sn of FORCE_RESYNC_PINNED_ORDER_SNS) {
+      const n = normalizeSn(sn);
+      if (n) snSet.add(n);
+    }
+  }
+  for (const sn of Array.isArray(opts?.orderSns) ? opts.orderSns : []) {
+    const n = normalizeSn(sn);
+    if (n) snSet.add(n);
+  }
+  const maxAuto = Math.min(Math.max(Number(opts?.maxAutoDetect ?? 30) || 0, 0), 80);
+  const tryShip = opts?.tryShip !== false;
+  if (isMongoReady() && maxAuto > 0) {
+    try {
+      const candidates = await loadShopeeTrackingEnrichCandidatesFromStore({
+        lookbackMs: 7 * 24 * 3600 * 1e3,
+        limit: Math.max(maxAuto * 2, 20),
+        localStatuses: [
+          "unprocessed",
+          "processed",
+          "pending_confirm",
+          "pending_verification"
+        ],
+        shopeeStatuses: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED", "PENDING", "UNPAID"]
+      });
+      for (const row of candidates) {
+        if (snSet.size >= maxAuto + FORCE_RESYNC_PINNED_ORDER_SNS.length) break;
+        if (!isStuckShopeePickupOrder(row) && !needsShopeeTrackingEnrichment(row)) continue;
+        const sn = normalizeSn(row?.orderSn);
+        if (sn) snSet.add(sn);
+      }
+    } catch (detectErr) {
+      console.warn(
+        "[Force Resync] auto-detect stuck orders failed:",
+        detectErr?.message || detectErr
+      );
+    }
+  }
+  const orderSns = [...snSet];
+  const results = [];
+  let healed = 0;
+  console.log(
+    `[Force Resync] START sns=${orderSns.length} tryShip=${tryShip} list=${orderSns.slice(0, 10).join(",")}${orderSns.length > 10 ? "\u2026" : ""}`
+  );
+  for (const orderSn of orderSns) {
+    const item = { orderSn, ok: false, steps: [] };
+    try {
+      let orders = [];
+      try {
+        orders = await loadOrdersForShipScoped([`shopee-${orderSn}`], [orderSn]);
+      } catch (loadErr) {
+        item.steps.push(`load_err:${loadErr?.message || loadErr}`);
+        orders = [];
+      }
+      let order = orders.find((o) => normalizeSn(o?.orderSn) === orderSn) || orders[0] || null;
+      if (!order && isMongoReady()) {
+        try {
+          const mongoRows = await loadOrdersFromStore({ orderSns: [orderSn] });
+          order = mongoRows[0] || null;
+          if (order) orders = [order];
+        } catch {
+        }
+      }
+      if (!order) {
+        item.error = "order_not_found_in_db";
+        results.push(item);
+        continue;
+      }
+      order.is_pending_shopee_check = false;
+      item.steps.push("clear_pending_flag");
+      const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
+      if (!shopId) {
+        item.error = "missing_shop_id";
+        results.push(item);
+        continue;
+      }
+      order.shopId = shopId;
+      const auth = await getShopeeAccessTokenForApi(shopId);
+      if (!auth?.token) {
+        item.error = "no_access_token";
+        results.push(item);
+        continue;
+      }
+      try {
+        const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+          auth.apiShopId,
+          auth.token,
+          auth.fileKey || shopId,
+          [orderSn],
+          { enrichTracking: true }
+        );
+        if (normalized.length > 0) {
+          await persistShopeeOrderChunk(orders, normalized, {
+            apiShopId: auth.apiShopId,
+            accessToken: auth.token,
+            skipTracking: true
+          });
+          order = orders.find((o) => normalizeSn(o?.orderSn) === orderSn) || normalized[0] || order;
+          order.is_pending_shopee_check = false;
+          item.steps.push("get_order_detail");
+        } else {
+          item.steps.push(
+            `get_order_detail_empty:${errors?.[0]?.error || errors?.[0]?.message || "empty"}`
+          );
+        }
+      } catch (detailErr) {
+        item.steps.push(`get_order_detail_err:${detailErr?.message || detailErr}`);
+      }
+      if (tryShip && !hasUsableShopeeTrackingNumber(order) && !isShopeeOrderPreparedForPrint(order)) {
+        const raw = String(order.shopee_order_status || "").toUpperCase();
+        if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PENDING" || !raw) {
+          try {
+            const method = resolveAutoShipMethodForPrint(order);
+            const shipResult = await arrangeShipment(order, method);
+            if (shipResult.success || isAlreadyShippedError(shipResult)) {
+              order.isPrepared = true;
+              order.is_pending_shopee_check = false;
+              if (!order.shopee_order_status || String(order.shopee_order_status).toUpperCase() === "READY_TO_SHIP" || String(order.shopee_order_status).toUpperCase() === "RETRY_SHIP") {
+                order.shopee_order_status = "PROCESSED";
+              }
+              if (order.status === "unprocessed" || order.status === "pending_confirm" || order.status === "pending_verification") {
+                order.status = "processed";
+              }
+              item.steps.push("ship_order");
+            } else {
+              item.steps.push(
+                `ship_order_fail:${shipResult.error || shipResult.message || "unknown"}`
+              );
+            }
+          } catch (shipErr) {
+            item.steps.push(`ship_order_err:${shipErr?.message || shipErr}`);
+          }
+        }
+      }
+      try {
+        const tnOk = await fetchAndForceSaveTrackingNumber(
+          auth.apiShopId,
+          auth.token,
+          order,
+          { retries: 4 }
+        );
+        item.steps.push(tnOk ? "get_tracking_number_ok" : "get_tracking_number_empty");
+      } catch (tnErr) {
+        item.steps.push(`get_tracking_number_err:${tnErr?.message || tnErr}`);
+      }
+      forceHealPickupOrderIfHasTracking(order);
+      promoteOrderStatusWhenTrackingReady(order);
+      enforceShopeeTerminalLocalStatus(order);
+      order.is_pending_shopee_check = false;
+      if (isMongoReady()) {
+        try {
+          await bulkUpsertOrdersToStore([order]);
+          item.steps.push("mongo_upsert");
+          queueOrdersJsonMirrorFromMongo();
+        } catch (mongoErr) {
+          item.steps.push(`mongo_upsert_err:${mongoErr?.message || mongoErr}`);
+        }
+      }
+      item.trackingNo = String(order.trackingNumber || order.tracking_no || "").trim() || void 0;
+      item.status = String(order.status || "");
+      item.shopee_order_status = String(order.shopee_order_status || "");
+      item.ok = hasUsableShopeeTrackingNumber(order) || item.steps.includes("get_order_detail") || item.steps.includes("ship_order");
+      if (hasUsableShopeeTrackingNumber(order)) healed += 1;
+      console.log(
+        `[Force Resync] ${orderSn} ok=${item.ok} status=${item.shopee_order_status || item.status || "?"} tn=${item.trackingNo || "\u2014"} steps=${item.steps.join("|")}`
+      );
+    } catch (err) {
+      item.error = err?.message || String(err);
+      console.error(`[Force Resync] ${orderSn} FAILED:`, err?.stack || err);
+    }
+    results.push(item);
+    await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
+  }
+  console.log(
+    `[Force Resync] DONE attempted=${results.length} healed=${healed} ok=${results.filter((r2) => r2.ok).length}`
+  );
+  return { attempted: results.length, healed, results };
+}
 function applyShopeeGetTrackingResponse(order, trackResult) {
   const sn = String(order?.orderSn || "").trim();
   console.log(`GHN_API_RESPONSE for order [${sn}]:`, JSON.stringify(trackResult));
@@ -115203,6 +115439,7 @@ async function startServer() {
     resolveOrderFromShopeeByScanCode,
     enrichMissingShopeeTracking,
     repairMissingShopeeTrackingInOrders,
+    forceResyncStuckOrdersWithoutTracking,
     repairMisassignedTracking,
     buildHandedOverWritePatch,
     buildClearHandedOverPatch,
@@ -117712,6 +117949,15 @@ async function startServer() {
           const cancelResult = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
           console.log(
             `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} \u2014 ${cancelResult.message}`
+          );
+          console.log("[Boot] Ch\u1EA1y forceResyncStuckOrdersWithoutTracking...");
+          const stuck = await forceResyncStuckOrdersWithoutTracking({
+            includePinned: true,
+            maxAutoDetect: 20,
+            tryShip: true
+          });
+          console.log(
+            `[Boot] Force resync stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`
           );
         } catch (bootPullErr) {
           console.error("[Background Sync Error]:", bootPullErr?.message || bootPullErr);

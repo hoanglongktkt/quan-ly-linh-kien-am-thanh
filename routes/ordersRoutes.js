@@ -12,6 +12,7 @@ import {
   cleanupMockOrders,
   hydrateTracking,
   enrichTracking,
+  forceResyncStuck,
   patchOrder,
   deleteOrder,
   handOverCarrierById,
@@ -47,6 +48,7 @@ router.post("/cleanup-processed-pickup", h(cleanupProcessedPickup));
 router.post("/cleanup-mock", h(cleanupMockOrders));
 router.post("/hydrate-tracking", h(hydrateTracking));
 router.post("/enrich-tracking", h(enrichTracking));
+router.post("/force-resync-stuck", h(forceResyncStuck));
 router.post("/hand-over-carrier/bulk", h(handOverCarrierBulk));
 router.post("/hand-over-carrier", h(handOverCarrierByCode));
 router.post("/heal-handed-over", h(healHandedOver));

@@ -44,6 +44,7 @@ const LONG_RUNNING_PREFIXES = [
   'scan/don-hoan-huy',
   'orders/enrich-tracking',
   'orders/hydrate-tracking',
+  'orders/force-resync-stuck',
   'orders/lookup',
   'orders/cleanup-closed-retention',
 ];

@@ -51,6 +51,11 @@ let deps = {
   resolveOrderFromShopeeByScanCode: async () => null,
   enrichMissingShopeeTracking: async () => null,
   repairMissingShopeeTrackingInOrders: async () => 0,
+  forceResyncStuckOrdersWithoutTracking: async () => ({
+    attempted: 0,
+    healed: 0,
+    results: [],
+  }),
   repairMisassignedTracking: (o) => o,
   buildHandedOverWritePatch: () => ({}),
   buildClearHandedOverPatch: () => ({}),
@@ -612,6 +617,59 @@ export async function hydrateTracking(_req, res) {
     return res.status(500).json({
       success: false,
       error: err?.message || String(err),
+    });
+  }
+}
+
+/**
+ * POST /api/orders/force-resync-stuck
+ * Ép get_order_detail + (ship_order nếu cần) + get_tracking_number cho đơn kẹt thiếu mã VĐ.
+ * Body: { orderSns?: string[], maxAutoDetect?: number, tryShip?: boolean, includePinned?: boolean }
+ */
+export async function forceResyncStuck(req, res) {
+  try {
+    const body = req.body || {};
+    const orderSns = Array.isArray(body.orderSns)
+      ? body.orderSns
+      : Array.isArray(body.order_sns)
+        ? body.order_sns
+        : typeof body.orderSn === "string"
+          ? [body.orderSn]
+          : [];
+    const maxRaw = Number(body.maxAutoDetect ?? body.max ?? 30);
+    const maxAutoDetect = Number.isFinite(maxRaw)
+      ? Math.min(Math.max(0, Math.floor(maxRaw)), 80)
+      : 30;
+    const tryShip = body.tryShip !== false && body.try_ship !== false;
+    const includePinned = body.includePinned !== false;
+
+    const result = await deps.forceResyncStuckOrdersWithoutTracking({
+      orderSns,
+      maxAutoDetect: orderSns.length > 0 ? maxAutoDetect : Math.max(maxAutoDetect, 2),
+      tryShip,
+      includePinned,
+    });
+
+    ordersRefreshCache = null;
+    const message =
+      result.healed > 0
+        ? `Đã ép lấy lại mã vận đơn cho ${result.healed}/${result.attempted} đơn.`
+        : `Đã xử lý ${result.attempted} đơn — Shopee chưa trả mã hoặc đơn không tìm thấy.`;
+
+    console.log(
+      `[Orders] force-resync-stuck attempted=${result.attempted} healed=${result.healed}`,
+    );
+    return res.json({
+      success: true,
+      ...result,
+      message,
+    });
+  } catch (err) {
+    console.error("[Orders] force-resync-stuck failed:", err?.message || err);
+    return res.status(500).json({
+      success: false,
+      error: err?.message || String(err),
+      message: "Không thể ép đồng bộ đơn kẹt thiếu mã vận đơn.",
     });
   }
 }

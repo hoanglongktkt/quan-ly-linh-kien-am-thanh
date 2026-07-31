@@ -7950,6 +7950,265 @@ function isStuckShopeePickupOrder(order: any): boolean {
   return false;
 }
 
+/**
+ * Đơn hotfix bị kẹt "Chưa có mã vận đơn" — ép re-sync riêng từng mã.
+ * Có thể gọi qua POST /api/orders/force-resync-stuck hoặc tự chạy sau boot.
+ */
+const FORCE_RESYNC_PINNED_ORDER_SNS = ["2607315FFJ7TDH", "26073155AN9G9B"];
+
+type ForceResyncStuckResultItem = {
+  orderSn: string;
+  ok: boolean;
+  steps: string[];
+  trackingNo?: string;
+  status?: string;
+  shopee_order_status?: string;
+  error?: string;
+};
+
+async function forceResyncStuckOrdersWithoutTracking(opts?: {
+  orderSns?: string[];
+  maxAutoDetect?: number;
+  tryShip?: boolean;
+  includePinned?: boolean;
+}): Promise<{
+  attempted: number;
+  healed: number;
+  results: ForceResyncStuckResultItem[];
+}> {
+  const normalizeSn = (s: unknown) =>
+    String(s || "")
+      .replace(/^#/, "")
+      .replace(/^shopee-/i, "")
+      .trim();
+
+  const snSet = new Set<string>();
+  if (opts?.includePinned !== false) {
+    for (const sn of FORCE_RESYNC_PINNED_ORDER_SNS) {
+      const n = normalizeSn(sn);
+      if (n) snSet.add(n);
+    }
+  }
+  for (const sn of Array.isArray(opts?.orderSns) ? opts!.orderSns : []) {
+    const n = normalizeSn(sn);
+    if (n) snSet.add(n);
+  }
+
+  const maxAuto = Math.min(Math.max(Number(opts?.maxAutoDetect ?? 30) || 0, 0), 80);
+  const tryShip = opts?.tryShip !== false;
+
+  if (isMongoReady() && maxAuto > 0) {
+    try {
+      const candidates = await loadShopeeTrackingEnrichCandidatesFromStore({
+        lookbackMs: 7 * 24 * 3600 * 1000,
+        limit: Math.max(maxAuto * 2, 20),
+        localStatuses: [
+          "unprocessed",
+          "processed",
+          "pending_confirm",
+          "pending_verification",
+        ],
+        shopeeStatuses: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED", "PENDING", "UNPAID"],
+      });
+      for (const row of candidates) {
+        if (snSet.size >= maxAuto + FORCE_RESYNC_PINNED_ORDER_SNS.length) break;
+        if (!isStuckShopeePickupOrder(row) && !needsShopeeTrackingEnrichment(row)) continue;
+        const sn = normalizeSn(row?.orderSn);
+        if (sn) snSet.add(sn);
+      }
+    } catch (detectErr: any) {
+      console.warn(
+        "[Force Resync] auto-detect stuck orders failed:",
+        detectErr?.message || detectErr,
+      );
+    }
+  }
+
+  const orderSns = [...snSet];
+  const results: ForceResyncStuckResultItem[] = [];
+  let healed = 0;
+
+  console.log(
+    `[Force Resync] START sns=${orderSns.length} tryShip=${tryShip} list=${orderSns.slice(0, 10).join(",")}${orderSns.length > 10 ? "…" : ""}`,
+  );
+
+  for (const orderSn of orderSns) {
+    const item: ForceResyncStuckResultItem = { orderSn, ok: false, steps: [] };
+    try {
+      let orders: any[] = [];
+      try {
+        orders = await loadOrdersForShipScoped([`shopee-${orderSn}`], [orderSn]);
+      } catch (loadErr: any) {
+        item.steps.push(`load_err:${loadErr?.message || loadErr}`);
+        orders = [];
+      }
+
+      let order =
+        orders.find((o) => normalizeSn(o?.orderSn) === orderSn) ||
+        orders[0] ||
+        null;
+
+      if (!order && isMongoReady()) {
+        try {
+          const mongoRows = await loadOrdersFromStore({ orderSns: [orderSn] });
+          order = mongoRows[0] || null;
+          if (order) orders = [order];
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (!order) {
+        item.error = "order_not_found_in_db";
+        results.push(item);
+        continue;
+      }
+
+      // Gỡ cờ treo từ lần lỗi trước để UI/API không bị chặn.
+      order.is_pending_shopee_check = false;
+      item.steps.push("clear_pending_flag");
+
+      const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
+      if (!shopId) {
+        item.error = "missing_shop_id";
+        results.push(item);
+        continue;
+      }
+      order.shopId = shopId;
+
+      const auth = await getShopeeAccessTokenForApi(shopId);
+      if (!auth?.token) {
+        item.error = "no_access_token";
+        results.push(item);
+        continue;
+      }
+
+      // 1) get_order_detail → upsert trạng thái chuẩn
+      try {
+        const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+          auth.apiShopId,
+          auth.token,
+          auth.fileKey || shopId,
+          [orderSn],
+          { enrichTracking: true },
+        );
+        if (normalized.length > 0) {
+          await persistShopeeOrderChunk(orders, normalized, {
+            apiShopId: auth.apiShopId,
+            accessToken: auth.token,
+            skipTracking: true,
+          });
+          order =
+            orders.find((o) => normalizeSn(o?.orderSn) === orderSn) ||
+            normalized[0] ||
+            order;
+          order.is_pending_shopee_check = false;
+          item.steps.push("get_order_detail");
+        } else {
+          item.steps.push(
+            `get_order_detail_empty:${errors?.[0]?.error || errors?.[0]?.message || "empty"}`,
+          );
+        }
+      } catch (detailErr: any) {
+        item.steps.push(`get_order_detail_err:${detailErr?.message || detailErr}`);
+      }
+
+      // 2) Nếu vẫn READY_TO_SHIP / chưa prepared → ép ship_order (create shipment)
+      if (
+        tryShip &&
+        !hasUsableShopeeTrackingNumber(order) &&
+        !isShopeeOrderPreparedForPrint(order)
+      ) {
+        const raw = String(order.shopee_order_status || "").toUpperCase();
+        if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PENDING" || !raw) {
+          try {
+            const method = resolveAutoShipMethodForPrint(order);
+            const shipResult = await arrangeShipment(order, method);
+            if (shipResult.success || isAlreadyShippedError(shipResult)) {
+              order.isPrepared = true;
+              order.is_pending_shopee_check = false;
+              if (
+                !order.shopee_order_status ||
+                String(order.shopee_order_status).toUpperCase() === "READY_TO_SHIP" ||
+                String(order.shopee_order_status).toUpperCase() === "RETRY_SHIP"
+              ) {
+                order.shopee_order_status = "PROCESSED";
+              }
+              if (
+                order.status === "unprocessed" ||
+                order.status === "pending_confirm" ||
+                order.status === "pending_verification"
+              ) {
+                order.status = "processed";
+              }
+              item.steps.push("ship_order");
+            } else {
+              item.steps.push(
+                `ship_order_fail:${shipResult.error || shipResult.message || "unknown"}`,
+              );
+            }
+          } catch (shipErr: any) {
+            item.steps.push(`ship_order_err:${shipErr?.message || shipErr}`);
+          }
+        }
+      }
+
+      // 3) Ép get_tracking_number (+ retry)
+      try {
+        const tnOk = await fetchAndForceSaveTrackingNumber(
+          auth.apiShopId,
+          auth.token,
+          order,
+          { retries: 4 },
+        );
+        item.steps.push(tnOk ? "get_tracking_number_ok" : "get_tracking_number_empty");
+      } catch (tnErr: any) {
+        item.steps.push(`get_tracking_number_err:${tnErr?.message || tnErr}`);
+      }
+
+      forceHealPickupOrderIfHasTracking(order);
+      promoteOrderStatusWhenTrackingReady(order);
+      enforceShopeeTerminalLocalStatus(order);
+      order.is_pending_shopee_check = false;
+
+      // 4) Ghi DB
+      if (isMongoReady()) {
+        try {
+          await bulkUpsertOrdersToStore([order]);
+          item.steps.push("mongo_upsert");
+          queueOrdersJsonMirrorFromMongo();
+        } catch (mongoErr: any) {
+          item.steps.push(`mongo_upsert_err:${mongoErr?.message || mongoErr}`);
+        }
+      }
+
+      item.trackingNo =
+        String(order.trackingNumber || order.tracking_no || "").trim() || undefined;
+      item.status = String(order.status || "");
+      item.shopee_order_status = String(order.shopee_order_status || "");
+      item.ok =
+        hasUsableShopeeTrackingNumber(order) ||
+        item.steps.includes("get_order_detail") ||
+        item.steps.includes("ship_order");
+      if (hasUsableShopeeTrackingNumber(order)) healed += 1;
+
+      console.log(
+        `[Force Resync] ${orderSn} ok=${item.ok} status=${item.shopee_order_status || item.status || "?"} tn=${item.trackingNo || "—"} steps=${item.steps.join("|")}`,
+      );
+    } catch (err: any) {
+      item.error = err?.message || String(err);
+      console.error(`[Force Resync] ${orderSn} FAILED:`, err?.stack || err);
+    }
+    results.push(item);
+    await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
+  }
+
+  console.log(
+    `[Force Resync] DONE attempted=${results.length} healed=${healed} ok=${results.filter((r) => r.ok).length}`,
+  );
+  return { attempted: results.length, healed, results };
+}
+
 function applyShopeeGetTrackingResponse(order: any, trackResult: any): void {
   const sn = String(order?.orderSn || "").trim();
   // Bắt buộc log cấu trúc thật từ Shopee (GHN thường khác SPX).
@@ -13337,6 +13596,7 @@ async function startServer() {
     resolveOrderFromShopeeByScanCode,
     enrichMissingShopeeTracking,
     repairMissingShopeeTrackingInOrders,
+    forceResyncStuckOrdersWithoutTracking,
     repairMisassignedTracking,
     buildHandedOverWritePatch,
     buildClearHandedOverPatch,
@@ -16376,6 +16636,17 @@ async function startServer() {
           const cancelResult = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
           console.log(
             `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} — ${cancelResult.message}`,
+          );
+
+          // Ép heal các đơn kẹt thiếu mã VĐ (pinned + auto-detect nhẹ).
+          console.log("[Boot] Chạy forceResyncStuckOrdersWithoutTracking...");
+          const stuck = await forceResyncStuckOrdersWithoutTracking({
+            includePinned: true,
+            maxAutoDetect: 20,
+            tryShip: true,
+          });
+          console.log(
+            `[Boot] Force resync stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`,
           );
         } catch (bootPullErr: any) {
           console.error("[Background Sync Error]:", bootPullErr?.message || bootPullErr);
