@@ -2105,7 +2105,7 @@ export default function OrderManager({
     </div>
     <h2>Đã xác nhận đơn hàng</h2>
     <div class="status-line" id="statusLine">
-      Đang chờ Shopee tạo vận đơn (<span class="countdown" id="countdown">5</span> giây)
+      Đang chờ Shopee tạo vận đơn (<span class="countdown" id="countdown">12</span> giây)
       <span class="dots" id="dots"><span></span><span></span><span></span></span>
     </div>
     <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
@@ -2118,7 +2118,7 @@ export default function OrderManager({
   </div>
   <script>
     (function () {
-      var totalMs = 5000;
+      var totalMs = 12000;
       var startedAt = Date.now();
       var countdownEl = document.getElementById('countdown');
       var fillEl = document.getElementById('progressFill');
@@ -2809,13 +2809,8 @@ export default function OrderManager({
       return;
     }
 
-    // Reserve tab ngay trong user-gesture — tránh popup blocker sau await.
-    let reservedWindow: Window | null = null;
-    try {
-      reservedWindow = window.open('about:blank', '_blank');
-    } catch {
-      reservedWindow = null;
-    }
+    // Reserve tab ngay trong user-gesture (placeholder spinner) — tránh popup blocker + tab trắng.
+    let reservedWindow: Window | null = openReservedPrintPlaceholder();
 
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
     const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
