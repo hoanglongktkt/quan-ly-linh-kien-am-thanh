@@ -72165,7 +72165,7 @@ function isCarrierTrackingCode(code) {
 
 // src/utils/orderHandover.ts
 function getShopeeOrderRawStatus(order) {
-  return String(order.shopee_order_status || "").toUpperCase();
+  return String(order.shopee_order_status || order.order_status || "").toUpperCase();
 }
 function getOrderTrackingNo(order) {
   const candidates = [
@@ -72195,6 +72195,12 @@ function isProcessedCondition(order) {
   if (hasOrderTrackingNo(order)) return true;
   const raw = getShopeeOrderRawStatus(order);
   if (raw === "PROCESSED") return true;
+  if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
+    if (getOrderFulfillmentType(order) === "dropoff" && Boolean(order.isPrepared)) {
+      return true;
+    }
+    return false;
+  }
   if (order.status === "processed") return true;
   if (getOrderFulfillmentType(order) === "dropoff" && Boolean(order.isPrepared)) {
     return true;
@@ -75122,9 +75128,69 @@ function orderTabFilter(tab) {
     case "cancelled":
       return { $or: [{ status: "cancelled" }, { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }] };
     case "processed":
-      return { status: "processed", shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+      return {
+        $and: [
+          {
+            $or: [
+              { status: "processed" },
+              { shopee_order_status: "PROCESSED" },
+              {
+                shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
+                $or: [
+                  { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
+                  { "data.tracking_no": { $exists: true, $nin: [null, "", "0"] } },
+                  { "data.trackingNumber": { $exists: true, $nin: [null, "", "0"] } }
+                ]
+              }
+            ]
+          },
+          { shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED", "CANCELLED", "IN_CANCEL"] } },
+          { is_handed_over: { $ne: true } }
+        ]
+      };
     case "unprocessed":
-      return { status: "unprocessed", shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+      return {
+        $and: [
+          {
+            $or: [
+              { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
+              {
+                status: "unprocessed",
+                shopee_order_status: {
+                  $nin: [
+                    "PROCESSED",
+                    "SHIPPED",
+                    "TO_CONFIRM_RECEIVE",
+                    "COMPLETED",
+                    "CANCELLED",
+                    "IN_CANCEL",
+                    "TO_RETURN"
+                  ]
+                }
+              }
+            ]
+          },
+          { shopee_order_status: { $ne: "PROCESSED" } },
+          { is_handed_over: { $ne: true } },
+          {
+            $and: [
+              { $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }] },
+              {
+                $or: [
+                  { "data.tracking_no": { $exists: false } },
+                  { "data.tracking_no": { $in: [null, "", "0"] } }
+                ]
+              },
+              {
+                $or: [
+                  { "data.trackingNumber": { $exists: false } },
+                  { "data.trackingNumber": { $in: [null, "", "0"] } }
+                ]
+              }
+            ]
+          }
+        ]
+      };
     case "pending_confirm":
       return { status: { $in: ["pending_confirm", "pending_verification"] } };
     case "handed_over_carrier":
@@ -103394,6 +103460,8 @@ async function readOrdersForRefresh(limit) {
 }
 async function refreshOrders(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   try {
     if (!isMongoReady()) {
       return res.status(200).json({
@@ -103402,6 +103470,9 @@ async function refreshOrders(req, res) {
         total: 0,
         error: "mongodb_not_ready"
       });
+    }
+    if (req.query.t != null || req.query.bust != null) {
+      ordersRefreshCache = null;
     }
     const rawLimit = Number(req.query.limit);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : void 0;
@@ -103533,9 +103604,17 @@ async function listOrders(req, res) {
       `[GET /api/orders] query.tab=${tab} filter=matchesProcessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n`
     );
   } else if (tab === "unprocessed" || tab === "chua-xu-ly" || tab === "ready_to_ship" || tab === "cho-lay-hang") {
-    rawOrders = rawOrders.filter((o) => deps14.matchesUnprocessedPickupTabShared(o));
+    rawOrders = rawOrders.filter((o) => {
+      if (deps14.matchesUnprocessedPickupTabShared(o)) return true;
+      const raw = String(o?.shopee_order_status || o?.order_status || "").toUpperCase();
+      if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return false;
+      if (o?.is_handed_over === true || o?.isHandedOverToCarrier === true) return false;
+      const tn = String(o?.tracking_no || o?.trackingNumber || "").trim();
+      if (tn && tn !== "0" && !/^0FG/i.test(tn)) return false;
+      return true;
+    });
     console.log(
-      `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound, !isProcessedCondition }`
+      `[GET /api/orders] query.tab=${tab} filter=READY_TO_SHIP|RETRY_SHIP (unprocessed) \u2192 ${rawOrders.length} \u0111\u01A1n | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound }`
     );
   } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
     rawOrders = rawOrders.filter((o) => deps14.matchesShippingTabShared(o));
@@ -106723,10 +106802,8 @@ function assertOrdersPullDeadline(deadlineAt, label) {
   );
 }
 async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
-  const now = Math.floor(Date.now() / 1e3);
-  const lookback = Math.max(60, Math.min(15 * 24 * 60 * 60, opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC));
-  const timeFrom = now - lookback;
-  const timeTo = now;
+  const timeTo = Math.floor(Date.now() / 1e3);
+  const timeFrom = timeTo - 3 * 24 * 60 * 60;
   const orderSnSet = /* @__PURE__ */ new Set();
   const seenCursors = /* @__PURE__ */ new Set();
   let cursor;
@@ -106740,68 +106817,86 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
     1,
     Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_HARD_CAP)
   );
-  syncDiag("Fetching order list...", `shop=${shopId} lookback=${lookback}s from=${timeFrom} to=${timeTo} maxSn=${maxOrderSns} hardCap=${pageHardCap}`);
+  syncDiag("Fetching order list...", `shop=${shopId} lookback=3d from=${timeFrom} to=${timeTo} maxSn=${maxOrderSns} hardCap=${pageHardCap}`);
   while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
-    assertOrdersPullDeadline(deadlineAt, `get_order_list page=${page + 1} shop=${shopId}`);
-    page += 1;
-    let listResult = await shopeeGetOrderList(shopId, accessToken, {
-      timeRangeField: "update_time",
-      timeFrom,
-      timeTo,
-      cursor
-    });
-    if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
-      syncDiag("GetOrderList AUTH FAIL \u2014 refresh once", `shop=${shopId}`);
-      try {
-        const refreshed = await refreshShopeeAccessTokenLocked(shopId, { force: true });
-        if (refreshed) {
-          accessToken = refreshed;
-          listResult = await shopeeGetOrderList(shopId, accessToken, {
-            timeRangeField: "update_time",
-            timeFrom,
-            timeTo,
-            cursor
-          });
+    try {
+      assertOrdersPullDeadline(deadlineAt, `get_order_list page=${page + 1} shop=${shopId}`);
+      page += 1;
+      let listResult = await shopeeGetOrderList(shopId, accessToken, {
+        timeRangeField: "update_time",
+        timeFrom,
+        timeTo,
+        cursor
+      });
+      if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
+        syncDiag("GetOrderList AUTH FAIL \u2014 refresh once", `shop=${shopId}`);
+        try {
+          const refreshed = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+          if (refreshed) {
+            accessToken = refreshed;
+            listResult = await shopeeGetOrderList(shopId, accessToken, {
+              timeRangeField: "update_time",
+              timeFrom,
+              timeTo,
+              cursor
+            });
+          }
+        } catch (refreshErr) {
+          console.error(
+            `[Orders Pull] Token refresh th\u1EA5t b\u1EA1i shop=${shopId}:`,
+            refreshErr?.message || refreshErr
+          );
+          break;
         }
-      } catch (refreshErr) {
+      }
+      if (listResult?.error) {
         console.error(
-          `[Orders Pull] Token refresh th\u1EA5t b\u1EA1i shop=${shopId}:`,
-          refreshErr?.message || refreshErr
+          `[Orders Pull] GetOrderList d\u1EEBng shop=${shopId}:`,
+          listResult.error,
+          listResult.message || ""
         );
         break;
       }
-    }
-    if (listResult?.error) {
-      console.error(
-        `[Orders Pull] GetOrderList d\u1EEBng shop=${shopId}:`,
-        listResult.error,
-        listResult.message || ""
+      const rows = extractShopeeOrderListRows(listResult);
+      for (const row of rows) {
+        try {
+          const sn = String(row?.order_sn || row?.ordersn || "").trim();
+          if (sn) orderSnSet.add(sn);
+          if (orderSnSet.size >= maxOrderSns) break;
+        } catch (rowErr) {
+          console.error(
+            `[Orders Pull] B\u1ECF qua 1 \u0111\u01A1n l\u1ED7i shop=${shopId}:`,
+            rowErr?.message || rowErr,
+            row
+          );
+          continue;
+        }
+      }
+      syncDiag(
+        "Order list received",
+        `${rows.length} orders (shop=${shopId} page=${page} totalSn=${orderSnSet.size} cursor=${cursor || "(start)"})`
       );
-      break;
+      const adv = advanceShopeeOrderListCursor({
+        listResult,
+        currentCursor: cursor,
+        seenCursors,
+        pageIndex: page,
+        hardCap: pageHardCap,
+        logLabel: `shop=${shopId}`
+      });
+      syncDiag("Pagination decision", `${adv.action} \u2014 ${adv.reason}`);
+      if (adv.action === "break") break;
+      seenCursors.add(adv.nextCursor);
+      cursor = adv.nextCursor;
+      await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+    } catch (pageErr) {
+      if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw pageErr;
+      console.error(
+        `[Orders Pull] GetOrderList page exception shop=${shopId}:`,
+        pageErr?.message || pageErr
+      );
+      continue;
     }
-    const rows = extractShopeeOrderListRows(listResult);
-    for (const row of rows) {
-      const sn = String(row?.order_sn || row?.ordersn || "").trim();
-      if (sn) orderSnSet.add(sn);
-      if (orderSnSet.size >= maxOrderSns) break;
-    }
-    syncDiag(
-      "Order list received",
-      `${rows.length} orders (shop=${shopId} page=${page} totalSn=${orderSnSet.size} cursor=${cursor || "(start)"})`
-    );
-    const adv = advanceShopeeOrderListCursor({
-      listResult,
-      currentCursor: cursor,
-      seenCursors,
-      pageIndex: page,
-      hardCap: pageHardCap,
-      logLabel: `shop=${shopId}`
-    });
-    syncDiag("Pagination decision", `${adv.action} \u2014 ${adv.reason}`);
-    if (adv.action === "break") break;
-    seenCursors.add(adv.nextCursor);
-    cursor = adv.nextCursor;
-    await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
   }
   syncDiag("Order list pagination done", `shop=${shopId} pages=${page} uniqueSn=${orderSnSet.size}`);
   return [...orderSnSet];
