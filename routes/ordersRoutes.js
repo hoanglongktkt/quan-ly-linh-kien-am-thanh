@@ -20,6 +20,7 @@ import {
   healHandedOver,
   createManualOrder,
 } from "../controllers/ordersController.js";
+import { pullOrders } from "../controllers/shopeeOrdersController.js";
 import { saveScanOrders, listDonHoanHuy } from "../controllers/scanController.js";
 import {
   enqueueScanBg,
@@ -36,6 +37,7 @@ const h = asyncHandler;
 router.get("/refresh", h(refreshOrders));
 router.get("/query", h(queryOrders));
 router.get("/lookup", h(lookupOrder));
+router.post("/pull", pullOrders);
 router.post("/cleanup-handed-over", h(cleanupHandedOver));
 router.post("/cleanup-closed-retention", h(cleanupClosedRetention));
 router.post("/cleanup-label-pdfs", h(cleanupLabelPdfs));

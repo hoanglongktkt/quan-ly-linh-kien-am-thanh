@@ -10,6 +10,7 @@ import {
 const router = Router();
 
 router.post("/orders/sync", syncOrders);
+router.post("/orders/pull", pullOrders);
 router.get("/diagnostics", getDiagnostics);
 router.get("/debug/return-by-order", debugReturnByOrder);
 

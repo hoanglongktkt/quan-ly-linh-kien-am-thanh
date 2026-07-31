@@ -2604,6 +2604,18 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     releaseOrdersPullLock("pullIncremental_finally");
   }
 }
+
+/**
+ * Quét riêng CANCELLED / IN_CANCEL / TO_RETURN (+ return_list) — cửa sổ rộng hơn sync thường.
+ * Bật enrichTracking để gắn mã vận đơn ngay (phục vụ quét kiện hoàn).
+ */
+async function pullShopeeCancelReturnOrders(opts?: {
+  lookbackSec?: number;
+  shopIds?: string[];
+}): Promise<{
+  success: boolean;
+  pulled: number;
+  added: number;
   updated: number;
   shops: number;
   errors: any[];
@@ -13361,6 +13373,9 @@ async function startServer() {
   app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
   // Mount tường minh — tránh 404 khi router interop/MVC miss sau refactor.
+  app.post("/api/orders/pull", authMiddleware, pullOrders);
+  app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
+  app.post("/api/shopee/orders/pull", authMiddleware, pullOrders);
   app.post("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
   app.get("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
   app.post("/api/products/shopee-item-preview", authMiddleware, previewItemVariants);
@@ -15907,10 +15922,27 @@ async function startServer() {
   app.use(errorHandler);
 
   if (isDevelopmentRuntime) {
-    // The computed import keeps all development tooling out of server.cjs.
-    const developmentModulePath = ["./", "dev", "Server.ts"].join("");
-    const { setupDevelopmentMiddleware } = await import(developmentModulePath);
-    await setupDevelopmentMiddleware(app);
+    // Dynamic path keeps Vite out of the server.cjs bundle; resolve from APP_ROOT
+    // (and parent) so running dist/server.cjs does not crash with MODULE_NOT_FOUND.
+    try {
+      const { pathToFileURL } = await import("node:url");
+      const devServerFile = ["dev", "Server.ts"].join("");
+      const candidates = [
+        path.join(APP_ROOT, devServerFile),
+        path.join(APP_ROOT, "..", devServerFile),
+        path.join(process.cwd(), devServerFile),
+      ];
+      const found = candidates.find((p) => fs.existsSync(p));
+      if (!found) {
+        console.warn("[Boot] devServer.ts not found — skipping Vite middleware");
+      } else {
+        const { setupDevelopmentMiddleware } = await import(pathToFileURL(found).href);
+        await setupDevelopmentMiddleware(app);
+      }
+    } catch (devErr) {
+      console.error("[Boot] setupDevelopmentMiddleware failed:", devErr instanceof Error ? devErr.stack || devErr.message : devErr);
+      console.warn("[Boot] Continuing without Vite middleware so API routes stay up.");
+    }
   } else {
     if (isCpanelPassengerRuntime && process.env.NODE_ENV !== "production") {
       console.warn("[Boot] Passenger/cPanel detected without NODE_ENV=production; forcing static production runtime.");

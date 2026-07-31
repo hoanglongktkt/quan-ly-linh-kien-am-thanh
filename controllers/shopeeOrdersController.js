@@ -100,12 +100,12 @@ async function runOrdersPullBackground(opts) {
         shopIds: shopIds?.length ? shopIds : undefined,
       });
     } catch (cancelErr) {
-      console.error("[Background Sync Error]:", cancelErr?.message || cancelErr);
+      console.error("[API_SYNC_ERROR] Lỗi chi tiết:", cancelErr?.stack || cancelErr);
     }
     try {
       deps.invalidateOrdersRefreshCache();
     } catch (cacheErr) {
-      console.error("[Background Sync Error]:", cacheErr?.message || cacheErr);
+      console.error("[API_SYNC_ERROR] Lỗi chi tiết:", cacheErr?.stack || cacheErr);
     }
     const pulled = (result?.pulled || 0) + (cancelPull.pulled || 0);
     const added = (result?.added || 0) + (cancelPull.added || 0);
@@ -136,14 +136,14 @@ async function runOrdersPullBackground(opts) {
           success ? undefined : message,
         );
       } catch (finishErr) {
-        console.error("[Background Sync Error]:", finishErr?.message || finishErr);
+        console.error("[API_SYNC_ERROR] Lỗi chi tiết:", finishErr?.stack || finishErr);
       }
     }
     console.log(
       `[${logTag}] BG done pulled=${pulled} +${added}/~${updated} err=${errors.length} — ${message}`,
     );
   } catch (error) {
-    console.error("[Background Sync Error]:", error?.message || error);
+    console.error("[API_SYNC_ERROR] Lỗi chi tiết:", error?.stack || error);
     if (jobId) {
       try {
         await deps.finishSyncJob(
@@ -157,7 +157,7 @@ async function runOrdersPullBackground(opts) {
           error?.message || String(error),
         );
       } catch (finishErr) {
-        console.error("[Background Sync Error]:", finishErr?.message || finishErr);
+        console.error("[API_SYNC_ERROR] Lỗi chi tiết:", finishErr?.stack || finishErr);
       }
     }
     return;
@@ -193,7 +193,7 @@ export async function pullOrders(req, res) {
       });
     }
 
-    // Trả HTTP ngay — không await pull Shopee.
+    // Trả HTTP ngay — không await pull Shopee (tránh timeout / "không kết nối được").
     res.status(200).json({
       status: 200,
       success: true,
@@ -209,19 +209,17 @@ export async function pullOrders(req, res) {
         jobType: "shopee_orders_pull",
         logTag: "Orders Pull",
       }).catch((error) => {
-        console.error("[Background Sync Error]:", error?.message || error);
+        console.error("[API_SYNC_ERROR] Lỗi chi tiết:", error?.stack || error);
       });
     });
     return;
   } catch (error) {
-    console.error("[Background Sync Error]:", error?.message || error);
+    console.error("[API_SYNC_ERROR] Lỗi chi tiết:", error?.stack || error);
     if (!res.headersSent) {
-      return res.status(200).json({
-        status: 200,
-        success: true,
-        background: true,
-        warning: true,
-        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
+      return res.status(500).json({
+        success: false,
+        error: error?.message || String(error) || "orders_pull_failed",
+        message: error?.message || "Đồng bộ thất bại",
       });
     }
     return;
@@ -256,6 +254,7 @@ export async function syncOrders(req, res) {
       });
     }
 
+    // Trả HTTP ngay — sync chạy ngầm.
     res.status(200).json({
       status: 200,
       success: true,
@@ -271,19 +270,17 @@ export async function syncOrders(req, res) {
         jobType: "shopee_orders_sync",
         logTag: "Orders Sync",
       }).catch((error) => {
-        console.error("[Background Sync Error]:", error?.message || error);
+        console.error("[API_SYNC_ERROR] Lỗi chi tiết:", error?.stack || error);
       });
     });
     return;
   } catch (error) {
-    console.error("[Background Sync Error]:", error?.message || error);
+    console.error("[API_SYNC_ERROR] Lỗi chi tiết:", error?.stack || error);
     if (!res.headersSent) {
-      return res.status(200).json({
-        status: 200,
-        success: true,
-        background: true,
-        warning: true,
-        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
+      return res.status(500).json({
+        success: false,
+        error: error?.message || String(error) || "orders_sync_failed",
+        message: error?.message || "Đồng bộ thất bại",
       });
     }
     return;
@@ -292,17 +289,28 @@ export async function syncOrders(req, res) {
 
 /** GET /api/shopee/diagnostics */
 export async function getDiagnostics(req, res) {
-  const shopId = req.query.shop_id ? String(req.query.shop_id) : undefined;
-  console.log("[Shopee Diagnostics] Bắt đầu kiểm tra...", shopId ? `shop_id=${shopId}` : "");
-  const report = await runShopeeConnectivityDiagnostics(shopId);
-  console.log("[Shopee Diagnostics] Kết quả:", JSON.stringify(report, null, 2));
-  return res.status(report.ok ? 200 : 502).json({
-    success: report.ok,
-    summary: report.code,
-    ...report,
-    checkedAt: new Date().toISOString(),
-    backend: "cpanel-node",
-  });
+  try {
+    const shopId = req.query.shop_id ? String(req.query.shop_id) : undefined;
+    console.log("[Shopee Diagnostics] Bắt đầu kiểm tra...", shopId ? `shop_id=${shopId}` : "");
+    const report = await runShopeeConnectivityDiagnostics(shopId);
+    console.log("[Shopee Diagnostics] Kết quả:", JSON.stringify(report, null, 2));
+    return res.status(report.ok ? 200 : 502).json({
+      success: report.ok,
+      summary: report.code,
+      ...report,
+      checkedAt: new Date().toISOString(),
+      backend: "cpanel-node",
+    });
+  } catch (error) {
+    console.error("[API_SYNC_ERROR] Lỗi chi tiết:", error?.stack || error);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: error?.message || String(error) || "diagnostics_failed",
+      });
+    }
+    return;
+  }
 }
 
 /** GET /api/shopee/debug/return-by-order */
@@ -568,14 +576,13 @@ export async function syncFromShop(req, res) {
         pageResult.skippedItems.length > 0 ? pageResult.skippedItems.slice(0, 50) : undefined,
     });
   } catch (error) {
-    console.error("DB Save Error:", error);
-    console.error("[Sync From Shop] Exception:", error);
+    console.error("[API_SYNC_ERROR] Lỗi chi tiết:", error?.stack || error);
     const errObj = error instanceof Error ? error : new Error(String(error));
     if (!res.headersSent) {
       return res.status(500).json({
         success: false,
         message: errObj.message,
-        error: errObj.toString(),
+        error: errObj.message || errObj.toString(),
       });
     }
   }
