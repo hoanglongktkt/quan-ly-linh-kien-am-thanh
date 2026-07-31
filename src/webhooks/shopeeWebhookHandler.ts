@@ -1,5 +1,6 @@
 import express, { type Router } from "express";
-import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
+// Signature check tạm tắt — không import verify để tránh từ chối / lỗi HMAC.
+// import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
 
 type WebhookProcessor = (payload: Record<string, unknown>) => Promise<void>;
 
@@ -88,12 +89,12 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
 function ackShopeeOk(res: express.Response): void {
   if (res.headersSent) return;
   // Shopee Live Push: HTTP 200 (+ body success) = push thành công.
-  res.status(200).json({ result: "success" });
+  res.status(200).json({ status: "success" });
 }
 
 /**
  * Tạo endpoint POST /api/webhook/shopee.
- * LUÔN trả 200 OK ngay lập tức trước mọi validate/DB/API — cắt cảnh báo Live Push fail.
+ * SIÊU DỄ DÃI: LUÔN trả 200 OK ngay lập tức — không HMAC, không validate chặn request.
  * Xử lý payload chạy ngầm sau khi response đã đóng.
  */
 export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Router {
@@ -106,11 +107,11 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
   });
 
   router.post("/shopee", express.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
-    // 1) ACK ngay — không chờ HMAC / parse / queue / DB.
+    // 1) ACK 200 NGAY — trước mọi validate / HMAC / parse / queue / DB.
     ackShopeeOk(res);
 
     const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-    const bodyPreview = rawBody.toString("utf8").slice(0, 4000);
+    const bodyText = rawBody.toString("utf8");
     const authHeader = req.get("authorization");
 
     console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee — ACK 200 sent; headers:", {
@@ -119,41 +120,27 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
       host: req.get("host") || "",
       xfProto: req.get("x-forwarded-proto") || "",
     });
-    console.log("[WEBHOOK RECEIVED] incoming payload (raw):", bodyPreview);
+    // In toàn bộ body Shopee gửi sang để debug Live Push.
+    console.log("[WEBHOOK RECEIVED] req.body (full):", bodyText);
 
     // 2) Xử lý ngầm sau khi socket ACK đã gửi.
     setImmediate(() => {
       try {
-        const configured = String(
-          process.env.SHOPEE_WEBHOOK_URL || process.env.APP_URL || process.env.API_BASE_URL || "",
-        )
-          .trim()
-          .replace(/\/$/, "");
-        const forwardedProto = String(req.get("x-forwarded-proto") || "")
-          .split(",")[0]
-          .trim();
-        const proto = forwardedProto || req.protocol || "https";
-        const host = String(req.get("x-forwarded-host") || req.get("host") || "")
-          .split(",")[0]
-          .trim();
-        const pathName = String(req.originalUrl || req.url || "/api/webhook/shopee").split("?")[0];
-        const urlCandidates = [
-          configured ? `${configured}/api/webhook/shopee` : "",
-          configured ? `${configured}${pathName}` : "",
-          host ? `${proto}://${host}${pathName}` : "",
-          host ? `https://${host}${pathName}` : "",
-          host ? `http://${host}${pathName}` : "",
-          "https://quanly.linhkienamthanh.net/api/webhook/shopee",
-          "https://api.linhkienamthanh.net/api/webhook/shopee",
-        ].filter(Boolean);
-
-        const hmacOk = verifyShopeeWebhookSignature(rawBody, authHeader, urlCandidates);
-        if (!hmacOk) {
-          // Emergency: vẫn tiếp tục xử lý nếu JSON hợp lệ — không bao giờ trả 401.
-          console.warn(
-            "[Shopee Webhook] HMAC warn (ignored for ACK) — vẫn xử lý ngầm nếu JSON OK. " +
-              `authPresent=${Boolean(authHeader)} bodyBytes=${rawBody.length}`,
-          );
+        // Signature verification TẠM TẮT — chỉ log nếu có auth header, KHÔNG bao giờ chặn.
+        try {
+          if (authHeader) {
+            console.log(
+              "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=true bodyBytes=" +
+                rawBody.length,
+            );
+          } else {
+            console.log(
+              "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=false bodyBytes=" +
+                rawBody.length,
+            );
+          }
+        } catch (sigErr) {
+          console.warn("[Shopee Webhook] Signature check error (ignored):", sigErr);
         }
 
         let payload: Record<string, unknown> | null = null;
@@ -162,9 +149,10 @@ export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Rou
             console.log("[Shopee Webhook] Empty body after ACK — nothing to process.");
             return;
           }
-          const parsed: unknown = JSON.parse(rawBody.toString("utf8"));
+          const parsed: unknown = JSON.parse(bodyText);
           if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
             payload = parsed as Record<string, unknown>;
+            console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
           } else {
             console.error("[Shopee Webhook] Background — payload không phải object:", typeof parsed);
           }

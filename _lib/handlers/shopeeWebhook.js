@@ -12,9 +12,10 @@ export async function handleShopeeWebhook(req, res) {
 
   if (req.method === 'POST') {
     if (!res.headersSent) {
-      res.status(200).json({ result: 'success' });
+      res.status(200).json({ status: 'success' });
     }
     console.log(`${LOG} POST ACK 200 (edge/vercel) — prefer backend /api/webhook/shopee for full processing`);
+    console.log(`${LOG} req.body (full):`, req.body);
     return;
   }
 

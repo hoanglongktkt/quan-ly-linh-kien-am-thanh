@@ -13387,7 +13387,7 @@ async function startServer() {
       "/api/shopee/webhook/",
     ],
     (_req, res) => {
-      if (!res.headersSent) res.status(200).json({ result: "success" });
+      if (!res.headersSent) res.status(200).json({ status: "success" });
       console.warn(
         "[Shopee Webhook] Legacy path ACK 200 — chuyển Push URL sang /api/webhook/shopee",
       );
