@@ -17,6 +17,8 @@ let deps = {
   persistPendingShopeeCheckFlag: async () => {},
   /** Full bulk sync handler body — inject từ server. */
   handleShipBulk: null,
+  /** Single-API: ship + tracking + PDF — inject từ server. */
+  handleFastProcess: null,
   executeShipOrderBackgroundJob: null,
   shipOrderJobs: new Map(),
   createShipOrderJobId: () => `ship-${Date.now()}`,
@@ -121,6 +123,14 @@ export async function shipOrderBulk(req, res) {
     return deps.handleShipBulk(req, res);
   }
   return res.status(500).json({ success: false, message: "ship bulk chưa khởi tạo" });
+}
+
+/** POST /api/orders/fast-process — xác nhận + lấy mã + PDF trong 1 request */
+export async function fastProcessOrders(req, res) {
+  if (typeof deps.handleFastProcess === "function") {
+    return deps.handleFastProcess(req, res);
+  }
+  return res.status(500).json({ success: false, message: "fast-process chưa khởi tạo" });
 }
 
 /** POST /api/shopee/ship-order/bulk-async */

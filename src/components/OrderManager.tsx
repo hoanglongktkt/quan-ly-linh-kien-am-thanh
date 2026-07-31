@@ -2332,12 +2332,11 @@ export default function OrderManager({
       const jobId = startData.jobId;
       const deadline = Date.now() + 3 * 60 * 1000;
       let pollCount = 0;
-      opts?.onStatus?.('Đang chuẩn bị tạo PDF vận đơn...');
+      opts?.onStatus?.('Đang tạo PDF vận đơn...');
       while (Date.now() < deadline) {
-        // Lần đầu poll ngay (delay 0); sau đó backoff 400/800/1200 để giảm request thừa.
-        const pollDelay = pollCount === 0 ? 0 : pollCount < 3 ? 400 : pollCount < 8 ? 800 : 1200;
-        if (pollDelay > 0) {
-          await new Promise((r) => setTimeout(r, pollDelay));
+        // Lần đầu poll ngay; sau đó mỗi 300ms (không fake backoff).
+        if (pollCount > 0) {
+          await new Promise((r) => setTimeout(r, 300));
         }
         pollCount += 1;
         const jobRes = await fetch(`/api/shopee/print-document/job/${jobId}`, {
@@ -2600,8 +2599,12 @@ export default function OrderManager({
     setIsPrintingFromSummary(false);
   };
 
-  const scheduleCloseProgressOverlay = (delayMs = 1800) => {
+  const scheduleCloseProgressOverlay = (delayMs = 0) => {
     if (progressCloseTimerRef.current) clearTimeout(progressCloseTimerRef.current);
+    if (delayMs <= 0) {
+      clearShipProgressOverlay();
+      return;
+    }
     progressCloseTimerRef.current = setTimeout(() => {
       clearShipProgressOverlay();
     }, delayMs);
@@ -2612,7 +2615,7 @@ export default function OrderManager({
     if (message) setProgressMessage(message);
     if (progressTotal > 0) setProgressCompleted(progressTotal);
     if (options?.autoClose !== false) {
-      scheduleCloseProgressOverlay(1800);
+      scheduleCloseProgressOverlay(0);
     }
   };
 
@@ -2719,8 +2722,10 @@ export default function OrderManager({
   const pollShipJobUntilDone = async (jobId: string, total: number): Promise<any | null> => {
     const deadline = Date.now() + 5 * 60 * 1000;
     let finalJob: any | null = null;
+    let pollCount = 0;
     while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (pollCount > 0) await new Promise((resolve) => setTimeout(resolve, 300));
+      pollCount += 1;
       try {
         const response = await fetch(`/api/shopee/ship-order/job/${jobId}`, { headers: authHeaders() });
         if (!response.ok) throw new Error('Không thể đọc tiến độ xác nhận.');
@@ -2804,6 +2809,14 @@ export default function OrderManager({
       return;
     }
 
+    // Reserve tab ngay trong user-gesture — tránh popup blocker sau await.
+    let reservedWindow: Window | null = null;
+    try {
+      reservedWindow = window.open('about:blank', '_blank');
+    } catch {
+      reservedWindow = null;
+    }
+
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
     const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
       shipMethod,
@@ -2818,8 +2831,8 @@ export default function OrderManager({
     setProgressCompleted(0);
     setProgressTotal(totalQueued);
     setProgressDone(false);
-    setProgressMessage(`Đang gửi yêu cầu xác nhận 0/${totalQueued} đơn...`);
-    showToast('Đang gửi yêu cầu...');
+    setProgressMessage('Đang xử lý & tạo vận đơn...');
+    showToast('Đang xác nhận & in nhanh...');
 
     onAddLog({
       id: `log-${Date.now()}`,
@@ -2827,38 +2840,111 @@ export default function OrderManager({
       channel: 'all',
       type: 'stock_sync',
       status: 'success',
-      message: `[LOGISTICS API] Xác nhận ship_order (${shipMethod === 'pickup' ? 'pickup' : 'dropoff'}) cho ${orderSns.length} đơn: ${orderSns.join(', ')} — concurrent, PDF nền.`,
+      message: `[LOGISTICS API] fast-process (${shipMethod === 'pickup' ? 'pickup' : 'dropoff'}) ${orderSns.length} đơn: ${orderSns.join(', ')}`,
     });
 
     try {
-      const res = await fetch('/api/shopee/ship-order/bulk-async', {
+      const res = await fetch('/api/orders/fast-process', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ orderIds, orderSns, method: shipMethod }),
       });
 
       const data = await readResponseJson<any>(res);
-      if (!res.ok && res.status !== 202) {
-        showToast(data.message || data.error || data.detail || 'Không thể bắt đầu xác nhận đơn hàng.');
+      if (!res.ok) {
+        closeReservedPrintWindow(reservedWindow);
+        showToast(data.message || data.error || data.detail || 'Xác nhận & In nhanh thất bại.');
+        setProgressDone(true);
+        setProgressMessage(data.message || 'Xác nhận & In nhanh thất bại');
         return;
       }
 
       setSelectedOrderIds([]);
       setActiveSubTab('processed');
 
-      if (!data.jobId) {
-        showToast('Máy chủ không trả về mã tiến trình xác nhận.');
+      const summary = buildShipConfirmSummary(data || {}, totalQueued);
+      setShipJobResults(Array.isArray(data.results) ? data.results : []);
+      setProgressCompleted(summary.successCount);
+      setProgressTotal(Math.max(totalQueued, summary.total, summary.successCount + summary.failCount));
+
+      if (summary.successCount > 0) {
+        const queuedKeys = new Set<string>();
+        for (const id of summary.successfulOrderIds) {
+          const s = String(id || '').trim();
+          if (s) {
+            queuedKeys.add(s);
+            queuedKeys.add(`shopee-${s.replace(/^shopee-/i, '')}`);
+          }
+        }
+        for (const r of Array.isArray(data.results) ? data.results : []) {
+          if (!r?.success) continue;
+          const id = String(r.orderId || '').trim();
+          const sn = String(r.orderSn || '').trim();
+          if (id) queuedKeys.add(id);
+          if (sn) {
+            queuedKeys.add(sn);
+            queuedKeys.add(`shopee-${sn}`);
+          }
+        }
+        const patchedBase = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
+          markPrinted: false,
+          shipMethod,
+        });
+        ordersRef.current = patchedBase;
+        onUpdateOrders(patchedBase);
+      }
+
+      onAddLog({
+        id: `log-${Date.now() + 2}`,
+        timestamp: new Date().toISOString(),
+        channel: 'all',
+        type: 'stock_sync',
+        status: summary.successCount > 0 ? 'success' : 'failed',
+        message: `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn. (${shipMethod === 'pickup' ? 'Lấy hàng' : 'Tự mang ra bưu cục'})`,
+      });
+
+      const printUrl = String(data.url || data.mergedUrl || data.printDocument?.url || '').trim();
+      const pdfFilename = String(data.pdfFilename || data.printDocument?.pdfFilename || '').trim();
+
+      if (printUrl && summary.successCount > 0) {
+        const idSet = new Set(summary.successfulOrderIds.map(String));
+        const patched = ordersRef.current.map((o) => {
+          if (!idSet.has(String(o.id)) && !idSet.has(String(o.orderSn)) && !idSet.has(`shopee-${o.orderSn}`)) {
+            return o;
+          }
+          return {
+            ...o,
+            labelUrl: printUrl,
+            pdfUrl: printUrl,
+            pdfFilename: pdfFilename || o.pdfFilename,
+            isPrinted: true,
+          };
+        });
+        ordersRef.current = patched;
+        onUpdateOrders(patched);
+
+        setShipConfirmSummary(null);
+        await openShopeeLabelFromStream(
+          { url: printUrl, pdfFilename: pdfFilename || undefined },
+          { reservedWindow },
+        );
+        markProgressComplete('Xác nhận & In thành công!');
+        if (data.message) showToast(data.message);
         return;
       }
 
-      setProgressMessage('Đã tiếp nhận, đang xác nhận đơn trên Shopee...');
-      const total = Number(data.total) || totalQueued;
-      const finalJob = await pollShipJobUntilDone(String(data.jobId), total);
-      await finishShipJobResult(finalJob, total);
-      return;
+      closeReservedPrintWindow(reservedWindow);
+      setProgressDone(true);
+      setShipConfirmSummary(summary);
+      setProgressMessage(
+        summary.successCount > 0
+          ? 'Đã xác nhận — chưa lấy được PDF, bấm In đơn để thử lại'
+          : 'Kết quả xác nhận hàng loạt',
+      );
     } catch (err) {
+      closeReservedPrintWindow(reservedWindow);
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
-      showToast(`Không thể kết nối API chuẩn bị hàng: ${msg}`);
+      showToast(`Không thể kết nối API: ${msg}`);
       setProgressDone(true);
       setProgressMessage(`Xác nhận thất bại: ${msg}`);
     } finally {
@@ -5550,7 +5636,7 @@ export default function OrderManager({
                     {progressDone ? (
                       <>
                         <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Modal sẽ tự đóng sau vài giây</span>
+                        <span>Hoàn tất</span>
                       </>
                     ) : progressMessage.includes('PDF') || progressMessage.includes('vận đơn') ? (
                       <>
@@ -5583,9 +5669,9 @@ export default function OrderManager({
               <div className="flex items-center gap-2">
                 <Truck className="w-5 h-5 text-blue-400" />
                 <div>
-                  <h3 className="text-sm font-bold">Xác nhận đơn hàng</h3>
+                  <h3 className="text-sm font-bold">Xác nhận &amp; In nhanh</h3>
                   <p className="text-[10px] text-slate-400">
-                    Chọn phương thức giao vận cho {shipConfirmOrders.length} đơn hàng {shipConfirmOrders.length === 1 ? `#${shipConfirmOrders[0].orderSn}` : 'đã chọn'}
+                    Chọn phương thức giao vận — hệ thống xác nhận và in vận đơn trong 1 bước cho {shipConfirmOrders.length} đơn {shipConfirmOrders.length === 1 ? `#${shipConfirmOrders[0].orderSn}` : 'đã chọn'}
                   </p>
                 </div>
               </div>
@@ -5648,7 +5734,7 @@ export default function OrderManager({
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 disabled:opacity-60"
               >
                 {isShipping && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                <span>{isShipping ? 'Đang gọi API vận chuyển...' : 'Xác nhận'}</span>
+                <span>{isShipping ? 'Đang xử lý...' : 'Xác nhận & In nhanh'}</span>
               </button>
             </div>
           </div>

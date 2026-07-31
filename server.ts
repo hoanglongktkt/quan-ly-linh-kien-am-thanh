@@ -650,8 +650,8 @@ function removeExistingLabelFilesForOrderSns(orderSns: string[]): number {
 }
 
 /**
- * Lưu PDF vào RAM + storage/labels/. Từ chối buffer rỗng / không phải PDF.
- * Trả về tên file an toàn sau khi đã xác minh tồn tại và size > 0.
+ * Lưu PDF vào RAM trước (phục vụ FE ngay), ghi đĩa nền — tránh chặn I/O cPanel.
+ * Từ chối buffer rỗng / không phải PDF.
  */
 function putLabelMem(filename: string, buffer: Buffer, contentType?: string): string {
   const safe = safeLabelFilename(filename);
@@ -675,58 +675,33 @@ function putLabelMem(filename: string, buffer: Buffer, contentType?: string): st
   }
 
   try {
-    ensureLabelsDir();
-    assertLabelsDirWritable();
     evictLabelMemIfNeeded();
-    cleanupExpiredLabelFiles();
 
     const snMatch =
       safe.match(/^order_([A-Za-z0-9_-]+?)(?:_gop_\d+)?(?:_\d+)?\.pdf$/i) ||
       safe.match(/^([A-Za-z0-9_-]+?)(?:_gop_\d+_don)?\.pdf$/i);
     if (snMatch?.[1]) removeExistingLabelFilesForOrderSns([snMatch[1]]);
 
-    const dest = path.join(LABELS_DIR, safe);
-    console.log(`[Labels] Đường dẫn lưu file dự kiến: ${dest}`);
-    fs.writeFileSync(dest, buffer);
-
-    if (!fs.existsSync(dest)) {
-      throw new Error(`Ghi PDF thất bại — file không tồn tại sau writeFileSync: ${dest}`);
-    }
-    const st = fs.statSync(dest);
-    if (!st.isFile() || st.size <= 0) {
-      try {
-        fs.unlinkSync(dest);
-      } catch {
-        /* ignore */
-      }
-      throw new Error(`Ghi PDF thất bại — file trên đĩa rỗng: ${dest}`);
-    }
-    if (st.size !== buffer.length) {
-      console.warn(`[Labels] Cảnh báo size lệch: buffer=${buffer.length} disk=${st.size} → ${dest}`);
-    }
-    const head = Buffer.alloc(5);
-    const fd = fs.openSync(dest, "r");
-    try {
-      fs.readSync(fd, head, 0, 5, 0);
-    } finally {
-      fs.closeSync(fd);
-    }
-    if (head.toString("utf8", 0, 4) !== "%PDF") {
-      try {
-        fs.unlinkSync(dest);
-      } catch {
-        /* ignore */
-      }
-      throw new Error(`File ghi ra không còn là PDF hợp lệ: ${safe}`);
-    }
-
+    // RAM first — FE lấy /api/public/labels từ cache ngay, không chờ disk.
     labelMemCache.set(safe, {
       buf: buffer,
       expires: Date.now() + LABEL_RAM_TTL_MS,
       contentType: "application/pdf",
     });
 
-    console.log(`[Labels] Kết quả: OK — Saved ${safe} (${st.size} bytes) → ${dest}`);
+    const dest = path.join(LABELS_DIR, safe);
+    console.log(`[Labels] Đường dẫn lưu file dự kiến: ${dest}`);
+    setImmediate(() => {
+      try {
+        ensureLabelsDir();
+        fs.writeFileSync(dest, buffer);
+        console.log(`[Labels] Kết quả: OK — Disk ${safe} (${buffer.length} bytes) → ${dest}`);
+      } catch (err: any) {
+        console.warn(`[Labels] Ghi đĩa nền thất bại ${safe}:`, err?.message || err);
+      }
+    });
+
+    console.log(`[Labels] Kết quả: OK — RAM ${safe} (${buffer.length} bytes)`);
     return safe;
   } catch (err: any) {
     console.error(`[Labels] Kết quả: Lỗi — ${err?.message || err}`);
@@ -1023,8 +998,8 @@ const SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS = 50;
 const SHOPEE_SYNC_CHUNK_SIZE = SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS;
 /** Nghỉ 1s giữa các lô — nhường GC / giải phóng process cPanel. */
 const ORDER_SYNC_SAVE_DELAY_MS = 1000;
-/** Nghỉ giữa mỗi lần get_tracking_number — tránh 429 (200–500ms). */
-const SHOPEE_TRACKING_FETCH_DELAY_MS = 350;
+/** Nghỉ giữa mỗi lần get_tracking_number — tránh 429 (poll nhanh 300ms). */
+const SHOPEE_TRACKING_FETCH_DELAY_MS = 300;
 /** Nghỉ giữa các chunk đơn hàng (đồng bộ nền) = 1s. */
 const SHOPEE_SYNC_CHUNK_DELAY_MS = 1000;
 const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
@@ -8196,7 +8171,7 @@ async function shopeeGetTrackingNumberWithRetry(
       last = { error: "exception", message: err?.message || String(err) };
       if (attempt >= maxAttempts) return last;
     }
-    await sleep(400 * attempt);
+    await sleep(300);
   }
   return last;
 }
@@ -8918,9 +8893,7 @@ async function ensureOrderTrackingNoForPrint(
       order.isPrepared = true;
     }
 
-    // Chỉ chờ lan truyền khi VỪA ship_order. Đơn đã prepared: gọi tracking ngay (0ms).
-    if (shipResult) await sleep(400);
-
+    // Không sleep giả — gọi get_tracking_number ngay (Shopee trả rỗng thì retry 300ms bên trong).
     console.log(
       `[Shopee Print Gate] get_tracking_number order_sn=${order.orderSn} package=${order.packageNumber || "-"}`,
     );
@@ -13599,6 +13572,185 @@ async function startServer() {
     };
   }
 
+  /**
+   * Single-API orchestration: ship_order → (DB persist ∥ tracking+PDF) → trả URL in.
+   * FE chỉ gọi 1 lần /api/orders/fast-process — không poll job / không chia bước.
+   */
+  const handleFastProcess = async (req: any, res: any) => {
+    const t0 = Date.now();
+    try {
+      const { orderIds, orderSns, method } = req.body || {};
+      const shipMethod: ShipMethod = method === "dropoff" ? "dropoff" : "pickup";
+      const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
+      const snList = Array.isArray(orderSns) ? orderSns.map(String) : [];
+      if (idList.length === 0 && snList.length === 0) {
+        return res.status(400).json({ error: "Thiếu danh sách orderIds hoặc orderSns." });
+      }
+
+      let orders: any[] = [];
+      try {
+        orders = await loadOrdersForShipScoped(idList, snList);
+      } catch (loadErr: any) {
+        console.warn("[Fast Process] loadOrdersForShipScoped:", loadErr?.message || loadErr);
+      }
+      if (!orders.length) {
+        try {
+          const loaded = await loadOrdersForApi({ readOnly: true });
+          const idSet = new Set([...idList, ...snList, ...snList.map((s) => `shopee-${s}`)]);
+          orders = (loaded.orders || []).filter(
+            (o: any) =>
+              idSet.has(String(o.id || "")) ||
+              idSet.has(String(o.orderSn || "")) ||
+              idSet.has(`shopee-${o.orderSn}`),
+          );
+        } catch {
+          orders = [];
+        }
+      }
+      const toShip = resolveOrdersFromRequest(orders, idList, snList);
+      if (toShip.length === 0) {
+        return res.status(404).json({
+          error: "orders_not_found",
+          message: "Không tìm thấy đơn nào trong database khớp với danh sách gửi lên.",
+          successCount: 0,
+          total: 0,
+          results: [],
+          url: null,
+        });
+      }
+
+      console.log(
+        `[Fast Process] Bắt đầu ${toShip.length} đơn method=${shipMethod} — ship rồi song song DB+PDF`,
+      );
+
+      const batch = await processShipOrderBatch(orders, toShip, shipMethod);
+      const summary = buildShipConfirmSummaryPayload(toShip.length, {
+        successCount: batch.successCount,
+        failedCount: batch.failedCount,
+        failedOrders: batch.failedOrders,
+        results: batch.results,
+      });
+
+      const mongoPatches = toShip.map(({ index, order }) => {
+        const p = orders[index] || order;
+        return {
+          orderSn: String(p.orderSn || order.orderSn || ""),
+          shopId: p.shopId ? String(p.shopId) : undefined,
+          status: p.status,
+          shopee_order_status: p.shopee_order_status,
+          ship_method: p.ship_method || shipMethod,
+          fulfillment_type: p.fulfillment_type || shipMethod,
+          tracking_no: String(p.tracking_no || p.trackingNumber || "").trim() || undefined,
+          isPrepared: Boolean(p.isPrepared),
+          shopeeSyncPending: Boolean(p.shopeeSyncPending),
+          shopeeSyncError: p.shopeeSyncError != null ? String(p.shopeeSyncError) : null,
+        };
+      }).filter((p) => p.orderSn);
+
+      const successOrders = batch.successfulShopeeOrders.slice();
+
+      // Song song: lưu Mongo ∥ lấy mã + kéo PDF Shopee (không chờ DB xong mới gọi Shopee).
+      const persistPromise = (async () => {
+        try {
+          await bulkUpdateShippedOrdersBySn(mongoPatches);
+        } catch (err: any) {
+          console.warn("[Fast Process] bulkUpdateShippedOrdersBySn:", err?.message || err);
+          try {
+            const changed = toShip.map(({ index }) => orders[index]).filter(Boolean);
+            await persistOrdersToDatabase(orders, changed);
+          } catch (err2: any) {
+            console.warn("[Fast Process] persistOrdersToDatabase fallback:", err2?.message || err2);
+          }
+        }
+      })();
+
+      const printPromise = (async () => {
+        if (successOrders.length === 0) return null;
+        try {
+          return await autoPrintLabelsForShopeeOrders(orders, successOrders);
+        } catch (err: any) {
+          console.error("[Fast Process] autoPrintLabels:", err?.message || err);
+          return {
+            url: null,
+            printedOrderSns: [] as string[],
+            skippedOrders: [{ error: "print_failed", message: String(err?.message || err) }],
+            message: String(err?.message || err),
+          };
+        }
+      })();
+
+      const [, printResult] = await Promise.all([persistPromise, printPromise]);
+
+      const printUrl = printResult?.url || null;
+      const pdfFilename = printResult?.pdfFilename || null;
+      const printedOrderSns = Array.isArray(printResult?.printedOrderSns)
+        ? printResult.printedOrderSns
+        : [];
+
+      if (printUrl && printedOrderSns.length > 0) {
+        const printedSet = new Set(printedOrderSns.map(String));
+        for (const o of successOrders) {
+          if (!printedSet.has(String(o.orderSn))) continue;
+          o.isPrinted = true;
+          o.labelUrl = printUrl;
+          o.pdfUrl = printUrl;
+          if (pdfFilename) o.pdfFilename = pdfFilename;
+        }
+        // Persist PDF meta nền — không chặn response.
+        setImmediate(() => {
+          void bulkUpdateShippedOrdersBySn(
+            successOrders
+              .filter((o) => printedSet.has(String(o.orderSn)))
+              .map((o) => ({
+                orderSn: String(o.orderSn || ""),
+                shopId: o.shopId ? String(o.shopId) : undefined,
+                status: o.status,
+                shopee_order_status: o.shopee_order_status,
+                tracking_no: String(o.tracking_no || o.trackingNumber || "").trim() || undefined,
+                isPrepared: true,
+              }))
+              .filter((p) => p.orderSn),
+          ).catch(() => {});
+        });
+      }
+
+      const elapsed = Date.now() - t0;
+      let message = `Thành công: ${summary.successCount} đơn. Thất bại: ${summary.failCount} đơn`;
+      if (printUrl) message += ` — PDF sẵn sàng`;
+      else if (successOrders.length > 0) message += ` — chưa lấy được PDF`;
+      message += ` (${elapsed}ms).`;
+
+      console.log(`[Fast Process] Done ${summary.successCount}/${toShip.length} url=${printUrl || "-"} ${elapsed}ms`);
+
+      return res.json({
+        ...summary,
+        failedCount: summary.failCount,
+        failedOrders: summary.failedOrderDetails,
+        results: batch.results,
+        url: printUrl,
+        mergedUrl: printUrl,
+        pdfFilename,
+        printDocument: printUrl
+          ? {
+              url: printUrl,
+              pdfFilename,
+              printedOrderSns,
+              skippedOrders: printResult?.skippedOrders || [],
+            }
+          : null,
+        message,
+        elapsedMs: elapsed,
+      });
+    } catch (error: any) {
+      console.error("[Fast Process] Lỗi nội bộ:", error?.stack || error);
+      return res.status(500).json({
+        success: false,
+        message: "Lỗi nội bộ server: " + (error?.message || String(error)),
+        url: null,
+      });
+    }
+  };
+
   // Bulk: arrange shipment ONLY ("Xác nhận Chuẩn bị hàng loạt").
   // KHÔNG tạo/fetch PDF tại đây — user in thủ công bằng nút "In đơn" sau.
   const handleShipBulk = async (req: any, res: any) => {
@@ -13950,7 +14102,7 @@ async function startServer() {
     // In vận đơn: 1 lần create (hoặc primed) + poll ngắn; recreate 1 lần nếu chưa READY.
     // Tránh poll 20 lần rồi break (hồi quy chậm khi primed miss).
     const MAX_RETRIES = 1;
-    const RETRY_DELAY_MS = 600;
+    const RETRY_DELAY_MS = 300;
     let lastError: { error?: string; message?: string } = {};
     let didForceRefresh = false;
     let usePrimedDocument = hasPrimedShippingDocuments(shopId, orderList);
@@ -14198,10 +14350,9 @@ async function startServer() {
       `[Shopee Print] create_shipping_document OK ${cleanOrderList.length}/${enrichedOrderList.length} đơn (mọi ĐVVC, không lọc SPX): ${cleanOrderList.map((o) => o.order_sn).join(", ")}`,
     );
 
-    // Poll get_shipping_document_result — lần đầu ngay; 350ms × 10 ≈ 3.5s rồi recreate.
-    // Tránh poll 20× (hồi quy chậm khi primed/create chưa READY).
-    const MAX_POLL_ATTEMPTS = 10;
-    const POLL_INTERVAL_MS = 350;
+    // Poll get_shipping_document_result — lần đầu ngay; 300ms × 12 ≈ 3.6s rồi recreate.
+    const MAX_POLL_ATTEMPTS = 12;
+    const POLL_INTERVAL_MS = 300;
     let pendingList = [...cleanOrderList];
     let readyDownloadList: typeof cleanOrderList = [];
     let pollFailed: any[] = [];
@@ -14356,21 +14507,10 @@ async function startServer() {
       groups[o.shopId].push(o);
     }
 
-    // BẮT BUỘC: await lấy mã vận đơn (retry) trước khi render PDF auto-print.
+    // BẮT BUỘC: await lấy mã vận đơn (retry) trước khi render PDF auto-print — không fake delay.
     console.log(`[Ship Order Bulk Auto-Print] Gate tracking cho ${candidates.length} đơn...`);
-    await ensureTrackingBeforePrint(allOrders, candidates, { retries: 1 });
-    saveOrders(allOrders);
-
-    // Chỉ chờ ngắn nếu vẫn còn đơn thiếu mã — không chờ cứng 2.5s khi đã đủ tracking.
-    const stillNeedTn = candidates.some((o: any) => !orderHasPrintableTracking(o));
-    if (stillNeedTn) {
-      console.log(
-        `[Ship Order Bulk Auto-Print] Còn đơn thiếu mã — chờ 400ms rồi quét lại (${candidates.length} đơn)...`,
-      );
-      await new Promise((r) => setTimeout(r, 400));
-      await ensureTrackingBeforePrint(allOrders, candidates, { retries: 1 });
-      saveOrders(allOrders);
-    }
+    await ensureTrackingBeforePrint(allOrders, candidates, { retries: 2 });
+    // Không saveOrders full-table — persist tracking đã chạy trong ensureTrackingBeforePrint.
 
     const printedOrderSns: string[] = [];
     const skippedOrders: any[] = [];
@@ -14416,7 +14556,6 @@ async function startServer() {
       const printedSet = new Set(printedOrderSns);
       const stillMissing = ready.filter((o: any) => !printedSet.has(o.orderSn));
       if (stillMissing.length > 0) {
-        await sleep(200);
         const retryList = stillMissing.map((o: any) => ({
           order_sn: o.orderSn,
           package_number: o.packageNumber,
@@ -14822,6 +14961,7 @@ async function startServer() {
     persistOrdersToDatabase,
     persistPendingShopeeCheckFlag,
     handleShipBulk,
+    handleFastProcess,
     executeShipOrderBackgroundJob,
     shipOrderJobs,
     createShipOrderJobId,
@@ -14856,13 +14996,8 @@ async function startServer() {
       return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds." });
     }
 
-    // Chờ Shopee tạo vận đơn sau ship_order (FE gửi waitMs khi auto-print sau xác nhận).
-    const waitMs = Math.min(3000, Math.max(0, Number(rawWaitMs) || 0));
-    if (waitMs > 0) {
-      markPrintPhase("tracking", "Đang chờ Shopee đồng bộ mã vận đơn...");
-      console.log(`[Shopee Print] Chờ ${waitMs}ms trước create_shipping_document...`);
-      await new Promise((r) => setTimeout(r, waitMs));
-    }
+    // Bỏ fake waitMs — tracking/PDF poll real-time (retry 300ms trong generate).
+    void rawWaitMs;
 
     // Mongo là SSOT (giống ship-order) — KHÔNG dùng orders.json legacy (dễ thiếu shopId / miss đơn sau sync ngầm).
     const idList = orderIds.map((id: any) => String(id || "").trim()).filter(Boolean);
@@ -15094,7 +15229,6 @@ async function startServer() {
       const printedSet = new Set(allPrintedSns);
       const stillMissing = readyToPrint.filter((o: any) => !printedSet.has(o.orderSn));
       if (stillMissing.length > 0) {
-        await sleep(200);
         const retryList = stillMissing.map((o: any) => ({
           order_sn: o.orderSn,
           package_number: o.packageNumber,

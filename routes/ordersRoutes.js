@@ -21,6 +21,7 @@ import {
   createManualOrder,
 } from "../controllers/ordersController.js";
 import { pullOrders } from "../controllers/shopeeOrdersController.js";
+import { fastProcessOrders } from "../controllers/shopeeShipController.js";
 import { saveScanOrders, listDonHoanHuy } from "../controllers/scanController.js";
 import {
   enqueueScanBg,
@@ -38,6 +39,7 @@ router.get("/refresh", h(refreshOrders));
 router.get("/query", h(queryOrders));
 router.get("/lookup", h(lookupOrder));
 router.post("/pull", pullOrders);
+router.post("/fast-process", fastProcessOrders);
 router.post("/cleanup-handed-over", h(cleanupHandedOver));
 router.post("/cleanup-closed-retention", h(cleanupClosedRetention));
 router.post("/cleanup-label-pdfs", h(cleanupLabelPdfs));
