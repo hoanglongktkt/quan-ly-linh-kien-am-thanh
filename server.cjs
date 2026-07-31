@@ -104600,8 +104600,8 @@ async function runOrdersPullBackground(opts) {
 }
 async function pullOrders(req, res) {
   try {
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
-    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
+    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 120);
+    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(Math.max(hoursRaw, 72), 15 * 24) : 120;
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean) : shopIdsRaw ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean) : void 0;
@@ -104650,8 +104650,8 @@ async function pullOrders(req, res) {
 }
 async function syncOrders(req, res) {
   try {
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
-    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
+    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 120);
+    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(Math.max(hoursRaw, 72), 15 * 24) : 120;
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean) : shopIdsRaw ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean) : void 0;
@@ -106345,7 +106345,8 @@ var SHOPEE_SYNC_CHUNK_DELAY_MS = 1e3;
 var SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1e3;
 var SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 var SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 8;
-var SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
+var SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 5 * 24 * 60 * 60;
+var SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 var SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
@@ -106738,14 +106739,16 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
   const defaultFrom = Math.floor(Date.now() / 1e3) - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
   const timeFrom = toShopeeUnixSeconds(opts?.timeFrom, defaultFrom);
   const maxWindow = 15 * 24 * 60 * 60;
-  const safeFrom = Math.max(timeFrom, timeTo - maxWindow);
+  const minFrom = timeTo - SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC;
+  const safeFrom = Math.min(minFrom, Math.max(timeFrom, timeTo - maxWindow));
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
     timestamp: String(timestamp),
     access_token: accessToken,
     shop_id: shopId,
     sign,
-    time_range_field: opts?.timeRangeField || "update_time",
+    time_range_field: "update_time",
+    // luôn update_time — không dùng create_time
     time_from: String(safeFrom),
     time_to: String(timeTo),
     page_size: String(SHOPEE_ORDER_LIST_PAGE_SIZE),
@@ -106756,7 +106759,7 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
   if (opts?.cursor !== void 0 && opts.cursor !== "") params.set("cursor", opts.cursor);
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
   console.log(
-    `[Shopee API] GetOrderList REQUEST shop=${shopId} field=${opts?.timeRangeField || "update_time"} time_from=${safeFrom} (${String(safeFrom).length} digits) time_to=${timeTo} (${String(timeTo).length} digits) cursor=${opts?.cursor || ""} status=${opts?.orderStatus || "ALL"}`
+    `[Shopee API] GetOrderList REQUEST shop=${shopId} field=update_time time_from=${safeFrom} (${String(safeFrom).length} digits) time_to=${timeTo} (${String(timeTo).length} digits) window_days=${((timeTo - safeFrom) / 86400).toFixed(2)} cursor=${opts?.cursor || ""} status=${opts?.orderStatus || "ALL"}`
   );
   try {
     const { json: json2, httpStatus } = await shopeeFetchJsonWithRetry(
@@ -106803,7 +106806,14 @@ function assertOrdersPullDeadline(deadlineAt, label) {
 }
 async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const timeTo = Math.floor(Date.now() / 1e3);
-  const timeFrom = timeTo - 3 * 24 * 60 * 60;
+  const lookback = Math.max(
+    SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
+    Math.min(
+      15 * 24 * 60 * 60,
+      Number(opts?.lookbackSec) > 0 ? Number(opts.lookbackSec) : SHOPEE_ORDER_LIST_INCREMENTAL_SEC
+    )
+  );
+  const timeFrom = timeTo - lookback;
   const orderSnSet = /* @__PURE__ */ new Set();
   const seenCursors = /* @__PURE__ */ new Set();
   let cursor;
@@ -106817,7 +106827,10 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
     1,
     Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_HARD_CAP)
   );
-  syncDiag("Fetching order list...", `shop=${shopId} lookback=3d from=${timeFrom} to=${timeTo} maxSn=${maxOrderSns} hardCap=${pageHardCap}`);
+  syncDiag(
+    "Fetching order list...",
+    `shop=${shopId} field=update_time lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d) from=${timeFrom} to=${timeTo} maxSn=${maxOrderSns} hardCap=${pageHardCap}`
+  );
   while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
     try {
       assertOrdersPullDeadline(deadlineAt, `get_order_list page=${page + 1} shop=${shopId}`);
@@ -106903,7 +106916,10 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
 }
 async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, opts) {
   const now = Math.floor(Date.now() / 1e3);
-  const lookback = Math.max(60, Math.min(15 * 24 * 60 * 60, opts?.lookbackSec ?? 7 * 24 * 60 * 60));
+  const lookback = Math.max(
+    SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
+    Math.min(15 * 24 * 60 * 60, opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC)
+  );
   const timeFrom = now - lookback;
   const timeTo = now;
   const orderSnSet = /* @__PURE__ */ new Set();
@@ -107288,7 +107304,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
     shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => normalizeShopIdKey(id)).filter(Boolean);
     singleShopPull = shopIds.length === 1;
     lookbackSec = Math.max(
-      60,
+      SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
       Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC)
     );
     longLookback = lookbackSec >= 168 * 3600;
@@ -107344,9 +107360,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
           pageHardCap
         });
         if (Date.now() < shopDeadlineAt) {
-          const statusExtra = longLookback ? ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED"] : ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
-          const statusMaxSn = longLookback ? Math.min(120, maxOrderSnsPerShop) : Math.min(80, maxOrderSnsPerShop);
-          const statusPageCap = longLookback ? Math.min(6, pageHardCap) : Math.min(3, pageHardCap);
+          const statusExtra = longLookback ? ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED", "CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED"] : ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED", "CANCELLED", "IN_CANCEL", "TO_RETURN"];
+          const statusMaxSn = longLookback ? Math.min(150, maxOrderSnsPerShop) : Math.min(120, maxOrderSnsPerShop);
+          const statusPageCap = longLookback ? Math.min(8, pageHardCap) : Math.min(5, pageHardCap);
           const snSet = new Set(orderSnList);
           let addedByStatus = 0;
           for (const st of statusExtra) {
@@ -111970,7 +111986,7 @@ function scheduleShopeeCancelReturnReconcile() {
   }
   console.log("[CancelReturn Cron] Scheduler ON \u2014 m\u1ED7i 45 ph\xFAt (CANCELLED/TO_RETURN + reconcile shipping).");
 }
-var AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = 45 * 60;
+var AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
 function scheduleAutoIncrementalOrdersSyncSafe() {
   try {
     scheduleAutoIncrementalOrdersSync({
@@ -112338,6 +112354,7 @@ function normalizeShopeeOrderDetail(shopId, shopName, item) {
       order.status = "pending_confirm";
       order.isPrepared = false;
     } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP" || finalRaw === "PROCESSED") {
+      order.shopee_order_status = finalRaw;
       if (order.status !== "shipping" && order.status !== "completed") {
         if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
           order.status = "processed";
@@ -112819,6 +112836,16 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       forceHealPickupOrderIfHasTracking(normalized);
       repairFalseProcessedReadyToShip(normalized);
       enforceShopeeTerminalLocalStatus(normalized);
+      {
+        const raw = String(normalized.shopee_order_status || "").toUpperCase();
+        if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
+          normalized.shopee_order_status = raw;
+          if (normalized.status !== "shipping" && normalized.status !== "completed" && !hasUsableShopeeTrackingNumber(normalized)) {
+            normalized.status = "unprocessed";
+            normalized.isPrepared = false;
+          }
+        }
+      }
       if (normalized.partialCancel) {
         await restoreLocalStockForPartialCancel(
           normalized.shopId || existing?.shopId,

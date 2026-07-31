@@ -1010,10 +1010,13 @@ const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 /** Hard-cap số trang get_order_list mỗi lần pull (tránh treo). */
 const SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 8;
 /**
- * Incremental pull: chỉ lấy đơn có update_time trong N giây gần nhất.
+ * Incremental pull: lấy đơn có update_time trong N giây gần nhất.
+ * Mặc định 5 ngày — KHÔNG dùng cửa sổ vài phút/giờ (dễ bỏ sót đơn mới).
  * Shopee bắt buộc time_from/time_to là UNIX SECONDS (không phải ms).
  */
-const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 24 * 60 * 60;
+const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 5 * 24 * 60 * 60;
+/** Sàn tối thiểu khi pull get_order_list — luôn ≥ 3 ngày. */
+const SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 /** Giới hạn order_sn mỗi shop mỗi lần pull — đủ 7 ngày shop bận, tránh cắt lệch Shopee. */
 const SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
 /** Deadline tường cho cả phiên pull — quá hạn thì BREAK (không treo process). */
@@ -1553,9 +1556,10 @@ async function shopeeGetOrderList(
   const defaultFrom = Math.floor(Date.now() / 1000) - SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
   const timeFrom = toShopeeUnixSeconds(opts?.timeFrom, defaultFrom);
 
-  // Guard: Shopee từ chối cửa sổ > 15 ngày.
+  // Guard: Shopee từ chối cửa sổ > 15 ngày; sàn tối thiểu 3 ngày khi caller truyền cửa sổ quá ngắn.
   const maxWindow = 15 * 24 * 60 * 60;
-  const safeFrom = Math.max(timeFrom, timeTo - maxWindow);
+  const minFrom = timeTo - SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC;
+  const safeFrom = Math.min(minFrom, Math.max(timeFrom, timeTo - maxWindow));
 
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
@@ -1563,7 +1567,7 @@ async function shopeeGetOrderList(
     access_token: accessToken,
     shop_id: shopId,
     sign,
-    time_range_field: opts?.timeRangeField || "update_time",
+    time_range_field: "update_time", // luôn update_time — không dùng create_time
     time_from: String(safeFrom),
     time_to: String(timeTo),
     page_size: String(SHOPEE_ORDER_LIST_PAGE_SIZE),
@@ -1576,9 +1580,10 @@ async function shopeeGetOrderList(
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
   console.log(
     `[Shopee API] GetOrderList REQUEST shop=${shopId}` +
-      ` field=${opts?.timeRangeField || "update_time"}` +
+      ` field=update_time` +
       ` time_from=${safeFrom} (${String(safeFrom).length} digits)` +
       ` time_to=${timeTo} (${String(timeTo).length} digits)` +
+      ` window_days=${((timeTo - safeFrom) / 86400).toFixed(2)}` +
       ` cursor=${opts?.cursor || ""}` +
       ` status=${opts?.orderStatus || "ALL"}`,
   );
@@ -1647,7 +1652,17 @@ async function collectShopeeOrderSnsIncremental(
   },
 ): Promise<string[]> {
   const timeTo = Math.floor(Date.now() / 1000);
-  const timeFrom = timeTo - 3 * 24 * 60 * 60; // luôn lùi đúng 3 ngày
+  // time_from ≥ 3 ngày, mặc định 5 ngày — tuyệt đối không cửa sổ vài phút/giờ.
+  const lookback = Math.max(
+    SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
+    Math.min(
+      15 * 24 * 60 * 60,
+      Number(opts?.lookbackSec) > 0
+        ? Number(opts.lookbackSec)
+        : SHOPEE_ORDER_LIST_INCREMENTAL_SEC,
+    ),
+  );
+  const timeFrom = timeTo - lookback;
   const orderSnSet = new Set<string>();
   const seenCursors = new Set<string>();
   let cursor: string | undefined;
@@ -1662,7 +1677,10 @@ async function collectShopeeOrderSnsIncremental(
     Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_HARD_CAP),
   );
 
-  syncDiag("Fetching order list...", `shop=${shopId} lookback=3d from=${timeFrom} to=${timeTo} maxSn=${maxOrderSns} hardCap=${pageHardCap}`);
+  syncDiag(
+    "Fetching order list...",
+    `shop=${shopId} field=update_time lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d) from=${timeFrom} to=${timeTo} maxSn=${maxOrderSns} hardCap=${pageHardCap}`,
+  );
 
   while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
     try {
@@ -1774,7 +1792,10 @@ async function collectShopeeOrderSnsByStatus(
   },
 ): Promise<string[]> {
   const now = Math.floor(Date.now() / 1000);
-  const lookback = Math.max(60, Math.min(15 * 24 * 60 * 60, opts?.lookbackSec ?? 7 * 24 * 60 * 60));
+  const lookback = Math.max(
+    SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
+    Math.min(15 * 24 * 60 * 60, opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC),
+  );
   const timeFrom = now - lookback;
   const timeTo = now;
   const orderSnSet = new Set<string>();
@@ -2262,7 +2283,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       .filter(Boolean);
     singleShopPull = shopIds.length === 1;
     lookbackSec = Math.max(
-      60,
+      SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
       Math.min(15 * 24 * 60 * 60, Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC),
     );
     longLookback = lookbackSec >= 168 * 3600;
@@ -2346,16 +2367,17 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           pageHardCap,
         });
 
-        // MỌI pull: bổ sung CANCELLED / IN_CANCEL / TO_RETURN (không chỉ ≥7 ngày).
+        // MỌI pull: ưu tiên READY_TO_SHIP / RETRY_SHIP (đơn mới chờ lấy hàng) rồi hủy/hoàn.
+        // Tránh update_time bị đầy bởi SHIPPED/COMPLETED khiến bỏ sót đơn mới.
         // longLookback: thêm SHIPPED + nới cap để khớp Seller Center.
         if (Date.now() < shopDeadlineAt) {
           const statusExtra = longLookback
-            ? ["CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED"]
-            : ["CANCELLED", "IN_CANCEL", "TO_RETURN"];
+            ? ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED", "CANCELLED", "IN_CANCEL", "TO_RETURN", "SHIPPED"]
+            : ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED", "CANCELLED", "IN_CANCEL", "TO_RETURN"];
           const statusMaxSn = longLookback
-            ? Math.min(120, maxOrderSnsPerShop)
-            : Math.min(80, maxOrderSnsPerShop);
-          const statusPageCap = longLookback ? Math.min(6, pageHardCap) : Math.min(3, pageHardCap);
+            ? Math.min(150, maxOrderSnsPerShop)
+            : Math.min(120, maxOrderSnsPerShop);
+          const statusPageCap = longLookback ? Math.min(8, pageHardCap) : Math.min(5, pageHardCap);
           const snSet = new Set(orderSnList);
           let addedByStatus = 0;
           for (const st of statusExtra) {
@@ -8695,11 +8717,10 @@ function scheduleShopeeCancelReturnReconcile(): void {
 }
 
 /**
- * Auto Incremental Sync mỗi 30 phút — chỉ lấy đơn thay đổi trong 45 phút gần nhất
- * (30 phút chu kỳ + 15 phút buffer an toàn để không miss đơn).
+ * Auto Incremental Sync — cửa sổ update_time tối thiểu 5 ngày (không dùng 45 phút).
  * Error boundary: mọi lỗi chỉ log, không throw (tránh crash Passenger).
  */
-const AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = 45 * 60;
+const AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
 
 function scheduleAutoIncrementalOrdersSyncSafe(): void {
   try {
@@ -9224,7 +9245,8 @@ function normalizeShopeeOrderDetail(shopId: string, shopName: string, item: any)
       order.status = "pending_confirm";
       order.isPrepared = false;
     } else if (finalRaw === "READY_TO_SHIP" || finalRaw === "RETRY_SHIP" || finalRaw === "PROCESSED") {
-      // Chỉ ép processed khi CHƯA bị logistics đẩy sang shipping (package_list).
+      // Bắt buộc lưu raw Shopee + map local: RTS/RETRY chưa mã → unprocessed; PROCESSED/có mã → processed.
+      order.shopee_order_status = finalRaw;
       if (order.status !== "shipping" && order.status !== "completed") {
         if (finalRaw === "PROCESSED" || hasUsableShopeeTrackingNumber(order)) {
           order.status = "processed";
@@ -9973,6 +9995,22 @@ async function persistShopeeOrderChunk(
       forceHealPickupOrderIfHasTracking(normalized);
       repairFalseProcessedReadyToShip(normalized);
       enforceShopeeTerminalLocalStatus(normalized);
+
+      // Đảm bảo READY_TO_SHIP/RETRY_SHIP luôn có raw + local status trước khi ghi Mongo.
+      {
+        const raw = String(normalized.shopee_order_status || "").toUpperCase();
+        if (raw === "READY_TO_SHIP" || raw === "RETRY_SHIP") {
+          normalized.shopee_order_status = raw;
+          if (
+            normalized.status !== "shipping" &&
+            normalized.status !== "completed" &&
+            !hasUsableShopeeTrackingNumber(normalized)
+          ) {
+            normalized.status = "unprocessed";
+            normalized.isPrepared = false;
+          }
+        }
+      }
 
       if (normalized.partialCancel) {
         await restoreLocalStockForPartialCancel(

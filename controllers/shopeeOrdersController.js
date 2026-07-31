@@ -167,8 +167,11 @@ async function runOrdersPullBackground(opts) {
 /** POST /api/orders/pull — fire-and-forget: HTTP trả ngay, sync chạy ngầm. */
 export async function pullOrders(req, res) {
   try {
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
-    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
+    // Mặc định 5 ngày (120h) — tối thiểu 3 ngày; không dùng 24h ngắn gây bỏ sót đơn mới.
+    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 120);
+    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0
+      ? Math.min(Math.max(hoursRaw, 72), 15 * 24)
+      : 120;
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = Array.isArray(shopIdsRaw)
@@ -229,8 +232,11 @@ export async function pullOrders(req, res) {
 /** POST /api/shopee/orders/sync — fire-and-forget: HTTP trả ngay, sync chạy ngầm. */
 export async function syncOrders(req, res) {
   try {
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 24);
-    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(hoursRaw, 15 * 24) : 24;
+    // Mặc định 5 ngày (120h) — tối thiểu 3 ngày.
+    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 120);
+    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0
+      ? Math.min(Math.max(hoursRaw, 72), 15 * 24)
+      : 120;
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = Array.isArray(shopIdsRaw)
