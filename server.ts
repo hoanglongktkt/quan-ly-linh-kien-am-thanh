@@ -315,6 +315,7 @@ import {
   shipOrderBulkAsync,
   getShipOrderJob,
   getShipOrderJobs,
+  fastProcessOrders,
 } from "./controllers/shopeeShipController.js";
 import {
   initShopeePrintController,
@@ -14968,6 +14969,9 @@ async function startServer() {
     pruneOldShipOrderJobs,
   });
   app.use("/api/shopee", authMiddleware, shopeeShipRoutes);
+  // Mount tường minh SAU init — handler trực tiếp (không phụ thuộc router/deps miss).
+  app.post("/api/orders/fast-process", authMiddleware, handleFastProcess);
+  app.post("/api/shopee/orders/fast-process", authMiddleware, handleFastProcess);
 
   // Single or bulk print: fetch the REAL Shopee AWB PDF for the given orders.
   async function printDocumentHandler(req: any, res: any) {

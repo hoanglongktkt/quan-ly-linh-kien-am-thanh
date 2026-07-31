@@ -35,6 +35,8 @@ const LONG_RUNNING_PREFIXES = [
   'multi-channel/publish',
   'shopee/category-attributes',
   'orders/pull',
+  'orders/fast-process',
+  'shopee/orders/fast-process',
   'orders/scan-bulk-update',
   'orders/scan-bg-enqueue',
   'orders/don-hoan-huy',
