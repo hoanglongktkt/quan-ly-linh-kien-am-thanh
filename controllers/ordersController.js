@@ -104,6 +104,8 @@ async function readOrdersForRefresh(limit) {
 /** GET /api/orders/refresh */
 export async function refreshOrders(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   try {
     if (!isMongoReady()) {
       return res.status(200).json({
@@ -112,6 +114,10 @@ export async function refreshOrders(req, res) {
         total: 0,
         error: "mongodb_not_ready",
       });
+    }
+    // FE gửi ?t= / ?bust= → bỏ cache in-memory để luôn đọc Mongo mới
+    if (req.query.t != null || req.query.bust != null) {
+      ordersRefreshCache = null;
     }
     const rawLimit = Number(req.query.limit);
     const limit =
@@ -269,10 +275,20 @@ export async function listOrders(req, res) {
     tab === "ready_to_ship" ||
     tab === "cho-lay-hang"
   ) {
-    rawOrders = rawOrders.filter((o) => deps.matchesUnprocessedPickupTabShared(o));
+    // Tab "Chờ lấy hàng (Chưa xử lý)" = READY_TO_SHIP|RETRY_SHIP (raw Shopee), chưa có mã VĐ
+    rawOrders = rawOrders.filter((o) => {
+      if (deps.matchesUnprocessedPickupTabShared(o)) return true;
+      // Fallback cứng nếu matcher chưa inject: khớp chuẩn Shopee READY_TO_SHIP
+      const raw = String(o?.shopee_order_status || o?.order_status || "").toUpperCase();
+      if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP") return false;
+      if (o?.is_handed_over === true || o?.isHandedOverToCarrier === true) return false;
+      const tn = String(o?.tracking_no || o?.trackingNumber || "").trim();
+      if (tn && tn !== "0" && !/^0FG/i.test(tn)) return false;
+      return true;
+    });
     console.log(
-      `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab → ${rawOrders.length} đơn` +
-        ` | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound, !isProcessedCondition }`,
+      `[GET /api/orders] query.tab=${tab} filter=READY_TO_SHIP|RETRY_SHIP (unprocessed) → ${rawOrders.length} đơn` +
+        ` | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound }`,
     );
   } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
     rawOrders = rawOrders.filter((o) => deps.matchesShippingTabShared(o));

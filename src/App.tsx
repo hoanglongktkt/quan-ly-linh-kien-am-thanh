@@ -451,11 +451,14 @@ export default function App() {
     let requestTimeoutId: number | undefined;
     try {
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
+      // Luôn bust cache (Vercel/CDN/browser) — timestamp + số ngẫu nhiên.
       const params = new URLSearchParams();
-      if (bustCache) params.set('t', String(Date.now()));
+      params.set('t', String(Date.now()));
+      params.set('_r', String(Math.random()).slice(2, 10));
       if (limit) params.set('limit', String(limit));
+      if (bustCache) params.set('bust', '1');
       const qs = params.toString();
-      const path = `/api/orders/refresh${qs ? `?${qs}` : ''}`;
+      const path = `/api/orders/refresh?${qs}`;
       const requestUrl =
         path.startsWith('http://') || path.startsWith('https://')
           ? path
@@ -477,8 +480,9 @@ export default function App() {
         signal: controller.signal,
         headers: {
           Authorization: `Bearer ${token}`,
-          'Cache-Control': 'no-cache',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
           Pragma: 'no-cache',
+          Expires: '0',
         },
       });
       if (response.ok) {

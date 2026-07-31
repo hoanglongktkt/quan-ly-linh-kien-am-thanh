@@ -32,7 +32,7 @@ export type { HandedOverSource } from './orderWarehouseStatus';
 export function getShopeeOrderRawStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): string {
-  return String(order.shopee_order_status || '').toUpperCase();
+  return String(order.shopee_order_status || order.order_status || '').toUpperCase();
 }
 
 /**
@@ -82,6 +82,7 @@ export function getOrderFulfillmentType(
 /**
  * isProcessedCondition — chỉ phân nhánh Chưa xử lý / Đã xử lý
  * trong pool READY_TO_SHIP (không quyết định tab Đang giao).
+ * READY_TO_SHIP/RETRY chưa có mã VĐ → luôn Chưa xử lý (không tin status local lệch).
  */
 export function isProcessedCondition(
   order: Partial<Order> & Record<string, unknown>,
@@ -90,6 +91,14 @@ export function isProcessedCondition(
 
   const raw = getShopeeOrderRawStatus(order);
   if (raw === 'PROCESSED') return true;
+
+  // Raw vẫn RTS/RETRY chưa có tracking → chưa xử lý (bỏ qua status local stale).
+  if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') {
+    if (getOrderFulfillmentType(order) === 'dropoff' && Boolean(order.isPrepared)) {
+      return true;
+    }
+    return false;
+  }
 
   if (order.status === 'processed') return true;
 
@@ -245,9 +254,9 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 
 /**
  * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)":
- * - Raw READY_TO_SHIP | RETRY_SHIP (không PROCESSED)
+ * - Raw READY_TO_SHIP | RETRY_SHIP (không PROCESSED) + chưa có mã VĐ outbound
  * - HOẶC local status=unprocessed khi thiếu raw
- * - AND chưa bàn giao ĐVVC / chưa có mã VĐ outbound / chưa isPrepared(dropoff)
+ * - AND chưa bàn giao ĐVVC / chưa isPrepared(dropoff)
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
   if (isOrderHandedOverToCarrier(order)) return false;
@@ -255,7 +264,7 @@ export function matchesUnprocessedPickupTab(order: Order): boolean {
   const raw = getShopeeOrderRawStatus(order);
   if (raw === 'PROCESSED') return false;
   if (isProcessedCondition(order)) return false;
-  // Đủ điều kiện: raw RTS/RETRY hoặc local unprocessed (fallback thiếu raw)
+  // Chuẩn Shopee: READY_TO_SHIP | RETRY_SHIP = Chờ lấy hàng (Chưa xử lý)
   if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP') return true;
   if (!raw && order.status === 'unprocessed') return true;
   if (order.status === 'unprocessed') return true;

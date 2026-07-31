@@ -2950,9 +2950,70 @@ function orderTabFilter(tab?: string): Record<string, unknown> {
     case "cancelled":
       return { $or: [{ status: "cancelled" }, { shopee_order_status: { $in: ["CANCELLED", "IN_CANCEL"] } }] };
     case "processed":
-      return { status: "processed", shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+      return {
+        $and: [
+          {
+            $or: [
+              { status: "processed" },
+              { shopee_order_status: "PROCESSED" },
+              {
+                shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] },
+                $or: [
+                  { tracking_no: { $exists: true, $nin: [null, "", "0"] } },
+                  { "data.tracking_no": { $exists: true, $nin: [null, "", "0"] } },
+                  { "data.trackingNumber": { $exists: true, $nin: [null, "", "0"] } },
+                ],
+              },
+            ],
+          },
+          { shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED", "CANCELLED", "IN_CANCEL"] } },
+          { is_handed_over: { $ne: true } },
+        ],
+      };
     case "unprocessed":
-      return { status: "unprocessed", shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] } };
+      // Khớp tab UI: READY_TO_SHIP | RETRY_SHIP (chưa có mã VĐ) hoặc status local unprocessed
+      return {
+        $and: [
+          {
+            $or: [
+              { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP"] } },
+              {
+                status: "unprocessed",
+                shopee_order_status: {
+                  $nin: [
+                    "PROCESSED",
+                    "SHIPPED",
+                    "TO_CONFIRM_RECEIVE",
+                    "COMPLETED",
+                    "CANCELLED",
+                    "IN_CANCEL",
+                    "TO_RETURN",
+                  ],
+                },
+              },
+            ],
+          },
+          { shopee_order_status: { $ne: "PROCESSED" } },
+          { is_handed_over: { $ne: true } },
+          {
+            $and: [
+              { $or: [{ tracking_no: { $exists: false } }, { tracking_no: { $in: [null, "", "0"] } }] },
+              {
+                $or: [
+                  { "data.tracking_no": { $exists: false } },
+                  { "data.tracking_no": { $in: [null, "", "0"] } },
+                ],
+              },
+              {
+                $or: [
+                  { "data.trackingNumber": { $exists: false } },
+                  { "data.trackingNumber": { $in: [null, "", "0"] } },
+                ],
+              },
+            ],
+          },
+        ],
+      };
     case "pending_confirm":
       return { status: { $in: ["pending_confirm", "pending_verification"] } };
     case "handed_over_carrier":
