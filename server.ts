@@ -10059,11 +10059,12 @@ async function persistShopeeOrderChunk(
     }
   }
 
-  // Mongo bulkWrite hoàn tất trước; orders.json chỉ nhận mirror nền sau đó.
+  // Mongo bulkWrite hoàn tất trước; orders.json mirror từ Mongo (tránh webhook
+  // truyền working-set 1 đơn rồi ghi đè mất toàn bộ JSON).
   if (touched.length > 0) {
     if (!isMongoReady()) throw new Error("mongodb_not_ready");
     const mongoN = await bulkUpsertOrdersToStore(touched);
-    queueOrdersJsonMirror(orders);
+    queueOrdersJsonMirrorFromMongo();
     console.log(
       `[DB UPDATED] Mongo bulkWrite OK — batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o) => o.orderSn).join(",")}`,
     );
@@ -10131,7 +10132,7 @@ async function persistShopeeOrderChunk(
           await sleep(SHOPEE_TRACKING_FETCH_DELAY_MS);
         }
       }
-      queueOrdersJsonMirror(orders);
+      queueOrdersJsonMirrorFromMongo();
     }
   }
 
@@ -12551,7 +12552,13 @@ function normalizeShopeeOrder(payload: any): any | null {
 function parseShopeePushEvent(body: any): {
   shopId: string;
   orderSn: string;
-  eventKind: "order_status_update" | "tracking_no_update" | "shipping_document" | "return_refund" | "other";
+  eventKind:
+    | "order_status_update"
+    | "tracking_no_update"
+    | "shipping_document"
+    | "return_refund"
+    | "package_update"
+    | "other";
   status: string;
   trackingNo: string;
   packageNumber: string;
@@ -12564,20 +12571,37 @@ function parseShopeePushEvent(body: any): {
   const action = String(body?.action || body?.msg || data?.action || data?.msg || "").toLowerCase();
   const codeNum = Number(code);
   const codeStr = String(code).toLowerCase();
-  const status = String(data.status || data.order_status || "").toUpperCase();
+  const status = String(
+    data.status || data.order_status || data.fulfillment_status || data.package_status || "",
+  ).toUpperCase();
   const returnSn = String(data.return_sn || data.returnSn || "").trim();
-  const orderSn = String(data.ordersn || data.order_sn || data.orderSn || "").trim();
+  const pkg0 = Array.isArray(data.package_list) ? data.package_list[0] : undefined;
+  const orderSn = String(
+    data.ordersn ||
+      data.order_sn ||
+      data.orderSn ||
+      pkg0?.ordersn ||
+      pkg0?.order_sn ||
+      "",
+  ).trim();
   const shopId = String(body?.shop_id ?? data.shop_id ?? "").trim();
   const trackingNo = pickBestTrackingNumber(
     data.tracking_no,
     data.tracking_number,
     data.last_mile_tracking_number,
     data.third_party_tracking_number,
+    pkg0?.tracking_no,
+    pkg0?.tracking_number,
   );
-  const packageNumber = String(data.package_number || data.packageNumber || "").trim();
-  const pkg0 = Array.isArray(data.package_list) ? data.package_list[0] : undefined;
+  const packageNumber = String(
+    data.package_number || data.packageNumber || pkg0?.package_number || "",
+  ).trim();
   const logisticsStatus = String(
-    data.logistics_status || data.logisticsStatus || pkg0?.logistics_status || "",
+    data.logistics_status ||
+      data.logisticsStatus ||
+      data.fulfillment_status ||
+      pkg0?.logistics_status ||
+      "",
   )
     .trim()
     .toUpperCase();
@@ -12587,17 +12611,22 @@ function parseShopeePushEvent(body: any): {
     | "tracking_no_update"
     | "shipping_document"
     | "return_refund"
+    | "package_update"
     | "other" = "other";
   if (
     codeNum === 3 ||
     codeStr.includes("order_status") ||
-    action.includes("order_status")
+    action.includes("order_status") ||
+    // Booking status cũng map về order lifecycle để real-time upsert.
+    codeStr.includes("booking_status") ||
+    action.includes("booking_status")
   ) {
     eventKind = "order_status_update";
   } else if (
     codeNum === 4 ||
     codeStr.includes("tracking") ||
-    action.includes("tracking_no")
+    action.includes("tracking_no") ||
+    action.includes("booking_tracking")
   ) {
     eventKind = "tracking_no_update";
   } else if (
@@ -12606,6 +12635,13 @@ function parseShopeePushEvent(body: any): {
     action.includes("shipping_document")
   ) {
     eventKind = "shipping_document";
+  } else if (
+    codeStr.includes("package") ||
+    action.includes("package_fulfillment") ||
+    action.includes("package_info") ||
+    action.includes("courier_delivery")
+  ) {
+    eventKind = "package_update";
   } else if (
     returnSn ||
     codeStr.includes("return") ||
@@ -12621,6 +12657,7 @@ function parseShopeePushEvent(body: any): {
     // Có tracking_no trong payload → ưu tiên Code 4 semantics (GHN/SPX).
     eventKind = "tracking_no_update";
   } else if (orderSn) {
+    // Đơn mới / mọi push còn lại có order_sn → coi như status update real-time.
     eventKind = "order_status_update";
   }
 
@@ -13015,6 +13052,8 @@ async function startServer() {
     isLogisticsHandedToCarrier,
     loadOrders,
     saveOrders,
+    loadOrdersFromStore,
+    queueOrdersJsonMirrorFromMongo,
     fetchNormalizeShopeeOrderChunk,
     persistShopeeOrderChunk,
     upsertShopeeWebhookShallow,

@@ -105679,6 +105679,9 @@ var deps19 = {
   loadOrders: () => [],
   saveOrders: () => {
   },
+  loadOrdersFromStore: async () => [],
+  queueOrdersJsonMirrorFromMongo: () => {
+  },
   fetchNormalizeShopeeOrderChunk: async () => ({ normalized: [], errors: [] }),
   persistShopeeOrderChunk: async () => {
   },
@@ -105698,10 +105701,69 @@ var deps19 = {
 function initShopeeWebhookController(partial) {
   deps19 = { ...deps19, ...partial };
 }
+async function loadWorkingOrdersForWebhook(orderSn) {
+  const sn = String(orderSn || "").trim();
+  const orders = [];
+  const seen = /* @__PURE__ */ new Set();
+  const pushUnique = (row) => {
+    if (!row || typeof row !== "object") return;
+    const key = String(row.orderSn || row.order_sn || "").trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    orders.push(row);
+  };
+  if (deps19.isMongoReady()) {
+    try {
+      const mongoRows = await deps19.loadOrdersFromStore({ orderSns: [sn] });
+      for (const row of Array.isArray(mongoRows) ? mongoRows : []) pushUnique(row);
+    } catch (err) {
+      console.warn(
+        `[Shopee Webhook] loadOrdersFromStore ${sn}:`,
+        err?.message || err
+      );
+    }
+  }
+  try {
+    const jsonRows = deps19.loadOrders() || [];
+    for (const row of jsonRows) {
+      if (String(row?.orderSn || "").trim() === sn) pushUnique(row);
+    }
+  } catch (err) {
+    console.warn(`[Shopee Webhook] loadOrders JSON ${sn}:`, err?.message || err);
+  }
+  return orders;
+}
+async function upsertOrderToDb(order, label = "") {
+  if (!order?.orderSn) return;
+  if (!deps19.isMongoReady()) {
+    console.warn(
+      `[Shopee Webhook] Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua upsert order_sn=${order.orderSn}`
+    );
+    return;
+  }
+  try {
+    await deps19.bulkUpsertOrdersToStore([order]);
+    console.log(
+      `[DB UPDATED] ${label ? `(${label}) ` : ""}order_sn=${order.orderSn} shop_id=${order.shopId || "?"} status=${order.shopee_order_status || order.status || "?"} \u2014 upsert OK`
+    );
+    try {
+      deps19.queueOrdersJsonMirrorFromMongo();
+    } catch {
+    }
+  } catch (mongoErr) {
+    console.warn(
+      `[Shopee Webhook] Mongo upsert ${order.orderSn}:`,
+      mongoErr?.message || mongoErr
+    );
+  }
+}
 async function processShopeeWebhookPayload(body) {
   try {
     if (!body || typeof body !== "object") return;
-    console.log("[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:", JSON.stringify(body));
+    console.log(
+      "[WEBHOOK RECEIVED] processShopeeWebhookPayload payload:",
+      JSON.stringify(body)
+    );
     if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
       const peek = deps19.parseShopeePushEvent(body);
       console.log(
@@ -105725,71 +105787,119 @@ async function processShopeeWebhookPayload(body) {
       })
     );
     if (!parsed.orderSn) {
-      console.error(
-        `[Shopee Webhook] REJECTED \u2014 thi\u1EBFu order_sn (code=${parsed.code}) payload=${JSON.stringify(body).slice(0, 800)}`
+      console.log(
+        `[Shopee Webhook] Non-order push skipped code=${parsed.code} kind=${parsed.eventKind}`
       );
       return;
     }
-    const shouldPersist = parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund" || deps19.SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) || deps19.isLogisticsHandedToCarrier(parsed.logisticsStatus);
-    if (!shouldPersist) {
-      console.error(
-        `[StateMachine] Webhook REJECTED \u2014 status/event kh\xF4ng c\u1EA7n persist order_sn=${parsed.orderSn} status=${parsed.status || "empty"} logistics=${parsed.logisticsStatus || "-"} code=${parsed.code} kind=${parsed.eventKind}`
+    const isOrderLifecycleEvent = parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund" || parsed.eventKind === "package_update" || deps19.SHOPEE_WEBHOOK_ORDER_STATUSES.has(parsed.status) || deps19.isLogisticsHandedToCarrier(parsed.logisticsStatus) || Boolean(parsed.trackingNo) || Boolean(parsed.status);
+    if (!isOrderLifecycleEvent) {
+      console.log(
+        `[Shopee Webhook] order_sn=${parsed.orderSn} kind=${parsed.eventKind} \u2014 v\u1EABn x\u1EED l\xFD real-time (fallback)`
       );
-      return;
     }
-    const orders = deps19.loadOrders();
-    const shopId = parsed.shopId;
+    const orders = await loadWorkingOrdersForWebhook(parsed.orderSn);
+    const shopId = String(parsed.shopId || "").trim() || String(orders[0]?.shopId || "").trim();
     let accessToken = null;
     if (shopId) {
-      accessToken = await getValidShopeeAccessToken(shopId);
-    }
-    const shouldFetchDetail = parsed.eventKind === "order_status_update" || parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "return_refund";
-    if (shouldFetchDetail && shopId && accessToken) {
-      const { normalized, errors } = await deps19.fetchNormalizeShopeeOrderChunk(
-        shopId,
-        accessToken,
-        shopId,
-        [parsed.orderSn],
-        { enrichTracking: true }
-      );
-      if (normalized.length > 0) {
-        await deps19.persistShopeeOrderChunk(orders, normalized, {
-          apiShopId: shopId,
-          accessToken
-        });
-        console.log(
-          `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
-        );
-      } else {
+      try {
+        accessToken = await getValidShopeeAccessToken(shopId);
+      } catch (tokenErr) {
         console.warn(
-          `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${parsed.orderSn}`,
-          errors?.[0] || ""
+          `[Shopee Webhook] getValidShopeeAccessToken shop=${shopId}:`,
+          tokenErr?.message || tokenErr
         );
-        await deps19.upsertShopeeWebhookShallow(body, orders);
-        deps19.saveOrders(orders);
+      }
+    }
+    let fetchedDetail = false;
+    if (shopId && accessToken) {
+      try {
+        const { normalized, errors } = await deps19.fetchNormalizeShopeeOrderChunk(
+          shopId,
+          accessToken,
+          shopId,
+          [parsed.orderSn],
+          { enrichTracking: true }
+        );
+        if (normalized.length > 0) {
+          try {
+            await deps19.persistShopeeOrderChunk(orders, normalized, {
+              apiShopId: shopId,
+              accessToken
+            });
+            fetchedDetail = true;
+            console.log(
+              `[Shopee Webhook] get_order_detail OK order_sn=${parsed.orderSn} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
+            );
+          } catch (persistErr) {
+            console.warn(
+              `[Shopee Webhook] persistShopeeOrderChunk fail \u2014 fallback shallow+upsert:`,
+              persistErr?.message || persistErr
+            );
+            const row = normalized[0];
+            const idx2 = orders.findIndex(
+              (o) => String(o.orderSn) === String(row.orderSn)
+            );
+            if (idx2 >= 0) orders[idx2] = { ...orders[idx2], ...row };
+            else orders.unshift(row);
+            fetchedDetail = true;
+            await upsertOrderToDb(orders[0] || row, "detail-fallback");
+          }
+        } else {
+          console.warn(
+            `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${parsed.orderSn}`,
+            errors?.[0] || ""
+          );
+        }
+      } catch (detailErr) {
+        console.warn(
+          `[Shopee Webhook] get_order_detail error order_sn=${parsed.orderSn}:`,
+          detailErr?.message || detailErr
+        );
       }
     } else {
-      if (!shopId || !accessToken) {
+      console.warn(
+        `[Shopee Webhook] Thi\u1EBFu shop_id/token \u2014 fallback normalize th\xF4 order_sn=${parsed.orderSn}`
+      );
+    }
+    if (!fetchedDetail) {
+      try {
+        await deps19.upsertShopeeWebhookShallow(body, orders);
+      } catch (shallowErr) {
         console.warn(
-          `[Shopee Webhook] Thi\u1EBFu shop_id/token \u2014 fallback normalize th\xF4 order_sn=${parsed.orderSn}`
+          `[Shopee Webhook] upsertShopeeWebhookShallow:`,
+          shallowErr?.message || shallowErr
         );
       }
-      await deps19.upsertShopeeWebhookShallow(body, orders);
-      deps19.saveOrders(orders);
     }
     let idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
-    if (idx < 0 && (parsed.trackingNo || parsed.status)) {
-      await deps19.upsertShopeeWebhookShallow(body, orders);
+    if (idx < 0 && (parsed.trackingNo || parsed.status || parsed.orderSn)) {
+      try {
+        await deps19.upsertShopeeWebhookShallow(body, orders);
+      } catch {
+      }
       idx = orders.findIndex((o) => String(o.orderSn) === parsed.orderSn);
     }
     if (idx >= 0) {
-      const beforeTn = String(orders[idx].trackingNumber || orders[idx].tracking_no || "");
-      deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
-      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || !deps19.hasUsableShopeeTrackingNumber(orders[idx]))) {
+      const beforeTn = String(
+        orders[idx].trackingNumber || orders[idx].tracking_no || ""
+      );
+      try {
+        deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
+      } catch (applyErr) {
+        console.warn(
+          `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
+          applyErr?.message || applyErr
+        );
+      }
+      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps19.hasUsableShopeeTrackingNumber(orders[idx]))) {
         try {
-          await deps19.enrichShopeeOrderTrackingFromApi(shopId, accessToken, orders[idx], {
-            retries: 4
-          });
+          await deps19.enrichShopeeOrderTrackingFromApi(
+            shopId,
+            accessToken,
+            orders[idx],
+            { retries: 4 }
+          );
           deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
         } catch (trackErr) {
           console.warn(
@@ -105798,54 +105908,41 @@ async function processShopeeWebhookPayload(body) {
           );
         }
       }
-      const afterTn = String(orders[idx].trackingNumber || orders[idx].tracking_no || "");
+      const afterTn = String(
+        orders[idx].trackingNumber || orders[idx].tracking_no || ""
+      );
       console.log(
         `[Shopee Webhook] Apply push fields order_sn=${parsed.orderSn} status=${orders[idx].status} raw=${orders[idx].shopee_order_status || "\u2014"} tn=${afterTn || "\u2014"} (before=${beforeTn || "\u2014"})`
       );
-      deps19.saveOrders(orders);
-      if (deps19.isMongoReady()) {
-        try {
-          await deps19.bulkUpsertOrdersToStore([orders[idx]]);
-          console.log(
-            `[DB UPDATED] order_sn=${parsed.orderSn} shop_id=${shopId || orders[idx]?.shopId || "?"} status=${orders[idx]?.shopee_order_status || "?"} \u2014 upsert OK`
-          );
-        } catch (mongoErr) {
-          console.warn(
-            `[Shopee Webhook] Mongo upsert ${parsed.orderSn}:`,
-            mongoErr?.message || mongoErr
-          );
-        }
-      }
+      await upsertOrderToDb(orders[idx], parsed.eventKind);
+    } else {
+      console.error(
+        `[Shopee Webhook] Kh\xF4ng t\u1EA1o/\u0111\u01B0\u1EE3c \u0111\u01A1n sau x\u1EED l\xFD order_sn=${parsed.orderSn}`
+      );
     }
     const orderAfter = orders.find((o) => String(o.orderSn) === parsed.orderSn);
     const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
     if (needReturnFallback && shopId && accessToken) {
-      await deps19.applyWebhookReturnFallback(
-        shopId,
-        accessToken,
-        parsed.orderSn,
-        orders,
-        parsed.returnSn
-      );
-      deps19.saveOrders(orders);
-      if (deps19.isMongoReady()) {
+      try {
+        await deps19.applyWebhookReturnFallback(
+          shopId,
+          accessToken,
+          parsed.orderSn,
+          orders,
+          parsed.returnSn
+        );
         const row = orders.find((o) => String(o.orderSn) === parsed.orderSn);
-        if (row) {
-          try {
-            await deps19.bulkUpsertOrdersToStore([row]);
-            console.log(
-              `[DB UPDATED] (return/cancel) order_sn=${parsed.orderSn} shop_id=${row?.shopId || "?"} status=${row?.shopee_order_status || "?"} \u2014 upsert OK`
-            );
-          } catch (mongoErr) {
-            console.warn(
-              `[Shopee Webhook] Mongo upsert return ${parsed.orderSn}:`,
-              mongoErr?.message || mongoErr
-            );
-          }
-        }
+        if (row) await upsertOrderToDb(row, "return/cancel");
+      } catch (retErr) {
+        console.warn(
+          `[Shopee Webhook] applyWebhookReturnFallback:`,
+          retErr?.message || retErr
+        );
       }
     }
-    console.log(`[Shopee Webhook] Order ${parsed.orderSn} processed (event=${parsed.eventKind}).`);
+    console.log(
+      `[Shopee Webhook] Order ${parsed.orderSn} processed (event=${parsed.eventKind}).`
+    );
   } catch (error) {
     console.error("[Shopee Webhook] Async processing error:", error);
   }
@@ -112905,7 +113002,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
   if (touched.length > 0) {
     if (!isMongoReady()) throw new Error("mongodb_not_ready");
     const mongoN = await bulkUpsertOrdersToStore(touched);
-    queueOrdersJsonMirror(orders);
+    queueOrdersJsonMirrorFromMongo();
     console.log(
       `[DB UPDATED] Mongo bulkWrite OK \u2014 batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o) => o.orderSn).join(",")}`
     );
@@ -112969,7 +113066,7 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
           await sleep2(SHOPEE_TRACKING_FETCH_DELAY_MS);
         }
       }
-      queueOrdersJsonMirror(orders);
+      queueOrdersJsonMirrorFromMongo();
     }
   }
   return { added, updated };
@@ -114502,28 +114599,39 @@ function parseShopeePushEvent(body) {
   const action = String(body?.action || body?.msg || data?.action || data?.msg || "").toLowerCase();
   const codeNum = Number(code);
   const codeStr = String(code).toLowerCase();
-  const status = String(data.status || data.order_status || "").toUpperCase();
+  const status = String(
+    data.status || data.order_status || data.fulfillment_status || data.package_status || ""
+  ).toUpperCase();
   const returnSn = String(data.return_sn || data.returnSn || "").trim();
-  const orderSn = String(data.ordersn || data.order_sn || data.orderSn || "").trim();
+  const pkg0 = Array.isArray(data.package_list) ? data.package_list[0] : void 0;
+  const orderSn = String(
+    data.ordersn || data.order_sn || data.orderSn || pkg0?.ordersn || pkg0?.order_sn || ""
+  ).trim();
   const shopId = String(body?.shop_id ?? data.shop_id ?? "").trim();
   const trackingNo = pickBestTrackingNumber(
     data.tracking_no,
     data.tracking_number,
     data.last_mile_tracking_number,
-    data.third_party_tracking_number
+    data.third_party_tracking_number,
+    pkg0?.tracking_no,
+    pkg0?.tracking_number
   );
-  const packageNumber = String(data.package_number || data.packageNumber || "").trim();
-  const pkg0 = Array.isArray(data.package_list) ? data.package_list[0] : void 0;
+  const packageNumber = String(
+    data.package_number || data.packageNumber || pkg0?.package_number || ""
+  ).trim();
   const logisticsStatus = String(
-    data.logistics_status || data.logisticsStatus || pkg0?.logistics_status || ""
+    data.logistics_status || data.logisticsStatus || data.fulfillment_status || pkg0?.logistics_status || ""
   ).trim().toUpperCase();
   let eventKind = "other";
-  if (codeNum === 3 || codeStr.includes("order_status") || action.includes("order_status")) {
+  if (codeNum === 3 || codeStr.includes("order_status") || action.includes("order_status") || // Booking status cũng map về order lifecycle để real-time upsert.
+  codeStr.includes("booking_status") || action.includes("booking_status")) {
     eventKind = "order_status_update";
-  } else if (codeNum === 4 || codeStr.includes("tracking") || action.includes("tracking_no")) {
+  } else if (codeNum === 4 || codeStr.includes("tracking") || action.includes("tracking_no") || action.includes("booking_tracking")) {
     eventKind = "tracking_no_update";
   } else if (codeNum === 15 || codeStr.includes("shipping_document") || action.includes("shipping_document")) {
     eventKind = "shipping_document";
+  } else if (codeStr.includes("package") || action.includes("package_fulfillment") || action.includes("package_info") || action.includes("courier_delivery")) {
+    eventKind = "package_update";
   } else if (returnSn || codeStr.includes("return") || codeStr.includes("refund") || action.includes("return") || action.includes("refund") || status === "TO_RETURN") {
     eventKind = "return_refund";
   } else if (trackingNo && orderSn) {
@@ -114855,6 +114963,8 @@ async function startServer() {
     isLogisticsHandedToCarrier,
     loadOrders,
     saveOrders,
+    loadOrdersFromStore,
+    queueOrdersJsonMirrorFromMongo,
     fetchNormalizeShopeeOrderChunk,
     persistShopeeOrderChunk,
     upsertShopeeWebhookShallow,
