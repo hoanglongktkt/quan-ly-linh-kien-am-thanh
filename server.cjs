@@ -115051,8 +115051,6 @@ async function startServer() {
   app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
   app.post("/api/orders/pull", authMiddleware, pullOrders);
-  app.post("/api/orders/fast-process", authMiddleware, fastProcessOrders);
-  app.post("/api/shopee/orders/fast-process", authMiddleware, fastProcessOrders);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
   app.post("/api/shopee/orders/pull", authMiddleware, pullOrders);
   app.post("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
@@ -116353,6 +116351,8 @@ async function startServer() {
     pruneOldShipOrderJobs
   });
   app.use("/api/shopee", authMiddleware, shopeeShipRoutes);
+  app.post("/api/orders/fast-process", authMiddleware, handleFastProcess);
+  app.post("/api/shopee/orders/fast-process", authMiddleware, handleFastProcess);
   async function printDocumentHandler(req, res) {
     try {
       const { orderIds, waitMs: rawWaitMs } = req.body;
