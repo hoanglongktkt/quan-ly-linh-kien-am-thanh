@@ -4,7 +4,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { PDFDocument } from "pdf-lib";
 import dotenv from "dotenv";
-import { scheduleAutoIncrementalOrdersSync } from "./cron/index.js";
+// cron auto-sync: TẮT — không import scheduleAutoIncrementalOrdersSync.
 import { createShopeeWebhookRouter } from "./src/webhooks/shopeeWebhookHandler.ts";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
@@ -150,8 +150,6 @@ import {
   purgeHandedOverGarbageOrdersOnce,
   purgeClosedOrdersByRetention,
   archiveStaleReceivedCancelReturnOrders,
-  scheduleClosedOrdersRetentionCleanup,
-  scheduleMongoTempCollectionsCleanup,
 } from "./services/orders.js";
 import {
   initOrdersController,
@@ -869,30 +867,8 @@ try {
 }
 wipeLegacyPublicPrints();
 cleanupExpiredLabelFiles();
-/** Không chạy chồng cleanup — tránh treo/fork thừa trên cPanel. */
-let labelDiskCleanupRunning = false;
-/** Mỗi giờ: xóa PDF > 24h. Mỗi ngày (24h): quét lại + log rõ. */
-let labelDailySweepAt = 0;
-const labelDiskCleanupTimer = setInterval(() => {
-  if (labelDiskCleanupRunning) return;
-  labelDiskCleanupRunning = true;
-  try {
-    const n = cleanupExpiredLabelFiles();
-    const now = Date.now();
-    if (now - labelDailySweepAt >= 24 * 60 * 60 * 1000) {
-      labelDailySweepAt = now;
-      wipeLegacyPublicPrints();
-      console.log(`[Labels Cleanup] Daily sweep xong — deleted≈${n}, TTL=24h, dir=${LABELS_DIR}`);
-    }
-  } catch (err) {
-    console.warn("[Labels Cleanup] setInterval lỗi:", err);
-  } finally {
-    labelDiskCleanupRunning = false;
-  }
-}, 60 * 60 * 1000);
-if (typeof (labelDiskCleanupTimer as any).unref === "function") {
-  (labelDiskCleanupTimer as any).unref();
-}
+/** TẮT setInterval cleanup — chỉ dọn 1 lần lúc boot (tránh process leak cPanel). */
+console.log("[Labels Cleanup] setInterval OFF — chỉ cleanup one-shot lúc boot.");
 
 type ServeLabelPdfResult = "sent" | "not_found" | "invalid";
 
@@ -8698,6 +8674,7 @@ const SHOPEE_TRACKING_ENRICH_BATCH_LIMIT = 40;
 const SHOPEE_TRACKING_ENRICH_BATCH_SIZE = 10;
 let shopeeTrackingEnrichInFlight = false;
 let shopeeTrackingEnrichTimer: ReturnType<typeof setInterval> | undefined;
+let shopeeCancelReturnCronTimer: ReturnType<typeof setInterval> | undefined;
 
 function getShopeeTrackingCandidateTime(order: any): number {
   const raw =
@@ -8971,112 +8948,27 @@ async function enrichMissingShopeeTracking(): Promise<{
   }
 }
 
+/** TẮT hẳn — không setInterval tracking enrich (process leak cPanel). */
 function scheduleMissingShopeeTrackingEnrichment(): void {
-  if (shopeeTrackingEnrichTimer) return;
-  shopeeTrackingEnrichTimer = setInterval(() => {
-    void enrichMissingShopeeTracking();
-  }, SHOPEE_TRACKING_ENRICH_INTERVAL_MS);
-  if (typeof (shopeeTrackingEnrichTimer as any).unref === "function") {
-    (shopeeTrackingEnrichTimer as any).unref();
+  if (shopeeTrackingEnrichTimer) {
+    clearInterval(shopeeTrackingEnrichTimer);
+    shopeeTrackingEnrichTimer = undefined;
   }
-  console.log("[Shopee Tracking Enrich] Scheduler ON — mỗi 10 phút, tối đa 40 đơn / lượt.");
+  console.log("[Shopee Tracking Enrich] Scheduler OFF — chỉ webhook + nút Làm mới.");
 }
 
-/** Cron bù CANCELLED / TO_RETURN khi webhook miss — mỗi 45 phút. */
-const SHOPEE_CANCEL_RETURN_CRON_MS = 45 * 60 * 1000;
-let shopeeCancelReturnCronTimer: ReturnType<typeof setInterval> | undefined;
-
+/** TẮT hẳn — không setInterval cancel/return reconcile. */
 function scheduleShopeeCancelReturnReconcile(): void {
-  if (shopeeCancelReturnCronTimer) return;
-  shopeeCancelReturnCronTimer = setInterval(() => {
-    Promise.resolve()
-      .then(async () => {
-        try {
-          if (!isMongoReady() || isOrdersPullLocked()) return;
-          const result = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
-          console.log(
-            `[CancelReturn Cron] pulled=${result.pulled} +${result.added}/~${result.updated} skipped=${Boolean(result.skipped)} — ${result.message}`,
-          );
-          if (!isOrdersPullLocked() && isMongoReady()) {
-            ensureShopeeLinkedShopTokenKeys();
-            const shopIds = listShopeeSyncShopIds();
-            if (shopIds.length) {
-              const orders = await loadOrdersFromStore();
-              const deadlineAt = Date.now() + 90_000;
-              const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
-              if (reconciled.pulled > 0 || reconciled.errors.length) {
-                console.log(
-                  `[CancelReturn Cron] reconcile pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} err=${reconciled.errors.length}`,
-                );
-              }
-            }
-          }
-        } catch (err: any) {
-          console.error("[Background Sync Error]:", err?.message || err);
-          return;
-        }
-      })
-      .catch((err: any) => {
-        console.error("[Background Sync Error]:", err?.message || err);
-      });
-  }, SHOPEE_CANCEL_RETURN_CRON_MS);
-  if (typeof (shopeeCancelReturnCronTimer as any).unref === "function") {
-    (shopeeCancelReturnCronTimer as any).unref();
+  if (shopeeCancelReturnCronTimer) {
+    clearInterval(shopeeCancelReturnCronTimer);
+    shopeeCancelReturnCronTimer = undefined;
   }
-  console.log("[CancelReturn Cron] Scheduler ON — mỗi 45 phút (CANCELLED/TO_RETURN + reconcile shipping).");
+  console.log("[CancelReturn Cron] Scheduler OFF — chỉ webhook + nút Làm mới.");
 }
 
-/**
- * Auto Incremental Sync — cửa sổ ngắn (2h): webhook là real-time;
- * cron chỉ bù miss, không kéo 5 ngày mỗi 30 phút (tránh process spike).
- * Error boundary: mọi lỗi chỉ log, không throw (tránh crash Passenger).
- */
-const AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = 2 * 60 * 60;
-
+/** TẮT hẳn auto incremental cron — không kéo đơn ngầm. */
 function scheduleAutoIncrementalOrdersSyncSafe(): void {
-  try {
-    scheduleAutoIncrementalOrdersSync({
-      lookbackSec: AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC,
-      isMongoReady: () => {
-        try {
-          return isMongoReady();
-        } catch {
-          return false;
-        }
-      },
-      isPullInFlight: () => isOrdersPullLocked(),
-      pullIncrementalOrdersFromShopee: async (opts) => {
-        try {
-          return await pullIncrementalOrdersFromShopee({
-            ...opts,
-            allowShortLookback: true,
-            reconcileActive: false,
-          });
-        } catch (error: any) {
-          console.error("[Background Sync Error]:", error?.message || error);
-          return {
-            success: false,
-            pulled: 0,
-            added: 0,
-            updated: 0,
-            shops: 0,
-            errors: [{ error: "background_sync_failed", message: String(error?.message || error) }],
-            message: String(error?.message || error),
-            skipped: true,
-          };
-        }
-      },
-      invalidateOrdersRefreshCache: () => {
-        try {
-          invalidateOrdersRefreshCache();
-        } catch (error: any) {
-          console.error("[Background Sync Error]:", error?.message || error);
-        }
-      },
-    });
-  } catch (error: any) {
-    console.error("[Background Sync Error]:", error?.message || error);
-  }
+  console.log("[CRON] Auto Incremental Sync OFF — chỉ webhook + nút Làm mới.");
 }
 
 /**
@@ -16624,14 +16516,16 @@ async function startServer() {
       const ok = await initMongo(APP_ROOT);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
-        scheduleMissingShopeeTrackingEnrichment();
-        scheduleShopeeCancelReturnReconcile();
-        scheduleAutoIncrementalOrdersSyncSafe();
-        scheduleClosedOrdersRetentionCleanup();
-        scheduleMongoTempCollectionsCleanup();
+        // TẮT toàn bộ background intervals / auto-sync / retention cron (process leak cPanel).
+        // Kéo đơn CHỈ qua: Shopee webhook real-time HOẶC nút Làm mới thủ công.
+        scheduleMissingShopeeTrackingEnrichment(); // no-op OFF
+        scheduleShopeeCancelReturnReconcile(); // no-op OFF
+        scheduleAutoIncrementalOrdersSyncSafe(); // no-op OFF
+        // KHÔNG gọi scheduleClosedOrdersRetentionCleanup / scheduleMongoTempCollectionsCleanup.
       }
-      // KHÔNG tự xóa đơn ĐVVC khi boot — chỉ qua POST /api/orders/cleanup-handed-over.
-      console.log(`[MongoDB] connectDB xong — ready=${isMongoReady()} uri=${getMongoUriMasked()}`);
+      console.log(
+        `[MongoDB] connectDB xong — ready=${isMongoReady()} uri=${getMongoUriMasked()} | background sync=OFF`,
+      );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("LỖI MONGODB STARTUP:", msg);
@@ -16664,57 +16558,16 @@ async function startServer() {
       // DB non-blocking: fire-and-forget sau khi port đã mở
       void connectDB();
 
-      // Sync đơn: webhook (HMAC đúng URL|body) + POST /api/orders/pull.
-      // Một lần recovery pull sau boot (24h) để lấy đơn miss khi webhook từng bị chặn HMAC sai.
-      console.log("[Boot] Order sync: webhook ON + one-shot recovery pull (24h) after Mongo ready.");
-      console.log("[Shopee Tracking Scanner] TẠM TẮT (iron-fist purge) — không quét khi boot.");
-      console.log("[Orders Retention] Job xóa đơn đã đóng: hủy/hoàn >14d, hoàn tất/ĐVVC >30d (sau Mongo ready).");
-      console.log("[Labels Cleanup] PDF vận đơn lưu đĩa storage/labels (không Mongo) — TTL 24h, dọn mỗi giờ.");
+      // Sync đơn: CHỈ webhook real-time + nút Làm mới (POST /api/orders/pull|sync).
+      // KHÔNG recovery pull / KHÔNG setInterval / KHÔNG cron auto-sync khi boot.
+      console.log("[Boot] Order sync: webhook ON + manual refresh ONLY — all background intervals OFF.");
+      console.log("[Boot] Recovery pull OFF | Tracking enrich cron OFF | CancelReturn cron OFF | Auto sync cron OFF.");
+      console.log("[Labels Cleanup] setInterval OFF — one-shot boot cleanup only.");
       console.log(
         `[Shopee Webhook] orders write ${
           String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"
         }`,
       );
-      void (async () => {
-        try {
-          // Chờ Mongo sẵn sàng tối đa ~30s rồi kéo đơn 24h gần nhất.
-          for (let i = 0; i < 15 && !isMongoReady(); i++) {
-            await sleep(2000);
-          }
-          if (!isMongoReady()) {
-            console.warn("[Boot] Recovery pull bỏ qua — Mongo chưa ready.");
-            return;
-          }
-          console.log("[Boot] Chạy recovery pullIncrementalOrdersFromShopee (24h)...");
-          const result = await pullIncrementalOrdersFromShopee({
-            lookbackSec: SHOPEE_ORDER_LIST_INCREMENTAL_SEC,
-          });
-          console.log(
-            `[Boot] Recovery pull xong: pulled=${result.pulled} +${result.added}/~${result.updated} err=${result.errors.length} — ${result.message}`,
-          );
-          console.log("[Boot] Chạy recovery pullShopeeCancelReturnOrders (48h)...");
-          const cancelResult = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
-          console.log(
-            `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} — ${cancelResult.message}`,
-          );
-
-          // Heal nhẹ lúc boot: không tryShip (tránh spawn ship_order hàng loạt → process spike).
-          console.log("[Boot] Chạy triggerFixStuckOrders (light, no ship)...");
-          const stuck = await triggerFixStuckOrders({
-            maxAutoDetect: 10,
-            tryShip: false,
-            lookbackMs: 7 * 24 * 3600 * 1000,
-          });
-          console.log(
-            `[Boot] Trigger fix stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`,
-          );
-        } catch (bootPullErr: any) {
-          console.error("[Background Sync Error]:", bootPullErr?.message || bootPullErr);
-          return;
-        }
-      })().catch((err: any) => {
-        console.error("[Background Sync Error]:", err?.message || err);
-      });
     };
 
     if (process.env.PORT) {

@@ -497,48 +497,22 @@ export async function purgeClosedOrdersByRetention(opts) {
   };
 }
 
+/** TẮT — không setInterval retention (process leak cPanel). Xóa thủ công qua API nếu cần. */
 export function scheduleClosedOrdersRetentionCleanup() {
-  if (closedOrdersRetentionTimer) return;
-  const run = () => {
-    if (closedOrdersRetentionRunning || !isMongoReady()) return;
-    closedOrdersRetentionRunning = true;
-    void purgeClosedOrdersByRetention()
-      .catch((err) => console.warn("[Orders Retention] schedule error:", err?.message || err))
-      .finally(() => {
-        closedOrdersRetentionRunning = false;
-      });
-  };
-  setTimeout(run, 2 * 60 * 1000);
-  closedOrdersRetentionTimer = setInterval(run, 24 * 60 * 60 * 1000);
-  if (typeof closedOrdersRetentionTimer.unref === "function") {
-    closedOrdersRetentionTimer.unref();
+  if (closedOrdersRetentionTimer) {
+    clearInterval(closedOrdersRetentionTimer);
+    closedOrdersRetentionTimer = undefined;
   }
-  console.log("[Orders Retention] Scheduled: hủy/hoàn >14d, hoàn tất/ĐVVC >30d, mỗi 24h.");
+  console.log("[Orders Retention] Scheduler OFF — không chạy nền.");
 }
 
+/** TẮT — không setInterval mongo temp cleanup (process leak cPanel). */
 export function scheduleMongoTempCollectionsCleanup() {
-  if (mongoTempCleanupTimer) return;
-  const run = () => {
-    if (mongoTempCleanupRunning || !isMongoReady()) return;
-    mongoTempCleanupRunning = true;
-    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14, ensureTtl: true })
-      .then((r) => {
-        console.log(
-          `[Mongo Temp Cleanup] order_events ${r.orderEventsBefore}→${r.orderEventsAfter} (−${r.orderEventsDeleted}),` +
-            ` sync_jobs ${r.syncJobsBefore}→${r.syncJobsAfter} (−${r.syncJobsDeleted})`,
-        );
-      })
-      .catch((err) => console.warn("[Mongo Temp Cleanup] schedule error:", err?.message || err))
-      .finally(() => {
-        mongoTempCleanupRunning = false;
-      });
-  };
-  setTimeout(run, 45_000);
-  mongoTempCleanupTimer = setInterval(run, 24 * 60 * 60 * 1000);
-  if (typeof mongoTempCleanupTimer.unref === "function") {
-    mongoTempCleanupTimer.unref();
+  if (mongoTempCleanupTimer) {
+    clearInterval(mongoTempCleanupTimer);
+    mongoTempCleanupTimer = undefined;
   }
-  console.log("[Mongo Temp Cleanup] Scheduled: order_events/sync_jobs >14d + TTL 14d, mỗi 24h.");
+  console.log("[Mongo Temp Cleanup] Scheduler OFF — không chạy nền.");
 }
 
 export function findOrderRecord(orders, idOrSn) {

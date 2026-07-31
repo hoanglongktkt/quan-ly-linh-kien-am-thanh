@@ -71467,68 +71467,6 @@ var import_fs15 = __toESM(require("fs"), 1);
 var import_pdf_lib = __toESM(require_cjs(), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 
-// cron/index.js
-var import_node_cron = __toESM(require("node-cron"), 1);
-var autoIncrementalScheduled = false;
-function scheduleAutoIncrementalOrdersSync(deps20) {
-  if (autoIncrementalScheduled) return;
-  const lookbackSec = Math.max(60, Number(deps20.lookbackSec) || 2 * 60 * 60);
-  const expression = "*/30 * * * *";
-  try {
-    if (typeof import_node_cron.default.validate !== "function" || !import_node_cron.default.validate(expression)) {
-      console.error("[Background Sync Error]: Invalid cron expression */30 * * * *");
-      return;
-    }
-  } catch (error) {
-    console.error("[Background Sync Error]:", error?.message || error);
-    return;
-  }
-  try {
-    import_node_cron.default.schedule(expression, () => {
-      Promise.resolve().then(() => runAutoIncrementalOnce(deps20, lookbackSec)).catch((error) => {
-        console.error("[Background Sync Error]:", error?.message || error);
-      });
-    });
-    autoIncrementalScheduled = true;
-    console.log(
-      `[CRON] Auto Incremental Sync ON \u2014 m\u1ED7i 30 ph\xFAt (lookback ${lookbackSec}s, short window).`
-    );
-  } catch (error) {
-    console.error("[Background Sync Error]:", error?.message || error);
-  }
-}
-async function runAutoIncrementalOnce(deps20, lookbackSec) {
-  try {
-    if (typeof deps20.isMongoReady === "function" && !deps20.isMongoReady()) {
-      console.log("[CRON] Auto sync 30m skipped \u2014 Mongo not ready.");
-      return;
-    }
-    if (typeof deps20.isPullInFlight === "function" && deps20.isPullInFlight()) {
-      console.log("[CRON] Auto sync 30m skipped \u2014 pull already in flight.");
-      return;
-    }
-    console.log(`[CRON] Auto sync 30m start \u2014 lookbackSec=${lookbackSec}`);
-    const result = await deps20.pullIncrementalOrdersFromShopee({
-      lookbackSec,
-      reconcileActive: false,
-      allowShortLookback: true
-    });
-    if (result && !result.skipped && typeof deps20.invalidateOrdersRefreshCache === "function") {
-      try {
-        deps20.invalidateOrdersRefreshCache();
-      } catch (cacheErr) {
-        console.error("[Background Sync Error]:", cacheErr?.message || cacheErr);
-      }
-    }
-    console.log(
-      `[CRON] Auto sync 30m finished successfully pulled=${result?.pulled ?? 0} +${result?.added ?? 0}/~${result?.updated ?? 0} err=${(result?.errors || []).length} \u2014 ${result?.message || ""}`
-    );
-  } catch (error) {
-    console.error("[Background Sync Error]:", error?.message || error);
-    return;
-  }
-}
-
 // src/webhooks/shopeeWebhookHandler.ts
 var import_express = __toESM(require_express2(), 1);
 var MAX_PENDING_JOBS = 200;
@@ -102762,10 +102700,6 @@ function initOrdersService(partial) {
 var orderLookupIndex = null;
 var ordersJsonMirrorQueued = false;
 var ordersJsonMirrorSnapshot = null;
-var closedOrdersRetentionRunning = false;
-var closedOrdersRetentionTimer;
-var mongoTempCleanupRunning = false;
-var mongoTempCleanupTimer;
 function normalizeOrderIndexKey(raw) {
   return String(raw || "").trim().toUpperCase().replace(/[\s\-_#./\\|:;,]+/g, "");
 }
@@ -103112,42 +103046,6 @@ async function purgeClosedOrdersByRetention(opts) {
     closedMatched: mongoResult.closedMatched,
     message
   };
-}
-function scheduleClosedOrdersRetentionCleanup() {
-  if (closedOrdersRetentionTimer) return;
-  const run = () => {
-    if (closedOrdersRetentionRunning || !isMongoReady()) return;
-    closedOrdersRetentionRunning = true;
-    void purgeClosedOrdersByRetention().catch((err) => console.warn("[Orders Retention] schedule error:", err?.message || err)).finally(() => {
-      closedOrdersRetentionRunning = false;
-    });
-  };
-  setTimeout(run, 2 * 60 * 1e3);
-  closedOrdersRetentionTimer = setInterval(run, 24 * 60 * 60 * 1e3);
-  if (typeof closedOrdersRetentionTimer.unref === "function") {
-    closedOrdersRetentionTimer.unref();
-  }
-  console.log("[Orders Retention] Scheduled: h\u1EE7y/ho\xE0n >14d, ho\xE0n t\u1EA5t/\u0110VVC >30d, m\u1ED7i 24h.");
-}
-function scheduleMongoTempCollectionsCleanup() {
-  if (mongoTempCleanupTimer) return;
-  const run = () => {
-    if (mongoTempCleanupRunning || !isMongoReady()) return;
-    mongoTempCleanupRunning = true;
-    void purgeMongoTempCollections({ orderEventDays: 14, syncJobDays: 14, ensureTtl: true }).then((r2) => {
-      console.log(
-        `[Mongo Temp Cleanup] order_events ${r2.orderEventsBefore}\u2192${r2.orderEventsAfter} (\u2212${r2.orderEventsDeleted}), sync_jobs ${r2.syncJobsBefore}\u2192${r2.syncJobsAfter} (\u2212${r2.syncJobsDeleted})`
-      );
-    }).catch((err) => console.warn("[Mongo Temp Cleanup] schedule error:", err?.message || err)).finally(() => {
-      mongoTempCleanupRunning = false;
-    });
-  };
-  setTimeout(run, 45e3);
-  mongoTempCleanupTimer = setInterval(run, 24 * 60 * 60 * 1e3);
-  if (typeof mongoTempCleanupTimer.unref === "function") {
-    mongoTempCleanupTimer.unref();
-  }
-  console.log("[Mongo Temp Cleanup] Scheduled: order_events/sync_jobs >14d + TTL 14d, m\u1ED7i 24h.");
 }
 function findOrderRecord(orders, idOrSn) {
   const key = String(idOrSn || "").trim();
@@ -106430,28 +106328,7 @@ try {
 }
 wipeLegacyPublicPrints();
 cleanupExpiredLabelFiles();
-var labelDiskCleanupRunning = false;
-var labelDailySweepAt = 0;
-var labelDiskCleanupTimer = setInterval(() => {
-  if (labelDiskCleanupRunning) return;
-  labelDiskCleanupRunning = true;
-  try {
-    const n = cleanupExpiredLabelFiles();
-    const now = Date.now();
-    if (now - labelDailySweepAt >= 24 * 60 * 60 * 1e3) {
-      labelDailySweepAt = now;
-      wipeLegacyPublicPrints();
-      console.log(`[Labels Cleanup] Daily sweep xong \u2014 deleted\u2248${n}, TTL=24h, dir=${LABELS_DIR}`);
-    }
-  } catch (err) {
-    console.warn("[Labels Cleanup] setInterval l\u1ED7i:", err);
-  } finally {
-    labelDiskCleanupRunning = false;
-  }
-}, 60 * 60 * 1e3);
-if (typeof labelDiskCleanupTimer.unref === "function") {
-  labelDiskCleanupTimer.unref();
-}
+console.log("[Labels Cleanup] setInterval OFF \u2014 ch\u1EC9 cleanup one-shot l\xFAc boot.");
 function serveLabelPdfFromMem(filename, res) {
   try {
     const safe = safeLabelFilename(decodeURIComponent(String(filename || "")));
@@ -112152,6 +112029,7 @@ var SHOPEE_TRACKING_ENRICH_BATCH_LIMIT = 40;
 var SHOPEE_TRACKING_ENRICH_BATCH_SIZE = 10;
 var shopeeTrackingEnrichInFlight = false;
 var shopeeTrackingEnrichTimer;
+var shopeeCancelReturnCronTimer;
 function getShopeeTrackingCandidateTime(order) {
   const raw = order?.last_shopee_update_at || order?.lastSynced || order?.last_synced_at || order?.updatedAt || order?.date;
   const value = raw instanceof Date ? raw.getTime() : new Date(String(raw || "")).getTime();
@@ -112360,99 +112238,21 @@ async function enrichMissingShopeeTracking() {
   }
 }
 function scheduleMissingShopeeTrackingEnrichment() {
-  if (shopeeTrackingEnrichTimer) return;
-  shopeeTrackingEnrichTimer = setInterval(() => {
-    void enrichMissingShopeeTracking();
-  }, SHOPEE_TRACKING_ENRICH_INTERVAL_MS);
-  if (typeof shopeeTrackingEnrichTimer.unref === "function") {
-    shopeeTrackingEnrichTimer.unref();
+  if (shopeeTrackingEnrichTimer) {
+    clearInterval(shopeeTrackingEnrichTimer);
+    shopeeTrackingEnrichTimer = void 0;
   }
-  console.log("[Shopee Tracking Enrich] Scheduler ON \u2014 m\u1ED7i 10 ph\xFAt, t\u1ED1i \u0111a 40 \u0111\u01A1n / l\u01B0\u1EE3t.");
+  console.log("[Shopee Tracking Enrich] Scheduler OFF \u2014 ch\u1EC9 webhook + n\xFAt L\xE0m m\u1EDBi.");
 }
-var SHOPEE_CANCEL_RETURN_CRON_MS = 45 * 60 * 1e3;
-var shopeeCancelReturnCronTimer;
 function scheduleShopeeCancelReturnReconcile() {
-  if (shopeeCancelReturnCronTimer) return;
-  shopeeCancelReturnCronTimer = setInterval(() => {
-    Promise.resolve().then(async () => {
-      try {
-        if (!isMongoReady() || isOrdersPullLocked()) return;
-        const result = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
-        console.log(
-          `[CancelReturn Cron] pulled=${result.pulled} +${result.added}/~${result.updated} skipped=${Boolean(result.skipped)} \u2014 ${result.message}`
-        );
-        if (!isOrdersPullLocked() && isMongoReady()) {
-          ensureShopeeLinkedShopTokenKeys();
-          const shopIds = listShopeeSyncShopIds();
-          if (shopIds.length) {
-            const orders = await loadOrdersFromStore();
-            const deadlineAt = Date.now() + 9e4;
-            const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
-            if (reconciled.pulled > 0 || reconciled.errors.length) {
-              console.log(
-                `[CancelReturn Cron] reconcile pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} err=${reconciled.errors.length}`
-              );
-            }
-          }
-        }
-      } catch (err) {
-        console.error("[Background Sync Error]:", err?.message || err);
-        return;
-      }
-    }).catch((err) => {
-      console.error("[Background Sync Error]:", err?.message || err);
-    });
-  }, SHOPEE_CANCEL_RETURN_CRON_MS);
-  if (typeof shopeeCancelReturnCronTimer.unref === "function") {
-    shopeeCancelReturnCronTimer.unref();
+  if (shopeeCancelReturnCronTimer) {
+    clearInterval(shopeeCancelReturnCronTimer);
+    shopeeCancelReturnCronTimer = void 0;
   }
-  console.log("[CancelReturn Cron] Scheduler ON \u2014 m\u1ED7i 45 ph\xFAt (CANCELLED/TO_RETURN + reconcile shipping).");
+  console.log("[CancelReturn Cron] Scheduler OFF \u2014 ch\u1EC9 webhook + n\xFAt L\xE0m m\u1EDBi.");
 }
-var AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC = 2 * 60 * 60;
 function scheduleAutoIncrementalOrdersSyncSafe() {
-  try {
-    scheduleAutoIncrementalOrdersSync({
-      lookbackSec: AUTO_INCREMENTAL_SYNC_LOOKBACK_SEC,
-      isMongoReady: () => {
-        try {
-          return isMongoReady();
-        } catch {
-          return false;
-        }
-      },
-      isPullInFlight: () => isOrdersPullLocked(),
-      pullIncrementalOrdersFromShopee: async (opts) => {
-        try {
-          return await pullIncrementalOrdersFromShopee({
-            ...opts,
-            allowShortLookback: true,
-            reconcileActive: false
-          });
-        } catch (error) {
-          console.error("[Background Sync Error]:", error?.message || error);
-          return {
-            success: false,
-            pulled: 0,
-            added: 0,
-            updated: 0,
-            shops: 0,
-            errors: [{ error: "background_sync_failed", message: String(error?.message || error) }],
-            message: String(error?.message || error),
-            skipped: true
-          };
-        }
-      },
-      invalidateOrdersRefreshCache: () => {
-        try {
-          invalidateOrdersRefreshCache();
-        } catch (error) {
-          console.error("[Background Sync Error]:", error?.message || error);
-        }
-      }
-    });
-  } catch (error) {
-    console.error("[Background Sync Error]:", error?.message || error);
-  }
+  console.log("[CRON] Auto Incremental Sync OFF \u2014 ch\u1EC9 webhook + n\xFAt L\xE0m m\u1EDBi.");
 }
 async function ensureTrackingBeforePrint(orders, targetOrders, opts) {
   const retries = opts?.retries ?? 1;
@@ -117978,10 +117778,10 @@ async function startServer() {
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
         scheduleAutoIncrementalOrdersSyncSafe();
-        scheduleClosedOrdersRetentionCleanup();
-        scheduleMongoTempCollectionsCleanup();
       }
-      console.log(`[MongoDB] connectDB xong \u2014 ready=${isMongoReady()} uri=${getMongoUriMasked()}`);
+      console.log(
+        `[MongoDB] connectDB xong \u2014 ready=${isMongoReady()} uri=${getMongoUriMasked()} | background sync=OFF`
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("L\u1ED6I MONGODB STARTUP:", msg);
@@ -118004,50 +117804,12 @@ async function startServer() {
       }
       console.log(`[MongoDB] listen OK \u2014 connecting DB in background (ready=${isMongoReady()})`);
       void connectDB2();
-      console.log("[Boot] Order sync: webhook ON + one-shot recovery pull (24h) after Mongo ready.");
-      console.log("[Shopee Tracking Scanner] T\u1EA0M T\u1EAET (iron-fist purge) \u2014 kh\xF4ng qu\xE9t khi boot.");
-      console.log("[Orders Retention] Job x\xF3a \u0111\u01A1n \u0111\xE3 \u0111\xF3ng: h\u1EE7y/ho\xE0n >14d, ho\xE0n t\u1EA5t/\u0110VVC >30d (sau Mongo ready).");
-      console.log("[Labels Cleanup] PDF v\u1EADn \u0111\u01A1n l\u01B0u \u0111\u0129a storage/labels (kh\xF4ng Mongo) \u2014 TTL 24h, d\u1ECDn m\u1ED7i gi\u1EDD.");
+      console.log("[Boot] Order sync: webhook ON + manual refresh ONLY \u2014 all background intervals OFF.");
+      console.log("[Boot] Recovery pull OFF | Tracking enrich cron OFF | CancelReturn cron OFF | Auto sync cron OFF.");
+      console.log("[Labels Cleanup] setInterval OFF \u2014 one-shot boot cleanup only.");
       console.log(
         `[Shopee Webhook] orders write ${String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"}`
       );
-      void (async () => {
-        try {
-          for (let i2 = 0; i2 < 15 && !isMongoReady(); i2++) {
-            await sleep2(2e3);
-          }
-          if (!isMongoReady()) {
-            console.warn("[Boot] Recovery pull b\u1ECF qua \u2014 Mongo ch\u01B0a ready.");
-            return;
-          }
-          console.log("[Boot] Ch\u1EA1y recovery pullIncrementalOrdersFromShopee (24h)...");
-          const result = await pullIncrementalOrdersFromShopee({
-            lookbackSec: SHOPEE_ORDER_LIST_INCREMENTAL_SEC
-          });
-          console.log(
-            `[Boot] Recovery pull xong: pulled=${result.pulled} +${result.added}/~${result.updated} err=${result.errors.length} \u2014 ${result.message}`
-          );
-          console.log("[Boot] Ch\u1EA1y recovery pullShopeeCancelReturnOrders (48h)...");
-          const cancelResult = await pullShopeeCancelReturnOrders({ lookbackSec: 48 * 3600 });
-          console.log(
-            `[Boot] Cancel/return recovery xong: pulled=${cancelResult.pulled} +${cancelResult.added}/~${cancelResult.updated} err=${cancelResult.errors.length} \u2014 ${cancelResult.message}`
-          );
-          console.log("[Boot] Ch\u1EA1y triggerFixStuckOrders (light, no ship)...");
-          const stuck = await triggerFixStuckOrders2({
-            maxAutoDetect: 10,
-            tryShip: false,
-            lookbackMs: 7 * 24 * 3600 * 1e3
-          });
-          console.log(
-            `[Boot] Trigger fix stuck xong: attempted=${stuck.attempted} healed=${stuck.healed}`
-          );
-        } catch (bootPullErr) {
-          console.error("[Background Sync Error]:", bootPullErr?.message || bootPullErr);
-          return;
-        }
-      })().catch((err) => {
-        console.error("[Background Sync Error]:", err?.message || err);
-      });
     };
     if (process.env.PORT) {
       app.listen(PORT, onReady);
