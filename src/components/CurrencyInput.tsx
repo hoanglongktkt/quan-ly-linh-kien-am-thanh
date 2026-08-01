@@ -9,6 +9,8 @@ interface CurrencyInputProps {
   min?: number;
   max?: number;
   disabled?: boolean;
+  onClick?: (e: React.MouseEvent<HTMLInputElement>) => void;
+  title?: string;
 }
 
 /** Ô nhập tiền tự format dấu chấm hàng nghìn (1.200.000). Value state luôn là số nguyên. */
@@ -20,6 +22,8 @@ export default function CurrencyInput({
   min = 0,
   max,
   disabled,
+  onClick,
+  title,
 }: CurrencyInputProps) {
   return (
     <input
@@ -27,7 +31,9 @@ export default function CurrencyInput({
       inputMode="numeric"
       disabled={disabled}
       placeholder={placeholder}
+      title={title}
       value={formatVndInput(value)}
+      onClick={onClick}
       onChange={(e) => {
         let next = parseVndInput(e.target.value);
         if (min != null) next = Math.max(min, next);

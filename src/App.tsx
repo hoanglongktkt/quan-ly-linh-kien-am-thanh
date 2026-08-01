@@ -1051,7 +1051,13 @@ export default function App() {
       }
 
       let syncResult = data;
-      if (!data?.shopeeSynced) {
+      const shopeeSkippedNoChange =
+        typeof data?.shopeeMessage === 'string' &&
+        (data.shopeeMessage.includes('Không có thay đổi') ||
+          data.shopeeMessage.includes('Chưa liên kết Mapping'));
+      // Chỉ ép sync Shopee khi PATCH báo chưa sync và KHÔNG phải trường hợp skip hợp lệ
+      // (vd. chỉ đổi importPrice — không cần đẩy tồn/giá bán lên sàn).
+      if (!data?.shopeeSynced && !shopeeSkippedNoChange) {
         const syncResponse = await fetch('/api/products/sync-shopee', {
           method: 'POST',
           headers: apiAuthHeaders(),

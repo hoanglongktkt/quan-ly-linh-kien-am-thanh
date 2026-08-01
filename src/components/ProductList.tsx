@@ -11,6 +11,7 @@ import ProductLinking from './ProductLinking';
 import InventoryAudit from './InventoryAudit';
 import { parseJsonResponse } from '../utils/apiClient';
 import { clearInventoryBrowserCache } from '../utils/catalogStorage';
+import CurrencyInput from './CurrencyInput';
 import { 
   Plus, 
   Search, 
@@ -34,7 +35,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  Save
 } from 'lucide-react';
 
 interface ProductListProps {
@@ -192,16 +194,57 @@ export default function ProductList({
   // Detail Modal state
   const [activeProduct, setActiveProduct] = useState<Product | null>(null);
   const [syncingProductId, setSyncingProductId] = useState<string | null>(null);
+  const [savingImportPriceId, setSavingImportPriceId] = useState<string | null>(null);
   const [actionToast, setActionToast] = useState<string | null>(null);
+  const [actionToastOk, setActionToastOk] = useState(false);
+
+  const showActionToast = (message: string, ok = false) => {
+    setActionToastOk(ok);
+    setActionToast(message);
+    setTimeout(() => setActionToast(null), 4500);
+  };
+
+  const handleSaveImportPrice = async (product: Product) => {
+    const token = localStorage.getItem('admin_token');
+    if (!token) {
+      showActionToast('Chưa đăng nhập.');
+      return;
+    }
+    const importPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
+    setSavingImportPriceId(product.id);
+    try {
+      const response = await fetch(`/api/products/${encodeURIComponent(product.id)}`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ importPrice }),
+      });
+      const data = await parseJsonResponse(response);
+      if (!response.ok || data?.success === false) {
+        throw new Error(
+          data?.error || data?.message || `Cập nhật giá nhập thất bại (HTTP ${response.status})`
+        );
+      }
+      const savedPrice = Math.max(0, Math.round(Number(data?.importPrice ?? importPrice) || 0));
+      onUpdateProduct({ ...product, importPrice: savedPrice });
+      showActionToast('Cập nhật giá nhập thành công!', true);
+    } catch (err: any) {
+      showActionToast(`Lỗi: ${err?.message || 'Cập nhật giá nhập thất bại.'}`);
+    } finally {
+      setSavingImportPriceId(null);
+    }
+  };
 
   const handleQuickSyncShopee = async (productId: string) => {
     const token = localStorage.getItem('admin_token');
     if (!token) {
-      setActionToast('Chưa đăng nhập.');
-      setTimeout(() => setActionToast(null), 3500);
+      showActionToast('Chưa đăng nhập.');
       return;
     }
     setSyncingProductId(productId);
+    setActionToastOk(false);
     setActionToast('Đang đồng bộ giá và tồn kho lên Shopee...');
     try {
       const response = await fetch('/api/products/sync-shopee', {
@@ -216,10 +259,11 @@ export default function ProductList({
       if (!response.ok || data?.success === false) {
         throw new Error(data?.error || data?.message || data?.shopeeMessage || `Đồng bộ Shopee thất bại (HTTP ${response.status})`);
       }
-      setActionToast(
+      showActionToast(
         data?.shopeeMessage
           ? `Đồng bộ Shopee thành công! ${data.shopeeMessage}`
-          : 'Đồng bộ Shopee thành công!'
+          : 'Đồng bộ Shopee thành công!',
+        true
       );
       onAddLog({
         id: `sync-${Date.now()}`,
@@ -231,7 +275,7 @@ export default function ProductList({
       });
     } catch (err: any) {
       const msg = err?.message || 'Đồng bộ Shopee thất bại.';
-      setActionToast(`Lỗi đồng bộ Shopee: ${msg}`);
+      showActionToast(`Lỗi đồng bộ Shopee: ${msg}`);
       onAddLog({
         id: `sync-${Date.now()}`,
         timestamp: new Date().toISOString(),
@@ -242,7 +286,6 @@ export default function ProductList({
       });
     } finally {
       setSyncingProductId(null);
-      setTimeout(() => setActionToast(null), 4500);
     }
   };
 
@@ -772,7 +815,11 @@ export default function ProductList({
       )}
       {actionToast && (
         <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white font-bold text-xs px-5 py-3 rounded-2xl shadow-2xl border border-slate-700 flex items-center gap-2 max-w-sm">
-          <RefreshCw className={`w-4 h-4 ${syncingProductId ? 'animate-spin text-orange-400' : 'text-orange-400'}`} />
+          {actionToastOk ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          ) : (
+            <RefreshCw className={`w-4 h-4 shrink-0 ${syncingProductId || savingImportPriceId ? 'animate-spin text-orange-400' : 'text-orange-400'}`} />
+          )}
           <span>{actionToast}</span>
           <button onClick={() => setActionToast(null)} className="ml-1 text-gray-400 hover:text-white cursor-pointer">
             <X className="w-3.5 h-3.5" />
@@ -1128,7 +1175,22 @@ export default function ProductList({
                         </div>
                       </td>
                       <td className="p-4 text-right font-mono font-medium text-gray-600">
-                        {prod.importPrice.toLocaleString('vi-VN')} đ
+                        {group.hasVariants ? (
+                          <span className="text-xs text-gray-500">
+                            {prod.importPrice.toLocaleString('vi-VN')} đ
+                          </span>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                            <CurrencyInput
+                              value={Math.max(0, Number(prod.importPrice) || 0)}
+                              onChange={(v) => onUpdateProduct({ ...prod, importPrice: v })}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-28 px-1.5 py-1 text-right bg-gray-50 hover:bg-gray-100 focus:bg-white rounded border border-gray-100 outline-none text-xs focus:border-blue-500 font-mono"
+                              title="Giá nhập"
+                            />
+                            <span className="text-[10px] text-gray-400">đ</span>
+                          </div>
+                        )}
                       </td>
                       <td className="p-4 text-right font-mono font-bold text-gray-900">
                         {group.hasVariants ? (
@@ -1180,6 +1242,19 @@ export default function ProductList({
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
+                          {!group.hasVariants && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleSaveImportPrice(prod);
+                              }}
+                              disabled={savingImportPriceId === prod.id}
+                              className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all disabled:opacity-60"
+                              title="Lưu giá nhập"
+                            >
+                              <Save className={`w-4 h-4 ${savingImportPriceId === prod.id ? 'animate-pulse text-emerald-600' : ''}`} />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1271,8 +1346,16 @@ export default function ProductList({
                               className="w-16 px-1.5 py-1 text-center bg-white hover:bg-gray-50 focus:bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-mono"
                             />
                           </td>
-                          <td className="p-3 text-right font-mono text-xs text-gray-500">
-                            {(child.importPrice || 0).toLocaleString('vi-VN')} đ
+                          <td className="p-3 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <CurrencyInput
+                                value={Math.max(0, Number(child.importPrice) || 0)}
+                                onChange={(v) => onUpdateProduct({ ...child, importPrice: v })}
+                                className="w-28 px-1.5 py-1 text-right bg-white hover:bg-gray-50 focus:bg-white rounded border border-gray-200 outline-none text-xs focus:border-blue-500 font-mono"
+                                title="Giá nhập"
+                              />
+                              <span className="text-[10px] text-gray-400">đ</span>
+                            </div>
                           </td>
                           <td className="p-3 text-right">
                             {(() => {
@@ -1309,6 +1392,14 @@ export default function ProductList({
                                 title="Sửa phân loại"
                               >
                                 <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => void handleSaveImportPrice(child)}
+                                disabled={savingImportPriceId === child.id}
+                                className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all disabled:opacity-60"
+                                title="Lưu giá nhập"
+                              >
+                                <Save className={`w-3.5 h-3.5 ${savingImportPriceId === child.id ? 'animate-pulse text-emerald-600' : ''}`} />
                               </button>
                               <button
                                 onClick={() => void handleQuickSyncShopee(child.id)}
@@ -1424,8 +1515,26 @@ export default function ProductList({
                           <p className={`text-[10px] font-semibold mt-0.5 ${childProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             Lãi: {childProfit.toLocaleString('vi-VN')}đ
                           </p>
+                          <div className="flex items-center gap-1 mt-1">
+                            <CurrencyInput
+                              value={Math.max(0, Number(child.importPrice) || 0)}
+                              onChange={(v) => onUpdateProduct({ ...child, importPrice: v })}
+                              className="w-24 px-1 py-0.5 text-right bg-white rounded border border-gray-200 outline-none text-[10px] focus:border-blue-500 font-mono"
+                            />
+                            <span className="text-[9px] text-gray-400">đ</span>
+                          </div>
                         </div>
                         <span className="text-xs font-mono font-bold text-slate-700">{child.stock}</span>
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveImportPrice(child)}
+                          disabled={savingImportPriceId === child.id}
+                          className="w-8 h-8 flex items-center justify-center rounded-lg bg-white text-emerald-600 hover:bg-emerald-50 border border-emerald-100 shrink-0 transition-all disabled:opacity-60"
+                          title="Lưu giá nhập"
+                          aria-label="Lưu giá nhập"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => openProductDetail(child)}
@@ -1444,9 +1553,28 @@ export default function ProductList({
                 <div className="grid grid-cols-3 gap-2 pt-2.5 border-t border-gray-50 text-xs font-semibold">
                   <div>
                     <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Giá nhập:</span>
-                    <span className="font-mono font-bold text-gray-700 text-[11px]">
-                      {prod.importPrice.toLocaleString('vi-VN')} đ
-                    </span>
+                    {group.hasVariants ? (
+                      <span className="font-mono font-bold text-gray-700 text-[11px]">
+                        {prod.importPrice.toLocaleString('vi-VN')} đ
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <CurrencyInput
+                          value={Math.max(0, Number(prod.importPrice) || 0)}
+                          onChange={(v) => onUpdateProduct({ ...prod, importPrice: v })}
+                          className="w-full px-1.5 py-1 text-right bg-gray-50 rounded border border-gray-100 outline-none text-[11px] focus:border-blue-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveImportPrice(prod)}
+                          disabled={savingImportPriceId === prod.id}
+                          className="p-1 text-emerald-600 hover:bg-emerald-50 rounded disabled:opacity-60 shrink-0"
+                          title="Lưu giá nhập"
+                        >
+                          <Save className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <span className="text-gray-400 text-[9px] block uppercase font-bold tracking-wider">Giá bán:</span>

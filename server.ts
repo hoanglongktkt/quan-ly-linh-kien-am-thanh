@@ -12237,7 +12237,10 @@ function mergeProductPatch(product: any, patch: any): any {
   if (patch.stock !== undefined) merged.stock = Math.max(0, Math.round(Number(patch.stock)));
   if (patch.sellingPrice !== undefined) merged.sellingPrice = Math.max(0, Math.round(Number(patch.sellingPrice)));
   if (patch.wholesalePrice !== undefined) merged.wholesalePrice = Math.max(0, Math.round(Number(patch.wholesalePrice)));
-  if (patch.importPrice !== undefined) merged.importPrice = Math.max(0, Math.round(Number(patch.importPrice)));
+  if (patch.importPrice !== undefined) {
+    merged.importPrice = Math.max(0, Math.round(Number(patch.importPrice)));
+    merged.last_import_price = merged.importPrice;
+  }
   if (patch.weight !== undefined) merged.weight = Math.max(0, Number(patch.weight));
   if (patch.brand !== undefined) merged.brand = String(patch.brand);
   if (patch.supplierId !== undefined) merged.supplierId = patch.supplierId ? String(patch.supplierId) : undefined;
