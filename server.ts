@@ -9200,44 +9200,54 @@ async function ensureTrackingBeforePrint(
     groups[o.shopId].push(o);
   }
 
-  // Tuần tự từng đơn + delay — tránh dồn dập get_tracking_number (rate-limit Shopee).
+  // Batch song song (CHUNK_SIZE) + pause giữa chunk — tránh rate-limit Shopee.
   for (const [shopId, groupOrders] of Object.entries(groups)) {
     const accessToken = await getValidShopeeAccessToken(shopId);
     if (!accessToken) {
       console.error(`[Shopee Print Gate] Không có access_token shop_id=${shopId}`);
       continue;
     }
-    for (const o of groupOrders) {
-      try {
-        console.log(
-          `[Shopee Print Gate] Đơn ${o.orderSn} thiếu tracking_no — gọi get_tracking_number (light, retries=${retries})...`,
-        );
-        await enrichShopeeOrderTrackingFromApi(shopId, accessToken, o, {
-          retries,
-          light: true,
-        });
-        const idx = orders.findIndex((x: any) => String(x.orderSn) === String(o.orderSn));
-        if (idx >= 0) {
-          orders[idx].trackingNumber = o.trackingNumber;
-          orders[idx].tracking_no = o.tracking_no || o.trackingNumber;
-          orders[idx].internalTrackingCode = o.internalTrackingCode;
-          orders[idx].packageNumber = o.packageNumber || orders[idx].packageNumber;
-        }
-        if (hasUsableShopeeTrackingNumber(o)) {
-          filled++;
-          await persistOrderTrackingToDb(o);
-          console.log(
-            `[Shopee Print Gate] OK order_sn=${o.orderSn} tracking_no=${o.trackingNumber}`,
-          );
-        } else {
-          console.error(
-            `[Shopee Print Gate] VẪN thiếu tracking_no order_sn=${o.orderSn} sau ${retries} lần thử`,
-          );
-        }
-      } catch (error) {
-        console.error("Lỗi 1 đơn:", error);
+    const CHUNK_SIZE = 15;
+    for (let i = 0; i < groupOrders.length; i += CHUNK_SIZE) {
+      const chunk = groupOrders.slice(i, i + CHUNK_SIZE);
+
+      await Promise.all(
+        chunk.map(async (o) => {
+          try {
+            console.log(
+              `[Shopee Print Gate] Đơn ${o.orderSn} thiếu tracking_no — gọi get_tracking_number (light, retries=${retries})...`,
+            );
+            await enrichShopeeOrderTrackingFromApi(shopId, accessToken, o, {
+              retries,
+              light: true,
+            });
+            const idx = orders.findIndex((x: any) => String(x.orderSn) === String(o.orderSn));
+            if (idx >= 0) {
+              orders[idx].trackingNumber = o.trackingNumber;
+              orders[idx].tracking_no = o.tracking_no || o.trackingNumber;
+              orders[idx].internalTrackingCode = o.internalTrackingCode;
+              orders[idx].packageNumber = o.packageNumber || orders[idx].packageNumber;
+            }
+            if (hasUsableShopeeTrackingNumber(o)) {
+              filled++;
+              await persistOrderTrackingToDb(o);
+              console.log(
+                `[Shopee Print Gate] OK order_sn=${o.orderSn} tracking_no=${o.trackingNumber}`,
+              );
+            } else {
+              console.error(
+                `[Shopee Print Gate] VẪN thiếu tracking_no order_sn=${o.orderSn} sau ${retries} lần thử`,
+              );
+            }
+          } catch (error) {
+            console.error("Lỗi 1 đơn:", error);
+          }
+        }),
+      );
+
+      if (i + CHUNK_SIZE < groupOrders.length) {
+        await sleep(300);
       }
-      await sleep(PRINT_API_DELAY_MS);
     }
   }
   if (filled > 0) {
