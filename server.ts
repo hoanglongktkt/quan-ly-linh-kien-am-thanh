@@ -978,16 +978,23 @@ const SHOPEE_RETURN_LIST_PAGE_SIZE = 100;
 const SHOPEE_RETURN_LIST_MAX_PAGES = 50;
 /** Shopee v2 get_order_detail chấp nhận tối đa 50 order_sn cho mỗi request. */
 const SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS = 50;
-/** Đồng bộ theo đúng giới hạn GetOrderDetail để ≤50 đơn dùng chính xác một request. */
-const SHOPEE_SYNC_CHUNK_SIZE = SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS;
+/**
+ * Batch kéo chi tiết: 20 đơn/mẻ (an toàn rate-limit, trong khoảng 10–20).
+ * 1 request get_order_detail gom nhiều order_sn — không gọi tuần tự từng đơn.
+ */
+const ORDER_DETAIL_FETCH_BATCH_SIZE = 20;
+/** Nghỉ giữa các mẻ get_order_detail — tránh Shopee 429. */
+const ORDER_DETAIL_BATCH_DELAY_MS = 300;
+/** Đồng bộ chunk outer = batch size (caller + fetchNormalize khớp nhau). */
+const SHOPEE_SYNC_CHUNK_SIZE = ORDER_DETAIL_FETCH_BATCH_SIZE;
 /** Nghỉ 1s giữa các lô — nhường GC / giải phóng process cPanel. */
 const ORDER_SYNC_SAVE_DELAY_MS = 1000;
 /** Nghỉ giữa mỗi lần get_tracking_number — tránh 429 (poll nhanh 300ms). */
 const SHOPEE_TRACKING_FETCH_DELAY_MS = 300;
 /** Nghỉ giữa mỗi lần gọi API Shopee khi in đơn hàng loạt — tránh rate-limit. */
 const PRINT_API_DELAY_MS = 500;
-/** Nghỉ giữa các chunk đơn hàng (đồng bộ nền) = 1s. */
-const SHOPEE_SYNC_CHUNK_DELAY_MS = 1000;
+/** Nghỉ giữa các chunk đơn hàng (đồng bộ nền) = delay mẻ detail. */
+const SHOPEE_SYNC_CHUNK_DELAY_MS = ORDER_DETAIL_BATCH_DELAY_MS;
 const SHOPEE_SYNC_BATCH_DELAY_MS = SHOPEE_SYNC_CHUNK_DELAY_MS;
 const SHOPEE_ORDER_LIST_PAGE_DELAY_MS = 1000;
 /** get_order_list page_size — Shopee max 100; giữ 50 để nhẹ cPanel. */
@@ -10207,7 +10214,13 @@ async function backfillMissingShippingCarriersFromShopee(
   return filled;
 }
 
-/** Lấy chi tiết + chuẩn hóa — TUẦN TỰ từng order_sn (CẤM Promise.all / batch song song). */
+/**
+ * Lấy chi tiết + chuẩn hóa theo BATCH (không tuần tự từng đơn).
+ * - Mỗi mẻ ≤20 order_sn → 1 lần get_order_detail (Shopee hỗ trợ tối đa 50).
+ * - Normalize song song bằng Promise.all; lỗi 1 đơn không làm sập cả mẻ.
+ * - Nghỉ ORDER_DETAIL_BATCH_DELAY_MS giữa các mẻ để tránh rate-limit.
+ * - Nếu cả mẻ API fail → fallback Promise.all gọi lẻ từng đơn trong mẻ đó.
+ */
 async function fetchNormalizeShopeeOrderChunk(
   apiShopId: string,
   accessToken: string,
@@ -10224,129 +10237,191 @@ async function fetchNormalizeShopeeOrderChunk(
   const snList = orderSns.map((sn) => String(sn || "").trim()).filter(Boolean);
   if (snList.length === 0) return { normalized, errors, failed_orders };
 
+  const batchSize = Math.min(ORDER_DETAIL_FETCH_BATCH_SIZE, SHOPEE_ORDER_DETAIL_MAX_ORDER_SNS);
   console.log(
-    `[Shopee Sync] get_order_detail tuần tự ${snList.length} đơn (shop=${fileKey}) — delay 200ms/đơn`,
+    `[Shopee Sync] get_order_detail BATCH ${snList.length} đơn (shop=${fileKey}) — size=${batchSize}, delay=${ORDER_DETAIL_BATCH_DELAY_MS}ms/mẻ`,
   );
 
-  for (const orderSn of snList) {
+  const pushFail = (orderSn: string, error: string, message: string, httpStatus?: number) => {
+    failed_orders.push(orderSn);
+    errors.push({ shopId: fileKey, error, message, orderSn, httpStatus });
+  };
+
+  const normalizeOne = (orderSn: string, detail: any): any | null => {
     try {
-      let detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, [orderSn]);
+      const norm = normalizeShopeeOrderDetail(fileKey, detail?.shop_name, detail);
+      if (!norm) {
+        console.error("Lỗi ở đơn:", orderSn, "normalize trả null (thiếu field)");
+        pushFail(orderSn, "normalize_null", "normalizeShopeeOrderDetail trả null");
+        return null;
+      }
+      return norm;
+    } catch (mapErr: any) {
+      console.error("Lỗi ở đơn:", orderSn, mapErr?.message || mapErr);
+      pushFail(orderSn, "normalize_failed", mapErr?.message || String(mapErr));
+      return null;
+    }
+  };
+
+  /** Fallback: Promise.all gọi get_order_detail lẻ trong 1 mẻ (giữ isolation từng đơn). */
+  const fetchBatchIndividually = async (batch: string[], token: string) => {
+    let tok = token;
+    const settled = await Promise.all(
+      batch.map(async (orderSn) => {
+        try {
+          let detailResult = await shopeeGetOrderDetail(apiShopId, tok, [orderSn]);
+          if (
+            detailResult?.httpStatus === 401 ||
+            detailResult?.httpStatus === 403 ||
+            isShopeeInvalidTokenError(detailResult?.error, detailResult?.message)
+          ) {
+            try {
+              const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+              if (refreshed) {
+                tok = refreshed;
+                accessToken = refreshed;
+                detailResult = await shopeeGetOrderDetail(apiShopId, tok, [orderSn]);
+              }
+            } catch (refreshErr: any) {
+              console.error("Lỗi ở đơn:", orderSn, `token_refresh: ${refreshErr?.message || refreshErr}`);
+            }
+          }
+          if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
+            await delay(ORDER_DETAIL_BATCH_DELAY_MS);
+            detailResult = await shopeeGetOrderDetail(apiShopId, tok, [orderSn]);
+          }
+          if (detailResult?.error) {
+            const message =
+              detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
+            console.error("Lỗi ở đơn:", orderSn, message);
+            pushFail(orderSn, String(detailResult.error), message, detailResult.httpStatus);
+            return null;
+          }
+          const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
+          const detail = Array.isArray(detailList)
+            ? detailList.find((d: any) => String(d?.order_sn || "").trim() === orderSn) || detailList[0]
+            : null;
+          if (!detail) {
+            console.error("Lỗi ở đơn:", orderSn, "get_order_detail trả về rỗng / thiếu order_sn");
+            pushFail(orderSn, "order_detail_missing", `get_order_detail không trả order_sn=${orderSn}`);
+            return null;
+          }
+          return normalizeOne(orderSn, detail);
+        } catch (err: any) {
+          console.error("Lỗi ở đơn:", orderSn, err?.message || err);
+          pushFail(orderSn, "order_detail_exception", err?.message || String(err));
+          return null;
+        }
+      }),
+    );
+    for (const norm of settled) {
+      if (norm) normalized.push(norm);
+    }
+  };
+
+  for (let i = 0; i < snList.length; i += batchSize) {
+    const batch = snList.slice(i, i + batchSize);
+    const batchNo = Math.floor(i / batchSize) + 1;
+    const totalBatches = Math.ceil(snList.length / batchSize);
+    try {
+      console.log(
+        `[Shopee Sync] get_order_detail mẻ ${batchNo}/${totalBatches} — ${batch.length} đơn (shop=${fileKey})`,
+      );
+      let detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, batch);
 
       if (
         detailResult?.httpStatus === 401 ||
         detailResult?.httpStatus === 403 ||
         isShopeeInvalidTokenError(detailResult?.error, detailResult?.message)
       ) {
+        console.warn(
+          `[Shopee Sync] get_order_detail AUTH FAIL shop=${fileKey} — force refresh token + retry 1 lần`,
+        );
         try {
           const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
           if (refreshed) {
             accessToken = refreshed;
-            detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, [orderSn]);
+            detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, batch);
           }
         } catch (refreshErr: any) {
           console.error(
-            "Lỗi ở đơn:",
-            orderSn,
-            `token_refresh: ${refreshErr?.message || refreshErr}`,
+            `[Shopee Sync] Token refresh sau GetOrderDetail fail shop=${fileKey}:`,
+            refreshErr?.message || refreshErr,
           );
         }
       }
 
       if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
         console.warn(
-          `[Shopee Sync] get_order_detail RATE LIMIT order_sn=${orderSn} — chờ rồi retry 1 lần`,
+          `[Shopee Sync] get_order_detail RATE LIMIT shop=${fileKey} — chờ ${ORDER_DETAIL_BATCH_DELAY_MS * 2}ms rồi retry`,
         );
-        await delay(200);
+        await delay(ORDER_DETAIL_BATCH_DELAY_MS * 2);
         try {
-          detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, [orderSn]);
+          detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, batch);
         } catch (rlErr: any) {
-          console.error("Lỗi ở đơn:", orderSn, rlErr?.message || rlErr);
-          failed_orders.push(orderSn);
-          errors.push({
-            shopId: fileKey,
-            error: "rate_limit_retry_failed",
-            message: rlErr?.message || String(rlErr),
-            orderSn,
-          });
-          await delay(200);
-          continue;
+          console.error(
+            `[Shopee Sync] get_order_detail rate-limit retry fail shop=${fileKey}:`,
+            rlErr?.message || rlErr,
+          );
         }
       }
 
       if (detailResult?.error) {
         const message =
           detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
-        console.error("Lỗi ở đơn:", orderSn, message);
-        failed_orders.push(orderSn);
-        errors.push({
-          shopId: fileKey,
-          error: detailResult.error,
-          message,
-          orderSn,
-          httpStatus: detailResult.httpStatus,
-        });
-        await delay(200);
-        continue;
-      }
-
-      const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
-      const detail = Array.isArray(detailList)
-        ? detailList.find((d: any) => String(d?.order_sn || "").trim() === orderSn) || detailList[0]
-        : null;
-      if (!detail) {
-        console.error("Lỗi ở đơn:", orderSn, "get_order_detail trả về rỗng / thiếu order_sn");
-        failed_orders.push(orderSn);
-        errors.push({
-          shopId: fileKey,
-          error: "order_detail_missing",
-          message: `get_order_detail không trả order_sn=${orderSn}`,
-          orderSn,
-        });
-        await delay(200);
-        continue;
-      }
-
-      try {
-        const norm = normalizeShopeeOrderDetail(fileKey, detail?.shop_name, detail);
-        if (!norm) {
-          console.error("Lỗi ở đơn:", orderSn, "normalize trả null (thiếu field)");
-          failed_orders.push(orderSn);
-          errors.push({
-            shopId: fileKey,
-            error: "normalize_null",
-            message: "normalizeShopeeOrderDetail trả null",
-            orderSn,
-          });
+        console.warn(
+          `[Shopee Sync] get_order_detail batch lỗi shop=${fileKey}: ${message} — fallback Promise.all từng đơn trong mẻ`,
+        );
+        await fetchBatchIndividually(batch, accessToken);
+      } else {
+        const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
+        if (!Array.isArray(detailList) || detailList.length === 0) {
+          console.warn(
+            `[Shopee Sync] get_order_detail trả rỗng lô ${batch.length} đơn shop=${fileKey} — fallback từng đơn`,
+          );
+          await fetchBatchIndividually(batch, accessToken);
         } else {
-          normalized.push(norm);
+          const detailBySn = new Map<string, any>();
+          for (const detail of detailList) {
+            const sn = String(detail?.order_sn || "").trim();
+            if (sn) detailBySn.set(sn, detail);
+          }
+          // Promise.all normalize cả mẻ — lỗi 1 đơn không chặn các đơn còn lại.
+          const settled = await Promise.all(
+            batch.map(async (orderSn) => {
+              const detail = detailBySn.get(orderSn);
+              if (!detail) {
+                console.error("Lỗi ở đơn:", orderSn, "thiếu trong batch response");
+                pushFail(
+                  orderSn,
+                  "order_detail_missing_in_batch",
+                  `get_order_detail không trả order_sn=${orderSn} trong batch`,
+                );
+                return null;
+              }
+              return normalizeOne(orderSn, detail);
+            }),
+          );
+          for (const norm of settled) {
+            if (norm) normalized.push(norm);
+          }
         }
-      } catch (mapErr: any) {
-        console.error("Lỗi ở đơn:", orderSn, mapErr?.message || mapErr);
-        failed_orders.push(orderSn);
-        errors.push({
-          shopId: fileKey,
-          error: "normalize_failed",
-          message: mapErr?.message || String(mapErr),
-          orderSn,
-        });
       }
     } catch (err: any) {
-      // BẮT BUỘC continue — không throw làm sập hàm cha (HTML/rate-limit/crash 1 đơn).
-      console.error("Lỗi ở đơn:", orderSn, err?.message || err);
-      failed_orders.push(orderSn);
-      errors.push({
-        shopId: fileKey,
-        error: "order_detail_exception",
-        message: err?.message || String(err),
-        orderSn,
-      });
+      console.error(
+        `[Shopee Sync] Exception get_order_detail batch shop=${fileKey}:`,
+        err?.message || err,
+        "— fallback Promise.all từng đơn",
+      );
+      await fetchBatchIndividually(batch, accessToken);
     }
 
-    // Nghỉ 200ms mỗi đơn — tránh Shopee rate limit / spike cPanel.
-    await delay(200);
+    if (i + batchSize < snList.length) {
+      await delay(ORDER_DETAIL_BATCH_DELAY_MS);
+    }
   }
 
-  // Escrow tuần tự (skip trên fast path pull).
+  // Escrow (skip trên fast path pull).
   if (normalized.length > 0 && !skipEscrow) {
     try {
       await enrichShopeeOrdersEscrowFinance(apiShopId, accessToken, normalized);
