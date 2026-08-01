@@ -17,7 +17,9 @@ function webhookOrderKey(payload: Record<string, unknown>): string {
       ? (payload.data as Record<string, unknown>)
       : payload;
   const shopId = String(payload.shop_id ?? data.shop_id ?? "").trim();
-  const orderSn = String(data.ordersn ?? data.order_sn ?? data.orderSn ?? "").trim();
+  const orderSn = String(
+    data.ordersn ?? data.order_sn ?? data.orderSn ?? payload.ordersn ?? payload.order_sn ?? "",
+  ).trim();
   return orderSn ? `${shopId}:${orderSn}` : "";
 }
 
@@ -116,9 +118,9 @@ function createBoundedQueue(processPayload: WebhookProcessor) {
 function ackShopeeOk(res: express.Response): void {
   if (res.headersSent || res.writableEnded) return;
   try {
-    // Shopee Live Push: HTTP 200 (+ body success) = push thành công.
-    // Kết thúc response ngay — không giữ socket chờ xử lý nền.
-    res.status(200).json({ status: "success" });
+    // Shopee Live Push: HTTP 200 = push thành công.
+    // User yêu cầu body "OK" — kết thúc response ngay, không giữ socket chờ xử lý nền.
+    res.status(200).send("OK");
   } catch (ackErr) {
     console.warn("[Shopee Webhook] ACK send failed:", ackErr);
     try {
@@ -129,93 +131,121 @@ function ackShopeeOk(res: express.Response): void {
   }
 }
 
+/** Parse body Buffer | object | string → object payload (Shopee v2 Push). */
+function parseWebhookBody(reqBody: unknown): Record<string, unknown> | null {
+  try {
+    if (Buffer.isBuffer(reqBody)) {
+      const text = reqBody.toString("utf8");
+      if (!text.trim()) return null;
+      const parsed: unknown = JSON.parse(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return null;
+    }
+    if (typeof reqBody === "string") {
+      const text = reqBody.trim();
+      if (!text) return null;
+      const parsed: unknown = JSON.parse(text);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+      return null;
+    }
+    if (reqBody && typeof reqBody === "object" && !Array.isArray(reqBody)) {
+      return reqBody as Record<string, unknown>;
+    }
+  } catch (err) {
+    console.error("[Shopee Webhook] JSON parse failed:", err);
+  }
+  return null;
+}
+
+function queueAfterAck(
+  queue: ReturnType<typeof createBoundedQueue>,
+  req: express.Request,
+  routeLabel: string,
+): void {
+  setImmediate(() => {
+    try {
+      const rawBody = Buffer.isBuffer(req.body) ? req.body : null;
+      const bodyText = rawBody
+        ? rawBody.toString("utf8")
+        : typeof req.body === "string"
+          ? req.body
+          : JSON.stringify(req.body ?? {});
+
+      console.log(`[WEBHOOK RECEIVED] ${routeLabel} — ACK 200 sent; headers:`, {
+        authorization: req.get("authorization") ? "(present)" : "(missing)",
+        contentLength: req.get("content-length") || "0",
+        contentType: req.get("content-type") || "",
+        host: req.get("host") || "",
+      });
+      console.log("[WEBHOOK RECEIVED] req.body (full):", bodyText);
+
+      const authHeader = req.get("authorization");
+      if (authHeader) {
+        console.log(
+          "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=true",
+        );
+      } else {
+        console.log(
+          "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=false",
+        );
+      }
+
+      const payload = parseWebhookBody(req.body);
+      if (!payload) {
+        console.log("[Shopee Webhook] Empty/invalid body after ACK — nothing to process.");
+        return;
+      }
+
+      console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
+
+      if (!queue.enqueue(payload)) return;
+
+      const data =
+        payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+          ? (payload.data as Record<string, unknown>)
+          : {};
+      console.log(
+        "[WEBHOOK RECEIVED] payload queued after ACK — will get_order_detail + UPSERT:",
+        JSON.stringify({
+          code: payload.code ?? null,
+          shop_id: payload.shop_id ?? data.shop_id ?? null,
+          order_sn: data.ordersn ?? data.order_sn ?? data.orderSn ?? null,
+          status: data.status ?? data.order_status ?? null,
+        }),
+      );
+    } catch (error) {
+      console.error("[Shopee Webhook] Background handler failed (after ACK 200):", error);
+    }
+  });
+}
+
 /**
- * Tạo endpoint POST /api/webhook/shopee.
- * SIÊU DỄ DÃI: LUÔN trả 200 OK ngay lập tức — không HMAC, không validate chặn request.
- * Xử lý payload chạy ngầm sau khi response đã đóng.
+ * Tạo endpoint webhook Shopee (canonical hoặc legacy).
+ * SIÊU DỄ DÃI: LUÔN trả 200 OK ngay — không HMAC, không validate chặn request.
+ * Xử lý payload chạy ngầm: parse → get_order_detail → UPSERT DB.
  */
-export function createShopeeWebhookRouter(processPayload: WebhookProcessor): Router {
+export function createShopeeWebhookRouter(
+  processPayload: WebhookProcessor,
+  routePath: string = "/shopee",
+): Router {
   const queue = createBoundedQueue(processPayload);
   const router = express.Router();
+  const path = routePath.startsWith("/") ? routePath : `/${routePath}`;
 
-  // GET probe cho Shopee verification (một số webhook yêu cầu GET trả 200).
-  router.get("/shopee", (_req, res) => {
+  // GET probe cho Shopee verification.
+  router.get(path, (_req, res) => {
     ackShopeeOk(res);
   });
 
-  router.post("/shopee", express.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
-    // 1) ACK 200 NGAY — trước mọi validate / HMAC / parse / queue / DB.
+  router.post(path, express.raw({ type: "*/*", limit: "1mb" }), (req, res) => {
+    // 1) ACK 200 NGAY — trước mọi validate / parse / queue / DB.
     ackShopeeOk(res);
-
-    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-    const bodyText = rawBody.toString("utf8");
-    const authHeader = req.get("authorization");
-
-    console.log("[WEBHOOK RECEIVED] POST /api/webhook/shopee — ACK 200 sent; headers:", {
-      authorization: authHeader ? "(present)" : "(missing)",
-      contentLength: req.get("content-length") || "0",
-      host: req.get("host") || "",
-      xfProto: req.get("x-forwarded-proto") || "",
-    });
-    // In toàn bộ body Shopee gửi sang để debug Live Push.
-    console.log("[WEBHOOK RECEIVED] req.body (full):", bodyText);
-
     // 2) Xử lý ngầm sau khi socket ACK đã gửi.
-    setImmediate(() => {
-      try {
-        // Signature verification TẠM TẮT — chỉ log nếu có auth header, KHÔNG bao giờ chặn.
-        try {
-          if (authHeader) {
-            console.log(
-              "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=true bodyBytes=" +
-                rawBody.length,
-            );
-          } else {
-            console.log(
-              "[Shopee Webhook] Signature check SKIPPED (permissive mode). authPresent=false bodyBytes=" +
-                rawBody.length,
-            );
-          }
-        } catch (sigErr) {
-          console.warn("[Shopee Webhook] Signature check error (ignored):", sigErr);
-        }
-
-        let payload: Record<string, unknown> | null = null;
-        try {
-          if (!rawBody.length) {
-            console.log("[Shopee Webhook] Empty body after ACK — nothing to process.");
-            return;
-          }
-          const parsed: unknown = JSON.parse(bodyText);
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            payload = parsed as Record<string, unknown>;
-            console.log("[WEBHOOK RECEIVED] req.body (parsed object):", JSON.stringify(payload));
-          } else {
-            console.error("[Shopee Webhook] Background — payload không phải object:", typeof parsed);
-          }
-        } catch (parseErr) {
-          console.error("[Shopee Webhook] Background — JSON parse failed:", parseErr);
-        }
-
-        if (!payload) return;
-
-        if (!queue.enqueue(payload)) {
-          // Queue đầy: đã ACK 200 — CHỈ drop, không spawn job unbounded.
-          return;
-        }
-
-        console.log(
-          "[WEBHOOK RECEIVED] payload queued after ACK:",
-          JSON.stringify({
-            code: payload.code ?? null,
-            shop_id: payload.shop_id ?? null,
-            data: payload.data ?? null,
-          }),
-        );
-      } catch (error) {
-        console.error("[Shopee Webhook] Background handler failed (after ACK 200):", error);
-      }
-    });
+    queueAfterAck(queue, req, `POST ${path}`);
   });
 
   return router;

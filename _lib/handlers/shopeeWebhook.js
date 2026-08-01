@@ -2,19 +2,26 @@ import { logShopeeRequest, respondShopeeOk } from '../shopeeCallbackUtil.js';
 
 const LOG = '[Shopee Webhook]';
 
+/**
+ * Edge/Vercel stub — chỉ ACK 200.
+ * Xử lý get_order_detail + UPSERT chạy trên backend Node: POST /api/webhook/shopee
+ * (hoặc legacy /api/shopee/webhook). Cấu hình Push URL trỏ về server.cjs/cPanel.
+ */
 export async function handleShopeeWebhook(req, res) {
   logShopeeRequest(LOG, req);
 
-  // Emergency: mọi method đều ACK 200 ngay — không 410/405 để tránh Live Push fail.
   if (req.method === 'OPTIONS' || req.method === 'GET') {
-    return respondShopeeOk(res);
+    if (!res.headersSent) res.status(200).send('OK');
+    return;
   }
 
   if (req.method === 'POST') {
     if (!res.headersSent) {
-      res.status(200).json({ status: 'success' });
+      res.status(200).send('OK');
     }
-    console.log(`${LOG} POST ACK 200 (edge/vercel) — prefer backend /api/webhook/shopee for full processing`);
+    console.log(
+      `${LOG} POST ACK 200 (edge/vercel stub) — Push URL nên trỏ backend /api/webhook/shopee để get_order_detail + UPSERT`,
+    );
     console.log(`${LOG} req.body (full):`, req.body);
     return;
   }

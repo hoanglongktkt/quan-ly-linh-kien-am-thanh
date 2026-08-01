@@ -12787,11 +12787,16 @@ function parseShopeePushEvent(body: any): {
     data.ordersn ||
       data.order_sn ||
       data.orderSn ||
+      body?.ordersn ||
+      body?.order_sn ||
+      body?.orderSn ||
       pkg0?.ordersn ||
       pkg0?.order_sn ||
       "",
   ).trim();
-  const shopId = String(body?.shop_id ?? data.shop_id ?? "").trim();
+  const shopId = String(
+    body?.shop_id ?? body?.shopId ?? data.shop_id ?? data.shopId ?? "",
+  ).trim();
   const trackingNo = pickBestTrackingNumber(
     data.tracking_no,
     data.tracking_number,
@@ -13211,6 +13216,21 @@ async function upsertShopeeWebhookShallow(body: any, orders: any[]): Promise<str
   } else {
     orders.unshift(merged);
   }
+  // Shallow cũng phải ghi Mongo — tránh webhook chỉ ACK mà DB trống khi get_order_detail fail.
+  if (isMongoReady() && merged?.orderSn) {
+    try {
+      await bulkUpsertOrdersToStore([merged]);
+      queueOrdersJsonMirrorFromMongo();
+      console.log(
+        `[DB UPDATED] (webhook-shallow) order_sn=${merged.orderSn} shop_id=${merged.shopId || "?"} — upsert OK`,
+      );
+    } catch (mongoErr: any) {
+      console.error(
+        `[Shopee Webhook] shallow Mongo upsert FAILED order_sn=${merged.orderSn}:`,
+        mongoErr?.message || mongoErr,
+      );
+    }
+  }
   return String(merged.orderSn);
 }
 
@@ -13270,8 +13290,12 @@ async function startServer() {
     isMongoReady,
     bulkUpsertOrdersToStore,
     applyWebhookReturnFallback,
+    listShopeeOAuthShopIds,
   });
-  app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload));
+  // Canonical + legacy Push URL — cùng ACK 200 + queue get_order_detail + UPSERT.
+  // PHẢI mount TRƯỚC express.json (dùng express.raw để giữ raw body).
+  app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload, "/shopee"));
+  app.use("/api/shopee", createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook"));
 
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -13283,21 +13307,18 @@ async function startServer() {
     console.error("[Labels] ensureLabelsDir lúc boot Express:", err);
   }
 
-  // URL callback cũ: vẫn ACK 200 ngay (cắt Live Push fail). Chỉ route canonical
-  // /api/webhook/shopee (express.raw) mới xử lý đầy đủ + HMAC + queue.
+  // OAuth callback cũ: chỉ ACK 200 (không phải order push).
   app.post(
     [
       "/api/auth/shopee/callback",
       "/api/auth/shopee/callback/",
       "/api/shopee/callback",
       "/api/shopee/callback/",
-      "/api/shopee/webhook",
-      "/api/shopee/webhook/",
     ],
     (_req, res) => {
-      if (!res.headersSent) res.status(200).json({ status: "success" });
+      if (!res.headersSent) res.status(200).send("OK");
       console.warn(
-        "[Shopee Webhook] Legacy path ACK 200 — chuyển Push URL sang /api/webhook/shopee",
+        "[Shopee OAuth] Legacy callback path ACK 200 — dùng /api/shopee/auth/callback nếu cần code",
       );
     },
   );
