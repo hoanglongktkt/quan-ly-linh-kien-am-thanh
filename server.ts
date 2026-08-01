@@ -420,6 +420,7 @@ import {
   existsDonHoanHuy,
   describeMongoWriteError,
   isMongoConnectionError,
+  recoverMongoConnection,
   mirrorTopLevelTrackingIntoData,
   getDashboardStatsFromStore,
   getLowStockProductsFromStore,
@@ -2375,7 +2376,59 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     }
 
     // MongoDB là SSOT: pull/merge không được lấy orders.json cũ làm base.
-    const orders = isMongoReady() ? await loadOrdersFromStore() : [];
+    let orders: any[] = [];
+    if (isMongoReady()) {
+      try {
+        orders = await loadOrdersFromStore();
+      } catch (loadErr: any) {
+        if (isMongoConnectionError(loadErr)) {
+          console.warn(
+            "[Orders Pull] loadOrdersFromStore timeout/network — thử reconnect:",
+            loadErr?.message || loadErr,
+          );
+          const ok = await recoverMongoConnection("orders_pull_load");
+          if (ok) {
+            try {
+              orders = await loadOrdersFromStore();
+            } catch (retryErr: any) {
+              errors.push({
+                error: "mongo_load_failed",
+                message: describeMongoWriteError(retryErr),
+              });
+              return {
+                success: false,
+                pulled: 0,
+                added: 0,
+                updated: 0,
+                shops: shopIds.length,
+                errors,
+                message: describeMongoWriteError(retryErr),
+                elapsedMs: Date.now() - startedAt,
+                lookbackSec,
+                shopee_response: [],
+              };
+            }
+          } else {
+            const friendly = describeMongoWriteError(loadErr);
+            errors.push({ error: "mongo_reconnect_failed", message: friendly });
+            return {
+              success: false,
+              pulled: 0,
+              added: 0,
+              updated: 0,
+              shops: shopIds.length,
+              errors,
+              message: friendly,
+              elapsedMs: Date.now() - startedAt,
+              lookbackSec,
+              shopee_response: [],
+            };
+          }
+        } else {
+          throw loadErr;
+        }
+      }
+    }
     // Ngân sách thời gian công bằng — tránh shop đầu chiếm hết deadline.
     const perShopBudgetMs = Math.max(
       longLookback ? 45_000 : 28_000,
@@ -2508,17 +2561,22 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                 `shop=${shopId} +${upsert.added}/~${upsert.updated} elapsed=${Date.now() - startedAt}ms`,
               );
             } catch (saveErr: any) {
+              const friendly = describeMongoWriteError(saveErr);
               console.error(
                 "[Orders Pull] Mongo/JSON upsert FAILED:",
+                friendly,
                 saveErr?.message || saveErr,
                 saveErr?.stack || "",
                 "order_sn=",
                 normalized.map((o) => o?.orderSn).join(","),
               );
+              if (isMongoConnectionError(saveErr)) {
+                void recoverMongoConnection("orders_pull_upsert");
+              }
               errors.push({
                 shopId,
                 error: "db_upsert_failed",
-                message: saveErr?.message || String(saveErr),
+                message: friendly,
                 orderSns: normalized.map((o) => o?.orderSn),
               });
             }

@@ -17,6 +17,15 @@ import {
 } from "../services/shopee/client.js";
 import { runShopeeConnectivityDiagnostics } from "../services/shopee/diagnostics.js";
 import { sleep } from "../utils/concurrency.js";
+import { isMongoTimeoutOrNetworkError } from "../config/db.js";
+
+function friendlyPullError(err) {
+  const raw = err?.message || String(err || "");
+  if (isMongoTimeoutOrNetworkError(err) || /27017|connection \d+ to .+ timed out/i.test(raw)) {
+    return "Lỗi kết nối MongoDB (timeout tới máy chủ DB). Kiểm tra mạng/firewall/IP whitelist rồi thử lại.";
+  }
+  return raw || "Đồng bộ thất bại";
+}
 
 let deps = {
   createSyncJob: async () => ({ id: "" }),
@@ -192,8 +201,8 @@ async function runOrdersPull(opts) {
       added: 0,
       updated: 0,
       shops: 0,
-      errors: [{ error: "orders_pull_exception", message: error?.message || String(error) }],
-      message: error?.message || String(error) || "Đồng bộ thất bại",
+      errors: [{ error: "orders_pull_exception", message: friendlyPullError(error) }],
+      message: friendlyPullError(error),
       jobId,
       shopee_response: null,
     };
@@ -374,8 +383,8 @@ export async function pullOrders(req, res) {
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
-      message: `Lỗi đồng bộ đơn hàng: ${err?.message || String(err) || "orders_pull_failed"}`,
-      error: err?.message || String(err) || "orders_pull_failed",
+      message: `Lỗi đồng bộ đơn hàng: ${friendlyPullError(err)}`,
+      error: friendlyPullError(err),
       pulled: 0,
       added: 0,
       updated: 0,
@@ -465,8 +474,8 @@ export async function syncOrders(req, res) {
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
-      message: `Lỗi đồng bộ đơn hàng: ${err?.message || String(err) || "orders_sync_failed"}`,
-      error: err?.message || String(err) || "orders_sync_failed",
+      message: `Lỗi đồng bộ đơn hàng: ${friendlyPullError(err)}`,
+      error: friendlyPullError(err),
       pulled: 0,
       added: 0,
       updated: 0,

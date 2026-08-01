@@ -10,6 +10,7 @@ import path from "path";
 import {
   connectDB as connectMongoShared,
   getMongoUri,
+  reconnectDB,
 } from "../../config/db.js";
 import DonHoanHuyModelImport from "../../models/DonHoanHuy.js";
 import {
@@ -409,6 +410,30 @@ function withWriteTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 10_
 
 export function isMongoReady(): boolean {
   return mongoReady && mongoose.connection.readyState === 1;
+}
+
+/**
+ * Sau lỗi "connection N to host:27017 timed out" — đóng pool cũ và nối lại.
+ * Trả true nếu readyState === 1 sau reconnect.
+ */
+export async function recoverMongoConnection(reason = "timeout"): Promise<boolean> {
+  console.warn(`[MongoDB] recoverMongoConnection (${reason}) — reconnecting...`);
+  mongoReady = false;
+  try {
+    await reconnectDB();
+    mongoReady = mongoose.connection.readyState === 1;
+    if (mongoReady) {
+      console.log("[MongoDB] recoverMongoConnection OK");
+      return true;
+    }
+  } catch (err: any) {
+    console.error(
+      "[MongoDB] recoverMongoConnection FAILED:",
+      err?.message || err,
+    );
+  }
+  mongoReady = false;
+  return false;
 }
 
 export function getMongoUriMasked(): string {
@@ -3316,12 +3341,13 @@ export function describeMongoWriteError(err: unknown): string {
   const msg = String(anyErr?.message || err || "");
   const code = String(anyErr?.code ?? anyErr?.codeName ?? "");
   const name = String(anyErr?.name || "");
+  const blob = `${msg} ${name} ${code}`;
   if (
-    /server selection|ServerSelectionError|timed out after|maxTimeMS|ExceededTimeLimit|MongoServerSelectionError|MongoNetworkTimeoutError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|MongoNetworkError|topology was destroyed|connection.*closed|mongodb_not_ready|Chưa kết nối được Database/i.test(
-      msg + name + code,
+    /server selection|ServerSelectionError|timed out after|timed out|timeout|maxTimeMS|ExceededTimeLimit|MongoServerSelectionError|MongoNetworkTimeoutError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|MongoNetworkError|topology was destroyed|connection.*closed|connection \d+ to .+ timed out|27017|mongodb_not_ready|Chưa kết nối được Database|pool destroyed/i.test(
+      blob,
     )
   ) {
-    return "Lỗi kết nối MongoDB";
+    return "Lỗi kết nối MongoDB (timeout tới máy chủ DB). Kiểm tra mạng/firewall/IP whitelist rồi thử lại.";
   }
   if (/quota|space|exceeded|8000|AtlasError/i.test(msg + code) || code === "8000") {
     return "Quota MongoDB chưa nhả đủ dung lượng (Atlas Over space quota). Hãy dọn order_events hoặc nâng gói.";
@@ -3340,7 +3366,8 @@ export function describeMongoWriteError(err: unknown): string {
 }
 
 export function isMongoConnectionError(err: unknown): boolean {
-  return describeMongoWriteError(err) === "Lỗi kết nối MongoDB";
+  const msg = describeMongoWriteError(err);
+  return msg.startsWith("Lỗi kết nối MongoDB");
 }
 
 function donHoanHuyDocToOrder(doc: any): any {

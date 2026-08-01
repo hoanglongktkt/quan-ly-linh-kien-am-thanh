@@ -72404,13 +72404,17 @@ try {
 } catch {
 }
 var MONGO_CONNECT_OPTIONS = {
-  serverSelectionTimeoutMS: 5e3,
-  connectTimeoutMS: 5e3,
-  socketTimeoutMS: 15e3,
-  maxPoolSize: 15,
+  serverSelectionTimeoutMS: 1e4,
+  connectTimeoutMS: 1e4,
+  // "connection N to host:27017 timed out" thường do socketTimeout quá ngắn khi bulkWrite.
+  socketTimeoutMS: 6e4,
+  maxPoolSize: 10,
   minPoolSize: 1,
-  waitQueueTimeoutMS: 5e3,
-  maxIdleTimeMS: 3e4
+  waitQueueTimeoutMS: 1e4,
+  maxIdleTimeMS: 6e4,
+  heartbeatFrequencyMS: 1e4,
+  // Ưu tiên IPv4 — tránh treo dual-stack trên một số host cPanel.
+  family: 4
 };
 var connectPromise = null;
 function getMongoUri() {
@@ -72441,14 +72445,34 @@ async function connectDB() {
       connectPromise = null;
       const msg = err?.message || String(err);
       throw new Error(
-        /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|MongoNetwork/i.test(msg) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI." : msg || "Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c MongoDB."
+        /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|ETIMEDOUT|MongoNetwork|timed out|27017/i.test(
+          msg
+        ) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng (timeout t\u1EDBi DB). Ki\u1EC3m tra IP whitelist, firewall v\xE0 bi\u1EBFn MONGODB_URI." : msg || "Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c MongoDB."
       );
     }
   })();
   return connectPromise;
 }
+async function reconnectDB() {
+  connectPromise = null;
+  try {
+    if (import_mongoose2.default.connection.readyState !== 0) {
+      await import_mongoose2.default.connection.close().catch(() => {
+      });
+    }
+  } catch {
+  }
+  return connectDB();
+}
 function isDBReady() {
   return import_mongoose2.default.connection.readyState === 1;
+}
+function isMongoTimeoutOrNetworkError(err) {
+  const msg = String(err?.message || err || "");
+  const name = String(err?.name || "");
+  return /serverSelection|ServerSelectionError|MongoServerSelectionError|MongoNetworkTimeoutError|MongoNetworkError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|timed out|timeout|27017|topology was destroyed|connection.*closed|pool destroyed/i.test(
+    `${msg} ${name}`
+  );
 }
 
 // src/db/mongoStore.ts
@@ -73118,6 +73142,25 @@ function withWriteTimeout(promise, label, timeoutMs = 1e4) {
 }
 function isMongoReady() {
   return mongoReady && import_mongoose3.default.connection.readyState === 1;
+}
+async function recoverMongoConnection(reason = "timeout") {
+  console.warn(`[MongoDB] recoverMongoConnection (${reason}) \u2014 reconnecting...`);
+  mongoReady = false;
+  try {
+    await reconnectDB();
+    mongoReady = import_mongoose3.default.connection.readyState === 1;
+    if (mongoReady) {
+      console.log("[MongoDB] recoverMongoConnection OK");
+      return true;
+    }
+  } catch (err) {
+    console.error(
+      "[MongoDB] recoverMongoConnection FAILED:",
+      err?.message || err
+    );
+  }
+  mongoReady = false;
+  return false;
 }
 function getMongoUriMasked() {
   const uri = getMongoUri();
@@ -75380,10 +75423,11 @@ function describeMongoWriteError(err) {
   const msg = String(anyErr?.message || err || "");
   const code = String(anyErr?.code ?? anyErr?.codeName ?? "");
   const name = String(anyErr?.name || "");
-  if (/server selection|ServerSelectionError|timed out after|maxTimeMS|ExceededTimeLimit|MongoServerSelectionError|MongoNetworkTimeoutError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|MongoNetworkError|topology was destroyed|connection.*closed|mongodb_not_ready|Chưa kết nối được Database/i.test(
-    msg + name + code
+  const blob = `${msg} ${name} ${code}`;
+  if (/server selection|ServerSelectionError|timed out after|timed out|timeout|maxTimeMS|ExceededTimeLimit|MongoServerSelectionError|MongoNetworkTimeoutError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|MongoNetworkError|topology was destroyed|connection.*closed|connection \d+ to .+ timed out|27017|mongodb_not_ready|Chưa kết nối được Database|pool destroyed/i.test(
+    blob
   )) {
-    return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB";
+    return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB (timeout t\u1EDBi m\xE1y ch\u1EE7 DB). Ki\u1EC3m tra m\u1EA1ng/firewall/IP whitelist r\u1ED3i th\u1EED l\u1EA1i.";
   }
   if (/quota|space|exceeded|8000|AtlasError/i.test(msg + code) || code === "8000") {
     return "Quota MongoDB ch\u01B0a nh\u1EA3 \u0111\u1EE7 dung l\u01B0\u1EE3ng (Atlas Over space quota). H\xE3y d\u1ECDn order_events ho\u1EB7c n\xE2ng g\xF3i.";
@@ -75397,7 +75441,8 @@ function describeMongoWriteError(err) {
   return msg || "L\u1ED7i ghi MongoDB kh\xF4ng x\xE1c \u0111\u1ECBnh.";
 }
 function isMongoConnectionError(err) {
-  return describeMongoWriteError(err) === "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB";
+  const msg = describeMongoWriteError(err);
+  return msg.startsWith("L\u1ED7i k\u1EBFt n\u1ED1i MongoDB");
 }
 function donHoanHuyDocToOrder(doc) {
   const looksLikeTracking = (code) => /^(SPX(VN)?|GHN|GYA|GHTK|JNT|JT|NINJA|VTP|VNPOST|BEST|LEX)/i.test(String(code || "").trim());
@@ -75949,10 +75994,10 @@ function describeDbError(err) {
   if (/quota|space|storage|over.?space/i.test(msg)) {
     return "Quota MongoDB \u0111\u1EA7y (Atlas Over space quota). H\xE3y d\u1ECDn d\u1EEF li\u1EC7u ho\u1EB7c n\xE2ng g\xF3i.";
   }
-  if (/ECONNREFUSED|ENOTFOUND|ETIMEOUT|serverSelection|connect ETIMEDOUT|MongoNetwork|Thiếu MONGODB/i.test(
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEOUT|ETIMEDOUT|serverSelection|connect ETIMEDOUT|MongoNetwork|Thiếu MONGODB|timed out|timeout|27017|connection \d+ to /i.test(
     msg
   )) {
-    return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng. Ki\u1EC3m tra Atlas v\xE0 bi\u1EBFn MONGODB_URI.";
+    return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB / m\u1EA1ng (timeout t\u1EDBi DB). Ki\u1EC3m tra IP whitelist, firewall v\xE0 bi\u1EBFn MONGODB_URI.";
   }
   if (/duplicate key|E11000/i.test(msg)) {
     return "Tr\xF9ng m\xE3 \u0111\u01A1n trong don_hoan_huy (\u0111\xE3 l\u01B0u tr\u01B0\u1EDBc \u0111\xF3).";
@@ -104879,6 +104924,13 @@ async function runShopeeConnectivityDiagnostics(shopIdInput) {
 }
 
 // controllers/shopeeOrdersController.js
+function friendlyPullError(err) {
+  const raw = err?.message || String(err || "");
+  if (isMongoTimeoutOrNetworkError(err) || /27017|connection \d+ to .+ timed out/i.test(raw)) {
+    return "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB (timeout t\u1EDBi m\xE1y ch\u1EE7 DB). Ki\u1EC3m tra m\u1EA1ng/firewall/IP whitelist r\u1ED3i th\u1EED l\u1EA1i.";
+  }
+  return raw || "\u0110\u1ED3ng b\u1ED9 th\u1EA5t b\u1EA1i";
+}
 var deps15 = {
   createSyncJob: async () => ({ id: "" }),
   finishSyncJob: async () => {
@@ -105040,8 +105092,8 @@ async function runOrdersPull(opts) {
       added: 0,
       updated: 0,
       shops: 0,
-      errors: [{ error: "orders_pull_exception", message: error?.message || String(error) }],
-      message: error?.message || String(error) || "\u0110\u1ED3ng b\u1ED9 th\u1EA5t b\u1EA1i",
+      errors: [{ error: "orders_pull_exception", message: friendlyPullError(error) }],
+      message: friendlyPullError(error),
       jobId,
       shopee_response: null
     };
@@ -105193,8 +105245,8 @@ async function pullOrders(req, res) {
     console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
-      message: `L\u1ED7i \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng: ${err?.message || String(err) || "orders_pull_failed"}`,
-      error: err?.message || String(err) || "orders_pull_failed",
+      message: `L\u1ED7i \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng: ${friendlyPullError(err)}`,
+      error: friendlyPullError(err),
       pulled: 0,
       added: 0,
       updated: 0,
@@ -105275,8 +105327,8 @@ async function syncOrders(req, res) {
     console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
-      message: `L\u1ED7i \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng: ${err?.message || String(err) || "orders_sync_failed"}`,
-      error: err?.message || String(err) || "orders_sync_failed",
+      message: `L\u1ED7i \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng: ${friendlyPullError(err)}`,
+      error: friendlyPullError(err),
       pulled: 0,
       added: 0,
       updated: 0,
@@ -108466,7 +108518,59 @@ async function pullIncrementalOrdersFromShopee(opts) {
         shopee_response: { error: "no_oauth_shop" }
       };
     }
-    const orders = isMongoReady() ? await loadOrdersFromStore() : [];
+    let orders = [];
+    if (isMongoReady()) {
+      try {
+        orders = await loadOrdersFromStore();
+      } catch (loadErr) {
+        if (isMongoConnectionError(loadErr)) {
+          console.warn(
+            "[Orders Pull] loadOrdersFromStore timeout/network \u2014 th\u1EED reconnect:",
+            loadErr?.message || loadErr
+          );
+          const ok = await recoverMongoConnection("orders_pull_load");
+          if (ok) {
+            try {
+              orders = await loadOrdersFromStore();
+            } catch (retryErr) {
+              errors.push({
+                error: "mongo_load_failed",
+                message: describeMongoWriteError(retryErr)
+              });
+              return {
+                success: false,
+                pulled: 0,
+                added: 0,
+                updated: 0,
+                shops: shopIds.length,
+                errors,
+                message: describeMongoWriteError(retryErr),
+                elapsedMs: Date.now() - startedAt,
+                lookbackSec,
+                shopee_response: []
+              };
+            }
+          } else {
+            const friendly = describeMongoWriteError(loadErr);
+            errors.push({ error: "mongo_reconnect_failed", message: friendly });
+            return {
+              success: false,
+              pulled: 0,
+              added: 0,
+              updated: 0,
+              shops: shopIds.length,
+              errors,
+              message: friendly,
+              elapsedMs: Date.now() - startedAt,
+              lookbackSec,
+              shopee_response: []
+            };
+          }
+        } else {
+          throw loadErr;
+        }
+      }
+    }
     const perShopBudgetMs = Math.max(
       longLookback ? 45e3 : 28e3,
       Math.floor(pullDeadlineMs / Math.max(1, shopIds.length))
@@ -108582,17 +108686,22 @@ async function pullIncrementalOrdersFromShopee(opts) {
                 `shop=${shopId} +${upsert.added}/~${upsert.updated} elapsed=${Date.now() - startedAt}ms`
               );
             } catch (saveErr) {
+              const friendly = describeMongoWriteError(saveErr);
               console.error(
                 "[Orders Pull] Mongo/JSON upsert FAILED:",
+                friendly,
                 saveErr?.message || saveErr,
                 saveErr?.stack || "",
                 "order_sn=",
                 normalized.map((o) => o?.orderSn).join(",")
               );
+              if (isMongoConnectionError(saveErr)) {
+                void recoverMongoConnection("orders_pull_upsert");
+              }
               errors.push({
                 shopId,
                 error: "db_upsert_failed",
-                message: saveErr?.message || String(saveErr),
+                message: friendly,
                 orderSns: normalized.map((o) => o?.orderSn)
               });
             }

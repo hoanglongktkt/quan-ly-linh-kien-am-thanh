@@ -10,16 +10,20 @@ try {
 
 /**
  * Options kết nối Mongo — SSOT dùng chung cho MVC (config/db) và mongoStore.initMongo.
- * Giữ nguyên bộ options đã ổn định trên cPanel (maxPoolSize 15, fail-fast 5s).
+ * socketTimeoutMS đủ dài cho pull đơn / bulkWrite; fail-fast khi chọn server.
  */
 export const MONGO_CONNECT_OPTIONS = {
-  serverSelectionTimeoutMS: 5000,
-  connectTimeoutMS: 5000,
-  socketTimeoutMS: 15000,
-  maxPoolSize: 15,
+  serverSelectionTimeoutMS: 10_000,
+  connectTimeoutMS: 10_000,
+  // "connection N to host:27017 timed out" thường do socketTimeout quá ngắn khi bulkWrite.
+  socketTimeoutMS: 60_000,
+  maxPoolSize: 10,
   minPoolSize: 1,
-  waitQueueTimeoutMS: 5000,
-  maxIdleTimeMS: 30000,
+  waitQueueTimeoutMS: 10_000,
+  maxIdleTimeMS: 60_000,
+  heartbeatFrequencyMS: 10_000,
+  // Ưu tiên IPv4 — tránh treo dual-stack trên một số host cPanel.
+  family: 4,
 };
 
 /** Mutex singleton — tránh gọi mongoose.connect song song khi readyState=2 (connecting). */
@@ -68,8 +72,10 @@ export async function connectDB() {
       connectPromise = null; // Cho phép retry lần sau
       const msg = err?.message || String(err);
       throw new Error(
-        /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|MongoNetwork/i.test(msg)
-          ? "Lỗi kết nối MongoDB / mạng. Kiểm tra Atlas và biến MONGODB_URI."
+        /serverSelection|ENOTFOUND|ECONNREFUSED|ETIMEOUT|ETIMEDOUT|MongoNetwork|timed out|27017/i.test(
+          msg,
+        )
+          ? "Lỗi kết nối MongoDB / mạng (timeout tới DB). Kiểm tra IP whitelist, firewall và biến MONGODB_URI."
           : msg || "Không kết nối được MongoDB.",
       );
     }
@@ -78,8 +84,33 @@ export async function connectDB() {
   return connectPromise;
 }
 
+/**
+ * Ép reconnect khi pool chết / socket timeout (readyState vẫn có thể = 1 giả).
+ * Dùng sau lỗi "connection N to host:27017 timed out".
+ */
+export async function reconnectDB() {
+  connectPromise = null;
+  try {
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.connection.close().catch(() => {});
+    }
+  } catch {
+    /* ignore */
+  }
+  return connectDB();
+}
+
 export function isDBReady() {
   return mongoose.connection.readyState === 1;
+}
+
+/** Nhận diện lỗi timeout / mất kết nối Mongo (kể cả "connection N to IP:27017 timed out"). */
+export function isMongoTimeoutOrNetworkError(err) {
+  const msg = String(err?.message || err || "");
+  const name = String(err?.name || "");
+  return /serverSelection|ServerSelectionError|MongoServerSelectionError|MongoNetworkTimeoutError|MongoNetworkError|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ETIMEOUT|timed out|timeout|27017|topology was destroyed|connection.*closed|pool destroyed/i.test(
+    `${msg} ${name}`,
+  );
 }
 
 export default connectDB;

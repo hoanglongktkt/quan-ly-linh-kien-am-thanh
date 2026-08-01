@@ -36,11 +36,11 @@ function describeDbError(err) {
     return "Quota MongoDB đầy (Atlas Over space quota). Hãy dọn dữ liệu hoặc nâng gói.";
   }
   if (
-    /ECONNREFUSED|ENOTFOUND|ETIMEOUT|serverSelection|connect ETIMEDOUT|MongoNetwork|Thiếu MONGODB/i.test(
+    /ECONNREFUSED|ENOTFOUND|ETIMEOUT|ETIMEDOUT|serverSelection|connect ETIMEDOUT|MongoNetwork|Thiếu MONGODB|timed out|timeout|27017|connection \d+ to /i.test(
       msg,
     )
   ) {
-    return "Lỗi kết nối MongoDB / mạng. Kiểm tra Atlas và biến MONGODB_URI.";
+    return "Lỗi kết nối MongoDB / mạng (timeout tới DB). Kiểm tra IP whitelist, firewall và biến MONGODB_URI.";
   }
   if (/duplicate key|E11000/i.test(msg)) {
     return "Trùng mã đơn trong don_hoan_huy (đã lưu trước đó).";
