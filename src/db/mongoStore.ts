@@ -192,7 +192,8 @@ const OrderSchema = new Schema<OrderDoc>(
     is_pending_shopee_check: { type: Boolean, default: false, index: true },
     /** Cờ nội bộ — chỉ $setOnInsert khi sync; QR/bàn giao mới $set true */
     is_handed_over: { type: Boolean, default: false, index: true },
-    isPrinted: { type: Boolean, default: false },
+    /** Cờ in vận đơn nội bộ — chỉ $setOnInsert khi sync; API in mới $set true */
+    isPrinted: { type: Boolean, default: false, index: true },
     isPrepared: { type: Boolean, default: false },
     last_synced_at: { type: Date, default: null, index: true },
     last_shopee_update_at: { type: Date, default: null },
@@ -1845,6 +1846,7 @@ export async function bulkUpdateShippedOrdersBySn(
     fulfillment_type?: string;
     tracking_no?: string;
     isPrepared?: boolean;
+    isPrinted?: boolean;
     shopeeSyncPending?: boolean;
     shopeeSyncError?: string | null;
     labelUrl?: string;
@@ -1879,6 +1881,10 @@ export async function bulkUpdateShippedOrdersBySn(
     if (p.isPrepared != null) {
       $set.isPrepared = Boolean(p.isPrepared);
       $set["data.isPrepared"] = Boolean(p.isPrepared);
+    }
+    if (p.isPrinted != null) {
+      $set.isPrinted = Boolean(p.isPrinted);
+      $set["data.isPrinted"] = Boolean(p.isPrinted);
     }
     if (p.shopeeSyncPending != null) $set["data.shopeeSyncPending"] = Boolean(p.shopeeSyncPending);
     if (p.shopeeSyncError !== undefined) {
@@ -2009,6 +2015,85 @@ export async function markOrderHandedOverInStore(
     `[MongoDB] findOneAndUpdate markOrderHandedOver is_handed_over=true order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
+}
+
+/**
+ * Ghi cờ isPrinted — KHÔNG dùng bulkUpsert (INTERNAL_FLAG_KEYS bỏ isPrinted).
+ * Gọi sau khi lấy PDF vận đơn Shopee thành công, hoặc khi user reset "Chưa in".
+ */
+export async function markOrdersPrintedInStore(
+  orderSns: string[],
+  isPrinted: boolean,
+  meta?: {
+    shopId?: string;
+    labelUrl?: string;
+    pdfUrl?: string;
+    pdfFilename?: string;
+  },
+): Promise<number> {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const sns = [
+    ...new Set(
+      (Array.isArray(orderSns) ? orderSns : [])
+        .map((s) => String(s || "").replace(/^shopee-/i, "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (sns.length === 0) return 0;
+
+  const printed = Boolean(isPrinted);
+  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
+  const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || "").trim();
+  const pdfFilename = String(meta?.pdfFilename || "").trim();
+
+  const ops = sns.map((sn) => {
+    const _id = `shopee-${sn}`;
+    const $set: Record<string, unknown> = {
+      isPrinted: printed,
+      "data.isPrinted": printed,
+    };
+    if (printed && labelUrl) {
+      $set["data.labelUrl"] = labelUrl;
+      $set["data.pdfUrl"] = labelUrl;
+    }
+    if (printed && pdfFilename) $set["data.pdfFilename"] = pdfFilename;
+    if (shopIdStr) {
+      $set.shopId = shopIdStr;
+      $set["data.shopId"] = shopIdStr;
+    }
+    return {
+      updateOne: {
+        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+        update: {
+          $set,
+          $setOnInsert: {
+            _id,
+            orderSn: sn,
+            "data.id": _id,
+            "data.orderSn": sn,
+            "data.channel": "shopee",
+          },
+        },
+        upsert: true,
+      },
+    };
+  });
+
+  await withWriteTimeout(
+    enqueueWrite(async () => {
+      const result = await OrderModel.bulkWrite(ops as any, {
+        ordered: false,
+        maxTimeMS: 8_000,
+      });
+      console.log(
+        `[MongoDB] markOrdersPrintedInStore isPrinted=${printed} sns=${sns.length}` +
+          ` modified=${result.modifiedCount || 0} upserted=${result.upsertedCount || 0}`,
+      );
+    }),
+    "mark_printed",
+  );
+  return sns.length;
 }
 
 /**
@@ -2959,6 +3044,8 @@ export type OrdersPageQuery = {
   shopId?: string;
   carrier?: string;
   query?: string;
+  /** `printed` | `unprinted` — lọc theo cờ isPrinted trong Mongo (không gọi Shopee). */
+  printStatus?: string;
 };
 
 /** Terminal / thoát pool chờ lấy hàng — khớp isShopeeCancelledLike + shipping/completed. */
@@ -3236,6 +3323,30 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     and.push({ $or: shopVariants });
   }
   if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
+  const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
+  if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
+    and.push({
+      $or: [{ isPrinted: true }, { "data.isPrinted": true }],
+    });
+  } else if (
+    printStatus === "unprinted" ||
+    printStatus === "chua-in" ||
+    printStatus === "false" ||
+    printStatus === "not_printed"
+  ) {
+    and.push({
+      $and: [
+        { $or: [{ isPrinted: { $exists: false } }, { isPrinted: false }, { isPrinted: null }] },
+        {
+          $or: [
+            { "data.isPrinted": { $exists: false } },
+            { "data.isPrinted": false },
+            { "data.isPrinted": null },
+          ],
+        },
+      ],
+    });
+  }
   const search = String(opts?.query || "").trim();
   if (search) {
     const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");

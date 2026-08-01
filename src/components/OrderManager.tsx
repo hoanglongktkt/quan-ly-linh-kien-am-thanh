@@ -486,6 +486,8 @@ interface OrderManagerProps {
     bustCache?: boolean;
     limit?: number;
     merge?: boolean;
+    /** `printed` | `unprinted` — lọc theo isPrinted từ Mongo (không gọi Shopee). */
+    print_status?: 'printed' | 'unprinted' | 'all' | '';
   }) => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
@@ -880,7 +882,9 @@ export default function OrderManager({
 
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterUnprinted, setFilterUnprinted] = useState(false);
+  /** `all` | `printed` | `unprinted` — lọc theo isPrinted từ DB. */
+  const [printStatusFilter, setPrintStatusFilter] = useState<'all' | 'printed' | 'unprinted'>('all');
+  const [resettingPrintIds, setResettingPrintIds] = useState<string[]>([]);
 
   const matchesSelectedShop = (order: Order): boolean => {
     if (selectedShopId === 'all') return true;
@@ -901,11 +905,72 @@ export default function OrderManager({
   };
 
   const openHandedOverCarrierTab = React.useCallback(() => {
-    setFilterUnprinted(false);
+    setPrintStatusFilter('all');
     setSearchQuery('');
     setSelectedShopId('all');
     setActiveSubTab(UI_TAB_HANDED_OVER_CARRIER);
   }, []);
+
+  /** Đổi lọc Đã in / Chưa in → gọi API nội bộ kèm print_status (Mongo, không Shopee). */
+  const applyPrintStatusFilter = React.useCallback(
+    (next: 'all' | 'printed' | 'unprinted') => {
+      setPrintStatusFilter(next);
+      void onFetchOrders?.({
+        silent: true,
+        bustCache: true,
+        limit: 2000,
+        merge: true,
+        print_status: next === 'all' ? '' : next,
+      });
+    },
+    [onFetchOrders],
+  );
+
+  /** Reset isPrinted=false trên Mongo — in lại từ đầu. */
+  const resetPrintStatusForOrders = React.useCallback(
+    async (targetOrders: Order[]) => {
+      const ids = targetOrders
+        .map((o) => String(o.orderSn || o.id || '').replace(/^shopee-/i, '').trim())
+        .filter(Boolean);
+      if (ids.length === 0) {
+        showToast('Chưa chọn đơn để đánh dấu chưa in.');
+        return;
+      }
+      setResettingPrintIds(ids);
+      try {
+        const token = localStorage.getItem('admin_token');
+        const res = await fetch('/api/orders/reset-print-status', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ orderIds: ids, orderSns: ids }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.success === false) {
+          showToast(data?.message || 'Không thể đánh dấu chưa in.');
+          return;
+        }
+        const idSet = new Set(ids.map((s) => s.toLowerCase()));
+        const patched = ordersRef.current.map((o) => {
+          const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+          const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
+          if (!idSet.has(sn) && !idSet.has(oid)) return o;
+          return { ...o, isPrinted: false };
+        });
+        ordersRef.current = patched;
+        onUpdateOrders(patched, { persist: false });
+        showToast(`Đã đánh dấu chưa in: ${ids.length} đơn.`);
+        void onFetchOrders?.({ silent: true, bustCache: true, merge: true, limit: 2000 });
+      } catch (err: any) {
+        showToast(err?.message || 'Lỗi đánh dấu chưa in.');
+      } finally {
+        setResettingPrintIds([]);
+      }
+    },
+    [onFetchOrders, onUpdateOrders],
+  );
 
   const applyHandoverToLocalOrders = React.useCallback(
     (updatedOrder: Order, source: 'qr_scan' | 'manual_button' = 'manual_button') => {
@@ -2811,8 +2876,7 @@ export default function OrderManager({
       return;
     }
 
-    // Reserve tab ngay trong user-gesture (placeholder spinner) — tránh popup blocker + tab trắng.
-    let reservedWindow: Window | null = openReservedPrintPlaceholder();
+    // Không dùng openReservedPrintPlaceholder để tránh treo tab trắng.
 
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
     const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
@@ -2849,7 +2913,6 @@ export default function OrderManager({
 
       const data = await readResponseJson<any>(res);
       if (!res.ok) {
-        closeReservedPrintWindow(reservedWindow);
         showToast(data.message || data.error || data.detail || 'Xác nhận & In nhanh thất bại.');
         setProgressDone(true);
         setProgressMessage(data.message || 'Xác nhận & In nhanh thất bại');
@@ -2922,15 +2985,13 @@ export default function OrderManager({
 
         setShipConfirmSummary(null);
         await openShopeeLabelFromStream(
-          { url: printUrl, pdfFilename: pdfFilename || undefined },
-          { reservedWindow },
+          { url: printUrl, pdfFilename: pdfFilename || undefined }
         );
         markProgressComplete('Xác nhận & In thành công!');
         if (data.message) showToast(data.message);
         return;
       }
 
-      closeReservedPrintWindow(reservedWindow);
       setProgressDone(true);
       setShipConfirmSummary(summary);
       setProgressMessage(
@@ -2939,7 +3000,6 @@ export default function OrderManager({
           : 'Kết quả xác nhận hàng loạt',
       );
     } catch (err) {
-      closeReservedPrintWindow(reservedWindow);
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API: ${msg}`);
       setProgressDone(true);
@@ -3146,8 +3206,9 @@ export default function OrderManager({
       if (!matchSn && !matchTracking && !matchInternal && !matchProduct) return false;
     }
 
-    // 5. Lọc chưa in (áp dụng trước ĐVVC để count khớp list khi bật)
-    if (filterUnprinted && isOrderPrintedEffective(order)) return false;
+    // 5. Lọc Đã in / Chưa in theo cờ isPrinted từ Mongo
+    if (printStatusFilter === 'printed' && !Boolean(order.isPrinted)) return false;
+    if (printStatusFilter === 'unprinted' && Boolean(order.isPrinted)) return false;
 
     return true;
   };
@@ -3162,7 +3223,7 @@ export default function OrderManager({
       selectedPlatform,
       selectedShopId,
       searchQuery,
-      filterUnprinted,
+      printStatusFilter,
     ],
   );
 
@@ -4755,14 +4816,44 @@ export default function OrderManager({
           </span>
           <button
             type="button"
-            onClick={() => setFilterUnprinted((v) => !v)}
+            onClick={() => applyPrintStatusFilter(printStatusFilter === 'unprinted' ? 'all' : 'unprinted')}
             className={`text-[11px] font-black px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
-              filterUnprinted
+              printStatusFilter === 'unprinted'
                 ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
                 : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
             }`}
           >
-            {filterUnprinted ? 'Đang lọc: Chưa in (Bấm để Hủy)' : 'Lọc đơn Chưa in'}
+            {printStatusFilter === 'unprinted' ? 'Đang lọc: Chưa in (Bấm để Hủy)' : 'Lọc đơn Chưa in'}
+          </button>
+          <button
+            type="button"
+            onClick={() => applyPrintStatusFilter(printStatusFilter === 'printed' ? 'all' : 'printed')}
+            className={`text-[11px] font-black px-2.5 py-1.5 rounded-lg border transition-all cursor-pointer ${
+              printStatusFilter === 'printed'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            {printStatusFilter === 'printed' ? 'Đang lọc: Đã in (Bấm để Hủy)' : 'Lọc đơn Đã in'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const targets =
+                selectedOrderIds.length > 0
+                  ? filteredOrders.filter((o) => selectedOrderIds.includes(o.id))
+                  : [];
+              if (targets.length === 0) {
+                showToast('Chọn đơn cần đánh dấu chưa in trước.');
+                return;
+              }
+              void resetPrintStatusForOrders(targets);
+            }}
+            disabled={resettingPrintIds.length > 0}
+            className="text-[11px] font-black px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 transition-all cursor-pointer disabled:opacity-50"
+            title="Reset isPrinted=false trên DB để in lại từ đầu"
+          >
+            {resettingPrintIds.length > 0 ? 'Đang reset...' : 'Đánh dấu chưa in'}
           </button>
         </div>
 
@@ -5133,6 +5224,17 @@ export default function OrderManager({
                               }`}>
                                 {isOrderPrintedEffective(order) ? '✓ Đã in' : '✕ Chưa in'}
                               </span>
+                              {isOrderPrintedEffective(order) && (
+                                <button
+                                  type="button"
+                                  onClick={() => void resetPrintStatusForOrders([order])}
+                                  disabled={resettingPrintIds.includes(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
+                                  className="om-mobile-hide-print text-[10px] font-bold px-1.5 py-1 rounded border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                                  title="Đánh dấu chưa in để in lại"
+                                >
+                                  Đánh dấu chưa in
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={(e) => handlePrintButtonClick(e, order)}
@@ -5398,6 +5500,17 @@ export default function OrderManager({
                           }`}>
                             {isOrderPrintedEffective(order) ? '✓ Đã in' : '✕ Chưa in'}
                           </span>
+                          {isOrderPrintedEffective(order) && (
+                            <button
+                              type="button"
+                              onClick={() => void resetPrintStatusForOrders([order])}
+                              disabled={resettingPrintIds.includes(String(order.orderSn || '').replace(/^shopee-/i, '').trim())}
+                              className="om-mobile-hide-print text-[11px] font-black px-2 py-1 rounded-xl border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+                              title="Đánh dấu chưa in để in lại"
+                            >
+                              Đánh dấu chưa in
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => handlePrintButtonClick(e, order)}

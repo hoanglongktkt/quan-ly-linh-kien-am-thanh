@@ -416,6 +416,7 @@ export default function App() {
     retriesLeft?: number;
     limit?: number;
     merge?: boolean;
+    print_status?: 'printed' | 'unprinted' | 'all' | '';
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
@@ -430,7 +431,8 @@ export default function App() {
           ? 50
           : undefined;
     const merge = opts?.merge ?? Boolean(limit);
-    const flightKey = limit ? `limit:${limit}` : 'full';
+    const printStatus = String(opts?.print_status || '').trim().toLowerCase();
+    const flightKey = `${limit ? `limit:${limit}` : 'full'}|print:${printStatus || 'all'}`;
 
     if (fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
@@ -457,6 +459,7 @@ export default function App() {
       params.set('_r', String(Math.random()).slice(2, 10));
       if (limit) params.set('limit', String(limit));
       if (bustCache) params.set('bust', '1');
+      if (printStatus && printStatus !== 'all') params.set('print_status', printStatus);
       const qs = params.toString();
       const path = `/api/orders/refresh?${qs}`;
       const requestUrl =

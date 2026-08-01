@@ -195,7 +195,8 @@ export function isOrderAwaitingCarrierPickup(order: Pick<Order, 'status'>): bool
 export function isOrderPrintedEffective(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
-  return isProcessedCondition(order) && Boolean(order.isPrinted);
+  // SSOT: cờ isPrinted trong MongoDB — không phụ thuộc processed/Shopee live.
+  return Boolean(order.isPrinted);
 }
 
 export function isOrderPreparedEffective(

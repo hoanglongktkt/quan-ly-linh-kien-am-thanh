@@ -101192,7 +101192,7 @@ function isShopeeRetryableNetworkError(err) {
   return /timeout|timed out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|AbortError|fetch failed|network|socket/i.test(msg);
 }
 function isShopeeRetryableHttpStatus(status) {
-  return status === 429 || status === 502 || status === 503 || status === 504;
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 async function runInShopeeBatches(items, processor, opts) {
   if (items.length === 0) return;
@@ -102367,9 +102367,9 @@ function resolveShopeeTokenShopId(requested) {
   if (!req) {
     if (authorized.length === 1) return authorized[0];
     console.warn(
-      `[Shopee Auth] resolveShopeeTokenShopId: \u0110A SHOP (${authorized.length} shop: [${authorized.join(", ")}]) \u2014 thi\u1EBFu shop_id, tr\u1EA3 null. D\xF9ng listAuthorizedShopeeShopIds().`
+      `[Shopee Auth] resolveShopeeTokenShopId: \u0110A SHOP (${authorized.length} shop: [${authorized.join(", ")}]) \u2014 thi\u1EBFu shop_id. T\u1EA1m fallback v\u1EC1 ${authorized[0]} \u0111\u1EC3 tr\xE1nh crash.`
     );
-    return null;
+    return authorized[0];
   }
   const tokens = loadShopeeTokens();
   if (tokens[req]) return req;

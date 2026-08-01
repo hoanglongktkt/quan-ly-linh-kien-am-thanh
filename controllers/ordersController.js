@@ -32,6 +32,7 @@ import {
   loadDonHoanHuyAsOrders,
   markOrderHandedOverInStore,
   markOrderLocalStatusInStore,
+  markOrdersPrintedInStore,
 } from "../src/db/mongoStore.ts";
 
 const APP_ROOT = resolveAppRoot();
@@ -111,6 +112,24 @@ async function readOrdersForRefresh(limit) {
   return ordersRefreshInFlight;
 }
 
+/** Lọc theo cờ isPrinted trong Mongo — không gọi Shopee. */
+function filterOrdersByPrintStatus(orders, printStatusRaw) {
+  const printStatus = String(printStatusRaw || "").trim().toLowerCase();
+  if (!printStatus || printStatus === "all") return orders;
+  if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
+    return orders.filter((o) => o?.isPrinted === true);
+  }
+  if (
+    printStatus === "unprinted" ||
+    printStatus === "chua-in" ||
+    printStatus === "false" ||
+    printStatus === "not_printed"
+  ) {
+    return orders.filter((o) => o?.isPrinted !== true);
+  }
+  return orders;
+}
+
 /** GET /api/orders/refresh */
 export async function refreshOrders(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -144,6 +163,8 @@ export async function refreshOrders(req, res) {
         mergeErr?.message || mergeErr,
       );
     }
+    const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
+    mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
     let products = [];
     if (!limit) {
       try {
@@ -195,6 +216,7 @@ export async function queryOrders(req, res) {
       shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
       carrier: String(req.query.carrier || ""),
       query: String(req.query.q ?? req.query.query ?? ""),
+      printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
     });
     const products = await deps.loadProductsForOrders(page.rows);
     const rows = deps.enrichOrdersWithShopNames(
@@ -249,6 +271,10 @@ export async function listOrders(req, res) {
 
   let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
   rawOrders = rawOrders.filter(deps.isValidOrder);
+  rawOrders = filterOrdersByPrintStatus(
+    rawOrders,
+    String(req.query.print_status || req.query.printStatus || ""),
+  );
 
   const unprocessedPool = rawOrders.filter((o) => deps.matchesUnprocessedPickupTabShared(o));
   const processedPool = rawOrders.filter((o) => deps.matchesProcessedPickupTabShared(o));
@@ -943,7 +969,88 @@ export async function patchOrder(req, res) {
       console.error("[Orders PATCH] markOrderLocalStatus failed:", err?.message || err);
     }
   }
+  if (isMongoReady() && "isPrinted" in patch) {
+    try {
+      await markOrdersPrintedInStore(
+        [String(orders[index].orderSn || orders[index].id || "")],
+        Boolean(patch.isPrinted),
+        {
+          shopId: orders[index].shopId != null ? String(orders[index].shopId) : undefined,
+          labelUrl: orders[index].labelUrl || orders[index].pdfUrl,
+          pdfFilename: orders[index].pdfFilename,
+        },
+      );
+      invalidateOrdersRefreshCache();
+    } catch (err) {
+      console.error("[Orders PATCH] markOrdersPrinted failed:", err?.message || err);
+    }
+  }
   return res.json(orders[index]);
+}
+
+/**
+ * POST /api/orders/reset-print-status
+ * Đặt isPrinted=false trên Mongo — cho phép in lại từ đầu (không gọi Shopee).
+ * Body: { orderIds?: string[], orderSns?: string[] }
+ */
+export async function resetPrintStatus(req, res) {
+  try {
+    const body = req.body || {};
+    const rawIds = [
+      ...(Array.isArray(body.orderIds) ? body.orderIds : []),
+      ...(Array.isArray(body.orderSns) ? body.orderSns : []),
+      ...(Array.isArray(body.order_sns) ? body.order_sns : []),
+      body.orderId,
+      body.orderSn,
+      body.order_sn,
+    ]
+      .map((v) => String(v || "").replace(/^shopee-/i, "").trim())
+      .filter(Boolean);
+    const sns = [...new Set(rawIds)];
+    if (sns.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_order_ids",
+        message: "Thiếu danh sách đơn cần reset trạng thái in.",
+      });
+    }
+
+    const orders = loadOrders();
+    const snSet = new Set(sns.map((s) => s.toLowerCase()));
+    const changed = [];
+    for (let i = 0; i < orders.length; i++) {
+      const o = orders[i];
+      const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim().toLowerCase();
+      const id = String(o.id || "")
+        .replace(/^shopee-/i, "")
+        .trim()
+        .toLowerCase();
+      if (!snSet.has(sn) && !snSet.has(id)) continue;
+      orders[i] = { ...o, isPrinted: false };
+      changed.push(orders[i]);
+    }
+    if (changed.length > 0) {
+      await persistOrdersToDatabase(orders, changed);
+    }
+    let mongoUpdated = 0;
+    if (isMongoReady()) {
+      mongoUpdated = await markOrdersPrintedInStore(sns, false);
+      invalidateOrdersRefreshCache();
+    }
+    return res.json({
+      success: true,
+      resetCount: Math.max(changed.length, mongoUpdated, sns.length),
+      orderSns: sns,
+      orders: changed,
+    });
+  } catch (error) {
+    console.error("[Orders reset-print-status]", error?.stack || error?.message || error);
+    return res.status(500).json({
+      success: false,
+      error: "reset_print_status_failed",
+      message: error?.message || "Không thể reset trạng thái in.",
+    });
+  }
 }
 
 /** DELETE /api/orders/:id */

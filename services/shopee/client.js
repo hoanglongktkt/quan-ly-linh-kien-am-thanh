@@ -145,7 +145,7 @@ export function isShopeeRetryableNetworkError(err) {
 }
 
 export function isShopeeRetryableHttpStatus(status) {
-  return status === 429 || status === 502 || status === 503 || status === 504;
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
 /** Xử lý danh sách tuần tự theo gói — delay giữa item và nghỉ giữa các gói. */

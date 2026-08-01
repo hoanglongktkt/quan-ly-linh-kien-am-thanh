@@ -1234,9 +1234,9 @@ export function resolveShopeeTokenShopId(requested) {
   if (!req) {
     if (authorized.length === 1) return authorized[0];
     console.warn(
-      `[Shopee Auth] resolveShopeeTokenShopId: ĐA SHOP (${authorized.length} shop: [${authorized.join(", ")}]) — thiếu shop_id, trả null. Dùng listAuthorizedShopeeShopIds().`,
+      `[Shopee Auth] resolveShopeeTokenShopId: ĐA SHOP (${authorized.length} shop: [${authorized.join(", ")}]) — thiếu shop_id. Tạm fallback về ${authorized[0]} để tránh crash.`,
     );
-    return null;
+    return authorized[0];
   }
 
   const tokens = loadShopeeTokens();
