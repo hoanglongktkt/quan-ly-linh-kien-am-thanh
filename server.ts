@@ -5902,11 +5902,10 @@ function dedupeShopeeParentVariantRows(products: any[]): any[] {
 const SHOPEE_LOGISTICS_TIMEOUT_MS = 5_000;
 // Mỗi đơn xác nhận tối đa 8s (chỉ get_shipping_parameter + ship_order, KHÔNG recover/enrich).
 const SHIP_ORDER_OPERATION_TIMEOUT_MS = 8_000;
-/** Concurrency trong mỗi chunk — song song nhưng không burst hàng trăm request. */
-const SHIP_ORDER_BATCH_CONCURRENCY = 20;
-/** Chia lô 25 đơn/chunk. */
-const SHIP_ORDER_CHUNK_SIZE = 25;
-const SHIP_ORDER_CHUNK_PAUSE_MS = 50;
+/** Chia lô 15 đơn/chunk + Promise.all trong chunk. */
+const SHIP_ORDER_CHUNK_SIZE = 15;
+/** Nghỉ giữa các chunk — tránh Shopee rate-limit. */
+const SHIP_ORDER_CHUNK_PAUSE_MS = 300;
 
 /** In-memory cache get_address_list — tránh gọi lại API trong cùng bulk ship. */
 const shopeeAddressListMemCache = new Map<
@@ -14038,7 +14037,7 @@ async function startServer() {
     let completedCount = 0;
 
     console.log(
-      `[Ship Order Bulk] Bắt đầu xác nhận ${toShip.length} đơn — concurrency=${SHIP_ORDER_BATCH_CONCURRENCY} chunk=${SHIP_ORDER_CHUNK_SIZE} timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms skipRecover=true (không enrich/tracking/retry).`,
+      `[Ship Order Bulk] Bắt đầu xác nhận ${toShip.length} đơn — chunk=${SHIP_ORDER_CHUNK_SIZE} Promise.all + pause=${SHIP_ORDER_CHUNK_PAUSE_MS}ms timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms skipRecover=true (không enrich/tracking/retry).`,
     );
 
     await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
@@ -14179,12 +14178,18 @@ async function startServer() {
       if (opts?.onProgress) opts.onProgress(completedCount, toShip.length);
     };
 
-    // Chunk 25 + concurrency 20 — song song có giới hạn, fail-fast từng đơn.
+    // Chunk 15 + Promise.all trong chunk + pause 300ms giữa các chunk — tránh rate-limit.
     for (let chunkStart = 0; chunkStart < toShip.length; chunkStart += SHIP_ORDER_CHUNK_SIZE) {
       const chunk = toShip.slice(chunkStart, chunkStart + SHIP_ORDER_CHUNK_SIZE);
-      await mapWithConcurrency(chunk, SHIP_ORDER_BATCH_CONCURRENCY, async (item, localIdx) => {
-        await processOne(item, chunkStart + localIdx);
-      });
+      await Promise.all(
+        chunk.map(async (item, localIdx) => {
+          try {
+            await processOne(item, chunkStart + localIdx);
+          } catch (error) {
+            console.error("Lỗi 1 đơn (ship batch):", error);
+          }
+        }),
+      );
       if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length && SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
         await sleep(SHIP_ORDER_CHUNK_PAUSE_MS);
       }
@@ -15491,110 +15496,118 @@ async function startServer() {
         job.updatedAt = Date.now();
       };
 
-      const settled = await Promise.allSettled(
-        toShip.map(async ({ index, order }) => {
-          const resolvedShopId = resolveOrderShopId(order);
-          if (resolvedShopId && !order.shopId) {
-            orders[index].shopId = resolvedShopId;
-            order.shopId = resolvedShopId;
-          }
+      const settled: PromiseSettledResult<any>[] = [];
+      for (let chunkStart = 0; chunkStart < toShip.length; chunkStart += SHIP_ORDER_CHUNK_SIZE) {
+        const chunk = toShip.slice(chunkStart, chunkStart + SHIP_ORDER_CHUNK_SIZE);
+        const chunkSettled = await Promise.allSettled(
+          chunk.map(async ({ index, order }) => {
+            const resolvedShopId = resolveOrderShopId(order);
+            if (resolvedShopId && !order.shopId) {
+              orders[index].shopId = resolvedShopId;
+              order.shopId = resolvedShopId;
+            }
 
-          let result: Awaited<ReturnType<typeof arrangeShipment>>;
-          try {
-            result = await withOperationTimeout(
-              (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
-              SHIP_ORDER_OPERATION_TIMEOUT_MS,
-              `Ship order ${order.orderSn}`,
-            );
-          } catch (error: any) {
-            result = {
-              success: false,
-              error: /timeout/i.test(String(error?.message || "")) ? "timeout" : "internal_server_error",
-              message: "Lỗi nội bộ server: " + (error?.message || String(error)),
+            let result: Awaited<ReturnType<typeof arrangeShipment>>;
+            try {
+              result = await withOperationTimeout(
+                (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+                SHIP_ORDER_OPERATION_TIMEOUT_MS,
+                `Ship order ${order.orderSn}`,
+              );
+            } catch (error: any) {
+              result = {
+                success: false,
+                error: /timeout/i.test(String(error?.message || "")) ? "timeout" : "internal_server_error",
+                message: "Lỗi nội bộ server: " + (error?.message || String(error)),
+              };
+            }
+
+            const alreadyProcessedOnShopee = !result.success && isAlreadyShippedError(result);
+            const treatedAsSuccess = result.success || alreadyProcessedOnShopee;
+            const pendingTrap = !treatedAsSuccess && isShopeePendingVerificationError(result);
+            let patched: any = orders[index];
+
+            if (pendingTrap) {
+              patched = markOrderPendingShopeeCheck(
+                orders[index],
+                result.message || result.error || "Order is pending verification",
+              );
+              orders[index] = patched;
+            } else if (treatedAsSuccess) {
+              const tn = String(
+                order.trackingNumber ||
+                  order.tracking_no ||
+                  result.trackingNumber ||
+                  orders[index].trackingNumber ||
+                  "",
+              ).trim();
+              patched = {
+                ...orders[index],
+                ...order,
+                isPrepared: true,
+                status: "processed",
+                is_pending_shopee_check: false,
+                fulfillment_type: shipMethod,
+                ship_method: shipMethod,
+                trackingNumber: tn || orders[index].trackingNumber,
+                tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
+                shopId: orders[index].shopId || order.shopId || result.shopId || resolvedShopId,
+                shopee_order_status:
+                  alreadyProcessedOnShopee
+                    ? "READY_TO_SHIP"
+                    : (order.shopee_order_status === "READY_TO_SHIP" ||
+                        order.shopee_order_status === "RETRY_SHIP" ||
+                        !order.shopee_order_status)
+                      ? "PROCESSED"
+                      : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
+                shopeeSyncPending: false,
+                shopeeSyncError: undefined,
+              };
+              forceHealPickupOrderIfHasTracking(patched);
+              orders[index] = patched;
+
+              // PDF nền — không chờ, không chặn job.
+              fireCreateShippingDocumentInBackground(String(patched.shopId || resolvedShopId || ""), String(patched.orderSn || ""), {
+                packageNumber: String(patched.packageNumber || "").trim() || undefined,
+                trackingNumber: tn || undefined,
+              });
+            } else {
+              patched = {
+                ...orders[index],
+                status: "unprocessed",
+                isPrepared: false,
+                shopeeSyncPending: false,
+                shopeeSyncError: result.message || result.error || "Không đồng bộ được Shopee",
+              };
+              orders[index] = patched;
+            }
+
+            const jobResult = {
+              orderId: order.id,
+              orderSn: order.orderSn,
+              success: treatedAsSuccess,
+              pendingShopeeCheck: pendingTrap,
+              alreadyShipped: alreadyProcessedOnShopee,
+              patched,
+              error: result.error,
+              message: result.message,
+              mode: result.mode,
+              shopId: result.shopId,
+              trackingNumber: result.trackingNumber,
+              skipped: result.skipped,
             };
-          }
-
-          const alreadyProcessedOnShopee = !result.success && isAlreadyShippedError(result);
-          const treatedAsSuccess = result.success || alreadyProcessedOnShopee;
-          const pendingTrap = !treatedAsSuccess && isShopeePendingVerificationError(result);
-          let patched: any = orders[index];
-
-          if (pendingTrap) {
-            patched = markOrderPendingShopeeCheck(
-              orders[index],
-              result.message || result.error || "Order is pending verification",
-            );
-            orders[index] = patched;
-          } else if (treatedAsSuccess) {
-            const tn = String(
-              order.trackingNumber ||
-                order.tracking_no ||
-                result.trackingNumber ||
-                orders[index].trackingNumber ||
-                "",
-            ).trim();
-            patched = {
-              ...orders[index],
-              ...order,
-              isPrepared: true,
-              status: "processed",
-              is_pending_shopee_check: false,
-              fulfillment_type: shipMethod,
-              ship_method: shipMethod,
-              trackingNumber: tn || orders[index].trackingNumber,
-              tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
-              shopId: orders[index].shopId || order.shopId || result.shopId || resolvedShopId,
-              shopee_order_status:
-                alreadyProcessedOnShopee
-                  ? "READY_TO_SHIP"
-                  : (order.shopee_order_status === "READY_TO_SHIP" ||
-                      order.shopee_order_status === "RETRY_SHIP" ||
-                      !order.shopee_order_status)
-                    ? "PROCESSED"
-                    : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
-              shopeeSyncPending: false,
-              shopeeSyncError: undefined,
-            };
-            forceHealPickupOrderIfHasTracking(patched);
-            orders[index] = patched;
-
-            // PDF nền — không chờ, không chặn job.
-            fireCreateShippingDocumentInBackground(String(patched.shopId || resolvedShopId || ""), String(patched.orderSn || ""), {
-              packageNumber: String(patched.packageNumber || "").trim() || undefined,
-              trackingNumber: tn || undefined,
-            });
-          } else {
-            patched = {
-              ...orders[index],
-              status: "unprocessed",
-              isPrepared: false,
-              shopeeSyncPending: false,
-              shopeeSyncError: result.message || result.error || "Không đồng bộ được Shopee",
-            };
-            orders[index] = patched;
-          }
-
-          const jobResult = {
-            orderId: order.id,
-            orderSn: order.orderSn,
-            success: treatedAsSuccess,
-            pendingShopeeCheck: pendingTrap,
-            alreadyShipped: alreadyProcessedOnShopee,
-            patched,
-            error: result.error,
-            message: result.message,
-            mode: result.mode,
-            shopId: result.shopId,
-            trackingNumber: result.trackingNumber,
-            skipped: result.skipped,
-          };
-          // Expose each completed order immediately for the polling modal; the
-          // final bulkWrite still remains one atomic Mongo operation.
-          job.results = [...job.results, jobResult];
-          bumpProgress();
-          return jobResult;
-        }),
-      );
+            // Expose each completed order immediately for the polling modal; the
+            // final bulkWrite still remains one atomic Mongo operation.
+            job.results = [...job.results, jobResult];
+            bumpProgress();
+            return jobResult;
+          }),
+        );
+        settled.push(...chunkSettled);
+        if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length) {
+          await sleep(SHIP_ORDER_CHUNK_PAUSE_MS);
+        }
+      }
 
       const results: any[] = [];
       const failedOrders: { orderSn: string; orderId: string; error: string; message: string }[] = [];
