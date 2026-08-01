@@ -243,6 +243,9 @@ import {
   saveShopeeTokenForShop,
   listShopeeOAuthShopIds,
   listShopeeSyncShopIds,
+  listAuthorizedShopeeShopIds,
+  resolveShopeeShopIdsForSync,
+  getAccessTokenForShop,
   ensureShopeeLinkedShopTokenKeys,
   propagateShopeeTokenToLinkedShops,
   shopeeSign,
@@ -4203,38 +4206,51 @@ async function pushStockUpdatesToShopee(
   }
 
   const preferredShopId = resolveShopeeTokenShopId(requestedShopId);
-  if (!preferredShopId && !Object.keys(loadShopeeTokens()).length) {
+  const shopIdsForSync = resolveShopeeShopIdsForSync(requestedShopId);
+  if (!shopIdsForSync.length) {
     const msg = getShopeeUnauthorizedShopMessage();
     console.error(`[Shopee Stock Push] ${msg}`);
     return { ok: false, errors: [msg], warnings: [], pushed: 0, staleSkus: [] };
   }
 
-  let accessToken: string | null = null;
-  if (preferredShopId) {
+  console.log(
+    `[Shopee Stock Push] Multi-shop sync shops=[${shopIdsForSync.join(", ")}] preferred=${preferredShopId || "(none)"}`,
+  );
+
+  // Prefetch token per shop (auto-refresh nếu hết hạn)
+  const tokenByShop = new Map<string, string>();
+  for (const sid of shopIdsForSync) {
     try {
-      console.log(`[Shopee Stock Push] Lấy access_token (auto-refresh nếu hết hạn) shop_id=${preferredShopId}...`);
-      accessToken = await getValidShopeeAccessToken(preferredShopId);
-      if (!accessToken) {
-        console.error(
-          `[Shopee Stock Push] Không lấy được access_token shop_id=${preferredShopId} — refresh thất bại hoặc thiếu refresh_token. Cần Ủy quyền lại Shop.`,
-        );
+      console.log(`[Shopee Stock Push] Lấy access_token shop_id=${sid}...`);
+      const tok = await getValidShopeeAccessToken(sid);
+      if (tok) {
+        tokenByShop.set(sid, tok);
+        console.log(`[Shopee Stock Push] access_token OK shop_id=${sid}`);
       } else {
-        console.log(`[Shopee Stock Push] access_token OK shop_id=${preferredShopId}`);
+        console.error(
+          `[Shopee Stock Push] Không lấy được access_token shop_id=${sid} — cần Ủy quyền lại Shop.`,
+        );
       }
     } catch (err: any) {
       console.error(
-        `[Shopee Stock Push] Lỗi refresh/lấy token shop_id=${preferredShopId}:`,
+        `[Shopee Stock Push] Lỗi refresh/lấy token shop_id=${sid}:`,
         err?.message || err,
       );
     }
   }
+
   const errors: string[] = [];
   const warnings: string[] = [];
   const staleSkus: string[] = [];
   let liveItemIds: Set<number> | null = null;
-  if (preferredShopId && accessToken) {
+  const primaryShop =
+    preferredShopId && tokenByShop.has(preferredShopId)
+      ? preferredShopId
+      : shopIdsForSync.find((s) => tokenByShop.has(s)) || "";
+  const accessToken = primaryShop ? tokenByShop.get(primaryShop) || null : null;
+  if (primaryShop && accessToken) {
     try {
-      liveItemIds = await refreshShopeeLiveItemIdSet(preferredShopId, accessToken);
+      liveItemIds = await refreshShopeeLiveItemIdSet(primaryShop, accessToken);
     } catch (err: any) {
       warnings.push(`Không refresh được danh sách item Shopee: ${err?.message || err}. Sẽ kiểm tra từng item.`);
     }
@@ -4262,9 +4278,21 @@ async function pushStockUpdatesToShopee(
 
   for (const [itemId, rows] of itemEntries) {
     let resolved =
-      preferredShopId && accessToken ? { shopId: preferredShopId, accessToken } : null;
+      primaryShop && accessToken ? { shopId: primaryShop, accessToken } : null;
     if (!resolved) {
-      resolved = await resolveShopeeShopForItemId(itemId, preferredShopId || undefined);
+      // Đa shop: thử lần lượt từng shop đã có token
+      for (const sid of shopIdsForSync) {
+        const tok = tokenByShop.get(sid);
+        if (!tok) continue;
+        const found = await resolveShopeeShopForItemId(itemId, sid);
+        if (found) {
+          resolved = found;
+          break;
+        }
+      }
+      if (!resolved) {
+        resolved = await resolveShopeeShopForItemId(itemId, primaryShop || undefined);
+      }
     }
     if (!resolved) {
       markStaleItem(
@@ -13416,6 +13444,8 @@ async function startServer() {
     applyShopeeLinkFieldsToProduct,
     readChannelListingsDb,
     resolveShopeeTokenShopId,
+    resolveShopeeShopIdsForSync,
+    listAuthorizedShopeeShopIds,
     getShopeeUnauthorizedShopMessage,
     getValidShopeeAccessToken,
     withShopeeAccessTokenRetry,
@@ -13465,6 +13495,8 @@ async function startServer() {
     },
     pushStockUpdatesToShopee,
     resolveShopeeTokenShopId,
+    resolveShopeeShopIdsForSync,
+    listAuthorizedShopeeShopIds,
     getShopeeUnauthorizedShopMessage,
     isShopeeConfigValid,
     isStaleShopeeItemErrorText,

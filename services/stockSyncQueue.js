@@ -20,6 +20,8 @@ let deps = {
   applyShopeeLinkFieldsToProduct: (product) => product,
   readChannelListingsDb: async () => [],
   resolveShopeeTokenShopId: () => null,
+  resolveShopeeShopIdsForSync: () => [],
+  listAuthorizedShopeeShopIds: () => [],
   getShopeeUnauthorizedShopMessage: () =>
     "Chưa có shop Shopee được ủy quyền. Vào mục Cài đặt → Ủy quyền lại Shop Shopee.",
   getValidShopeeAccessToken: async () => null,
@@ -129,62 +131,32 @@ export async function resolveProductWithShopeeMapping(product) {
 }
 
 /**
- * Resolve shop_id + access_token (auto refresh nếu access_token hết hạn 4h).
+ * Resolve shop_id + access_token cho ĐÚNG 1 shop (bắt buộc có shop_id).
+ * Access token hết hạn → getValidShopeeAccessToken tự refresh.
  */
 async function resolveShopAuthForStockSync(mapped, opts) {
   const itemId = deps.getShopeeItemIdForStockPush(mapped);
-  const requested =
-    opts?.shopId ||
-    mapped?.shopeeShopId ||
-    mapped?.shopId ||
-    mapped?.shop_id ||
-    null;
-
-  let shopId = deps.resolveShopeeTokenShopId(requested);
-  const tokenKeys = Object.keys(deps.loadShopeeTokens() || {});
+  const shopId = String(
+    opts?.shopId || mapped?.shopeeShopId || mapped?.shopId || mapped?.shop_id || "",
+  ).trim();
 
   console.log(
-    `[Shopee Sync] Auth resolve: requested=${requested || "(none)"} resolved=${shopId || "(null)"} tokens=[${tokenKeys.join(", ") || "empty"}] item_id=${itemId ?? "?"}`,
+    `[Shopee Sync] Auth resolve: shop_id=${shopId || "(THIẾU)"} item_id=${itemId ?? "?"}`,
   );
 
   if (!shopId) {
-    if (!tokenKeys.length) {
-      const msg = deps.getShopeeUnauthorizedShopMessage();
-      console.error(`[Shopee Sync] ${msg}`);
-      return { ok: false, message: msg };
-    }
-    // Multi-shop / resolve thất bại — tìm shop sở hữu item_id.
-    if (itemId != null) {
-      try {
-        console.log(`[Shopee Sync] Fallback resolveShopeeShopForItemId item_id=${itemId}...`);
-        const found = await deps.resolveShopeeShopForItemId(itemId, undefined);
-        if (found?.shopId && found?.accessToken) {
-          console.log(`[Shopee Sync] Tìm thấy item trên shop_id=${found.shopId}`);
-          return { ok: true, shopId: found.shopId, accessToken: found.accessToken };
-        }
-      } catch (err) {
-        console.error(`[Shopee Sync] resolveShopeeShopForItemId lỗi:`, err?.message || err);
-      }
-    }
-    const msg = deps.getShopeeUnauthorizedShopMessage();
-    console.error(`[Shopee Sync] Không resolve được shop. ${msg}`);
-    return { ok: false, message: msg };
+    return {
+      ok: false,
+      message:
+        "Thiếu shop_id — hệ thống đa shop bắt buộc truyền shop_id khi lấy token / đồng bộ.",
+    };
   }
 
   try {
     console.log(
-      `[Shopee Sync] getValidShopeeAccessToken shop_id=${shopId} (refresh nếu access_token hết hạn)...`,
+      `[Shopee Sync] getValidShopeeAccessToken shop_id=${shopId} (refresh nếu hết hạn)...`,
     );
-    let accessToken = await deps.getValidShopeeAccessToken(shopId);
-    if (!accessToken && itemId != null) {
-      console.warn(
-        `[Shopee Sync] Token shop_id=${shopId} thất bại — thử resolveShopeeShopForItemId...`,
-      );
-      const found = await deps.resolveShopeeShopForItemId(itemId, shopId);
-      if (found?.shopId && found?.accessToken) {
-        return { ok: true, shopId: found.shopId, accessToken: found.accessToken };
-      }
-    }
+    const accessToken = await deps.getValidShopeeAccessToken(shopId);
     if (!accessToken) {
       const msg = `Không lấy được access_token hợp lệ cho shop_id=${shopId} (token hết hạn và refresh thất bại). Vào mục Cài đặt → Ủy quyền lại Shop Shopee.`;
       console.error(`[Shopee Sync] ${msg}`);
@@ -383,7 +355,9 @@ export async function executeShopeeStockPriceSyncJob(product, opts) {
   }
 }
 
-/** Đẩy stock/price lên Shopee ngay (không qua queue) — dùng cho PATCH sản phẩm / nút sync nhanh. */
+/** Đẩy stock/price lên Shopee ngay (không qua queue) — dùng cho PATCH sản phẩm / nút sync nhanh.
+ * Đa shop: nếu không truyền shop_id → lần lượt đồng bộ lên TẤT CẢ shop đã ủy quyền.
+ */
 export async function pushProductStockPriceToShopeeImmediate(product, opts) {
   if (!opts.syncStock && !opts.syncPrice) {
     return { ok: true, skipped: true, message: "Không có thay đổi tồn/giá cần đồng bộ Shopee." };
@@ -397,11 +371,55 @@ export async function pushProductStockPriceToShopeeImmediate(product, opts) {
         message: "Chưa liên kết Mapping Shopee — chỉ lưu kho nội bộ.",
       };
     }
-    return executeShopeeStockPriceSyncJob(mapped, {
-      syncStock: opts.syncStock,
-      syncPrice: opts.syncPrice,
-      shopId: opts.shopId,
-    });
+
+    const requestedShop =
+      opts.shopId || mapped.shopeeShopId || mapped.shopId || mapped.shop_id || "";
+    const shopIds =
+      typeof deps.resolveShopeeShopIdsForSync === "function"
+        ? deps.resolveShopeeShopIdsForSync(requestedShop)
+        : (() => {
+            const one = deps.resolveShopeeTokenShopId(requestedShop);
+            return one ? [one] : deps.listAuthorizedShopeeShopIds?.() || [];
+          })();
+
+    if (!shopIds.length) {
+      const msg = deps.getShopeeUnauthorizedShopMessage();
+      console.error(`[Shopee Sync] ${msg}`);
+      return { ok: false, message: msg };
+    }
+
+    console.log(
+      `[Shopee Sync] Manual sync product=${mapped.id || mapped.sku} shops=[${shopIds.join(", ")}] stock=${!!opts.syncStock} price=${!!opts.syncPrice}`,
+    );
+
+    const shopResults = [];
+    for (const shopId of shopIds) {
+      const result = await executeShopeeStockPriceSyncJob(mapped, {
+        syncStock: opts.syncStock,
+        syncPrice: opts.syncPrice,
+        shopId,
+      });
+      shopResults.push({ shopId, ...result });
+      console.log(
+        `[Shopee Sync] shop_id=${shopId} → ${result.ok ? "OK" : "FAIL"}: ${result.message || ""}`,
+      );
+    }
+
+    const successes = shopResults.filter((r) => r.ok);
+    if (successes.length > 0) {
+      return {
+        ok: true,
+        message: successes.map((r) => `[${r.shopId}] ${r.message}`).join(" | "),
+        shopResults,
+      };
+    }
+
+    const failMsg = shopResults.map((r) => `[${r.shopId}] ${r.message}`).join(" | ");
+    return {
+      ok: false,
+      message: failMsg || "Đồng bộ Shopee thất bại trên mọi shop.",
+      shopResults,
+    };
   } catch (err) {
     console.error("[Shopee Sync] pushProductStockPriceToShopeeImmediate exception:", err);
     return {
@@ -437,20 +455,46 @@ export async function processShopeeSyncQueue() {
           continue;
         }
 
-        const result = await executeShopeeStockPriceSyncJob(mapped, {
-          syncStock: job.syncStock,
-          syncPrice: job.syncPrice,
-          shopId: job.shopId,
-        });
+        const shopIds = job.shopId
+          ? [String(job.shopId)]
+          : typeof deps.resolveShopeeShopIdsForSync === "function"
+            ? deps.resolveShopeeShopIdsForSync("")
+            : deps.listAuthorizedShopeeShopIds?.() || [];
 
-        if (result.ok) {
-          console.log(
-            `[Shopee Sync Queue] OK productId=${job.productId} sku=${mapped.sku} stock=${job.syncStock} price=${job.syncPrice} — ${result.message}`,
+        if (!shopIds.length) {
+          console.error(
+            `[Shopee Sync Queue] Không có shop ủy quyền — productId=${job.productId}`,
           );
+          continue;
+        }
+
+        let anyOk = false;
+        let lastMessage = "";
+        for (const shopId of shopIds) {
+          const result = await executeShopeeStockPriceSyncJob(mapped, {
+            syncStock: job.syncStock,
+            syncPrice: job.syncPrice,
+            shopId,
+          });
+          lastMessage = result.message || lastMessage;
+          if (result.ok) {
+            anyOk = true;
+            console.log(
+              `[Shopee Sync Queue] OK productId=${job.productId} shop=${shopId} sku=${mapped.sku} — ${result.message}`,
+            );
+          } else {
+            console.error(
+              `[Shopee Sync Queue] FAIL productId=${job.productId} shop=${shopId}: ${result.message}`,
+            );
+          }
+        }
+
+        if (anyOk) {
+          /* success for at least one shop */
         } else {
           job.attempts += 1;
           console.error(
-            `[Shopee Sync Queue] FAIL attempt ${job.attempts}/${SHOPEE_SYNC_QUEUE_MAX_RETRY} productId=${job.productId} sku=${mapped.sku}: ${result.message}`,
+            `[Shopee Sync Queue] FAIL attempt ${job.attempts}/${SHOPEE_SYNC_QUEUE_MAX_RETRY} productId=${job.productId} sku=${mapped.sku}: ${lastMessage}`,
           );
           if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
             const retryKey = `${job.productId}|stock=${job.syncStock}|price=${job.syncPrice}|shop=${job.shopId || ""}`;
@@ -461,7 +505,7 @@ export async function processShopeeSyncQueue() {
             }
           } else {
             console.error(
-              `[Shopee Sync Queue] DROPPED sau ${SHOPEE_SYNC_QUEUE_MAX_RETRY} lần — productId=${job.productId} sku=${mapped.sku}: ${result.message}`,
+              `[Shopee Sync Queue] DROPPED sau ${SHOPEE_SYNC_QUEUE_MAX_RETRY} lần — productId=${job.productId} sku=${mapped.sku}: ${lastMessage}`,
             );
           }
         }

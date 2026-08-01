@@ -99610,6 +99610,8 @@ var deps8 = {
   applyShopeeLinkFieldsToProduct: (product) => product,
   readChannelListingsDb: async () => [],
   resolveShopeeTokenShopId: () => null,
+  resolveShopeeShopIdsForSync: () => [],
+  listAuthorizedShopeeShopIds: () => [],
   getShopeeUnauthorizedShopMessage: () => "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee.",
   getValidShopeeAccessToken: async () => null,
   withShopeeAccessTokenRetry: async (_shopId, runner) => runner(null),
@@ -99699,48 +99701,23 @@ async function resolveProductWithShopeeMapping(product) {
 }
 async function resolveShopAuthForStockSync(mapped, opts) {
   const itemId = deps8.getShopeeItemIdForStockPush(mapped);
-  const requested = opts?.shopId || mapped?.shopeeShopId || mapped?.shopId || mapped?.shop_id || null;
-  let shopId = deps8.resolveShopeeTokenShopId(requested);
-  const tokenKeys = Object.keys(deps8.loadShopeeTokens() || {});
+  const shopId = String(
+    opts?.shopId || mapped?.shopeeShopId || mapped?.shopId || mapped?.shop_id || ""
+  ).trim();
   console.log(
-    `[Shopee Sync] Auth resolve: requested=${requested || "(none)"} resolved=${shopId || "(null)"} tokens=[${tokenKeys.join(", ") || "empty"}] item_id=${itemId ?? "?"}`
+    `[Shopee Sync] Auth resolve: shop_id=${shopId || "(THI\u1EBEU)"} item_id=${itemId ?? "?"}`
   );
   if (!shopId) {
-    if (!tokenKeys.length) {
-      const msg2 = deps8.getShopeeUnauthorizedShopMessage();
-      console.error(`[Shopee Sync] ${msg2}`);
-      return { ok: false, message: msg2 };
-    }
-    if (itemId != null) {
-      try {
-        console.log(`[Shopee Sync] Fallback resolveShopeeShopForItemId item_id=${itemId}...`);
-        const found = await deps8.resolveShopeeShopForItemId(itemId, void 0);
-        if (found?.shopId && found?.accessToken) {
-          console.log(`[Shopee Sync] T\xECm th\u1EA5y item tr\xEAn shop_id=${found.shopId}`);
-          return { ok: true, shopId: found.shopId, accessToken: found.accessToken };
-        }
-      } catch (err) {
-        console.error(`[Shopee Sync] resolveShopeeShopForItemId l\u1ED7i:`, err?.message || err);
-      }
-    }
-    const msg = deps8.getShopeeUnauthorizedShopMessage();
-    console.error(`[Shopee Sync] Kh\xF4ng resolve \u0111\u01B0\u1EE3c shop. ${msg}`);
-    return { ok: false, message: msg };
+    return {
+      ok: false,
+      message: "Thi\u1EBFu shop_id \u2014 h\u1EC7 th\u1ED1ng \u0111a shop b\u1EAFt bu\u1ED9c truy\u1EC1n shop_id khi l\u1EA5y token / \u0111\u1ED3ng b\u1ED9."
+    };
   }
   try {
     console.log(
-      `[Shopee Sync] getValidShopeeAccessToken shop_id=${shopId} (refresh n\u1EBFu access_token h\u1EBFt h\u1EA1n)...`
+      `[Shopee Sync] getValidShopeeAccessToken shop_id=${shopId} (refresh n\u1EBFu h\u1EBFt h\u1EA1n)...`
     );
-    let accessToken = await deps8.getValidShopeeAccessToken(shopId);
-    if (!accessToken && itemId != null) {
-      console.warn(
-        `[Shopee Sync] Token shop_id=${shopId} th\u1EA5t b\u1EA1i \u2014 th\u1EED resolveShopeeShopForItemId...`
-      );
-      const found = await deps8.resolveShopeeShopForItemId(itemId, shopId);
-      if (found?.shopId && found?.accessToken) {
-        return { ok: true, shopId: found.shopId, accessToken: found.accessToken };
-      }
-    }
+    const accessToken = await deps8.getValidShopeeAccessToken(shopId);
     if (!accessToken) {
       const msg = `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId} (token h\u1EBFt h\u1EA1n v\xE0 refresh th\u1EA5t b\u1EA1i). V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee.`;
       console.error(`[Shopee Sync] ${msg}`);
@@ -99935,11 +99912,45 @@ async function pushProductStockPriceToShopeeImmediate(product, opts) {
         message: "Ch\u01B0a li\xEAn k\u1EBFt Mapping Shopee \u2014 ch\u1EC9 l\u01B0u kho n\u1ED9i b\u1ED9."
       };
     }
-    return executeShopeeStockPriceSyncJob(mapped, {
-      syncStock: opts.syncStock,
-      syncPrice: opts.syncPrice,
-      shopId: opts.shopId
-    });
+    const requestedShop = opts.shopId || mapped.shopeeShopId || mapped.shopId || mapped.shop_id || "";
+    const shopIds = typeof deps8.resolveShopeeShopIdsForSync === "function" ? deps8.resolveShopeeShopIdsForSync(requestedShop) : (() => {
+      const one = deps8.resolveShopeeTokenShopId(requestedShop);
+      return one ? [one] : deps8.listAuthorizedShopeeShopIds?.() || [];
+    })();
+    if (!shopIds.length) {
+      const msg = deps8.getShopeeUnauthorizedShopMessage();
+      console.error(`[Shopee Sync] ${msg}`);
+      return { ok: false, message: msg };
+    }
+    console.log(
+      `[Shopee Sync] Manual sync product=${mapped.id || mapped.sku} shops=[${shopIds.join(", ")}] stock=${!!opts.syncStock} price=${!!opts.syncPrice}`
+    );
+    const shopResults = [];
+    for (const shopId of shopIds) {
+      const result = await executeShopeeStockPriceSyncJob(mapped, {
+        syncStock: opts.syncStock,
+        syncPrice: opts.syncPrice,
+        shopId
+      });
+      shopResults.push({ shopId, ...result });
+      console.log(
+        `[Shopee Sync] shop_id=${shopId} \u2192 ${result.ok ? "OK" : "FAIL"}: ${result.message || ""}`
+      );
+    }
+    const successes = shopResults.filter((r2) => r2.ok);
+    if (successes.length > 0) {
+      return {
+        ok: true,
+        message: successes.map((r2) => `[${r2.shopId}] ${r2.message}`).join(" | "),
+        shopResults
+      };
+    }
+    const failMsg = shopResults.map((r2) => `[${r2.shopId}] ${r2.message}`).join(" | ");
+    return {
+      ok: false,
+      message: failMsg || "\u0110\u1ED3ng b\u1ED9 Shopee th\u1EA5t b\u1EA1i tr\xEAn m\u1ECDi shop.",
+      shopResults
+    };
   } catch (err) {
     console.error("[Shopee Sync] pushProductStockPriceToShopeeImmediate exception:", err);
     return {
@@ -99970,19 +99981,38 @@ async function processShopeeSyncQueue() {
           await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
           continue;
         }
-        const result = await executeShopeeStockPriceSyncJob(mapped, {
-          syncStock: job.syncStock,
-          syncPrice: job.syncPrice,
-          shopId: job.shopId
-        });
-        if (result.ok) {
-          console.log(
-            `[Shopee Sync Queue] OK productId=${job.productId} sku=${mapped.sku} stock=${job.syncStock} price=${job.syncPrice} \u2014 ${result.message}`
+        const shopIds = job.shopId ? [String(job.shopId)] : typeof deps8.resolveShopeeShopIdsForSync === "function" ? deps8.resolveShopeeShopIdsForSync("") : deps8.listAuthorizedShopeeShopIds?.() || [];
+        if (!shopIds.length) {
+          console.error(
+            `[Shopee Sync Queue] Kh\xF4ng c\xF3 shop \u1EE7y quy\u1EC1n \u2014 productId=${job.productId}`
           );
+          continue;
+        }
+        let anyOk = false;
+        let lastMessage = "";
+        for (const shopId of shopIds) {
+          const result = await executeShopeeStockPriceSyncJob(mapped, {
+            syncStock: job.syncStock,
+            syncPrice: job.syncPrice,
+            shopId
+          });
+          lastMessage = result.message || lastMessage;
+          if (result.ok) {
+            anyOk = true;
+            console.log(
+              `[Shopee Sync Queue] OK productId=${job.productId} shop=${shopId} sku=${mapped.sku} \u2014 ${result.message}`
+            );
+          } else {
+            console.error(
+              `[Shopee Sync Queue] FAIL productId=${job.productId} shop=${shopId}: ${result.message}`
+            );
+          }
+        }
+        if (anyOk) {
         } else {
           job.attempts += 1;
           console.error(
-            `[Shopee Sync Queue] FAIL attempt ${job.attempts}/${SHOPEE_SYNC_QUEUE_MAX_RETRY} productId=${job.productId} sku=${mapped.sku}: ${result.message}`
+            `[Shopee Sync Queue] FAIL attempt ${job.attempts}/${SHOPEE_SYNC_QUEUE_MAX_RETRY} productId=${job.productId} sku=${mapped.sku}: ${lastMessage}`
           );
           if (job.attempts < SHOPEE_SYNC_QUEUE_MAX_RETRY) {
             const retryKey = `${job.productId}|stock=${job.syncStock}|price=${job.syncPrice}|shop=${job.shopId || ""}`;
@@ -99993,7 +100023,7 @@ async function processShopeeSyncQueue() {
             }
           } else {
             console.error(
-              `[Shopee Sync Queue] DROPPED sau ${SHOPEE_SYNC_QUEUE_MAX_RETRY} l\u1EA7n \u2014 productId=${job.productId} sku=${mapped.sku}: ${result.message}`
+              `[Shopee Sync Queue] DROPPED sau ${SHOPEE_SYNC_QUEUE_MAX_RETRY} l\u1EA7n \u2014 productId=${job.productId} sku=${mapped.sku}: ${lastMessage}`
             );
           }
         }
@@ -100108,6 +100138,8 @@ var deps9 = {
     staleSkus: []
   }),
   resolveShopeeTokenShopId: () => null,
+  resolveShopeeShopIdsForSync: () => [],
+  listAuthorizedShopeeShopIds: () => [],
   getShopeeUnauthorizedShopMessage: () => "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee.",
   isShopeeConfigValid: () => false,
   isStaleShopeeItemErrorText: () => false,
@@ -100284,7 +100316,8 @@ async function handleProductSyncShopee(req, res) {
       }
       const shopee = await pushProductStockPriceToShopeeImmediate(row, {
         syncStock: true,
-        syncPrice: true
+        syncPrice: true,
+        shopId: req.body?.shopId
       });
       if (shopee.skipped || !shopee.ok) {
         results.push({
@@ -100575,7 +100608,11 @@ async function inventoryBalance(req, res) {
 async function syncStock(req, res) {
   try {
     const products = await deps9.loadProducts();
-    const shopId = deps9.resolveShopeeTokenShopId(req.body?.shopId);
+    const requestedShopId = req.body?.shopId;
+    const shopIds = typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync(requestedShopId) : (() => {
+      const one = deps9.resolveShopeeTokenShopId(requestedShopId);
+      return one ? [one] : [];
+    })();
     const warnings = [];
     if (!deps9.isShopeeConfigValid()) {
       return res.status(400).json({
@@ -100583,7 +100620,7 @@ async function syncStock(req, res) {
         message: "Shopee: c\u1EA5u h\xECnh Partner ch\u01B0a h\u1EE3p l\u1EC7."
       });
     }
-    if (!shopId) {
+    if (!shopIds.length) {
       const msg = deps9.getShopeeUnauthorizedShopMessage();
       console.error(`[Sync Stock] ${msg}`);
       return res.status(400).json({
@@ -100592,7 +100629,11 @@ async function syncStock(req, res) {
         error: msg
       });
     }
-    const shopeeResult = await deps9.pushStockUpdatesToShopee(products, shopId);
+    console.log(`[Sync Stock] Multi-shop \u0111\u1EA9y t\u1ED3n shops=[${shopIds.join(", ")}]`);
+    const shopeeResult = await deps9.pushStockUpdatesToShopee(
+      products,
+      requestedShopId || void 0
+    );
     if (shopeeResult.warnings?.length) warnings.push(...shopeeResult.warnings);
     if (!shopeeResult.ok && shopeeResult.errors.length > 0) {
       const onlyStale = shopeeResult.errors.every((e2) => deps9.isStaleShopeeItemErrorText(e2));
@@ -100871,12 +100912,14 @@ async function bulkChannelSync(req, res) {
     }
     const shopList = Array.isArray(shops) ? shops : [];
     const wooShop = shopList.find((s2) => s2.platform === "woocommerce" && s2.connected !== false);
-    const shopeeShopId = deps9.resolveShopeeTokenShopId(
-      shopId || shopList.find((s2) => s2.platform === "shopee")?.shopId
-    );
-    let shopeeToken = null;
+    const requestedShopeeShop = shopId || shopList.find((s2) => s2.platform === "shopee")?.shopId || "";
+    const shopeeShopIds = typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync(requestedShopeeShop) : (() => {
+      const one = deps9.resolveShopeeTokenShopId(requestedShopeeShop);
+      return one ? [one] : [];
+    })();
+    const shopeeTokensByShop = /* @__PURE__ */ new Map();
     if (channelList.includes("shopee")) {
-      if (!shopeeShopId) {
+      if (!shopeeShopIds.length) {
         const authMsg = deps9.getShopeeUnauthorizedShopMessage();
         console.error(`[Bulk Channel Sync] ${authMsg}`);
         return res.status(400).json({
@@ -100893,10 +100936,18 @@ async function bulkChannelSync(req, res) {
           ])
         });
       }
-      shopeeToken = await deps9.getValidShopeeAccessToken(shopeeShopId);
-      if (!shopeeToken) {
+      for (const sid of shopeeShopIds) {
+        const token = await deps9.getValidShopeeAccessToken(sid);
+        if (token) {
+          shopeeTokensByShop.set(sid, token);
+          console.log(`[Bulk Channel Sync] Token OK shop_id=${sid}`);
+        } else {
+          console.error(`[Bulk Channel Sync] Token FAIL shop_id=${sid}`);
+        }
+      }
+      if (shopeeTokensByShop.size === 0) {
         return res.status(400).json({
-          error: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopeeShopId}.`,
+          error: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho c\xE1c shop: [${shopeeShopIds.join(", ")}].`,
           logs: products.flatMap((p) => [
             {
               productId: p.id,
@@ -100904,7 +100955,7 @@ async function bulkChannelSync(req, res) {
               channel: "shopee",
               action: "auth",
               success: false,
-              message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shop_id=${shopeeShopId}`
+              message: `Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7 cho shops=[${shopeeShopIds.join(", ")}]`
             }
           ])
         });
@@ -100913,10 +100964,12 @@ async function bulkChannelSync(req, res) {
     const logs = [];
     for (const product of products) {
       for (const channel of channelList) {
-        if (channel === "shopee" && shopeeShopId && shopeeToken) {
-          const lines = await deps9.syncProductToShopee(product, shopeeShopId, shopeeToken);
-          logs.push(...lines);
-          await new Promise((r2) => setTimeout(r2, 150));
+        if (channel === "shopee" && shopeeTokensByShop.size > 0) {
+          for (const [sid, token] of shopeeTokensByShop.entries()) {
+            const lines = await deps9.syncProductToShopee(product, sid, token);
+            logs.push(...lines);
+            await new Promise((r2) => setTimeout(r2, 150));
+          }
         } else if (channel === "woocommerce") {
           const lines = await deps9.syncProductToWoo(product, wooShop);
           logs.push(...lines);
@@ -102145,25 +102198,39 @@ function resolveShopeeApiShopId(record, configuredShopId) {
 }
 async function getValidShopeeAccessToken(shopId) {
   const key = normalizeShopIdKey(shopId);
-  if (!key) return null;
+  if (!key) {
+    console.error(
+      "[Shopee API] getValidShopeeAccessToken: THI\u1EBEU shop_id \u2014 t\u1EEB ch\u1ED1i g\u1ECDi (h\u1EC7 th\u1ED1ng \u0111a shop b\u1EAFt bu\u1ED9c truy\u1EC1n shop_id)."
+    );
+    return null;
+  }
   const tokens = loadShopeeTokens();
   const record = getShopeeTokenRecord(tokens, key);
   if (!record) {
-    const available = listShopeeOAuthShopIds();
+    const available = listAuthorizedShopeeShopIds();
     console.warn(
-      `[Shopee API] Ch\u01B0a c\xF3 access_token cho shop_id=${key}. Token \u0111ang c\xF3: [${available.join(", ") || "kh\xF4ng c\xF3"}]`
+      `[Shopee API] Ch\u01B0a c\xF3 token record cho shop_id=${key}. Shop \u0111\xE3 \u1EE7y quy\u1EC1n: [${available.join(", ") || "kh\xF4ng c\xF3"}]`
     );
     return null;
   }
   const fresh = readShopeeAccessTokenIfFresh(key);
-  if (fresh) return fresh;
+  if (fresh) {
+    console.log(`[Shopee API] access_token c\xF2n h\u1EA1n shop_id=${key}`);
+    return fresh;
+  }
   if (!record.refresh_token) {
     console.error(`[Shopee API] Shop ${key} thi\u1EBFu refresh_token \u2014 c\u1EA7n OAuth l\u1EA1i.`);
     return null;
   }
   try {
-    console.log(`[Shopee API] access_token c\u1EE7a shop_id=${key} \u0111\xE3 h\u1EBFt h\u1EA1n, \u0111ang refresh (mutex)...`);
-    return await refreshShopeeAccessTokenLocked(key, { force: false });
+    console.log(
+      `[Shopee API] access_token shop_id=${key} H\u1EBET H\u1EA0N (expired) \u2014 g\u1ECDi Refresh Token \u2192 l\u01B0u DB...`
+    );
+    const refreshed = await refreshShopeeAccessTokenLocked(key, { force: false });
+    if (refreshed) {
+      console.log(`[Shopee API] Refresh OK shop_id=${key} \u2014 d\xF9ng access_token m\u1EDBi`);
+    }
+    return refreshed;
   } catch (err) {
     if (err instanceof ShopeeRefreshTokenExpiredError) {
       console.error(`[Shopee API] ${err.message}`);
@@ -102187,65 +102254,69 @@ async function withShopeeAccessTokenRetry(shopId, runner, isAuthFailure) {
   token = await refreshShopeeAccessTokenLocked(key, { force: true });
   return runner(token);
 }
-function pickDefaultShopeeTokenShopId(tokens, keys) {
-  const usable = keys.filter((k) => {
-    const r2 = tokens[k];
-    return Boolean(r2?.access_token || r2?.refresh_token);
-  });
-  if (!usable.length) return null;
-  if (usable.length === 1) return usable[0];
-  const primary = usable.filter((k) => {
-    const r2 = tokens[k];
-    const oauth = normalizeShopIdKey(r2?.oauth_shop_id);
-    return oauth && oauth === normalizeShopIdKey(k);
-  });
-  const pool = primary.length > 0 ? primary : usable;
-  pool.sort(
-    (a, b) => (Number(tokens[b]?.obtained_at) || 0) - (Number(tokens[a]?.obtained_at) || 0)
-  );
-  return pool[0] || null;
+function listAuthorizedShopeeShopIds() {
+  const tokens = loadShopeeTokens();
+  const ids = /* @__PURE__ */ new Set();
+  for (const [rawKey, record] of Object.entries(tokens || {})) {
+    if (!record?.access_token && !record?.refresh_token) continue;
+    const key = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
+    if (key) ids.add(key);
+  }
+  return [...ids].sort();
 }
 function resolveShopeeTokenShopId(requested) {
-  const tokens = loadShopeeTokens();
-  const keys = Object.keys(tokens);
-  if (!keys.length) {
-    console.warn("[Shopee Auth] resolveShopeeTokenShopId: DB kh\xF4ng c\xF3 shop n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n (shopee_tokens tr\u1ED1ng).");
+  const authorized = listAuthorizedShopeeShopIds();
+  if (!authorized.length) {
+    console.warn(
+      "[Shopee Auth] resolveShopeeTokenShopId: DB kh\xF4ng c\xF3 shop n\xE0o \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n (shopee_tokens tr\u1ED1ng)."
+    );
     return null;
   }
   const req = String(requested || "").trim();
-  if (req && tokens[req]) return req;
-  if (req) {
-    const digits = normalizeShopIdKey(req) || req.match(/(\d{5,})/)?.[1] || "";
-    if (digits && tokens[digits]) return digits;
-    if (digits) {
-      const linked = getShopeeTokenRecord(tokens, digits);
-      if (linked) {
-        console.log(
-          `[Shopee Auth] resolveShopeeTokenShopId: shop_id=${digits} t\xECm th\u1EA5y qua linked/oauth record.`
-        );
-        return digits;
-      }
-      console.warn(
-        `[Shopee Auth] resolveShopeeTokenShopId: y\xEAu c\u1EA7u shop_id=${digits} nh\u01B0ng kh\xF4ng c\xF3 token. Shops: [${keys.join(", ")}]`
+  if (!req) {
+    if (authorized.length === 1) return authorized[0];
+    console.warn(
+      `[Shopee Auth] resolveShopeeTokenShopId: \u0110A SHOP (${authorized.length} shop: [${authorized.join(", ")}]) \u2014 thi\u1EBFu shop_id, tr\u1EA3 null. D\xF9ng listAuthorizedShopeeShopIds().`
+    );
+    return null;
+  }
+  const tokens = loadShopeeTokens();
+  if (tokens[req]) return req;
+  const digits = normalizeShopIdKey(req) || req.match(/(\d{5,})/)?.[1] || "";
+  if (digits && tokens[digits]) return digits;
+  if (digits) {
+    const linked = getShopeeTokenRecord(tokens, digits);
+    if (linked) {
+      console.log(
+        `[Shopee Auth] resolveShopeeTokenShopId: shop_id=${digits} t\xECm th\u1EA5y qua linked/oauth record.`
       );
       return digits;
     }
-    if (req) return null;
+    console.warn(
+      `[Shopee Auth] resolveShopeeTokenShopId: y\xEAu c\u1EA7u shop_id=${digits} nh\u01B0ng kh\xF4ng c\xF3 token. Shops: [${authorized.join(", ")}]`
+    );
+    return digits;
   }
-  if (keys.length === 1) return keys[0];
-  const picked = pickDefaultShopeeTokenShopId(tokens, keys);
+  return null;
+}
+function resolveShopeeShopIdsForSync(requested) {
+  const req = String(requested || "").trim();
+  if (req) {
+    const one = resolveShopeeTokenShopId(req);
+    return one ? [one] : [];
+  }
+  const all = listAuthorizedShopeeShopIds();
   console.log(
-    `[Shopee Auth] resolveShopeeTokenShopId: kh\xF4ng ch\u1EC9 \u0111\u1ECBnh shop \u2014 ch\u1ECDn m\u1EB7c \u0111\u1ECBnh shop_id=${picked} (c\xF3 ${keys.length} shop: [${keys.join(", ")}])`
+    `[Shopee Auth] resolveShopeeShopIdsForSync: kh\xF4ng truy\u1EC1n shop_id \u2014 d\xF9ng T\u1EA4T C\u1EA2 ${all.length} shop: [${all.join(", ")}]`
   );
-  return picked;
+  return all;
 }
 function getShopeeUnauthorizedShopMessage() {
-  const tokens = loadShopeeTokens();
-  const keys = Object.keys(tokens);
+  const keys = listAuthorizedShopeeShopIds();
   if (!keys.length) {
     return "Ch\u01B0a c\xF3 shop Shopee \u0111\u01B0\u1EE3c \u1EE7y quy\u1EC1n trong h\u1EC7 th\u1ED1ng. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee r\u1ED3i th\u1EED \u0111\u1ED3ng b\u1ED9 l\u1EA1i.";
   }
-  return "Kh\xF4ng x\xE1c \u0111\u1ECBnh \u0111\u01B0\u1EE3c shop Shopee \u0111\u1EC3 \u0111\u1ED3ng b\u1ED9. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t ki\u1EC3m tra \u1EE7y quy\u1EC1n Shop, ho\u1EB7c ch\u1ECDn \u0111\xFAng shop r\u1ED3i th\u1EED l\u1EA1i.";
+  return `H\u1EC7 th\u1ED1ng c\xF3 ${keys.length} shop Shopee \u0111\xE3 \u1EE7y quy\u1EC1n ([${keys.join(", ")}]) nh\u01B0ng thi\u1EBFu shop_id c\u1EE5 th\u1EC3 ho\u1EB7c token shop y\xEAu c\u1EA7u kh\xF4ng h\u1EE3p l\u1EC7. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t ki\u1EC3m tra \u1EE7y quy\u1EC1n.`;
 }
 function describeShopeeTokenFailure(shopKey) {
   const tokens = loadShopeeTokens();
@@ -106211,20 +106282,30 @@ async function resolveWebhookShopAuth(shopId) {
   }
 }
 async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
+  const payloadShopId = String(preferredShopId || "").trim();
   const shopCandidates = [];
   const pushShop = (id) => {
     const s2 = String(id || "").trim();
     if (s2 && !shopCandidates.includes(s2)) shopCandidates.push(s2);
   };
-  pushShop(preferredShopId);
-  pushShop(orders[0]?.shopId);
-  try {
-    for (const id of deps19.listShopeeOAuthShopIds() || []) pushShop(id);
-  } catch (listErr) {
-    console.warn(
-      "[Shopee Webhook] listShopeeOAuthShopIds failed:",
-      listErr?.message || listErr
+  if (payloadShopId) {
+    pushShop(payloadShopId);
+    console.log(
+      `\u{1F4E6} Webhook nh\u1EADn \u0111\u01A1n: ${orderSn} c\u1EE7a shop: ${payloadShopId} \u2014 d\xF9ng shop_id payload \u0111\u1EC3 l\u1EA5y token`
     );
+  } else {
+    console.warn(
+      `\u{1F4E6} Webhook order_sn=${orderSn} THI\u1EBEU shop_id trong payload \u2014 s\u1EBD th\u1EED c\xE1c shop \u0111\xE3 \u1EE7y quy\u1EC1n`
+    );
+    pushShop(orders[0]?.shopId);
+    try {
+      for (const id of deps19.listShopeeOAuthShopIds() || []) pushShop(id);
+    } catch (listErr) {
+      console.warn(
+        "[Shopee Webhook] listShopeeOAuthShopIds failed:",
+        listErr?.message || listErr
+      );
+    }
   }
   if (shopCandidates.length === 0) {
     console.error(
@@ -106236,135 +106317,161 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     );
     return { fetched: false, shopId: "", row: null, accessToken: null };
   }
-  for (const shopId of shopCandidates) {
+  const tryFetchForShop = async (shopId) => {
+    console.log(`\u{1F4E6} Webhook k\xE9o chi ti\u1EBFt: order_sn=${orderSn} shop_id=${shopId}`);
+    const auth = await resolveWebhookShopAuth(shopId);
+    if (!auth.ok || !auth.token) {
+      console.warn(
+        `[Shopee Webhook] B\u1ECF qua shop=${shopId} \u2014 ${auth.message || "kh\xF4ng c\xF3 token"}`
+      );
+      return null;
+    }
+    const apiShopId = auth.apiShopId || shopId;
+    const fileKey = auth.fileKey || shopId;
+    let accessToken = auth.token;
+    console.log(
+      `[Shopee Webhook] Calling get_order_detail order_sn=${orderSn} shop_id=${apiShopId} fileKey=${fileKey}`
+    );
+    let normalized = [];
+    let errors = [];
     try {
-      console.log(
-        `\u{1F4E6} Webhook k\xE9o chi ti\u1EBFt: order_sn=${orderSn} th\u1EED shop_id=${shopId}`
+      const chunk = await deps19.fetchNormalizeShopeeOrderChunk(
+        apiShopId,
+        accessToken,
+        fileKey,
+        [orderSn],
+        { enrichTracking: true, skipEscrow: true }
       );
-      const auth = await resolveWebhookShopAuth(shopId);
-      if (!auth.ok || !auth.token) {
+      normalized = chunk.normalized || [];
+      errors = chunk.errors || [];
+      const authFail = errors.some(
+        (e2) => Number(e2?.httpStatus) === 401 || Number(e2?.httpStatus) === 403 || isShopeeInvalidTokenError(e2?.error, e2?.message)
+      );
+      if (authFail) {
         console.warn(
-          `[Shopee Webhook] B\u1ECF qua shop=${shopId} \u2014 ${auth.message || "kh\xF4ng c\xF3 token"}`
+          `\u{1F511} get_order_detail b\xE1o token l\u1ED7i shop=${fileKey} \u2014 force refresh + retry 1 l\u1EA7n`
         );
-        continue;
-      }
-      const apiShopId = auth.apiShopId || shopId;
-      const fileKey = auth.fileKey || shopId;
-      let accessToken = auth.token;
-      console.log(
-        `[Shopee Webhook] Calling get_order_detail order_sn=${orderSn} shop_id=${apiShopId} fileKey=${fileKey}`
-      );
-      let normalized = [];
-      let errors = [];
-      try {
-        const chunk = await deps19.fetchNormalizeShopeeOrderChunk(
-          apiShopId,
-          accessToken,
-          fileKey,
-          [orderSn],
-          { enrichTracking: true, skipEscrow: true }
-        );
-        normalized = chunk.normalized || [];
-        errors = chunk.errors || [];
-        const authFail = errors.some(
-          (e2) => Number(e2?.httpStatus) === 401 || Number(e2?.httpStatus) === 403 || isShopeeInvalidTokenError(e2?.error, e2?.message)
-        );
-        if (!normalized.length && authFail || authFail) {
-          console.warn(
-            `\u{1F511} get_order_detail b\xE1o token l\u1ED7i shop=${fileKey} \u2014 force refresh + retry 1 l\u1EA7n`
-          );
-          try {
-            const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
-            if (refreshed) {
-              accessToken = refreshed;
-              const retry2 = await deps19.fetchNormalizeShopeeOrderChunk(
-                apiShopId,
-                accessToken,
-                fileKey,
-                [orderSn],
-                { enrichTracking: true, skipEscrow: true }
-              );
-              normalized = retry2.normalized || [];
-              errors = retry2.errors || [];
-            }
-          } catch (retryRefreshErr) {
-            console.error(
-              `\u{1F511} Force refresh sau get_order_detail fail:`,
-              retryRefreshErr?.message || retryRefreshErr
+        try {
+          const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+          if (refreshed) {
+            accessToken = refreshed;
+            const retry2 = await deps19.fetchNormalizeShopeeOrderChunk(
+              apiShopId,
+              accessToken,
+              fileKey,
+              [orderSn],
+              { enrichTracking: true, skipEscrow: true }
             );
+            normalized = retry2.normalized || [];
+            errors = retry2.errors || [];
           }
+        } catch (retryRefreshErr) {
+          console.error(
+            `\u{1F511} Force refresh sau get_order_detail fail:`,
+            retryRefreshErr?.message || retryRefreshErr
+          );
         }
-      } catch (detailErr) {
-        console.error(
-          `[Shopee Webhook] get_order_detail EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
-          detailErr?.message || detailErr,
-          detailErr?.stack || ""
-        );
-        console.log(
-          "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
-          `l\u1ED7i exception \u2014 order_sn=${orderSn} shop=${shopId}: ${detailErr?.message || detailErr}`
-        );
-        continue;
       }
-      if (!normalized?.length) {
-        const errMsg = errors?.[0] ? `${errors[0].error || ""} ${errors[0].message || ""}`.trim() : "response r\u1ED7ng";
-        console.warn(
-          `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${orderSn} shop=${shopId}`,
-          errMsg
-        );
-        console.log(
-          "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
-          `l\u1ED7i API \u2014 order_sn=${orderSn} shop=${shopId}: ${errMsg || "empty"}`
-        );
-        continue;
-      }
+    } catch (detailErr) {
+      console.error(
+        `[Shopee Webhook] get_order_detail EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
+        detailErr?.message || detailErr,
+        detailErr?.stack || ""
+      );
       console.log(
         "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
-        `th\xE0nh c\xF4ng \u2014 order_sn=${orderSn} shop=${apiShopId} status=${normalized[0]?.shopee_order_status || normalized[0]?.status || "?"} tn=${normalized[0]?.trackingNumber || "\u2014"}`
+        `l\u1ED7i exception \u2014 order_sn=${orderSn} shop=${shopId}: ${detailErr?.message || detailErr}`
       );
-      try {
-        await deps19.persistShopeeOrderChunk(orders, normalized, {
-          apiShopId,
-          accessToken,
-          skipTracking: true
-        });
-        console.log(
-          `[Shopee Webhook] get_order_detail + UPSERT OK order_sn=${orderSn} shop_id=${apiShopId} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
-        );
-        console.log(
-          "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
-          `th\xE0nh c\xF4ng (persistShopeeOrderChunk) \u2014 order_sn=${orderSn}`
-        );
-        return {
-          fetched: true,
-          shopId: apiShopId,
-          row: orders.find((o) => String(o.orderSn) === orderSn) || normalized[0],
-          accessToken
-        };
-      } catch (persistErr) {
-        console.error(
-          `[Shopee Webhook] persistShopeeOrderChunk FAILED order_sn=${orderSn}:`,
-          persistErr?.message || persistErr,
-          persistErr?.stack || ""
-        );
-        const row = normalized[0];
-        const idx = orders.findIndex((o) => String(o.orderSn) === String(row.orderSn));
-        if (idx >= 0) orders[idx] = { ...orders[idx], ...row };
-        else orders.unshift(row);
-        const saved = await upsertOrderToDb(orders[0] || row, "detail-fallback");
-        return {
-          fetched: true,
-          shopId: apiShopId,
-          row: orders[0] || row,
-          accessToken: saved ? accessToken : accessToken
-        };
-      }
+      return null;
+    }
+    if (!normalized?.length) {
+      const errMsg = errors?.[0] ? `${errors[0].error || ""} ${errors[0].message || ""}`.trim() : "response r\u1ED7ng";
+      console.warn(
+        `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${orderSn} shop=${shopId}`,
+        errMsg
+      );
+      console.log(
+        "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
+        `l\u1ED7i API \u2014 order_sn=${orderSn} shop=${shopId}: ${errMsg || "empty"}`
+      );
+      return null;
+    }
+    console.log(
+      "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
+      `th\xE0nh c\xF4ng \u2014 order_sn=${orderSn} shop=${apiShopId} status=${normalized[0]?.shopee_order_status || normalized[0]?.status || "?"} tn=${normalized[0]?.trackingNumber || "\u2014"}`
+    );
+    try {
+      await deps19.persistShopeeOrderChunk(orders, normalized, {
+        apiShopId,
+        accessToken,
+        skipTracking: true
+      });
+      console.log(
+        `[Shopee Webhook] get_order_detail + UPSERT OK order_sn=${orderSn} shop_id=${apiShopId} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
+      );
+      console.log(
+        "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
+        `th\xE0nh c\xF4ng (persistShopeeOrderChunk) \u2014 order_sn=${orderSn}`
+      );
+      return {
+        fetched: true,
+        shopId: apiShopId,
+        row: orders.find((o) => String(o.orderSn) === orderSn) || normalized[0],
+        accessToken
+      };
+    } catch (persistErr) {
+      console.error(
+        `[Shopee Webhook] persistShopeeOrderChunk FAILED order_sn=${orderSn}:`,
+        persistErr?.message || persistErr,
+        persistErr?.stack || ""
+      );
+      const row = normalized[0];
+      const idx = orders.findIndex((o) => String(o.orderSn) === String(row.orderSn));
+      if (idx >= 0) orders[idx] = { ...orders[idx], ...row };
+      else orders.unshift(row);
+      await upsertOrderToDb(orders[0] || row, "detail-fallback");
+      return {
+        fetched: true,
+        shopId: apiShopId,
+        row: orders[0] || row,
+        accessToken
+      };
+    }
+  };
+  for (const shopId of shopCandidates) {
+    try {
+      const result = await tryFetchForShop(shopId);
+      if (result?.fetched) return result;
     } catch (shopLoopErr) {
       console.error(
-        `[Shopee Webhook] fetchDetailAndUpsert shop loop EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
+        `[Shopee Webhook] fetchDetailAndUpsert EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
         shopLoopErr?.message || shopLoopErr,
         shopLoopErr?.stack || ""
       );
+    }
+  }
+  if (payloadShopId) {
+    const fallbackShops = [];
+    try {
+      for (const id of deps19.listShopeeOAuthShopIds() || []) {
+        const s2 = String(id || "").trim();
+        if (s2 && s2 !== payloadShopId && !fallbackShops.includes(s2)) fallbackShops.push(s2);
+      }
+    } catch {
+    }
+    for (const shopId of fallbackShops) {
+      try {
+        console.warn(
+          `[Shopee Webhook] Fallback shop_id=${shopId} sau khi payload shop=${payloadShopId} th\u1EA5t b\u1EA1i`
+        );
+        const result = await tryFetchForShop(shopId);
+        if (result?.fetched) return result;
+      } catch (fbErr) {
+        console.error(
+          `[Shopee Webhook] Fallback EXCEPTION shop=${shopId}:`,
+          fbErr?.message || fbErr
+        );
+      }
     }
   }
   console.log(
@@ -109572,26 +109679,31 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
     return { ok: true, errors: [], warnings: [], pushed: 0, staleSkus: [] };
   }
   const preferredShopId = resolveShopeeTokenShopId(requestedShopId);
-  if (!preferredShopId && !Object.keys(loadShopeeTokens()).length) {
+  const shopIdsForSync = resolveShopeeShopIdsForSync(requestedShopId);
+  if (!shopIdsForSync.length) {
     const msg = getShopeeUnauthorizedShopMessage();
     console.error(`[Shopee Stock Push] ${msg}`);
     return { ok: false, errors: [msg], warnings: [], pushed: 0, staleSkus: [] };
   }
-  let accessToken = null;
-  if (preferredShopId) {
+  console.log(
+    `[Shopee Stock Push] Multi-shop sync shops=[${shopIdsForSync.join(", ")}] preferred=${preferredShopId || "(none)"}`
+  );
+  const tokenByShop = /* @__PURE__ */ new Map();
+  for (const sid of shopIdsForSync) {
     try {
-      console.log(`[Shopee Stock Push] L\u1EA5y access_token (auto-refresh n\u1EBFu h\u1EBFt h\u1EA1n) shop_id=${preferredShopId}...`);
-      accessToken = await getValidShopeeAccessToken(preferredShopId);
-      if (!accessToken) {
-        console.error(
-          `[Shopee Stock Push] Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token shop_id=${preferredShopId} \u2014 refresh th\u1EA5t b\u1EA1i ho\u1EB7c thi\u1EBFu refresh_token. C\u1EA7n \u1EE6y quy\u1EC1n l\u1EA1i Shop.`
-        );
+      console.log(`[Shopee Stock Push] L\u1EA5y access_token shop_id=${sid}...`);
+      const tok = await getValidShopeeAccessToken(sid);
+      if (tok) {
+        tokenByShop.set(sid, tok);
+        console.log(`[Shopee Stock Push] access_token OK shop_id=${sid}`);
       } else {
-        console.log(`[Shopee Stock Push] access_token OK shop_id=${preferredShopId}`);
+        console.error(
+          `[Shopee Stock Push] Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token shop_id=${sid} \u2014 c\u1EA7n \u1EE6y quy\u1EC1n l\u1EA1i Shop.`
+        );
       }
     } catch (err) {
       console.error(
-        `[Shopee Stock Push] L\u1ED7i refresh/l\u1EA5y token shop_id=${preferredShopId}:`,
+        `[Shopee Stock Push] L\u1ED7i refresh/l\u1EA5y token shop_id=${sid}:`,
         err?.message || err
       );
     }
@@ -109600,9 +109712,11 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
   const warnings = [];
   const staleSkus = [];
   let liveItemIds = null;
-  if (preferredShopId && accessToken) {
+  const primaryShop = preferredShopId && tokenByShop.has(preferredShopId) ? preferredShopId : shopIdsForSync.find((s2) => tokenByShop.has(s2)) || "";
+  const accessToken = primaryShop ? tokenByShop.get(primaryShop) || null : null;
+  if (primaryShop && accessToken) {
     try {
-      liveItemIds = await refreshShopeeLiveItemIdSet(preferredShopId, accessToken);
+      liveItemIds = await refreshShopeeLiveItemIdSet(primaryShop, accessToken);
     } catch (err) {
       warnings.push(`Kh\xF4ng refresh \u0111\u01B0\u1EE3c danh s\xE1ch item Shopee: ${err?.message || err}. S\u1EBD ki\u1EC3m tra t\u1EEBng item.`);
     }
@@ -109624,9 +109738,20 @@ async function pushStockUpdatesToShopee(updatedProducts, requestedShopId) {
   const itemEntries = [...byItem.entries()];
   let processedInBatch = 0;
   for (const [itemId, rows] of itemEntries) {
-    let resolved = preferredShopId && accessToken ? { shopId: preferredShopId, accessToken } : null;
+    let resolved = primaryShop && accessToken ? { shopId: primaryShop, accessToken } : null;
     if (!resolved) {
-      resolved = await resolveShopeeShopForItemId(itemId, preferredShopId || void 0);
+      for (const sid of shopIdsForSync) {
+        const tok = tokenByShop.get(sid);
+        if (!tok) continue;
+        const found = await resolveShopeeShopForItemId(itemId, sid);
+        if (found) {
+          resolved = found;
+          break;
+        }
+      }
+      if (!resolved) {
+        resolved = await resolveShopeeShopForItemId(itemId, primaryShop || void 0);
+      }
     }
     if (!resolved) {
       markStaleItem(
@@ -115851,6 +115976,8 @@ async function startServer() {
     applyShopeeLinkFieldsToProduct,
     readChannelListingsDb,
     resolveShopeeTokenShopId,
+    resolveShopeeShopIdsForSync,
+    listAuthorizedShopeeShopIds,
     getShopeeUnauthorizedShopMessage,
     getValidShopeeAccessToken,
     withShopeeAccessTokenRetry,
@@ -115900,6 +116027,8 @@ async function startServer() {
     },
     pushStockUpdatesToShopee,
     resolveShopeeTokenShopId,
+    resolveShopeeShopIdsForSync,
+    listAuthorizedShopeeShopIds,
     getShopeeUnauthorizedShopMessage,
     isShopeeConfigValid,
     isStaleShopeeItemErrorText,

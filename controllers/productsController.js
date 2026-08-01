@@ -52,6 +52,8 @@ let deps = {
     staleSkus: [],
   }),
   resolveShopeeTokenShopId: () => null,
+  resolveShopeeShopIdsForSync: () => [],
+  listAuthorizedShopeeShopIds: () => [],
   getShopeeUnauthorizedShopMessage: () =>
     "Chưa có shop Shopee được ủy quyền. Vào mục Cài đặt → Ủy quyền lại Shop Shopee.",
   isShopeeConfigValid: () => false,
@@ -264,6 +266,7 @@ export async function handleProductSyncShopee(req, res) {
       const shopee = await pushProductStockPriceToShopeeImmediate(row, {
         syncStock: true,
         syncPrice: true,
+        shopId: req.body?.shopId,
       });
       if (shopee.skipped || !shopee.ok) {
         results.push({
@@ -603,7 +606,14 @@ export async function syncStock(req, res) {
   try {
     // Đồng bộ 1 CHIỀU: Kho gốc (Master) → Sàn. Không kéo tồn từ Sàn đè Kho gốc.
     const products = await deps.loadProducts();
-    const shopId = deps.resolveShopeeTokenShopId(req.body?.shopId);
+    const requestedShopId = req.body?.shopId;
+    const shopIds =
+      typeof deps.resolveShopeeShopIdsForSync === "function"
+        ? deps.resolveShopeeShopIdsForSync(requestedShopId)
+        : (() => {
+            const one = deps.resolveShopeeTokenShopId(requestedShopId);
+            return one ? [one] : [];
+          })();
     const warnings = [];
 
     if (!deps.isShopeeConfigValid()) {
@@ -612,7 +622,7 @@ export async function syncStock(req, res) {
         message: "Shopee: cấu hình Partner chưa hợp lệ.",
       });
     }
-    if (!shopId) {
+    if (!shopIds.length) {
       const msg = deps.getShopeeUnauthorizedShopMessage();
       console.error(`[Sync Stock] ${msg}`);
       return res.status(400).json({
@@ -622,7 +632,13 @@ export async function syncStock(req, res) {
       });
     }
 
-    const shopeeResult = await deps.pushStockUpdatesToShopee(products, shopId);
+    console.log(`[Sync Stock] Multi-shop đẩy tồn shops=[${shopIds.join(", ")}]`);
+
+    // Không truyền shop cụ thể → pushStockUpdatesToShopee tự loop tất cả shop đã ủy quyền
+    const shopeeResult = await deps.pushStockUpdatesToShopee(
+      products,
+      requestedShopId || undefined,
+    );
     if (shopeeResult.warnings?.length) warnings.push(...shopeeResult.warnings);
     if (!shopeeResult.ok && shopeeResult.errors.length > 0) {
       const onlyStale = shopeeResult.errors.every((e) => deps.isStaleShopeeItemErrorText(e));
@@ -936,12 +952,20 @@ export async function bulkChannelSync(req, res) {
     const shopList = Array.isArray(shops) ? shops : [];
     const wooShop = shopList.find((s) => s.platform === "woocommerce" && s.connected !== false);
 
-    const shopeeShopId = deps.resolveShopeeTokenShopId(
-      shopId || shopList.find((s) => s.platform === "shopee")?.shopId,
-    );
-    let shopeeToken = null;
+    const requestedShopeeShop =
+      shopId || shopList.find((s) => s.platform === "shopee")?.shopId || "";
+    const shopeeShopIds =
+      typeof deps.resolveShopeeShopIdsForSync === "function"
+        ? deps.resolveShopeeShopIdsForSync(requestedShopeeShop)
+        : (() => {
+            const one = deps.resolveShopeeTokenShopId(requestedShopeeShop);
+            return one ? [one] : [];
+          })();
+
+    /** @type {Map<string, string>} */
+    const shopeeTokensByShop = new Map();
     if (channelList.includes("shopee")) {
-      if (!shopeeShopId) {
+      if (!shopeeShopIds.length) {
         const authMsg = deps.getShopeeUnauthorizedShopMessage();
         console.error(`[Bulk Channel Sync] ${authMsg}`);
         return res.status(400).json({
@@ -958,10 +982,18 @@ export async function bulkChannelSync(req, res) {
           ]),
         });
       }
-      shopeeToken = await deps.getValidShopeeAccessToken(shopeeShopId);
-      if (!shopeeToken) {
+      for (const sid of shopeeShopIds) {
+        const token = await deps.getValidShopeeAccessToken(sid);
+        if (token) {
+          shopeeTokensByShop.set(sid, token);
+          console.log(`[Bulk Channel Sync] Token OK shop_id=${sid}`);
+        } else {
+          console.error(`[Bulk Channel Sync] Token FAIL shop_id=${sid}`);
+        }
+      }
+      if (shopeeTokensByShop.size === 0) {
         return res.status(400).json({
-          error: `Chưa có access_token hợp lệ cho shop_id=${shopeeShopId}.`,
+          error: `Chưa có access_token hợp lệ cho các shop: [${shopeeShopIds.join(", ")}].`,
           logs: products.flatMap((p) => [
             {
               productId: p.id,
@@ -969,7 +1001,7 @@ export async function bulkChannelSync(req, res) {
               channel: "shopee",
               action: "auth",
               success: false,
-              message: `Chưa có access_token hợp lệ cho shop_id=${shopeeShopId}`,
+              message: `Chưa có access_token hợp lệ cho shops=[${shopeeShopIds.join(", ")}]`,
             },
           ]),
         });
@@ -980,10 +1012,12 @@ export async function bulkChannelSync(req, res) {
 
     for (const product of products) {
       for (const channel of channelList) {
-        if (channel === "shopee" && shopeeShopId && shopeeToken) {
-          const lines = await deps.syncProductToShopee(product, shopeeShopId, shopeeToken);
-          logs.push(...lines);
-          await new Promise((r) => setTimeout(r, 150));
+        if (channel === "shopee" && shopeeTokensByShop.size > 0) {
+          for (const [sid, token] of shopeeTokensByShop.entries()) {
+            const lines = await deps.syncProductToShopee(product, sid, token);
+            logs.push(...lines);
+            await new Promise((r) => setTimeout(r, 150));
+          }
         } else if (channel === "woocommerce") {
           const lines = await deps.syncProductToWoo(product, wooShop);
           logs.push(...lines);
