@@ -72246,6 +72246,7 @@ function getRedis() {
       enableReadyCheck: true,
       lazyConnect: true,
       connectTimeout: 3e3,
+      commandTimeout: 2e3,
       retryStrategy(times) {
         if (times > 3) {
           redisDisabled = true;
@@ -99705,7 +99706,12 @@ async function mapWithConcurrency(items, concurrency, worker) {
     while (true) {
       const i2 = next++;
       if (i2 >= n) return;
-      results[i2] = await worker(items[i2], i2);
+      try {
+        results[i2] = await worker(items[i2], i2);
+      } catch (err) {
+        results[i2] = void 0;
+        console.error("[mapWithConcurrency] worker error at index", i2, err);
+      }
     }
   });
   await Promise.all(runners);
@@ -107646,6 +107652,29 @@ var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
 var ordersPullInFlight = false;
 var ordersPullStartedAt = 0;
+var logisticsWorkDepth = 0;
+function beginLogisticsWork(label = "logistics") {
+  logisticsWorkDepth += 1;
+  if (logisticsWorkDepth === 1) {
+    console.log(`[Logistics] PRIORITY ON (${label}) \u2014 sync s\u1EBD nh\u01B0\u1EDDng API`);
+  }
+}
+function endLogisticsWork(label = "logistics") {
+  logisticsWorkDepth = Math.max(0, logisticsWorkDepth - 1);
+  if (logisticsWorkDepth === 0) {
+    console.log(`[Logistics] PRIORITY OFF (${label})`);
+  }
+}
+function isLogisticsBusy() {
+  return logisticsWorkDepth > 0;
+}
+async function yieldToLogisticsIfBusy(maxWaitMs = 15e3) {
+  if (!isLogisticsBusy()) return;
+  const t0 = Date.now();
+  while (isLogisticsBusy() && Date.now() - t0 < maxWaitMs) {
+    await sleep2(200);
+  }
+}
 function releaseOrdersPullLock(reason = "finally") {
   if (ordersPullInFlight) {
     const elapsed = ordersPullStartedAt > 0 ? Date.now() - ordersPullStartedAt : 0;
@@ -108732,7 +108761,8 @@ async function pullIncrementalOrdersFromShopee(opts) {
       "Pull START",
       `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking3} longLookback=${longLookback}`
     );
-    await mapWithConcurrency(shopIds, 3, async (shopId) => {
+    await mapWithConcurrency(shopIds, isLogisticsBusy() ? 1 : 2, async (shopId) => {
+      await yieldToLogisticsIfBusy(12e3);
       if (Date.now() >= deadlineAt) {
         syncDiag("DEADLINE HIT \u2014 stop before next shop", `remaining skipped after ${shopId}`);
         errors.push({
@@ -108879,7 +108909,10 @@ async function pullIncrementalOrdersFromShopee(opts) {
             });
           }
           if (i2 + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
-            await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+            await yieldToLogisticsIfBusy(8e3);
+            await shopeeSyncDelay(
+              isLogisticsBusy() ? Math.max(SHOPEE_SYNC_CHUNK_DELAY_MS, 600) : SHOPEE_SYNC_CHUNK_DELAY_MS
+            );
           }
         }
       } catch (shopErr) {
@@ -109115,7 +109148,10 @@ async function pullShopeeCancelReturnOrders(opts) {
             });
           }
           if (i2 + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
-            await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+            await yieldToLogisticsIfBusy(8e3);
+            await shopeeSyncDelay(
+              isLogisticsBusy() ? Math.max(SHOPEE_SYNC_CHUNK_DELAY_MS, 600) : SHOPEE_SYNC_CHUNK_DELAY_MS
+            );
           }
         }
       } catch (shopErr) {
@@ -111262,11 +111298,15 @@ function dedupeShopeeParentVariantRows(products) {
 var SHOPEE_LOGISTICS_TIMEOUT_MS = 5e3;
 var SHIP_ORDER_OPERATION_TIMEOUT_MS = 8e3;
 var SHIP_ORDER_CHUNK_SIZE = 15;
+var SHIP_ORDER_CHUNK_CONCURRENCY = 5;
 var SHIP_ORDER_CHUNK_PAUSE_MS = 300;
+var PRINT_TRACKING_CHUNK_SIZE = 10;
+var PRINT_TRACKING_CONCURRENCY = 5;
+var PRINT_TRACKING_CHUNK_PAUSE_MS = 300;
 var shopeeAddressListMemCache = /* @__PURE__ */ new Map();
 var shopeeAddressListInflight = /* @__PURE__ */ new Map();
 var SHOPEE_ADDRESS_LIST_MEM_TTL_MS = 10 * 60 * 1e3;
-async function getShopeeAddressListCached(shopId, accessToken, signal) {
+async function getShopeeAddressListCached(shopId, accessToken, _signal) {
   const sid = String(shopId || "").trim();
   const mem = shopeeAddressListMemCache.get(sid);
   if (mem && Date.now() - mem.at < SHOPEE_ADDRESS_LIST_MEM_TTL_MS && mem.result && !mem.result.error) {
@@ -111284,7 +111324,7 @@ async function getShopeeAddressListCached(shopId, accessToken, signal) {
   const inflight = shopeeAddressListInflight.get(sid);
   if (inflight) return inflight;
   const run = (async () => {
-    const result = await shopeeGetAddressList(sid, accessToken, signal);
+    const result = await shopeeGetAddressList(sid, accessToken, void 0);
     const list = result?.response?.address_list || result?.address_list || [];
     if (result && !result.error) {
       shopeeAddressListMemCache.set(sid, { at: Date.now(), result, list });
@@ -113659,44 +113699,41 @@ async function ensureTrackingBeforePrint(orders, targetOrders, opts) {
       console.error(`[Shopee Print Gate] Kh\xF4ng c\xF3 access_token shop_id=${shopId}`);
       continue;
     }
-    const CHUNK_SIZE = 15;
-    for (let i2 = 0; i2 < groupOrders.length; i2 += CHUNK_SIZE) {
-      const chunk = groupOrders.slice(i2, i2 + CHUNK_SIZE);
-      await Promise.all(
-        chunk.map(async (o) => {
-          try {
-            console.log(
-              `[Shopee Print Gate] \u0110\u01A1n ${o.orderSn} thi\u1EBFu tracking_no \u2014 g\u1ECDi get_tracking_number (light, retries=${retries})...`
-            );
-            await enrichShopeeOrderTrackingFromApi(shopId, accessToken, o, {
-              retries,
-              light: true
-            });
-            const idx = orders.findIndex((x2) => String(x2.orderSn) === String(o.orderSn));
-            if (idx >= 0) {
-              orders[idx].trackingNumber = o.trackingNumber;
-              orders[idx].tracking_no = o.tracking_no || o.trackingNumber;
-              orders[idx].internalTrackingCode = o.internalTrackingCode;
-              orders[idx].packageNumber = o.packageNumber || orders[idx].packageNumber;
-            }
-            if (hasUsableShopeeTrackingNumber(o)) {
-              filled++;
-              await persistOrderTrackingToDb(o);
-              console.log(
-                `[Shopee Print Gate] OK order_sn=${o.orderSn} tracking_no=${o.trackingNumber}`
-              );
-            } else {
-              console.error(
-                `[Shopee Print Gate] V\u1EAAN thi\u1EBFu tracking_no order_sn=${o.orderSn} sau ${retries} l\u1EA7n th\u1EED`
-              );
-            }
-          } catch (error) {
-            console.error("L\u1ED7i 1 \u0111\u01A1n:", error);
+    for (let i2 = 0; i2 < groupOrders.length; i2 += PRINT_TRACKING_CHUNK_SIZE) {
+      const chunk = groupOrders.slice(i2, i2 + PRINT_TRACKING_CHUNK_SIZE);
+      await mapWithConcurrency(chunk, PRINT_TRACKING_CONCURRENCY, async (o) => {
+        try {
+          console.log(
+            `[Shopee Print Gate] \u0110\u01A1n ${o.orderSn} thi\u1EBFu tracking_no \u2014 g\u1ECDi get_tracking_number (light, retries=${retries})...`
+          );
+          await enrichShopeeOrderTrackingFromApi(shopId, accessToken, o, {
+            retries,
+            light: true
+          });
+          const idx = orders.findIndex((x2) => String(x2.orderSn) === String(o.orderSn));
+          if (idx >= 0) {
+            orders[idx].trackingNumber = o.trackingNumber;
+            orders[idx].tracking_no = o.tracking_no || o.trackingNumber;
+            orders[idx].internalTrackingCode = o.internalTrackingCode;
+            orders[idx].packageNumber = o.packageNumber || orders[idx].packageNumber;
           }
-        })
-      );
-      if (i2 + CHUNK_SIZE < groupOrders.length) {
-        await sleep2(300);
+          if (hasUsableShopeeTrackingNumber(o)) {
+            filled++;
+            await persistOrderTrackingToDb(o);
+            console.log(
+              `[Shopee Print Gate] OK order_sn=${o.orderSn} tracking_no=${o.trackingNumber}`
+            );
+          } else {
+            console.error(
+              `[Shopee Print Gate] V\u1EAAN thi\u1EBFu tracking_no order_sn=${o.orderSn} sau ${retries} l\u1EA7n th\u1EED`
+            );
+          }
+        } catch (error) {
+          console.error("L\u1ED7i 1 \u0111\u01A1n:", error);
+        }
+      });
+      if (i2 + PRINT_TRACKING_CHUNK_SIZE < groupOrders.length) {
+        await sleep2(PRINT_TRACKING_CHUNK_PAUSE_MS);
       }
     }
   }
@@ -116940,7 +116977,7 @@ async function startServer() {
     const failedOrders = [];
     let completedCount = 0;
     console.log(
-      `[Ship Order Bulk] B\u1EAFt \u0111\u1EA7u x\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n \u2014 chunk=${SHIP_ORDER_CHUNK_SIZE} Promise.all + pause=${SHIP_ORDER_CHUNK_PAUSE_MS}ms timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms skipRecover=true (kh\xF4ng enrich/tracking/retry).`
+      `[Ship Order Bulk] B\u1EAFt \u0111\u1EA7u x\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n \u2014 chunk=${SHIP_ORDER_CHUNK_SIZE} concurrency=${SHIP_ORDER_CHUNK_CONCURRENCY} pause=${SHIP_ORDER_CHUNK_PAUSE_MS}ms timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms skipRecover=true (kh\xF4ng enrich/tracking/retry).`
     );
     await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
     const processOne = async (item, i2) => {
@@ -117061,15 +117098,13 @@ async function startServer() {
     };
     for (let chunkStart = 0; chunkStart < toShip.length; chunkStart += SHIP_ORDER_CHUNK_SIZE) {
       const chunk = toShip.slice(chunkStart, chunkStart + SHIP_ORDER_CHUNK_SIZE);
-      await Promise.all(
-        chunk.map(async (item, localIdx) => {
-          try {
-            await processOne(item, chunkStart + localIdx);
-          } catch (error) {
-            console.error("L\u1ED7i 1 \u0111\u01A1n (ship batch):", error);
-          }
-        })
-      );
+      await mapWithConcurrency(chunk, SHIP_ORDER_CHUNK_CONCURRENCY, async (item, localIdx) => {
+        try {
+          await processOne(item, chunkStart + localIdx);
+        } catch (error) {
+          console.error("L\u1ED7i 1 \u0111\u01A1n (ship batch):", error);
+        }
+      });
       if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length && SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
         await sleep2(SHIP_ORDER_CHUNK_PAUSE_MS);
       }
@@ -117099,6 +117134,7 @@ async function startServer() {
   }
   const handleFastProcess = async (req, res) => {
     const t0 = Date.now();
+    beginLogisticsWork("fast-process");
     try {
       const { orderIds, orderSns, method } = req.body || {};
       const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
@@ -117254,9 +117290,12 @@ async function startServer() {
         message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + (error?.message || String(error)),
         url: null
       });
+    } finally {
+      endLogisticsWork("fast-process");
     }
   };
   const handleShipBulk = async (req, res) => {
+    beginLogisticsWork("ship-bulk");
     try {
       const { orderIds, orderSns, method } = req.body;
       const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
@@ -117321,6 +117360,8 @@ async function startServer() {
     } catch (error) {
       console.error("[Ship Order Bulk] L\u1ED7i n\u1ED9i b\u1ED9 endpoint /api/shopee/ship-order/bulk:", error?.stack || error);
       return res.status(500).json({ success: false, message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + error.message });
+    } finally {
+      endLogisticsWork("ship-bulk");
     }
   };
   const LABEL_DOWNLOAD_CONCURRENCY = 5;
@@ -118079,6 +118120,7 @@ async function startServer() {
     const job = shipOrderJobs.get(jobId);
     if (!job) return;
     const t0 = Date.now();
+    beginLogisticsWork(`ship-job:${jobId}`);
     try {
       if (!tryAcquireHeavyJob(`ship-order:${jobId}`)) {
         job.status = "failed";
@@ -118118,8 +118160,10 @@ async function startServer() {
       const settled = [];
       for (let chunkStart = 0; chunkStart < toShip.length; chunkStart += SHIP_ORDER_CHUNK_SIZE) {
         const chunk = toShip.slice(chunkStart, chunkStart + SHIP_ORDER_CHUNK_SIZE);
-        const chunkSettled = await Promise.allSettled(
-          chunk.map(async ({ index, order }) => {
+        const chunkValues = await mapWithConcurrency(
+          chunk,
+          SHIP_ORDER_CHUNK_CONCURRENCY,
+          async ({ index, order }) => {
             const resolvedShopId = resolveOrderShopId(order);
             if (resolvedShopId && !order.shopId) {
               orders[index].shopId = resolvedShopId;
@@ -118201,9 +118245,11 @@ async function startServer() {
             job.results = [...job.results, jobResult];
             bumpProgress();
             return jobResult;
-          })
+          }
         );
-        settled.push(...chunkSettled);
+        for (const value of chunkValues) {
+          settled.push({ status: "fulfilled", value });
+        }
         if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length) {
           await sleep2(SHIP_ORDER_CHUNK_PAUSE_MS);
         }
@@ -118303,6 +118349,7 @@ async function startServer() {
     } finally {
       job.updatedAt = Date.now();
       releaseHeavyJob(`ship-order:${jobId}`);
+      endLogisticsWork(`ship-job:${jobId}`);
     }
   }
   initShopeeShipController({
@@ -118327,6 +118374,7 @@ async function startServer() {
   app.post("/api/orders/fast-process", authMiddleware, handleFastProcess);
   app.post("/api/shopee/orders/fast-process", authMiddleware, handleFastProcess);
   async function printDocumentHandler(req, res) {
+    beginLogisticsWork("print-document");
     try {
       const { orderIds, waitMs: rawWaitMs } = req.body;
       const printStartedAt = Date.now();
@@ -118751,6 +118799,8 @@ async function startServer() {
       console.error("[Shopee Print] fatal:", err?.response?.data || err?.message || err);
       console.error("[Shopee Print] T\u1EA3i PDF th\u1EA5t b\u1EA1i \u2014 exception:", err?.message || err);
       return res.status(500).json({ error: err.message });
+    } finally {
+      endLogisticsWork("print-document");
     }
   }
   initShopeePrintController({
