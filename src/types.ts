@@ -268,6 +268,10 @@ export interface ConnectedShop {
   wooUrl?: string; // For WooCommerce Website URL
   connected: boolean;
   lastSynced?: string;
+  /** Trạng thái token thật từ backend: online | expired | missing */
+  connection_status?: 'online' | 'expired' | 'missing';
+  connection_message?: string;
+  token_expires_at?: number | null;
 }
 
 export interface ChannelSettings {

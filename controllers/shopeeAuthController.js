@@ -14,6 +14,7 @@ import {
   loadShopeeTokens,
   listShopeeSyncShopIds,
   getShopeeTokenRecord,
+  resolveShopeeTokenConnectionStatus,
   loadLastOAuthAudit,
   buildShopeeAuthPartnerUrl,
   isShopeeConfigValid,
@@ -213,6 +214,7 @@ export async function listOauthShops(_req, res) {
   const shopIds = listShopeeSyncShopIds();
   const details = shopIds.map((id) => {
     const record = getShopeeTokenRecord(tokens, id);
+    const tokenStatus = resolveShopeeTokenConnectionStatus(id);
     return {
       shop_id: id,
       obtained_at: record?.obtained_at ?? null,
@@ -220,6 +222,9 @@ export async function listOauthShops(_req, res) {
       oauth_shop_id: record?.oauth_shop_id ?? null,
       shop_id_list: record?.shop_id_list ?? [],
       has_own_key: Boolean(tokens[id]),
+      connection_status: tokenStatus.status,
+      connection_message: tokenStatus.message,
+      token_expires_at: tokenStatus.expires_at,
     };
   });
   const lastOAuth = loadLastOAuthAudit();

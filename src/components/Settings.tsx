@@ -30,7 +30,7 @@ import {
   Loader2
 } from 'lucide-react';
 
-type ShopConnState = 'online' | 'offline' | 'checking' | 'unknown';
+type ShopConnState = 'online' | 'expired' | 'missing' | 'offline' | 'checking' | 'unknown';
 
 interface SettingsProps {
   settings: ChannelSettings;
@@ -423,7 +423,7 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   };
 
   const applyConnectionResults = (
-    statuses: Record<string, { online: boolean; message: string }>,
+    statuses: Record<string, { online: boolean; connection_status?: string; message: string }>,
     targetShops: ConnectedShop[],
     opts?: { appendTerminal?: boolean },
   ) => {
@@ -431,7 +431,11 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       const next = { ...prev };
       for (const shop of targetShops) {
         const result = statuses[shop.id];
-        if (result) {
+        if (!result) continue;
+        const cs = String(result.connection_status || '').toLowerCase();
+        if (cs === 'online' || cs === 'expired' || cs === 'missing') {
+          next[shop.id] = cs as ShopConnState;
+        } else {
           next[shop.id] = result.online ? 'online' : 'offline';
         }
       }
@@ -451,8 +455,10 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       const lines = targetShops.flatMap((shop) => {
         const result = statuses[shop.id];
         if (!result) return [];
+        const cs = String(result.connection_status || (result.online ? 'online' : 'offline'));
+        const icon = cs === 'online' ? '✅' : cs === 'expired' ? '⚠️' : '❌';
         return [
-          `[LOG ${time}] ${shop.shopName} (${shop.platform.toUpperCase()}): ${result.online ? '✅ Online' : '❌ Offline'} — ${result.message}`,
+          `[LOG ${time}] ${shop.shopName} (${shop.platform.toUpperCase()}): ${icon} ${cs} — ${result.message}`,
         ];
       });
       if (lines.length) {
@@ -485,7 +491,12 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
         },
         body: JSON.stringify({ shops: targetShops }),
       });
-      const data = await parseJsonResponse<{ success?: boolean; statuses?: Record<string, { online: boolean; message: string }>; error?: string; message?: string }>(res);
+      const data = await parseJsonResponse<{
+        success?: boolean;
+        statuses?: Record<string, { online: boolean; connection_status?: string; message: string }>;
+        error?: string;
+        message?: string;
+      }>(res);
       if (!res.ok || !data.success || !data.statuses) {
         throw new Error(data.message || data.error || 'Kiểm tra kết nối thất bại');
       }
@@ -494,7 +505,13 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
       const message = error instanceof Error ? error.message : String(error);
       setShopConnectionStatus((prev) => {
         const next = { ...prev };
-        for (const shop of targetShops) next[shop.id] = 'offline';
+        for (const shop of targetShops) {
+          // Fallback theo connection_status từ settings nếu API lỗi
+          const fromSettings = shop.connection_status;
+          next[shop.id] = fromSettings === 'online' || fromSettings === 'expired' || fromSettings === 'missing'
+            ? fromSettings
+            : 'offline';
+        }
         return next;
       });
       if (!opts?.silent) {
@@ -508,6 +525,28 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
     }
   };
 
+  // Đồng bộ trạng thái từ connection_status trên settings (API /channels đã tính sẵn).
+  useEffect(() => {
+    if (!shops.length) return;
+    setShopConnectionStatus((prev) => {
+      const next = { ...prev };
+      for (const shop of shops) {
+        const cs = shop.connection_status;
+        if ((cs === 'online' || cs === 'expired' || cs === 'missing') && next[shop.id] !== 'checking') {
+          next[shop.id] = cs;
+        }
+      }
+      return next;
+    });
+    setShopConnectionMessages((prev) => {
+      const next = { ...prev };
+      for (const shop of shops) {
+        if (shop.connection_message) next[shop.id] = shop.connection_message;
+      }
+      return next;
+    });
+  }, [shops.map((s) => `${s.id}:${s.connection_status || ''}:${s.connection_message || ''}`).join('|')]);
+
   useEffect(() => {
     if (!shops.length) return;
     void checkShopConnections(shops, { silent: true });
@@ -520,9 +559,34 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   }, [shops.length, settings.shops?.map((s) => `${s.id}:${s.connected}:${s.platform}:${s.shopId}`).join('|')]);
 
   const renderShopConnectionStatus = (shop: ConnectedShop) => {
-    const status = shopConnectionStatus[shop.id] ?? 'unknown';
+    const status = shopConnectionStatus[shop.id] ?? shop.connection_status ?? 'unknown';
     const isChecking = status === 'checking' || status === 'unknown' || testingAPI === shop.id || testingAPI === 'all-shops';
-    const isOnline = status === 'online';
+    const tooltip =
+      shopConnectionMessages[shop.id] ||
+      shop.connection_message ||
+      'Kiểm tra kết nối API';
+
+    let label = 'Offline';
+    let colorClass = 'text-red-600';
+    let btnClass = 'border-red-100 bg-red-50 text-red-600 hover:bg-red-100';
+
+    if (isChecking) {
+      label = '...';
+      colorClass = 'text-gray-400';
+      btnClass = 'border-gray-200 bg-gray-50 text-gray-400';
+    } else if (status === 'online') {
+      label = 'Online';
+      colorClass = 'text-blue-600';
+      btnClass = 'border-blue-100 bg-blue-50 text-blue-600 hover:bg-blue-100';
+    } else if (status === 'expired') {
+      label = 'Token Hết Hạn';
+      colorClass = 'text-amber-600';
+      btnClass = 'border-amber-200 bg-amber-50 text-amber-600 hover:bg-amber-100';
+    } else if (status === 'missing') {
+      label = 'Chưa kết nối';
+      colorClass = 'text-gray-500';
+      btnClass = 'border-gray-200 bg-gray-50 text-gray-500 hover:bg-gray-100';
+    }
 
     return (
       <div className="flex items-center gap-1.5 shrink-0">
@@ -530,23 +594,13 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
           type="button"
           onClick={() => checkShopConnections([shop], { appendTerminal: true, testingId: shop.id })}
           disabled={testingAPI !== null}
-          className={`p-1.5 rounded-lg border transition-all disabled:opacity-50 ${
-            isChecking
-              ? 'border-gray-200 bg-gray-50 text-gray-400'
-              : isOnline
-                ? 'border-blue-100 bg-blue-50 text-blue-600 hover:bg-blue-100'
-                : 'border-red-100 bg-red-50 text-red-600 hover:bg-red-100'
-          }`}
-          title={shopConnectionMessages[shop.id] || 'Kiểm tra kết nối API'}
+          className={`p-1.5 rounded-lg border transition-all disabled:opacity-50 ${btnClass}`}
+          title={tooltip}
         >
           <RefreshCw className={`w-4 h-4 ${isChecking ? 'animate-spin' : ''}`} />
         </button>
-        <span
-          className={`text-[11px] font-bold min-w-[52px] ${
-            isChecking ? 'text-gray-400' : isOnline ? 'text-blue-600' : 'text-red-600'
-          }`}
-        >
-          {isChecking ? '...' : isOnline ? 'Online' : 'Offline'}
+        <span className={`text-[11px] font-bold min-w-[52px] whitespace-nowrap ${colorClass}`} title={tooltip}>
+          {label}
         </span>
       </div>
     );

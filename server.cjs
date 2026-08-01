@@ -97964,7 +97964,12 @@ var deps4 = {
   saveChannelSettings: () => false,
   upsertShopsInChannelSettings: (_a2, b) => Array.isArray(b) ? b : [],
   logOAuthSaveError: (ctx, err) => console.error(ctx, err),
-  checkShopConnectionStatus: async () => ({ online: false, message: "not_initialized" })
+  checkShopConnectionStatus: async () => ({
+    online: false,
+    connection_status: "missing",
+    message: "not_initialized"
+  }),
+  enrichShopsWithConnectionStatus: (shops) => Array.isArray(shops) ? shops : []
 };
 function initSettingsController(partial) {
   deps4 = { ...deps4, ...partial };
@@ -97972,11 +97977,12 @@ function initSettingsController(partial) {
 async function getChannelSettings(_req, res) {
   try {
     const settings = deps4.loadChannelSettings();
+    const shops = deps4.enrichShopsWithConnectionStatus(settings.shops || []);
     return res.json({
       success: true,
-      settings,
+      settings: { ...settings, shops },
       path: deps4.CHANNEL_SETTINGS_PATH,
-      shopCount: Array.isArray(settings.shops) ? settings.shops.length : 0
+      shopCount: shops.length
     });
   } catch (error) {
     deps4.logOAuthSaveError("GET /api/settings/channels", error);
@@ -98016,11 +98022,16 @@ async function putChannelSettings(req, res) {
       });
     }
     const saved = deps4.loadChannelSettings();
+    const shops = deps4.enrichShopsWithConnectionStatus(saved.shops || []);
     console.log(
       "[Channel Settings] PUT OK \u2014 shop_ids:",
-      (saved.shops || []).map((s2) => s2.shopId).join(", ") || "(tr\u1ED1ng)"
+      shops.map((s2) => s2.shopId).join(", ") || "(tr\u1ED1ng)"
     );
-    return res.json({ success: true, settings: saved, shopCount: saved.shops?.length ?? 0 });
+    return res.json({
+      success: true,
+      settings: { ...saved, shops },
+      shopCount: shops.length
+    });
   } catch (error) {
     deps4.logOAuthSaveError("PUT /api/settings/channels", error);
     return res.status(500).json({
@@ -98101,6 +98112,7 @@ async function postShopConnectionStatus(req, res) {
             id: shop.id,
             status: {
               online: false,
+              connection_status: "missing",
               message: shopErr?.message || "L\u1ED7i ki\u1EC3m tra k\u1EBFt n\u1ED1i gian h\xE0ng"
             }
           };
@@ -101578,6 +101590,37 @@ function getShopeeTokenRecord(tokens, shopId) {
     if (linked.some((id) => normalizeShopIdKey(id) === key)) return v;
   }
   return null;
+}
+function resolveShopeeTokenConnectionStatus(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) {
+    return { status: "missing", message: "Thi\u1EBFu Shop ID", expires_at: null };
+  }
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record?.access_token) {
+    return {
+      status: "missing",
+      message: "Ch\u01B0a k\u1EBFt n\u1ED1i OAuth \u2014 kh\xF4ng c\xF3 access_token",
+      expires_at: null
+    };
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 0;
+  const expiresAt = obtainedAt > 0 && expireIn > 0 ? obtainedAt + expireIn : null;
+  if (expiresAt != null && now > expiresAt) {
+    return {
+      status: "expired",
+      message: `Token h\u1EBFt h\u1EA1n l\xFAc ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")} \u2014 c\u1EA7n OAuth l\u1EA1i ho\u1EB7c refresh`,
+      expires_at: expiresAt
+    };
+  }
+  return {
+    status: "online",
+    message: expiresAt != null ? `Token h\u1EE3p l\u1EC7 \u0111\u1EBFn ${new Date(expiresAt * 1e3).toLocaleString("vi-VN")}` : "Token h\u1EE3p l\u1EC7",
+    expires_at: expiresAt
+  };
 }
 function collectShopIdsForTokenSave(requestShopId, authJson, expectedShopId) {
   const ids = /* @__PURE__ */ new Set();
@@ -105810,13 +105853,17 @@ async function listOauthShops(_req, res) {
   const shopIds = listShopeeSyncShopIds();
   const details = shopIds.map((id) => {
     const record = getShopeeTokenRecord(tokens, id);
+    const tokenStatus = resolveShopeeTokenConnectionStatus(id);
     return {
       shop_id: id,
       obtained_at: record?.obtained_at ?? null,
       expire_in: record?.expire_in ?? null,
       oauth_shop_id: record?.oauth_shop_id ?? null,
       shop_id_list: record?.shop_id_list ?? [],
-      has_own_key: Boolean(tokens[id])
+      has_own_key: Boolean(tokens[id]),
+      connection_status: tokenStatus.status,
+      connection_message: tokenStatus.message,
+      token_expires_at: tokenStatus.expires_at
     };
   });
   const lastOAuth = loadLastOAuthAudit();
@@ -118017,15 +118064,31 @@ async function startServer() {
   });
   app.use("/api/shopee", authMiddleware, shopeePrintRoutes);
   async function checkShopConnectionStatus(shop) {
-    if (!shop?.connected) {
-      return { online: false, message: "\u0110\u1ED3ng b\u1ED9 \u0111ang t\u1EAFt" };
-    }
     if (shop.platform === "shopee") {
       try {
         if (!isShopeeConfigValid()) {
-          return { online: false, message: "Shopee Partner ID/Key ch\u01B0a c\u1EA5u h\xECnh" };
+          return {
+            online: false,
+            connection_status: "missing",
+            message: "Shopee Partner ID/Key ch\u01B0a c\u1EA5u h\xECnh"
+          };
         }
         const configuredId = normalizeShopIdKey(String(shop.shopId || ""));
+        const tokenStatus = resolveShopeeTokenConnectionStatus(configuredId);
+        if (tokenStatus.status === "missing" || tokenStatus.status === "expired") {
+          return {
+            online: false,
+            connection_status: tokenStatus.status,
+            message: tokenStatus.message
+          };
+        }
+        if (!shop?.connected) {
+          return {
+            online: false,
+            connection_status: "online",
+            message: "Token h\u1EE3p l\u1EC7 nh\u01B0ng \u0111\u1ED3ng b\u1ED9 \u0111ang t\u1EAFt (Sync OFF)"
+          };
+        }
         const oauthShopIds = listShopeeOAuthShopIds();
         const tokens = loadShopeeTokens();
         const record = configuredId ? getShopeeTokenRecord(tokens, configuredId) : null;
@@ -118034,7 +118097,11 @@ async function startServer() {
           const apiShopId = resolveShopeeApiShopId(record, configuredId);
           let ping = await verifyShopeeShopToken(apiShopId, token);
           if (ping.ok) {
-            return { online: true, message: `OAuth token h\u1EE3p l\u1EC7 (Shopee API OK, shop_id=${apiShopId})` };
+            return {
+              online: true,
+              connection_status: "online",
+              message: `OAuth token h\u1EE3p l\u1EC7 (Shopee API OK, shop_id=${apiShopId})`
+            };
           }
           if (isShopeeInvalidTokenError(ping.error, ping.error) || /invalid|expire|auth|unauthorized/i.test(String(ping.error || ""))) {
             try {
@@ -118046,6 +118113,7 @@ async function startServer() {
               if (ping.ok) {
                 return {
                   online: true,
+                  connection_status: "online",
                   message: `OAuth token h\u1EE3p l\u1EC7 sau auto-refresh (Shopee API OK, shop_id=${apiShopId})`
                 };
               }
@@ -118054,14 +118122,17 @@ async function startServer() {
                 `[Shop connection] Refresh th\u1EA5t b\u1EA1i shop_id=${configuredId}:`,
                 refreshErr?.message || refreshErr
               );
+              const afterRefresh = resolveShopeeTokenConnectionStatus(configuredId);
               return {
                 online: false,
+                connection_status: afterRefresh.status === "online" ? "expired" : afterRefresh.status,
                 message: refreshErr instanceof ShopeeRefreshTokenExpiredError ? refreshErr.message : `Refresh token th\u1EA5t b\u1EA1i shop_id=${configuredId}: ${refreshErr?.message || ping.error || "unknown"}`
               };
             }
           }
           return {
             online: false,
+            connection_status: "expired",
             message: `C\xF3 token trong file nh\u01B0ng Shopee t\u1EEB ch\u1ED1i shop_id=${apiShopId}: ${ping.error || "invalid_token"}. C\u1EA7n OAuth l\u1EA1i \u0111\xFAng shop ${configuredId}.`
           };
         }
@@ -118069,19 +118140,29 @@ async function startServer() {
         if (lastOAuth?.expected_shop_id === configuredId && lastOAuth?.shop_mismatch && lastOAuth?.callback_shop_id) {
           return {
             online: false,
+            connection_status: "missing",
             message: `OAuth g\u1EA7n nh\u1EA5t: Shopee tr\u1EA3 shop ${lastOAuth.callback_shop_id}, kh\xF4ng ph\u1EA3i ${configuredId}. \u0110\u0103ng xu\u1EA5t Shopee Seller, \u0111\u0103ng nh\u1EADp shop ${configuredId}, b\u1EA5m OAuth l\u1EA1i.`
           };
         }
         if (oauthShopIds.length > 0) {
           return {
             online: false,
+            connection_status: "missing",
             message: `Shop ID c\u1EA5u h\xECnh "${shop.shopId || "(tr\u1ED1ng)"}" ch\u01B0a c\xF3 token. OAuth \u0111\xE3 l\u01B0u: [${oauthShopIds.join(", ")}] \u2014 ki\u1EC3m tra Shop ID c\xF3 \u0111\xFAng tr\xEAn Shopee Seller Center kh\xF4ng.`
           };
         }
-        return { online: false, message: "Ch\u01B0a OAuth ho\u1EB7c token h\u1EBFt h\u1EA1n" };
+        return {
+          online: false,
+          connection_status: "missing",
+          message: "Ch\u01B0a OAuth ho\u1EB7c token h\u1EBFt h\u1EA1n"
+        };
       } catch (error) {
         console.error("[Shop connection] Shopee check failed:", shop?.shopId, error);
-        return { online: false, message: error?.message || "L\u1ED7i ki\u1EC3m tra k\u1EBFt n\u1ED1i Shopee" };
+        return {
+          online: false,
+          connection_status: "missing",
+          message: error?.message || "L\u1ED7i ki\u1EC3m tra k\u1EBFt n\u1ED1i Shopee"
+        };
       }
     }
     if (shop.platform === "woocommerce") {
@@ -118089,7 +118170,14 @@ async function startServer() {
       const key = String(shop.shopId || "").trim();
       const secret = String(shop.apiSecret || shop.apiKey || "").trim();
       if (!base || !key) {
-        return { online: false, message: "Thi\u1EBFu URL ho\u1EB7c Consumer Key" };
+        return { online: false, connection_status: "missing", message: "Thi\u1EBFu URL ho\u1EB7c Consumer Key" };
+      }
+      if (!shop?.connected) {
+        return {
+          online: false,
+          connection_status: "missing",
+          message: "\u0110\u1ED3ng b\u1ED9 \u0111ang t\u1EAFt"
+        };
       }
       try {
         const auth = Buffer.from(`${key}:${secret}`).toString("base64");
@@ -118101,20 +118189,68 @@ async function startServer() {
         });
         clearTimeout(timer);
         if (res.ok) {
-          return { online: true, message: "WooCommerce REST API ph\u1EA3n h\u1ED3i OK" };
+          return { online: true, connection_status: "online", message: "WooCommerce REST API ph\u1EA3n h\u1ED3i OK" };
         }
-        return { online: false, message: `WooCommerce tr\u1EA3 HTTP ${res.status}` };
+        return {
+          online: false,
+          connection_status: "expired",
+          message: `WooCommerce tr\u1EA3 HTTP ${res.status}`
+        };
       } catch (error) {
-        return { online: false, message: error?.message || "Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c WooCommerce" };
+        return {
+          online: false,
+          connection_status: "expired",
+          message: error?.message || "Kh\xF4ng k\u1EBFt n\u1ED1i \u0111\u01B0\u1EE3c WooCommerce"
+        };
       }
     }
     if (shop.platform === "tiktok") {
-      if (shop.shopId && shop.apiKey) {
-        return { online: true, message: "Credentials TikTok Shop \u0111\xE3 c\u1EA5u h\xECnh" };
+      if (!shop.shopId || !shop.apiKey) {
+        return { online: false, connection_status: "missing", message: "Thi\u1EBFu Seller ID ho\u1EB7c API Key" };
       }
-      return { online: false, message: "Thi\u1EBFu Seller ID ho\u1EB7c API Key" };
+      if (!shop?.connected) {
+        return {
+          online: false,
+          connection_status: "online",
+          message: "Credentials \u0111\xE3 c\u1EA5u h\xECnh nh\u01B0ng \u0111\u1ED3ng b\u1ED9 \u0111ang t\u1EAFt"
+        };
+      }
+      return { online: true, connection_status: "online", message: "Credentials TikTok Shop \u0111\xE3 c\u1EA5u h\xECnh" };
     }
-    return { online: false, message: "N\u1EC1n t\u1EA3ng kh\xF4ng h\u1ED7 tr\u1EE3" };
+    return { online: false, connection_status: "missing", message: "N\u1EC1n t\u1EA3ng kh\xF4ng h\u1ED7 tr\u1EE3" };
+  }
+  function enrichShopsWithConnectionStatus(shops) {
+    if (!Array.isArray(shops)) return [];
+    return shops.map((shop) => {
+      if (!shop || typeof shop !== "object") return shop;
+      if (shop.platform === "shopee") {
+        const tokenStatus = resolveShopeeTokenConnectionStatus(shop.shopId);
+        return {
+          ...shop,
+          connection_status: tokenStatus.status,
+          connection_message: tokenStatus.message,
+          token_expires_at: tokenStatus.expires_at
+        };
+      }
+      if (shop.platform === "woocommerce") {
+        const hasCreds = Boolean(String(shop.wooUrl || "").trim() && String(shop.shopId || "").trim());
+        const status = hasCreds ? "online" : "missing";
+        return {
+          ...shop,
+          connection_status: status,
+          connection_message: hasCreds ? "\u0110\xE3 c\u1EA5u h\xECnh WooCommerce credentials" : "Ch\u01B0a c\u1EA5u h\xECnh URL/Consumer Key"
+        };
+      }
+      if (shop.platform === "tiktok") {
+        const hasCreds = Boolean(shop.shopId && shop.apiKey);
+        return {
+          ...shop,
+          connection_status: hasCreds ? "online" : "missing",
+          connection_message: hasCreds ? "\u0110\xE3 c\u1EA5u h\xECnh TikTok credentials" : "Thi\u1EBFu Seller ID ho\u1EB7c API Key"
+        };
+      }
+      return { ...shop, connection_status: "missing", connection_message: "N\u1EC1n t\u1EA3ng kh\xF4ng h\u1ED7 tr\u1EE3" };
+    });
   }
   ensureGeminiClientFromEnv();
   initSettingsController({
@@ -118124,7 +118260,8 @@ async function startServer() {
     saveChannelSettings,
     upsertShopsInChannelSettings,
     logOAuthSaveError,
-    checkShopConnectionStatus
+    checkShopConnectionStatus,
+    enrichShopsWithConnectionStatus
   });
   app.use("/api/settings", authMiddleware, settingsRoutes);
   const LISTINGS_DB_PATH = import_path15.default.join(APP_ROOT11, "data", "multi_channel_listings.json");

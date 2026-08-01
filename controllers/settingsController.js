@@ -38,7 +38,12 @@ let deps = {
   saveChannelSettings: () => false,
   upsertShopsInChannelSettings: (_a, b) => (Array.isArray(b) ? b : []),
   logOAuthSaveError: (ctx, err) => console.error(ctx, err),
-  checkShopConnectionStatus: async () => ({ online: false, message: "not_initialized" }),
+  checkShopConnectionStatus: async () => ({
+    online: false,
+    connection_status: "missing",
+    message: "not_initialized",
+  }),
+  enrichShopsWithConnectionStatus: (shops) => (Array.isArray(shops) ? shops : []),
 };
 
 export function initSettingsController(partial) {
@@ -49,11 +54,12 @@ export function initSettingsController(partial) {
 export async function getChannelSettings(_req, res) {
   try {
     const settings = deps.loadChannelSettings();
+    const shops = deps.enrichShopsWithConnectionStatus(settings.shops || []);
     return res.json({
       success: true,
-      settings,
+      settings: { ...settings, shops },
       path: deps.CHANNEL_SETTINGS_PATH,
-      shopCount: Array.isArray(settings.shops) ? settings.shops.length : 0,
+      shopCount: shops.length,
     });
   } catch (error) {
     deps.logOAuthSaveError("GET /api/settings/channels", error);
@@ -97,11 +103,16 @@ export async function putChannelSettings(req, res) {
       });
     }
     const saved = deps.loadChannelSettings();
+    const shops = deps.enrichShopsWithConnectionStatus(saved.shops || []);
     console.log(
       "[Channel Settings] PUT OK — shop_ids:",
-      (saved.shops || []).map((s) => s.shopId).join(", ") || "(trống)",
+      shops.map((s) => s.shopId).join(", ") || "(trống)",
     );
-    return res.json({ success: true, settings: saved, shopCount: saved.shops?.length ?? 0 });
+    return res.json({
+      success: true,
+      settings: { ...saved, shops },
+      shopCount: shops.length,
+    });
   } catch (error) {
     deps.logOAuthSaveError("PUT /api/settings/channels", error);
     return res.status(500).json({
@@ -191,6 +202,7 @@ export async function postShopConnectionStatus(req, res) {
             id: shop.id,
             status: {
               online: false,
+              connection_status: "missing",
               message: shopErr?.message || "Lỗi kiểm tra kết nối gian hàng",
             },
           };

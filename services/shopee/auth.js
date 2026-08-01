@@ -342,6 +342,45 @@ export function getShopeeTokenRecord(tokens, shopId) {
   return null;
 }
 
+/**
+ * Trạng thái kết nối token thật (không phụ thuộc shop.connected trong DB).
+ * @returns {{ status: 'missing'|'expired'|'online', message: string, expires_at: number|null }}
+ */
+export function resolveShopeeTokenConnectionStatus(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) {
+    return { status: "missing", message: "Thiếu Shop ID", expires_at: null };
+  }
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record?.access_token) {
+    return {
+      status: "missing",
+      message: "Chưa kết nối OAuth — không có access_token",
+      expires_at: null,
+    };
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 0;
+  const expiresAt = obtainedAt > 0 && expireIn > 0 ? obtainedAt + expireIn : null;
+  if (expiresAt != null && now > expiresAt) {
+    return {
+      status: "expired",
+      message: `Token hết hạn lúc ${new Date(expiresAt * 1000).toLocaleString("vi-VN")} — cần OAuth lại hoặc refresh`,
+      expires_at: expiresAt,
+    };
+  }
+  return {
+    status: "online",
+    message:
+      expiresAt != null
+        ? `Token hợp lệ đến ${new Date(expiresAt * 1000).toLocaleString("vi-VN")}`
+        : "Token hợp lệ",
+    expires_at: expiresAt,
+  };
+}
+
 function collectShopIdsForTokenSave(requestShopId, authJson, expectedShopId) {
   const ids = new Set();
   const primary = normalizeShopIdKey(requestShopId);

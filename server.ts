@@ -262,6 +262,7 @@ import {
   getShopeeUnauthorizedShopMessage,
   describeShopeeTokenFailure,
   getShopeeTokenRecord,
+  resolveShopeeTokenConnectionStatus,
   SHOPEE_CALLBACK_URL,
   SHOPEE_WEBHOOK_URL,
   SHOPEE_CALLBACK_IDLE_MSG,
@@ -15935,17 +15936,40 @@ async function startServer() {
   });
   app.use("/api/shopee", authMiddleware, shopeePrintRoutes);
 
-  async function checkShopConnectionStatus(shop: any): Promise<{ online: boolean; message: string }> {
-    if (!shop?.connected) {
-      return { online: false, message: "Đồng bộ đang tắt" };
-    }
-
+  async function checkShopConnectionStatus(shop: any): Promise<{
+    online: boolean;
+    connection_status: "online" | "expired" | "missing";
+    message: string;
+  }> {
     if (shop.platform === "shopee") {
       try {
         if (!isShopeeConfigValid()) {
-          return { online: false, message: "Shopee Partner ID/Key chưa cấu hình" };
+          return {
+            online: false,
+            connection_status: "missing",
+            message: "Shopee Partner ID/Key chưa cấu hình",
+          };
         }
         const configuredId = normalizeShopIdKey(String(shop.shopId || ""));
+        const tokenStatus = resolveShopeeTokenConnectionStatus(configuredId);
+
+        // Ưu tiên trạng thái token thật (missing/expired) — không báo Online ảo chỉ vì shop có trong DB.
+        if (tokenStatus.status === "missing" || tokenStatus.status === "expired") {
+          return {
+            online: false,
+            connection_status: tokenStatus.status,
+            message: tokenStatus.message,
+          };
+        }
+
+        if (!shop?.connected) {
+          return {
+            online: false,
+            connection_status: "online",
+            message: "Token hợp lệ nhưng đồng bộ đang tắt (Sync OFF)",
+          };
+        }
+
         const oauthShopIds = listShopeeOAuthShopIds();
         const tokens = loadShopeeTokens();
         const record = configuredId ? getShopeeTokenRecord(tokens, configuredId) : null;
@@ -15955,7 +15979,11 @@ async function startServer() {
           const apiShopId = resolveShopeeApiShopId(record, configuredId);
           let ping = await verifyShopeeShopToken(apiShopId, token);
           if (ping.ok) {
-            return { online: true, message: `OAuth token hợp lệ (Shopee API OK, shop_id=${apiShopId})` };
+            return {
+              online: true,
+              connection_status: "online",
+              message: `OAuth token hợp lệ (Shopee API OK, shop_id=${apiShopId})`,
+            };
           }
           // Auth fail → refresh đúng shop_id + retry 1 lần, KHÔNG Offline ngay.
           if (
@@ -15971,6 +15999,7 @@ async function startServer() {
               if (ping.ok) {
                 return {
                   online: true,
+                  connection_status: "online",
                   message: `OAuth token hợp lệ sau auto-refresh (Shopee API OK, shop_id=${apiShopId})`,
                 };
               }
@@ -15979,8 +16008,11 @@ async function startServer() {
                 `[Shop connection] Refresh thất bại shop_id=${configuredId}:`,
                 refreshErr?.message || refreshErr,
               );
+              const afterRefresh = resolveShopeeTokenConnectionStatus(configuredId);
               return {
                 online: false,
+                connection_status:
+                  afterRefresh.status === "online" ? "expired" : afterRefresh.status,
                 message:
                   refreshErr instanceof ShopeeRefreshTokenExpiredError
                     ? refreshErr.message
@@ -15990,6 +16022,7 @@ async function startServer() {
           }
           return {
             online: false,
+            connection_status: "expired",
             message: `Có token trong file nhưng Shopee từ chối shop_id=${apiShopId}: ${ping.error || "invalid_token"}. Cần OAuth lại đúng shop ${configuredId}.`,
           };
         }
@@ -16002,6 +16035,7 @@ async function startServer() {
         ) {
           return {
             online: false,
+            connection_status: "missing",
             message: `OAuth gần nhất: Shopee trả shop ${lastOAuth.callback_shop_id}, không phải ${configuredId}. Đăng xuất Shopee Seller, đăng nhập shop ${configuredId}, bấm OAuth lại.`,
           };
         }
@@ -16009,13 +16043,22 @@ async function startServer() {
         if (oauthShopIds.length > 0) {
           return {
             online: false,
+            connection_status: "missing",
             message: `Shop ID cấu hình "${shop.shopId || "(trống)"}" chưa có token. OAuth đã lưu: [${oauthShopIds.join(", ")}] — kiểm tra Shop ID có đúng trên Shopee Seller Center không.`,
           };
         }
-        return { online: false, message: "Chưa OAuth hoặc token hết hạn" };
+        return {
+          online: false,
+          connection_status: "missing",
+          message: "Chưa OAuth hoặc token hết hạn",
+        };
       } catch (error: any) {
         console.error("[Shop connection] Shopee check failed:", shop?.shopId, error);
-        return { online: false, message: error?.message || "Lỗi kiểm tra kết nối Shopee" };
+        return {
+          online: false,
+          connection_status: "missing",
+          message: error?.message || "Lỗi kiểm tra kết nối Shopee",
+        };
       }
     }
 
@@ -16024,7 +16067,14 @@ async function startServer() {
       const key = String(shop.shopId || "").trim();
       const secret = String(shop.apiSecret || shop.apiKey || "").trim();
       if (!base || !key) {
-        return { online: false, message: "Thiếu URL hoặc Consumer Key" };
+        return { online: false, connection_status: "missing", message: "Thiếu URL hoặc Consumer Key" };
+      }
+      if (!shop?.connected) {
+        return {
+          online: false,
+          connection_status: "missing",
+          message: "Đồng bộ đang tắt",
+        };
       }
       try {
         const auth = Buffer.from(`${key}:${secret}`).toString("base64");
@@ -16036,22 +16086,75 @@ async function startServer() {
         });
         clearTimeout(timer);
         if (res.ok) {
-          return { online: true, message: "WooCommerce REST API phản hồi OK" };
+          return { online: true, connection_status: "online", message: "WooCommerce REST API phản hồi OK" };
         }
-        return { online: false, message: `WooCommerce trả HTTP ${res.status}` };
+        return {
+          online: false,
+          connection_status: "expired",
+          message: `WooCommerce trả HTTP ${res.status}`,
+        };
       } catch (error: any) {
-        return { online: false, message: error?.message || "Không kết nối được WooCommerce" };
+        return {
+          online: false,
+          connection_status: "expired",
+          message: error?.message || "Không kết nối được WooCommerce",
+        };
       }
     }
 
     if (shop.platform === "tiktok") {
-      if (shop.shopId && shop.apiKey) {
-        return { online: true, message: "Credentials TikTok Shop đã cấu hình" };
+      if (!shop.shopId || !shop.apiKey) {
+        return { online: false, connection_status: "missing", message: "Thiếu Seller ID hoặc API Key" };
       }
-      return { online: false, message: "Thiếu Seller ID hoặc API Key" };
+      if (!shop?.connected) {
+        return {
+          online: false,
+          connection_status: "online",
+          message: "Credentials đã cấu hình nhưng đồng bộ đang tắt",
+        };
+      }
+      return { online: true, connection_status: "online", message: "Credentials TikTok Shop đã cấu hình" };
     }
 
-    return { online: false, message: "Nền tảng không hỗ trợ" };
+    return { online: false, connection_status: "missing", message: "Nền tảng không hỗ trợ" };
+  }
+
+  function enrichShopsWithConnectionStatus(shops: any[]): any[] {
+    if (!Array.isArray(shops)) return [];
+    return shops.map((shop) => {
+      if (!shop || typeof shop !== "object") return shop;
+      if (shop.platform === "shopee") {
+        const tokenStatus = resolveShopeeTokenConnectionStatus(shop.shopId);
+        return {
+          ...shop,
+          connection_status: tokenStatus.status,
+          connection_message: tokenStatus.message,
+          token_expires_at: tokenStatus.expires_at,
+        };
+      }
+      if (shop.platform === "woocommerce") {
+        const hasCreds = Boolean(String(shop.wooUrl || "").trim() && String(shop.shopId || "").trim());
+        const status = hasCreds ? "online" : "missing";
+        return {
+          ...shop,
+          connection_status: status,
+          connection_message: hasCreds
+            ? "Đã cấu hình WooCommerce credentials"
+            : "Chưa cấu hình URL/Consumer Key",
+        };
+      }
+      if (shop.platform === "tiktok") {
+        const hasCreds = Boolean(shop.shopId && shop.apiKey);
+        return {
+          ...shop,
+          connection_status: hasCreds ? "online" : "missing",
+          connection_message: hasCreds
+            ? "Đã cấu hình TikTok credentials"
+            : "Thiếu Seller ID hoặc API Key",
+        };
+      }
+      return { ...shop, connection_status: "missing", connection_message: "Nền tảng không hỗ trợ" };
+    });
   }
 
   // --- Settings API — Phase 2 MVC ---
@@ -16064,6 +16167,7 @@ async function startServer() {
     upsertShopsInChannelSettings,
     logOAuthSaveError,
     checkShopConnectionStatus,
+    enrichShopsWithConnectionStatus,
   });
   app.use("/api/settings", authMiddleware, settingsRoutes);
 
