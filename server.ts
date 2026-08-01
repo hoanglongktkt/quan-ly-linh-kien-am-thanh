@@ -2267,6 +2267,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   warnings?: any[];
   /** Raw get_order_list responses — trả về FE để debug. */
   shopee_response?: any;
+  total_success?: number;
+  failed_orders?: string[];
 }> {
   if (!tryAcquireOrdersPullLock()) {
     syncDiag("Pull SKIPPED — already in flight", "mutex busy");
@@ -2294,6 +2296,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   const enrichTracking = opts?.enrichTracking === true;
   const errors: any[] = [];
   const shopeeResponsePages: any[] = [];
+  const failedOrdersSet = new Set<string>();
   let pulled = 0;
   let added = 0;
   let updated = 0;
@@ -2529,7 +2532,11 @@ async function pullIncrementalOrdersFromShopee(opts?: {
               "Fetching details for chunk...",
               `shop=${shopId} chunk=${chunkNo} count=${chunkSns.length} sn=${chunkSns.slice(0, 3).join(",")}`,
             );
-            const { normalized, errors: chunkErrors } = await fetchNormalizeShopeeOrderChunk(
+            const {
+              normalized,
+              errors: chunkErrors,
+              failed_orders: chunkFailed = [],
+            } = await fetchNormalizeShopeeOrderChunk(
               shopId,
               accessToken,
               shopId,
@@ -2537,6 +2544,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
               { enrichTracking: false, skipEscrow: true },
             );
             if (chunkErrors.length) errors.push(...chunkErrors);
+            for (const sn of chunkFailed) {
+              if (sn) failedOrdersSet.add(String(sn));
+            }
 
             if (normalized.length === 0) {
               console.warn(
@@ -2645,28 +2655,33 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
     const elapsedMs = Date.now() - startedAt;
     const dbErrors = errors.filter((e) => String(e?.error || "") === "db_upsert_failed");
+    const failed_orders = [...failedOrdersSet];
+    // Lỗi detail từng đơn = soft — không fail cả phiên nếu đã kéo được đơn.
     const hardErrors = errors.filter((e) => {
       const code = String(e?.error || "");
-      // Soft / partial — không làm fail cả phiên nếu đã kéo được đơn.
       return (
         code !== "pull_sn_cap" &&
         code !== "pull_deadline" &&
-        code !== "pull_shop_deadline"
+        code !== "pull_shop_deadline" &&
+        code !== "normalize_failed" &&
+        code !== "normalize_null" &&
+        code !== "order_detail_missing" &&
+        code !== "order_detail_exception" &&
+        code !== "rate_limit_retry_failed"
       );
     });
     const softOnly =
       errors.length > 0 && hardErrors.length === 0 && (pulled > 0 || truncatedShops > 0);
-    // Lỗi lưu DB → success=false để FE thấy (không nuốt).
+    // Lỗi lưu DB → success=false để FE thấy (không nuốt). Còn lại: kéo được đơn = success.
     const success =
       dbErrors.length === 0 && (pulled > 0 || hardErrors.length === 0 || softOnly);
     const message =
       dbErrors.length > 0
         ? `Lỗi lưu MongoDB: ${dbErrors[0]?.message || "db_upsert_failed"}`
         : pulled > 0
-          ? `Đã kéo/cập nhật ${pulled} đơn (+${added} mới, ~${updated} cập nhật) trong ${elapsedMs}ms` +
-            (truncatedShops > 0
-              ? ` — ${truncatedShops} shop chạm trần SN, có thể còn lệch Shopee`
-              : "")
+          ? `Kéo đơn hoàn tất — thành công ${pulled} đơn` +
+            (failed_orders.length ? `, lỗi ${failed_orders.length} đơn` : "") +
+            ` (+${added} mới, ~${updated} cập nhật) trong ${elapsedMs}ms`
           : hardErrors.length > 0
             ? `Pull 0 đơn — có lỗi: ${hardErrors[0]?.message || hardErrors[0]?.error}`
             : errors.length > 0
@@ -2675,7 +2690,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
     syncDiag(
       "Pull DONE",
-      `${message} success=${success} errors=${errors.length} hard=${hardErrors.length} truncatedShops=${truncatedShops}`,
+      `${message} success=${success} errors=${errors.length} hard=${hardErrors.length} failed=${failed_orders.length} truncatedShops=${truncatedShops}`,
     );
     return {
       success,
@@ -2699,6 +2714,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       maxOrderSnsPerShop,
       lookbackSec,
       shopee_response: shopeeResponsePages,
+      total_success: pulled,
+      failed_orders,
     };
   } catch (pullFatal: any) {
     console.error(
@@ -2723,6 +2740,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       elapsedMs: Date.now() - startedAt,
       lookbackSec,
       shopee_response: shopeeResponsePages,
+      total_success: pulled,
+      failed_orders: [...failedOrdersSet],
     };
   } finally {
     releaseOrdersPullLock("pullIncremental_finally");
@@ -10187,84 +10206,77 @@ async function backfillMissingShippingCarriersFromShopee(
   return filled;
 }
 
-/** Lấy chi tiết + chuẩn hóa THEO LÔ — 1 lần get_order_detail tối đa 50 order_sn (Shopee v2). */
+/** Lấy chi tiết + chuẩn hóa — TUẦN TỰ từng order_sn (CẤM Promise.all / batch song song). */
 async function fetchNormalizeShopeeOrderChunk(
   apiShopId: string,
   accessToken: string,
   fileKey: string,
   orderSns: string[],
   opts?: { enrichTracking?: boolean; skipEscrow?: boolean },
-): Promise<{ normalized: any[]; errors: any[] }> {
+): Promise<{ normalized: any[]; errors: any[]; failed_orders: string[] }> {
   const normalized: any[] = [];
   const errors: any[] = [];
+  const failed_orders: string[] = [];
   const enrichTracking = opts?.enrichTracking !== false;
   void enrichTracking; // tracking chạy ở persistShopeeOrderChunk — không gọi x2 ở đây
   const skipEscrow = opts?.skipEscrow === true;
   const snList = orderSns.map((sn) => String(sn || "").trim()).filter(Boolean);
-  if (snList.length === 0) return { normalized, errors };
+  if (snList.length === 0) return { normalized, errors, failed_orders };
 
-  // Phòng thủ: nếu caller truyền >50 thì tự chia nhỏ — không bao giờ gọi lẻ từng đơn.
-  if (snList.length > SHOPEE_SYNC_CHUNK_SIZE) {
-    for (let i = 0; i < snList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
-      const sub = snList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
-      const part = await fetchNormalizeShopeeOrderChunk(apiShopId, accessToken, fileKey, sub, opts);
-      normalized.push(...part.normalized);
-      errors.push(...part.errors);
-      if (i + SHOPEE_SYNC_CHUNK_SIZE < snList.length) {
-        await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
-      }
-    }
-    return { normalized, errors };
-  }
+  console.log(
+    `[Shopee Sync] get_order_detail tuần tự ${snList.length} đơn (shop=${fileKey}) — delay 200ms/đơn`,
+  );
 
-  try {
-    console.log(
-      `[Shopee Sync] get_order_detail batch ${snList.length}/${SHOPEE_SYNC_CHUNK_SIZE} đơn (shop=${fileKey}): ${snList.slice(0, 3).join(", ")}${snList.length > 3 ? "..." : ""}`,
-    );
-    let detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, snList);
-    if (
-      detailResult?.httpStatus === 401 ||
-      detailResult?.httpStatus === 403 ||
-      isShopeeInvalidTokenError(detailResult?.error, detailResult?.message)
-    ) {
-      console.warn(
-        `[Shopee Sync] get_order_detail AUTH FAIL shop=${fileKey} — force refresh token + retry 1 lần`,
-      );
-      try {
-        const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
-        if (refreshed) {
-          accessToken = refreshed;
-          detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, snList);
+  for (const orderSn of snList) {
+    try {
+      let detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, [orderSn]);
+
+      if (
+        detailResult?.httpStatus === 401 ||
+        detailResult?.httpStatus === 403 ||
+        isShopeeInvalidTokenError(detailResult?.error, detailResult?.message)
+      ) {
+        try {
+          const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+          if (refreshed) {
+            accessToken = refreshed;
+            detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, [orderSn]);
+          }
+        } catch (refreshErr: any) {
+          console.error(
+            "Lỗi ở đơn:",
+            orderSn,
+            `token_refresh: ${refreshErr?.message || refreshErr}`,
+          );
         }
-      } catch (refreshErr: any) {
-        console.error(
-          `[Shopee Sync] Token refresh sau GetOrderDetail fail shop=${fileKey}:`,
-          refreshErr?.message || refreshErr,
-        );
       }
-    }
-    // Rate-limit: backoff thêm 1 lần trước khi trả lỗi (shopeeFetchJsonWithRetry đã retry nội bộ).
-    if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
-      console.warn(
-        `[Shopee Sync] get_order_detail RATE LIMIT shop=${fileKey} — chờ ${SHOPEE_SYNC_CHUNK_DELAY_MS * 2}ms rồi retry 1 lần`,
-      );
-      await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS * 2);
-      try {
-        detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, snList);
-      } catch (rlErr: any) {
-        console.error(
-          `[Shopee Sync] get_order_detail rate-limit retry fail shop=${fileKey}:`,
-          rlErr?.message || rlErr,
+
+      if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
+        console.warn(
+          `[Shopee Sync] get_order_detail RATE LIMIT order_sn=${orderSn} — chờ rồi retry 1 lần`,
         );
+        await delay(200);
+        try {
+          detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, [orderSn]);
+        } catch (rlErr: any) {
+          console.error("Lỗi ở đơn:", orderSn, rlErr?.message || rlErr);
+          failed_orders.push(orderSn);
+          errors.push({
+            shopId: fileKey,
+            error: "rate_limit_retry_failed",
+            message: rlErr?.message || String(rlErr),
+            orderSn,
+          });
+          await delay(200);
+          continue;
+        }
       }
-    }
-    if (detailResult.error) {
-      const message =
-        detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
-      console.error(
-        `[Shopee Sync] get_order_detail lỗi HTTP ${detailResult.httpStatus || "?"} shop=${fileKey}: ${message}`,
-      );
-      for (const orderSn of snList) {
+
+      if (detailResult?.error) {
+        const message =
+          detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
+        console.error("Lỗi ở đơn:", orderSn, message);
+        failed_orders.push(orderSn);
         errors.push({
           shopId: fileKey,
           error: detailResult.error,
@@ -10272,68 +10284,80 @@ async function fetchNormalizeShopeeOrderChunk(
           orderSn,
           httpStatus: detailResult.httpStatus,
         });
-      }
-      return { normalized, errors };
-    }
-
-    const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
-    if (!Array.isArray(detailList) || detailList.length === 0) {
-      console.warn(`[Shopee Sync] get_order_detail trả về rỗng cho lô ${snList.length} đơn — shop ${fileKey}`);
-      return { normalized, errors };
-    }
-
-    // Map theo order_sn (API có thể trả order_list lệch thứ tự so với snList).
-    const detailBySn = new Map<string, any>();
-    for (const detail of detailList) {
-      const sn = String(detail?.order_sn || "").trim();
-      if (sn) detailBySn.set(sn, detail);
-    }
-    for (const requestedSn of snList) {
-      const detail = detailBySn.get(requestedSn);
-      if (!detail) {
-        errors.push({
-          shopId: fileKey,
-          error: "order_detail_missing_in_batch",
-          message: `get_order_detail không trả order_sn=${requestedSn} trong batch`,
-          orderSn: requestedSn,
-        });
+        await delay(200);
         continue;
       }
+
+      const detailList = detailResult?.response?.order_list ?? detailResult?.order_list ?? [];
+      const detail = Array.isArray(detailList)
+        ? detailList.find((d: any) => String(d?.order_sn || "").trim() === orderSn) || detailList[0]
+        : null;
+      if (!detail) {
+        console.error("Lỗi ở đơn:", orderSn, "get_order_detail trả về rỗng / thiếu order_sn");
+        failed_orders.push(orderSn);
+        errors.push({
+          shopId: fileKey,
+          error: "order_detail_missing",
+          message: `get_order_detail không trả order_sn=${orderSn}`,
+          orderSn,
+        });
+        await delay(200);
+        continue;
+      }
+
       try {
         const norm = normalizeShopeeOrderDetail(fileKey, detail?.shop_name, detail);
-        if (!norm) continue;
-        // Tracking KHÔNG gọi ở đây (tránh x2 API). ensureShopeeTrackingForBatch tuần tự sau.
-        normalized.push(norm);
-      } catch (detailErr: any) {
-        console.error(`[Shopee Sync] Lỗi xử lý đơn ${detail?.order_sn}:`, detailErr?.message || detailErr);
+        if (!norm) {
+          console.error("Lỗi ở đơn:", orderSn, "normalize trả null (thiếu field)");
+          failed_orders.push(orderSn);
+          errors.push({
+            shopId: fileKey,
+            error: "normalize_null",
+            message: "normalizeShopeeOrderDetail trả null",
+            orderSn,
+          });
+        } else {
+          normalized.push(norm);
+        }
+      } catch (mapErr: any) {
+        console.error("Lỗi ở đơn:", orderSn, mapErr?.message || mapErr);
+        failed_orders.push(orderSn);
         errors.push({
           shopId: fileKey,
           error: "normalize_failed",
-          message: detailErr?.message || String(detailErr),
-          orderSn: detail?.order_sn,
+          message: mapErr?.message || String(mapErr),
+          orderSn,
         });
       }
-    }
-
-    // Escrow tuần tự (1s/đơn) từng làm pull "quay vòng" — skip trên fast path.
-    if (normalized.length > 0 && !skipEscrow) {
-      await enrichShopeeOrdersEscrowFinance(apiShopId, accessToken, normalized);
-    }
-  } catch (err: any) {
-    const mapped = shopeeApiErrorResult(err, `get_order_detail batch shop=${fileKey}`);
-    console.error(`[Shopee Sync] Exception get_order_detail shop=${fileKey}:`, mapped.message);
-    for (const orderSn of snList) {
+    } catch (err: any) {
+      // BẮT BUỘC continue — không throw làm sập hàm cha (HTML/rate-limit/crash 1 đơn).
+      console.error("Lỗi ở đơn:", orderSn, err?.message || err);
+      failed_orders.push(orderSn);
       errors.push({
         shopId: fileKey,
-        error: mapped.error || "order_detail_failed",
-        message: mapped.message,
+        error: "order_detail_exception",
+        message: err?.message || String(err),
         orderSn,
-        httpStatus: mapped.httpStatus,
       });
+    }
+
+    // Nghỉ 200ms mỗi đơn — tránh Shopee rate limit / spike cPanel.
+    await delay(200);
+  }
+
+  // Escrow tuần tự (skip trên fast path pull).
+  if (normalized.length > 0 && !skipEscrow) {
+    try {
+      await enrichShopeeOrdersEscrowFinance(apiShopId, accessToken, normalized);
+    } catch (escrowErr: any) {
+      console.error(
+        `[Shopee Sync] enrich escrow skip shop=${fileKey}:`,
+        escrowErr?.message || escrowErr,
+      );
     }
   }
 
-  return { normalized, errors };
+  return { normalized, errors, failed_orders };
 }
 
 /** Upsert lô đơn vào store JSON + Mongo bulkWrite (1 lần / lô). */

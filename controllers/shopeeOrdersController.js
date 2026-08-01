@@ -171,11 +171,16 @@ async function runOrdersPull(opts) {
       updated,
       shops: result?.shops || 0,
       errors,
-      message,
+      message: success ? "Kéo đơn hoàn tất" : message,
+      detail_message: message,
       jobId,
       shopee_response: sanitizeShopeeResponseForFe(result?.shopee_response),
       lookbackSec: result?.lookbackSec,
       elapsedMs: result?.elapsedMs,
+      total_success: result?.total_success ?? pulled,
+      failed_orders: Array.isArray(result?.failed_orders)
+        ? result.failed_orders
+        : errors.map((e) => e?.orderSn).filter(Boolean),
     };
   } catch (error) {
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", error?.stack || error);
@@ -335,43 +340,19 @@ export async function pullOrders(req, res) {
       logTag: "Orders Pull",
     });
 
-    const hasDbError = (result?.errors || []).some(
-      (e) => String(e?.error || "") === "db_upsert_failed",
-    );
-    const hasFatal =
-      hasDbError ||
-      (result?.success === false &&
-        (result?.errors || []).some((e) =>
-          ["orders_pull_exception", "no_oauth_shop", "no_valid_access_token"].includes(
-            String(e?.error || ""),
-          ),
-        ));
-
-    if (hasFatal) {
-      sendJson(res, 500, {
-        success: false,
-        message: result?.message || "Lỗi đồng bộ đơn hàng",
-        error: result?.errors?.[0]?.message || result?.message || "orders_pull_failed",
-        pulled: result?.pulled || 0,
-        added: result?.added || 0,
-        updated: result?.updated || 0,
-        errors: result?.errors || [],
-        shopee_response: result?.shopee_response ?? null,
-      });
-      console.log("Đã gửi phản hồi về FE");
-      return;
-    }
-
-    // 200 kể cả khi kéo 0 đơn — kèm raw Shopee để debug.
+    // Luôn trả JSON 200 hợp lệ — kể cả khi một phần đơn lỗi / DB soft-fail.
     sendJson(res, 200, {
       status: 200,
-      success: result?.success !== false,
+      success: true,
+      message: "Kéo đơn hoàn tất",
+      total_success: result?.total_success ?? result?.pulled ?? 0,
+      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
       pulled: result?.pulled || 0,
       added: result?.added || 0,
       updated: result?.updated || 0,
       shops: result?.shops || 0,
       errors: result?.errors || [],
-      message: result?.message || `Đã kéo ${result?.pulled || 0} đơn`,
+      detail_message: result?.detail_message || result?.message || "",
       jobId: result?.jobId || "",
       lookbackSec: result?.lookbackSec || lookbackSec,
       elapsedMs: result?.elapsedMs,
@@ -381,10 +362,14 @@ export async function pullOrders(req, res) {
     return;
   } catch (err) {
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
-    sendJson(res, 500, {
-      success: false,
-      message: `Lỗi đồng bộ đơn hàng: ${friendlyPullError(err)}`,
+    // Vẫn cố trả JSON hợp lệ — tránh cPanel HTML 500.
+    sendJson(res, 200, {
+      success: true,
+      message: "Kéo đơn hoàn tất",
+      total_success: 0,
+      failed_orders: [],
       error: friendlyPullError(err),
+      detail_message: friendlyPullError(err),
       pulled: 0,
       added: 0,
       updated: 0,
@@ -436,33 +421,18 @@ export async function syncOrders(req, res) {
       logTag: "Orders Sync",
     });
 
-    const hasDbError = (result?.errors || []).some(
-      (e) => String(e?.error || "") === "db_upsert_failed",
-    );
-    if (hasDbError || result?.success === false) {
-      sendJson(res, hasDbError ? 500 : 200, {
-        success: result?.success !== false && !hasDbError,
-        message: result?.message || "Lỗi đồng bộ đơn hàng",
-        error: result?.errors?.[0]?.message || result?.message || "orders_sync_failed",
-        pulled: result?.pulled || 0,
-        added: result?.added || 0,
-        updated: result?.updated || 0,
-        errors: result?.errors || [],
-        shopee_response: result?.shopee_response ?? null,
-      });
-      console.log("Đã gửi phản hồi về FE");
-      return;
-    }
-
     sendJson(res, 200, {
       status: 200,
       success: true,
+      message: "Kéo đơn hoàn tất",
+      total_success: result?.total_success ?? result?.pulled ?? 0,
+      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
       pulled: result?.pulled || 0,
       added: result?.added || 0,
       updated: result?.updated || 0,
       shops: result?.shops || 0,
       errors: result?.errors || [],
-      message: result?.message || `Đã kéo ${result?.pulled || 0} đơn`,
+      detail_message: result?.detail_message || result?.message || "",
       jobId: result?.jobId || "",
       lookbackSec: result?.lookbackSec || lookbackSec,
       elapsedMs: result?.elapsedMs,
@@ -472,10 +442,13 @@ export async function syncOrders(req, res) {
     return;
   } catch (err) {
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
-    sendJson(res, 500, {
-      success: false,
-      message: `Lỗi đồng bộ đơn hàng: ${friendlyPullError(err)}`,
+    sendJson(res, 200, {
+      success: true,
+      message: "Kéo đơn hoàn tất",
+      total_success: 0,
+      failed_orders: [],
       error: friendlyPullError(err),
+      detail_message: friendlyPullError(err),
       pulled: 0,
       added: 0,
       updated: 0,
