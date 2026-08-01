@@ -33,6 +33,7 @@ function getRedis(): Redis | null {
       enableReadyCheck: true,
       lazyConnect: true,
       connectTimeout: 3_000,
+      commandTimeout: 2_000,
       retryStrategy(times) {
         if (times > 3) {
           redisDisabled = true;

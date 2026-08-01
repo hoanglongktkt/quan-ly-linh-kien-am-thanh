@@ -22,7 +22,13 @@ export async function mapWithConcurrency(items, concurrency, worker) {
     while (true) {
       const i = next++;
       if (i >= n) return;
-      results[i] = await worker(items[i], i);
+      try {
+        results[i] = await worker(items[i], i);
+      } catch (err) {
+        // Không để 1 item reject làm Promise.all chết cả pool (treo/dở dang runner).
+        results[i] = undefined;
+        console.error("[mapWithConcurrency] worker error at index", i, err);
+      }
     }
   });
   await Promise.all(runners);

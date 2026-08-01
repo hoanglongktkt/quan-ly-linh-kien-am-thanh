@@ -108732,7 +108732,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
       "Pull START",
       `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking3} longLookback=${longLookback}`
     );
-    for (const shopId of shopIds) {
+    await mapWithConcurrency(shopIds, 3, async (shopId) => {
       if (Date.now() >= deadlineAt) {
         syncDiag("DEADLINE HIT \u2014 stop before next shop", `remaining skipped after ${shopId}`);
         errors.push({
@@ -108740,7 +108740,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
           message: `H\u1EBFt th\u1EDDi gian pull tr\u01B0\u1EDBc shop ${shopId}`,
           shopId
         });
-        break;
+        return;
       }
       const shopDeadlineAt = Math.min(deadlineAt, Date.now() + perShopBudgetMs);
       try {
@@ -108750,7 +108750,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
           const msg = `Shop ${shopId}: kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token (h\u1EBFt h\u1EA1n / thi\u1EBFu refresh_token)`;
           console.error(`[Orders Pull] ${msg}`);
           errors.push({ shopId, error: "no_valid_access_token", message: msg });
-          continue;
+          return;
         }
         const listCollect = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
           lookbackSec,
@@ -108798,7 +108798,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
           );
         }
         syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
-        if (orderSnList.length === 0) continue;
+        if (orderSnList.length === 0) return;
         for (let i2 = 0; i2 < orderSnList.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
           assertOrdersPullDeadline(shopDeadlineAt, `detail chunk shop=${shopId} offset=${i2}`);
           const chunkSns = orderSnList.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
@@ -108890,7 +108890,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
             error: "pull_shop_deadline",
             message: shopErr.message
           });
-          continue;
+          return;
         }
         console.error(`[Orders Pull] Shop ${shopId} exception:`, shopErr?.message || shopErr, shopErr?.stack || "");
         errors.push({
@@ -108899,7 +108899,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
           message: shopErr?.message || String(shopErr)
         });
       }
-    }
+    });
     if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
       try {
         const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
@@ -111261,9 +111261,8 @@ function dedupeShopeeParentVariantRows(products) {
 }
 var SHOPEE_LOGISTICS_TIMEOUT_MS = 5e3;
 var SHIP_ORDER_OPERATION_TIMEOUT_MS = 8e3;
-var SHIP_ORDER_BATCH_CONCURRENCY = 20;
-var SHIP_ORDER_CHUNK_SIZE = 25;
-var SHIP_ORDER_CHUNK_PAUSE_MS = 50;
+var SHIP_ORDER_CHUNK_SIZE = 15;
+var SHIP_ORDER_CHUNK_PAUSE_MS = 300;
 var shopeeAddressListMemCache = /* @__PURE__ */ new Map();
 var shopeeAddressListInflight = /* @__PURE__ */ new Map();
 var SHOPEE_ADDRESS_LIST_MEM_TTL_MS = 10 * 60 * 1e3;
@@ -113660,37 +113659,45 @@ async function ensureTrackingBeforePrint(orders, targetOrders, opts) {
       console.error(`[Shopee Print Gate] Kh\xF4ng c\xF3 access_token shop_id=${shopId}`);
       continue;
     }
-    for (const o of groupOrders) {
-      try {
-        console.log(
-          `[Shopee Print Gate] \u0110\u01A1n ${o.orderSn} thi\u1EBFu tracking_no \u2014 g\u1ECDi get_tracking_number (light, retries=${retries})...`
-        );
-        await enrichShopeeOrderTrackingFromApi(shopId, accessToken, o, {
-          retries,
-          light: true
-        });
-        const idx = orders.findIndex((x2) => String(x2.orderSn) === String(o.orderSn));
-        if (idx >= 0) {
-          orders[idx].trackingNumber = o.trackingNumber;
-          orders[idx].tracking_no = o.tracking_no || o.trackingNumber;
-          orders[idx].internalTrackingCode = o.internalTrackingCode;
-          orders[idx].packageNumber = o.packageNumber || orders[idx].packageNumber;
-        }
-        if (hasUsableShopeeTrackingNumber(o)) {
-          filled++;
-          await persistOrderTrackingToDb(o);
-          console.log(
-            `[Shopee Print Gate] OK order_sn=${o.orderSn} tracking_no=${o.trackingNumber}`
-          );
-        } else {
-          console.error(
-            `[Shopee Print Gate] V\u1EAAN thi\u1EBFu tracking_no order_sn=${o.orderSn} sau ${retries} l\u1EA7n th\u1EED`
-          );
-        }
-      } catch (error) {
-        console.error("L\u1ED7i 1 \u0111\u01A1n:", error);
+    const CHUNK_SIZE = 15;
+    for (let i2 = 0; i2 < groupOrders.length; i2 += CHUNK_SIZE) {
+      const chunk = groupOrders.slice(i2, i2 + CHUNK_SIZE);
+      await Promise.all(
+        chunk.map(async (o) => {
+          try {
+            console.log(
+              `[Shopee Print Gate] \u0110\u01A1n ${o.orderSn} thi\u1EBFu tracking_no \u2014 g\u1ECDi get_tracking_number (light, retries=${retries})...`
+            );
+            await enrichShopeeOrderTrackingFromApi(shopId, accessToken, o, {
+              retries,
+              light: true
+            });
+            const idx = orders.findIndex((x2) => String(x2.orderSn) === String(o.orderSn));
+            if (idx >= 0) {
+              orders[idx].trackingNumber = o.trackingNumber;
+              orders[idx].tracking_no = o.tracking_no || o.trackingNumber;
+              orders[idx].internalTrackingCode = o.internalTrackingCode;
+              orders[idx].packageNumber = o.packageNumber || orders[idx].packageNumber;
+            }
+            if (hasUsableShopeeTrackingNumber(o)) {
+              filled++;
+              await persistOrderTrackingToDb(o);
+              console.log(
+                `[Shopee Print Gate] OK order_sn=${o.orderSn} tracking_no=${o.trackingNumber}`
+              );
+            } else {
+              console.error(
+                `[Shopee Print Gate] V\u1EAAN thi\u1EBFu tracking_no order_sn=${o.orderSn} sau ${retries} l\u1EA7n th\u1EED`
+              );
+            }
+          } catch (error) {
+            console.error("L\u1ED7i 1 \u0111\u01A1n:", error);
+          }
+        })
+      );
+      if (i2 + CHUNK_SIZE < groupOrders.length) {
+        await sleep2(300);
       }
-      await sleep2(PRINT_API_DELAY_MS);
     }
   }
   if (filled > 0) {
@@ -116933,7 +116940,7 @@ async function startServer() {
     const failedOrders = [];
     let completedCount = 0;
     console.log(
-      `[Ship Order Bulk] B\u1EAFt \u0111\u1EA7u x\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n \u2014 concurrency=${SHIP_ORDER_BATCH_CONCURRENCY} chunk=${SHIP_ORDER_CHUNK_SIZE} timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms skipRecover=true (kh\xF4ng enrich/tracking/retry).`
+      `[Ship Order Bulk] B\u1EAFt \u0111\u1EA7u x\xE1c nh\u1EADn ${toShip.length} \u0111\u01A1n \u2014 chunk=${SHIP_ORDER_CHUNK_SIZE} Promise.all + pause=${SHIP_ORDER_CHUNK_PAUSE_MS}ms timeout=${SHIP_ORDER_OPERATION_TIMEOUT_MS}ms skipRecover=true (kh\xF4ng enrich/tracking/retry).`
     );
     await prewarmShopeeAddressCacheForShip(toShip, shipMethod);
     const processOne = async (item, i2) => {
@@ -117054,9 +117061,15 @@ async function startServer() {
     };
     for (let chunkStart = 0; chunkStart < toShip.length; chunkStart += SHIP_ORDER_CHUNK_SIZE) {
       const chunk = toShip.slice(chunkStart, chunkStart + SHIP_ORDER_CHUNK_SIZE);
-      await mapWithConcurrency(chunk, SHIP_ORDER_BATCH_CONCURRENCY, async (item, localIdx) => {
-        await processOne(item, chunkStart + localIdx);
-      });
+      await Promise.all(
+        chunk.map(async (item, localIdx) => {
+          try {
+            await processOne(item, chunkStart + localIdx);
+          } catch (error) {
+            console.error("L\u1ED7i 1 \u0111\u01A1n (ship batch):", error);
+          }
+        })
+      );
       if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length && SHIP_ORDER_CHUNK_PAUSE_MS > 0) {
         await sleep2(SHIP_ORDER_CHUNK_PAUSE_MS);
       }
@@ -118102,91 +118115,99 @@ async function startServer() {
         job.message = completedCount > 0 ? `\u0110ang x\xE1c nh\u1EADn ${completedCount}/${toShip.length} \u0111\u01A1n l\xEAn s\xE0n...` : "\u0110ang g\u1ECDi API Shopee...";
         job.updatedAt = Date.now();
       };
-      const settled = await Promise.allSettled(
-        toShip.map(async ({ index, order }) => {
-          const resolvedShopId = resolveOrderShopId(order);
-          if (resolvedShopId && !order.shopId) {
-            orders[index].shopId = resolvedShopId;
-            order.shopId = resolvedShopId;
-          }
-          let result;
-          try {
-            result = await withOperationTimeout(
-              (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
-              SHIP_ORDER_OPERATION_TIMEOUT_MS,
-              `Ship order ${order.orderSn}`
-            );
-          } catch (error) {
-            result = {
-              success: false,
-              error: /timeout/i.test(String(error?.message || "")) ? "timeout" : "internal_server_error",
-              message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + (error?.message || String(error))
+      const settled = [];
+      for (let chunkStart = 0; chunkStart < toShip.length; chunkStart += SHIP_ORDER_CHUNK_SIZE) {
+        const chunk = toShip.slice(chunkStart, chunkStart + SHIP_ORDER_CHUNK_SIZE);
+        const chunkSettled = await Promise.allSettled(
+          chunk.map(async ({ index, order }) => {
+            const resolvedShopId = resolveOrderShopId(order);
+            if (resolvedShopId && !order.shopId) {
+              orders[index].shopId = resolvedShopId;
+              order.shopId = resolvedShopId;
+            }
+            let result;
+            try {
+              result = await withOperationTimeout(
+                (signal) => arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+                SHIP_ORDER_OPERATION_TIMEOUT_MS,
+                `Ship order ${order.orderSn}`
+              );
+            } catch (error) {
+              result = {
+                success: false,
+                error: /timeout/i.test(String(error?.message || "")) ? "timeout" : "internal_server_error",
+                message: "L\u1ED7i n\u1ED9i b\u1ED9 server: " + (error?.message || String(error))
+              };
+            }
+            const alreadyProcessedOnShopee = !result.success && isAlreadyShippedError(result);
+            const treatedAsSuccess = result.success || alreadyProcessedOnShopee;
+            const pendingTrap = !treatedAsSuccess && isShopeePendingVerificationError(result);
+            let patched = orders[index];
+            if (pendingTrap) {
+              patched = markOrderPendingShopeeCheck(
+                orders[index],
+                result.message || result.error || "Order is pending verification"
+              );
+              orders[index] = patched;
+            } else if (treatedAsSuccess) {
+              const tn = String(
+                order.trackingNumber || order.tracking_no || result.trackingNumber || orders[index].trackingNumber || ""
+              ).trim();
+              patched = {
+                ...orders[index],
+                ...order,
+                isPrepared: true,
+                status: "processed",
+                is_pending_shopee_check: false,
+                fulfillment_type: shipMethod,
+                ship_method: shipMethod,
+                trackingNumber: tn || orders[index].trackingNumber,
+                tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
+                shopId: orders[index].shopId || order.shopId || result.shopId || resolvedShopId,
+                shopee_order_status: alreadyProcessedOnShopee ? "READY_TO_SHIP" : order.shopee_order_status === "READY_TO_SHIP" || order.shopee_order_status === "RETRY_SHIP" || !order.shopee_order_status ? "PROCESSED" : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
+                shopeeSyncPending: false,
+                shopeeSyncError: void 0
+              };
+              forceHealPickupOrderIfHasTracking(patched);
+              orders[index] = patched;
+              fireCreateShippingDocumentInBackground(String(patched.shopId || resolvedShopId || ""), String(patched.orderSn || ""), {
+                packageNumber: String(patched.packageNumber || "").trim() || void 0,
+                trackingNumber: tn || void 0
+              });
+            } else {
+              patched = {
+                ...orders[index],
+                status: "unprocessed",
+                isPrepared: false,
+                shopeeSyncPending: false,
+                shopeeSyncError: result.message || result.error || "Kh\xF4ng \u0111\u1ED3ng b\u1ED9 \u0111\u01B0\u1EE3c Shopee"
+              };
+              orders[index] = patched;
+            }
+            const jobResult = {
+              orderId: order.id,
+              orderSn: order.orderSn,
+              success: treatedAsSuccess,
+              pendingShopeeCheck: pendingTrap,
+              alreadyShipped: alreadyProcessedOnShopee,
+              patched,
+              error: result.error,
+              message: result.message,
+              mode: result.mode,
+              shopId: result.shopId,
+              trackingNumber: result.trackingNumber,
+              skipped: result.skipped
             };
-          }
-          const alreadyProcessedOnShopee = !result.success && isAlreadyShippedError(result);
-          const treatedAsSuccess = result.success || alreadyProcessedOnShopee;
-          const pendingTrap = !treatedAsSuccess && isShopeePendingVerificationError(result);
-          let patched = orders[index];
-          if (pendingTrap) {
-            patched = markOrderPendingShopeeCheck(
-              orders[index],
-              result.message || result.error || "Order is pending verification"
-            );
-            orders[index] = patched;
-          } else if (treatedAsSuccess) {
-            const tn = String(
-              order.trackingNumber || order.tracking_no || result.trackingNumber || orders[index].trackingNumber || ""
-            ).trim();
-            patched = {
-              ...orders[index],
-              ...order,
-              isPrepared: true,
-              status: "processed",
-              is_pending_shopee_check: false,
-              fulfillment_type: shipMethod,
-              ship_method: shipMethod,
-              trackingNumber: tn || orders[index].trackingNumber,
-              tracking_no: tn || orders[index].tracking_no || orders[index].trackingNumber,
-              shopId: orders[index].shopId || order.shopId || result.shopId || resolvedShopId,
-              shopee_order_status: alreadyProcessedOnShopee ? "READY_TO_SHIP" : order.shopee_order_status === "READY_TO_SHIP" || order.shopee_order_status === "RETRY_SHIP" || !order.shopee_order_status ? "PROCESSED" : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED",
-              shopeeSyncPending: false,
-              shopeeSyncError: void 0
-            };
-            forceHealPickupOrderIfHasTracking(patched);
-            orders[index] = patched;
-            fireCreateShippingDocumentInBackground(String(patched.shopId || resolvedShopId || ""), String(patched.orderSn || ""), {
-              packageNumber: String(patched.packageNumber || "").trim() || void 0,
-              trackingNumber: tn || void 0
-            });
-          } else {
-            patched = {
-              ...orders[index],
-              status: "unprocessed",
-              isPrepared: false,
-              shopeeSyncPending: false,
-              shopeeSyncError: result.message || result.error || "Kh\xF4ng \u0111\u1ED3ng b\u1ED9 \u0111\u01B0\u1EE3c Shopee"
-            };
-            orders[index] = patched;
-          }
-          const jobResult = {
-            orderId: order.id,
-            orderSn: order.orderSn,
-            success: treatedAsSuccess,
-            pendingShopeeCheck: pendingTrap,
-            alreadyShipped: alreadyProcessedOnShopee,
-            patched,
-            error: result.error,
-            message: result.message,
-            mode: result.mode,
-            shopId: result.shopId,
-            trackingNumber: result.trackingNumber,
-            skipped: result.skipped
-          };
-          job.results = [...job.results, jobResult];
-          bumpProgress();
-          return jobResult;
-        })
-      );
+            job.results = [...job.results, jobResult];
+            bumpProgress();
+            return jobResult;
+          })
+        );
+        settled.push(...chunkSettled);
+        if (chunkStart + SHIP_ORDER_CHUNK_SIZE < toShip.length) {
+          await sleep2(SHIP_ORDER_CHUNK_PAUSE_MS);
+        }
+      }
       const results = [];
       const failedOrders = [];
       const mongoPatches = [];
