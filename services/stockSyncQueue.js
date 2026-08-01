@@ -20,7 +20,13 @@ let deps = {
   applyShopeeLinkFieldsToProduct: (product) => product,
   readChannelListingsDb: async () => [],
   resolveShopeeTokenShopId: () => null,
+  getShopeeUnauthorizedShopMessage: () =>
+    "Chưa có shop Shopee được ủy quyền. Vào mục Cài đặt → Ủy quyền lại Shop Shopee.",
   getValidShopeeAccessToken: async () => null,
+  withShopeeAccessTokenRetry: async (_shopId, runner) => runner(null),
+  isShopeeInvalidTokenError: () => false,
+  resolveShopeeShopForItemId: async () => null,
+  loadShopeeTokens: () => ({}),
   productRequiresShopeeModelId: () => false,
   resolveShopeeModelIdFromApi: async () => ({ hasModel: false, modelId: null }),
   appendShopeeSyncErrorToDb: async () => {},
@@ -107,6 +113,12 @@ export async function resolveProductWithShopeeMapping(product) {
             modelId: match.modelId ?? match.shopeeModelId ?? current.shopeeModelId,
             itemId: match.itemId ?? deps.getShopeeItemIdForStockPush(current),
           });
+          // Giữ shop_id từ mapping nếu có — dùng khi multi-shop.
+          const listingShop =
+            match.shopId ?? match.shop_id ?? match.channelShopId ?? null;
+          if (listingShop != null && String(listingShop).trim()) {
+            current = { ...current, shopeeShopId: String(listingShop).trim() };
+          }
         }
       }
     }
@@ -116,85 +128,129 @@ export async function resolveProductWithShopeeMapping(product) {
   return current;
 }
 
-export async function executeShopeeStockPriceSyncJob(product, opts) {
-  const mapped = await resolveProductWithShopeeMapping(product);
-  if (!mapped) {
-    return { ok: false, message: "Chưa liên kết Mapping Shopee — bỏ qua sync." };
-  }
-
-  const shopId = deps.resolveShopeeTokenShopId(opts.shopId);
-  if (!shopId) {
-    return { ok: false, message: "Chưa có shop Shopee được ủy quyền." };
-  }
-  const accessToken = await deps.getValidShopeeAccessToken(shopId);
-  if (!accessToken) {
-    return { ok: false, message: `Chưa có access_token hợp lệ cho shop_id=${shopId}.` };
-  }
-
+/**
+ * Resolve shop_id + access_token (auto refresh nếu access_token hết hạn 4h).
+ */
+async function resolveShopAuthForStockSync(mapped, opts) {
   const itemId = deps.getShopeeItemIdForStockPush(mapped);
-  let modelId = deps.resolveShopeeModelIdForStockPush(mapped);
-  if (itemId == null) {
-    return { ok: false, message: "Thiếu Shopee item_id sau khi resolve Mapping." };
-  }
+  const requested =
+    opts?.shopId ||
+    mapped?.shopeeShopId ||
+    mapped?.shopId ||
+    mapped?.shop_id ||
+    null;
 
-  // Fallback: lấy model_id từ get_model_list nếu thiếu (item has_model).
-  let itemHasModel = deps.productRequiresShopeeModelId(mapped, 1);
-  if (modelId == null) {
-    const fromApi = await deps.resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
-    if (fromApi.hasModel) itemHasModel = true;
-    if (fromApi.modelId != null) {
-      modelId = fromApi.modelId;
-      mapped.shopeeModelId = String(fromApi.modelId);
+  let shopId = deps.resolveShopeeTokenShopId(requested);
+  const tokenKeys = Object.keys(deps.loadShopeeTokens() || {});
+
+  console.log(
+    `[Shopee Sync] Auth resolve: requested=${requested || "(none)"} resolved=${shopId || "(null)"} tokens=[${tokenKeys.join(", ") || "empty"}] item_id=${itemId ?? "?"}`,
+  );
+
+  if (!shopId) {
+    if (!tokenKeys.length) {
+      const msg = deps.getShopeeUnauthorizedShopMessage();
+      console.error(`[Shopee Sync] ${msg}`);
+      return { ok: false, message: msg };
     }
-  }
-
-  if (itemHasModel && modelId == null) {
-    const msg =
-      "Phân loại (variant) thiếu model_id — bắt buộc truyền item_id + model_id khi update_stock";
-    await deps.appendShopeeSyncErrorToDb({
-      itemId,
-      modelId: undefined,
-      sku: mapped.sku,
-      shopId,
-      action: "update_stock",
-      error: msg,
-      productId: mapped.id,
-    });
+    // Multi-shop / resolve thất bại — tìm shop sở hữu item_id.
+    if (itemId != null) {
+      try {
+        console.log(`[Shopee Sync] Fallback resolveShopeeShopForItemId item_id=${itemId}...`);
+        const found = await deps.resolveShopeeShopForItemId(itemId, undefined);
+        if (found?.shopId && found?.accessToken) {
+          console.log(`[Shopee Sync] Tìm thấy item trên shop_id=${found.shopId}`);
+          return { ok: true, shopId: found.shopId, accessToken: found.accessToken };
+        }
+      } catch (err) {
+        console.error(`[Shopee Sync] resolveShopeeShopForItemId lỗi:`, err?.message || err);
+      }
+    }
+    const msg = deps.getShopeeUnauthorizedShopMessage();
+    console.error(`[Shopee Sync] Không resolve được shop. ${msg}`);
     return { ok: false, message: msg };
   }
 
-  const locationId = opts.syncStock
-    ? await deps.resolveShopeeStockLocationId(shopId, accessToken)
-    : null;
-
-  const lines = [];
-
-  if (opts.syncStock) {
-    const stockEntry = deps.buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
-    try {
-      const stockResult = await deps.shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
-      const parsed = deps.parseShopeeApiResult(stockResult, mapped, "update_stock");
-      lines.push(parsed.message);
-      if (!parsed.success) {
-        await deps.appendShopeeSyncErrorToDb({
-          itemId,
-          modelId: modelId ?? mapped.shopeeModelId,
-          sku: mapped.sku,
-          shopId,
-          action: "update_stock",
-          error: parsed.message,
-          productId: mapped.id,
-        });
-        return { ok: false, message: parsed.message };
-      }
-    } catch (err) {
-      const msg = deps.extractShopeeStockPushErrorMessage(
-        err,
-        err instanceof Error ? err.message : String(err),
+  try {
+    console.log(
+      `[Shopee Sync] getValidShopeeAccessToken shop_id=${shopId} (refresh nếu access_token hết hạn)...`,
+    );
+    let accessToken = await deps.getValidShopeeAccessToken(shopId);
+    if (!accessToken && itemId != null) {
+      console.warn(
+        `[Shopee Sync] Token shop_id=${shopId} thất bại — thử resolveShopeeShopForItemId...`,
       );
+      const found = await deps.resolveShopeeShopForItemId(itemId, shopId);
+      if (found?.shopId && found?.accessToken) {
+        return { ok: true, shopId: found.shopId, accessToken: found.accessToken };
+      }
+    }
+    if (!accessToken) {
+      const msg = `Không lấy được access_token hợp lệ cho shop_id=${shopId} (token hết hạn và refresh thất bại). Vào mục Cài đặt → Ủy quyền lại Shop Shopee.`;
+      console.error(`[Shopee Sync] ${msg}`);
+      return { ok: false, message: msg };
+    }
+    console.log(`[Shopee Sync] access_token OK shop_id=${shopId}`);
+    return { ok: true, shopId, accessToken };
+  } catch (err) {
+    const msg =
+      err?.message ||
+      `Lỗi lấy/refresh token Shopee shop_id=${shopId}. Vào mục Cài đặt → Ủy quyền lại Shop.`;
+    console.error(`[Shopee Sync] Exception resolve auth:`, err);
+    return { ok: false, message: msg };
+  }
+}
+
+function isAuthFailResult(result) {
+  if (!result || typeof result !== "object") return false;
+  if (Number(result.httpStatus) === 401 || Number(result.httpStatus) === 403) return true;
+  return deps.isShopeeInvalidTokenError(result.error, result.message);
+}
+
+export async function executeShopeeStockPriceSyncJob(product, opts) {
+  try {
+    const mapped = await resolveProductWithShopeeMapping(product);
+    if (!mapped) {
+      return { ok: false, message: "Chưa liên kết Mapping Shopee — bỏ qua sync." };
+    }
+
+    const auth = await resolveShopAuthForStockSync(mapped, opts || {});
+    if (!auth.ok) {
+      return { ok: false, message: auth.message };
+    }
+
+    let { shopId, accessToken } = auth;
+
+    const itemId = deps.getShopeeItemIdForStockPush(mapped);
+    let modelId = deps.resolveShopeeModelIdForStockPush(mapped);
+    if (itemId == null) {
+      return { ok: false, message: "Thiếu Shopee item_id sau khi resolve Mapping." };
+    }
+
+    // Fallback: lấy model_id từ get_model_list nếu thiếu (item has_model).
+    let itemHasModel = deps.productRequiresShopeeModelId(mapped, 1);
+    if (modelId == null) {
+      try {
+        const fromApi = await deps.resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
+        if (fromApi.hasModel) itemHasModel = true;
+        if (fromApi.modelId != null) {
+          modelId = fromApi.modelId;
+          mapped.shopeeModelId = String(fromApi.modelId);
+        }
+      } catch (err) {
+        console.error(
+          `[Shopee Sync] resolveShopeeModelIdFromApi lỗi shop=${shopId} item=${itemId}:`,
+          err?.message || err,
+        );
+      }
+    }
+
+    if (itemHasModel && modelId == null) {
+      const msg =
+        "Phân loại (variant) thiếu model_id — bắt buộc truyền item_id + model_id khi update_stock";
       await deps.appendShopeeSyncErrorToDb({
         itemId,
-        modelId: modelId ?? mapped.shopeeModelId,
+        modelId: undefined,
         sku: mapped.sku,
         shopId,
         action: "update_stock",
@@ -203,46 +259,128 @@ export async function executeShopeeStockPriceSyncJob(product, opts) {
       });
       return { ok: false, message: msg };
     }
-  }
 
-  if (opts.syncPrice) {
-    await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
-    const priceEntry = deps.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
-    try {
-      const priceResult = await deps.shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
-      const parsed = deps.parseShopeeApiResult(priceResult, mapped, "update_price");
-      lines.push(parsed.message);
-      if (!parsed.success) {
+    let locationId = null;
+    if (opts.syncStock) {
+      try {
+        locationId = await deps.resolveShopeeStockLocationId(shopId, accessToken);
+      } catch (err) {
+        console.warn(
+          `[Shopee Sync] resolveShopeeStockLocationId shop=${shopId}:`,
+          err?.message || err,
+        );
+      }
+    }
+
+    const lines = [];
+
+    if (opts.syncStock) {
+      const stockEntry = deps.buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
+      try {
+        console.log(
+          `[Shopee Sync] UpdateStock shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} stock=${mapped.stock}`,
+        );
+        const stockResult = await deps.withShopeeAccessTokenRetry(
+          shopId,
+          async (token) => {
+            accessToken = token || accessToken;
+            return deps.shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
+          },
+          isAuthFailResult,
+        );
+        const parsed = deps.parseShopeeApiResult(stockResult, mapped, "update_stock");
+        lines.push(parsed.message);
+        if (!parsed.success) {
+          console.error(`[Shopee Sync] UpdateStock FAIL:`, parsed.message);
+          await deps.appendShopeeSyncErrorToDb({
+            itemId,
+            modelId: modelId ?? mapped.shopeeModelId,
+            sku: mapped.sku,
+            shopId,
+            action: "update_stock",
+            error: parsed.message,
+            productId: mapped.id,
+          });
+          return { ok: false, message: parsed.message };
+        }
+        console.log(`[Shopee Sync] UpdateStock OK item_id=${itemId}`);
+      } catch (err) {
+        const msg = deps.extractShopeeStockPushErrorMessage(
+          err,
+          err instanceof Error ? err.message : String(err),
+        );
+        console.error(`[Shopee Sync] UpdateStock exception shop=${shopId} item=${itemId}:`, err);
+        await deps.appendShopeeSyncErrorToDb({
+          itemId,
+          modelId: modelId ?? mapped.shopeeModelId,
+          sku: mapped.sku,
+          shopId,
+          action: "update_stock",
+          error: msg,
+          productId: mapped.id,
+        });
+        return { ok: false, message: msg };
+      }
+    }
+
+    if (opts.syncPrice) {
+      await sleep(SHOPEE_SYNC_QUEUE_GAP_MS);
+      const priceEntry = deps.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
+      try {
+        console.log(
+          `[Shopee Sync] UpdatePrice shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} price=${mapped.sellingPrice}`,
+        );
+        const priceResult = await deps.withShopeeAccessTokenRetry(
+          shopId,
+          async (token) => {
+            accessToken = token || accessToken;
+            return deps.shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
+          },
+          isAuthFailResult,
+        );
+        const parsed = deps.parseShopeeApiResult(priceResult, mapped, "update_price");
+        lines.push(parsed.message);
+        if (!parsed.success) {
+          console.error(`[Shopee Sync] UpdatePrice FAIL:`, parsed.message);
+          await deps.appendShopeeSyncErrorToDb({
+            itemId,
+            modelId: modelId ?? mapped.shopeeModelId,
+            sku: mapped.sku,
+            shopId,
+            action: "update_price",
+            error: parsed.message,
+            productId: mapped.id,
+          });
+          return { ok: false, message: parsed.message };
+        }
+        console.log(`[Shopee Sync] UpdatePrice OK item_id=${itemId}`);
+      } catch (err) {
+        const msg = deps.extractShopeeStockPushErrorMessage(
+          err,
+          err instanceof Error ? err.message : String(err),
+        );
+        console.error(`[Shopee Sync] UpdatePrice exception shop=${shopId} item=${itemId}:`, err);
         await deps.appendShopeeSyncErrorToDb({
           itemId,
           modelId: modelId ?? mapped.shopeeModelId,
           sku: mapped.sku,
           shopId,
           action: "update_price",
-          error: parsed.message,
+          error: msg,
           productId: mapped.id,
         });
-        return { ok: false, message: parsed.message };
+        return { ok: false, message: msg };
       }
-    } catch (err) {
-      const msg = deps.extractShopeeStockPushErrorMessage(
-        err,
-        err instanceof Error ? err.message : String(err),
-      );
-      await deps.appendShopeeSyncErrorToDb({
-        itemId,
-        modelId: modelId ?? mapped.shopeeModelId,
-        sku: mapped.sku,
-        shopId,
-        action: "update_price",
-        error: msg,
-        productId: mapped.id,
-      });
-      return { ok: false, message: msg };
     }
-  }
 
-  return { ok: true, message: lines.join(" | ") || "Sync Shopee OK" };
+    return { ok: true, message: lines.join(" | ") || "Sync Shopee OK" };
+  } catch (err) {
+    console.error("[Shopee Sync] executeShopeeStockPriceSyncJob exception:", err);
+    return {
+      ok: false,
+      message: err instanceof Error ? err.message : String(err || "Lỗi đồng bộ Shopee không xác định"),
+    };
+  }
 }
 
 /** Đẩy stock/price lên Shopee ngay (không qua queue) — dùng cho PATCH sản phẩm / nút sync nhanh. */
@@ -250,18 +388,27 @@ export async function pushProductStockPriceToShopeeImmediate(product, opts) {
   if (!opts.syncStock && !opts.syncPrice) {
     return { ok: true, skipped: true, message: "Không có thay đổi tồn/giá cần đồng bộ Shopee." };
   }
-  const mapped = await resolveProductWithShopeeMapping(product);
-  if (!mapped) {
+  try {
+    const mapped = await resolveProductWithShopeeMapping(product);
+    if (!mapped) {
+      return {
+        ok: true,
+        skipped: true,
+        message: "Chưa liên kết Mapping Shopee — chỉ lưu kho nội bộ.",
+      };
+    }
+    return executeShopeeStockPriceSyncJob(mapped, {
+      syncStock: opts.syncStock,
+      syncPrice: opts.syncPrice,
+      shopId: opts.shopId,
+    });
+  } catch (err) {
+    console.error("[Shopee Sync] pushProductStockPriceToShopeeImmediate exception:", err);
     return {
-      ok: true,
-      skipped: true,
-      message: "Chưa liên kết Mapping Shopee — chỉ lưu kho nội bộ.",
+      ok: false,
+      message: err instanceof Error ? err.message : String(err || "Lỗi đồng bộ Shopee"),
     };
   }
-  return executeShopeeStockPriceSyncJob(mapped, {
-    syncStock: opts.syncStock,
-    syncPrice: opts.syncPrice,
-  });
 }
 
 export async function processShopeeSyncQueue() {
@@ -363,7 +510,6 @@ export async function enqueueShopeeStockPriceSync(products, opts) {
 
     const key = `${productId}|stock=${syncStock}|price=${syncPrice}|shop=${preferredShopId || ""}`;
     if (shopeeSyncQueueKeys.has(key)) {
-      // Merge: nếu job cũ đang chờ, giữ nguyên (đã cùng flags)
       continue;
     }
 

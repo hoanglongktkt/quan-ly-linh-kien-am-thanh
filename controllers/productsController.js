@@ -52,6 +52,8 @@ let deps = {
     staleSkus: [],
   }),
   resolveShopeeTokenShopId: () => null,
+  getShopeeUnauthorizedShopMessage: () =>
+    "Chưa có shop Shopee được ủy quyền. Vào mục Cài đặt → Ủy quyền lại Shop Shopee.",
   isShopeeConfigValid: () => false,
   isStaleShopeeItemErrorText: () => false,
   sendApiErrorJson: (res, err, status) =>
@@ -611,9 +613,12 @@ export async function syncStock(req, res) {
       });
     }
     if (!shopId) {
+      const msg = deps.getShopeeUnauthorizedShopMessage();
+      console.error(`[Sync Stock] ${msg}`);
       return res.status(400).json({
         success: false,
-        message: "Shopee: chưa có shop được ủy quyền.",
+        message: msg,
+        error: msg,
       });
     }
 
@@ -937,8 +942,10 @@ export async function bulkChannelSync(req, res) {
     let shopeeToken = null;
     if (channelList.includes("shopee")) {
       if (!shopeeShopId) {
+        const authMsg = deps.getShopeeUnauthorizedShopMessage();
+        console.error(`[Bulk Channel Sync] ${authMsg}`);
         return res.status(400).json({
-          error: "Chưa có shop Shopee được ủy quyền.",
+          error: authMsg,
           logs: products.flatMap((p) => [
             {
               productId: p.id,
@@ -946,7 +953,7 @@ export async function bulkChannelSync(req, res) {
               channel: "shopee",
               action: "auth",
               success: false,
-              message: "Chưa có shop Shopee được ủy quyền",
+              message: authMsg,
             },
           ]),
         });

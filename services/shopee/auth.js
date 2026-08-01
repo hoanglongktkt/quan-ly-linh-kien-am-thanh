@@ -1138,20 +1138,76 @@ export async function withShopeeAccessTokenRetry(shopId, runner, isAuthFailure) 
   return runner(token);
 }
 
+/**
+ * Khi không chỉ định shop_id: ưu tiên shop OAuth chính (oauth_shop_id === key),
+ * rồi shop có refresh/access token mới nhất. Multi-shop KHÔNG được trả null
+ * nếu DB vẫn còn ủy quyền — tránh báo sai "Chưa có shop được ủy quyền".
+ */
+function pickDefaultShopeeTokenShopId(tokens, keys) {
+  const usable = keys.filter((k) => {
+    const r = tokens[k];
+    return Boolean(r?.access_token || r?.refresh_token);
+  });
+  if (!usable.length) return null;
+  if (usable.length === 1) return usable[0];
+
+  const primary = usable.filter((k) => {
+    const r = tokens[k];
+    const oauth = normalizeShopIdKey(r?.oauth_shop_id);
+    return oauth && oauth === normalizeShopIdKey(k);
+  });
+  const pool = primary.length > 0 ? primary : usable;
+  pool.sort(
+    (a, b) => (Number(tokens[b]?.obtained_at) || 0) - (Number(tokens[a]?.obtained_at) || 0),
+  );
+  return pool[0] || null;
+}
+
 export function resolveShopeeTokenShopId(requested) {
   const tokens = loadShopeeTokens();
   const keys = Object.keys(tokens);
-  if (!keys.length) return null;
+  if (!keys.length) {
+    console.warn("[Shopee Auth] resolveShopeeTokenShopId: DB không có shop nào được ủy quyền (shopee_tokens trống).");
+    return null;
+  }
   const req = String(requested || "").trim();
   if (req && tokens[req]) return req;
   if (req) {
     const digits = normalizeShopIdKey(req) || req.match(/(\d{5,})/)?.[1] || "";
     if (digits && tokens[digits]) return digits;
-    // Có shop_id yêu cầu nhưng không có token riêng — KHÔNG fallback sang shop khác.
-    if (digits || req) return digits || null;
+    if (digits) {
+      const linked = getShopeeTokenRecord(tokens, digits);
+      if (linked) {
+        console.log(
+          `[Shopee Auth] resolveShopeeTokenShopId: shop_id=${digits} tìm thấy qua linked/oauth record.`,
+        );
+        return digits;
+      }
+      // Có shop_id yêu cầu nhưng không có token — KHÔNG fallback sang shop khác.
+      console.warn(
+        `[Shopee Auth] resolveShopeeTokenShopId: yêu cầu shop_id=${digits} nhưng không có token. Shops: [${keys.join(", ")}]`,
+      );
+      return digits;
+    }
+    if (req) return null;
   }
-  // Chỉ khi không truyền shop_id mới lấy shop đầu (single-shop legacy).
-  return keys.length === 1 ? keys[0] : null;
+  // Không truyền shop_id: single-shop hoặc chọn shop mặc định khi multi-shop.
+  if (keys.length === 1) return keys[0];
+  const picked = pickDefaultShopeeTokenShopId(tokens, keys);
+  console.log(
+    `[Shopee Auth] resolveShopeeTokenShopId: không chỉ định shop — chọn mặc định shop_id=${picked} (có ${keys.length} shop: [${keys.join(", ")}])`,
+  );
+  return picked;
+}
+
+/** Thông báo rõ khi DB trống / thiếu ủy quyền — hướng user vào Cài đặt. */
+export function getShopeeUnauthorizedShopMessage() {
+  const tokens = loadShopeeTokens();
+  const keys = Object.keys(tokens);
+  if (!keys.length) {
+    return "Chưa có shop Shopee được ủy quyền trong hệ thống. Vào mục Cài đặt → Ủy quyền lại Shop Shopee rồi thử đồng bộ lại.";
+  }
+  return "Không xác định được shop Shopee để đồng bộ. Vào mục Cài đặt kiểm tra ủy quyền Shop, hoặc chọn đúng shop rồi thử lại.";
 }
 
 export function describeShopeeTokenFailure(shopKey) {

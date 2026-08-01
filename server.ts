@@ -256,6 +256,7 @@ import {
   withShopeeAccessTokenRetry,
   refreshShopeeAccessTokenLocked,
   resolveShopeeTokenShopId,
+  getShopeeUnauthorizedShopMessage,
   describeShopeeTokenFailure,
   getShopeeTokenRecord,
   SHOPEE_CALLBACK_URL,
@@ -4203,10 +4204,30 @@ async function pushStockUpdatesToShopee(
 
   const preferredShopId = resolveShopeeTokenShopId(requestedShopId);
   if (!preferredShopId && !Object.keys(loadShopeeTokens()).length) {
-    return { ok: false, errors: ["Chưa có shop Shopee được ủy quyền."], warnings: [], pushed: 0, staleSkus: [] };
+    const msg = getShopeeUnauthorizedShopMessage();
+    console.error(`[Shopee Stock Push] ${msg}`);
+    return { ok: false, errors: [msg], warnings: [], pushed: 0, staleSkus: [] };
   }
 
-  const accessToken = preferredShopId ? await getValidShopeeAccessToken(preferredShopId) : null;
+  let accessToken: string | null = null;
+  if (preferredShopId) {
+    try {
+      console.log(`[Shopee Stock Push] Lấy access_token (auto-refresh nếu hết hạn) shop_id=${preferredShopId}...`);
+      accessToken = await getValidShopeeAccessToken(preferredShopId);
+      if (!accessToken) {
+        console.error(
+          `[Shopee Stock Push] Không lấy được access_token shop_id=${preferredShopId} — refresh thất bại hoặc thiếu refresh_token. Cần Ủy quyền lại Shop.`,
+        );
+      } else {
+        console.log(`[Shopee Stock Push] access_token OK shop_id=${preferredShopId}`);
+      }
+    } catch (err: any) {
+      console.error(
+        `[Shopee Stock Push] Lỗi refresh/lấy token shop_id=${preferredShopId}:`,
+        err?.message || err,
+      );
+    }
+  }
   const errors: string[] = [];
   const warnings: string[] = [];
   const staleSkus: string[] = [];
@@ -13395,7 +13416,12 @@ async function startServer() {
     applyShopeeLinkFieldsToProduct,
     readChannelListingsDb,
     resolveShopeeTokenShopId,
+    getShopeeUnauthorizedShopMessage,
     getValidShopeeAccessToken,
+    withShopeeAccessTokenRetry,
+    isShopeeInvalidTokenError,
+    resolveShopeeShopForItemId,
+    loadShopeeTokens,
     productRequiresShopeeModelId,
     resolveShopeeModelIdFromApi,
     appendShopeeSyncErrorToDb,
@@ -13439,6 +13465,7 @@ async function startServer() {
     },
     pushStockUpdatesToShopee,
     resolveShopeeTokenShopId,
+    getShopeeUnauthorizedShopMessage,
     isShopeeConfigValid,
     isStaleShopeeItemErrorText,
     sendApiErrorJson,

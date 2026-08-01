@@ -6,6 +6,7 @@ import {
   isShopeeConfigValid,
   resolveShopeeTokenShopId,
   getValidShopeeAccessToken,
+  getShopeeUnauthorizedShopMessage,
 } from "../services/shopee/auth.js";
 import { sendApiErrorJson } from "../utils/apiError.js";
 
@@ -75,7 +76,7 @@ export async function syncProducts(req, res) {
       return res.status(404).json({
         success: false,
         error: "no_shopee_shop_linked",
-        message: "Chưa có shop Shopee nào được ủy quyền.",
+        message: getShopeeUnauthorizedShopMessage(),
         details: "no_shopee_shop_linked",
       });
     }
@@ -216,7 +217,7 @@ export async function syncItemVariants(req, res) {
       return res.status(400).json({
         success: false,
         error: "no_shopee_shop",
-        message: "Chưa có shop Shopee được ủy quyền.",
+        message: getShopeeUnauthorizedShopMessage(),
         details: "no_shopee_shop",
       });
     }
@@ -350,7 +351,7 @@ export async function previewItemVariants(req, res) {
       return res.status(400).json({
         success: false,
         error: "no_shopee_shop",
-        message: "Chưa có shop Shopee được ủy quyền.",
+        message: getShopeeUnauthorizedShopMessage(),
       });
     }
 
