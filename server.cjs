@@ -17780,8 +17780,8 @@ var require_escape_html = __commonJS({
   "node_modules/escape-html/index.js"(exports2, module2) {
     "use strict";
     var matchHtmlRegExp = /["'&<>]/;
-    module2.exports = escapeHtml;
-    function escapeHtml(string) {
+    module2.exports = escapeHtml2;
+    function escapeHtml2(string) {
       var str = "" + string;
       var match2 = matchHtmlRegExp.exec(str);
       if (!match2) {
@@ -17912,7 +17912,7 @@ var require_finalhandler = __commonJS({
     "use strict";
     var debug = require_src2()("finalhandler");
     var encodeUrl = require_encodeurl();
-    var escapeHtml = require_escape_html();
+    var escapeHtml2 = require_escape_html();
     var onFinished = require_on_finished();
     var parseUrl = require_parseurl();
     var statuses = require_statuses();
@@ -17924,7 +17924,7 @@ var require_finalhandler = __commonJS({
     };
     var isFinished = onFinished.isFinished;
     function createHtmlDocument(message) {
-      var body = escapeHtml(message).replace(NEWLINE_REGEXP, "<br>").replace(DOUBLE_SPACE_REGEXP, " &nbsp;");
+      var body = escapeHtml2(message).replace(NEWLINE_REGEXP, "<br>").replace(DOUBLE_SPACE_REGEXP, " &nbsp;");
       return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Error</title>\n</head>\n<body>\n<pre>' + body + "</pre>\n</body>\n</html>\n";
     }
     module2.exports = finalhandler;
@@ -20428,7 +20428,7 @@ var require_send = __commonJS({
     var deprecate3 = require_depd()("send");
     var destroy = require_destroy();
     var encodeUrl = require_encodeurl();
-    var escapeHtml = require_escape_html();
+    var escapeHtml2 = require_escape_html();
     var etag = require_etag();
     var fresh = require_fresh();
     var fs17 = require("fs");
@@ -20528,7 +20528,7 @@ var require_send = __commonJS({
       }
       var res = this.res;
       var msg = statuses.message[status] || String(status);
-      var doc = createHtmlDocument("Error", escapeHtml(msg));
+      var doc = createHtmlDocument("Error", escapeHtml2(msg));
       clearHeaders(res);
       if (err && err.headers) {
         setHeaders(res, err.headers);
@@ -20628,7 +20628,7 @@ var require_send = __commonJS({
         return;
       }
       var loc = encodeUrl(collapseLeadingSlashes(this.path + "/"));
-      var doc = createHtmlDocument("Redirecting", "Redirecting to " + escapeHtml(loc));
+      var doc = createHtmlDocument("Redirecting", "Redirecting to " + escapeHtml2(loc));
       res.statusCode = 301;
       res.setHeader("Content-Type", "text/html; charset=UTF-8");
       res.setHeader("Content-Length", Buffer.byteLength(doc));
@@ -23217,7 +23217,7 @@ var require_response = __commonJS({
     var createError = require_http_errors();
     var deprecate3 = require_depd()("express");
     var encodeUrl = require_encodeurl();
-    var escapeHtml = require_escape_html();
+    var escapeHtml2 = require_escape_html();
     var http3 = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
@@ -23623,7 +23623,7 @@ var require_response = __commonJS({
           body = statuses.message[status] + ". Redirecting to " + address;
         },
         html: function() {
-          var u = escapeHtml(address);
+          var u = escapeHtml2(address);
           body = "<p>" + statuses.message[status] + ". Redirecting to " + u + "</p>";
         },
         default: function() {
@@ -23755,7 +23755,7 @@ var require_serve_static = __commonJS({
   "node_modules/serve-static/index.js"(exports2, module2) {
     "use strict";
     var encodeUrl = require_encodeurl();
-    var escapeHtml = require_escape_html();
+    var escapeHtml2 = require_escape_html();
     var parseUrl = require_parseurl();
     var resolve = require("path").resolve;
     var send = require_send();
@@ -23842,7 +23842,7 @@ var require_serve_static = __commonJS({
         originalUrl.path = null;
         originalUrl.pathname = collapseLeadingSlashes(originalUrl.pathname + "/");
         var loc = encodeUrl(url.format(originalUrl));
-        var doc = createHtmlDocument("Redirecting", "Redirecting to " + escapeHtml(loc));
+        var doc = createHtmlDocument("Redirecting", "Redirecting to " + escapeHtml2(loc));
         res.statusCode = 301;
         res.setHeader("Content-Type", "text/html; charset=UTF-8");
         res.setHeader("Content-Length", Buffer.byteLength(doc));
@@ -76377,7 +76377,7 @@ function resolveShopeeCallbackUrl() {
   return `${APP_BASE_URL}/api/shopee/callback`;
 }
 var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
-var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
+var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
 var deps2 = {
   ensureDataDirs: () => {
     import_fs5.default.mkdirSync(import_path5.default.join(APP_ROOT, "data"), { recursive: true });
@@ -98629,7 +98629,7 @@ var import_mongoose4 = __toESM(require("mongoose"), 1);
 function dbReadyMiddleware(req, res, next) {
   const pathName = String(req.path || req.originalUrl || "").split("?")[0];
   if (!pathName.startsWith("/api/")) return next();
-  const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/auth/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName === "/api/webhook/shopee" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
+  const allowWithoutDb = pathName === "/api/login" || pathName.startsWith("/api/health") || pathName.startsWith("/api/auth/") || pathName === "/api/shopee/callback" || pathName === "/api/shopee/oauth/complete" || pathName === "/api/shopee/webhook" || pathName.startsWith("/api/public/") || pathName.startsWith("/api/shopee/ship-order") || pathName === "/api/shopee/print-document";
   if (allowWithoutDb) return next();
   if (import_mongoose4.default.connection.readyState !== 1) {
     return res.status(503).json({
@@ -101336,7 +101336,7 @@ function resolveShopeeCallbackUrl2() {
   return `${APP_BASE_URL2}/api/shopee/callback`;
 }
 var SHOPEE_CALLBACK_URL2 = resolveShopeeCallbackUrl2();
-var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL2}/api/webhook/shopee`;
+var SHOPEE_WEBHOOK_URL2 = `${APP_BASE_URL2}/api/shopee/webhook`;
 var SHOPEE_CALLBACK_IDLE_MSG = "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 var SHOPEE_ENV = (process.env.SHOPEE_ENV || "live").toLowerCase();
 var SHOPEE_HOST = "https://partner.shopeemobile.com";
@@ -101664,6 +101664,9 @@ function persistOAuthTokens(authJson, opts) {
     console.log("DEBUG SAVE: Saving data for shop:", id, "Full Data:", JSON.stringify(updates[id]));
   }
   saveShopeeTokens(updates);
+  for (const id of shopIds) {
+    console.log("L\u01B0u token th\xE0nh c\xF4ng cho shop: ", id);
+  }
   const saved = [...shopIds];
   const tokensData = normalizeTokenStore(loadShopeeTokens());
   console.log(
@@ -105732,10 +105735,15 @@ async function oauthComplete(req, res) {
       mainAccountIdRaw: mainAccountIdRaw || void 0,
       expectedShopId: expectedShop || void 0
     });
+    if (result.success) {
+      for (const id of result.saved_shop_ids || []) {
+        console.log("L\u01B0u token th\xE0nh c\xF4ng cho shop: ", id);
+      }
+    }
     console.log("[Shopee OAuth Complete] K\u1EBET QU\u1EA2", JSON.stringify(result));
     return res.status(result.success ? 200 : 400).json({
       ...result,
-      message: result.success ? `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho shop ${result.oauth_shop_id}.` : result.message || result.error || "OAuth th\u1EA5t b\u1EA1i",
+      message: result.success ? `\u1EE6y quy\u1EC1n th\xE0nh c\xF4ng, b\u1EA1n c\xF3 th\u1EC3 \u0111\xF3ng tab n\xE0y. Token \u0111\xE3 l\u01B0u cho shop ${result.oauth_shop_id}.` : result.message || result.error || "OAuth th\u1EA5t b\u1EA1i",
       tokens_path: SHOPEE_TOKENS_PATH
     });
   } catch (error) {
@@ -105781,12 +105789,9 @@ async function oauthCallback(req, res) {
     console.error(
       `[Shopee Callback] shop_id/main_account_id kh\xF4ng h\u1EE3p l\u1EC7: shop_id=${shopIdRaw}, main_account_id=${mainAccountIdRaw}`
     );
-    return res.status(400).json({
-      success: false,
-      error: "invalid_shop_id",
-      message: `Shop ID / Main Account ID kh\xF4ng h\u1EE3p l\u1EC7`,
-      tokens_path: SHOPEE_TOKENS_PATH
-    });
+    return res.status(400).type("text/html; charset=utf-8").send(
+      "<!doctype html><html><body><h2>\u1EE6y quy\u1EC1n th\u1EA5t b\u1EA1i</h2><p>Shop ID / Main Account ID kh\xF4ng h\u1EE3p l\u1EC7.</p></body></html>"
+    );
   }
   try {
     const result = await completeShopeeOAuthFlow(code, {
@@ -105796,27 +105801,48 @@ async function oauthCallback(req, res) {
     });
     if (!result.success) {
       console.error(`[Shopee Callback] \u0110\u1ED5i code th\u1EA5t b\u1EA1i:`, result.error, result.message);
+      if (queryParamOne(req.query.format) === "json") {
+        return res.status(400).json({
+          ...result,
+          message: result.message || result.error || "token_exchange_failed",
+          tokens_path: SHOPEE_TOKENS_PATH
+        });
+      }
       if (shouldOAuthRedirectToFrontend(req)) {
         return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
       }
-      return res.status(400).json({
-        ...result,
-        message: result.message || result.error || "token_exchange_failed",
-        tokens_path: SHOPEE_TOKENS_PATH
-      });
+      const errMsg = result.message || result.error || "token_exchange_failed";
+      return res.status(400).type("text/html; charset=utf-8").send(
+        `<!doctype html><html><head><meta charset="utf-8"><title>OAuth th\u1EA5t b\u1EA1i</title></head><body style="font-family:sans-serif;padding:2rem"><h2>\u1EE6y quy\u1EC1n th\u1EA5t b\u1EA1i</h2><p>${escapeHtml(errMsg)}</p><p>B\u1EA1n c\xF3 th\u1EC3 \u0111\xF3ng tab n\xE0y v\xE0 th\u1EED OAuth l\u1EA1i.</p></body></html>`
+      );
+    }
+    const savedIds = Array.isArray(result.saved_shop_ids) ? result.saved_shop_ids : [];
+    for (const id of savedIds) {
+      console.log("L\u01B0u token th\xE0nh c\xF4ng cho shop: ", id);
     }
     console.log(
-      `[Shopee Callback] OAuth OK. Token \u0111\xE3 l\u01B0u cho: [${result.saved_shop_ids.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`
+      `[Shopee Callback] OAuth OK. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`
     );
-    if (shouldOAuthRedirectToFrontend(req)) {
-      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
+    if (queryParamOne(req.query.format) === "json") {
+      return res.status(200).json({
+        ...result,
+        message: result.message || `\u1EE6y quy\u1EC1n th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${savedIds.join(", ")}].`,
+        tokens_path: SHOPEE_TOKENS_PATH,
+        callback_url: SHOPEE_CALLBACK_URL2
+      });
     }
-    return res.status(200).json({
-      ...result,
-      message: result.message || `OAuth th\xE0nh c\xF4ng. Token \u0111\xE3 l\u01B0u cho: [${result.saved_shop_ids.join(", ")}].`,
-      tokens_path: SHOPEE_TOKENS_PATH,
-      callback_url: SHOPEE_CALLBACK_URL2
-    });
+    const frontendUrl = buildOAuthFrontendRedirectUrl(req, result);
+    const shopLabel = savedIds.join(", ") || result.oauth_shop_id || oauthShopId || mainAccountId || "";
+    return res.status(200).type("text/html; charset=utf-8").send(
+      `<!doctype html><html><head><meta charset="utf-8"><title>\u1EE6y quy\u1EC1n th\xE0nh c\xF4ng</title>
+<meta http-equiv="refresh" content="2;url=${escapeHtml(frontendUrl)}">
+<style>body{font-family:system-ui,sans-serif;padding:2.5rem;max-width:32rem;margin:auto;color:#111}h1{color:#059669;font-size:1.35rem}a{color:#2563eb}</style>
+</head><body>
+<h1>\u1EE6y quy\u1EC1n th\xE0nh c\xF4ng, b\u1EA1n c\xF3 th\u1EC3 \u0111\xF3ng tab n\xE0y</h1>
+<p>Token \u0111\xE3 l\u01B0u cho shop: <strong>${escapeHtml(String(shopLabel))}</strong>.</p>
+<p>\u0110ang chuy\u1EC3n v\u1EC1 trang qu\u1EA3n l\xFD\u2026 <a href="${escapeHtml(frontendUrl)}">b\u1EA5m v\xE0o \u0111\xE2y</a> n\u1EBFu kh\xF4ng t\u1EF1 chuy\u1EC3n.</p>
+</body></html>`
+    );
   } catch (error) {
     deps17.logOAuthSaveError("Shopee Callback", error);
     saveOAuthAudit({
@@ -105833,14 +105859,22 @@ async function oauthCallback(req, res) {
       message: error?.message || "L\u1ED7i x\u1EED l\xFD OAuth callback",
       oauth_shop_id: oauthShopId
     };
+    if (queryParamOne(req.query.format) === "json") {
+      return res.status(500).json({
+        ...failResult,
+        tokens_path: SHOPEE_TOKENS_PATH
+      });
+    }
     if (shouldOAuthRedirectToFrontend(req)) {
       return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
     }
-    return res.status(500).json({
-      ...failResult,
-      tokens_path: SHOPEE_TOKENS_PATH
-    });
+    return res.status(500).type("text/html; charset=utf-8").send(
+      `<!doctype html><html><body><h2>\u1EE6y quy\u1EC1n th\u1EA5t b\u1EA1i</h2><p>${escapeHtml(failResult.message)}</p></body></html>`
+    );
   }
+}
+function escapeHtml(s2) {
+  return String(s2 || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 function webhookProbe(req, res) {
   logShopeeIngress("[Shopee Webhook]", req);
@@ -105909,8 +105943,6 @@ router14.get("/webhook", webhookProbe);
 router14.get("/oauth-shops", authMiddleware, listOauthShops);
 router14.get("/auth-url", authMiddleware, getAuthUrl);
 var shopeeAuthRoutes_default = router14;
-var shopeeAuthCallbackAlias = (0, import_express15.Router)();
-shopeeAuthCallbackAlias.get("/callback", oauthCallback);
 
 // routes/shopeeOrdersRoutes.js
 var import_express16 = __toESM(require_express2(), 1);
@@ -106750,7 +106782,6 @@ var productsRoutes = asRouter(productsRoutes_default);
 var mappingRoutes = asRouter(mappingRoutes_default);
 var ordersRoutes = asRouter(ordersRoutes_default);
 var shopeeAuthRoutes = asRouter(shopeeAuthRoutes_default);
-var shopeeAuthCallbackAlias2 = asRouter(shopeeAuthCallbackAlias);
 var shopeeOrdersRoutes = asRouter(shopeeOrdersRoutes_default);
 var shopeeProductsRoutes = asRouter(shopeeProductsRoutes_default);
 var shopeeShipRoutes = asRouter(shopeeShipRoutes_default);
@@ -115942,7 +115973,6 @@ async function startServer() {
     applyWebhookReturnFallback,
     listShopeeOAuthShopIds
   });
-  app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload, "/shopee"));
   app.use("/api/shopee", createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook"));
   app.use(import_express24.default.json({ limit: "50mb" }));
   app.use(import_express24.default.urlencoded({ limit: "50mb", extended: true }));
@@ -115951,20 +115981,6 @@ async function startServer() {
   } catch (err) {
     console.error("[Labels] ensureLabelsDir l\xFAc boot Express:", err);
   }
-  app.post(
-    [
-      "/api/auth/shopee/callback",
-      "/api/auth/shopee/callback/",
-      "/api/shopee/callback",
-      "/api/shopee/callback/"
-    ],
-    (_req, res) => {
-      if (!res.headersSent) res.status(200).send("OK");
-      console.warn(
-        "[Shopee OAuth] Legacy callback path ACK 200 \u2014 d\xF9ng /api/shopee/auth/callback n\u1EBFu c\u1EA7n code"
-      );
-    }
-  );
   app.use(dbReady_default);
   initHealthController({
     ensureDataDirs,
@@ -116014,7 +116030,6 @@ async function startServer() {
   app.use(labelsRoutes);
   initShopeeAuthController({ logOAuthSaveError });
   app.use("/api/shopee", shopeeAuthRoutes);
-  app.use("/api/auth/shopee", shopeeAuthCallbackAlias2);
   initStockSyncQueue({
     getProductChildrenList,
     inheritShopeeLinkFromParent,
@@ -118750,6 +118765,7 @@ async function startServer() {
       console.log(`[Config] APP_BASE_URL=${APP_BASE_URL3}`);
       console.log(`[Config] NODE_ENV=${process.env.NODE_ENV || "unset"}`);
       console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL2}`);
+      console.log(`[Shopee] Webhook=${SHOPEE_WEBHOOK_URL2}`);
       if (!process.env.PORT) {
         console.log("[Dashboard] API route ready: GET /api/dashboard?date_range=...");
       }

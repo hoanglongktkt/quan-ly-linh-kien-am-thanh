@@ -8,7 +8,11 @@ import {
   getAuthUrl,
 } from "../controllers/shopeeAuthController.js";
 
-/** Mount tại /api/shopee — OAuth public + shops/auth-url có auth */
+/**
+ * Mount tại /api/shopee — canonical routes:
+ * - GET /callback  → OAuth (nhận code + shop_id, lưu token)
+ * - GET /webhook   → probe (POST webhook do createShopeeWebhookRouter xử lý trước express.json)
+ */
 const router = Router();
 
 router.get("/oauth/complete", oauthComplete);
@@ -19,7 +23,3 @@ router.get("/auth-url", authMiddleware, getAuthUrl);
 
 export default router;
 export { router };
-
-/** Alias callback: /api/auth/shopee/callback */
-export const shopeeAuthCallbackAlias = Router();
-shopeeAuthCallbackAlias.get("/callback", oauthCallback);

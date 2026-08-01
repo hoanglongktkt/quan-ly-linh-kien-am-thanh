@@ -64,16 +64,19 @@ export default function SettingsView({ settings, onUpdateSettings, logs, onClear
   // Shopee Open Platform callback URLs — lấy từ backend (OAuth trỏ thẳng cPanel)
   const appOrigin = getPublicAppOrigin();
   const [shopeeRedirectUrl, setShopeeRedirectUrl] = useState(`${appOrigin}/api/shopee/callback`);
-  const shopeeWebhookUrl = `${appOrigin}/api/shopee/webhook`;
+  const [shopeeWebhookUrl, setShopeeWebhookUrl] = useState(`${appOrigin}/api/shopee/webhook`);
   const [copiedUrlField, setCopiedUrlField] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
       try {
         const res = await apiFetch('/api/config/public');
-        const data = await parseJsonResponse<{ shopeeCallbackUrl?: string }>(res);
+        const data = await parseJsonResponse<{ shopeeCallbackUrl?: string; shopeeWebhookUrl?: string }>(res);
         if (res.ok && data.shopeeCallbackUrl) {
           setShopeeRedirectUrl(data.shopeeCallbackUrl);
+        }
+        if (res.ok && data.shopeeWebhookUrl) {
+          setShopeeWebhookUrl(data.shopeeWebhookUrl);
         }
       } catch {
         /* giữ fallback */

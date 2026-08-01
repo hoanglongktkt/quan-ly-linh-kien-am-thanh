@@ -1,6 +1,7 @@
 /**
  * Controllers: Shopee webhook payload processor (real-time).
- * Mount: app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload))
+ * Mount: app.use("/api/shopee", createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook"))
+ * → canonical POST/GET /api/shopee/webhook
  * PHẢI nằm trước express.json.
  *
  * Luồng: ACK 200 ở router → queue → processShopeeWebhookPayload (async):

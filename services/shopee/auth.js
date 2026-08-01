@@ -21,7 +21,8 @@ function resolveShopeeCallbackUrl() {
 }
 
 export const SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
-export const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
+/** Canonical Push URL — khớp giao diện Cài đặt. */
+export const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
 export const SHOPEE_CALLBACK_IDLE_MSG =
   "Callback route is active. Waiting for Shopee parameters (code, shop_id)...";
 
@@ -435,6 +436,10 @@ function persistOAuthTokens(authJson, opts) {
   }
 
   saveShopeeTokens(updates);
+
+  for (const id of shopIds) {
+    console.log("Lưu token thành công cho shop: ", id);
+  }
 
   const saved = [...shopIds];
   const tokensData = normalizeTokenStore(loadShopeeTokens());

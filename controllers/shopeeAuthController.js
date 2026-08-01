@@ -77,11 +77,16 @@ export async function oauthComplete(req, res) {
       mainAccountIdRaw: mainAccountIdRaw || undefined,
       expectedShopId: expectedShop || undefined,
     });
+    if (result.success) {
+      for (const id of result.saved_shop_ids || []) {
+        console.log("Lưu token thành công cho shop: ", id);
+      }
+    }
     console.log("[Shopee OAuth Complete] KẾT QUẢ", JSON.stringify(result));
     return res.status(result.success ? 200 : 400).json({
       ...result,
       message: result.success
-        ? `OAuth thành công. Token đã lưu cho shop ${result.oauth_shop_id}.`
+        ? `Ủy quyền thành công, bạn có thể đóng tab này. Token đã lưu cho shop ${result.oauth_shop_id}.`
         : result.message || result.error || "OAuth thất bại",
       tokens_path: SHOPEE_TOKENS_PATH,
     });
@@ -94,7 +99,7 @@ export async function oauthComplete(req, res) {
   }
 }
 
-/** GET /api/shopee/callback | /api/auth/shopee/callback */
+/** GET /api/shopee/callback — nhận code + shop_id từ Shopee, đổi token và lưu DB. */
 export async function oauthCallback(req, res) {
   console.log("DEBUG RAW RESPONSE:", JSON.stringify(req.query));
   logShopeeIngress("[Shopee Callback]", req);
@@ -133,12 +138,9 @@ export async function oauthCallback(req, res) {
     console.error(
       `[Shopee Callback] shop_id/main_account_id không hợp lệ: shop_id=${shopIdRaw}, main_account_id=${mainAccountIdRaw}`,
     );
-    return res.status(400).json({
-      success: false,
-      error: "invalid_shop_id",
-      message: `Shop ID / Main Account ID không hợp lệ`,
-      tokens_path: SHOPEE_TOKENS_PATH,
-    });
+    return res.status(400).type("text/html; charset=utf-8").send(
+      "<!doctype html><html><body><h2>Ủy quyền thất bại</h2><p>Shop ID / Main Account ID không hợp lệ.</p></body></html>",
+    );
   }
 
   try {
@@ -150,30 +152,54 @@ export async function oauthCallback(req, res) {
 
     if (!result.success) {
       console.error(`[Shopee Callback] Đổi code thất bại:`, result.error, result.message);
+      if (queryParamOne(req.query.format) === "json") {
+        return res.status(400).json({
+          ...result,
+          message: result.message || result.error || "token_exchange_failed",
+          tokens_path: SHOPEE_TOKENS_PATH,
+        });
+      }
       if (shouldOAuthRedirectToFrontend(req)) {
         return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
       }
-      return res.status(400).json({
+      const errMsg = result.message || result.error || "token_exchange_failed";
+      return res.status(400).type("text/html; charset=utf-8").send(
+        `<!doctype html><html><head><meta charset="utf-8"><title>OAuth thất bại</title></head><body style="font-family:sans-serif;padding:2rem"><h2>Ủy quyền thất bại</h2><p>${escapeHtml(errMsg)}</p><p>Bạn có thể đóng tab này và thử OAuth lại.</p></body></html>`,
+      );
+    }
+
+    const savedIds = Array.isArray(result.saved_shop_ids) ? result.saved_shop_ids : [];
+    for (const id of savedIds) {
+      console.log("Lưu token thành công cho shop: ", id);
+    }
+    console.log(
+      `[Shopee Callback] OAuth OK. Token đã lưu cho: [${savedIds.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`,
+    );
+
+    if (queryParamOne(req.query.format) === "json") {
+      return res.status(200).json({
         ...result,
-        message: result.message || result.error || "token_exchange_failed",
+        message:
+          result.message ||
+          `Ủy quyền thành công. Token đã lưu cho: [${savedIds.join(", ")}].`,
         tokens_path: SHOPEE_TOKENS_PATH,
+        callback_url: SHOPEE_CALLBACK_URL,
       });
     }
 
-    console.log(
-      `[Shopee Callback] OAuth OK. Token đã lưu cho: [${result.saved_shop_ids.join(", ")}]. verified=${result.verified_in_file} File: ${SHOPEE_TOKENS_PATH}`,
+    // Browser OAuth: hiện thông báo rõ + redirect về dashboard để FE nhận shopee_linked.
+    const frontendUrl = buildOAuthFrontendRedirectUrl(req, result);
+    const shopLabel = savedIds.join(", ") || result.oauth_shop_id || oauthShopId || mainAccountId || "";
+    return res.status(200).type("text/html; charset=utf-8").send(
+      `<!doctype html><html><head><meta charset="utf-8"><title>Ủy quyền thành công</title>
+<meta http-equiv="refresh" content="2;url=${escapeHtml(frontendUrl)}">
+<style>body{font-family:system-ui,sans-serif;padding:2.5rem;max-width:32rem;margin:auto;color:#111}h1{color:#059669;font-size:1.35rem}a{color:#2563eb}</style>
+</head><body>
+<h1>Ủy quyền thành công, bạn có thể đóng tab này</h1>
+<p>Token đã lưu cho shop: <strong>${escapeHtml(String(shopLabel))}</strong>.</p>
+<p>Đang chuyển về trang quản lý… <a href="${escapeHtml(frontendUrl)}">bấm vào đây</a> nếu không tự chuyển.</p>
+</body></html>`,
     );
-    if (shouldOAuthRedirectToFrontend(req)) {
-      return res.redirect(302, buildOAuthFrontendRedirectUrl(req, result));
-    }
-    return res.status(200).json({
-      ...result,
-      message:
-        result.message ||
-        `OAuth thành công. Token đã lưu cho: [${result.saved_shop_ids.join(", ")}].`,
-      tokens_path: SHOPEE_TOKENS_PATH,
-      callback_url: SHOPEE_CALLBACK_URL,
-    });
   } catch (error) {
     deps.logOAuthSaveError("Shopee Callback", error);
     saveOAuthAudit({
@@ -190,17 +216,30 @@ export async function oauthCallback(req, res) {
       message: error?.message || "Lỗi xử lý OAuth callback",
       oauth_shop_id: oauthShopId,
     };
+    if (queryParamOne(req.query.format) === "json") {
+      return res.status(500).json({
+        ...failResult,
+        tokens_path: SHOPEE_TOKENS_PATH,
+      });
+    }
     if (shouldOAuthRedirectToFrontend(req)) {
       return res.redirect(302, buildOAuthFrontendRedirectUrl(req, failResult));
     }
-    return res.status(500).json({
-      ...failResult,
-      tokens_path: SHOPEE_TOKENS_PATH,
-    });
+    return res.status(500).type("text/html; charset=utf-8").send(
+      `<!doctype html><html><body><h2>Ủy quyền thất bại</h2><p>${escapeHtml(failResult.message)}</p></body></html>`,
+    );
   }
 }
 
-/** GET /api/shopee/webhook — probe only */
+function escapeHtml(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** GET /api/shopee/webhook — probe only (POST do webhook router raw-body) */
 export function webhookProbe(req, res) {
   logShopeeIngress("[Shopee Webhook]", req);
   console.log("[Shopee Webhook] GET verification probe — 200 success");

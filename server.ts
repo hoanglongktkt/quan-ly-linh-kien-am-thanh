@@ -119,7 +119,7 @@ import {
 import productsRoutesImport from "./routes/productsRoutes.js";
 import mappingRoutesImport from "./routes/mappingRoutes.js";
 import ordersRoutesImport from "./routes/ordersRoutes.js";
-import shopeeAuthRoutesImport, { shopeeAuthCallbackAlias as shopeeAuthCallbackAliasImport } from "./routes/shopeeAuthRoutes.js";
+import shopeeAuthRoutesImport from "./routes/shopeeAuthRoutes.js";
 import shopeeOrdersRoutesImport from "./routes/shopeeOrdersRoutes.js";
 import shopeeProductsRoutesImport from "./routes/shopeeProductsRoutes.js";
 import shopeeShipRoutesImport from "./routes/shopeeShipRoutes.js";
@@ -358,7 +358,6 @@ const productsRoutes = asRouter(productsRoutesImport);
 const mappingRoutes = asRouter(mappingRoutesImport);
 const ordersRoutes = asRouter(ordersRoutesImport);
 const shopeeAuthRoutes = asRouter(shopeeAuthRoutesImport);
-const shopeeAuthCallbackAlias = asRouter(shopeeAuthCallbackAliasImport);
 const shopeeOrdersRoutes = asRouter(shopeeOrdersRoutesImport);
 const shopeeProductsRoutes = asRouter(shopeeProductsRoutesImport);
 const shopeeShipRoutes = asRouter(shopeeShipRoutesImport);
@@ -13345,9 +13344,8 @@ async function startServer() {
     applyWebhookReturnFallback,
     listShopeeOAuthShopIds,
   });
-  // Canonical + legacy Push URL — cùng ACK 200 + queue get_order_detail + UPSERT.
+  // Canonical Push URL duy nhất: POST/GET /api/shopee/webhook
   // PHẢI mount TRƯỚC express.json (dùng express.raw để giữ raw body).
-  app.use("/api/webhook", createShopeeWebhookRouter(processShopeeWebhookPayload, "/shopee"));
   app.use("/api/shopee", createShopeeWebhookRouter(processShopeeWebhookPayload, "/webhook"));
 
   app.use(express.json({ limit: '50mb' }));
@@ -13359,22 +13357,6 @@ async function startServer() {
   } catch (err) {
     console.error("[Labels] ensureLabelsDir lúc boot Express:", err);
   }
-
-  // OAuth callback cũ: chỉ ACK 200 (không phải order push).
-  app.post(
-    [
-      "/api/auth/shopee/callback",
-      "/api/auth/shopee/callback/",
-      "/api/shopee/callback",
-      "/api/shopee/callback/",
-    ],
-    (_req, res) => {
-      if (!res.headersSent) res.status(200).send("OK");
-      console.warn(
-        "[Shopee OAuth] Legacy callback path ACK 200 — dùng /api/shopee/auth/callback nếu cần code",
-      );
-    },
-  );
 
   /** DB chưa sẵn sàng → trả 503 NGAY (sync, không await/chờ). Auth/health/oauth/ship-order vẫn chạy. */
   app.use(dbReadyMiddleware);
@@ -13433,7 +13415,6 @@ async function startServer() {
 
   initShopeeAuthController({ logOAuthSaveError });
   app.use("/api/shopee", shopeeAuthRoutes);
-  app.use("/api/auth/shopee", shopeeAuthCallbackAlias);
 
   // Real synced orders list  // Real synced orders list — this is what the Order Management UI reads from.
   // --- Products warehouse API — Phase 4 MVC ---
@@ -16738,6 +16719,7 @@ async function startServer() {
       console.log(`[Config] APP_BASE_URL=${APP_BASE_URL}`);
       console.log(`[Config] NODE_ENV=${process.env.NODE_ENV || "unset"}`);
       console.log(`[Shopee] Callback=${SHOPEE_CALLBACK_URL}`);
+      console.log(`[Shopee] Webhook=${SHOPEE_WEBHOOK_URL}`);
       if (!process.env.PORT) {
         console.log("[Dashboard] API route ready: GET /api/dashboard?date_range=...");
       }

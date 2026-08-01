@@ -14,7 +14,7 @@ function resolveShopeeCallbackUrl() {
 }
 
 const SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
-const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/webhook/shopee`;
+const SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
 
 /** Deps từ server.ts (Shopee token helpers chưa tách). */
 let deps = {

@@ -12,10 +12,8 @@ export function dbReadyMiddleware(req, res, next) {
     pathName.startsWith("/api/health") ||
     pathName.startsWith("/api/auth/") ||
     pathName === "/api/shopee/callback" ||
-    pathName === "/api/auth/shopee/callback" ||
     pathName === "/api/shopee/oauth/complete" ||
     pathName === "/api/shopee/webhook" ||
-    pathName === "/api/webhook/shopee" ||
     pathName.startsWith("/api/public/") ||
     pathName.startsWith("/api/shopee/ship-order") ||
     pathName === "/api/shopee/print-document";
