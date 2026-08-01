@@ -984,12 +984,13 @@ export default function ProductLinking({ products, shops, onAddLog, onUpdateProd
     });
   };
 
-  // 2. Open Manual Mapping Modal
+  // 2. Open Manual Mapping Modal — ưu tiên tên sản phẩm sàn (SKU khớp thì đã auto-map).
   const handleOpenMapping = (listing: ChannelListing) => {
     setMappingListing(listing);
-    setMappingSearch(String(listing.sku || '').trim());
+    const titleKeyword = String(listing.title || '').trim();
+    setMappingSearch(titleKeyword);
     void loadMasterCatalog();
-    void searchMasterViaApi(String(listing.sku || '').trim());
+    void searchMasterViaApi(titleKeyword);
   };
 
   // 3. Confirm Manual Mapping — dùng listingId + masterProductId từ DATA (state), không lấy từ UI text.
