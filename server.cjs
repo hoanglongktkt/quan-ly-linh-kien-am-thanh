@@ -101326,10 +101326,10 @@ function formatShopeeApiError(json2, httpStatus) {
     return parts[0] || "Shopee gi\u1EDBi h\u1EA1n t\u1EA7n su\u1EA5t (HTTP 429 Too Many Requests) \u2014 vui l\xF2ng th\u1EED l\u1EA1i sau 1\u20132 ph\xFAt.";
   }
   if (status === 504) {
-    return parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0111\u1ED3ng b\u1ED9 nhanh (2 gi\u1EDD).";
+    return parts[0] || "Timeout khi g\u1ECDi Shopee API (HTTP 504) \u2014 c\u1EEDa s\u1ED5 \u0111\u1ED3ng b\u1ED9 qu\xE1 r\u1ED9ng ho\u1EB7c Shopee ph\u1EA3n h\u1ED3i ch\u1EADm. Th\u1EED l\u1EA1i v\u1EDBi \u0110\u1ED3ng b\u1ED9 nhanh 3h.";
   }
   if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
-    return parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9 v\xE0 th\u1EED l\u1EA1i.";
+    return parts[0] || "Timeout khi g\u1ECDi Shopee API \u2014 th\u1EED \u0110\u1ED3ng b\u1ED9 nhanh 3h ho\u1EB7c gi\u1EA3m ph\u1EA1m vi th\u1EDDi gian \u0111\u1ED3ng b\u1ED9.";
   }
   if (parts.length > 0) return parts.join(" \u2014 ");
   if (status && status >= 400) return `Shopee API l\u1ED7i HTTP ${status}`;
@@ -105167,7 +105167,10 @@ async function runOrdersPull(opts) {
     shopIds,
     username,
     jobType,
-    logTag
+    logTag,
+    allowShortLookback = false,
+    reconcileActive = true,
+    skipCancelReturn = false
   } = opts;
   let jobId = "";
   let retryTelemetryBefore;
@@ -105183,20 +105186,34 @@ async function runOrdersPull(opts) {
     } catch (jobErr) {
       console.warn(`[${logTag}] createSyncJob skip:`, jobErr?.message || jobErr);
     }
-    console.log(`[${logTag}] b\u1EAFt \u0111\u1EA7u k\xE9o \u0111\u01A1n shop_id=${shopIds?.length ? shopIds.join(",") : "all"}`);
+    console.log(
+      `[${logTag}] b\u1EAFt \u0111\u1EA7u k\xE9o \u0111\u01A1n shop_id=${shopIds?.length ? shopIds.join(",") : "all"} lookbackSec=${lookbackSec} short=${allowShortLookback} reconcile=${reconcileActive} skipCancel=${skipCancelReturn}`
+    );
     const result = await deps15.pullIncrementalOrdersFromShopee({
       lookbackSec,
-      reconcileActive: true,
+      reconcileActive: reconcileActive === true,
+      allowShortLookback: allowShortLookback === true,
       shopIds: shopIds?.length ? shopIds : void 0
     });
     let cancelPull = { pulled: 0, added: 0, updated: 0, errors: [], message: "", skipped: false };
-    try {
-      cancelPull = await deps15.pullShopeeCancelReturnOrders({
-        lookbackSec: Math.max(lookbackSec, 48 * 3600),
-        shopIds: shopIds?.length ? shopIds : void 0
-      });
-    } catch (cancelErr) {
-      console.error("[API_SYNC_ERROR] cancel pull:", cancelErr?.stack || cancelErr);
+    if (!skipCancelReturn) {
+      try {
+        cancelPull = await deps15.pullShopeeCancelReturnOrders({
+          lookbackSec: Math.max(lookbackSec, 48 * 3600),
+          shopIds: shopIds?.length ? shopIds : void 0
+        });
+      } catch (cancelErr) {
+        console.error("[API_SYNC_ERROR] cancel pull:", cancelErr?.stack || cancelErr);
+      }
+    } else {
+      cancelPull = {
+        pulled: 0,
+        added: 0,
+        updated: 0,
+        errors: [],
+        message: "skipped_quick_sync",
+        skipped: true
+      };
     }
     try {
       deps15.invalidateOrdersRefreshCache();
@@ -105209,7 +105226,7 @@ async function runOrdersPull(opts) {
     const errors = [...result?.errors || [], ...cancelPull.errors || []];
     const dbErrors = errors.filter((e2) => String(e2?.error || "") === "db_upsert_failed");
     const success = dbErrors.length === 0 && (Boolean(result?.success) || cancelPull.pulled > 0 || errors.length === 0);
-    const message = dbErrors.length > 0 ? `L\u1ED7i l\u01B0u MongoDB: ${dbErrors[0]?.message || "db_upsert_failed"}` : String(result?.message || `\u0110\xE3 k\xE9o ${pulled} \u0111\u01A1n`) + (cancelPull.pulled > 0 || cancelPull.message ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}` : "");
+    const message = dbErrors.length > 0 ? `L\u1ED7i l\u01B0u MongoDB: ${dbErrors[0]?.message || "db_upsert_failed"}` : String(result?.message || `\u0110\xE3 k\xE9o ${pulled} \u0111\u01A1n`) + (cancelPull.pulled > 0 || cancelPull.message && !cancelPull.skipped ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}` : "");
     if (jobId) {
       try {
         await deps15.finishSyncJob(
@@ -105222,6 +105239,7 @@ async function runOrdersPull(opts) {
             shops: result?.shops,
             errors: errors.length,
             cancel_return_pulled: cancelPull.pulled || 0,
+            quick_sync: allowShortLookback === true,
             retry: retryTelemetryBefore ? diffShopeeRetryTelemetry(retryTelemetryBefore) : void 0
           },
           success ? void 0 : message
@@ -105497,6 +105515,82 @@ async function syncOrders(req, res) {
       pulled: 0,
       added: 0,
       updated: 0,
+      shopee_response: null
+    });
+    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
+    return;
+  }
+}
+var QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
+async function quickSyncOrders(req, res) {
+  console.log("=== B\u1EAET \u0110\u1EA6U QUICK SYNC ORDERS (3h) ===");
+  try {
+    const lookbackSec = QUICK_SYNC_LOOKBACK_SEC;
+    const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+    const shopIds = resolvePullShopIds(shopIdsRaw);
+    const username = String(req.user?.username || "");
+    console.log(
+      `Quick Sync shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookbackSec=${lookbackSec} (3h)`
+    );
+    if (typeof deps15.isOrdersPullLocked === "function" && deps15.isOrdersPullLocked()) {
+      sendJson(res, 200, {
+        status: 200,
+        success: true,
+        warning: true,
+        pulled: 0,
+        added: 0,
+        updated: 0,
+        message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
+        shopee_response: { skipped: true, reason: "pull_in_flight" },
+        lookbackSec,
+        mode: "quick_sync"
+      });
+      console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
+      return;
+    }
+    const result = await runOrdersPull({
+      lookbackSec,
+      shopIds,
+      username,
+      jobType: "shopee_orders_quick_sync",
+      logTag: "Orders Quick Sync",
+      allowShortLookback: true,
+      reconcileActive: false,
+      skipCancelReturn: true
+    });
+    sendJson(res, 200, {
+      status: 200,
+      success: true,
+      message: result?.message || "\u0110\u1ED3ng b\u1ED9 nhanh 3h ho\xE0n t\u1EA5t",
+      total_success: result?.total_success ?? result?.pulled ?? 0,
+      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
+      pulled: result?.pulled || 0,
+      added: result?.added || 0,
+      updated: result?.updated || 0,
+      shops: result?.shops || 0,
+      errors: Array.isArray(result?.errors) ? result.errors : [],
+      detail_message: result?.detail_message || result?.message || "",
+      jobId: result?.jobId || "",
+      lookbackSec: result?.lookbackSec || lookbackSec,
+      elapsedMs: result?.elapsedMs,
+      mode: "quick_sync",
+      shopee_response: result?.shopee_response ?? null
+    });
+    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
+    return;
+  } catch (err) {
+    console.error("[API_SYNC_ERROR] Quick Sync l\u1ED7i chi ti\u1EBFt:", err?.stack || err);
+    sendJson(res, 500, {
+      success: false,
+      message: friendlyPullError(err),
+      total_success: 0,
+      failed_orders: [],
+      error: friendlyPullError(err),
+      detail_message: friendlyPullError(err),
+      pulled: 0,
+      added: 0,
+      updated: 0,
+      mode: "quick_sync",
       shopee_response: null
     });
     console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
@@ -106043,6 +106137,7 @@ router13.get("/refresh", h2(refreshOrders));
 router13.get("/query", h2(queryOrders));
 router13.get("/lookup", h2(lookupOrder));
 router13.post("/pull", pullOrders);
+router13.post("/quick-sync", quickSyncOrders);
 router13.post("/fast-process", fastProcessOrders);
 router13.post("/cleanup-handed-over", h2(cleanupHandedOver));
 router13.post("/cleanup-closed-retention", h2(cleanupClosedRetention));
@@ -106335,6 +106430,7 @@ var import_express16 = __toESM(require_express2(), 1);
 var router15 = (0, import_express16.Router)();
 router15.post("/orders/sync", syncOrders);
 router15.post("/orders/pull", pullOrders);
+router15.post("/orders/quick-sync", quickSyncOrders);
 router15.get("/diagnostics", getDiagnostics);
 router15.get("/debug/return-by-order", debugReturnByOrder);
 var shopeeOrdersRoutes_default = router15;
@@ -108082,7 +108178,7 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
   if (timeTo - timeFrom > SHOPEE_ORDER_LIST_MAX_WINDOW_SEC) {
     timeFrom = timeTo - SHOPEE_ORDER_LIST_MAX_WINDOW_SEC;
   }
-  if (timeTo - timeFrom < SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC) {
+  if (!opts?.allowShortLookback && timeTo - timeFrom < SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC) {
     timeFrom = timeTo - SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC;
   }
   const timeRangeField = opts?.timeRangeField === "create_time" ? "create_time" : "update_time";
@@ -108151,14 +108247,13 @@ function assertOrdersPullDeadline(deadlineAt, label) {
 }
 async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const timeTo = Math.floor(Date.now() / 1e3);
-  const lookback = Math.max(
+  const rawLookback = Number(opts?.lookbackSec) > 0 ? Number(opts.lookbackSec) : SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+  const lookback = opts?.allowShortLookback ? Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)) : Math.max(
     SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
-    Math.min(
-      SHOPEE_ORDER_LIST_MAX_WINDOW_SEC,
-      Number(opts?.lookbackSec) > 0 ? Number(opts.lookbackSec) : SHOPEE_ORDER_LIST_INCREMENTAL_SEC
-    )
+    Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)
   );
   const timeFrom = timeTo - lookback;
+  const allowShort = opts?.allowShortLookback === true;
   const orderSnSet = /* @__PURE__ */ new Set();
   const shopeeResponses = [];
   const seenCursors = /* @__PURE__ */ new Set();
@@ -108185,7 +108280,8 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
         timeRangeField: "update_time",
         timeFrom,
         timeTo,
-        cursor
+        cursor,
+        allowShortLookback: allowShort
         // Không truyền orderStatus — kéo toàn bộ trạng thái.
       });
       if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
@@ -108198,7 +108294,8 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
               timeRangeField: "update_time",
               timeFrom,
               timeTo,
-              cursor
+              cursor,
+              allowShortLookback: allowShort
             });
           }
         } catch (refreshErr) {
@@ -108691,14 +108788,21 @@ async function pullIncrementalOrdersFromShopee(opts) {
     }
     singleShopPull = shopIds.length === 1;
     const rawLookback = Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
-    lookbackSec = opts?.allowShortLookback ? Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)) : Math.max(
+    const shortLookback = opts?.allowShortLookback === true;
+    lookbackSec = shortLookback ? Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)) : Math.max(
       SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
       Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)
     );
     longLookback = lookbackSec >= 168 * 3600;
-    pullDeadlineMs = singleShopPull ? longLookback ? 24e4 : 18e4 : longLookback ? 24e4 : ORDERS_PULL_HARD_DEADLINE_MS;
-    maxOrderSnsPerShop = singleShopPull ? longLookback ? 400 : 250 : longLookback ? 300 : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
-    pageHardCap = singleShopPull ? longLookback ? 15 : 12 : longLookback ? 12 : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+    if (shortLookback) {
+      pullDeadlineMs = 9e4;
+      maxOrderSnsPerShop = 100;
+      pageHardCap = 4;
+    } else {
+      pullDeadlineMs = singleShopPull ? longLookback ? 24e4 : 18e4 : longLookback ? 24e4 : ORDERS_PULL_HARD_DEADLINE_MS;
+      maxOrderSnsPerShop = singleShopPull ? longLookback ? 400 : 250 : longLookback ? 300 : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
+      pageHardCap = singleShopPull ? longLookback ? 15 : 12 : longLookback ? 12 : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+    }
     deadlineAt = startedAt + pullDeadlineMs;
     if (shopIds.length === 0) {
       return {
@@ -108772,7 +108876,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
     );
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking3} longLookback=${longLookback}`
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking3} longLookback=${longLookback}`
     );
     for (const shopId of shopIds) {
       try {
@@ -108800,13 +108904,14 @@ async function pullIncrementalOrdersFromShopee(opts) {
             lookbackSec,
             deadlineAt: shopDeadlineAt,
             maxOrderSns: maxOrderSnsPerShop,
-            pageHardCap
+            pageHardCap,
+            allowShortLookback: shortLookback
           });
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
           if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {
             shopeeResponsePages.push(...listCollect.shopeeResponses);
           }
-          if (Date.now() < shopDeadlineAt) {
+          if (!shortLookback && Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
                 mode: "incremental"
@@ -116996,8 +117101,10 @@ async function startServer() {
   app.use("/api/shopee", authMiddleware, shopeeOrdersRoutes);
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
   app.post("/api/orders/pull", authMiddleware, pullOrders);
+  app.post("/api/orders/quick-sync", authMiddleware, quickSyncOrders);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
   app.post("/api/shopee/orders/pull", authMiddleware, pullOrders);
+  app.post("/api/shopee/orders/quick-sync", authMiddleware, quickSyncOrders);
   app.post("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
   app.get("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
   app.post("/api/products/shopee-item-preview", authMiddleware, previewItemVariants);
