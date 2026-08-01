@@ -104951,6 +104951,7 @@ async function runOrdersPullBackground(opts) {
   try {
     const job = await deps15.createSyncJob(jobType, username);
     jobId = job?.id || "";
+    console.log(`[${logTag}] BG b\u1EAFt \u0111\u1EA7u k\xE9o \u0111\u01A1n shop_id=${shopIds?.length ? shopIds.join(",") : "all"}`);
     const result = await deps15.pullIncrementalOrdersFromShopee({
       lookbackSec,
       reconcileActive: true,
@@ -104974,8 +104975,8 @@ async function runOrdersPullBackground(opts) {
     const added = (result?.added || 0) + (cancelPull.added || 0);
     const updated = (result?.updated || 0) + (cancelPull.updated || 0);
     const errors = [...result?.errors || [], ...cancelPull.errors || []];
-    const success = Boolean(result?.success) || cancelPull.pulled > 0;
-    const message = String(result?.message || "") + (cancelPull.pulled > 0 || cancelPull.message ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}` : "");
+    const success = Boolean(result?.success) || cancelPull.pulled > 0 || errors.length === 0;
+    const message = String(result?.message || `\u0110\xE3 k\xE9o ${pulled} \u0111\u01A1n`) + (cancelPull.pulled > 0 || cancelPull.message ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}` : "");
     if (jobId) {
       try {
         await deps15.finishSyncJob(
@@ -104999,6 +105000,7 @@ async function runOrdersPullBackground(opts) {
     console.log(
       `[${logTag}] BG done pulled=${pulled} +${added}/~${updated} err=${errors.length} \u2014 ${message}`
     );
+    return { success, pulled, added, updated, shops: result?.shops || 0, errors, message, jobId };
   } catch (error) {
     console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", error?.stack || error);
     if (jobId) {
@@ -105015,8 +105017,16 @@ async function runOrdersPullBackground(opts) {
         console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", finishErr?.stack || finishErr);
       }
     }
-    return;
+    return null;
   }
+}
+function sendJson(res, statusCode, body) {
+  if (res.headersSent) {
+    console.warn("[Orders Pull] headers \u0111\xE3 g\u1EEDi \u2014 b\u1ECF qua response tr\xF9ng.");
+    return false;
+  }
+  res.status(statusCode).json(body);
+  return true;
 }
 function resolvePullShopIds(shopIdsRaw) {
   if (shopIdsRaw == null || shopIdsRaw === "" || Array.isArray(shopIdsRaw) && shopIdsRaw.length === 0) {
@@ -105042,7 +105052,9 @@ function resolvePullShopIds(shopIdsRaw) {
   return resolved.length ? resolved : void 0;
 }
 async function pullOrders(req, res) {
+  console.log("=== B\u1EAET \u0110\u1EA6U PULL ORDERS ===");
   try {
+    console.log("B\u1EAFt \u0111\u1EA7u l\u1EA5y \u0111\u01A1n");
     const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 15 * 24);
     const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(Math.max(hoursRaw, 72), 15 * 24) : 15 * 24;
     const lookbackSec = Math.floor(hours * 60 * 60);
@@ -105050,23 +105062,32 @@ async function pullOrders(req, res) {
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     console.log(
-      `[Orders Pull] POST /api/orders/pull (background) lookback_hours=${hours}` + (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all")
+      `\u0110\xE3 l\u1EA5y xong shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookback_hours=${hours}`
     );
     if (typeof deps15.isOrdersPullLocked === "function" && deps15.isOrdersPullLocked()) {
-      return res.status(200).json({
+      sendJson(res, 200, {
         status: 200,
         success: true,
         background: true,
         warning: true,
+        pulled: 0,
+        added: 0,
+        updated: 0,
         message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t"
       });
+      console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
+      return;
     }
-    res.status(200).json({
+    sendJson(res, 200, {
       status: 200,
       success: true,
       background: true,
-      message: "\u0110ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m..."
+      pulled: 0,
+      added: 0,
+      updated: 0,
+      message: "\u0110\xE3 nh\u1EADn l\u1EC7nh \u0111\u1ED3ng b\u1ED9. \u0110ang k\xE9o \u0111\u01A1n ng\u1EA7m..."
     });
+    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     setImmediate(() => {
       runOrdersPullBackground({
         lookbackSec,
@@ -105079,20 +105100,24 @@ async function pullOrders(req, res) {
       });
     });
     return;
-  } catch (error) {
-    console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", error?.stack || error);
-    if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        error: error?.message || String(error) || "orders_pull_failed",
-        message: error?.message || "\u0110\u1ED3ng b\u1ED9 th\u1EA5t b\u1EA1i"
-      });
-    }
+  } catch (err) {
+    console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", err?.stack || err);
+    sendJson(res, 500, {
+      success: false,
+      message: "L\u1ED7i \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng",
+      error: err?.message || String(err) || "orders_pull_failed",
+      pulled: 0,
+      added: 0,
+      updated: 0
+    });
+    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     return;
   }
 }
 async function syncOrders(req, res) {
+  console.log("=== B\u1EAET \u0110\u1EA6U PULL ORDERS ===");
   try {
+    console.log("B\u1EAFt \u0111\u1EA7u l\u1EA5y \u0111\u01A1n");
     const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 15 * 24);
     const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(Math.max(hoursRaw, 72), 15 * 24) : 15 * 24;
     const lookbackSec = Math.floor(hours * 60 * 60);
@@ -105100,23 +105125,32 @@ async function syncOrders(req, res) {
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     console.log(
-      `[Orders Sync] POST /api/shopee/orders/sync (background) lookback_hours=${hours}` + (shopIds?.length ? ` shop_ids=[${shopIds.join(",")}]` : " shop_ids=all")
+      `\u0110\xE3 l\u1EA5y xong shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookback_hours=${hours}`
     );
     if (typeof deps15.isOrdersPullLocked === "function" && deps15.isOrdersPullLocked()) {
-      return res.status(200).json({
+      sendJson(res, 200, {
         status: 200,
         success: true,
         background: true,
         warning: true,
+        pulled: 0,
+        added: 0,
+        updated: 0,
         message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t"
       });
+      console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
+      return;
     }
-    res.status(200).json({
+    sendJson(res, 200, {
       status: 200,
       success: true,
       background: true,
-      message: "\u0110ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m..."
+      pulled: 0,
+      added: 0,
+      updated: 0,
+      message: "\u0110\xE3 nh\u1EADn l\u1EC7nh \u0111\u1ED3ng b\u1ED9. \u0110ang k\xE9o \u0111\u01A1n ng\u1EA7m..."
     });
+    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     setImmediate(() => {
       runOrdersPullBackground({
         lookbackSec,
@@ -105129,15 +105163,17 @@ async function syncOrders(req, res) {
       });
     });
     return;
-  } catch (error) {
-    console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", error?.stack || error);
-    if (!res.headersSent) {
-      return res.status(500).json({
-        success: false,
-        error: error?.message || String(error) || "orders_sync_failed",
-        message: error?.message || "\u0110\u1ED3ng b\u1ED9 th\u1EA5t b\u1EA1i"
-      });
-    }
+  } catch (err) {
+    console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", err?.stack || err);
+    sendJson(res, 500, {
+      success: false,
+      message: "L\u1ED7i \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng",
+      error: err?.message || String(err) || "orders_sync_failed",
+      pulled: 0,
+      added: 0,
+      updated: 0
+    });
+    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     return;
   }
 }

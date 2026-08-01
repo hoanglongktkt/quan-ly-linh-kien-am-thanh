@@ -657,13 +657,13 @@ export default function OrderManager({
     setIsRefreshing(true);
     try {
       const token = localStorage.getItem('admin_token') || '';
-      console.log('[Orders Sync] Làm mới → POST /api/orders/pull (background)...');
-      const pullBody: Record<string, unknown> = { lookback_hours: 168 };
+      console.log('[Orders Sync] Làm mới → POST /api/orders/pull...');
+      const pullBody: Record<string, unknown> = { lookback_hours: 14 * 24 };
       if (selectedShopId && selectedShopId !== 'all') {
         pullBody.shop_ids = [String(selectedShopId)];
       }
       const pullController = new AbortController();
-      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 30_000);
+      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 240_000);
       try {
         const pullRes = await fetch('/api/orders/pull', {
           method: 'POST',
@@ -675,6 +675,7 @@ export default function OrderManager({
           body: JSON.stringify(pullBody),
         });
         const pullJson = await pullRes.json().catch(() => ({} as Record<string, unknown>));
+        console.log('[Orders Sync] shopee_response:', pullJson?.shopee_response);
         if (pullRes.ok && pullJson?.warning === true) {
           const warnMsg = String(
             pullJson?.message ||
@@ -683,17 +684,15 @@ export default function OrderManager({
           setLastSyncSummary(warnMsg);
           showToast(warnMsg, 7000);
         } else if (pullRes.ok) {
+          const pulled = Number(pullJson?.pulled ?? 0);
           const summary = String(
-            pullJson?.message || 'Đã đưa vào tiến trình đồng bộ ngầm',
+            pullJson?.message || `Đã kéo ${pulled} đơn từ Shopee`,
           );
           setLastSyncSummary(summary);
-          showToast(
-            'Tiến trình đồng bộ đang chạy ngầm, đơn hàng sẽ tự động xuất hiện sau ít phút...',
-            7000,
-          );
-          console.log('[Orders Sync] Background sync queued:', summary);
+          showToast(summary, 7000);
+          console.log('[Orders Sync] Pull xong:', summary, 'raw pages=', Array.isArray(pullJson?.shopee_response) ? pullJson.shopee_response.length : pullJson?.shopee_response);
         } else {
-          console.warn('[Orders Sync] Queue sync thất bại:', pullJson);
+          console.warn('[Orders Sync] Pull thất bại:', pullJson);
           setLastSyncSummary(
             `Đồng bộ thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`,
           );
@@ -703,9 +702,9 @@ export default function OrderManager({
           );
         }
       } catch (pullErr) {
-        console.warn('[Orders Sync] Queue sync lỗi:', pullErr);
+        console.warn('[Orders Sync] Pull lỗi:', pullErr);
         setLastSyncSummary('Đồng bộ thất bại: lỗi kết nối máy chủ.');
-        showToast('Không gửi được lệnh đồng bộ ngầm — thử lại.', 5000);
+        showToast('Không nhận được phản hồi đồng bộ — thử lại.', 5000);
       } finally {
         window.clearTimeout(pullTimeoutId);
       }
