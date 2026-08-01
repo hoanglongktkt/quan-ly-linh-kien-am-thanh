@@ -732,6 +732,74 @@ export default function OrderManager({
     }
   };
 
+  /** Đồng bộ nhanh 3h — chỉ kéo đơn update_time gần đây, tránh timeout cPanel. */
+  const handleQuickSyncOrders = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      const token = localStorage.getItem('admin_token') || '';
+      console.log('[Orders Quick Sync] → POST /api/orders/quick-sync...');
+      const pullBody: Record<string, unknown> = {};
+      if (selectedShopId && selectedShopId !== 'all') {
+        pullBody.shop_ids = [String(selectedShopId)];
+      }
+      const pullController = new AbortController();
+      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 100_000);
+      try {
+        const pullRes = await fetch('/api/orders/quick-sync', {
+          method: 'POST',
+          signal: pullController.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(pullBody),
+        });
+        const pullJson = await pullRes.json().catch(() => ({} as Record<string, unknown>));
+        console.log('[Orders Quick Sync] response:', pullJson);
+        if (pullRes.ok && pullJson?.warning === true) {
+          const warnMsg = String(
+            pullJson?.message ||
+              'Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát',
+          );
+          setLastSyncSummary(warnMsg);
+          showToast(warnMsg, 7000);
+        } else if (pullRes.ok) {
+          const pulled = Number(pullJson?.pulled ?? 0);
+          const elapsed = Number(pullJson?.elapsedMs ?? 0);
+          const summary = String(
+            pullJson?.message ||
+              `Đồng bộ nhanh 3h: đã kéo ${pulled} đơn` +
+                (elapsed > 0 ? ` (${Math.round(elapsed / 1000)}s)` : ''),
+          );
+          setLastSyncSummary(summary);
+          showToast(summary, 7000);
+        } else {
+          console.warn('[Orders Quick Sync] thất bại:', pullJson);
+          setLastSyncSummary(
+            `Đồng bộ nhanh thất bại: ${pullJson?.message || pullJson?.error || 'Không thể kết nối Shopee'}`,
+          );
+          showToast(
+            String(pullJson?.message || pullJson?.error || 'Đồng bộ nhanh thất bại'),
+            7000,
+          );
+        }
+      } catch (pullErr) {
+        console.warn('[Orders Quick Sync] lỗi:', pullErr);
+        setLastSyncSummary('Đồng bộ nhanh thất bại: lỗi kết nối máy chủ.');
+        showToast('Không nhận được phản hồi đồng bộ nhanh — thử lại.', 5000);
+      } finally {
+        window.clearTimeout(pullTimeoutId);
+      }
+      void onFetchOrders?.({ silent: true, bustCache: true });
+    } catch (err) {
+      console.error('[Orders Quick Sync] thất bại:', err);
+      setLastSyncSummary('Đồng bộ nhanh thất bại: lỗi kết nối máy chủ.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   useEffect(() => {
     if (initialOrdersSubTab) {
       setActiveSubTab(initialOrdersSubTab === 'pending_verification' ? 'pending_confirm' : initialOrdersSubTab);
@@ -4532,8 +4600,19 @@ export default function OrderManager({
         <div className="flex items-center gap-3">
           <button
             type="button"
+            onClick={handleQuickSyncOrders}
+            disabled={isRefreshing || ordersLoading}
+            title="Chỉ kéo đơn tạo/cập nhật trong 3 giờ gần nhất — nhanh, tránh timeout"
+            className="px-4 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshing || ordersLoading ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing || ordersLoading ? 'Đang đồng bộ...' : 'Đồng bộ nhanh 3h'}</span>
+          </button>
+          <button
+            type="button"
             onClick={handleRefreshOrders}
             disabled={isRefreshing || ordersLoading}
+            title="Đồng bộ đầy đủ ~14 ngày + đối soát trạng thái"
             className="px-4 py-2 bg-white hover:bg-blue-50 border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing || ordersLoading ? 'animate-spin' : ''}`} />

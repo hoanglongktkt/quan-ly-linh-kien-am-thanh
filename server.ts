@@ -302,6 +302,7 @@ import {
   initShopeeOrdersController,
   pullOrders,
   syncOrders,
+  quickSyncOrders,
   getDiagnostics,
   debugReturnByOrder,
   syncFromShop,
@@ -1574,6 +1575,8 @@ async function shopeeGetOrderList(
     timeRangeField?: "create_time" | "update_time";
     timeFrom?: number;
     timeTo?: number;
+    /** Quick Sync / cron: cho phép cửa sổ < 3 ngày (không ép MIN_LOOKBACK). */
+    allowShortLookback?: boolean;
   },
 ) {
   const apiPath = "/api/v2/order/get_order_list";
@@ -1594,7 +1597,11 @@ async function shopeeGetOrderList(
     timeFrom = timeTo - SHOPEE_ORDER_LIST_MAX_WINDOW_SEC;
   }
   // Sàn tối thiểu 3 ngày khi caller vô tình truyền cửa sổ quá ngắn.
-  if (timeTo - timeFrom < SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC) {
+  // Quick Sync (allowShortLookback) bỏ qua — giữ đúng time_from/time_to caller.
+  if (
+    !opts?.allowShortLookback &&
+    timeTo - timeFrom < SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC
+  ) {
     timeFrom = timeTo - SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC;
   }
 
@@ -1691,20 +1698,24 @@ async function collectShopeeOrderSnsIncremental(
     deadlineAt?: number;
     maxOrderSns?: number;
     pageHardCap?: number;
+    /** Quick Sync: cho phép lookback < 3 ngày. */
+    allowShortLookback?: boolean;
   },
 ): Promise<{ orderSns: string[]; shopeeResponses: any[] }> {
   const timeTo = Math.floor(Date.now() / 1000);
-  // Mặc định 14 ngày; clamp [3d, 15d].
-  const lookback = Math.max(
-    SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
-    Math.min(
-      SHOPEE_ORDER_LIST_MAX_WINDOW_SEC,
-      Number(opts?.lookbackSec) > 0
-        ? Number(opts.lookbackSec)
-        : SHOPEE_ORDER_LIST_INCREMENTAL_SEC,
-    ),
-  );
+  const rawLookback =
+    Number(opts?.lookbackSec) > 0
+      ? Number(opts.lookbackSec)
+      : SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
+  // Mặc định clamp [3d, 15d]; Quick Sync: [60s, 15d].
+  const lookback = opts?.allowShortLookback
+    ? Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback))
+    : Math.max(
+        SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
+        Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback),
+      );
   const timeFrom = timeTo - lookback;
+  const allowShort = opts?.allowShortLookback === true;
   const orderSnSet = new Set<string>();
   const shopeeResponses: any[] = [];
   const seenCursors = new Set<string>();
@@ -1735,6 +1746,7 @@ async function collectShopeeOrderSnsIncremental(
         timeFrom,
         timeTo,
         cursor,
+        allowShortLookback: allowShort,
         // Không truyền orderStatus — kéo toàn bộ trạng thái.
       });
 
@@ -1754,6 +1766,7 @@ async function collectShopeeOrderSnsIncremental(
               timeFrom,
               timeTo,
               cursor,
+              allowShortLookback: allowShort,
             });
           }
         } catch (refreshErr: any) {
@@ -1761,8 +1774,7 @@ async function collectShopeeOrderSnsIncremental(
             `[Orders Pull] Token refresh thất bại shop=${shopId}:`,
             refreshErr?.message || refreshErr,
           );
-          shopeeResponses.push({
-            shop_id: shopId,
+          shopeeResponses.push({            shop_id: shopId,
             page,
             error: "token_refresh_failed",
             detail: refreshErr?.message || String(refreshErr),
@@ -2375,36 +2387,44 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     }
     singleShopPull = shopIds.length === 1;
     const rawLookback = Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
-    lookbackSec = opts?.allowShortLookback
+    const shortLookback = opts?.allowShortLookback === true;
+    lookbackSec = shortLookback
       ? Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback))
       : Math.max(
           SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
           Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback),
         );
     longLookback = lookbackSec >= 168 * 3600;
+    // Quick Sync: deadline ngắn (90s) — dưới timeout cPanel 120s.
     // 7 ngày / Làm mới: nới cap để không lệch số đơn với Seller Center.
     // 1 shop: ưu tiên kéo đủ; nhiều shop: vẫn cao hơn mặc định cũ (80/5/90s).
-    pullDeadlineMs = singleShopPull
-      ? longLookback
-        ? 240_000
-        : 180_000
-      : longLookback
-        ? 240_000
-        : ORDERS_PULL_HARD_DEADLINE_MS;
-    maxOrderSnsPerShop = singleShopPull
-      ? longLookback
-        ? 400
-        : 250
-      : longLookback
-        ? 300
-        : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
-    pageHardCap = singleShopPull
-      ? longLookback
-        ? 15
-        : 12
-      : longLookback
-        ? 12
-        : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+    if (shortLookback) {
+      pullDeadlineMs = 90_000;
+      maxOrderSnsPerShop = 100;
+      pageHardCap = 4;
+    } else {
+      pullDeadlineMs = singleShopPull
+        ? longLookback
+          ? 240_000
+          : 180_000
+        : longLookback
+          ? 240_000
+          : ORDERS_PULL_HARD_DEADLINE_MS;
+      maxOrderSnsPerShop = singleShopPull
+        ? longLookback
+          ? 400
+          : 250
+        : longLookback
+          ? 300
+          : SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP;
+      pageHardCap = singleShopPull
+        ? longLookback
+          ? 15
+          : 12
+        : longLookback
+          ? 12
+          : SHOPEE_ORDER_LIST_LOOP_HARD_CAP;
+    }
     deadlineAt = startedAt + pullDeadlineMs;
 
     if (shopIds.length === 0) {
@@ -2483,7 +2503,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     syncDiag(
       "Pull START",
       `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s` +
-        ` deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap}` +
+        ` short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms` +
+        ` maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap}` +
         ` enrichTracking=${enrichTracking} longLookback=${longLookback}`,
     );
 
@@ -2517,6 +2538,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             deadlineAt: shopDeadlineAt,
             maxOrderSns: maxOrderSnsPerShop,
             pageHardCap,
+            allowShortLookback: shortLookback,
           });
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
           if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {
@@ -2524,8 +2546,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           }
 
           // KHÔNG lọc theo order_status — kéo ALL từ get_order_list (update_time ~14 ngày).
-          // MỌI pull: bổ sung order_sn từ get_return_list (TO_RETURN / tracking hoàn).
-          if (Date.now() < shopDeadlineAt) {
+          // MỌI pull (trừ Quick Sync): bổ sung order_sn từ get_return_list (TO_RETURN / tracking hoàn).
+          if (!shortLookback && Date.now() < shopDeadlineAt) {
             try {
               const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
                 mode: "incremental",
@@ -14070,8 +14092,10 @@ async function startServer() {
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
   // Mount tường minh — tránh 404 khi router interop/MVC miss sau refactor.
   app.post("/api/orders/pull", authMiddleware, pullOrders);
+  app.post("/api/orders/quick-sync", authMiddleware, quickSyncOrders);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
   app.post("/api/shopee/orders/pull", authMiddleware, pullOrders);
+  app.post("/api/shopee/orders/quick-sync", authMiddleware, quickSyncOrders);
   app.post("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
   app.get("/api/shopee/products/item-preview", authMiddleware, previewItemVariants);
   app.post("/api/products/shopee-item-preview", authMiddleware, previewItemVariants);

@@ -81,6 +81,7 @@ export function initShopeeOrdersController(partial) {
 
 /**
  * Chạy kéo đơn + cancel/return. Không throw ra ngoài — luôn trả object (kể cả lỗi).
+ * Quick Sync: allowShortLookback + reconcileActive=false + skipCancelReturn.
  */
 async function runOrdersPull(opts) {
   const {
@@ -89,6 +90,9 @@ async function runOrdersPull(opts) {
     username,
     jobType,
     logTag,
+    allowShortLookback = false,
+    reconcileActive = true,
+    skipCancelReturn = false,
   } = opts;
   let jobId = "";
   let retryTelemetryBefore;
@@ -104,20 +108,36 @@ async function runOrdersPull(opts) {
     } catch (jobErr) {
       console.warn(`[${logTag}] createSyncJob skip:`, jobErr?.message || jobErr);
     }
-    console.log(`[${logTag}] bắt đầu kéo đơn shop_id=${shopIds?.length ? shopIds.join(",") : "all"}`);
+    console.log(
+      `[${logTag}] bắt đầu kéo đơn shop_id=${shopIds?.length ? shopIds.join(",") : "all"}` +
+        ` lookbackSec=${lookbackSec} short=${allowShortLookback} reconcile=${reconcileActive}` +
+        ` skipCancel=${skipCancelReturn}`,
+    );
     const result = await deps.pullIncrementalOrdersFromShopee({
       lookbackSec,
-      reconcileActive: true,
+      reconcileActive: reconcileActive === true,
+      allowShortLookback: allowShortLookback === true,
       shopIds: shopIds?.length ? shopIds : undefined,
     });
     let cancelPull = { pulled: 0, added: 0, updated: 0, errors: [], message: "", skipped: false };
-    try {
-      cancelPull = await deps.pullShopeeCancelReturnOrders({
-        lookbackSec: Math.max(lookbackSec, 48 * 3600),
-        shopIds: shopIds?.length ? shopIds : undefined,
-      });
-    } catch (cancelErr) {
-      console.error("[API_SYNC_ERROR] cancel pull:", cancelErr?.stack || cancelErr);
+    if (!skipCancelReturn) {
+      try {
+        cancelPull = await deps.pullShopeeCancelReturnOrders({
+          lookbackSec: Math.max(lookbackSec, 48 * 3600),
+          shopIds: shopIds?.length ? shopIds : undefined,
+        });
+      } catch (cancelErr) {
+        console.error("[API_SYNC_ERROR] cancel pull:", cancelErr?.stack || cancelErr);
+      }
+    } else {
+      cancelPull = {
+        pulled: 0,
+        added: 0,
+        updated: 0,
+        errors: [],
+        message: "skipped_quick_sync",
+        skipped: true,
+      };
     }
     try {
       deps.invalidateOrdersRefreshCache();
@@ -136,7 +156,7 @@ async function runOrdersPull(opts) {
       dbErrors.length > 0
         ? `Lỗi lưu MongoDB: ${dbErrors[0]?.message || "db_upsert_failed"}`
         : String(result?.message || `Đã kéo ${pulled} đơn`) +
-          (cancelPull.pulled > 0 || cancelPull.message
+          (cancelPull.pulled > 0 || (cancelPull.message && !cancelPull.skipped)
             ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}`
             : "");
     if (jobId) {
@@ -151,6 +171,7 @@ async function runOrdersPull(opts) {
             shops: result?.shops,
             errors: errors.length,
             cancel_return_pulled: cancelPull.pulled || 0,
+            quick_sync: allowShortLookback === true,
             retry: retryTelemetryBefore
               ? diffShopeeRetryTelemetry(retryTelemetryBefore)
               : undefined,
@@ -467,6 +488,90 @@ export async function syncOrders(req, res) {
       pulled: 0,
       added: 0,
       updated: 0,
+      shopee_response: null,
+    });
+    console.log("Đã gửi phản hồi về FE");
+    return;
+  }
+}
+
+/** Lookback cố định cho Đồng bộ nhanh — 3 giờ (Unix seconds phía Shopee). */
+const QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
+
+/** POST /api/orders/quick-sync — kéo đơn update_time trong 3h gần nhất (nhẹ, tránh timeout cPanel). */
+export async function quickSyncOrders(req, res) {
+  console.log("=== BẮT ĐẦU QUICK SYNC ORDERS (3h) ===");
+  try {
+    const lookbackSec = QUICK_SYNC_LOOKBACK_SEC;
+    const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+    const shopIds = resolvePullShopIds(shopIdsRaw);
+    const username = String(req.user?.username || "");
+    console.log(
+      `Quick Sync shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"}` +
+        ` lookbackSec=${lookbackSec} (3h)`,
+    );
+
+    if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
+      sendJson(res, 200, {
+        status: 200,
+        success: true,
+        warning: true,
+        pulled: 0,
+        added: 0,
+        updated: 0,
+        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
+        shopee_response: { skipped: true, reason: "pull_in_flight" },
+        lookbackSec,
+        mode: "quick_sync",
+      });
+      console.log("Đã gửi phản hồi về FE");
+      return;
+    }
+
+    const result = await runOrdersPull({
+      lookbackSec,
+      shopIds,
+      username,
+      jobType: "shopee_orders_quick_sync",
+      logTag: "Orders Quick Sync",
+      allowShortLookback: true,
+      reconcileActive: false,
+      skipCancelReturn: true,
+    });
+
+    sendJson(res, 200, {
+      status: 200,
+      success: true,
+      message: result?.message || "Đồng bộ nhanh 3h hoàn tất",
+      total_success: result?.total_success ?? result?.pulled ?? 0,
+      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
+      pulled: result?.pulled || 0,
+      added: result?.added || 0,
+      updated: result?.updated || 0,
+      shops: result?.shops || 0,
+      errors: Array.isArray(result?.errors) ? result.errors : [],
+      detail_message: result?.detail_message || result?.message || "",
+      jobId: result?.jobId || "",
+      lookbackSec: result?.lookbackSec || lookbackSec,
+      elapsedMs: result?.elapsedMs,
+      mode: "quick_sync",
+      shopee_response: result?.shopee_response ?? null,
+    });
+    console.log("Đã gửi phản hồi về FE");
+    return;
+  } catch (err) {
+    console.error("[API_SYNC_ERROR] Quick Sync lỗi chi tiết:", err?.stack || err);
+    sendJson(res, 500, {
+      success: false,
+      message: friendlyPullError(err),
+      total_success: 0,
+      failed_orders: [],
+      error: friendlyPullError(err),
+      detail_message: friendlyPullError(err),
+      pulled: 0,
+      added: 0,
+      updated: 0,
+      mode: "quick_sync",
       shopee_response: null,
     });
     console.log("Đã gửi phản hồi về FE");

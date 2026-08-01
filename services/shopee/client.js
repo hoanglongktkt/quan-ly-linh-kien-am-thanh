@@ -219,13 +219,13 @@ export function formatShopeeApiError(json, httpStatus) {
   if (status === 504) {
     return (
       parts[0] ||
-      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với đồng bộ nhanh (2 giờ)."
+      "Timeout khi gọi Shopee API (HTTP 504) — cửa sổ đồng bộ quá rộng hoặc Shopee phản hồi chậm. Thử lại với Đồng bộ nhanh 3h."
     );
   }
   if (/timeout|timed out|AbortError/i.test(parts.join(" "))) {
     return (
       parts[0] ||
-      "Timeout khi gọi Shopee API — giảm phạm vi thời gian đồng bộ và thử lại."
+      "Timeout khi gọi Shopee API — thử Đồng bộ nhanh 3h hoặc giảm phạm vi thời gian đồng bộ."
     );
   }
   if (parts.length > 0) return parts.join(" — ");
