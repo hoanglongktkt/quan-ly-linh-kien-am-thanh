@@ -992,10 +992,10 @@ const SHOPEE_ORDER_LIST_PAGE_SIZE = 50;
 const SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 8;
 /**
  * Incremental pull: lấy đơn có update_time trong N giây gần nhất.
- * Mặc định 5 ngày — KHÔNG dùng cửa sổ vài phút/giờ (dễ bỏ sót đơn mới).
+ * Mặc định 15 ngày — khớp cửa sổ đồng bộ thủ công đa shop.
  * Shopee bắt buộc time_from/time_to là UNIX SECONDS (không phải ms).
  */
-const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 5 * 24 * 60 * 60;
+const SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 15 * 24 * 60 * 60;
 /** Sàn tối thiểu khi pull get_order_list — luôn ≥ 3 ngày. */
 const SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 /** Giới hạn order_sn mỗi shop mỗi lần pull — đủ 7 ngày shop bận, tránh cắt lệch Shopee. */
@@ -2264,9 +2264,23 @@ async function pullIncrementalOrdersFromShopee(opts?: {
   try {
     // Materialize shop con (VD: 831052930) trước khi liệt kê — tránh bỏ sót pull/UI.
     ensureShopeeLinkedShopTokenKeys();
-    shopIds = (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
-      .map((id) => normalizeShopIdKey(id))
-      .filter(Boolean);
+    const rawShopIds = opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds();
+    shopIds = [];
+    const seenShop = new Set();
+    for (const raw of rawShopIds) {
+      try {
+        const resolved = resolveShopeeTokenShopId(raw) || normalizeShopIdKey(raw);
+        if (resolved && !seenShop.has(resolved)) {
+          seenShop.add(resolved);
+          shopIds.push(resolved);
+        }
+      } catch (resolveErr: any) {
+        console.warn(
+          `[Orders Pull] resolveShopeeTokenShopId skip shop=${raw}:`,
+          resolveErr?.message || resolveErr,
+        );
+      }
+    }
     singleShopPull = shopIds.length === 1;
     const rawLookback = Number(opts?.lookbackSec) || SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
     lookbackSec = opts?.allowShortLookback
@@ -2514,7 +2528,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             });
           }
           if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
-            await shopeeSyncDelay(Math.min(SHOPEE_SYNC_CHUNK_DELAY_MS, 400));
+            // Rate-limit: nghỉ đủ giữa các lô get_order_detail (đa shop / hàng loạt).
+            await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
           }
         }
       } catch (shopErr: any) {
@@ -2762,7 +2777,8 @@ async function pullShopeeCancelReturnOrders(opts?: {
             });
           }
           if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
-            await shopeeSyncDelay(Math.min(SHOPEE_SYNC_CHUNK_DELAY_MS, 400));
+            // Rate-limit: nghỉ đủ giữa các lô get_order_detail (đa shop / hàng loạt).
+            await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
           }
         }
       } catch (shopErr: any) {
@@ -10121,6 +10137,21 @@ async function fetchNormalizeShopeeOrderChunk(
         );
       }
     }
+    // Rate-limit: backoff thêm 1 lần trước khi trả lỗi (shopeeFetchJsonWithRetry đã retry nội bộ).
+    if (isShopeeRateLimited(detailResult?.httpStatus, detailResult)) {
+      console.warn(
+        `[Shopee Sync] get_order_detail RATE LIMIT shop=${fileKey} — chờ ${SHOPEE_SYNC_CHUNK_DELAY_MS * 2}ms rồi retry 1 lần`,
+      );
+      await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS * 2);
+      try {
+        detailResult = await shopeeGetOrderDetail(apiShopId, accessToken, snList);
+      } catch (rlErr: any) {
+        console.error(
+          `[Shopee Sync] get_order_detail rate-limit retry fail shop=${fileKey}:`,
+          rlErr?.message || rlErr,
+        );
+      }
+    }
     if (detailResult.error) {
       const message =
         detailResult.message || formatShopeeApiError(detailResult, detailResult.httpStatus);
@@ -10239,6 +10270,16 @@ async function persistShopeeOrderChunk(
     try {
       if (!normalized?.orderSn) {
         console.warn("[Orders Sync] SKIP đơn thiếu orderSn — không phải do cờ ĐVVC.");
+        continue;
+      }
+      // ĐA SHOP: BẮT BUỘC gắn shop_id từ context sync (không để đơn orphan).
+      if (syncCtx?.apiShopId) {
+        normalized.shopId = String(syncCtx.apiShopId);
+      }
+      if (!normalized.shopId) {
+        console.warn(
+          `[Orders Sync] SKIP order_sn=${normalized.orderSn} — thiếu shop_id (multi-shop bắt buộc)`,
+        );
         continue;
       }
       // KHÔNG skip theo is_handed_over / internal_status — mọi đơn Shopee đều được upsert.

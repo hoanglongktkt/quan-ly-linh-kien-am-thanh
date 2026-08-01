@@ -16,6 +16,7 @@ import {
   loadShopeeTokens,
   getShopeeTokenRecord,
   normalizeShopIdKey,
+  resolveShopeeTokenShopId,
   isShopeeInvalidTokenError,
   getShopeeUnauthorizedShopMessage,
   ShopeeRefreshTokenExpiredError,
@@ -214,7 +215,22 @@ function inspectShopTokenStatus(shopId) {
  * @returns {{ ok: boolean, token?: string, apiShopId?: string, fileKey?: string, message?: string, refreshed?: boolean }}
  */
 async function resolveWebhookShopAuth(shopId) {
-  const key = normalizeShopIdKey(shopId) || String(shopId || "").trim();
+  // Đa shop: resolve đúng token record theo shop_id payload (linked/oauth alias).
+  const resolved = resolveShopeeTokenShopId(shopId);
+  const key =
+    normalizeShopIdKey(resolved || shopId) || String(resolved || shopId || "").trim();
+  if (!key) {
+    return {
+      ok: false,
+      message: getShopeeUnauthorizedShopMessage(),
+      refreshed: false,
+    };
+  }
+  if (resolved && resolved !== String(shopId || "").trim()) {
+    console.log(
+      `[Shopee Webhook] resolveShopeeTokenShopId: payload=${shopId} → token_key=${resolved}`,
+    );
+  }
   const status = inspectShopTokenStatus(key);
 
   console.log(
@@ -329,17 +345,24 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     if (s && !shopCandidates.includes(s)) shopCandidates.push(s);
   };
 
-  // 1) shop_id từ payload Webhook — bắt buộc ưu tiên
+  // 1) shop_id từ payload Webhook — resolve token key đa shop rồi ưu tiên
   if (payloadShopId) {
-    pushShop(payloadShopId);
+    const resolvedPayload = resolveShopeeTokenShopId(payloadShopId);
+    pushShop(resolvedPayload || payloadShopId);
+    if (resolvedPayload && resolvedPayload !== payloadShopId) {
+      pushShop(payloadShopId);
+    }
     console.log(
-      `📦 Webhook nhận đơn: ${orderSn} của shop: ${payloadShopId} — dùng shop_id payload để lấy token`,
+      `📦 Webhook nhận đơn: ${orderSn} của shop: ${payloadShopId}` +
+        (resolvedPayload ? ` (token_key=${resolvedPayload})` : "") +
+        ` — dùng resolveShopeeTokenShopId để lấy token`,
     );
   } else {
     console.warn(
       `📦 Webhook order_sn=${orderSn} THIẾU shop_id trong payload — sẽ thử các shop đã ủy quyền`,
     );
-    pushShop(orders[0]?.shopId);
+    const fromOrder = resolveShopeeTokenShopId(orders[0]?.shopId) || orders[0]?.shopId;
+    pushShop(fromOrder);
     try {
       for (const id of deps.listShopeeOAuthShopIds() || []) pushShop(id);
     } catch (listErr) {
@@ -579,6 +602,17 @@ async function processShopeeWebhookPayloadInner(body) {
   const orderSn = extracted.orderSn;
   let shopId = extracted.shopId;
 
+  // Type 3 (Order Status) + type 4 (Tracking No) — luôn kéo get_order_detail khi có ordersn.
+  const codeNum = Number(parsed.code);
+  const isOrderPush =
+    codeNum === 3 ||
+    codeNum === 4 ||
+    parsed.eventKind === "order_status_update" ||
+    parsed.eventKind === "tracking_no_update" ||
+    parsed.eventKind === "shipping_document" ||
+    parsed.eventKind === "package_update" ||
+    Boolean(orderSn);
+
   console.log("📦 Webhook nhận đơn:", orderSn || "(không có order_sn)", "của shop:", shopId || "(không có shop_id)");
 
   console.log(
@@ -596,7 +630,7 @@ async function processShopeeWebhookPayloadInner(body) {
     }),
   );
 
-  if (!orderSn) {
+  if (!orderSn || !isOrderPush) {
     console.log(
       `[Shopee Webhook] Non-order push skipped code=${parsed.code} kind=${parsed.eventKind}`,
     );
@@ -608,8 +642,11 @@ async function processShopeeWebhookPayloadInner(body) {
     if (!shopId && orders[0]?.shopId) {
       shopId = String(orders[0].shopId).trim();
     }
+    // Đa shop: map shop_id payload → đúng token key trước khi gọi API.
+    const resolvedShop = resolveShopeeTokenShopId(shopId);
+    if (resolvedShop) shopId = resolvedShop;
 
-    // 1) Token check + refresh → get_order_detail → UPSERT
+    // 1) Token check + refresh → get_order_detail → UPSERT (lưu kèm shop_id)
     const detailResult = await fetchDetailAndUpsert(orderSn, shopId, orders);
     if (detailResult.shopId) shopId = detailResult.shopId;
     const fetchedDetail = detailResult.fetched;

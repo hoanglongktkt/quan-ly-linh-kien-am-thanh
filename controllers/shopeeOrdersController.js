@@ -9,6 +9,7 @@ import {
   getShopeeAccessTokenForApi,
   isShopeeConfigValid,
   ensureDataDirs,
+  resolveShopeeTokenShopId,
 } from "../services/shopee/auth.js";
 import {
   snapshotShopeeRetryTelemetry,
@@ -88,6 +89,7 @@ async function runOrdersPullBackground(opts) {
   try {
     const job = await deps.createSyncJob(jobType, username);
     jobId = job?.id || "";
+    // Đa shop: shopIds đã resolve; nếu rỗng → pull toàn bộ shop ủy quyền.
     const result = await deps.pullIncrementalOrdersFromShopee({
       lookbackSec,
       reconcileActive: true,
@@ -164,21 +166,46 @@ async function runOrdersPullBackground(opts) {
   }
 }
 
+/** Resolve shop_ids từ body — 1 shop cụ thể hoặc undefined (= toàn bộ shop sync). */
+function resolvePullShopIds(shopIdsRaw) {
+  if (
+    shopIdsRaw == null ||
+    shopIdsRaw === "" ||
+    (Array.isArray(shopIdsRaw) && shopIdsRaw.length === 0)
+  ) {
+    return undefined;
+  }
+  const rawList = Array.isArray(shopIdsRaw) ? shopIdsRaw : [shopIdsRaw];
+  const resolved = [];
+  const seen = new Set();
+  for (const raw of rawList) {
+    try {
+      const one = resolveShopeeTokenShopId(raw) || normalizeShopIdKey(raw);
+      if (one && !seen.has(one)) {
+        seen.add(one);
+        resolved.push(one);
+      }
+    } catch (err) {
+      console.warn(
+        `[Orders Pull] resolveShopeeTokenShopId skip raw=${raw}:`,
+        err?.message || err,
+      );
+    }
+  }
+  return resolved.length ? resolved : undefined;
+}
+
 /** POST /api/orders/pull — fire-and-forget: HTTP trả ngay, sync chạy ngầm. */
 export async function pullOrders(req, res) {
   try {
-    // Mặc định 5 ngày (120h) — tối thiểu 3 ngày; không dùng 24h ngắn gây bỏ sót đơn mới.
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 120);
+    // Mặc định 15 ngày — cửa sổ get_order_list multi-shop.
+    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 15 * 24);
     const hours = Number.isFinite(hoursRaw) && hoursRaw > 0
       ? Math.min(Math.max(hoursRaw, 72), 15 * 24)
-      : 120;
+      : 15 * 24;
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
-    const shopIds = Array.isArray(shopIdsRaw)
-      ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean)
-      : shopIdsRaw
-        ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean)
-        : undefined;
+    const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     console.log(
       `[Orders Pull] POST /api/orders/pull (background) lookback_hours=${hours}` +
@@ -232,18 +259,14 @@ export async function pullOrders(req, res) {
 /** POST /api/shopee/orders/sync — fire-and-forget: HTTP trả ngay, sync chạy ngầm. */
 export async function syncOrders(req, res) {
   try {
-    // Mặc định 5 ngày (120h) — tối thiểu 3 ngày.
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 120);
+    // Mặc định 15 ngày — đồng bộ thủ công đa shop.
+    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 15 * 24);
     const hours = Number.isFinite(hoursRaw) && hoursRaw > 0
       ? Math.min(Math.max(hoursRaw, 72), 15 * 24)
-      : 120;
+      : 15 * 24;
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
-    const shopIds = Array.isArray(shopIdsRaw)
-      ? shopIdsRaw.map((id) => normalizeShopIdKey(id)).filter(Boolean)
-      : shopIdsRaw
-        ? [normalizeShopIdKey(shopIdsRaw)].filter(Boolean)
-        : undefined;
+    const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     console.log(
       `[Orders Sync] POST /api/shopee/orders/sync (background) lookback_hours=${hours}` +
