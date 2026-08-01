@@ -106028,28 +106028,42 @@ async function loadWorkingOrdersForWebhook(orderSn) {
   return orders;
 }
 async function upsertOrderToDb(order, label = "") {
-  if (!order?.orderSn) return;
+  if (!order?.orderSn) {
+    console.log("\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:", "th\u1EA5t b\u1EA1i \u2014 thi\u1EBFu orderSn");
+    return false;
+  }
   if (!deps19.isMongoReady()) {
     console.warn(
       `[Shopee Webhook] Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua upsert order_sn=${order.orderSn}`
     );
-    return;
+    console.log("\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:", `th\u1EA5t b\u1EA1i \u2014 Mongo ch\u01B0a s\u1EB5n s\xE0ng (order_sn=${order.orderSn})`);
+    return false;
   }
   try {
     await deps19.bulkUpsertOrdersToStore([order]);
     console.log(
       `[DB UPDATED] ${label ? `(${label}) ` : ""}order_sn=${order.orderSn} shop_id=${order.shopId || "?"} status=${order.shopee_order_status || order.status || "?"} \u2014 upsert OK`
     );
+    console.log(
+      "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
+      `th\xE0nh c\xF4ng \u2014 order_sn=${order.orderSn} shop_id=${order.shopId || "?"} label=${label || "webhook"}`
+    );
     try {
       deps19.queueOrdersJsonMirrorFromMongo();
     } catch {
     }
+    return true;
   } catch (mongoErr) {
     console.error(
       `[Shopee Webhook] Mongo upsert FAILED order_sn=${order.orderSn}:`,
       mongoErr?.message || mongoErr,
       mongoErr?.stack || ""
     );
+    console.log(
+      "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
+      `l\u1ED7i \u2014 order_sn=${order.orderSn}: ${mongoErr?.message || mongoErr}`
+    );
+    return false;
   }
 }
 function extractOrderSnAndShopId(body, parsed) {
@@ -106062,6 +106076,139 @@ function extractOrderSnAndShopId(body, parsed) {
     parsed?.shopId || body?.shop_id || body?.shopId || data.shop_id || data.shopId || ""
   ).trim();
   return { orderSn, shopId };
+}
+function inspectShopTokenStatus(shopId) {
+  const key = normalizeShopIdKey(shopId);
+  if (!key) {
+    return {
+      shopId: "",
+      hasRecord: false,
+      hasAccessToken: false,
+      hasRefreshToken: false,
+      needsRefresh: true,
+      reason: "missing_shop_id"
+    };
+  }
+  const tokens = loadShopeeTokens();
+  const record = getShopeeTokenRecord(tokens, key);
+  if (!record) {
+    return {
+      shopId: key,
+      hasRecord: false,
+      hasAccessToken: false,
+      hasRefreshToken: false,
+      needsRefresh: true,
+      reason: "no_token_record"
+    };
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  const obtainedAt = Number(record.obtained_at) || 0;
+  const expireIn = Number(record.expire_in) || 14400;
+  const age = obtainedAt > 0 ? now - obtainedAt : null;
+  const expired = !record.access_token || obtainedAt > 0 && now - obtainedAt >= expireIn - 60;
+  return {
+    shopId: key,
+    hasRecord: true,
+    hasAccessToken: Boolean(record.access_token),
+    hasRefreshToken: Boolean(record.refresh_token),
+    needsRefresh: expired,
+    ageSeconds: age,
+    expireIn,
+    reason: expired ? record.refresh_token ? "access_token_expired_need_refresh" : "expired_and_no_refresh_token" : "access_token_fresh"
+  };
+}
+async function resolveWebhookShopAuth(shopId) {
+  const key = normalizeShopIdKey(shopId) || String(shopId || "").trim();
+  const status = inspectShopTokenStatus(key);
+  console.log(
+    "\u{1F511} Tr\u1EA1ng th\xE1i Token:",
+    `shop_id=${key || "?"} c\xF3_record=${status.hasRecord} c\xF3_access_token=${status.hasAccessToken} c\xF3_refresh_token=${status.hasRefreshToken} c\u1EA7n_refresh=${status.needsRefresh} l\xFD_do=${status.reason}` + (status.ageSeconds != null ? ` age=${status.ageSeconds}s/expire_in=${status.expireIn}s` : "")
+  );
+  if (!status.hasRecord) {
+    return {
+      ok: false,
+      message: getShopeeUnauthorizedShopMessage(),
+      refreshed: false
+    };
+  }
+  if (!status.hasRefreshToken && status.needsRefresh) {
+    return {
+      ok: false,
+      message: `Shop ${key}: access_token h\u1EBFt h\u1EA1n v\xE0 thi\u1EBFu refresh_token. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee.`,
+      refreshed: false
+    };
+  }
+  try {
+    let refreshed = false;
+    let auth = null;
+    if (status.needsRefresh) {
+      console.log(
+        `\u{1F511} Token h\u1EBFt h\u1EA1n shop_id=${key} \u2014 g\u1ECDi Refresh Token tr\u01B0\u1EDBc get_order_detail...`
+      );
+      try {
+        const newToken = await refreshShopeeAccessTokenLocked(key, { force: true });
+        if (newToken) {
+          refreshed = true;
+          auth = await getShopeeAccessTokenForApi(key);
+          console.log(`\u{1F511} Refresh Token OK shop_id=${key} \u2014 \u0111\xE3 l\u01B0u DB, d\xF9ng token m\u1EDBi.`);
+        }
+      } catch (refreshErr) {
+        console.error(
+          `\u{1F511} Refresh Token TH\u1EA4T B\u1EA0I shop_id=${key}:`,
+          refreshErr?.message || refreshErr
+        );
+        if (refreshErr instanceof ShopeeRefreshTokenExpiredError) {
+          return {
+            ok: false,
+            message: `Shop ${key}: refresh_token h\u1EBFt h\u1EA1n \u2014 ${getShopeeUnauthorizedShopMessage()}`,
+            refreshed: false
+          };
+        }
+      }
+    }
+    if (!auth?.token) {
+      auth = await getShopeeAccessTokenForApi(key);
+    }
+    if (!auth?.token) {
+      const fallback = await getValidShopeeAccessToken(key);
+      if (!fallback) {
+        console.log(
+          "\u{1F511} Tr\u1EA1ng th\xE1i Token:",
+          `KH\xD4NG l\u1EA5y \u0111\u01B0\u1EE3c access_token h\u1EE3p l\u1EC7 cho shop_id=${key}`
+        );
+        return {
+          ok: false,
+          message: `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token h\u1EE3p l\u1EC7 cho shop_id=${key}. V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop.`,
+          refreshed
+        };
+      }
+      return {
+        ok: true,
+        token: fallback,
+        apiShopId: key,
+        fileKey: key,
+        refreshed
+      };
+    }
+    console.log(
+      "\u{1F511} Tr\u1EA1ng th\xE1i Token:",
+      `OK \u2014 l\u1EA5y \u0111\u01B0\u1EE3c access_token shop_id=${auth.fileKey} api_shop_id=${auth.apiShopId} refreshed=${refreshed}`
+    );
+    return {
+      ok: true,
+      token: auth.token,
+      apiShopId: auth.apiShopId || key,
+      fileKey: auth.fileKey || key,
+      refreshed
+    };
+  } catch (err) {
+    console.error(`\u{1F511} L\u1ED7i resolve token shop_id=${key}:`, err?.message || err);
+    return {
+      ok: false,
+      message: err?.message || String(err),
+      refreshed: false
+    };
+  }
 }
 async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
   const shopCandidates = [];
@@ -106083,53 +106230,117 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     console.error(
       `[Shopee Webhook] Kh\xF4ng c\xF3 shop_id n\xE0o \u0111\u1EC3 g\u1ECDi get_order_detail order_sn=${orderSn}`
     );
-    return { fetched: false, shopId: "", row: null };
+    console.log(
+      "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
+      `l\u1ED7i \u2014 kh\xF4ng c\xF3 shop \u1EE7y quy\u1EC1n. ${getShopeeUnauthorizedShopMessage()}`
+    );
+    return { fetched: false, shopId: "", row: null, accessToken: null };
   }
   for (const shopId of shopCandidates) {
-    let accessToken = null;
     try {
-      accessToken = await getValidShopeeAccessToken(shopId);
-    } catch (tokenErr) {
-      console.warn(
-        `[Shopee Webhook] getValidShopeeAccessToken shop=${shopId}:`,
-        tokenErr?.message || tokenErr
+      console.log(
+        `\u{1F4E6} Webhook k\xE9o chi ti\u1EBFt: order_sn=${orderSn} th\u1EED shop_id=${shopId}`
       );
-      continue;
-    }
-    if (!accessToken) {
-      console.warn(
-        `[Shopee Webhook] Kh\xF4ng c\xF3 access_token shop=${shopId} \u2014 th\u1EED shop ti\u1EBFp theo`
-      );
-      continue;
-    }
-    console.log(
-      `[Shopee Webhook] Calling get_order_detail order_sn=${orderSn} shop_id=${shopId}`
-    );
-    try {
-      const { normalized, errors } = await deps19.fetchNormalizeShopeeOrderChunk(
-        shopId,
-        accessToken,
-        shopId,
-        [orderSn],
-        { enrichTracking: true, skipEscrow: true }
-      );
-      if (!normalized?.length) {
+      const auth = await resolveWebhookShopAuth(shopId);
+      if (!auth.ok || !auth.token) {
         console.warn(
-          `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${orderSn} shop=${shopId}`,
-          errors?.[0] || ""
+          `[Shopee Webhook] B\u1ECF qua shop=${shopId} \u2014 ${auth.message || "kh\xF4ng c\xF3 token"}`
         );
         continue;
       }
+      const apiShopId = auth.apiShopId || shopId;
+      const fileKey = auth.fileKey || shopId;
+      let accessToken = auth.token;
+      console.log(
+        `[Shopee Webhook] Calling get_order_detail order_sn=${orderSn} shop_id=${apiShopId} fileKey=${fileKey}`
+      );
+      let normalized = [];
+      let errors = [];
+      try {
+        const chunk = await deps19.fetchNormalizeShopeeOrderChunk(
+          apiShopId,
+          accessToken,
+          fileKey,
+          [orderSn],
+          { enrichTracking: true, skipEscrow: true }
+        );
+        normalized = chunk.normalized || [];
+        errors = chunk.errors || [];
+        const authFail = errors.some(
+          (e2) => Number(e2?.httpStatus) === 401 || Number(e2?.httpStatus) === 403 || isShopeeInvalidTokenError(e2?.error, e2?.message)
+        );
+        if (!normalized.length && authFail || authFail) {
+          console.warn(
+            `\u{1F511} get_order_detail b\xE1o token l\u1ED7i shop=${fileKey} \u2014 force refresh + retry 1 l\u1EA7n`
+          );
+          try {
+            const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
+            if (refreshed) {
+              accessToken = refreshed;
+              const retry2 = await deps19.fetchNormalizeShopeeOrderChunk(
+                apiShopId,
+                accessToken,
+                fileKey,
+                [orderSn],
+                { enrichTracking: true, skipEscrow: true }
+              );
+              normalized = retry2.normalized || [];
+              errors = retry2.errors || [];
+            }
+          } catch (retryRefreshErr) {
+            console.error(
+              `\u{1F511} Force refresh sau get_order_detail fail:`,
+              retryRefreshErr?.message || retryRefreshErr
+            );
+          }
+        }
+      } catch (detailErr) {
+        console.error(
+          `[Shopee Webhook] get_order_detail EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
+          detailErr?.message || detailErr,
+          detailErr?.stack || ""
+        );
+        console.log(
+          "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
+          `l\u1ED7i exception \u2014 order_sn=${orderSn} shop=${shopId}: ${detailErr?.message || detailErr}`
+        );
+        continue;
+      }
+      if (!normalized?.length) {
+        const errMsg = errors?.[0] ? `${errors[0].error || ""} ${errors[0].message || ""}`.trim() : "response r\u1ED7ng";
+        console.warn(
+          `[Shopee Webhook] get_order_detail r\u1ED7ng order_sn=${orderSn} shop=${shopId}`,
+          errMsg
+        );
+        console.log(
+          "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
+          `l\u1ED7i API \u2014 order_sn=${orderSn} shop=${shopId}: ${errMsg || "empty"}`
+        );
+        continue;
+      }
+      console.log(
+        "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
+        `th\xE0nh c\xF4ng \u2014 order_sn=${orderSn} shop=${apiShopId} status=${normalized[0]?.shopee_order_status || normalized[0]?.status || "?"} tn=${normalized[0]?.trackingNumber || "\u2014"}`
+      );
       try {
         await deps19.persistShopeeOrderChunk(orders, normalized, {
-          apiShopId: shopId,
+          apiShopId,
           accessToken,
           skipTracking: true
         });
         console.log(
-          `[Shopee Webhook] get_order_detail + UPSERT OK order_sn=${orderSn} shop_id=${shopId} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
+          `[Shopee Webhook] get_order_detail + UPSERT OK order_sn=${orderSn} shop_id=${apiShopId} status=${normalized[0]?.shopee_order_status || ""} tn=${normalized[0]?.trackingNumber || "\u2014"}`
         );
-        return { fetched: true, shopId, row: orders.find((o) => String(o.orderSn) === orderSn) || normalized[0] };
+        console.log(
+          "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
+          `th\xE0nh c\xF4ng (persistShopeeOrderChunk) \u2014 order_sn=${orderSn}`
+        );
+        return {
+          fetched: true,
+          shopId: apiShopId,
+          row: orders.find((o) => String(o.orderSn) === orderSn) || normalized[0],
+          accessToken
+        };
       } catch (persistErr) {
         console.error(
           `[Shopee Webhook] persistShopeeOrderChunk FAILED order_sn=${orderSn}:`,
@@ -106140,18 +106351,32 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
         const idx = orders.findIndex((o) => String(o.orderSn) === String(row.orderSn));
         if (idx >= 0) orders[idx] = { ...orders[idx], ...row };
         else orders.unshift(row);
-        await upsertOrderToDb(orders[0] || row, "detail-fallback");
-        return { fetched: true, shopId, row: orders[0] || row };
+        const saved = await upsertOrderToDb(orders[0] || row, "detail-fallback");
+        return {
+          fetched: true,
+          shopId: apiShopId,
+          row: orders[0] || row,
+          accessToken: saved ? accessToken : accessToken
+        };
       }
-    } catch (detailErr) {
+    } catch (shopLoopErr) {
       console.error(
-        `[Shopee Webhook] get_order_detail EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
-        detailErr?.message || detailErr,
-        detailErr?.stack || ""
+        `[Shopee Webhook] fetchDetailAndUpsert shop loop EXCEPTION order_sn=${orderSn} shop=${shopId}:`,
+        shopLoopErr?.message || shopLoopErr,
+        shopLoopErr?.stack || ""
       );
     }
   }
-  return { fetched: false, shopId: preferredShopId || shopCandidates[0] || "", row: null };
+  console.log(
+    "\u{1F4E5} K\u1EBFt qu\u1EA3 g\u1ECDi API get_order_detail:",
+    `th\u1EA5t b\u1EA1i \u2014 kh\xF4ng shop n\xE0o tr\u1EA3 \u0111\u01B0\u1EE3c chi ti\u1EBFt order_sn=${orderSn} (\u0111\xE3 th\u1EED: ${shopCandidates.join(", ")})`
+  );
+  return {
+    fetched: false,
+    shopId: preferredShopId || shopCandidates[0] || "",
+    row: null,
+    accessToken: null
+  };
 }
 async function processShopeeWebhookPayloadInner(body) {
   if (!body || typeof body !== "object") {
@@ -106173,6 +106398,7 @@ async function processShopeeWebhookPayloadInner(body) {
   const extracted = extractOrderSnAndShopId(body, parsed);
   const orderSn = extracted.orderSn;
   let shopId = extracted.shopId;
+  console.log("\u{1F4E6} Webhook nh\u1EADn \u0111\u01A1n:", orderSn || "(kh\xF4ng c\xF3 order_sn)", "c\u1EE7a shop:", shopId || "(kh\xF4ng c\xF3 shop_id)");
   console.log(
     "[Shopee Webhook] Push event",
     JSON.stringify({
@@ -106193,105 +106419,131 @@ async function processShopeeWebhookPayloadInner(body) {
     );
     return;
   }
-  const orders = await loadWorkingOrdersForWebhook(orderSn);
-  if (!shopId && orders[0]?.shopId) {
-    shopId = String(orders[0].shopId).trim();
-  }
-  const detailResult = await fetchDetailAndUpsert(orderSn, shopId, orders);
-  if (detailResult.shopId) shopId = detailResult.shopId;
-  const fetchedDetail = detailResult.fetched;
-  let accessToken = null;
-  if (shopId) {
-    try {
-      accessToken = await getValidShopeeAccessToken(shopId);
-    } catch {
+  try {
+    const orders = await loadWorkingOrdersForWebhook(orderSn);
+    if (!shopId && orders[0]?.shopId) {
+      shopId = String(orders[0].shopId).trim();
     }
-  }
-  if (!fetchedDetail) {
-    console.warn(
-      `[Shopee Webhook] Fallback shallow normalize order_sn=${orderSn} (detail ch\u01B0a l\u1EA5y \u0111\u01B0\u1EE3c)`
-    );
-    try {
-      await deps19.upsertShopeeWebhookShallow(body, orders);
-    } catch (shallowErr) {
-      console.error(
-        `[Shopee Webhook] upsertShopeeWebhookShallow FAILED:`,
-        shallowErr?.message || shallowErr,
-        shallowErr?.stack || ""
-      );
-    }
-  }
-  let idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
-  if (idx < 0 && (parsed.trackingNo || parsed.status || orderSn)) {
-    try {
-      await deps19.upsertShopeeWebhookShallow(body, orders);
-    } catch {
-    }
-    idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
-  }
-  if (idx >= 0) {
-    const beforeTn = String(
-      orders[idx].trackingNumber || orders[idx].tracking_no || ""
-    );
-    try {
-      deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
-    } catch (applyErr) {
-      console.warn(
-        `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
-        applyErr?.message || applyErr
-      );
-    }
-    if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps19.hasUsableShopeeTrackingNumber(orders[idx]))) {
+    const detailResult = await fetchDetailAndUpsert(orderSn, shopId, orders);
+    if (detailResult.shopId) shopId = detailResult.shopId;
+    const fetchedDetail = detailResult.fetched;
+    let accessToken = detailResult.accessToken || null;
+    if (!accessToken && shopId) {
       try {
-        await deps19.enrichShopeeOrderTrackingFromApi(
-          shopId,
-          accessToken,
-          orders[idx],
-          { retries: 1, light: true }
-        );
-        deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
-      } catch (trackErr) {
+        const auth = await resolveWebhookShopAuth(shopId);
+        accessToken = auth.ok ? auth.token : null;
+      } catch (tokenErr) {
         console.warn(
-          `[Shopee Webhook] Force get_tracking_number ${orderSn}:`,
-          trackErr?.message || trackErr
+          `[Shopee Webhook] resolveWebhookShopAuth sau detail:`,
+          tokenErr?.message || tokenErr
         );
       }
     }
-    const afterTn = String(
-      orders[idx].trackingNumber || orders[idx].tracking_no || ""
-    );
-    console.log(
-      `[Shopee Webhook] Apply push fields order_sn=${orderSn} status=${orders[idx].status} raw=${orders[idx].shopee_order_status || "\u2014"} tn=${afterTn || "\u2014"} (before=${beforeTn || "\u2014"})`
-    );
-    await upsertOrderToDb(orders[idx], parsed.eventKind || "webhook");
-  } else {
-    console.error(
-      `[Shopee Webhook] Kh\xF4ng t\u1EA1o/\u0111\u01B0\u1EE3c \u0111\u01A1n sau x\u1EED l\xFD order_sn=${orderSn} \u2014 DB kh\xF4ng \u0111\u01B0\u1EE3c c\u1EADp nh\u1EADt`
-    );
-  }
-  const orderAfter = orders.find((o) => String(o.orderSn) === orderSn);
-  const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
-  if (needReturnFallback && shopId && accessToken) {
-    try {
-      await deps19.applyWebhookReturnFallback(
-        shopId,
-        accessToken,
-        orderSn,
-        orders,
-        parsed.returnSn
-      );
-      const row = orders.find((o) => String(o.orderSn) === orderSn);
-      if (row) await upsertOrderToDb(row, "return/cancel");
-    } catch (retErr) {
+    if (!fetchedDetail) {
       console.warn(
-        `[Shopee Webhook] applyWebhookReturnFallback:`,
-        retErr?.message || retErr
+        `[Shopee Webhook] Fallback shallow normalize order_sn=${orderSn} (detail ch\u01B0a l\u1EA5y \u0111\u01B0\u1EE3c)`
+      );
+      try {
+        await deps19.upsertShopeeWebhookShallow(body, orders);
+        console.log("\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:", `shallow fallback \u0111\xE3 g\u1ECDi \u2014 order_sn=${orderSn}`);
+      } catch (shallowErr) {
+        console.error(
+          `[Shopee Webhook] upsertShopeeWebhookShallow FAILED:`,
+          shallowErr?.message || shallowErr,
+          shallowErr?.stack || ""
+        );
+        console.log(
+          "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
+          `shallow fallback l\u1ED7i \u2014 ${shallowErr?.message || shallowErr}`
+        );
+      }
+    }
+    let idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
+    if (idx < 0 && (parsed.trackingNo || parsed.status || orderSn)) {
+      try {
+        await deps19.upsertShopeeWebhookShallow(body, orders);
+      } catch {
+      }
+      idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
+    }
+    if (idx >= 0) {
+      const beforeTn = String(
+        orders[idx].trackingNumber || orders[idx].tracking_no || ""
+      );
+      try {
+        deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
+      } catch (applyErr) {
+        console.warn(
+          `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
+          applyErr?.message || applyErr
+        );
+      }
+      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps19.hasUsableShopeeTrackingNumber(orders[idx]))) {
+        try {
+          await deps19.enrichShopeeOrderTrackingFromApi(
+            shopId,
+            accessToken,
+            orders[idx],
+            { retries: 1, light: true }
+          );
+          deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
+        } catch (trackErr) {
+          console.warn(
+            `[Shopee Webhook] Force get_tracking_number ${orderSn}:`,
+            trackErr?.message || trackErr
+          );
+        }
+      }
+      const afterTn = String(
+        orders[idx].trackingNumber || orders[idx].tracking_no || ""
+      );
+      console.log(
+        `[Shopee Webhook] Apply push fields order_sn=${orderSn} status=${orders[idx].status} raw=${orders[idx].shopee_order_status || "\u2014"} tn=${afterTn || "\u2014"} (before=${beforeTn || "\u2014"})`
+      );
+      await upsertOrderToDb(orders[idx], parsed.eventKind || "webhook");
+    } else {
+      console.error(
+        `[Shopee Webhook] Kh\xF4ng t\u1EA1o/\u0111\u01B0\u1EE3c \u0111\u01A1n sau x\u1EED l\xFD order_sn=${orderSn} \u2014 DB kh\xF4ng \u0111\u01B0\u1EE3c c\u1EADp nh\u1EADt`
+      );
+      console.log(
+        "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
+        `th\u1EA5t b\u1EA1i \u2014 kh\xF4ng c\xF3 row order_sn=${orderSn} sau x\u1EED l\xFD`
       );
     }
+    const orderAfter = orders.find((o) => String(o.orderSn) === orderSn);
+    const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
+    if (needReturnFallback && shopId && accessToken) {
+      try {
+        await deps19.applyWebhookReturnFallback(
+          shopId,
+          accessToken,
+          orderSn,
+          orders,
+          parsed.returnSn
+        );
+        const row = orders.find((o) => String(o.orderSn) === orderSn);
+        if (row) await upsertOrderToDb(row, "return/cancel");
+      } catch (retErr) {
+        console.warn(
+          `[Shopee Webhook] applyWebhookReturnFallback:`,
+          retErr?.message || retErr
+        );
+      }
+    }
+    console.log(
+      `[Shopee Webhook] Order ${orderSn} processed (event=${parsed.eventKind}, detail=${fetchedDetail}).`
+    );
+  } catch (processErr) {
+    console.error(
+      `[Shopee Webhook] processShopeeWebhookPayloadInner EXCEPTION order_sn=${orderSn}:`,
+      processErr?.message || processErr,
+      processErr?.stack || ""
+    );
+    console.log(
+      "\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:",
+      `exception \u2014 ${processErr?.message || processErr}`
+    );
   }
-  console.log(
-    `[Shopee Webhook] Order ${orderSn} processed (event=${parsed.eventKind}, detail=${fetchedDetail}).`
-  );
 }
 async function processShopeeWebhookPayload(body) {
   let timer;
