@@ -243,27 +243,42 @@ function sanitizeShopeeResponseForFe(raw) {
   }
 }
 
-/** Gửi JSON an toàn — không double-send. */
+/** Gửi JSON an toàn — luôn Content-Type JSON, không double-send, không để Express ném HTML 500. */
 function sendJson(res, statusCode, body) {
   if (res.headersSent) {
     console.warn("[Orders Pull] headers đã gửi — bỏ qua response trùng.");
     return false;
   }
+  const safeBody =
+    body && typeof body === "object"
+      ? body
+      : { success: false, message: "empty_response", data: body ?? null };
   try {
-    res.status(statusCode).json(body);
+    const payload = JSON.stringify(safeBody, (_key, value) => {
+      if (typeof value === "bigint") return value.toString();
+      if (value instanceof Error) return value.message || String(value);
+      return value;
+    });
+    res.status(Number(statusCode) || 200);
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.send(payload);
     return true;
   } catch (err) {
     console.error("[Orders Pull] sendJson FAILED:", err?.message || err);
     try {
       if (!res.headersSent) {
-        res.status(500).json({
-          success: false,
-          message: "Lỗi gửi phản hồi JSON",
-          error: err?.message || String(err),
-        });
+        res.status(500);
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.send(
+          JSON.stringify({
+            success: false,
+            message: "Lỗi gửi phản hồi JSON",
+            error: String(err?.message || err || "json_serialize_failed"),
+          }),
+        );
       }
-    } catch {
-      /* ignore */
+    } catch (fatal) {
+      console.error("[Orders Pull] sendJson FATAL:", fatal?.message || fatal);
     }
     return false;
   }
@@ -351,7 +366,7 @@ export async function pullOrders(req, res) {
       added: result?.added || 0,
       updated: result?.updated || 0,
       shops: result?.shops || 0,
-      errors: result?.errors || [],
+      errors: Array.isArray(result?.errors) ? result.errors : [],
       detail_message: result?.detail_message || result?.message || "",
       jobId: result?.jobId || "",
       lookbackSec: result?.lookbackSec || lookbackSec,
@@ -363,9 +378,9 @@ export async function pullOrders(req, res) {
   } catch (err) {
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
     // Vẫn cố trả JSON hợp lệ — tránh cPanel HTML 500.
-    sendJson(res, 200, {
-      success: true,
-      message: "Kéo đơn hoàn tất",
+    sendJson(res, 500, {
+      success: false,
+      message: friendlyPullError(err),
       total_success: 0,
       failed_orders: [],
       error: friendlyPullError(err),
@@ -431,7 +446,7 @@ export async function syncOrders(req, res) {
       added: result?.added || 0,
       updated: result?.updated || 0,
       shops: result?.shops || 0,
-      errors: result?.errors || [],
+      errors: Array.isArray(result?.errors) ? result.errors : [],
       detail_message: result?.detail_message || result?.message || "",
       jobId: result?.jobId || "",
       lookbackSec: result?.lookbackSec || lookbackSec,
@@ -442,9 +457,9 @@ export async function syncOrders(req, res) {
     return;
   } catch (err) {
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
-    sendJson(res, 200, {
-      success: true,
-      message: "Kéo đơn hoàn tất",
+    sendJson(res, 500, {
+      success: false,
+      message: friendlyPullError(err),
       total_success: 0,
       failed_orders: [],
       error: friendlyPullError(err),

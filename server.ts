@@ -2487,194 +2487,224 @@ async function pullIncrementalOrdersFromShopee(opts?: {
         ` enrichTracking=${enrichTracking} longLookback=${longLookback}`,
     );
 
-    await mapWithConcurrency(shopIds, isLogisticsBusy() ? 1 : 2, async (shopId) => {
-      await yieldToLogisticsIfBusy(12_000);
-      if (Date.now() >= deadlineAt) {
-        syncDiag("DEADLINE HIT — stop before next shop", `remaining skipped after ${shopId}`);
-        errors.push({
-          error: "pull_deadline",
-          message: `Hết thời gian pull trước shop ${shopId}`,
-          shopId,
-        });
-        return;
-      }
-      const shopDeadlineAt = Math.min(deadlineAt, Date.now() + perShopBudgetMs);
+    // TUẦN TỰ từng shop — CẤM mapWithConcurrency đa shop khi cùng mutate `orders`
+    // (unshift/findIndex song song → race → crash/HTTP 500 HTML).
+    for (const shopId of shopIds) {
       try {
-        assertOrdersPullDeadline(shopDeadlineAt, `before shop=${shopId}`);
-        let accessToken = await getValidShopeeAccessToken(shopId);
-        if (!accessToken) {
-          const msg = `Shop ${shopId}: không lấy được access_token (hết hạn / thiếu refresh_token)`;
-          console.error(`[Orders Pull] ${msg}`);
-          errors.push({ shopId, error: "no_valid_access_token", message: msg });
-          return;
+        await yieldToLogisticsIfBusy(12_000);
+        if (Date.now() >= deadlineAt) {
+          syncDiag("DEADLINE HIT — stop before next shop", `remaining skipped after ${shopId}`);
+          errors.push({
+            error: "pull_deadline",
+            message: `Hết thời gian pull trước shop ${shopId}`,
+            shopId,
+          });
+          break;
         }
+        const shopDeadlineAt = Math.min(deadlineAt, Date.now() + perShopBudgetMs);
+        try {
+          assertOrdersPullDeadline(shopDeadlineAt, `before shop=${shopId}`);
+          let accessToken = await getValidShopeeAccessToken(shopId);
+          if (!accessToken) {
+            const msg = `Shop ${shopId}: không lấy được access_token (hết hạn / thiếu refresh_token)`;
+            console.error(`[Orders Pull] ${msg}`);
+            errors.push({ shopId, error: "no_valid_access_token", message: msg });
+            continue;
+          }
 
-        const listCollect = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
-          lookbackSec,
-          deadlineAt: shopDeadlineAt,
-          maxOrderSns: maxOrderSnsPerShop,
-          pageHardCap,
-        });
-        let orderSnList = listCollect.orderSns;
-        if (Array.isArray(listCollect.shopeeResponses) && listCollect.shopeeResponses.length) {
-          shopeeResponsePages.push(...listCollect.shopeeResponses);
-        }
+          const listCollect = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
+            lookbackSec,
+            deadlineAt: shopDeadlineAt,
+            maxOrderSns: maxOrderSnsPerShop,
+            pageHardCap,
+          });
+          let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
+          if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {
+            shopeeResponsePages.push(...listCollect.shopeeResponses);
+          }
 
-        // KHÔNG lọc theo order_status — kéo ALL từ get_order_list (update_time ~14 ngày).
-        // MỌI pull: bổ sung order_sn từ get_return_list (TO_RETURN / tracking hoàn).
-        if (Date.now() < shopDeadlineAt) {
-          try {
-            const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
-              mode: "incremental",
-            });
-            const snSet = new Set(orderSnList);
-            let addedFromReturns = 0;
-            for (const row of returnRows) {
-              const sn = String(row?.orderSn || "").trim();
-              if (!sn || snSet.has(sn)) continue;
-              if (snSet.size >= maxOrderSnsPerShop) break;
-              snSet.add(sn);
-              addedFromReturns += 1;
-            }
-            if (addedFromReturns > 0) {
-              orderSnList = [...snSet];
-              syncDiag(
-                "Return list merged",
-                `shop=${shopId} +${addedFromReturns} order_sn from get_return_list (total=${orderSnList.length})`,
+          // KHÔNG lọc theo order_status — kéo ALL từ get_order_list (update_time ~14 ngày).
+          // MỌI pull: bổ sung order_sn từ get_return_list (TO_RETURN / tracking hoàn).
+          if (Date.now() < shopDeadlineAt) {
+            try {
+              const returnRows = await shopeeFetchAllReturnSns(shopId, accessToken, {
+                mode: "incremental",
+              });
+              const snSet = new Set(orderSnList);
+              let addedFromReturns = 0;
+              for (const row of returnRows || []) {
+                const sn = String(row?.orderSn || "").trim();
+                if (!sn || snSet.has(sn)) continue;
+                if (snSet.size >= maxOrderSnsPerShop) break;
+                snSet.add(sn);
+                addedFromReturns += 1;
+              }
+              if (addedFromReturns > 0) {
+                orderSnList = [...snSet];
+                syncDiag(
+                  "Return list merged",
+                  `shop=${shopId} +${addedFromReturns} order_sn from get_return_list (total=${orderSnList.length})`,
+                );
+              }
+            } catch (returnErr: any) {
+              console.error(
+                `[Orders Pull] shopeeFetchAllReturnSns skip shop=${shopId}:`,
+                returnErr?.message || returnErr,
               );
             }
-          } catch (returnErr: any) {
-            console.warn(
-              `[Orders Pull] shopeeFetchAllReturnSns skip shop=${shopId}:`,
-              returnErr?.message || returnErr,
+          }
+
+          if (orderSnList.length >= maxOrderSnsPerShop) {
+            truncatedShops += 1;
+            // Soft warning — KHÔNG đẩy vào errors (tránh FE báo "Đồng bộ thất bại" dù đã kéo được đơn).
+            syncDiag(
+              "SN cap hit",
+              `shop=${shopId} sn=${orderSnList.length} cap=${maxOrderSnsPerShop} — có thể còn đơn trên Shopee`,
             );
           }
-        }
 
-        if (orderSnList.length >= maxOrderSnsPerShop) {
-          truncatedShops += 1;
-          // Soft warning — KHÔNG đẩy vào errors (tránh FE báo "Đồng bộ thất bại" dù đã kéo được đơn).
-          syncDiag(
-            "SN cap hit",
-            `shop=${shopId} sn=${orderSnList.length} cap=${maxOrderSnsPerShop} — có thể còn đơn trên Shopee`,
-          );
-        }
+          syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
 
-        syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
+          if (orderSnList.length === 0) continue;
 
-        if (orderSnList.length === 0) return;
-
-        for (let i = 0; i < orderSnList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
-          assertOrdersPullDeadline(shopDeadlineAt, `detail chunk shop=${shopId} offset=${i}`);
-          const chunkSns = orderSnList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
-          const chunkNo = Math.floor(i / SHOPEE_SYNC_CHUNK_SIZE) + 1;
-          try {
-            const fresh = await getValidShopeeAccessToken(shopId);
-            if (fresh) accessToken = fresh;
-
-            syncDiag(
-              "Fetching details for chunk...",
-              `shop=${shopId} chunk=${chunkNo} count=${chunkSns.length} sn=${chunkSns.slice(0, 3).join(",")}`,
-            );
-            const {
-              normalized,
-              errors: chunkErrors,
-              failed_orders: chunkFailed = [],
-            } = await fetchNormalizeShopeeOrderChunk(
-              shopId,
-              accessToken,
-              shopId,
-              chunkSns,
-              { enrichTracking: false, skipEscrow: true },
-            );
-            if (chunkErrors.length) errors.push(...chunkErrors);
-            for (const sn of chunkFailed) {
-              if (sn) failedOrdersSet.add(String(sn));
-            }
-
-            if (normalized.length === 0) {
-              console.warn(
-                `[Orders Pull] Shop ${shopId}: get_order_detail normalize rỗng cho ${chunkSns.length} sn — ${chunkSns.join(",")}`,
-              );
-              continue;
-            }
-
-            syncDiag("Saving to MongoDB...", `shop=${shopId} chunk=${chunkNo} docs=${normalized.length}`);
-            // Bọc riêng logic lưu DB — lỗi map/BulkWrite phải log + đẩy lên FE, không nuốt.
+          for (let i = 0; i < orderSnList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
             try {
-              const upsert = await persistShopeeOrderChunk(orders, normalized, {
-                apiShopId: shopId,
-                accessToken,
-                skipTracking: !enrichTracking,
-              });
-              added += upsert.added;
-              updated += upsert.updated;
-              pulled += normalized.length;
-              syncDiag(
-                "MongoDB save OK",
-                `shop=${shopId} +${upsert.added}/~${upsert.updated} elapsed=${Date.now() - startedAt}ms`,
-              );
-            } catch (saveErr: any) {
-              const friendly = describeMongoWriteError(saveErr);
-              console.error(
-                "[Orders Pull] Mongo/JSON upsert FAILED:",
-                friendly,
-                saveErr?.message || saveErr,
-                saveErr?.stack || "",
-                "order_sn=",
-                normalized.map((o) => o?.orderSn).join(","),
-              );
-              if (isMongoConnectionError(saveErr)) {
-                void recoverMongoConnection("orders_pull_upsert");
+              assertOrdersPullDeadline(shopDeadlineAt, `detail chunk shop=${shopId} offset=${i}`);
+              const chunkSns = orderSnList.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+              const chunkNo = Math.floor(i / SHOPEE_SYNC_CHUNK_SIZE) + 1;
+              try {
+                const fresh = await getValidShopeeAccessToken(shopId);
+                if (fresh) accessToken = fresh;
+
+                syncDiag(
+                  "Fetching details for chunk...",
+                  `shop=${shopId} chunk=${chunkNo} count=${chunkSns.length} sn=${chunkSns.slice(0, 3).join(",")}`,
+                );
+                const {
+                  normalized,
+                  errors: chunkErrors,
+                  failed_orders: chunkFailed = [],
+                } = await fetchNormalizeShopeeOrderChunk(
+                  shopId,
+                  accessToken,
+                  shopId,
+                  chunkSns,
+                  { enrichTracking: false, skipEscrow: true },
+                );
+                if (Array.isArray(chunkErrors) && chunkErrors.length) errors.push(...chunkErrors);
+                for (const sn of chunkFailed) {
+                  if (sn) failedOrdersSet.add(String(sn));
+                }
+
+                if (!Array.isArray(normalized) || normalized.length === 0) {
+                  console.warn(
+                    `[Orders Pull] Shop ${shopId}: get_order_detail normalize rỗng cho ${chunkSns.length} sn — ${chunkSns.join(",")}`,
+                  );
+                  continue;
+                }
+
+                syncDiag("Saving to MongoDB...", `shop=${shopId} chunk=${chunkNo} docs=${normalized.length}`);
+                // Bọc riêng logic lưu DB — lỗi map/BulkWrite phải log + đẩy lên FE, không nuốt.
+                try {
+                  const upsert = await persistShopeeOrderChunk(orders, normalized, {
+                    apiShopId: shopId,
+                    accessToken,
+                    skipTracking: !enrichTracking,
+                  });
+                  added += upsert.added;
+                  updated += upsert.updated;
+                  pulled += normalized.length;
+                  syncDiag(
+                    "MongoDB save OK",
+                    `shop=${shopId} +${upsert.added}/~${upsert.updated} elapsed=${Date.now() - startedAt}ms`,
+                  );
+                } catch (saveErr: any) {
+                  const friendly = describeMongoWriteError(saveErr);
+                  console.error(
+                    "[Orders Pull] Mongo/JSON upsert FAILED:",
+                    friendly,
+                    saveErr?.message || saveErr,
+                    saveErr?.stack || "",
+                    "order_sn=",
+                    normalized.map((o) => o?.orderSn).join(","),
+                  );
+                  if (isMongoConnectionError(saveErr)) {
+                    void recoverMongoConnection("orders_pull_upsert");
+                  }
+                  errors.push({
+                    shopId,
+                    error: "db_upsert_failed",
+                    message: friendly,
+                    orderSns: normalized.map((o) => o?.orderSn),
+                  });
+                }
+              } catch (chunkErr: any) {
+                if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
+                console.error(
+                  `[Orders Pull] Chunk exception shop=${shopId}:`,
+                  chunkErr?.message || chunkErr,
+                  chunkErr?.stack || "",
+                );
+                errors.push({
+                  shopId,
+                  error: "chunk_failed",
+                  message: chunkErr?.message || String(chunkErr),
+                });
               }
+              if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
+                await yieldToLogisticsIfBusy(8_000);
+                await shopeeSyncDelay(
+                  isLogisticsBusy() ? Math.max(SHOPEE_SYNC_CHUNK_DELAY_MS, 600) : SHOPEE_SYNC_CHUNK_DELAY_MS,
+                );
+              }
+            } catch (loopErr: any) {
+              if (String(loopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw loopErr;
+              console.error(
+                `[Orders Pull] Loop exception shop=${shopId} offset=${i}:`,
+                loopErr?.message || loopErr,
+              );
               errors.push({
                 shopId,
-                error: "db_upsert_failed",
-                message: friendly,
-                orderSns: normalized.map((o) => o?.orderSn),
+                error: "chunk_loop_failed",
+                message: loopErr?.message || String(loopErr),
               });
             }
-          } catch (chunkErr: any) {
-            if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
-            console.error(
-              `[Orders Pull] Chunk exception shop=${shopId}:`,
-              chunkErr?.message || chunkErr,
-              chunkErr?.stack || "",
-            );
+          }
+        } catch (shopErr: any) {
+          if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
+            syncDiag("SHOP DEADLINE — continue next shop", shopErr.message);
             errors.push({
               shopId,
-              error: "chunk_failed",
-              message: chunkErr?.message || String(chunkErr),
+              error: "pull_shop_deadline",
+              message: shopErr.message,
             });
+            continue;
           }
-          if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
-            // Rate-limit: nghỉ đủ giữa các lô get_order_detail (đa shop / hàng loạt).
-            // Nếu đang xác nhận/in → nhường thêm để không nghẽn logistics.
-            await yieldToLogisticsIfBusy(8_000);
-            await shopeeSyncDelay(
-              isLogisticsBusy() ? Math.max(SHOPEE_SYNC_CHUNK_DELAY_MS, 600) : SHOPEE_SYNC_CHUNK_DELAY_MS,
-            );
-          }
-        }
-      } catch (shopErr: any) {
-        if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
-          // Không break cả vòng — chuyển shop tiếp theo với phần thời gian còn lại.
-          syncDiag("SHOP DEADLINE — continue next shop", shopErr.message);
+          console.error(
+            `[Orders Pull] Shop ${shopId} exception:`,
+            shopErr?.message || shopErr,
+            shopErr?.stack || "",
+          );
           errors.push({
             shopId,
-            error: "pull_shop_deadline",
-            message: shopErr.message,
+            error: "pull_shop_failed",
+            message: shopErr?.message || String(shopErr),
           });
-          return;
         }
-        console.error(`[Orders Pull] Shop ${shopId} exception:`, shopErr?.message || shopErr, shopErr?.stack || "");
+      } catch (outerShopErr: any) {
+        // Tuyệt đối không để 1 shop làm sập cả phiên pull.
+        console.error(
+          `[Orders Pull] OUTER shop guard ${shopId}:`,
+          outerShopErr?.message || outerShopErr,
+          outerShopErr?.stack || "",
+        );
         errors.push({
           shopId,
-          error: "pull_shop_failed",
-          message: shopErr?.message || String(shopErr),
+          error: "pull_shop_outer_failed",
+          message: outerShopErr?.message || String(outerShopErr),
         });
       }
-    });
+    }
 
     // Nút "Làm mới" phải đối soát cả các đơn cũ đang PROCESSED/READY_TO_SHIP.
     if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
@@ -2773,10 +2803,10 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     );
     return {
       success: false,
-      pulled,
-      added,
-      updated,
-      shops: shopIds.length,
+      pulled: Number(pulled) || 0,
+      added: Number(added) || 0,
+      updated: Number(updated) || 0,
+      shops: shopIds.length || 0,
       errors: [
         ...errors,
         {
@@ -2787,8 +2817,8 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       message: pullFatal?.message || String(pullFatal) || "Đồng bộ đơn hàng thất bại",
       elapsedMs: Date.now() - startedAt,
       lookbackSec,
-      shopee_response: shopeeResponsePages,
-      total_success: pulled,
+      shopee_response: Array.isArray(shopeeResponsePages) ? shopeeResponsePages.slice(0, 6) : [],
+      total_success: Number(pulled) || 0,
       failed_orders: [...failedOrdersSet],
     };
   } finally {
@@ -2862,7 +2892,19 @@ async function pullShopeeCancelReturnOrders(opts?: {
       };
     }
 
-    const orders = isMongoReady() ? await loadOrdersFromStore() : [];
+    const orders = isMongoReady()
+      ? await (async () => {
+          try {
+            return await loadOrdersFromStore();
+          } catch (loadErr: any) {
+            console.error(
+              "[CancelReturn Pull] loadOrdersFromStore failed:",
+              loadErr?.message || loadErr,
+            );
+            return [];
+          }
+        })()
+      : [];
     const perShopBudgetMs = Math.max(25_000, Math.floor((deadlineAt - startedAt) / Math.max(1, shopIds.length)));
 
     for (const shopId of shopIds) {
