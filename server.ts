@@ -2561,17 +2561,28 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     }
 
     // Nút "Làm mới" phải đối soát cả các đơn cũ đang PROCESSED/READY_TO_SHIP.
-    // Không phụ thuộc get_order_list update_time, vì API đó chỉ quét cửa sổ gần đây.
     if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
-      const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
-      pulled += reconciled.pulled;
-      added += reconciled.added;
-      updated += reconciled.updated;
-      errors.push(...reconciled.errors);
-      syncDiag(
-        "Active status reconcile DONE",
-        `pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} errors=${reconciled.errors.length}`,
-      );
+      try {
+        const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
+        pulled += reconciled.pulled;
+        added += reconciled.added;
+        updated += reconciled.updated;
+        errors.push(...reconciled.errors);
+        syncDiag(
+          "Active status reconcile DONE",
+          `pulled=${reconciled.pulled} +${reconciled.added}/~${reconciled.updated} errors=${reconciled.errors.length}`,
+        );
+      } catch (reconcileErr: any) {
+        console.error(
+          "[Orders Pull] reconcileActive FAILED:",
+          reconcileErr?.message || reconcileErr,
+          reconcileErr?.stack || "",
+        );
+        errors.push({
+          error: "reconcile_failed",
+          message: reconcileErr?.message || String(reconcileErr),
+        });
+      }
     }
 
     const elapsedMs = Date.now() - startedAt;
@@ -2628,6 +2639,30 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       elapsedMs,
       truncatedShops,
       maxOrderSnsPerShop,
+      lookbackSec,
+      shopee_response: shopeeResponsePages,
+    };
+  } catch (pullFatal: any) {
+    console.error(
+      "[Orders Pull] FATAL:",
+      pullFatal?.message || pullFatal,
+      pullFatal?.stack || "",
+    );
+    return {
+      success: false,
+      pulled,
+      added,
+      updated,
+      shops: shopIds.length,
+      errors: [
+        ...errors,
+        {
+          error: "orders_pull_fatal",
+          message: pullFatal?.message || String(pullFatal),
+        },
+      ],
+      message: pullFatal?.message || String(pullFatal) || "Đồng bộ đơn hàng thất bại",
+      elapsedMs: Date.now() - startedAt,
       lookbackSec,
       shopee_response: shopeeResponsePages,
     };

@@ -71,7 +71,7 @@ export function initShopeeOrdersController(partial) {
 }
 
 /**
- * Chạy kéo đơn + cancel/return. Trả object kết quả (kể cả pulled=0 + shopee_response).
+ * Chạy kéo đơn + cancel/return. Không throw ra ngoài — luôn trả object (kể cả lỗi).
  */
 async function runOrdersPull(opts) {
   const {
@@ -89,8 +89,12 @@ async function runOrdersPull(opts) {
     retryTelemetryBefore = null;
   }
   try {
-    const job = await deps.createSyncJob(jobType, username);
-    jobId = job?.id || "";
+    try {
+      const job = await deps.createSyncJob(jobType, username);
+      jobId = job?.id || "";
+    } catch (jobErr) {
+      console.warn(`[${logTag}] createSyncJob skip:`, jobErr?.message || jobErr);
+    }
     console.log(`[${logTag}] bắt đầu kéo đơn shop_id=${shopIds?.length ? shopIds.join(",") : "all"}`);
     const result = await deps.pullIncrementalOrdersFromShopee({
       lookbackSec,
@@ -104,12 +108,12 @@ async function runOrdersPull(opts) {
         shopIds: shopIds?.length ? shopIds : undefined,
       });
     } catch (cancelErr) {
-      console.error("[API_SYNC_ERROR] Lỗi chi tiết:", cancelErr?.stack || cancelErr);
+      console.error("[API_SYNC_ERROR] cancel pull:", cancelErr?.stack || cancelErr);
     }
     try {
       deps.invalidateOrdersRefreshCache();
     } catch (cacheErr) {
-      console.error("[API_SYNC_ERROR] Lỗi chi tiết:", cacheErr?.stack || cacheErr);
+      console.error("[API_SYNC_ERROR] invalidate cache:", cacheErr?.stack || cacheErr);
     }
     const pulled = (result?.pulled || 0) + (cancelPull.pulled || 0);
     const added = (result?.added || 0) + (cancelPull.added || 0);
@@ -145,7 +149,7 @@ async function runOrdersPull(opts) {
           success ? undefined : message,
         );
       } catch (finishErr) {
-        console.error("[API_SYNC_ERROR] Lỗi chi tiết:", finishErr?.stack || finishErr);
+        console.error("[API_SYNC_ERROR] finishSyncJob:", finishErr?.stack || finishErr);
       }
     }
     console.log(
@@ -160,7 +164,7 @@ async function runOrdersPull(opts) {
       errors,
       message,
       jobId,
-      shopee_response: result?.shopee_response ?? null,
+      shopee_response: sanitizeShopeeResponseForFe(result?.shopee_response),
       lookbackSec: result?.lookbackSec,
       elapsedMs: result?.elapsedMs,
     };
@@ -179,10 +183,49 @@ async function runOrdersPull(opts) {
           error?.message || String(error),
         );
       } catch (finishErr) {
-        console.error("[API_SYNC_ERROR] Lỗi chi tiết:", finishErr?.stack || finishErr);
+        console.error("[API_SYNC_ERROR] finishSyncJob:", finishErr?.stack || finishErr);
       }
     }
-    throw error;
+    return {
+      success: false,
+      pulled: 0,
+      added: 0,
+      updated: 0,
+      shops: 0,
+      errors: [{ error: "orders_pull_exception", message: error?.message || String(error) }],
+      message: error?.message || String(error) || "Đồng bộ thất bại",
+      jobId,
+      shopee_response: null,
+    };
+  }
+}
+
+/** Cắt gọn raw Shopee để FE debug — tránh payload quá lớn / circular JSON. */
+function sanitizeShopeeResponseForFe(raw) {
+  if (raw == null) return null;
+  try {
+    const pages = Array.isArray(raw) ? raw.slice(0, 6) : [raw];
+    return pages.map((page) => {
+      const cloned = JSON.parse(JSON.stringify(page));
+      const orderList =
+        cloned?.raw?.response?.order_list ||
+        cloned?.raw?.order_list ||
+        cloned?.response?.order_list;
+      if (Array.isArray(orderList) && orderList.length > 10) {
+        const kept = orderList.slice(0, 10);
+        if (cloned?.raw?.response?.order_list) {
+          cloned.raw.response.order_list = kept;
+          cloned.raw.response._truncated = orderList.length;
+        } else if (cloned?.raw?.order_list) {
+          cloned.raw.order_list = kept;
+          cloned.raw._truncated = orderList.length;
+        }
+      }
+      return cloned;
+    });
+  } catch (err) {
+    console.warn("[Orders Pull] sanitizeShopeeResponseForFe:", err?.message || err);
+    return { sanitize_error: err?.message || String(err), preview: String(raw).slice(0, 500) };
   }
 }
 
@@ -192,8 +235,24 @@ function sendJson(res, statusCode, body) {
     console.warn("[Orders Pull] headers đã gửi — bỏ qua response trùng.");
     return false;
   }
-  res.status(statusCode).json(body);
-  return true;
+  try {
+    res.status(statusCode).json(body);
+    return true;
+  } catch (err) {
+    console.error("[Orders Pull] sendJson FAILED:", err?.message || err);
+    try {
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: "Lỗi gửi phản hồi JSON",
+          error: err?.message || String(err),
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+    return false;
+  }
 }
 
 /** Resolve shop_ids từ body — 1 shop cụ thể hoặc undefined (= toàn bộ shop sync). */
@@ -270,11 +329,20 @@ export async function pullOrders(req, res) {
     const hasDbError = (result?.errors || []).some(
       (e) => String(e?.error || "") === "db_upsert_failed",
     );
-    if (hasDbError) {
+    const hasFatal =
+      hasDbError ||
+      (result?.success === false &&
+        (result?.errors || []).some((e) =>
+          ["orders_pull_exception", "no_oauth_shop", "no_valid_access_token"].includes(
+            String(e?.error || ""),
+          ),
+        ));
+
+    if (hasFatal) {
       sendJson(res, 500, {
         success: false,
-        message: result?.message || "Lỗi lưu MongoDB khi kéo đơn",
-        error: result?.errors?.find((e) => e?.error === "db_upsert_failed")?.message || "db_upsert_failed",
+        message: result?.message || "Lỗi đồng bộ đơn hàng",
+        error: result?.errors?.[0]?.message || result?.message || "orders_pull_failed",
         pulled: result?.pulled || 0,
         added: result?.added || 0,
         updated: result?.updated || 0,
@@ -285,10 +353,10 @@ export async function pullOrders(req, res) {
       return;
     }
 
-    // Bắt buộc 200 kể cả khi kéo 0 đơn — kèm raw Shopee để debug.
+    // 200 kể cả khi kéo 0 đơn — kèm raw Shopee để debug.
     sendJson(res, 200, {
       status: 200,
-      success: true,
+      success: result?.success !== false,
       pulled: result?.pulled || 0,
       added: result?.added || 0,
       updated: result?.updated || 0,
@@ -306,7 +374,7 @@ export async function pullOrders(req, res) {
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
-      message: "Lỗi đồng bộ đơn hàng",
+      message: `Lỗi đồng bộ đơn hàng: ${err?.message || String(err) || "orders_pull_failed"}`,
       error: err?.message || String(err) || "orders_pull_failed",
       pulled: 0,
       added: 0,
@@ -362,11 +430,11 @@ export async function syncOrders(req, res) {
     const hasDbError = (result?.errors || []).some(
       (e) => String(e?.error || "") === "db_upsert_failed",
     );
-    if (hasDbError) {
-      sendJson(res, 500, {
-        success: false,
-        message: result?.message || "Lỗi lưu MongoDB khi kéo đơn",
-        error: result?.errors?.find((e) => e?.error === "db_upsert_failed")?.message || "db_upsert_failed",
+    if (hasDbError || result?.success === false) {
+      sendJson(res, hasDbError ? 500 : 200, {
+        success: result?.success !== false && !hasDbError,
+        message: result?.message || "Lỗi đồng bộ đơn hàng",
+        error: result?.errors?.[0]?.message || result?.message || "orders_sync_failed",
         pulled: result?.pulled || 0,
         added: result?.added || 0,
         updated: result?.updated || 0,
@@ -397,7 +465,7 @@ export async function syncOrders(req, res) {
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
-      message: "Lỗi đồng bộ đơn hàng",
+      message: `Lỗi đồng bộ đơn hàng: ${err?.message || String(err) || "orders_sync_failed"}`,
       error: err?.message || String(err) || "orders_sync_failed",
       pulled: 0,
       added: 0,
