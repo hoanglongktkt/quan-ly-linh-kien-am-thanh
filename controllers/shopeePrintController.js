@@ -70,6 +70,8 @@ export async function printDocumentAsync(req, res) {
         } catch (err) {
           job.status = "failed";
           job.error = err?.message || String(err);
+          job.httpStatus = 500;
+          job.result = { error: err?.message || String(err) };
           job.updatedAt = Date.now();
         }
       })();

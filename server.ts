@@ -14805,9 +14805,18 @@ async function startServer() {
           };
         });
 
-    const createResult = usePrimedDocument
-      ? { response: { result_list: [] } }
-      : await shopeeCreateShippingDocument(shopId, accessToken, enrichedOrderList);
+    console.log(
+      `[Shopee Print] Bắt đầu yêu cầu tạo PDF cho ${enrichedOrderList.length} đơn shop_id=${shopId}${usePrimedDocument ? " (primed)" : ""}`,
+    );
+    let createResult: any;
+    try {
+      createResult = usePrimedDocument
+        ? { response: { result_list: [] } }
+        : await shopeeCreateShippingDocument(shopId, accessToken, enrichedOrderList);
+    } catch (createErr: any) {
+      console.error(`[Shopee Print] Tải PDF thất bại — create_shipping_document exception:`, createErr?.message || createErr);
+      throw createErr;
+    }
     if (usePrimedDocument) {
       console.log(
         `[Shopee Print] Dùng chứng từ đã tạo nền cho ${enrichedOrderList.length} đơn shop_id=${shopId}; chuyển thẳng sang poll READY.`,
@@ -14908,30 +14917,42 @@ async function startServer() {
       `[Shopee Print] create_shipping_document OK ${cleanOrderList.length}/${enrichedOrderList.length} đơn (mọi ĐVVC, không lọc SPX): ${cleanOrderList.map((o) => o.order_sn).join(", ")}`,
     );
 
-    // Poll get_shipping_document_result — lần đầu ngay; sau đó mỗi 1s (tối đa ~15s) rồi mới recreate.
-    // Tránh recreate sớm (trước đây 300ms×12≈3.6s) làm mất thêm 1 vòng create+poll.
-    const MAX_POLL_ATTEMPTS = 15;
-    const POLL_INTERVAL_MS = 1000;
+    // Poll có giới hạn: tối đa 5 lần, mỗi lần cách 2s — tuyệt đối không lặp vô tận.
+    const MAX_POLL_ATTEMPTS = 5;
+    const POLL_INTERVAL_MS = 2000;
+    const SHOPEE_DOC_OVERLOAD_MSG =
+      "Shopee đang quá tải hoặc chậm tạo vận đơn. Vui lòng thử in lại sau ít phút.";
     let pendingList = [...cleanOrderList];
     let readyDownloadList: typeof cleanOrderList = [];
     let pollFailed: any[] = [];
     let attempts = 0;
-    let isFirstPoll = true;
+
+    console.log(`[Shopee Print] Đang chờ Shopee tạo PDF (tối đa ${MAX_POLL_ATTEMPTS} lần × ${POLL_INTERVAL_MS}ms)...`);
 
     while (pendingList.length > 0 && attempts < MAX_POLL_ATTEMPTS) {
-      if (isFirstPoll) {
-        isFirstPoll = false;
-      } else {
-        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      attempts++;
+      console.log(`[Shopee Print] Đang chờ Shopee... (lần ${attempts}/${MAX_POLL_ATTEMPTS})`);
+      await delay(POLL_INTERVAL_MS);
+      let pollResult: any;
+      try {
+        pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, pendingList);
+      } catch (pollErr: any) {
+        console.error(`[Shopee Print] get_shipping_document_result lỗi lần ${attempts}:`, pollErr?.message || pollErr);
+        if (attempts >= MAX_POLL_ATTEMPTS) break;
+        continue;
       }
-      const pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, pendingList);
       console.log(
         "=== KẾT QUẢ get_shipping_document_result ===",
         "attempt:",
-        attempts + 1,
+        attempts,
         "Response:",
         JSON.stringify(pollResult),
       );
+      if (pollResult?.error) {
+        console.warn(
+          `[Shopee Print] Poll lỗi top-level lần ${attempts}: ${pollResult.error} — ${pollResult.message || ""}`,
+        );
+      }
       const items: any[] = pollResult.response?.result_list || [];
       const bySn = new Map(items.map((it: any) => [String(it.order_sn || ""), it]));
 
@@ -14952,47 +14973,51 @@ async function startServer() {
         }
       }
       pendingList = stillProcessing;
-      attempts++;
       if (pendingList.length === 0) break;
     }
 
-    // Đơn còn pending sau max poll → coi như failed với raw poll context
-    for (const o of pendingList) {
-      pollFailed.push({
-        orderSn: o.order_sn,
-        error: "document_not_ready",
-        message: `Shopee API Error: document not READY after poll (order_sn=${o.order_sn})`,
-      });
-    }
-
-    if (readyDownloadList.length === 0) {
-      const first = pollFailed[0];
-      return {
-        success: false,
-        error: first?.error || "document_not_ready",
-        message: first?.message || "Shopee API Error: no READY shipping document",
-        permanent: PERMANENT_SHOPEE_DOC_ERRORS.has(first?.error),
-        skippedOrders: [...skippedOrders, ...pollFailed],
-      };
+    // Quá 5 lần mà PDF chưa READY → thoát vòng lặp, không treo request.
+    if (pendingList.length > 0 || readyDownloadList.length === 0) {
+      for (const o of pendingList) {
+        pollFailed.push({
+          orderSn: o.order_sn,
+          error: "document_not_ready",
+          message: SHOPEE_DOC_OVERLOAD_MSG,
+        });
+      }
+      if (readyDownloadList.length === 0) {
+        console.error(`[Shopee Print] Tải PDF thất bại — Shopee chưa READY sau ${MAX_POLL_ATTEMPTS} lần poll.`);
+        return {
+          success: false,
+          error: "document_not_ready",
+          message: SHOPEE_DOC_OVERLOAD_MSG,
+          permanent: true,
+          skippedOrders: [...skippedOrders, ...pollFailed],
+        };
+      }
+      console.warn(
+        `[Shopee Print] ${pendingList.length} đơn chưa READY sau ${MAX_POLL_ATTEMPTS} lần — chỉ tải ${readyDownloadList.length} đơn READY.`,
+      );
     }
 
     const downloadList = readyDownloadList;
     if (downloadList.length < cleanOrderList.length) {
       console.warn(
-        `[Shopee Print] Tải ${downloadList.length}/${cleanOrderList.length} đơn READY — các đơn còn lại sẽ retry riêng nếu cần.`,
+        `[Shopee Print] Tải ${downloadList.length}/${cleanOrderList.length} đơn READY — các đơn còn lại bỏ qua (hết lượt poll).`,
       );
     }
 
+    console.log(`[Shopee Print] Bắt đầu tải PDF cho ${downloadList.length} đơn...`);
     const downloadResult = await downloadShippingDocumentsMerged(shopId, accessToken, downloadList);
     if ("error" in downloadResult || !downloadResult.buffer) {
       console.error(
-        `[Shopee Print] Kết quả: Lỗi — download thất bại: ${(downloadResult as any).error || (downloadResult as any).message}`,
+        `[Shopee Print] Tải PDF thất bại: ${(downloadResult as any).error || (downloadResult as any).message}`,
       );
       return { success: false, error: (downloadResult as any).error, message: (downloadResult as any).message };
     }
     if (downloadResult.buffer.length < 128 || !isPdfBuffer(downloadResult.buffer)) {
       console.error(
-        `[Shopee Print] Kết quả: Lỗi — buffer rỗng/không phải PDF (${downloadResult.buffer.length} bytes)`,
+        `[Shopee Print] Tải PDF thất bại — buffer rỗng/không phải PDF (${downloadResult.buffer.length} bytes)`,
       );
       return {
         success: false,
@@ -15027,7 +15052,7 @@ async function startServer() {
     if (!url) {
       throw new Error(`Không tạo được URL sau khi lưu PDF ${filename}`);
     }
-    console.log(`[Shopee Print] Kết quả: OK — ${filename} (${ready.size} bytes, ~${pages} trang)`);
+    console.log(`[Shopee Print] Tải PDF thành công — ${filename} (${ready.size} bytes, ~${pages} trang)`);
     console.log(`[Shopee Print] URL trả về cho FE: ${url}`);
 
     return {
@@ -15803,6 +15828,22 @@ async function startServer() {
       );
       const docResult = await generateShopeeShippingDocument(shopId, orderList);
 
+      // PDF chưa READY sau poll giới hạn → trả 400 ngay, không retry hàng loạt làm treo FE.
+      if (
+        !docResult.success &&
+        (docResult.error === "document_not_ready" ||
+          String(docResult.message || "").includes("quá tải") ||
+          String(docResult.message || "").includes("chậm tạo vận đơn"))
+      ) {
+        const overloadMsg =
+          "Shopee đang quá tải hoặc chậm tạo vận đơn. Vui lòng thử in lại sau ít phút.";
+        console.error(`[Shopee Print] Tải PDF thất bại — ${overloadMsg}`);
+        return res.status(400).json({
+          success: false,
+          message: overloadMsg,
+        });
+      }
+
       if (docResult.success && docResult.filename) {
         savedFilenames.push(docResult.filename);
         const sns = docResult.orderSns || readyToPrint.map((o: any) => o.orderSn);
@@ -16071,12 +16112,10 @@ async function startServer() {
       shippingDocumentType: SHOPEE_SHIPPING_DOCUMENT_TYPE,
       openMode: "static_url",
     });
-    } catch (error: any) {
-      console.error("[Shopee Print] fatal:", error?.response?.data || error?.message || error);
-      return res.status(500).json({
-        error: error?.message || "print_document_failed",
-        message: error?.message || "Tạo vận đơn Shopee thất bại",
-      });
+    } catch (err: any) {
+      console.error("[Shopee Print] fatal:", err?.response?.data || err?.message || err);
+      console.error("[Shopee Print] Tải PDF thất bại — exception:", err?.message || err);
+      return res.status(500).json({ error: err.message });
     }
   }
 

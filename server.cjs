@@ -106231,6 +106231,8 @@ async function printDocumentAsync(req, res) {
         } catch (err) {
           job.status = "failed";
           job.error = err?.message || String(err);
+          job.httpStatus = 500;
+          job.result = { error: err?.message || String(err) };
           job.updatedAt = Date.now();
         }
       })();
@@ -117376,7 +117378,16 @@ async function startServer() {
         tracking_number: trackingNo
       };
     });
-    const createResult = usePrimedDocument ? { response: { result_list: [] } } : await shopeeCreateShippingDocument(shopId, accessToken, enrichedOrderList);
+    console.log(
+      `[Shopee Print] B\u1EAFt \u0111\u1EA7u y\xEAu c\u1EA7u t\u1EA1o PDF cho ${enrichedOrderList.length} \u0111\u01A1n shop_id=${shopId}${usePrimedDocument ? " (primed)" : ""}`
+    );
+    let createResult;
+    try {
+      createResult = usePrimedDocument ? { response: { result_list: [] } } : await shopeeCreateShippingDocument(shopId, accessToken, enrichedOrderList);
+    } catch (createErr) {
+      console.error(`[Shopee Print] T\u1EA3i PDF th\u1EA5t b\u1EA1i \u2014 create_shipping_document exception:`, createErr?.message || createErr);
+      throw createErr;
+    }
     if (usePrimedDocument) {
       console.log(
         `[Shopee Print] D\xF9ng ch\u1EE9ng t\u1EEB \u0111\xE3 t\u1EA1o n\u1EC1n cho ${enrichedOrderList.length} \u0111\u01A1n shop_id=${shopId}; chuy\u1EC3n th\u1EB3ng sang poll READY.`
@@ -117462,27 +117473,38 @@ async function startServer() {
     console.log(
       `[Shopee Print] create_shipping_document OK ${cleanOrderList.length}/${enrichedOrderList.length} \u0111\u01A1n (m\u1ECDi \u0110VVC, kh\xF4ng l\u1ECDc SPX): ${cleanOrderList.map((o) => o.order_sn).join(", ")}`
     );
-    const MAX_POLL_ATTEMPTS = 15;
-    const POLL_INTERVAL_MS = 1e3;
+    const MAX_POLL_ATTEMPTS = 5;
+    const POLL_INTERVAL_MS = 2e3;
+    const SHOPEE_DOC_OVERLOAD_MSG = "Shopee \u0111ang qu\xE1 t\u1EA3i ho\u1EB7c ch\u1EADm t\u1EA1o v\u1EADn \u0111\u01A1n. Vui l\xF2ng th\u1EED in l\u1EA1i sau \xEDt ph\xFAt.";
     let pendingList = [...cleanOrderList];
     let readyDownloadList = [];
     let pollFailed = [];
     let attempts = 0;
-    let isFirstPoll = true;
+    console.log(`[Shopee Print] \u0110ang ch\u1EDD Shopee t\u1EA1o PDF (t\u1ED1i \u0111a ${MAX_POLL_ATTEMPTS} l\u1EA7n \xD7 ${POLL_INTERVAL_MS}ms)...`);
     while (pendingList.length > 0 && attempts < MAX_POLL_ATTEMPTS) {
-      if (isFirstPoll) {
-        isFirstPoll = false;
-      } else {
-        await new Promise((r2) => setTimeout(r2, POLL_INTERVAL_MS));
+      attempts++;
+      console.log(`[Shopee Print] \u0110ang ch\u1EDD Shopee... (l\u1EA7n ${attempts}/${MAX_POLL_ATTEMPTS})`);
+      await delay2(POLL_INTERVAL_MS);
+      let pollResult;
+      try {
+        pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, pendingList);
+      } catch (pollErr) {
+        console.error(`[Shopee Print] get_shipping_document_result l\u1ED7i l\u1EA7n ${attempts}:`, pollErr?.message || pollErr);
+        if (attempts >= MAX_POLL_ATTEMPTS) break;
+        continue;
       }
-      const pollResult = await shopeeGetShippingDocumentResult(shopId, accessToken, pendingList);
       console.log(
         "=== K\u1EBET QU\u1EA2 get_shipping_document_result ===",
         "attempt:",
-        attempts + 1,
+        attempts,
         "Response:",
         JSON.stringify(pollResult)
       );
+      if (pollResult?.error) {
+        console.warn(
+          `[Shopee Print] Poll l\u1ED7i top-level l\u1EA7n ${attempts}: ${pollResult.error} \u2014 ${pollResult.message || ""}`
+        );
+      }
       const items = pollResult.response?.result_list || [];
       const bySn = new Map(items.map((it) => [String(it.order_sn || ""), it]));
       const stillProcessing = [];
@@ -117502,42 +117524,47 @@ async function startServer() {
         }
       }
       pendingList = stillProcessing;
-      attempts++;
       if (pendingList.length === 0) break;
     }
-    for (const o of pendingList) {
-      pollFailed.push({
-        orderSn: o.order_sn,
-        error: "document_not_ready",
-        message: `Shopee API Error: document not READY after poll (order_sn=${o.order_sn})`
-      });
-    }
-    if (readyDownloadList.length === 0) {
-      const first = pollFailed[0];
-      return {
-        success: false,
-        error: first?.error || "document_not_ready",
-        message: first?.message || "Shopee API Error: no READY shipping document",
-        permanent: PERMANENT_SHOPEE_DOC_ERRORS.has(first?.error),
-        skippedOrders: [...skippedOrders, ...pollFailed]
-      };
+    if (pendingList.length > 0 || readyDownloadList.length === 0) {
+      for (const o of pendingList) {
+        pollFailed.push({
+          orderSn: o.order_sn,
+          error: "document_not_ready",
+          message: SHOPEE_DOC_OVERLOAD_MSG
+        });
+      }
+      if (readyDownloadList.length === 0) {
+        console.error(`[Shopee Print] T\u1EA3i PDF th\u1EA5t b\u1EA1i \u2014 Shopee ch\u01B0a READY sau ${MAX_POLL_ATTEMPTS} l\u1EA7n poll.`);
+        return {
+          success: false,
+          error: "document_not_ready",
+          message: SHOPEE_DOC_OVERLOAD_MSG,
+          permanent: true,
+          skippedOrders: [...skippedOrders, ...pollFailed]
+        };
+      }
+      console.warn(
+        `[Shopee Print] ${pendingList.length} \u0111\u01A1n ch\u01B0a READY sau ${MAX_POLL_ATTEMPTS} l\u1EA7n \u2014 ch\u1EC9 t\u1EA3i ${readyDownloadList.length} \u0111\u01A1n READY.`
+      );
     }
     const downloadList = readyDownloadList;
     if (downloadList.length < cleanOrderList.length) {
       console.warn(
-        `[Shopee Print] T\u1EA3i ${downloadList.length}/${cleanOrderList.length} \u0111\u01A1n READY \u2014 c\xE1c \u0111\u01A1n c\xF2n l\u1EA1i s\u1EBD retry ri\xEAng n\u1EBFu c\u1EA7n.`
+        `[Shopee Print] T\u1EA3i ${downloadList.length}/${cleanOrderList.length} \u0111\u01A1n READY \u2014 c\xE1c \u0111\u01A1n c\xF2n l\u1EA1i b\u1ECF qua (h\u1EBFt l\u01B0\u1EE3t poll).`
       );
     }
+    console.log(`[Shopee Print] B\u1EAFt \u0111\u1EA7u t\u1EA3i PDF cho ${downloadList.length} \u0111\u01A1n...`);
     const downloadResult = await downloadShippingDocumentsMerged(shopId, accessToken, downloadList);
     if ("error" in downloadResult || !downloadResult.buffer) {
       console.error(
-        `[Shopee Print] K\u1EBFt qu\u1EA3: L\u1ED7i \u2014 download th\u1EA5t b\u1EA1i: ${downloadResult.error || downloadResult.message}`
+        `[Shopee Print] T\u1EA3i PDF th\u1EA5t b\u1EA1i: ${downloadResult.error || downloadResult.message}`
       );
       return { success: false, error: downloadResult.error, message: downloadResult.message };
     }
     if (downloadResult.buffer.length < 128 || !isPdfBuffer(downloadResult.buffer)) {
       console.error(
-        `[Shopee Print] K\u1EBFt qu\u1EA3: L\u1ED7i \u2014 buffer r\u1ED7ng/kh\xF4ng ph\u1EA3i PDF (${downloadResult.buffer.length} bytes)`
+        `[Shopee Print] T\u1EA3i PDF th\u1EA5t b\u1EA1i \u2014 buffer r\u1ED7ng/kh\xF4ng ph\u1EA3i PDF (${downloadResult.buffer.length} bytes)`
       );
       return {
         success: false,
@@ -117565,7 +117592,7 @@ async function startServer() {
     if (!url) {
       throw new Error(`Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c URL sau khi l\u01B0u PDF ${filename}`);
     }
-    console.log(`[Shopee Print] K\u1EBFt qu\u1EA3: OK \u2014 ${filename} (${ready.size} bytes, ~${pages} trang)`);
+    console.log(`[Shopee Print] T\u1EA3i PDF th\xE0nh c\xF4ng \u2014 ${filename} (${ready.size} bytes, ~${pages} trang)`);
     console.log(`[Shopee Print] URL tr\u1EA3 v\u1EC1 cho FE: ${url}`);
     return {
       success: true,
@@ -118186,6 +118213,14 @@ async function startServer() {
           JSON.stringify(orderList)
         );
         const docResult = await generateShopeeShippingDocument(shopId, orderList);
+        if (!docResult.success && (docResult.error === "document_not_ready" || String(docResult.message || "").includes("qu\xE1 t\u1EA3i") || String(docResult.message || "").includes("ch\u1EADm t\u1EA1o v\u1EADn \u0111\u01A1n"))) {
+          const overloadMsg = "Shopee \u0111ang qu\xE1 t\u1EA3i ho\u1EB7c ch\u1EADm t\u1EA1o v\u1EADn \u0111\u01A1n. Vui l\xF2ng th\u1EED in l\u1EA1i sau \xEDt ph\xFAt.";
+          console.error(`[Shopee Print] T\u1EA3i PDF th\u1EA5t b\u1EA1i \u2014 ${overloadMsg}`);
+          return res.status(400).json({
+            success: false,
+            message: overloadMsg
+          });
+        }
         if (docResult.success && docResult.filename) {
           savedFilenames.push(docResult.filename);
           const sns = docResult.orderSns || readyToPrint.map((o) => o.orderSn);
@@ -118433,12 +118468,10 @@ async function startServer() {
         shippingDocumentType: SHOPEE_SHIPPING_DOCUMENT_TYPE,
         openMode: "static_url"
       });
-    } catch (error) {
-      console.error("[Shopee Print] fatal:", error?.response?.data || error?.message || error);
-      return res.status(500).json({
-        error: error?.message || "print_document_failed",
-        message: error?.message || "T\u1EA1o v\u1EADn \u0111\u01A1n Shopee th\u1EA5t b\u1EA1i"
-      });
+    } catch (err) {
+      console.error("[Shopee Print] fatal:", err?.response?.data || err?.message || err);
+      console.error("[Shopee Print] T\u1EA3i PDF th\u1EA5t b\u1EA1i \u2014 exception:", err?.message || err);
+      return res.status(500).json({ error: err.message });
     }
   }
   initShopeePrintController({
