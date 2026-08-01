@@ -663,7 +663,7 @@ export default function OrderManager({
         pullBody.shop_ids = [String(selectedShopId)];
       }
       const pullController = new AbortController();
-      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 15_000);
+      const pullTimeoutId = window.setTimeout(() => pullController.abort(), 30_000);
       try {
         const pullRes = await fetch('/api/orders/pull', {
           method: 'POST',
@@ -682,13 +682,16 @@ export default function OrderManager({
           );
           setLastSyncSummary(warnMsg);
           showToast(warnMsg, 7000);
-        } else if (pullRes.ok && (pullJson?.background === true || pullJson?.success !== false)) {
-          setLastSyncSummary(String(pullJson?.message || 'Đã đưa vào tiến trình đồng bộ ngầm'));
+        } else if (pullRes.ok) {
+          const summary = String(
+            pullJson?.message || 'Đã đưa vào tiến trình đồng bộ ngầm',
+          );
+          setLastSyncSummary(summary);
           showToast(
             'Tiến trình đồng bộ đang chạy ngầm, đơn hàng sẽ tự động xuất hiện sau ít phút...',
             7000,
           );
-          console.log('[Orders Sync] Background sync queued:', pullJson?.message || 'ok');
+          console.log('[Orders Sync] Background sync queued:', summary);
         } else {
           console.warn('[Orders Sync] Queue sync thất bại:', pullJson);
           setLastSyncSummary(
