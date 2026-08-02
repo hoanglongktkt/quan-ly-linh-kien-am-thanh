@@ -3295,6 +3295,85 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
   }
 }
 
+/** Đếm số đơn theo tab từ MongoDB — dùng cho badge/tab, không gọi Shopee. */
+export async function countOrdersByTabsFromStore(opts?: {
+  shopId?: string;
+}): Promise<Record<string, number>> {
+  requireMongo();
+  const shopAnd: Record<string, unknown>[] = [];
+  if (opts?.shopId && opts.shopId !== "all") {
+    const shopIdStr = String(opts.shopId).trim();
+    const shopVariants: Record<string, unknown>[] = [
+      { shopId: shopIdStr },
+      { "data.shopId": shopIdStr },
+    ];
+    const asNum = Number(shopIdStr);
+    if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+      shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+    }
+    shopAnd.push({ $or: shopVariants });
+  }
+  const withShop = (tabFilter: Record<string, unknown>) => {
+    const parts = [...shopAnd];
+    if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
+    if (parts.length === 0) return {};
+    if (parts.length === 1) return parts[0];
+    return { $and: parts };
+  };
+  const cancelReturnsFilter = withShop({
+    $or: [
+      { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+      {
+        shopee_order_status: {
+          $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"],
+        },
+      },
+      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+      { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+      { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+    ],
+  });
+  const countTabs = [
+    "pending_confirm",
+    "unprocessed",
+    "processed",
+    "shipping",
+    "handed_over_carrier",
+    "return_pending",
+  ] as const;
+  const [all, ...tabCounts] = await Promise.all([
+    OrderModel.countDocuments(withShop({})).maxTimeMS(8000),
+    ...countTabs.map((t) =>
+      OrderModel.countDocuments(withShop(orderTabFilter(t))).maxTimeMS(8000),
+    ),
+    OrderModel.countDocuments(cancelReturnsFilter).maxTimeMS(8000),
+  ]);
+  const counts: Record<string, number> = {
+    all: Number(all) || 0,
+    cancel_returns: Number(tabCounts[countTabs.length]) || 0,
+  };
+  countTabs.forEach((t, i) => {
+    counts[t] = Number(tabCounts[i]) || 0;
+  });
+  try {
+    const dhhFilter =
+      opts?.shopId && opts.shopId !== "all"
+        ? {
+            $or: [
+              { shopId: String(opts.shopId) },
+              { shop_id: String(opts.shopId) },
+            ],
+          }
+        : {};
+    counts.received_cancel_returns = Number(
+      await DonHoanHuyModel.countDocuments(dhhFilter).maxTimeMS(5000),
+    );
+  } catch {
+    counts.received_cancel_returns = 0;
+  }
+  return counts;
+}
+
 /** Danh sách đơn phân trang từ MongoDB; frontend không cần tải toàn bộ collection để lọc. */
 export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<{
   rows: any[];

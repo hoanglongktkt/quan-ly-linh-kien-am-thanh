@@ -23,6 +23,7 @@ import {
   loadOrdersFromStore,
   findOrderByScanCodeInStore,
   queryOrdersPageFromStore,
+  countOrdersByTabsFromStore,
   loadOrderEvents,
   getSyncJob,
   deleteOrdersFromStore,
@@ -263,11 +264,84 @@ export async function getSyncJobById(req, res) {
   return res.json({ success: true, data: job });
 }
 
-/** GET /api/orders */
+/** GET /api/order-counts — chỉ đếm từ MongoDB (badge/tab), không gọi Shopee. */
+export async function getOrderCounts(req, res) {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  try {
+    if (!isMongoReady()) {
+      return res.status(200).json({
+        success: false,
+        counts: {},
+        error: "mongodb_not_ready",
+      });
+    }
+    const shopId = String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const counts = await countOrdersByTabsFromStore({
+      shopId: shopId || undefined,
+    });
+    return res.status(200).json({ success: true, counts });
+  } catch (error) {
+    console.error(
+      "[GET /api/order-counts] failed:",
+      error?.stack || error?.message || error,
+    );
+    return res.status(200).json({
+      success: false,
+      counts: {},
+      error: "order_counts_failed",
+      message: error?.message || "Không thể đếm đơn hàng từ MongoDB.",
+    });
+  }
+}
+
+/** GET /api/orders — READ-ONLY MongoDB. Không gọi Shopee. Hỗ trợ ?page=&page_size= hoặc ?limit=&tab=. */
 export async function listOrders(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
+
+  // Phân trang nhanh qua Mongo khi có page/page_size (kiến trúc Sapo Read path).
+  const pageRaw = Number(req.query.page);
+  const pageSizeRaw = Number(req.query.page_size ?? req.query.pageSize);
+  if (
+    (Number.isFinite(pageRaw) && pageRaw > 0) ||
+    (Number.isFinite(pageSizeRaw) && pageSizeRaw > 0)
+  ) {
+    try {
+      if (!isMongoReady()) {
+        return res.status(200).json({
+          success: false,
+          data: [],
+          total: 0,
+          error: "mongodb_not_ready",
+        });
+      }
+      const page = await queryOrdersPageFromStore({
+        page: pageRaw,
+        pageSize: pageSizeRaw || 50,
+        tab: String(req.query.tab || req.query.internal_tab || ""),
+        shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
+        carrier: String(req.query.carrier || ""),
+        query: String(req.query.q ?? req.query.query ?? ""),
+        printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
+      });
+      const products = await deps.loadProductsForOrders(page.rows);
+      const rows = deps.enrichOrdersWithShopNames(
+        deps.enrichOrdersFromCatalog(page.rows, products),
+      );
+      return res.json({
+        success: true,
+        data: rows,
+        total: page.total,
+        page: page.page,
+        page_size: page.pageSize,
+        has_more: page.hasMore,
+        counts: page.counts,
+      });
+    } catch (pageErr) {
+      console.error("[GET /api/orders] paged query failed:", pageErr?.message || pageErr);
+    }
+  }
 
   let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
   rawOrders = rawOrders.filter(deps.isValidOrder);

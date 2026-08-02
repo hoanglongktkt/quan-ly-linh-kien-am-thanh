@@ -2,15 +2,18 @@ import { Router } from "express";
 import { authMiddleware } from "../middlewares/auth.js";
 import {
   getSyncJobById,
+  getOrderCounts,
   cleanupMongoTemp,
   ensureMongoTtl,
 } from "../controllers/ordersController.js";
-import { pullOrders, syncFromShop } from "../controllers/shopeeOrdersController.js";
+import { pullOrders, syncFromShop, syncShopee } from "../controllers/shopeeOrdersController.js";
 
 /** Mount tại /api — paths hệ thống (auth từng route) */
 const router = Router();
 
 router.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
+router.get("/order-counts", authMiddleware, getOrderCounts);
+router.post("/sync-shopee", authMiddleware, syncShopee);
 router.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
 router.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
 router.post("/orders/pull", authMiddleware, pullOrders);

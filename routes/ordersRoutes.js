@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   refreshOrders,
   queryOrders,
+  getOrderCounts,
   getOrderEvents,
   listOrders,
   cleanupHandedOver,
@@ -41,6 +42,7 @@ const h = asyncHandler;
 // Static paths trước :id / :orderSn
 router.get("/refresh", h(refreshOrders));
 router.get("/query", h(queryOrders));
+router.get("/counts", h(getOrderCounts));
 router.get("/lookup", h(lookupOrder));
 router.post("/pull", pullOrders);
 router.post("/quick-sync", quickSyncOrders);

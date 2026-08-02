@@ -534,6 +534,88 @@ export async function syncOrders(req, res) {
 /** Lookback cố định cho Đồng bộ nhanh — 3 giờ (Unix seconds phía Shopee). */
 const QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
 
+/**
+ * POST /api/sync-shopee — ACK ngay (status 200), kéo đơn Shopee chạy nền.
+ * Body: { lookback_hours?, shop_ids?, mode?: "full"|"quick" }
+ */
+export async function syncShopee(req, res) {
+  try {
+    const mode = String(req.body?.mode || req.query?.mode || "full")
+      .trim()
+      .toLowerCase();
+    const isQuick = mode === "quick" || mode === "quick_sync" || mode === "3h";
+    const hours = isQuick
+      ? 3
+      : resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
+    const lookbackSec = isQuick
+      ? QUICK_SYNC_LOOKBACK_SEC
+      : Math.floor(hours * 60 * 60);
+    const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+    const shopIds = resolvePullShopIds(shopIdsRaw);
+    const username = String(req.user?.username || "");
+
+    if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
+      sendJson(res, 200, {
+        status: 200,
+        success: true,
+        warning: true,
+        background: true,
+        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
+        shopee_response: { skipped: true, reason: "pull_in_flight" },
+      });
+      return;
+    }
+
+    // ACK ngay — không await Shopee (kiến trúc Sapo Sync async).
+    sendJson(res, 200, {
+      status: 200,
+      success: true,
+      background: true,
+      message: "Đang đồng bộ",
+      mode: isQuick ? "quick_sync" : "full",
+      lookbackSec,
+    });
+
+    setImmediate(() => {
+      void (async () => {
+        console.log(
+          `=== SYNC-SHOPEE BG START mode=${isQuick ? "quick" : "full"} lookbackSec=${lookbackSec} ===`,
+        );
+        try {
+          const result = await runOrdersPull({
+            lookbackSec,
+            shopIds,
+            username,
+            jobType: isQuick ? "shopee_orders_quick_sync" : "shopee_orders_sync",
+            logTag: isQuick ? "Orders Sync-Shopee Quick" : "Orders Sync-Shopee",
+            allowShortLookback: isQuick,
+            reconcileActive: !isQuick,
+            skipCancelReturn: isQuick,
+          });
+          console.log(
+            `[Sync-Shopee BG] done pulled=${result?.pulled || 0}` +
+              ` +${result?.added || 0}/~${result?.updated || 0}` +
+              ` msg=${result?.message || ""}`,
+          );
+        } catch (bgErr) {
+          console.error("[Sync-Shopee BG] failed:", bgErr?.stack || bgErr?.message || bgErr);
+        }
+      })();
+    });
+    return;
+  } catch (err) {
+    console.error("[API_SYNC_ERROR] sync-shopee:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        message: friendlyPullError(err),
+        background: false,
+      });
+    }
+    return;
+  }
+}
+
 /** POST /api/orders/quick-sync — kéo đơn update_time trong 3h gần nhất (nhẹ, tránh timeout cPanel). */
 export async function quickSyncOrders(req, res) {
   console.log("=== BẮT ĐẦU QUICK SYNC ORDERS (3h) ===");
