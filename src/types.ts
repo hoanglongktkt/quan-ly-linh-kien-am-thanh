@@ -206,6 +206,9 @@ export interface Order {
   /** Flag nội bộ: đơn bị Shopee giữ (pending verification) — đưa vào tab kiểm tra */
   is_pending_shopee_check?: boolean;
   isPrepared?: boolean;
+  /** PDF vận đơn đã lưu sẵn trong kho nội bộ (BG worker) — khác isPrinted. */
+  hasPdf?: boolean;
+  readyToPrint?: boolean;
   isPrinted?: boolean;
   /** URL PDF vận đơn đã tạo (in nhanh qua window.open, không gọi lại API). */
   labelUrl?: string;

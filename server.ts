@@ -410,6 +410,7 @@ import {
   markOrderHandedOverInStore,
   markOrderLocalStatusInStore,
   markOrdersPrintedInStore,
+  markOrdersHasPdfInStore,
   updateOrderPendingShopeeCheckInStore,
   updateOrderTrackingInStore,
   updateOrderPackageNumberInStore,
@@ -16009,7 +16010,7 @@ async function startServer() {
         `[Print Local] Done ok=${successCount} fail=${failCount} missing=${missingOrders.length} ${elapsed}ms`,
       );
 
-      // Chỉ đánh dấu đã in khi lấy được PDF local (không gọi Shopee).
+      // User bấm In thành công → isPrinted=true (khác hasPdf từ BG worker).
       if (successCount > 0) {
         const okSns = results.filter((r) => r.success).map((r) => String(r.orderSn || "")).filter(Boolean);
         const firstDoc = documents.find((d) => d.url && d.pdfFilename);
@@ -16136,19 +16137,18 @@ async function startServer() {
               continue;
             }
 
-            // Lưu meta PDF vào Mongo — chưa đánh dấu isPrinted (user chưa bấm In).
-            await bulkUpdateShippedOrdersBySn([
-              {
-                orderSn: sn,
-                shopId,
-                labelUrl: String(gen.url),
-                pdfFilename,
-              },
-            ]);
+            // Lưu meta PDF + hasPdf — tuyệt đối KHÔNG set isPrinted (user chưa bấm In).
+            await markOrdersHasPdfInStore([sn], {
+              shopId,
+              labelUrl: String(gen.url),
+              pdfFilename,
+            });
             order.labelUrl = gen.url;
             order.pdfUrl = gen.url;
             order.pdfFilename = pdfFilename;
-            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename}`);
+            order.hasPdf = true;
+            order.readyToPrint = true;
+            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename} hasPdf=true isPrinted=unchanged`);
           } catch (err: any) {
             console.warn(`[Label Prepare BG] ${sn}:`, err?.message || err);
           } finally {

@@ -143,6 +143,19 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     is_pending_shopee_check: Boolean(raw.is_pending_shopee_check),
     isPrepared: Boolean(raw.isPrepared),
     isPrinted: Boolean(raw.isPrinted),
+    hasPdf: Boolean(
+      raw.hasPdf ??
+        raw.readyToPrint ??
+        (raw.labelUrl || raw.pdfUrl || raw.pdfFilename),
+    ),
+    readyToPrint: Boolean(
+      raw.readyToPrint ??
+        raw.hasPdf ??
+        (raw.labelUrl || raw.pdfUrl || raw.pdfFilename),
+    ),
+    labelUrl: raw.labelUrl ? String(raw.labelUrl) : undefined,
+    pdfUrl: raw.pdfUrl ? String(raw.pdfUrl) : raw.labelUrl ? String(raw.labelUrl) : undefined,
+    pdfFilename: raw.pdfFilename ? String(raw.pdfFilename) : undefined,
     is_handed_over: isTruthyFlag(
       raw.is_handed_over ??
         raw.isHandedOverToCarrier ??

@@ -73081,8 +73081,10 @@ var OrderSchema = new import_mongoose3.Schema(
     is_pending_shopee_check: { type: Boolean, default: false, index: true },
     /** Cờ nội bộ — chỉ $setOnInsert khi sync; QR/bàn giao mới $set true */
     is_handed_over: { type: Boolean, default: false, index: true },
-    /** Cờ in vận đơn nội bộ — chỉ $setOnInsert khi sync; API in mới $set true */
+    /** Cờ in vận đơn nội bộ — chỉ $setOnInsert khi sync; API in user mới $set true */
     isPrinted: { type: Boolean, default: false, index: true },
+    /** PDF đã tải sẵn vào kho nội bộ — BG worker; KHÔNG đồng nghĩa đã in giấy */
+    hasPdf: { type: Boolean, default: false, index: true },
     isPrepared: { type: Boolean, default: false },
     last_synced_at: { type: Date, default: null, index: true },
     last_shopee_update_at: { type: Date, default: null },
@@ -74104,6 +74106,8 @@ async function bulkUpsertChannelListingsToStore(rows) {
 var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "is_handed_over",
   "isPrinted",
+  "hasPdf",
+  "readyToPrint",
   "isPrepared",
   "isHandedOverToCarrier",
   "is_handed_over_to_carrier",
@@ -74118,7 +74122,10 @@ var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "local_status_updated_at",
   "is_local_return_archived",
   "stock_restored",
-  "stock_restored_at"
+  "stock_restored_at",
+  "labelUrl",
+  "pdfUrl",
+  "pdfFilename"
 ]);
 async function bulkUpsertOrdersToStore(orders) {
   requireMongo();
@@ -74224,9 +74231,11 @@ async function bulkUpsertOrdersToStore(orders) {
       _id,
       is_handed_over: false,
       isPrinted: false,
+      hasPdf: false,
       isPrepared: false,
       "data.is_handed_over": false,
       "data.isPrinted": false,
+      "data.hasPdf": false,
       "data.isPrepared": false,
       "data.isHandedOverToCarrier": false,
       "data.is_handed_over_to_carrier": false,
@@ -74392,6 +74401,12 @@ async function bulkUpdateShippedOrdersBySn(patches) {
       $set.isPrinted = Boolean(p.isPrinted);
       $set["data.isPrinted"] = Boolean(p.isPrinted);
     }
+    if (p.hasPdf != null) {
+      const ready = Boolean(p.hasPdf);
+      $set.hasPdf = ready;
+      $set["data.hasPdf"] = ready;
+      $set["data.readyToPrint"] = ready;
+    }
     if (p.shopeeSyncPending != null) $set["data.shopeeSyncPending"] = Boolean(p.shopeeSyncPending);
     if (p.shopeeSyncError !== void 0) {
       $set["data.shopeeSyncError"] = p.shopeeSyncError || null;
@@ -74402,7 +74417,10 @@ async function bulkUpdateShippedOrdersBySn(patches) {
       $set["data.tracking_no"] = tn;
       $set["data.trackingNumber"] = tn;
     }
-    if (p.labelUrl) $set["data.labelUrl"] = String(p.labelUrl);
+    if (p.labelUrl) {
+      $set["data.labelUrl"] = String(p.labelUrl);
+      $set["data.pdfUrl"] = String(p.labelUrl);
+    }
     if (p.pdfFilename) $set["data.pdfFilename"] = String(p.pdfFilename);
     if (shopIdStr) {
       $set.shopId = shopIdStr;
@@ -74513,11 +74531,16 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
       isPrinted: printed,
       "data.isPrinted": printed
     };
-    if (printed && labelUrl) {
-      $set["data.labelUrl"] = labelUrl;
-      $set["data.pdfUrl"] = labelUrl;
+    if (printed) {
+      $set.hasPdf = true;
+      $set["data.hasPdf"] = true;
+      $set["data.readyToPrint"] = true;
+      if (labelUrl) {
+        $set["data.labelUrl"] = labelUrl;
+        $set["data.pdfUrl"] = labelUrl;
+      }
+      if (pdfFilename) $set["data.pdfFilename"] = pdfFilename;
     }
-    if (printed && pdfFilename) $set["data.pdfFilename"] = pdfFilename;
     if (shopIdStr) {
       $set.shopId = shopIdStr;
       $set["data.shopId"] = shopIdStr;
@@ -74550,6 +74573,67 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
       );
     }),
     "mark_printed"
+  );
+  return sns.length;
+}
+async function markOrdersHasPdfInStore(orderSns, meta) {
+  if (!isMongoReady()) return 0;
+  requireMongo();
+  const sns = [
+    ...new Set(
+      (Array.isArray(orderSns) ? orderSns : []).map((s2) => String(s2 || "").replace(/^shopee-/i, "").trim()).filter(Boolean)
+    )
+  ];
+  if (sns.length === 0) return 0;
+  const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
+  const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || "").trim();
+  const pdfFilename = String(meta?.pdfFilename || "").trim();
+  const ops = sns.map((sn) => {
+    const _id = `shopee-${sn}`;
+    const $set = {
+      hasPdf: true,
+      "data.hasPdf": true,
+      "data.readyToPrint": true
+    };
+    if (labelUrl) {
+      $set["data.labelUrl"] = labelUrl;
+      $set["data.pdfUrl"] = labelUrl;
+    }
+    if (pdfFilename) $set["data.pdfFilename"] = pdfFilename;
+    if (shopIdStr) {
+      $set.shopId = shopIdStr;
+      $set["data.shopId"] = shopIdStr;
+    }
+    return {
+      updateOne: {
+        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
+        update: {
+          $set,
+          $setOnInsert: {
+            _id,
+            orderSn: sn,
+            isPrinted: false,
+            "data.isPrinted": false,
+            "data.id": _id,
+            "data.orderSn": sn,
+            "data.channel": "shopee"
+          }
+        },
+        upsert: true
+      }
+    };
+  });
+  await withWriteTimeout(
+    enqueueWrite(async () => {
+      const result = await OrderModel.bulkWrite(ops, {
+        ordered: false,
+        maxTimeMS: 8e3
+      });
+      console.log(
+        `[MongoDB] markOrdersHasPdfInStore sns=${sns.length} modified=${result.modifiedCount || 0} upserted=${result.upsertedCount || 0}`
+      );
+    }),
+    "mark_has_pdf"
   );
   return sns.length;
 }
@@ -75093,7 +75177,12 @@ function hydrateOrderFromMongoDoc(d) {
     is_handed_over_to_carrier: handed,
     is_handed_over_to_courier: handed,
     isPrinted: d?.isPrinted != null ? Boolean(d.isPrinted) : Boolean(data.isPrinted),
+    hasPdf: d?.hasPdf != null ? Boolean(d.hasPdf) : Boolean(data.hasPdf ?? data.readyToPrint) || Boolean(String(data.labelUrl || data.pdfUrl || data.pdfFilename || "").trim()),
+    readyToPrint: d?.hasPdf != null ? Boolean(d.hasPdf) : Boolean(data.readyToPrint ?? data.hasPdf) || Boolean(String(data.labelUrl || data.pdfUrl || data.pdfFilename || "").trim()),
     isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
+    labelUrl: data.labelUrl || data.pdfUrl || void 0,
+    pdfUrl: data.pdfUrl || data.labelUrl || void 0,
+    pdfFilename: data.pdfFilename || void 0,
     ...localStored ? {
       local_status: localStored,
       localStatus: localStored,
@@ -119246,18 +119335,17 @@ async function startServer() {
               );
               continue;
             }
-            await bulkUpdateShippedOrdersBySn([
-              {
-                orderSn: sn,
-                shopId,
-                labelUrl: String(gen.url),
-                pdfFilename
-              }
-            ]);
+            await markOrdersHasPdfInStore([sn], {
+              shopId,
+              labelUrl: String(gen.url),
+              pdfFilename
+            });
             order.labelUrl = gen.url;
             order.pdfUrl = gen.url;
             order.pdfFilename = pdfFilename;
-            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename}`);
+            order.hasPdf = true;
+            order.readyToPrint = true;
+            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename} hasPdf=true isPrinted=unchanged`);
           } catch (err) {
             console.warn(`[Label Prepare BG] ${sn}:`, err?.message || err);
           } finally {

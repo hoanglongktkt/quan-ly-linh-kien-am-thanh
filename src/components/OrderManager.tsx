@@ -2920,6 +2920,8 @@ export default function OrderManager({
           labelUrl: hit.url,
           pdfUrl: hit.url,
           pdfFilename: hit.pdfFilename || o.pdfFilename,
+          hasPdf: true,
+          readyToPrint: true,
           isPrinted: true,
         };
       });
