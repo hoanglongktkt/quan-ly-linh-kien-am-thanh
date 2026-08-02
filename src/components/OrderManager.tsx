@@ -2662,7 +2662,11 @@ export default function OrderManager({
    */
   const fetchPrintDocumentApi = async (
     orderIds: string[],
-    opts?: { waitMs?: number; onStatus?: (message: string) => void }
+    opts?: {
+      waitMs?: number;
+      onStatus?: (message: string) => void;
+      onProgress?: (completed: number, total: number) => void;
+    }
   ): Promise<{
     ok: boolean;
     status: number;
@@ -2731,9 +2735,14 @@ export default function OrderManager({
       }
     };
 
+    const reportProgress = (completed: number) => {
+      opts?.onProgress?.(Math.min(completed, uniqueIds.length), uniqueIds.length);
+    };
+
     // —— Fast-path: đúng 1 đơn — bỏ chunk/queue ——
     if (uniqueIds.length === 1) {
       opts?.onStatus?.('Đang in 1 đơn — xử lý ngay...');
+      reportProgress(0);
       try {
         const res = await fetch('/api/shopee/print-document/chunk', {
           method: 'POST',
@@ -2780,6 +2789,7 @@ export default function OrderManager({
             },
           };
         }
+        reportProgress(1);
         return {
           ok: true,
           status: 200,
@@ -2804,75 +2814,81 @@ export default function OrderManager({
       }
     }
 
-    // —— Nhiều đơn: chunk + concurrency giới hạn ——
-    const chunks = chunkArray(uniqueIds, LOGISTICS_FE_CHUNK_SIZE);
+    // —— Nhiều đơn: mỗi đơn 1 request (concurrency giới hạn) → onProgress tăng từng đơn (tránh kẹt 0/N).
     const allDocs: NonNullable<PrintDocumentResponse['documents']> = [];
     const allUrls: string[] = [];
     const errors: string[] = [];
     let lastStatus = 200;
-    let completedChunks = 0;
+    let completedOrders = 0;
 
     opts?.onStatus?.(
-      `Đang in ${uniqueIds.length} đơn (${chunks.length} nhóm, tối đa ${PRINT_FE_CHUNK_CONCURRENCY} song song)...`,
+      `Đang in ${uniqueIds.length} đơn (tối đa ${PRINT_FE_CHUNK_CONCURRENCY} đơn song song)...`,
     );
+    reportProgress(0);
 
-    type ChunkOutcome = {
+    type OrderPrintOutcome = {
       status: number;
       docs: NonNullable<PrintDocumentResponse['documents']>;
       urls: string[];
       errors: string[];
     };
 
-    const outcomes = await mapPoolLimited(chunks, PRINT_FE_CHUNK_CONCURRENCY, async (chunk, i) => {
-      if (i > 0 && PRINT_FE_CHUNK_STAGGER_MS > 0) {
-        await new Promise((r) => setTimeout(r, PRINT_FE_CHUNK_STAGGER_MS * Math.min(i, 2)));
-      }
-      opts?.onStatus?.(
-        `Đang in nhóm ${i + 1}/${chunks.length} (${chunk.length} đơn)...`,
-      );
-      const localDocs: NonNullable<PrintDocumentResponse['documents']> = [];
-      const localUrls: string[] = [];
-      const localErrors: string[] = [];
-      let status = 200;
-      try {
-        const res = await fetch('/api/shopee/print-document/chunk', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ order_ids: chunk, orderIds: chunk }),
-        });
-        status = res.status;
-        const data = await parseJsonResponse<
-          PrintDocumentResponse & {
-            urls?: string[];
-            results?: Array<{
-              success?: boolean;
-              url?: string;
-              orderSn?: string;
-              orderId?: string;
-              pdfFilename?: string;
-              error?: string;
-              message?: string;
-            }>;
-          }
-        >(res);
-
-        mergeChunkResponse(data, localDocs, localUrls, localErrors);
-
-        if (!res.ok && localUrls.length === 0) {
-          localErrors.push(data.message || data.error || `HTTP ${res.status}`);
-        } else if (data.message && !data.success && localUrls.length === 0) {
-          localErrors.push(data.message);
+    const outcomes = await mapPoolLimited(
+      uniqueIds,
+      PRINT_FE_CHUNK_CONCURRENCY,
+      async (orderId, i) => {
+        if (i > 0 && PRINT_FE_CHUNK_STAGGER_MS > 0) {
+          await new Promise((r) => setTimeout(r, PRINT_FE_CHUNK_STAGGER_MS * Math.min(i, 2)));
         }
-      } catch (err) {
-        localErrors.push(err instanceof Error ? err.message : `Lỗi nhóm ${i + 1}`);
-      } finally {
-        completedChunks += 1;
-        opts?.onStatus?.(
-          `Đã xong ${completedChunks}/${chunks.length} nhóm...`,
-        );
-      }
-      return { status, docs: localDocs, urls: localUrls, errors: localErrors } satisfies ChunkOutcome;
-    });
+        opts?.onStatus?.(`Đang in đơn ${i + 1}/${uniqueIds.length}...`);
+        const localDocs: NonNullable<PrintDocumentResponse['documents']> = [];
+        const localUrls: string[] = [];
+        const localErrors: string[] = [];
+        let status = 200;
+        try {
+          const res = await fetch('/api/shopee/print-document/chunk', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ order_ids: [orderId], orderIds: [orderId] }),
+          });
+          status = res.status;
+          const data = await parseJsonResponse<
+            PrintDocumentResponse & {
+              urls?: string[];
+              results?: Array<{
+                success?: boolean;
+                url?: string;
+                orderSn?: string;
+                orderId?: string;
+                pdfFilename?: string;
+                error?: string;
+                message?: string;
+              }>;
+            }
+          >(res);
+
+          mergeChunkResponse(data, localDocs, localUrls, localErrors);
+
+          if (!res.ok && localUrls.length === 0) {
+            localErrors.push(data.message || data.error || `HTTP ${res.status}`);
+          } else if (data.message && !data.success && localUrls.length === 0) {
+            localErrors.push(data.message);
+          }
+        } catch (err) {
+          localErrors.push(err instanceof Error ? err.message : `Lỗi đơn ${i + 1}`);
+        } finally {
+          completedOrders += 1;
+          reportProgress(completedOrders);
+          opts?.onStatus?.(`Đã xong ${completedOrders}/${uniqueIds.length} đơn...`);
+        }
+        return {
+          status,
+          docs: localDocs,
+          urls: localUrls,
+          errors: localErrors,
+        } satisfies OrderPrintOutcome;
+      },
+    );
 
     for (const out of outcomes) {
       if (out.status >= 400) lastStatus = out.status;
@@ -2895,6 +2911,7 @@ export default function OrderManager({
       };
     }
 
+    reportProgress(uniqueIds.length);
     return {
       ok: true,
       status: 200,
@@ -2908,7 +2925,7 @@ export default function OrderManager({
           : allUrls.map((url) => ({ url })),
         message:
           allUrls.length === uniqueIds.length && errors.length === 0
-            ? `Đã sẵn sàng ${allUrls.length} URL PDF (${chunks.length} nhóm ×≤${LOGISTICS_FE_CHUNK_SIZE}).`
+            ? `Đã sẵn sàng ${allUrls.length} URL PDF (${uniqueIds.length} đơn).`
             : `Đã sẵn sàng ${allUrls.length}/${uniqueIds.length} URL PDF. ${errors.filter(Boolean).join('; ')}`,
       },
     };
@@ -3202,8 +3219,12 @@ export default function OrderManager({
         }
       }
 
-      // Một request duy nhất — backend gộp PDF toàn bộ orderIds (+ chờ Shopee nếu waitMs).
-      const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds, { waitMs, onStatus });
+      // Backend xử lý từng đơn (+ chờ Shopee nếu waitMs) — forward onProgress theo đơn.
+      const { ok, status, data } = await fetchPrintDocumentApi(uniqueIds, {
+        waitMs,
+        onStatus,
+        onProgress,
+      });
       if (!ok) {
         closeReservedPrintWindow(reservedWindow);
         if (data.error === 'tracking_number_missing' || status === 409) {
@@ -3262,6 +3283,7 @@ export default function OrderManager({
     setProgressTotal(0);
     setProgressDone(false);
     setShipConfirmSummary(null);
+    setShipJobResults([]);
     setIsPrintingFromSummary(false);
   };
 
@@ -3279,10 +3301,24 @@ export default function OrderManager({
   const markProgressComplete = (message?: string, options?: { autoClose?: boolean }) => {
     setProgressDone(true);
     if (message) setProgressMessage(message);
-    if (progressTotal > 0) setProgressCompleted(progressTotal);
+    // Functional update — tránh stale closure (progressTotal = 0 lúc bấm In → kẹt 0/N).
+    setProgressTotal((t) => {
+      if (t > 0) setProgressCompleted(t);
+      return t;
+    });
     if (options?.autoClose !== false) {
       scheduleCloseProgressOverlay(0);
     }
+  };
+
+  /** Reset overlay trước phiên in mới — xóa shipJobResults tồn đọng (nhãn "Thành công" giả). */
+  const beginPrintProgressSession = (total: number, message: string) => {
+    setShipJobResults([]);
+    setShipConfirmSummary(null);
+    setProgressDone(false);
+    setProgressCompleted(0);
+    setProgressTotal(Math.max(0, total));
+    setProgressMessage(message);
   };
 
   const buildQueuedOrderKeys = (queued: Order[]) => {
@@ -3705,20 +3741,18 @@ export default function OrderManager({
         showToast('Đã mở vận đơn từ bộ nhớ đệm.');
       }
       setShipConfirmSummary(null);
+      setShipJobResults([]);
       markProgressComplete('In vận đơn thành công!');
       return;
     }
 
     setIsPrintingFromSummary(true);
-    setShipConfirmSummary(null);
-    setProgressDone(false);
-    setProgressCompleted(0);
-    setProgressTotal(ids.length);
     setIsShipping(true);
-    setProgressMessage(
+    beginPrintProgressSession(
+      ids.length,
       ids.length === 1
         ? 'Đang in 1 đơn — xử lý ngay...'
-        : `Đang in ${ids.length} đơn (tối đa ${PRINT_FE_CHUNK_CONCURRENCY} nhóm song song)...`,
+        : `Đang in ${ids.length} đơn (tối đa ${PRINT_FE_CHUNK_CONCURRENCY} đơn song song)...`,
     );
 
     try {
@@ -4081,10 +4115,8 @@ export default function OrderManager({
 
     setIsBulkPrinting(true);
     if (shopeeAll.length > 0) {
-      setProgressDone(false);
-      setProgressTotal(shopeeAll.length);
-      setProgressCompleted(0);
-      setProgressMessage(
+      beginPrintProgressSession(
+        shopeeAll.length,
         shopeeAll.length === 1
           ? 'Đang in 1 đơn — xử lý ngay...'
           : `Đang in hàng loạt ${shopeeAll.length} đơn...`,
@@ -4098,7 +4130,7 @@ export default function OrderManager({
           channel: 'shopee',
           type: 'stock_sync',
           status: 'success',
-          message: `[SHOPEE PRINT] ${shopeeAll.length === 1 ? 'fast-path 1 đơn' : `chunk×${Math.ceil(shopeeAll.length / LOGISTICS_FE_CHUNK_SIZE)} concurrency=${PRINT_FE_CHUNK_CONCURRENCY}`} — poll READY ${PRINT_FE_STATUS_POLL_MS}ms.`,
+          message: `[SHOPEE PRINT] ${shopeeAll.length === 1 ? 'fast-path 1 đơn' : `per-order×${shopeeAll.length} concurrency=${PRINT_FE_CHUNK_CONCURRENCY}`} — poll READY ${PRINT_FE_STATUS_POLL_MS}ms.`,
         });
         const result = await printShopeeDocuments(shopeeAll, {
           onProgress: (completed, total) => {
@@ -4345,10 +4377,7 @@ export default function OrderManager({
     // label to be generated. If it doesn't, Shopee's own error message (surfaced
     // in the alert below) explains why — no more local pre-check blocking the request.
     setPrintingOrderId(order.id);
-    setProgressDone(false);
-    setProgressTotal(1);
-    setProgressCompleted(0);
-    setProgressMessage('Đang in 1 đơn — xử lý ngay...');
+    beginPrintProgressSession(1, 'Đang in 1 đơn — xử lý ngay...');
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
