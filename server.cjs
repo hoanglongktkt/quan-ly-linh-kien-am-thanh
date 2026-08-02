@@ -91823,24 +91823,22 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
     const needTn = !trackingForShopeeShippingDoc(order);
     if (!needPkg && !needTn) continue;
     try {
-      if (needTn || needPkg) {
-        const tnRes = await shopeeGetTrackingNumber(
-          shopId,
-          accessToken,
-          sn,
-          String(order.packageNumber || "").trim() || void 0
-        );
-        console.log(
-          `[Shopee Print Enrich] get_tracking_number order_sn=${sn} response=`,
-          JSON.stringify(tnRes)
-        );
-        applyShopeeGetTrackingResponse(order, tnRes);
-        const resp = tnRes?.response ?? tnRes ?? {};
-        const pkgFromTn = String(
-          resp?.package_number || resp?.package_no || order.packageNumber || ""
-        ).trim();
-        if (pkgFromTn) order.packageNumber = pkgFromTn;
-      }
+      const tnRes = await shopeeGetTrackingNumber(
+        shopId,
+        accessToken,
+        sn,
+        String(order.packageNumber || "").trim() || void 0
+      );
+      console.log(
+        `[Shopee Print Enrich] get_tracking_number order_sn=${sn} response=`,
+        JSON.stringify(tnRes)
+      );
+      applyShopeeGetTrackingResponse(order, tnRes);
+      const resp = tnRes?.response ?? tnRes ?? {};
+      const pkgFromTn = String(
+        resp?.package_number || resp?.package_no || order.packageNumber || ""
+      ).trim();
+      if (pkgFromTn) order.packageNumber = pkgFromTn;
     } catch (err) {
       console.warn(`[Shopee Print Enrich] get_tracking_number ${sn}:`, err?.message || err);
     }
@@ -91877,6 +91875,21 @@ async function enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, order
           `[Shopee Print Enrich] get_shipping_document_data_info ${sn}:`,
           err?.message || err
         );
+      }
+    }
+    if (!String(order.packageNumber || "").trim()) {
+      try {
+        const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [sn]);
+        const detailList = detailResult?.response?.order_list || detailResult?.order_list || [];
+        const detail = detailList.find((d) => String(d?.order_sn || "") === sn) || detailList[0];
+        if (detail) {
+          applyShopeePackageListTracking(order, detail);
+          const pkgs = Array.isArray(detail?.package_list) ? detail.package_list : [];
+          const pkgNum = String(pkgs[0]?.package_number || order.packageNumber || "").trim();
+          if (pkgNum) order.packageNumber = pkgNum;
+        }
+      } catch (err) {
+        console.warn(`[Shopee Print Enrich] get_order_detail retry ${sn}:`, err?.message || err);
       }
     }
     console.log(
@@ -95571,6 +95584,8 @@ async function startServer() {
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
   app.post("/api/orders/pull", authMiddleware, pullOrders);
   app.post("/api/orders/quick-sync", authMiddleware, quickSyncOrders);
+  app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
+  app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
   app.post("/api/shopee/orders/pull", authMiddleware, pullOrders);
   app.post("/api/shopee/orders/quick-sync", authMiddleware, quickSyncOrders);
@@ -96307,6 +96322,15 @@ async function startServer() {
           `[Shopee Print Create] Enrich package_number/tracking shop=${shopId} n=${groupOrders.length}`
         );
         await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, groupOrders);
+        const stillMissingPkg = groupOrders.filter(
+          (o) => !String(o?.packageNumber || o?.package_number || "").trim()
+        );
+        if (stillMissingPkg.length > 0) {
+          console.warn(
+            `[Shopee Print Create] Retry enrich package_number cho ${stillMissingPkg.length} \u0111\u01A1n m\u1EDBi x\xE1c nh\u1EADn...`
+          );
+          await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, stillMissingPkg);
+        }
         for (let offset = 0; offset < groupOrders.length; offset += SHOPEE_SHIPPING_DOC_BATCH_MAX) {
           const chunk = groupOrders.slice(offset, offset + SHOPEE_SHIPPING_DOC_BATCH_MAX);
           const orderList = chunk.map((o) => buildShopeeShippingDocOrderRow(o)).filter((r2) => Boolean(r2?.order_sn));

@@ -176,6 +176,8 @@ import {
   handOverCarrierBulk,
   healHandedOver,
   createManualOrder,
+  resetPrintStatus,
+  updatePrintStatus,
 } from "./controllers/ordersController.js";
 import {
   initStockSyncQueue,
@@ -9149,24 +9151,23 @@ async function enrichOrdersPackageAndTrackingForPrint(
     if (!needPkg && !needTn) continue;
 
     try {
-      if (needTn || needPkg) {
-        const tnRes = await shopeeGetTrackingNumber(
-          shopId,
-          accessToken,
-          sn,
-          String(order.packageNumber || "").trim() || undefined,
-        );
-        console.log(
-          `[Shopee Print Enrich] get_tracking_number order_sn=${sn} response=`,
-          JSON.stringify(tnRes),
-        );
-        applyShopeeGetTrackingResponse(order, tnRes);
-        const resp = tnRes?.response ?? tnRes ?? {};
-        const pkgFromTn = String(
-          resp?.package_number || resp?.package_no || order.packageNumber || "",
-        ).trim();
-        if (pkgFromTn) order.packageNumber = pkgFromTn;
-      }
+      // Đơn vừa xác nhận: get_tracking_number thường trả kèm package_number.
+      const tnRes = await shopeeGetTrackingNumber(
+        shopId,
+        accessToken,
+        sn,
+        String(order.packageNumber || "").trim() || undefined,
+      );
+      console.log(
+        `[Shopee Print Enrich] get_tracking_number order_sn=${sn} response=`,
+        JSON.stringify(tnRes),
+      );
+      applyShopeeGetTrackingResponse(order, tnRes);
+      const resp = tnRes?.response ?? tnRes ?? {};
+      const pkgFromTn = String(
+        resp?.package_number || resp?.package_no || order.packageNumber || "",
+      ).trim();
+      if (pkgFromTn) order.packageNumber = pkgFromTn;
     } catch (err: any) {
       console.warn(`[Shopee Print Enrich] get_tracking_number ${sn}:`, err?.message || err);
     }
@@ -9211,6 +9212,24 @@ async function enrichOrdersPackageAndTrackingForPrint(
           `[Shopee Print Enrich] get_shipping_document_data_info ${sn}:`,
           err?.message || err,
         );
+      }
+    }
+
+    // Vẫn thiếu package_number → get_order_detail 1 đơn lẻ lần nữa (đơn mới xác nhận).
+    if (!String(order.packageNumber || "").trim()) {
+      try {
+        const detailResult = await shopeeGetOrderDetail(shopId, accessToken, [sn]);
+        const detailList: any[] =
+          detailResult?.response?.order_list || detailResult?.order_list || [];
+        const detail = detailList.find((d: any) => String(d?.order_sn || "") === sn) || detailList[0];
+        if (detail) {
+          applyShopeePackageListTracking(order, detail);
+          const pkgs = Array.isArray(detail?.package_list) ? detail.package_list : [];
+          const pkgNum = String(pkgs[0]?.package_number || order.packageNumber || "").trim();
+          if (pkgNum) order.packageNumber = pkgNum;
+        }
+      } catch (err: any) {
+        console.warn(`[Shopee Print Enrich] get_order_detail retry ${sn}:`, err?.message || err);
       }
     }
 
@@ -14744,6 +14763,8 @@ async function startServer() {
   // Mount tường minh — tránh 404 khi router interop/MVC miss sau refactor.
   app.post("/api/orders/pull", authMiddleware, pullOrders);
   app.post("/api/orders/quick-sync", authMiddleware, quickSyncOrders);
+  app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
+  app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
   app.post("/api/shopee/orders/pull", authMiddleware, pullOrders);
   app.post("/api/shopee/orders/quick-sync", authMiddleware, quickSyncOrders);
@@ -15660,10 +15681,22 @@ async function startServer() {
         }
 
         // BẮT BUỘC: lấy package_number (+ tracking) trước create_shipping_document.
+        // Đơn vừa xác nhận xong thường chưa kịp có package_number trong DB nội bộ.
         console.log(
           `[Shopee Print Create] Enrich package_number/tracking shop=${shopId} n=${groupOrders.length}`,
         );
         await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, groupOrders);
+
+        // Pass 2: đơn vẫn thiếu package_number → ép get_order_detail + get_tracking_number lại.
+        const stillMissingPkg = groupOrders.filter(
+          (o: any) => !String(o?.packageNumber || o?.package_number || "").trim(),
+        );
+        if (stillMissingPkg.length > 0) {
+          console.warn(
+            `[Shopee Print Create] Retry enrich package_number cho ${stillMissingPkg.length} đơn mới xác nhận...`,
+          );
+          await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, stillMissingPkg);
+        }
 
         for (let offset = 0; offset < groupOrders.length; offset += SHOPEE_SHIPPING_DOC_BATCH_MAX) {
           const chunk = groupOrders.slice(offset, offset + SHOPEE_SHIPPING_DOC_BATCH_MAX);

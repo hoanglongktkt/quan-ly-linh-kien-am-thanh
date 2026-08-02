@@ -994,18 +994,23 @@ export default function OrderManager({
     [onFetchOrders],
   );
 
-  /** Cập nhật isPrinted trên DB nội bộ (không gọi Shopee) — hỗ trợ true/false. */
+  /** Cập nhật isPrinted trên DB nội bộ (không gọi Shopee) — hỗ trợ true/false.
+   * Soft-fail: lỗi API tuyệt đối không throw — không được chặn luồng in PDF. */
   const updatePrintStatusForOrders = React.useCallback(
-    async (targetOrders: Order[], isPrinted: boolean) => {
+    async (
+      targetOrders: Order[],
+      isPrinted: boolean,
+      opts?: { silent?: boolean },
+    ) => {
       const ids = targetOrders
         .map((o) => String(o.orderSn || o.id || '').replace(/^shopee-/i, '').trim())
         .filter(Boolean);
       const label = isPrinted ? 'đã in' : 'chưa in';
       if (ids.length === 0) {
-        showToast(`Chưa chọn đơn để đánh dấu ${label}.`);
+        if (!opts?.silent) showToast(`Chưa chọn đơn để đánh dấu ${label}.`);
         return;
       }
-      setResettingPrintIds(ids);
+      if (!opts?.silent) setResettingPrintIds(ids);
       try {
         const token = localStorage.getItem('admin_token');
         const res = await fetch('/api/orders/update-print-status', {
@@ -1024,7 +1029,25 @@ export default function OrderManager({
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data?.success === false) {
-          showToast(data?.message || `Không thể đánh dấu ${label}.`);
+          console.warn(
+            `[Print Status] update-print-status failed HTTP ${res.status}:`,
+            data?.message || data?.error || res.statusText,
+          );
+          const idSet = new Set(ids.map((s) => s.toLowerCase()));
+          const patchedLocal = ordersRef.current.map((o) => {
+            const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+            const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
+            if (!idSet.has(sn) && !idSet.has(oid)) return o;
+            return { ...o, isPrinted };
+          });
+          ordersRef.current = patchedLocal;
+          onUpdateOrders(patchedLocal, { persist: false });
+          if (!opts?.silent) {
+            showToast(
+              data?.message ||
+                `Không lưu được trạng thái ${label} lên server (đã cập nhật tạm trên giao diện).`,
+            );
+          }
           return;
         }
         const idSet = new Set(ids.map((s) => s.toLowerCase()));
@@ -1036,11 +1059,27 @@ export default function OrderManager({
         });
         ordersRef.current = patched;
         onUpdateOrders(patched, { persist: false });
-        showToast(`Đã đánh dấu ${label}: ${ids.length} đơn.`);
+        if (!opts?.silent) showToast(`Đã đánh dấu ${label}: ${ids.length} đơn.`);
       } catch (err: any) {
-        showToast(err?.message || `Lỗi đánh dấu ${label}.`);
+        console.warn('[Print Status] update-print-status exception:', err?.message || err);
+        try {
+          const idSet = new Set(ids.map((s) => s.toLowerCase()));
+          const patched = ordersRef.current.map((o) => {
+            const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
+            const oid = String(o.id || '').replace(/^shopee-/i, '').trim().toLowerCase();
+            if (!idSet.has(sn) && !idSet.has(oid)) return o;
+            return { ...o, isPrinted };
+          });
+          ordersRef.current = patched;
+          onUpdateOrders(patched, { persist: false });
+        } catch {
+          /* ignore */
+        }
+        if (!opts?.silent) {
+          showToast(err?.message || `Lỗi đánh dấu ${label} (đã cập nhật tạm trên giao diện).`);
+        }
       } finally {
-        setResettingPrintIds([]);
+        if (!opts?.silent) setResettingPrintIds([]);
       }
     },
     [onUpdateOrders],
@@ -2464,18 +2503,36 @@ export default function OrderManager({
     void opts?.waitMs;
     opts?.onStatus?.('Đang tạo lệnh in Batch trên Shopee...');
 
-    const createRes = await fetch('/api/shopee/print-document/create', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ orderIds }),
-    });
-    const createData = await parseJsonResponse<{
+    let createRes: Response;
+    let createData: {
       success?: boolean;
       task_id?: string;
       task_ids?: string[];
       message?: string;
       error?: string;
-    }>(createRes);
+    };
+    try {
+      createRes = await fetch('/api/shopee/print-document/create', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ orderIds }),
+      });
+      createData = await parseJsonResponse<{
+        success?: boolean;
+        task_id?: string;
+        task_ids?: string[];
+        message?: string;
+        error?: string;
+      }>(createRes);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Không tạo được lệnh in Batch.';
+      console.warn('[Batch Print] create failed:', msg);
+      return {
+        ok: false,
+        status: 500,
+        data: { error: 'create_failed', message: msg },
+      };
+    }
 
     if (!createRes.ok || !createData?.task_id) {
       return {
@@ -2651,7 +2708,7 @@ export default function OrderManager({
       onUpdateOrders(merged, { persist: false });
     }
 
-    // Cache label URL lên order state — lần in sau window.open ngay, không fetch lại.
+    // Cache label URL + đánh dấu đã in trên state — lần in sau window.open ngay.
     if (printUrl && orderIdsForCache?.length) {
       const idSet = new Set(orderIdsForCache.map(String));
       const patched = ordersRef.current.map((o) => {
@@ -2663,10 +2720,22 @@ export default function OrderManager({
           labelUrl: printUrl,
           pdfUrl: printUrl,
           pdfFilename: data.pdfFilename || o.pdfFilename,
+          isPrinted: true,
         };
       });
       ordersRef.current = patched;
-      onUpdateOrders(patched);
+      onUpdateOrders(patched, { persist: false });
+
+      // Sync isPrinted lên DB nội bộ — fire-and-forget, TUYỆT ĐỐI không chặn mở PDF.
+      const targets = patched.filter(
+        (o) =>
+          idSet.has(String(o.id)) ||
+          idSet.has(String(o.orderSn)) ||
+          idSet.has(`shopee-${o.orderSn}`),
+      );
+      void updatePrintStatusForOrders(targets, true, { silent: true }).catch((err) => {
+        console.warn('[Print Status] sync after PDF (ignored):', err);
+      });
     }
 
     if (openPdf && printUrl) {
