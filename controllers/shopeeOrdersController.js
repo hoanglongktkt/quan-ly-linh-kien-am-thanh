@@ -204,6 +204,13 @@ async function runOrdersPull(opts) {
         : errors.map((e) => e?.orderSn).filter(Boolean),
     };
   } catch (error) {
+    console.log(
+      "Shopee Sync API Error: ",
+      JSON.stringify(error?.response?.data || {
+        message: error?.message || String(error),
+        stack: error?.stack || undefined,
+      }),
+    );
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", error?.stack || error);
     if (jobId) {
       try {
@@ -334,16 +341,40 @@ function resolvePullShopIds(shopIdsRaw) {
   return resolved.length ? resolved : undefined;
 }
 
+/** Trần lookback full sync: 90 ngày (= 6 × 15 ngày chunks phía Shopee). */
+const FULL_SYNC_MAX_LOOKBACK_HOURS = 90 * 24;
+/** Sàn tối thiểu full sync: 3 ngày. */
+const FULL_SYNC_MIN_LOOKBACK_HOURS = 72;
+
+function resolveFullSyncLookbackHours(raw) {
+  const hoursRaw = Number(raw);
+  if (!Number.isFinite(hoursRaw) || hoursRaw <= 0) return 14 * 24;
+  return Math.min(Math.max(hoursRaw, FULL_SYNC_MIN_LOOKBACK_HOURS), FULL_SYNC_MAX_LOOKBACK_HOURS);
+}
+
+function resolveSyncHttpStatus(result) {
+  if (result?.success === false) {
+    const msg = String(result?.message || result?.errors?.[0]?.message || "").toLowerCase();
+    const code = String(result?.errors?.[0]?.error || "").toLowerCase();
+    if (
+      /no_oauth|no_valid_access|unauthorized|invalid.?token|param|bad.?request|missing/.test(
+        `${msg} ${code}`,
+      )
+    ) {
+      return 400;
+    }
+    return 500;
+  }
+  return 200;
+}
+
 /** POST /api/orders/pull — await kéo đơn, trả shopee_response thô về FE để debug. */
 export async function pullOrders(req, res) {
   console.log("=== BẮT ĐẦU PULL ORDERS ===");
   try {
     console.log("Bắt đầu lấy đơn");
-    // Mặc định 14 ngày (Unix seconds phía Shopee API).
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 14 * 24);
-    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0
-      ? Math.min(Math.max(hoursRaw, 72), 15 * 24)
-      : 14 * 24;
+    // Mặc định 14 ngày; tối đa 90 ngày (chia chunk ≤15 ngày phía Shopee API).
+    const hours = resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
@@ -376,11 +407,14 @@ export async function pullOrders(req, res) {
       logTag: "Orders Pull",
     });
 
-    // Luôn trả JSON 200 hợp lệ — kể cả khi một phần đơn lỗi / DB soft-fail.
-    sendJson(res, 200, {
-      status: 200,
-      success: true,
-      message: "Kéo đơn hoàn tất",
+    const httpStatus = resolveSyncHttpStatus(result);
+    const ok = httpStatus === 200;
+    sendJson(res, httpStatus, {
+      status: httpStatus,
+      success: ok,
+      message: ok
+        ? "Kéo đơn hoàn tất"
+        : result?.message || result?.detail_message || "Đồng bộ đơn hàng thất bại",
       total_success: result?.total_success ?? result?.pulled ?? 0,
       failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
       pulled: result?.pulled || 0,
@@ -397,8 +431,8 @@ export async function pullOrders(req, res) {
     console.log("Đã gửi phản hồi về FE");
     return;
   } catch (err) {
+    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
-    // Vẫn cố trả JSON hợp lệ — tránh cPanel HTML 500.
     sendJson(res, 500, {
       success: false,
       message: friendlyPullError(err),
@@ -421,10 +455,7 @@ export async function syncOrders(req, res) {
   console.log("=== BẮT ĐẦU PULL ORDERS ===");
   try {
     console.log("Bắt đầu lấy đơn");
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 14 * 24);
-    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0
-      ? Math.min(Math.max(hoursRaw, 72), 15 * 24)
-      : 14 * 24;
+    const hours = resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
@@ -457,10 +488,14 @@ export async function syncOrders(req, res) {
       logTag: "Orders Sync",
     });
 
-    sendJson(res, 200, {
-      status: 200,
-      success: true,
-      message: "Kéo đơn hoàn tất",
+    const httpStatus = resolveSyncHttpStatus(result);
+    const ok = httpStatus === 200;
+    sendJson(res, httpStatus, {
+      status: httpStatus,
+      success: ok,
+      message: ok
+        ? "Kéo đơn hoàn tất"
+        : result?.message || result?.detail_message || "Đồng bộ đơn hàng thất bại",
       total_success: result?.total_success ?? result?.pulled ?? 0,
       failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
       pulled: result?.pulled || 0,
@@ -477,6 +512,7 @@ export async function syncOrders(req, res) {
     console.log("Đã gửi phản hồi về FE");
     return;
   } catch (err) {
+    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
     console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
@@ -539,10 +575,14 @@ export async function quickSyncOrders(req, res) {
       skipCancelReturn: true,
     });
 
-    sendJson(res, 200, {
-      status: 200,
-      success: true,
-      message: result?.message || "Đồng bộ nhanh 3h hoàn tất",
+    const httpStatus = resolveSyncHttpStatus(result);
+    const ok = httpStatus === 200;
+    sendJson(res, httpStatus, {
+      status: httpStatus,
+      success: ok,
+      message: ok
+        ? result?.message || "Đồng bộ nhanh 3h hoàn tất"
+        : result?.message || result?.detail_message || "Đồng bộ nhanh thất bại",
       total_success: result?.total_success ?? result?.pulled ?? 0,
       failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
       pulled: result?.pulled || 0,
@@ -560,6 +600,7 @@ export async function quickSyncOrders(req, res) {
     console.log("Đã gửi phản hồi về FE");
     return;
   } catch (err) {
+    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
     console.error("[API_SYNC_ERROR] Quick Sync lỗi chi tiết:", err?.stack || err);
     sendJson(res, 500, {
       success: false,

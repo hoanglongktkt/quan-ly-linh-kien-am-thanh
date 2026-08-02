@@ -49916,8 +49916,8 @@ function inferShippingCarrierLabel(order) {
 function parseShopeeOrderListPagination(result) {
   const root = result && typeof result === "object" ? result : {};
   const body = root.response && typeof root.response === "object" ? root.response : root;
-  const nextCursor = String(body.next_cursor ?? "").trim();
-  const more = body.more === true || body.more === 1 || body.more === "true";
+  const nextCursor = String(body.next_cursor ?? body.nextCursor ?? "").trim();
+  const more = body.more === true || body.more === 1 || body.more === "true" || body.more_page === true || body.more_page === 1 || body.more_page === "true";
   return { more, nextCursor };
 }
 function extractShopeeOrderListRows(result) {
@@ -82628,13 +82628,14 @@ async function patchOrder(req, res) {
   }
   return res.json(orders[index]);
 }
-async function resetPrintStatus(req, res) {
+async function updatePrintStatus(req, res) {
   try {
     const body = req.body || {};
     const rawIds = [
       ...Array.isArray(body.orderIds) ? body.orderIds : [],
       ...Array.isArray(body.orderSns) ? body.orderSns : [],
       ...Array.isArray(body.order_sns) ? body.order_sns : [],
+      ...Array.isArray(body.order_sn) ? body.order_sn : [],
       body.orderId,
       body.orderSn,
       body.order_sn
@@ -82644,9 +82645,19 @@ async function resetPrintStatus(req, res) {
       return res.status(400).json({
         success: false,
         error: "missing_order_ids",
-        message: "Thi\u1EBFu danh s\xE1ch \u0111\u01A1n c\u1EA7n reset tr\u1EA1ng th\xE1i in."
+        message: "Thi\u1EBFu danh s\xE1ch \u0111\u01A1n c\u1EA7n c\u1EADp nh\u1EADt tr\u1EA1ng th\xE1i in."
       });
     }
+    const hasFlag = typeof body.is_printed === "boolean" || typeof body.isPrinted === "boolean" || body.is_printed === 0 || body.is_printed === 1 || body.isPrinted === 0 || body.isPrinted === 1 || typeof body.is_printed === "string" || typeof body.isPrinted === "string";
+    if (!hasFlag) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_is_printed",
+        message: "Thi\u1EBFu bi\u1EBFn is_printed (true/false)."
+      });
+    }
+    const rawFlag = body.is_printed ?? body.isPrinted;
+    const isPrinted = rawFlag === true || rawFlag === 1 || String(rawFlag).trim().toLowerCase() === "true" || String(rawFlag).trim() === "1";
     const orders = loadOrders();
     const snSet = new Set(sns.map((s2) => s2.toLowerCase()));
     const changed = [];
@@ -82655,7 +82666,7 @@ async function resetPrintStatus(req, res) {
       const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim().toLowerCase();
       const id = String(o.id || "").replace(/^shopee-/i, "").trim().toLowerCase();
       if (!snSet.has(sn) && !snSet.has(id)) continue;
-      orders[i2] = { ...o, isPrinted: false };
+      orders[i2] = { ...o, isPrinted };
       changed.push(orders[i2]);
     }
     if (changed.length > 0) {
@@ -82663,23 +82674,29 @@ async function resetPrintStatus(req, res) {
     }
     let mongoUpdated = 0;
     if (isMongoReady()) {
-      mongoUpdated = await markOrdersPrintedInStore(sns, false);
+      mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted);
       invalidateOrdersRefreshCache();
     }
     return res.json({
       success: true,
-      resetCount: Math.max(changed.length, mongoUpdated, sns.length),
+      isPrinted,
+      updatedCount: Math.max(changed.length, mongoUpdated, sns.length),
+      resetCount: isPrinted ? 0 : Math.max(changed.length, mongoUpdated, sns.length),
       orderSns: sns,
       orders: changed
     });
   } catch (error) {
-    console.error("[Orders reset-print-status]", error?.stack || error?.message || error);
+    console.error("[Orders update-print-status]", error?.stack || error?.message || error);
     return res.status(500).json({
       success: false,
-      error: "reset_print_status_failed",
-      message: error?.message || "Kh\xF4ng th\u1EC3 reset tr\u1EA1ng th\xE1i in."
+      error: "update_print_status_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt tr\u1EA1ng th\xE1i in."
     });
   }
+}
+async function resetPrintStatus(req, res) {
+  req.body = { ...req.body || {}, is_printed: false, isPrinted: false };
+  return updatePrintStatus(req, res);
 }
 async function deleteOrder(req, res) {
   const key = String(req.params.id || "").trim();
@@ -83285,6 +83302,13 @@ async function runOrdersPull(opts) {
       failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : errors.map((e2) => e2?.orderSn).filter(Boolean)
     };
   } catch (error) {
+    console.log(
+      "Shopee Sync API Error: ",
+      JSON.stringify(error?.response?.data || {
+        message: error?.message || String(error),
+        stack: error?.stack || void 0
+      })
+    );
     console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", error?.stack || error);
     if (jobId) {
       try {
@@ -83396,12 +83420,31 @@ function resolvePullShopIds(shopIdsRaw) {
   }
   return resolved.length ? resolved : void 0;
 }
+var FULL_SYNC_MAX_LOOKBACK_HOURS = 90 * 24;
+var FULL_SYNC_MIN_LOOKBACK_HOURS = 72;
+function resolveFullSyncLookbackHours(raw) {
+  const hoursRaw = Number(raw);
+  if (!Number.isFinite(hoursRaw) || hoursRaw <= 0) return 14 * 24;
+  return Math.min(Math.max(hoursRaw, FULL_SYNC_MIN_LOOKBACK_HOURS), FULL_SYNC_MAX_LOOKBACK_HOURS);
+}
+function resolveSyncHttpStatus(result) {
+  if (result?.success === false) {
+    const msg = String(result?.message || result?.errors?.[0]?.message || "").toLowerCase();
+    const code = String(result?.errors?.[0]?.error || "").toLowerCase();
+    if (/no_oauth|no_valid_access|unauthorized|invalid.?token|param|bad.?request|missing/.test(
+      `${msg} ${code}`
+    )) {
+      return 400;
+    }
+    return 500;
+  }
+  return 200;
+}
 async function pullOrders(req, res) {
   console.log("=== B\u1EAET \u0110\u1EA6U PULL ORDERS ===");
   try {
     console.log("B\u1EAFt \u0111\u1EA7u l\u1EA5y \u0111\u01A1n");
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 14 * 24);
-    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(Math.max(hoursRaw, 72), 15 * 24) : 14 * 24;
+    const hours = resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
@@ -83430,10 +83473,12 @@ async function pullOrders(req, res) {
       jobType: "shopee_orders_pull",
       logTag: "Orders Pull"
     });
-    sendJson(res, 200, {
-      status: 200,
-      success: true,
-      message: "K\xE9o \u0111\u01A1n ho\xE0n t\u1EA5t",
+    const httpStatus = resolveSyncHttpStatus(result);
+    const ok = httpStatus === 200;
+    sendJson(res, httpStatus, {
+      status: httpStatus,
+      success: ok,
+      message: ok ? "K\xE9o \u0111\u01A1n ho\xE0n t\u1EA5t" : result?.message || result?.detail_message || "\u0110\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng th\u1EA5t b\u1EA1i",
       total_success: result?.total_success ?? result?.pulled ?? 0,
       failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
       pulled: result?.pulled || 0,
@@ -83450,6 +83495,7 @@ async function pullOrders(req, res) {
     console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     return;
   } catch (err) {
+    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
     console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
@@ -83471,8 +83517,7 @@ async function syncOrders(req, res) {
   console.log("=== B\u1EAET \u0110\u1EA6U PULL ORDERS ===");
   try {
     console.log("B\u1EAFt \u0111\u1EA7u l\u1EA5y \u0111\u01A1n");
-    const hoursRaw = Number(req.body?.lookback_hours ?? req.body?.hours ?? 14 * 24);
-    const hours = Number.isFinite(hoursRaw) && hoursRaw > 0 ? Math.min(Math.max(hoursRaw, 72), 15 * 24) : 14 * 24;
+    const hours = resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
@@ -83501,10 +83546,12 @@ async function syncOrders(req, res) {
       jobType: "shopee_orders_sync",
       logTag: "Orders Sync"
     });
-    sendJson(res, 200, {
-      status: 200,
-      success: true,
-      message: "K\xE9o \u0111\u01A1n ho\xE0n t\u1EA5t",
+    const httpStatus = resolveSyncHttpStatus(result);
+    const ok = httpStatus === 200;
+    sendJson(res, httpStatus, {
+      status: httpStatus,
+      success: ok,
+      message: ok ? "K\xE9o \u0111\u01A1n ho\xE0n t\u1EA5t" : result?.message || result?.detail_message || "\u0110\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng th\u1EA5t b\u1EA1i",
       total_success: result?.total_success ?? result?.pulled ?? 0,
       failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
       pulled: result?.pulled || 0,
@@ -83521,6 +83568,7 @@ async function syncOrders(req, res) {
     console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     return;
   } catch (err) {
+    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
     console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
@@ -83575,10 +83623,12 @@ async function quickSyncOrders(req, res) {
       reconcileActive: false,
       skipCancelReturn: true
     });
-    sendJson(res, 200, {
-      status: 200,
-      success: true,
-      message: result?.message || "\u0110\u1ED3ng b\u1ED9 nhanh 3h ho\xE0n t\u1EA5t",
+    const httpStatus = resolveSyncHttpStatus(result);
+    const ok = httpStatus === 200;
+    sendJson(res, httpStatus, {
+      status: httpStatus,
+      success: ok,
+      message: ok ? result?.message || "\u0110\u1ED3ng b\u1ED9 nhanh 3h ho\xE0n t\u1EA5t" : result?.message || result?.detail_message || "\u0110\u1ED3ng b\u1ED9 nhanh th\u1EA5t b\u1EA1i",
       total_success: result?.total_success ?? result?.pulled ?? 0,
       failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
       pulled: result?.pulled || 0,
@@ -83596,6 +83646,7 @@ async function quickSyncOrders(req, res) {
     console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     return;
   } catch (err) {
+    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
     console.error("[API_SYNC_ERROR] Quick Sync l\u1ED7i chi ti\u1EBFt:", err?.stack || err);
     sendJson(res, 500, {
       success: false,
@@ -84176,6 +84227,7 @@ router13.get("/scan-bg-status", h2(getScanBgStatus));
 router13.post("/scan-bg-ack", h2(ackScanBg));
 router13.post("/scan-bulk-update", h2(scanBulkUpdate));
 router13.post("/reset-print-status", h2(resetPrintStatus));
+router13.post("/update-print-status", h2(updatePrintStatus));
 router13.get("/:orderSn/events", h2(getOrderEvents));
 router13.post("/:id/hand-over-carrier", h2(handOverCarrierById));
 router13.get("/", h2(listOrders));
@@ -85766,11 +85818,40 @@ var SHOPEE_ORDER_LIST_LOOP_HARD_CAP = 8;
 var SHOPEE_ORDER_LIST_INCREMENTAL_SEC = 14 * 24 * 60 * 60;
 var SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC = 3 * 24 * 60 * 60;
 var SHOPEE_ORDER_LIST_MAX_WINDOW_SEC = 15 * 24 * 60 * 60;
+var SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC = 90 * 24 * 60 * 60;
 var SHOPEE_SYNC_MAX_ORDER_SNS_PER_SHOP = 200;
 var ORDERS_PULL_HARD_DEADLINE_MS = 18e4;
 var ORDERS_PULL_LOCK_TIMEOUT_MS = 15 * 60 * 1e3;
 var ordersPullInFlight = false;
 var ordersPullStartedAt = 0;
+function buildShopeeOrderListTimeChunks(timeFromSec, timeToSec, maxWindowSec = SHOPEE_ORDER_LIST_MAX_WINDOW_SEC) {
+  const to = toShopeeUnixSeconds(timeToSec);
+  let from = toShopeeUnixSeconds(timeFromSec);
+  if (from >= to) {
+    from = to - Math.min(maxWindowSec, SHOPEE_ORDER_LIST_INCREMENTAL_SEC);
+  }
+  const windowSec = Math.max(60, Math.floor(maxWindowSec));
+  const chunks = [];
+  let cursorTo = to;
+  while (cursorTo > from) {
+    const cursorFrom = Math.max(from, cursorTo - windowSec);
+    chunks.push({ timeFrom: cursorFrom, timeTo: cursorTo });
+    if (cursorFrom <= from) break;
+    cursorTo = cursorFrom - 1;
+  }
+  return chunks.length ? chunks : [{ timeFrom: from, timeTo: to }];
+}
+function logShopeeSyncApiError(error, context) {
+  try {
+    const payload = error?.response?.data ?? error;
+    console.log(
+      "Shopee Sync API Error: ",
+      JSON.stringify(payload) + (context ? ` | context=${context}` : "")
+    );
+  } catch {
+    console.log("Shopee Sync API Error: ", String(error), context || "");
+  }
+}
 var logisticsWorkDepth = 0;
 function beginLogisticsWork(label = "logistics") {
   logisticsWorkDepth += 1;
@@ -86231,11 +86312,16 @@ async function shopeeGetOrderList(shopId, accessToken, opts) {
     }
     if (json2.error) {
       const errMsg = formatShopeeApiError(json2, httpStatus);
+      logShopeeSyncApiError(
+        { ...json2 || {}, httpStatus, message: json2.message || errMsg },
+        `get_order_list shop_id=${shopId}`
+      );
       console.error(`[Shopee API] GetOrderList l\u1ED7i: ${errMsg}`);
       return { ...json2, message: json2.message || errMsg, httpStatus };
     }
     return { ...json2, httpStatus };
   } catch (err) {
+    logShopeeSyncApiError(err, `get_order_list shop_id=${shopId}`);
     console.error(
       "[Shopee API] GetOrderList EXCEPTION:",
       `shop_id=${shopId}`,
@@ -86260,15 +86346,12 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
   const rawLookback = Number(opts?.lookbackSec) > 0 ? Number(opts.lookbackSec) : SHOPEE_ORDER_LIST_INCREMENTAL_SEC;
   const lookback = opts?.allowShortLookback ? Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)) : Math.max(
     SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
-    Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)
+    Math.min(SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC, rawLookback)
   );
   const timeFrom = timeTo - lookback;
   const allowShort = opts?.allowShortLookback === true;
   const orderSnSet = /* @__PURE__ */ new Set();
   const shopeeResponses = [];
-  const seenCursors = /* @__PURE__ */ new Set();
-  let cursor;
-  let page = 0;
   const deadlineAt = opts?.deadlineAt ?? Date.now() + ORDERS_PULL_HARD_DEADLINE_MS;
   const maxOrderSns = Math.max(
     1,
@@ -86278,184 +86361,237 @@ async function collectShopeeOrderSnsIncremental(shopId, accessToken, opts) {
     1,
     Math.floor(opts?.pageHardCap ?? SHOPEE_ORDER_LIST_LOOP_HARD_CAP)
   );
+  const timeChunks = buildShopeeOrderListTimeChunks(timeFrom, timeTo);
   syncDiag(
     "Fetching order list...",
-    `shop=${shopId} field=update_time lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d) from=${timeFrom} to=${timeTo} maxSn=${maxOrderSns} hardCap=${pageHardCap}`
+    `shop=${shopId} field=update_time lookback=${lookback}s (~${(lookback / 86400).toFixed(1)}d) from=${timeFrom} to=${timeTo} chunks=${timeChunks.length} maxSn=${maxOrderSns} hardCap=${pageHardCap}`
   );
-  while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
-    try {
-      assertOrdersPullDeadline(deadlineAt, `get_order_list page=${page + 1} shop=${shopId}`);
-      page += 1;
-      let listResult = await shopeeGetOrderList(shopId, accessToken, {
-        timeRangeField: "update_time",
-        timeFrom,
-        timeTo,
-        cursor,
-        allowShortLookback: allowShort
-        // Không truyền orderStatus — kéo toàn bộ trạng thái.
-      });
-      if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
-        syncDiag("GetOrderList AUTH FAIL \u2014 refresh once", `shop=${shopId}`);
-        try {
-          const refreshed = await refreshShopeeAccessTokenLocked(shopId, { force: true });
-          if (refreshed) {
-            accessToken = refreshed;
-            listResult = await shopeeGetOrderList(shopId, accessToken, {
-              timeRangeField: "update_time",
-              timeFrom,
-              timeTo,
-              cursor,
-              allowShortLookback: allowShort
+  let page = 0;
+  for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
+    if (orderSnSet.size >= maxOrderSns) break;
+    if (Date.now() > deadlineAt) break;
+    const chunk = timeChunks[chunkIdx];
+    const chunkTimeFrom = toShopeeUnixSeconds(chunk.timeFrom);
+    const chunkTimeTo = toShopeeUnixSeconds(chunk.timeTo);
+    const seenCursors = /* @__PURE__ */ new Set();
+    let cursor;
+    let chunkPage = 0;
+    syncDiag(
+      "Order list time chunk",
+      `shop=${shopId} chunk=${chunkIdx + 1}/${timeChunks.length} from=${chunkTimeFrom} to=${chunkTimeTo} (~${((chunkTimeTo - chunkTimeFrom) / 86400).toFixed(2)}d)`
+    );
+    while (chunkPage < pageHardCap && orderSnSet.size < maxOrderSns) {
+      try {
+        assertOrdersPullDeadline(
+          deadlineAt,
+          `get_order_list chunk=${chunkIdx + 1} page=${page + 1} shop=${shopId}`
+        );
+        page += 1;
+        chunkPage += 1;
+        let listResult = await shopeeGetOrderList(shopId, accessToken, {
+          timeRangeField: "update_time",
+          timeFrom: chunkTimeFrom,
+          timeTo: chunkTimeTo,
+          cursor,
+          allowShortLookback: allowShort
+          // Không truyền orderStatus — kéo toàn bộ trạng thái.
+        });
+        if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
+          syncDiag("GetOrderList AUTH FAIL \u2014 refresh once", `shop=${shopId}`);
+          try {
+            const refreshed = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+            if (refreshed) {
+              accessToken = refreshed;
+              listResult = await shopeeGetOrderList(shopId, accessToken, {
+                timeRangeField: "update_time",
+                timeFrom: chunkTimeFrom,
+                timeTo: chunkTimeTo,
+                cursor,
+                allowShortLookback: allowShort
+              });
+            }
+          } catch (refreshErr) {
+            logShopeeSyncApiError(refreshErr, `token_refresh shop_id=${shopId}`);
+            console.error(
+              `[Orders Pull] Token refresh th\u1EA5t b\u1EA1i shop=${shopId}:`,
+              refreshErr?.message || refreshErr
+            );
+            shopeeResponses.push({
+              shop_id: shopId,
+              page,
+              chunk: chunkIdx + 1,
+              error: "token_refresh_failed",
+              detail: refreshErr?.message || String(refreshErr),
+              raw: listResult
             });
+            break;
           }
-        } catch (refreshErr) {
+        }
+        shopeeResponses.push({
+          shop_id: shopId,
+          page,
+          chunk: chunkIdx + 1,
+          time_from: chunkTimeFrom,
+          time_to: chunkTimeTo,
+          cursor: cursor || "",
+          raw: listResult
+        });
+        if (listResult?.error) {
+          logShopeeSyncApiError(listResult, `get_order_list shop_id=${shopId}`);
           console.error(
-            `[Orders Pull] Token refresh th\u1EA5t b\u1EA1i shop=${shopId}:`,
-            refreshErr?.message || refreshErr
+            `[Orders Pull] GetOrderList d\u1EEBng shop=${shopId}:`,
+            listResult.error,
+            listResult.message || ""
           );
-          shopeeResponses.push({
-            shop_id: shopId,
-            page,
-            error: "token_refresh_failed",
-            detail: refreshErr?.message || String(refreshErr),
-            raw: listResult
-          });
           break;
         }
-      }
-      shopeeResponses.push({
-        shop_id: shopId,
-        page,
-        time_from: timeFrom,
-        time_to: timeTo,
-        cursor: cursor || "",
-        raw: listResult
-      });
-      if (listResult?.error) {
-        console.error(
-          `[Orders Pull] GetOrderList d\u1EEBng shop=${shopId}:`,
-          listResult.error,
-          listResult.message || ""
+        const rows = extractShopeeOrderListRows(listResult);
+        for (const row of rows) {
+          try {
+            const sn = String(row?.order_sn || row?.ordersn || "").trim();
+            if (sn) orderSnSet.add(sn);
+            if (orderSnSet.size >= maxOrderSns) break;
+          } catch (rowErr) {
+            console.error(
+              `[Orders Pull] B\u1ECF qua 1 \u0111\u01A1n l\u1ED7i shop=${shopId}:`,
+              rowErr?.message || rowErr,
+              row
+            );
+            continue;
+          }
+        }
+        syncDiag(
+          "Order list received",
+          `${rows.length} orders (shop=${shopId} chunk=${chunkIdx + 1} page=${page} totalSn=${orderSnSet.size} cursor=${cursor || "(start)"})`
         );
+        const adv = advanceShopeeOrderListCursor({
+          listResult,
+          currentCursor: cursor,
+          seenCursors,
+          pageIndex: chunkPage,
+          hardCap: pageHardCap,
+          logLabel: `shop=${shopId} chunk=${chunkIdx + 1}`
+        });
+        syncDiag("Pagination decision", `${adv.action} \u2014 ${adv.reason}`);
+        if (adv.action === "break") break;
+        seenCursors.add(adv.nextCursor);
+        cursor = adv.nextCursor;
+        await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
+      } catch (pageErr) {
+        if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw pageErr;
+        logShopeeSyncApiError(pageErr, `get_order_list page shop_id=${shopId}`);
+        console.error(
+          `[Orders Pull] GetOrderList page exception shop=${shopId}:`,
+          pageErr?.message || pageErr
+        );
+        shopeeResponses.push({
+          shop_id: shopId,
+          page,
+          chunk: chunkIdx + 1,
+          error: "page_exception",
+          detail: pageErr?.message || String(pageErr)
+        });
         break;
       }
-      const rows = extractShopeeOrderListRows(listResult);
-      for (const row of rows) {
-        try {
-          const sn = String(row?.order_sn || row?.ordersn || "").trim();
-          if (sn) orderSnSet.add(sn);
-          if (orderSnSet.size >= maxOrderSns) break;
-        } catch (rowErr) {
-          console.error(
-            `[Orders Pull] B\u1ECF qua 1 \u0111\u01A1n l\u1ED7i shop=${shopId}:`,
-            rowErr?.message || rowErr,
-            row
-          );
-          continue;
-        }
-      }
-      syncDiag(
-        "Order list received",
-        `${rows.length} orders (shop=${shopId} page=${page} totalSn=${orderSnSet.size} cursor=${cursor || "(start)"})`
-      );
-      const adv = advanceShopeeOrderListCursor({
-        listResult,
-        currentCursor: cursor,
-        seenCursors,
-        pageIndex: page,
-        hardCap: pageHardCap,
-        logLabel: `shop=${shopId}`
-      });
-      syncDiag("Pagination decision", `${adv.action} \u2014 ${adv.reason}`);
-      if (adv.action === "break") break;
-      seenCursors.add(adv.nextCursor);
-      cursor = adv.nextCursor;
+    }
+    if (chunkIdx + 1 < timeChunks.length && orderSnSet.size < maxOrderSns) {
       await shopeeSyncDelay(SHOPEE_ORDER_LIST_PAGE_DELAY_MS);
-    } catch (pageErr) {
-      if (String(pageErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw pageErr;
-      console.error(
-        `[Orders Pull] GetOrderList page exception shop=${shopId}:`,
-        pageErr?.message || pageErr
-      );
-      shopeeResponses.push({
-        shop_id: shopId,
-        page,
-        error: "page_exception",
-        detail: pageErr?.message || String(pageErr)
-      });
-      continue;
     }
   }
-  syncDiag("Order list pagination done", `shop=${shopId} pages=${page} uniqueSn=${orderSnSet.size}`);
+  syncDiag(
+    "Order list pagination done",
+    `shop=${shopId} pages=${page} chunks=${timeChunks.length} uniqueSn=${orderSnSet.size}`
+  );
   return { orderSns: [...orderSnSet], shopeeResponses };
 }
 async function collectShopeeOrderSnsByStatus(shopId, accessToken, orderStatus, opts) {
   const now = Math.floor(Date.now() / 1e3);
   const lookback = Math.max(
     SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
-    Math.min(15 * 24 * 60 * 60, opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC)
+    Math.min(
+      SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC,
+      opts?.lookbackSec ?? SHOPEE_ORDER_LIST_INCREMENTAL_SEC
+    )
   );
   const timeFrom = now - lookback;
   const timeTo = now;
   const orderSnSet = /* @__PURE__ */ new Set();
-  const seenCursors = /* @__PURE__ */ new Set();
-  let cursor;
-  let page = 0;
   const deadlineAt = opts?.deadlineAt ?? Date.now() + 45e3;
   const maxOrderSns = Math.max(1, Math.floor(opts?.maxOrderSns ?? 80));
   const pageHardCap = Math.max(1, Math.floor(opts?.pageHardCap ?? 4));
   const status = String(orderStatus || "").trim().toUpperCase();
   if (!status) return [];
-  while (page < pageHardCap && orderSnSet.size < maxOrderSns) {
-    if (Date.now() > deadlineAt) break;
-    page += 1;
-    let listResult = await shopeeGetOrderList(shopId, accessToken, {
-      timeRangeField: "update_time",
-      timeFrom,
-      timeTo,
-      cursor,
-      orderStatus: status
-    });
-    if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
+  const timeChunks = buildShopeeOrderListTimeChunks(timeFrom, timeTo);
+  let page = 0;
+  for (let chunkIdx = 0; chunkIdx < timeChunks.length; chunkIdx++) {
+    if (orderSnSet.size >= maxOrderSns || Date.now() > deadlineAt) break;
+    const chunk = timeChunks[chunkIdx];
+    const chunkTimeFrom = toShopeeUnixSeconds(chunk.timeFrom);
+    const chunkTimeTo = toShopeeUnixSeconds(chunk.timeTo);
+    const seenCursors = /* @__PURE__ */ new Set();
+    let cursor;
+    let chunkPage = 0;
+    while (chunkPage < pageHardCap && orderSnSet.size < maxOrderSns) {
+      if (Date.now() > deadlineAt) break;
+      page += 1;
+      chunkPage += 1;
       try {
-        const refreshed = await refreshShopeeAccessTokenLocked(shopId, { force: true });
-        if (refreshed) {
-          accessToken = refreshed;
-          listResult = await shopeeGetOrderList(shopId, accessToken, {
-            timeRangeField: "update_time",
-            timeFrom,
-            timeTo,
-            cursor,
-            orderStatus: status
-          });
+        let listResult = await shopeeGetOrderList(shopId, accessToken, {
+          timeRangeField: "update_time",
+          timeFrom: chunkTimeFrom,
+          timeTo: chunkTimeTo,
+          cursor,
+          orderStatus: status
+        });
+        if (listResult?.httpStatus === 401 || listResult?.httpStatus === 403 || isShopeeInvalidTokenError(listResult?.error, listResult?.message)) {
+          try {
+            const refreshed = await refreshShopeeAccessTokenLocked(shopId, { force: true });
+            if (refreshed) {
+              accessToken = refreshed;
+              listResult = await shopeeGetOrderList(shopId, accessToken, {
+                timeRangeField: "update_time",
+                timeFrom: chunkTimeFrom,
+                timeTo: chunkTimeTo,
+                cursor,
+                orderStatus: status
+              });
+            }
+          } catch (refreshErr) {
+            logShopeeSyncApiError(refreshErr, `token_refresh status=${status} shop=${shopId}`);
+            console.error(
+              `[Orders Pull] Token refresh th\u1EA5t b\u1EA1i (status=${status}) shop=${shopId}:`,
+              refreshErr?.message || refreshErr
+            );
+            break;
+          }
         }
-      } catch (refreshErr) {
-        console.error(
-          `[Orders Pull] Token refresh th\u1EA5t b\u1EA1i (status=${status}) shop=${shopId}:`,
-          refreshErr?.message || refreshErr
-        );
+        if (listResult?.error) {
+          logShopeeSyncApiError(listResult, `get_order_list status=${status} shop=${shopId}`);
+          break;
+        }
+        const rows = extractShopeeOrderListRows(listResult);
+        for (const row of rows) {
+          const sn = String(row?.order_sn || row?.ordersn || "").trim();
+          if (sn) orderSnSet.add(sn);
+          if (orderSnSet.size >= maxOrderSns) break;
+        }
+        const adv = advanceShopeeOrderListCursor({
+          listResult,
+          currentCursor: cursor,
+          seenCursors,
+          pageIndex: chunkPage,
+          hardCap: pageHardCap,
+          logLabel: `scan-lookup status=${status} shop=${shopId} chunk=${chunkIdx + 1}`
+        });
+        if (adv.action === "break") break;
+        seenCursors.add(adv.nextCursor);
+        cursor = adv.nextCursor;
+        await shopeeSyncDelay(Math.min(SHOPEE_ORDER_LIST_PAGE_DELAY_MS, 250));
+      } catch (pageErr) {
+        logShopeeSyncApiError(pageErr, `get_order_list status=${status} shop=${shopId}`);
         break;
       }
     }
-    if (listResult?.error) break;
-    const rows = extractShopeeOrderListRows(listResult);
-    for (const row of rows) {
-      const sn = String(row?.order_sn || row?.ordersn || "").trim();
-      if (sn) orderSnSet.add(sn);
-      if (orderSnSet.size >= maxOrderSns) break;
-    }
-    const adv = advanceShopeeOrderListCursor({
-      listResult,
-      currentCursor: cursor,
-      seenCursors,
-      pageIndex: page,
-      hardCap: pageHardCap,
-      logLabel: `scan-lookup status=${status} shop=${shopId}`
-    });
-    if (adv.action === "break") break;
-    seenCursors.add(adv.nextCursor);
-    cursor = adv.nextCursor;
-    await shopeeSyncDelay(Math.min(SHOPEE_ORDER_LIST_PAGE_DELAY_MS, 250));
   }
   return [...orderSnSet];
 }
@@ -86801,7 +86937,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
     const shortLookback = opts?.allowShortLookback === true;
     lookbackSec = shortLookback ? Math.max(60, Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)) : Math.max(
       SHOPEE_ORDER_LIST_MIN_LOOKBACK_SEC,
-      Math.min(SHOPEE_ORDER_LIST_MAX_WINDOW_SEC, rawLookback)
+      Math.min(SHOPEE_ORDER_LIST_MAX_TOTAL_LOOKBACK_SEC, rawLookback)
     );
     longLookback = lookbackSec >= 168 * 3600;
     if (shortLookback) {
@@ -86920,6 +87056,19 @@ async function pullIncrementalOrdersFromShopee(opts) {
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
           if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {
             shopeeResponsePages.push(...listCollect.shopeeResponses);
+            if (orderSnList.length === 0) {
+              for (const page of listCollect.shopeeResponses) {
+                const rawErr = page?.raw?.error || page?.error;
+                if (!rawErr) continue;
+                const msg = page?.raw?.message || page?.detail || String(rawErr);
+                logShopeeSyncApiError(page?.raw || page, `pull shop_id=${shopId}`);
+                errors.push({
+                  shopId,
+                  error: String(rawErr),
+                  message: `get_order_list: ${msg}`
+                });
+              }
+            }
           }
           if (!shortLookback && Date.now() < shopDeadlineAt) {
             try {
@@ -87151,6 +87300,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
       failed_orders
     };
   } catch (pullFatal) {
+    logShopeeSyncApiError(pullFatal, "pullIncrementalOrdersFromShopee fatal");
     console.error(
       "[Orders Pull] FATAL:",
       pullFatal?.message || pullFatal,
@@ -87393,11 +87543,16 @@ async function shopeeGetOrderDetail(shopId, accessToken, orderSnList) {
     }
     if (json2.error) {
       const errMsg = formatShopeeApiError(json2, httpStatus);
+      logShopeeSyncApiError(
+        { ...json2 || {}, httpStatus, message: json2.message || errMsg },
+        `get_order_detail shop_id=${shopId}`
+      );
       console.error(`[Shopee API] GetOrderDetail l\u1ED7i: ${errMsg}`);
       return { ...json2, message: json2.message || errMsg, httpStatus };
     }
     return { ...json2, httpStatus };
   } catch (err) {
+    logShopeeSyncApiError(err, `get_order_detail shop_id=${shopId}`);
     console.error(
       "[Shopee API] GetOrderDetail EXCEPTION:",
       `shop_id=${shopId}`,

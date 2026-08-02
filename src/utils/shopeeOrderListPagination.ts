@@ -17,8 +17,14 @@ export function parseShopeeOrderListPagination(result: unknown): ShopeeOrderList
   const body = (
     root.response && typeof root.response === "object" ? root.response : root
   ) as Record<string, unknown>;
-  const nextCursor = String(body.next_cursor ?? "").trim();
-  const more = body.more === true || body.more === 1 || body.more === "true";
+  const nextCursor = String(body.next_cursor ?? body.nextCursor ?? "").trim();
+  const more =
+    body.more === true ||
+    body.more === 1 ||
+    body.more === "true" ||
+    body.more_page === true ||
+    body.more_page === 1 ||
+    body.more_page === "true";
   return { more, nextCursor };
 }
 
