@@ -1,4 +1,5 @@
 import express, { type Router } from "express";
+import { parseShopeeJson } from "../../services/shopee/jsonBig.js";
 // Signature check tạm tắt — không import verify để tránh từ chối / lỗi HMAC.
 // import { verifyShopeeWebhookSignature } from "./shopeeSignature.ts";
 
@@ -131,13 +132,13 @@ function ackShopeeOk(res: express.Response): void {
   }
 }
 
-/** Parse body Buffer | object | string → object payload (Shopee v2 Push). */
+/** Parse body Buffer | object | string → object payload (Shopee v2 Push). uint64 → string. */
 function parseWebhookBody(reqBody: unknown): Record<string, unknown> | null {
   try {
     if (Buffer.isBuffer(reqBody)) {
       const text = reqBody.toString("utf8");
       if (!text.trim()) return null;
-      const parsed: unknown = JSON.parse(text);
+      const parsed: unknown = parseShopeeJson(text);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>;
       }
@@ -146,7 +147,7 @@ function parseWebhookBody(reqBody: unknown): Record<string, unknown> | null {
     if (typeof reqBody === "string") {
       const text = reqBody.trim();
       if (!text) return null;
-      const parsed: unknown = JSON.parse(text);
+      const parsed: unknown = parseShopeeJson(text);
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         return parsed as Record<string, unknown>;
       }

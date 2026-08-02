@@ -7,6 +7,7 @@ import path from "path";
 import crypto from "crypto";
 import { resolveAppRoot, resolveAppBaseUrl } from "../../utils/appPaths.js";
 import { fetchWithTimeout, SHOPEE_REAUTH_REQUIRED_MESSAGE } from "./client.js";
+import { parseShopeeJson, toShopeeId } from "./jsonBig.js";
 
 export { SHOPEE_REAUTH_REQUIRED_MESSAGE };
 
@@ -800,7 +801,7 @@ async function exchangeShopeeCodeForToken(code, opts) {
 
   let json;
   try {
-    json = rawText ? JSON.parse(rawText) : {};
+    json = rawText ? parseShopeeJson(rawText) : {};
   } catch (parseErr) {
     console.error("[Shopee OAuth] Không parse được JSON từ Shopee:", parseErr);
     return { error: "invalid_json", message: rawText.slice(0, 500) };
@@ -862,7 +863,8 @@ async function refreshShopeeToken(shopId, refreshToken) {
         partner_id: Number(SHOPEE_PARTNER_ID),
       }),
     });
-    const json = await res.json();
+    const rawText = await res.text();
+    const json = rawText ? parseShopeeJson(rawText) : {};
     console.log(
       `[Shopee API] POST ${apiPath} (refresh shop_id=${key}) -> HTTP ${res.status}:`,
       JSON.stringify(json),
@@ -1098,7 +1100,8 @@ export async function verifyShopeeShopToken(shopId, accessToken) {
     const sign = shopeeSign(apiPath, timestamp, accessToken, key);
     const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${key}&sign=${sign}`;
     const res = await fetch(url, { signal: controller.signal });
-    const json = await res.json();
+    const rawText = await res.text();
+    const json = rawText ? parseShopeeJson(rawText) : {};
     const err = String(json?.error || "").trim();
     if (err) return { ok: false, error: err };
     return { ok: true };

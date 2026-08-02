@@ -1,10 +1,12 @@
 /**
  * Shopee HTTP client — fetch, retry, batch throttle, API error formatting.
  * Phase 6 — tách từ server.ts.
+ * uint64 OpenAPI: parse JSON qua json-bigint (storeAsString) — không dùng JSON.parse.
  */
 import path from "path";
 import { createRequire } from "node:module";
 import { sleep } from "../../utils/concurrency.js";
+import { parseShopeeJson, stringifyShopeeJson } from "./jsonBig.js";
 
 export const SHOPEE_API_MAX_RETRY = 3;
 export const SHOPEE_API_RETRY_BASE_MS = 1500;
@@ -263,7 +265,7 @@ export async function shopeeFetchJsonWithRetry(url, context, opts) {
 
     let json;
     try {
-      json = rawText ? JSON.parse(rawText) : {};
+      json = rawText ? parseShopeeJson(rawText) : {};
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       return {
@@ -316,7 +318,8 @@ export async function shopeePostJsonWithRetry(url, body, context, opts) {
       res = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        // stringifyShopeeJson giữ uint64 dạng string — Shopee chấp nhận string ID.
+        body: stringifyShopeeJson(body),
       });
       rawText = await res.text();
     } catch (err) {
@@ -333,7 +336,7 @@ export async function shopeePostJsonWithRetry(url, body, context, opts) {
 
     let json;
     try {
-      json = rawText ? JSON.parse(rawText) : {};
+      json = rawText ? parseShopeeJson(rawText) : {};
     } catch (parseErr) {
       const parseMsg = parseErr instanceof Error ? parseErr.message : String(parseErr);
       return {

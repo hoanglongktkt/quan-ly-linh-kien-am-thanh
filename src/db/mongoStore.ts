@@ -13,6 +13,7 @@ import {
   reconnectDB,
 } from "../../config/db.js";
 import DonHoanHuyModelImport from "../../models/DonHoanHuy.js";
+import { stringifyShopeeIdsDeep, toShopeeId } from "../../services/shopee/jsonBig.js";
 import {
   isProductsDiskMode,
   setProductsDiskAppRoot,
@@ -145,6 +146,8 @@ const ProductSchema = new Schema<ProductDoc>(
   {
     _id: { type: String, required: true },
     sku: { type: String, default: null, index: true },
+    // data.* giữ Mixed nhưng Shopee uint64 IDs (shopeeItemId/shopeeModelId/item_id/model_id)
+    // BẮT BUỘC là String — sanitize bằng stringifyShopeeIdsDeep trước khi ghi.
     data: { type: Schema.Types.Mixed, required: true },
   },
   { collection: "products", versionKey: false }
@@ -186,6 +189,7 @@ const OrderSchema = new Schema<OrderDoc>(
     status: { type: String, default: null, index: true },
     /** Raw Shopee — bắt buộc lưu khi sync (READY_TO_SHIP / SHIPPED / ...) */
     shopee_order_status: { type: String, default: null, index: true },
+    /** Shopee shop_id — luôn String (uint64-safe) */
     shopId: { type: String, default: null, index: true },
     tracking_no: { type: String, default: null, index: true },
     shipping_carrier: { type: String, default: null, index: true },
@@ -198,6 +202,7 @@ const OrderSchema = new Schema<OrderDoc>(
     last_synced_at: { type: Date, default: null, index: true },
     last_shopee_update_at: { type: Date, default: null },
     sync_state: { type: String, default: "verified", index: true },
+    // data.items[].productId / modelId / item_id… = String (Shopee uint64)
     data: { type: Schema.Types.Mixed, required: true },
   },
   { collection: "orders", versionKey: false }
@@ -342,10 +347,15 @@ function toProductDocs(products: any[]): ProductDoc[] {
     if (!p || typeof p !== "object") continue;
     const id = String(p.id || "").trim();
     if (!id) continue;
+    const data = stringifyShopeeIdsDeep(p);
+    // Ép tường minh các field ID Shopee sang String trước khi ghi Mongo.
+    if (data.shopeeItemId != null) data.shopeeItemId = toShopeeId(data.shopeeItemId) || String(data.shopeeItemId);
+    if (data.shopeeModelId != null) data.shopeeModelId = toShopeeId(data.shopeeModelId) || String(data.shopeeModelId);
+    if (data.shopeeId != null) data.shopeeId = String(data.shopeeId);
     out.push({
       _id: id,
-      sku: p.sku != null ? String(p.sku) : null,
-      data: p,
+      sku: data.sku != null ? String(data.sku) : null,
+      data,
     });
   }
   return out;
@@ -357,14 +367,15 @@ function toListingDocs(rows: any[]): ListingDoc[] {
     if (!r || typeof r !== "object") continue;
     const id = String(r.id || "").trim();
     if (!id) continue;
+    const data = stringifyShopeeIdsDeep(r);
     out.push({
       _id: id,
-      channelId: r.channelId != null ? String(r.channelId) : null,
-      platform: r.platform != null ? String(r.platform) : null,
-      sku: r.sku != null ? String(r.sku) : null,
-      status: r.status != null ? String(r.status) : null,
-      linkedProductId: r.linkedProductId != null ? String(r.linkedProductId) : null,
-      data: r,
+      channelId: data.channelId != null ? String(data.channelId) : null,
+      platform: data.platform != null ? String(data.platform) : null,
+      sku: data.sku != null ? String(data.sku) : null,
+      status: data.status != null ? String(data.status) : null,
+      linkedProductId: data.linkedProductId != null ? String(data.linkedProductId) : null,
+      data,
     });
   }
   return out;
@@ -1653,7 +1664,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
     // Push fallback có thể chỉ chứa orderSn/status. Không để `items: []` hoặc
     // `totalAmount: 0` ghi đè snapshot chi tiết đã lấy trước đó.
     if (Array.isArray(order.items) && order.items.length > 0) {
-      $set["data.items"] = order.items;
+      $set["data.items"] = stringifyShopeeIdsDeep(order.items);
     }
     if (order.date != null) $set["data.date"] = order.date;
     if (Number(order.totalAmount) > 0) $set["data.totalAmount"] = order.totalAmount;

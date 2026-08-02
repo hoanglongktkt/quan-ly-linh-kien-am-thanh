@@ -209,7 +209,7 @@ export async function syncItemVariants(req, res) {
         details: "itemId_required",
       });
     }
-    const itemId = Number(itemIdMatch[1]);
+    const itemId = itemIdMatch[1];
     const previewOnly = req.body?.previewOnly === true || req.body?.preview === true || req.query?.previewOnly === "1";
 
     const shopId = resolveShopeeTokenShopId(req.body?.shopId);
@@ -344,7 +344,7 @@ export async function previewItemVariants(req, res) {
         message: "Không xác định được item_id Shopee.",
       });
     }
-    const itemId = Number(itemIdMatch[1]);
+    const itemId = itemIdMatch[1];
 
     const shopId = resolveShopeeTokenShopId(req.body?.shopId || req.query?.shopId);
     if (!shopId) {

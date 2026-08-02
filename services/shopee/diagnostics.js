@@ -19,6 +19,7 @@ import {
   SHOPEE_TLS_MAX_VERSION,
   SHOPEE_HTTP_TIMEOUT_MS,
 } from "./client.js";
+import { parseShopeeJson } from "./jsonBig.js";
 
 export async function runShopeeConnectivityDiagnostics(shopIdInput) {
   const steps = [];
@@ -118,7 +119,8 @@ export async function runShopeeConnectivityDiagnostics(shopIdInput) {
     const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
     const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
     const res = await fetchWithTimeout(url);
-    const json = await res.json();
+    const rawText = await res.text();
+    const json = rawText ? parseShopeeJson(rawText) : {};
 
     const shopeeErr = String(json?.error || "").trim();
     const ok = res.ok && !shopeeErr;

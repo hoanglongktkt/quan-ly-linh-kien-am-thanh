@@ -29,6 +29,12 @@ const DonHoanHuySchema = new mongoose.Schema(
       default: "",
       trim: true,
     },
+    /** Shopee shop_id — String (uint64-safe), không lưu Number */
+    shopId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
   },
   {
     collection: "don_hoan_huy",

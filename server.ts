@@ -293,6 +293,12 @@ import {
   SHOPEE_TLS_MAX_VERSION,
 } from "./services/shopee/client.js";
 import {
+  parseShopeeJson,
+  toShopeeId,
+  isValidShopeeId,
+  stringifyShopeeIdsDeep,
+} from "./services/shopee/jsonBig.js";
+import {
   initShopeeAuthController,
   oauthComplete,
   oauthCallback,
@@ -1165,19 +1171,17 @@ function buildShopeeUpdateStockEntry(
   stock: number,
   modelId?: string | number | null,
   locationId?: string | null
-): { model_id?: number; seller_stock: { stock: number; location_id?: string }[] } {
+): { model_id?: string; seller_stock: { stock: number; location_id?: string }[] } {
   const sellerStock: { stock: number; location_id?: string } = {
     stock: Math.max(0, Math.round(Number(stock) || 0)),
   };
   const loc = String(locationId || "").trim();
   if (loc) sellerStock.location_id = loc;
-  const entry: { model_id?: number; seller_stock: { stock: number; location_id?: string }[] } = {
+  const entry: { model_id?: string; seller_stock: { stock: number; location_id?: string }[] } = {
     seller_stock: [sellerStock],
   };
-  const mid = Number(modelId);
-  if (Number.isFinite(mid) && mid > 0) {
-    entry.model_id = mid;
-  }
+  const mid = toShopeeId(modelId);
+  if (mid) entry.model_id = mid;
   return entry;
 }
 
@@ -3337,10 +3341,11 @@ async function shopeeGetItemList(
 }
 
 // v2.product.get_item_base_info — name/SKU/price/stock/image for up to 50 items at a time.
-async function shopeeGetItemBaseInfo(shopId: string, accessToken: string, itemIds: number[]) {
+async function shopeeGetItemBaseInfo(shopId: string, accessToken: string, itemIds: Array<string | number>) {
   const apiPath = "/api/v2/product/get_item_base_info";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const idList = itemIds.map((id) => toShopeeId(id)).filter(Boolean) as string[];
 
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
@@ -3348,13 +3353,13 @@ async function shopeeGetItemBaseInfo(shopId: string, accessToken: string, itemId
     access_token: accessToken,
     shop_id: shopId,
     sign,
-    item_id_list: itemIds.join(","),
+    item_id_list: idList.join(","),
     need_tax_info: "false",
     need_complaint_policy: "false",
   });
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} (${itemIds.length} items)`);
+  const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} (${idList.length} items)`);
   // Không dump toàn bộ response vào log (dễ OOM / fork fail trên cPanel).
   const itemCount = asShopeeArray(json?.response?.item_list).length;
   console.log(
@@ -3369,10 +3374,11 @@ async function shopeeGetItemBaseInfo(shopId: string, accessToken: string, itemId
 
 // v2.product.get_model_list — required for items that have variants (has_model=true);
 // get_item_base_info's own price_info/stock_info_v2 do NOT reflect real numbers for those.
-async function shopeeGetModelList(shopId: string, accessToken: string, itemId: number) {
+async function shopeeGetModelList(shopId: string, accessToken: string, itemId: string | number) {
   const apiPath = "/api/v2/product/get_model_list";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const safeItemId = toShopeeId(itemId) || String(itemId);
 
   const params = new URLSearchParams({
     partner_id: SHOPEE_PARTNER_ID,
@@ -3380,19 +3386,19 @@ async function shopeeGetModelList(shopId: string, accessToken: string, itemId: n
     access_token: accessToken,
     shop_id: shopId,
     sign,
-    item_id: String(itemId),
+    item_id: safeItemId,
   });
 
   const url = `${SHOPEE_HOST}${apiPath}?${params.toString()}`;
-  const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} item_id=${itemId}`);
-  console.log(`[Shopee API] GET ${apiPath} (item_id=${itemId}) -> HTTP ${httpStatus}:`, JSON.stringify(json));
+  const { json, httpStatus } = await shopeeFetchJsonWithRetry(url, `GET ${apiPath} item_id=${safeItemId}`);
+  console.log(`[Shopee API] GET ${apiPath} (item_id=${safeItemId}) -> HTTP ${httpStatus}:`, JSON.stringify(json));
   if (json.error) {
     json.message = json.message || formatShopeeApiError(json, httpStatus);
   }
   return json;
 }
 
-async function shopeeGetModelListWithRetry(shopId: string, accessToken: string, itemId: number, retries = 3) {
+async function shopeeGetModelListWithRetry(shopId: string, accessToken: string, itemId: string | number, retries = 3) {
   let last: any = null;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) await sleep(SHOPEE_PRODUCT_API_DELAY_MS * attempt);
@@ -3460,9 +3466,9 @@ async function resolveShopeeStockLocationId(
 async function resolveShopeeModelIdFromApi(
   shopId: string,
   accessToken: string,
-  itemId: number,
+  itemId: string | number,
   product: any
-): Promise<{ modelId: number | null; hasModel: boolean }> {
+): Promise<{ modelId: string | null; hasModel: boolean }> {
   try {
     const json = await shopeeGetModelListWithRetry(shopId, accessToken, itemId);
     if (json?.error) return { modelId: null, hasModel: false };
@@ -3474,13 +3480,13 @@ async function resolveShopeeModelIdFromApi(
         (m: any) => String(m?.model_sku || "").trim().toLowerCase() === sku
       );
       if (bySku?.model_id != null) {
-        const n = Number(bySku.model_id);
-        if (Number.isFinite(n) && n > 0) return { modelId: n, hasModel: true };
+        const id = toShopeeId(bySku.model_id);
+        if (id) return { modelId: id, hasModel: true };
       }
     }
     if (models.length === 1 && models[0]?.model_id != null) {
-      const n = Number(models[0].model_id);
-      if (Number.isFinite(n) && n > 0) return { modelId: n, hasModel: true };
+      const id = toShopeeId(models[0].model_id);
+      if (id) return { modelId: id, hasModel: true };
     }
     return { modelId: null, hasModel: true };
   } catch (err) {
@@ -3493,60 +3499,67 @@ async function resolveShopeeModelIdFromApi(
 async function shopeeUpdateStock(
   shopId: string,
   accessToken: string,
-  itemId: number,
-  stockList: { model_id?: number; seller_stock: { stock: number; location_id?: string }[] }[]
+  itemId: string | number,
+  stockList: { model_id?: string | number; seller_stock: { stock: number; location_id?: string }[] }[]
 ) {
   const apiPath = "/api/v2/product/update_stock";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  const body = { item_id: itemId, stock_list: stockList };
-  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${itemId}:`, JSON.stringify(body));
-  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${itemId}`);
-  console.log(`[Shopee API] POST ${apiPath} RESPONSE item_id=${itemId} HTTP ${httpStatus}:`, JSON.stringify(json));
+  const safeItemId = toShopeeId(itemId) || String(itemId);
+  const normalizedStockList = (Array.isArray(stockList) ? stockList : []).map((row) => {
+    const entry: { model_id?: string; seller_stock: { stock: number; location_id?: string }[] } = {
+      seller_stock: row.seller_stock,
+    };
+    const mid = toShopeeId(row?.model_id);
+    if (mid) entry.model_id = mid;
+    return entry;
+  });
+  const body = { item_id: safeItemId, stock_list: normalizedStockList };
+  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${safeItemId}:`, JSON.stringify(body));
+  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${safeItemId}`);
+  console.log(`[Shopee API] POST ${apiPath} RESPONSE item_id=${safeItemId} HTTP ${httpStatus}:`, JSON.stringify(json));
   return json;
 }
 
-/** Chuẩn hóa 1 dòng price_list — original_price/model_id phải là NUMBER (không string). */
+/** Chuẩn hóa 1 dòng price_list — original_price NUMBER; model_id STRING (uint64). */
 function buildShopeeUpdatePriceEntry(
   sellingPrice: unknown,
   modelId?: string | number | null
-): { model_id?: number; original_price: number } {
+): { model_id?: string; original_price: number } {
   // VN và hầu hết region (trừ SG/MY/BR/...): giá phải là số nguyên.
   const originalPrice = Math.max(0, Math.round(Number(sellingPrice) || 0));
-  const entry: { model_id?: number; original_price: number } = {
+  const entry: { model_id?: string; original_price: number } = {
     original_price: originalPrice,
   };
-  const mid = Number(modelId);
-  if (Number.isFinite(mid) && mid > 0) {
-    entry.model_id = mid;
-  }
+  const mid = toShopeeId(modelId);
+  if (mid) entry.model_id = mid;
   return entry;
 }
 
 async function shopeeUpdatePrice(
   shopId: string,
   accessToken: string,
-  itemId: number,
-  priceList: { model_id?: number; original_price: number }[]
+  itemId: string | number,
+  priceList: { model_id?: string | number; original_price: number }[]
 ) {
   const apiPath = "/api/v2/product/update_price";
   const timestamp = Math.floor(Date.now() / 1000);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  const numericItemId = Number(itemId);
+  const safeItemId = toShopeeId(itemId);
   const normalizedPriceList = (Array.isArray(priceList) ? priceList : []).map((row) => {
     const originalPrice = Math.max(0, Math.round(Number(row?.original_price) || 0));
-    const entry: { model_id?: number; original_price: number } = {
+    const entry: { model_id?: string; original_price: number } = {
       original_price: originalPrice,
     };
-    const mid = Number(row?.model_id);
-    if (Number.isFinite(mid) && mid > 0) entry.model_id = mid;
+    const mid = toShopeeId(row?.model_id);
+    if (mid) entry.model_id = mid;
     return entry;
   });
-  if (!Number.isFinite(numericItemId) || numericItemId <= 0) {
+  if (!safeItemId) {
     return {
       error: "error_param",
       message: "item_id không hợp lệ khi gọi update_price",
@@ -3561,13 +3574,13 @@ async function shopeeUpdatePrice(
     };
   }
 
-  const body = { item_id: numericItemId, price_list: normalizedPriceList };
-  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${numericItemId}:`, JSON.stringify(body));
-  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${numericItemId}`, {
+  const body = { item_id: safeItemId, price_list: normalizedPriceList };
+  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${safeItemId}:`, JSON.stringify(body));
+  const { json, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${safeItemId}`, {
     maxAttempts: SHOPEE_SYNC_QUEUE_MAX_RETRY,
   });
   console.log(
-    `[Shopee API] POST ${apiPath} RESPONSE item_id=${numericItemId} HTTP ${httpStatus}:`,
+    `[Shopee API] POST ${apiPath} RESPONSE item_id=${safeItemId} HTTP ${httpStatus}:`,
     JSON.stringify(json)
   );
   // HTTP 200 vẫn có thể chứa error/message/failure_list trong JSON body.
@@ -3706,7 +3719,7 @@ async function shopeeUploadImage(
   const rawText = await res.text();
   let json: any = {};
   try {
-    json = rawText ? JSON.parse(rawText) : {};
+    json = rawText ? parseShopeeJson(rawText) : {};
   } catch {
     console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ httpStatus: res.status, rawText: rawText.slice(0, 2000) }, null, 2));
     throw new Error(`upload_image phản hồi không phải JSON (HTTP ${res.status})`);
@@ -3984,8 +3997,8 @@ async function publishOneItemToShopee(shopId: string, payload: any): Promise<num
     addBody,
     "add_item",
   );
-  const itemId = Number(addResp?.item_id);
-  if (!Number.isFinite(itemId) || itemId <= 0) {
+  const itemId = toShopeeId(addResp?.item_id);
+  if (!itemId) {
     console.log("[SHOPEE UPLOAD ERROR]:", JSON.stringify({ step: "add_item", response: addResp }, null, 2));
     throw new Error("add_item không trả về item_id hợp lệ (Shopee không tạo sản phẩm)");
   }
@@ -4338,7 +4351,7 @@ async function syncProductToTikTok(product: any): Promise<ChannelSyncLine[]> {
 }
 
 async function resolveShopeeShopForItemId(
-  itemId: number,
+  itemId: string | number,
   preferredShopId?: string
 ): Promise<{ shopId: string; accessToken: string } | null> {
   const shopIds = listShopeeSyncShopIds();
@@ -4387,7 +4400,7 @@ function isShopeeItemNotFoundError(result: any): boolean {
 async function verifyShopeeItemExists(
   shopId: string,
   accessToken: string,
-  itemId: number
+  itemId: string | number
 ): Promise<{ exists: boolean; detail?: string }> {
   const result = await shopeeGetItemBaseInfo(shopId, accessToken, [itemId]);
   if (result?.error || isShopeeItemNotFoundError(result)) {
@@ -4399,14 +4412,16 @@ async function verifyShopeeItemExists(
   return { exists: true };
 }
 
-async function refreshShopeeLiveItemIdSet(shopId: string, accessToken: string): Promise<Set<number>> {
+async function refreshShopeeLiveItemIdSet(shopId: string, accessToken: string): Promise<Set<string>> {
   const ids = await fetchAllShopeeItemIds(shopId, accessToken);
   console.log(`[Shopee Push Stock] Refresh get_item_list: ${ids.length} item_id đang liệt kê trên shop`);
   return new Set(ids);
 }
 
-async function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): string[] {
-  const idSet = new Set(itemIds.map(Number).filter((n) => Number.isFinite(n) && n > 0));
+async function markShopeeItemsInvalidInDb(itemIds: Array<string | number>, reason: string): Promise<string[]> {
+  const idSet = new Set(
+    itemIds.map((v) => toShopeeId(v)).filter((id): id is string => !!id),
+  );
   if (idSet.size === 0) return [];
 
   const products = await loadProducts();
@@ -4448,8 +4463,9 @@ async function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): st
     const listings = await readChannelListingsDb();
     let listingChanged = false;
     const nextListings = listings.map((row: any) => {
-      const cid = Number(row.channelId);
-      if (row.platform !== "shopee" || !Number.isFinite(cid) || !idSet.has(cid)) return row;
+      const parsed = parseShopeeChannelLinkIds(row.channelId, row.modelId, row.itemId);
+      const cid = parsed.itemId || toShopeeId(row.channelId);
+      if (row.platform !== "shopee" || !cid || !idSet.has(cid)) return row;
       listingChanged = true;
       return {
         ...sanitizeChannelListingRow(row),
@@ -4466,49 +4482,40 @@ async function markShopeeItemsInvalidInDb(itemIds: number[], reason: string): st
   return [...new Set(affectedSkus)];
 }
 
-/** Parse channelId dạng itemId hoặc itemId:modelId (+ hint từ listing). */
+/** Parse channelId dạng itemId hoặc itemId:modelId (+ hint từ listing). uint64 → string. */
 function parseShopeeChannelLinkIds(
   channelId?: string | number | null,
   modelIdHint?: string | number | null,
   itemIdHint?: string | number | null
-): { itemId: number | null; modelId: number | null } {
-  const pickPositive = (v: unknown): number | null => {
-    const n = Number(String(v ?? "").match(/(\d+)/)?.[1] ?? v);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  };
-
+): { itemId: string | null; modelId: string | null } {
   const cid = String(channelId ?? "").trim();
   if (cid.includes(":")) {
     const [left, right] = cid.split(":");
     return {
-      itemId: pickPositive(left) || pickPositive(itemIdHint),
-      modelId: pickPositive(right) || pickPositive(modelIdHint),
+      itemId: toShopeeId(left) || toShopeeId(itemIdHint),
+      modelId: toShopeeId(right) || toShopeeId(modelIdHint),
     };
   }
 
-  const itemFromCid = pickPositive(cid.match(/(\d{6,})/)?.[1] ?? cid);
   return {
-    itemId: itemFromCid || pickPositive(itemIdHint),
-    modelId: pickPositive(modelIdHint),
+    itemId: toShopeeId(cid.match(/(\d{6,})/)?.[1] ?? cid) || toShopeeId(itemIdHint),
+    modelId: toShopeeId(modelIdHint),
   };
 }
 
-function resolveShopeeModelIdForStockPush(product: any): number | null {
+function resolveShopeeModelIdForStockPush(product: any): string | null {
   for (const c of [product?.shopeeModelId, product?.modelId, product?.model_id]) {
-    const n = Number(c);
-    if (Number.isFinite(n) && n > 0) return n;
+    const id = toShopeeId(c);
+    if (id) return id;
   }
   const fromChannel = parseShopeeChannelLinkIds(product?.shopeeId ?? product?.shopeeItemId);
   if (fromChannel.modelId) return fromChannel.modelId;
   const fromId = String(product?.id || "").match(/-model-(\d+)/);
-  if (fromId) {
-    const n = Number(fromId[1]);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
+  if (fromId) return toShopeeId(fromId[1]);
   return null;
 }
 
-function getShopeeItemIdForStockPush(product: any): number | null {
+function getShopeeItemIdForStockPush(product: any): string | null {
   const parsed = parseShopeeChannelLinkIds(
     product?.shopeeItemId ?? product?.shopeeId,
     product?.shopeeModelId,
@@ -4516,10 +4523,7 @@ function getShopeeItemIdForStockPush(product: any): number | null {
   );
   if (parsed.itemId) return parsed.itemId;
   const fromId = String(product?.id || "").match(/shopee-item-(\d+)/);
-  if (fromId) {
-    const n = Number(fromId[1]);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
+  if (fromId) return toShopeeId(fromId[1]);
   return null;
 }
 
@@ -4635,7 +4639,7 @@ async function pushStockUpdatesToShopee(
   const errors: string[] = [];
   const warnings: string[] = [];
   const staleSkus: string[] = [];
-  let liveItemIds: Set<number> | null = null;
+  let liveItemIds: Set<string> | null = null;
   const primaryShop =
     preferredShopId && tokenByShop.has(preferredShopId)
       ? preferredShopId
@@ -4649,17 +4653,17 @@ async function pushStockUpdatesToShopee(
     }
   }
 
-  const byItem = new Map<number, any[]>();
+  const byItem = new Map<string, any[]>();
   for (const p of shopeeRows) {
     const itemId = getShopeeItemIdForStockPush(p)!;
     if (!byItem.has(itemId)) byItem.set(itemId, []);
     byItem.get(itemId)!.push(p);
   }
 
-  const invalidItemIds = new Set<number>();
+  const invalidItemIds = new Set<string>();
   let pushed = 0;
 
-  const markStaleItem = (itemId: number, rows: any[], detail: string) => {
+  const markStaleItem = (itemId: string, rows: any[], detail: string) => {
     const skus = extractSkusFromShopeeRows(rows);
     warnings.push(`item_id=${itemId} (SKU: ${skus.join(", ")}): ${detail}`);
     staleSkus.push(...skus);
@@ -5064,8 +5068,8 @@ function getModelImageUrl(item: any, model: any, tierVariations: any[]): string 
 
 function buildVariantWarehouseRow(item: any, model: any, tierVariations: any[], modelIndex: number): any {
   const safeModel = model && typeof model === "object" ? model : {};
-  const itemId = item?.item_id;
-  const modelId = safeModel.model_id != null ? safeModel.model_id : `idx${modelIndex}`;
+  const itemId = toShopeeId(item?.item_id) || String(item?.item_id ?? "");
+  const modelId = toShopeeId(safeModel.model_id) || (safeModel.model_id != null ? String(safeModel.model_id) : `idx${modelIndex}`);
   const tiers = asShopeeArray(tierVariations);
   const modelName = getModelDisplayName(safeModel, tiers);
   const baseName = item?.item_name || `Sản phẩm Shopee ${itemId}`;
@@ -5140,7 +5144,7 @@ async function syncShopeeItemToWarehouseRows(
       return { rows: [buildSingleWarehouseRow(item)], modelCount: 0 };
     }
 
-    const modelResult = await shopeeGetModelListWithRetry(shopId, accessToken, Number(itemId), 3);
+    const modelResult = await shopeeGetModelListWithRetry(shopId, accessToken, itemId, 3);
     if (modelResult?.error || isShopeeItemNotFoundError(modelResult)) {
       const err = `${modelResult?.error || "product.error_item_not_found"}${modelResult?.message ? `: ${modelResult.message}` : ""}`;
       console.error(`[Shopee Sync] get_model_list item_id=${itemId}: ${err}`);
@@ -5199,15 +5203,15 @@ async function fetchShopeeItemListPage(
   accessToken: string,
   offset: number,
   updateWindow?: ShopeeUpdateWindow,
-): Promise<{ itemIds: number[]; hasMore: boolean; nextOffset: number; pageIndex: number }> {
+): Promise<{ itemIds: string[]; hasMore: boolean; nextOffset: number; pageIndex: number }> {
   const listResult = await shopeeGetItemList(shopId, accessToken, offset, updateWindow);
   if (listResult?.error) {
     throw new Error(formatShopeeApiError(listResult) || `${listResult.error}: ${listResult.message || ""}`);
   }
   const items = asShopeeArray(listResult?.response?.item);
   const itemIds = items
-    .map((it: any) => Number(it?.item_id))
-    .filter((n: number) => Number.isFinite(n) && n > 0);
+    .map((it: any) => toShopeeId(it?.item_id))
+    .filter((id: string | null): id is string => !!id);
   const hasMore = !!listResult?.response?.has_next_page && items.length > 0;
   const nextOffset = listResult?.response?.next_offset ?? offset + items.length;
   const pageIndex = Math.floor(offset / SHOPEE_ITEM_LIST_PAGE_SIZE);
@@ -5904,8 +5908,8 @@ async function syncShopeeWarehouseSinglePage(
   };
 }
 
-async function fetchAllShopeeItemIds(shopId: string, accessToken: string): Promise<number[]> {
-  const allItemIds: number[] = [];
+async function fetchAllShopeeItemIds(shopId: string, accessToken: string): Promise<string[]> {
+  const allItemIds: string[] = [];
   let offset = 0;
   let hasNext = true;
   let pageGuard = 0;
@@ -5915,7 +5919,10 @@ async function fetchAllShopeeItemIds(shopId: string, accessToken: string): Promi
       throw new Error(formatShopeeApiError(listResult) || `${listResult.error}: ${listResult.message || ""}`);
     }
     const items = listResult.response?.item || [];
-    allItemIds.push(...items.map((it: any) => it.item_id));
+    for (const it of items) {
+      const id = toShopeeId(it?.item_id);
+      if (id) allItemIds.push(id);
+    }
     hasNext = !!listResult.response?.has_next_page && items.length > 0;
     offset = listResult.response?.next_offset ?? offset + items.length;
     pageGuard++;
@@ -5924,10 +5931,16 @@ async function fetchAllShopeeItemIds(shopId: string, accessToken: string): Promi
   return allItemIds;
 }
 
-async function fetchShopeeBaseItemsByIds(shopId: string, accessToken: string, itemIds: number[]): Promise<any[]> {
+async function fetchShopeeBaseItemsByIds(
+  shopId: string,
+  accessToken: string,
+  itemIds: Array<string | number>,
+): Promise<any[]> {
   const allItems: any[] = [];
-  const ids = asShopeeArray(itemIds).filter((n) => Number.isFinite(Number(n)) && Number(n) > 0);
-  const batches: number[][] = [];
+  const ids = asShopeeArray(itemIds)
+    .map((v) => toShopeeId(v))
+    .filter((id): id is string => !!id);
+  const batches: string[][] = [];
   for (let i = 0; i < ids.length; i += SHOPEE_PRODUCT_BASE_INFO_BATCH) {
     batches.push(ids.slice(i, i + SHOPEE_PRODUCT_BASE_INFO_BATCH));
   }
@@ -6047,7 +6060,7 @@ async function syncStockFromShopee(shopId: string, accessToken: string) {
 async function fetchShopeeItemVariants(
   shopId: string,
   accessToken: string,
-  itemId: number
+  itemId: string | number
 ): Promise<{ item: any; variantProducts: any[]; error?: string; modelCount: number }> {
   const baseInfoResult = await shopeeGetItemBaseInfo(shopId, accessToken, [itemId]);
   if (baseInfoResult.error) {
