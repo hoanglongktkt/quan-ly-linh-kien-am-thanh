@@ -53403,6 +53403,78 @@ function orderTabFilter(tab) {
       return {};
   }
 }
+async function countOrdersByTabsFromStore(opts) {
+  requireMongo();
+  const shopAnd = [];
+  if (opts?.shopId && opts.shopId !== "all") {
+    const shopIdStr = String(opts.shopId).trim();
+    const shopVariants = [
+      { shopId: shopIdStr },
+      { "data.shopId": shopIdStr }
+    ];
+    const asNum = Number(shopIdStr);
+    if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+      shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+    }
+    shopAnd.push({ $or: shopVariants });
+  }
+  const withShop = (tabFilter) => {
+    const parts = [...shopAnd];
+    if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
+    if (parts.length === 0) return {};
+    if (parts.length === 1) return parts[0];
+    return { $and: parts };
+  };
+  const cancelReturnsFilter = withShop({
+    $or: [
+      { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+      {
+        shopee_order_status: {
+          $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"]
+        }
+      },
+      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+      { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+      { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } }
+    ]
+  });
+  const countTabs = [
+    "pending_confirm",
+    "unprocessed",
+    "processed",
+    "shipping",
+    "handed_over_carrier",
+    "return_pending"
+  ];
+  const [all, ...tabCounts] = await Promise.all([
+    OrderModel.countDocuments(withShop({})).maxTimeMS(8e3),
+    ...countTabs.map(
+      (t2) => OrderModel.countDocuments(withShop(orderTabFilter(t2))).maxTimeMS(8e3)
+    ),
+    OrderModel.countDocuments(cancelReturnsFilter).maxTimeMS(8e3)
+  ]);
+  const counts = {
+    all: Number(all) || 0,
+    cancel_returns: Number(tabCounts[countTabs.length]) || 0
+  };
+  countTabs.forEach((t2, i2) => {
+    counts[t2] = Number(tabCounts[i2]) || 0;
+  });
+  try {
+    const dhhFilter = opts?.shopId && opts.shopId !== "all" ? {
+      $or: [
+        { shopId: String(opts.shopId) },
+        { shop_id: String(opts.shopId) }
+      ]
+    } : {};
+    counts.received_cancel_returns = Number(
+      await DonHoanHuyModel.countDocuments(dhhFilter).maxTimeMS(5e3)
+    );
+  } catch {
+    counts.received_cancel_returns = 0;
+  }
+  return counts;
+}
 async function queryOrdersPageFromStore(opts) {
   requireMongo();
   const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
@@ -82069,10 +82141,76 @@ async function getSyncJobById(req, res) {
   if (!job) return res.status(404).json({ success: false, error: "sync_job_not_found" });
   return res.json({ success: true, data: job });
 }
+async function getOrderCounts(req, res) {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  try {
+    if (!isMongoReady()) {
+      return res.status(200).json({
+        success: false,
+        counts: {},
+        error: "mongodb_not_ready"
+      });
+    }
+    const shopId = String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const counts = await countOrdersByTabsFromStore({
+      shopId: shopId || void 0
+    });
+    return res.status(200).json({ success: true, counts });
+  } catch (error) {
+    console.error(
+      "[GET /api/order-counts] failed:",
+      error?.stack || error?.message || error
+    );
+    return res.status(200).json({
+      success: false,
+      counts: {},
+      error: "order_counts_failed",
+      message: error?.message || "Kh\xF4ng th\u1EC3 \u0111\u1EBFm \u0111\u01A1n h\xE0ng t\u1EEB MongoDB."
+    });
+  }
+}
 async function listOrders(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
+  const pageRaw = Number(req.query.page);
+  const pageSizeRaw = Number(req.query.page_size ?? req.query.pageSize);
+  if (Number.isFinite(pageRaw) && pageRaw > 0 || Number.isFinite(pageSizeRaw) && pageSizeRaw > 0) {
+    try {
+      if (!isMongoReady()) {
+        return res.status(200).json({
+          success: false,
+          data: [],
+          total: 0,
+          error: "mongodb_not_ready"
+        });
+      }
+      const page = await queryOrdersPageFromStore({
+        page: pageRaw,
+        pageSize: pageSizeRaw || 50,
+        tab: String(req.query.tab || req.query.internal_tab || ""),
+        shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
+        carrier: String(req.query.carrier || ""),
+        query: String(req.query.q ?? req.query.query ?? ""),
+        printStatus: String(req.query.print_status ?? req.query.printStatus ?? "")
+      });
+      const products2 = await deps14.loadProductsForOrders(page.rows);
+      const rows = deps14.enrichOrdersWithShopNames(
+        deps14.enrichOrdersFromCatalog(page.rows, products2)
+      );
+      return res.json({
+        success: true,
+        data: rows,
+        total: page.total,
+        page: page.page,
+        page_size: page.pageSize,
+        has_more: page.hasMore,
+        counts: page.counts
+      });
+    } catch (pageErr) {
+      console.error("[GET /api/orders] paged query failed:", pageErr?.message || pageErr);
+    }
+  }
   let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
   rawOrders = rawOrders.filter(deps14.isValidOrder);
   rawOrders = filterOrdersByPrintStatus(
@@ -83587,6 +83725,71 @@ async function syncOrders(req, res) {
   }
 }
 var QUICK_SYNC_LOOKBACK_SEC = 3 * 60 * 60;
+async function syncShopee(req, res) {
+  try {
+    const mode = String(req.body?.mode || req.query?.mode || "full").trim().toLowerCase();
+    const isQuick = mode === "quick" || mode === "quick_sync" || mode === "3h";
+    const hours = isQuick ? 3 : resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
+    const lookbackSec = isQuick ? QUICK_SYNC_LOOKBACK_SEC : Math.floor(hours * 60 * 60);
+    const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+    const shopIds = resolvePullShopIds(shopIdsRaw);
+    const username = String(req.user?.username || "");
+    if (typeof deps15.isOrdersPullLocked === "function" && deps15.isOrdersPullLocked()) {
+      sendJson(res, 200, {
+        status: 200,
+        success: true,
+        warning: true,
+        background: true,
+        message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
+        shopee_response: { skipped: true, reason: "pull_in_flight" }
+      });
+      return;
+    }
+    sendJson(res, 200, {
+      status: 200,
+      success: true,
+      background: true,
+      message: "\u0110ang \u0111\u1ED3ng b\u1ED9",
+      mode: isQuick ? "quick_sync" : "full",
+      lookbackSec
+    });
+    setImmediate(() => {
+      void (async () => {
+        console.log(
+          `=== SYNC-SHOPEE BG START mode=${isQuick ? "quick" : "full"} lookbackSec=${lookbackSec} ===`
+        );
+        try {
+          const result = await runOrdersPull({
+            lookbackSec,
+            shopIds,
+            username,
+            jobType: isQuick ? "shopee_orders_quick_sync" : "shopee_orders_sync",
+            logTag: isQuick ? "Orders Sync-Shopee Quick" : "Orders Sync-Shopee",
+            allowShortLookback: isQuick,
+            reconcileActive: !isQuick,
+            skipCancelReturn: isQuick
+          });
+          console.log(
+            `[Sync-Shopee BG] done pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} msg=${result?.message || ""}`
+          );
+        } catch (bgErr) {
+          console.error("[Sync-Shopee BG] failed:", bgErr?.stack || bgErr?.message || bgErr);
+        }
+      })();
+    });
+    return;
+  } catch (err) {
+    console.error("[API_SYNC_ERROR] sync-shopee:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        message: friendlyPullError(err),
+        background: false
+      });
+    }
+    return;
+  }
+}
 async function quickSyncOrders(req, res) {
   console.log("=== B\u1EAET \u0110\u1EA6U QUICK SYNC ORDERS (3h) ===");
   try {
@@ -84209,6 +84412,7 @@ var router13 = (0, import_express14.Router)();
 var h2 = asyncHandler;
 router13.get("/refresh", h2(refreshOrders));
 router13.get("/query", h2(queryOrders));
+router13.get("/counts", h2(getOrderCounts));
 router13.get("/lookup", h2(lookupOrder));
 router13.post("/pull", pullOrders);
 router13.post("/quick-sync", quickSyncOrders);
@@ -84646,6 +84850,8 @@ var autoLinkRoutes_default = router20;
 var import_express22 = __toESM(require_express2(), 1);
 var router21 = (0, import_express22.Router)();
 router21.get("/sync-jobs/:jobId", authMiddleware, getSyncJobById);
+router21.get("/order-counts", authMiddleware, getOrderCounts);
+router21.post("/sync-shopee", authMiddleware, syncShopee);
 router21.post("/mongo/cleanup-temp", authMiddleware, cleanupMongoTemp);
 router21.post("/mongo/ensure-ttl", authMiddleware, ensureMongoTtl);
 router21.post("/orders/pull", authMiddleware, pullOrders);
@@ -95591,6 +95797,8 @@ async function startServer() {
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
   app.post("/api/orders/pull", authMiddleware, pullOrders);
   app.post("/api/orders/quick-sync", authMiddleware, quickSyncOrders);
+  app.post("/api/sync-shopee", authMiddleware, syncShopee);
+  app.get("/api/order-counts", authMiddleware, getOrderCounts);
   app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
   app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);

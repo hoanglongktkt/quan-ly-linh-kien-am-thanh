@@ -417,6 +417,8 @@ export default function App() {
     limit?: number;
     merge?: boolean;
     print_status?: 'printed' | 'unprinted' | 'all' | '';
+    /** Cùng filter với /api/order-counts — tránh badge ≠ list. */
+    tab?: string;
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
@@ -432,7 +434,8 @@ export default function App() {
           : undefined;
     const merge = opts?.merge ?? Boolean(limit);
     const printStatus = String(opts?.print_status || '').trim().toLowerCase();
-    const flightKey = `${limit ? `limit:${limit}` : 'full'}|print:${printStatus || 'all'}`;
+    const tab = String(opts?.tab || '').trim().toLowerCase();
+    const flightKey = `${limit ? `limit:${limit}` : 'full'}|print:${printStatus || 'all'}|tab:${tab || 'all'}`;
 
     if (fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
@@ -460,8 +463,12 @@ export default function App() {
       if (limit) params.set('limit', String(limit));
       if (bustCache) params.set('bust', '1');
       if (printStatus && printStatus !== 'all') params.set('print_status', printStatus);
+      if (tab) params.set('tab', tab);
       const qs = params.toString();
       const path = `/api/orders/refresh?${qs}`;
+      console.log(
+        `[FRONTEND FETCHED] GET ${path} (silent=${silent} merge=${merge} tab=${tab || '(none)'})`,
+      );
       const requestUrl =
         path.startsWith('http://') || path.startsWith('https://')
           ? path
@@ -499,7 +506,7 @@ export default function App() {
               `[Fetch Orders] Refresh lỗi tạm thời (${payload.error}) — thử lại sau 3s (còn ${retriesLeft} lần).`,
             );
             window.setTimeout(() => {
-              void fetchOrders({ silent, bustCache, limit, merge, retriesLeft: retriesLeft - 1 });
+              void fetchOrders({ silent, bustCache, limit, merge, tab, retriesLeft: retriesLeft - 1 });
             }, 3000);
             return;
           }
@@ -557,7 +564,7 @@ export default function App() {
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG: (HTTP', response.status, ')');
         if (retriesLeft > 0) {
           window.setTimeout(() => {
-            void fetchOrders({ silent, bustCache, limit, merge, retriesLeft: retriesLeft - 1 });
+            void fetchOrders({ silent, bustCache, limit, merge, tab, retriesLeft: retriesLeft - 1 });
           }, 3000);
         } else {
           setHasLoadedOrdersOnce(true);
@@ -572,7 +579,7 @@ export default function App() {
       // 2-3 lần. Giờ retry luôn cả lỗi mạng/timeout, y hệt nhánh mongodb_not_ready.
       if (retriesLeft > 0) {
         window.setTimeout(() => {
-          void fetchOrders({ silent, bustCache, limit, merge, retriesLeft: retriesLeft - 1 });
+          void fetchOrders({ silent, bustCache, limit, merge, tab, retriesLeft: retriesLeft - 1 });
         }, 3000);
       } else {
         // Hết retry: thoát spinner; giữ IndexedDB/cache nếu có.

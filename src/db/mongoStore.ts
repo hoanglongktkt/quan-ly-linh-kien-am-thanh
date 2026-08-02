@@ -3110,6 +3110,44 @@ const ORDER_TAB_NOT_HANDED_OVER: Record<string, unknown> = {
   ],
 };
 
+/** Khớp isShopeeShippingStatus — loại khỏi pool Chờ lấy hàng. */
+const ORDER_TAB_NOT_SHIPPING_LOGISTICS: Record<string, unknown> = {
+  $and: [
+    {
+      $or: [
+        { logistics_status: { $exists: false } },
+        { logistics_status: null },
+        { logistics_status: "" },
+        {
+          logistics_status: {
+            $not: {
+              $regex:
+                "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
+              $options: "i",
+            },
+          },
+        },
+      ],
+    },
+    {
+      $or: [
+        { "data.logistics_status": { $exists: false } },
+        { "data.logistics_status": null },
+        { "data.logistics_status": "" },
+        {
+          "data.logistics_status": {
+            $not: {
+              $regex:
+                "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
+              $options: "i",
+            },
+          },
+        },
+      ],
+    },
+  ],
+};
+
 /**
  * SSOT Mongo filter theo tab — KHỚP matchesUnprocessedPickupTab / matchesProcessedPickupTab /
  * matchesShippingTab / isPendingConfirmOrder (OrderManager + GET /api/orders).
@@ -3154,8 +3192,20 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
       return {
         $and: [
           ORDER_TAB_NOT_HANDED_OVER,
+          ORDER_TAB_NOT_SHIPPING_LOGISTICS,
           {
             shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] },
+          },
+          {
+            $or: [
+              { "data.shopee_order_status": { $exists: false } },
+              { "data.shopee_order_status": { $in: [null, ""] } },
+              {
+                "data.shopee_order_status": {
+                  $nin: [...ORDER_TAB_LEFT_PICKUP_RAW],
+                },
+              },
+            ],
           },
           {
             $or: [
@@ -3204,10 +3254,11 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "ready_to_ship":
     case "cho-lay-hang":
       // matchesUnprocessedPickupTab: READY_TO_SHIP|RETRY_SHIP (hoặc local unprocessed),
-      // chưa PROCESSED / chưa tracking / chưa dropoff-prepared / chưa bàn giao.
+      // chưa PROCESSED / chưa tracking / chưa dropoff-prepared / chưa bàn giao / chưa shipping logistics.
       return {
         $and: [
           ORDER_TAB_NOT_HANDED_OVER,
+          ORDER_TAB_NOT_SHIPPING_LOGISTICS,
           { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
           {
             $or: [
@@ -3293,6 +3344,58 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     default:
       return {};
   }
+}
+
+/**
+ * Khi refresh shallow (limit), vẫn phải kéo đủ đơn thuộc các tab vận hành
+ * (Chưa xử lý / Đã xử lý / Chờ xác nhận / Đã giao ĐVVC) — tránh badge=4 mà list=0
+ * vì 50 đơn mới nhất toàn SHIPPED/COMPLETED.
+ */
+export async function loadPriorityTabOrdersFromStore(opts?: {
+  perTabLimit?: number;
+  shopId?: string;
+}): Promise<any[]> {
+  requireMongo();
+  const perTab = Math.max(
+    20,
+    Math.min(200, Math.floor(Number(opts?.perTabLimit) || 100)),
+  );
+  const tabs = [
+    "unprocessed",
+    "processed",
+    "pending_confirm",
+    "handed_over_carrier",
+    "shipping",
+  ] as const;
+  const pages = await Promise.all(
+    tabs.map((tab) =>
+      queryOrdersPageFromStore({
+        page: 1,
+        pageSize: perTab,
+        tab,
+        shopId: opts?.shopId || "",
+      }).catch((err) => {
+        console.warn(
+          `[MongoDB] loadPriorityTabOrders tab=${tab} failed:`,
+          err?.message || err,
+        );
+        return { rows: [] as any[] };
+      }),
+    ),
+  );
+  const byId = new Map<string, any>();
+  for (const page of pages) {
+    for (const row of page.rows || []) {
+      const id = String(row?.id || row?.orderSn || "").trim();
+      if (id) byId.set(id, row);
+    }
+  }
+  const merged = [...byId.values()];
+  console.log(
+    `[MongoDB] loadPriorityTabOrders merged=${merged.length}` +
+      ` tabs=${tabs.map((t, i) => `${t}:${pages[i]?.rows?.length || 0}`).join(",")}`,
+  );
+  return merged;
 }
 
 /** Đếm số đơn theo tab từ MongoDB — dùng cho badge/tab, không gọi Shopee. */

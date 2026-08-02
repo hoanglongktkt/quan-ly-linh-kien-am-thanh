@@ -501,6 +501,8 @@ interface OrderManagerProps {
     merge?: boolean;
     /** `printed` | `unprinted` — lọc theo isPrinted từ Mongo (không gọi Shopee). */
     print_status?: 'printed' | 'unprinted' | 'all' | '';
+    /** Tab SSOT — cùng filter với /api/order-counts. */
+    tab?: string;
   }) => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
@@ -700,7 +702,13 @@ export default function OrderManager({
     const maxTicks = 5;
     syncPollTimerRef.current = window.setInterval(() => {
       ticks += 1;
-      void onFetchOrders?.({ silent: true, bustCache: true, limit: 50, merge: true });
+      void onFetchOrders?.({
+        silent: true,
+        bustCache: true,
+        limit: 100,
+        merge: true,
+        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
+      });
       void fetchOrderCounts();
       if (ticks >= maxTicks) {
         if (syncPollTimerRef.current != null) {
@@ -714,10 +722,16 @@ export default function OrderManager({
     }, 4000);
     // Refresh lần đầu sau 1.5s (đơn có thể đã upsert sớm)
     window.setTimeout(() => {
-      void onFetchOrders?.({ silent: true, bustCache: true, limit: 50, merge: true });
+      void onFetchOrders?.({
+        silent: true,
+        bustCache: true,
+        limit: 100,
+        merge: true,
+        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
+      });
       void fetchOrderCounts();
     }, 1500);
-  }, [onFetchOrders, fetchOrderCounts]);
+  }, [onFetchOrders, fetchOrderCounts, activeSubTab]);
 
   useEffect(() => {
     return () => {
@@ -819,12 +833,31 @@ export default function OrderManager({
     }
   }, [activeSubTab]);
 
-  // Đổi tab chỉ đổi bộ lọc cục bộ của `orders`; không đọc lại toàn bộ MongoDB.
+  // Đổi tab: refetch DB theo đúng tab (cùng filter count) rồi merge vào pool.
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
     syncOrdersTabToUrl(activeSubTab, cancelReturnTab);
     onOrdersSubTabChange?.(activeSubTab);
-    // onOrdersSubTabChange không ổn định reference — chỉ phụ thuộc tab
+    const tabFetchTabs = new Set([
+      'unprocessed',
+      'processed',
+      'pending_confirm',
+      'shipping',
+      'handed_over_carrier',
+      'cancel_returns',
+      'received_cancel_returns',
+    ]);
+    if (tabFetchTabs.has(activeSubTab)) {
+      console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch tab-filtered list`);
+      void onFetchOrders?.({
+        silent: true,
+        bustCache: true,
+        limit: 150,
+        merge: true,
+        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
+      });
+      void fetchOrderCounts();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubTab, cancelReturnTab]);
   
@@ -3529,40 +3562,44 @@ export default function OrderManager({
   ];
 
   const getCount = (status: OrderTab) => {
-    // Ưu tiên counts từ MongoDB (/api/order-counts) — không phụ thuộc pool FE đang load.
-    if (serverOrderCounts) {
-      if (status === 'all' && typeof serverOrderCounts.all === 'number') {
-        return serverOrderCounts.all;
-      }
-      if (status === 'order_products') {
-        return aggregatedOrderProducts.length;
-      }
-      const key =
-        status === 'pending_verification' ? 'pending_confirm' : status;
-      if (typeof serverOrderCounts[key] === 'number') {
-        return serverOrderCounts[key];
-      }
-    }
     if (status === 'order_products') {
       return aggregatedOrderProducts.length;
     }
+    // Đếm từ CÙNG pool + CÙNG matcher với danh sách (tránh badge Mongo ≠ list shallow).
+    let clientCount = 0;
     if (status === 'cancel_returns') {
-      return cancelReturnPool.length;
+      clientCount = cancelReturnPool.length;
+    } else if (status === 'received_cancel_returns') {
+      clientCount = orders.filter((o) => matchesReceivedCancelReturnTab(o)).length;
+    } else {
+      clientCount = orders.filter((o) => {
+        if (status === 'all') return true;
+        if (status === 'pending_confirm' || status === 'pending_verification') {
+          return isPendingConfirmOrder(o);
+        }
+        if (status === 'unprocessed') {
+          return matchesUnprocessedPickupTab(o) && !isPendingConfirmOrder(o);
+        }
+        if (status === 'processed') {
+          return matchesProcessedPickupTab(o) && !isPendingConfirmOrder(o);
+        }
+        if (status === 'shipping') return matchesShippingTab(o);
+        if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
+        return o.status === status;
+      }).length;
     }
-    if (status === 'received_cancel_returns') {
-      return orders.filter((o) => matchesReceivedCancelReturnTab(o)).length;
-    }
-    return orders.filter(o => {
-      if (status === 'all') return true;
-      if (status === 'pending_confirm' || status === 'pending_verification') {
-        return isPendingConfirmOrder(o);
+    // Fallback server count khi pool chưa có dữ liệu tab (đang load).
+    if (clientCount === 0 && serverOrderCounts) {
+      const key = status === 'pending_verification' ? 'pending_confirm' : status;
+      const serverN = Number(serverOrderCounts[key]);
+      if (Number.isFinite(serverN) && serverN > 0) {
+        console.warn(
+          `[OrderCounts] tab=${status} client=0 nhưng server=${serverN} — pool thiếu, sẽ refetch theo tab`,
+        );
+        return serverN;
       }
-      if (status === 'unprocessed') return matchesUnprocessedPickupTab(o) && !isPendingConfirmOrder(o);
-      if (status === 'processed') return matchesProcessedPickupTab(o) && !isPendingConfirmOrder(o);
-      if (status === 'shipping') return matchesShippingTab(o);
-      if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
-      return o.status === status;
-    }).length;
+    }
+    return clientCount;
   };
 
   // Filter logic (client-side only — không gọi API)

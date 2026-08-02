@@ -24,6 +24,8 @@ import {
   findOrderByScanCodeInStore,
   queryOrdersPageFromStore,
   countOrdersByTabsFromStore,
+  loadPriorityTabOrdersFromStore,
+  orderTabFilter,
   loadOrderEvents,
   getSyncJob,
   deleteOrdersFromStore,
@@ -85,16 +87,110 @@ export function invalidateOrdersRefreshCache() {
   ordersRefreshCache = null;
 }
 
-async function readOrdersForRefresh(limit) {
+async function readOrdersForRefresh(limit, opts = {}) {
+  const tab = String(opts.tab || "").trim().toLowerCase();
+  const shopId = String(opts.shopId || "").trim();
+
+  // Read theo tab = cùng filter với /api/order-counts (Sapo: count ≡ list).
+  if (tab) {
+    if (
+      tab === "received_cancel_returns" ||
+      tab === "received-cancel-returns" ||
+      tab === "da_nhan_huy_hoan"
+    ) {
+      const pageSize =
+        Number.isFinite(Number(limit)) && Number(limit) > 0
+          ? Math.min(Math.floor(Number(limit)), 2000)
+          : 500;
+      const dhh = await loadDonHoanHuyAsOrders(pageSize);
+      console.log(
+        `[GET /api/orders/refresh] tab=${tab} source=don_hoan_huy → ${dhh.length} đơn`,
+      );
+      return dhh.filter((order) => Boolean(order?.orderSn || order?.id));
+    }
+    const tabFilter = orderTabFilter(tab);
+    console.log(
+      `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"} filter=`,
+      JSON.stringify(tabFilter),
+    );
+    const pageSize =
+      Number.isFinite(Number(limit)) && Number(limit) > 0
+        ? Math.min(Math.floor(Number(limit)), 500)
+        : 200;
+    const page = await queryOrdersPageFromStore({
+      page: 1,
+      pageSize,
+      tab,
+      shopId,
+      printStatus: String(opts.printStatus || ""),
+    });
+    console.log(
+      `[GET /api/orders/refresh] tab=${tab} → rows=${page.rows.length} total=${page.total} counts=`,
+      page.counts,
+    );
+    return page.rows.filter((order) => Boolean(order?.orderSn || order?.id));
+  }
+
   const now = Date.now();
-  if (ordersRefreshCache && ordersRefreshCache.expiresAt > now) {
-    return limit && limit > 0
-      ? ordersRefreshCache.orders.slice(0, limit)
-      : ordersRefreshCache.orders;
+  if (ordersRefreshCache && ordersRefreshCache.expiresAt > now && !shopId) {
+    const cached = ordersRefreshCache.orders;
+    if (limit && limit > 0) {
+      // Shallow: vẫn merge đơn tab ưu tiên để badge/list không lệch.
+      try {
+        const priority = await loadPriorityTabOrdersFromStore({
+          perTabLimit: Math.min(100, Math.max(50, limit)),
+        });
+        const byId = new Map();
+        for (const o of priority) {
+          const id = String(o?.id || o?.orderSn || "").trim();
+          if (id) byId.set(id, o);
+        }
+        for (const o of cached.slice(0, limit)) {
+          const id = String(o?.id || o?.orderSn || "").trim();
+          if (id && !byId.has(id)) byId.set(id, o);
+        }
+        return [...byId.values()];
+      } catch (prioErr) {
+        console.warn(
+          "[GET /api/orders/refresh] priority merge (cache) skipped:",
+          prioErr?.message || prioErr,
+        );
+        return cached.slice(0, limit);
+      }
+    }
+    return cached;
   }
   if (limit && limit > 0) {
-    const orders = await loadOrdersFromStore({ limit });
-    return orders.filter((order) => Boolean(order?.orderSn || order?.id));
+    const recent = await loadOrdersFromStore({ limit });
+    let priority = [];
+    try {
+      priority = await loadPriorityTabOrdersFromStore({
+        perTabLimit: Math.min(150, Math.max(80, limit)),
+        shopId: shopId || undefined,
+      });
+    } catch (prioErr) {
+      console.warn(
+        "[GET /api/orders/refresh] priority merge skipped:",
+        prioErr?.message || prioErr,
+      );
+    }
+    const byId = new Map();
+    for (const o of priority) {
+      const id = String(o?.id || o?.orderSn || "").trim();
+      if (id) byId.set(id, o);
+    }
+    for (const o of recent) {
+      const id = String(o?.id || o?.orderSn || "").trim();
+      if (id && !byId.has(id)) byId.set(id, o);
+    }
+    const merged = [...byId.values()].filter((order) =>
+      Boolean(order?.orderSn || order?.id),
+    );
+    console.log(
+      `[GET /api/orders/refresh] shallow limit=${limit} recent=${recent.length}` +
+        ` priority=${priority.length} merged=${merged.length}`,
+    );
+    return merged;
   }
   if (!ordersRefreshInFlight) {
     ordersRefreshInFlight = loadOrdersFromStore()
@@ -154,7 +250,17 @@ export async function refreshOrders(req, res) {
       Number.isFinite(rawLimit) && rawLimit > 0
         ? Math.min(Math.floor(rawLimit), 5000)
         : undefined;
-    const rawOrders = await readOrdersForRefresh(limit);
+    const tab = String(req.query.tab || req.query.internal_tab || "").trim();
+    const shopId = String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    console.log(
+      `[GET /api/orders/refresh] params limit=${limit ?? "(full)"} tab=${tab || "(none)"}` +
+        ` shopId=${shopId || "(all)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`,
+    );
+    const rawOrders = await readOrdersForRefresh(limit, {
+      tab,
+      shopId,
+      printStatus: String(req.query.print_status || req.query.printStatus || ""),
+    });
     let mergedOrders = rawOrders;
     try {
       mergedOrders = await mergeDonHoanHuyIntoOrders(rawOrders);
@@ -219,6 +325,15 @@ export async function queryOrders(req, res) {
       query: String(req.query.q ?? req.query.query ?? ""),
       printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
     });
+    console.log(
+      `[GET /api/orders/query] tab=${req.query.tab || "(all)"}` +
+        ` shop=${req.query.shop_id || req.query.shopId || "(all)"}` +
+        ` carrier=${req.query.carrier || "(all)"}` +
+        ` print=${req.query.print_status || req.query.printStatus || "(all)"}` +
+        ` filter=`,
+      JSON.stringify(orderTabFilter(String(req.query.tab || ""))),
+      `→ rows=${page.rows.length} total=${page.total}`,
+    );
     const products = await deps.loadProductsForOrders(page.rows);
     const rows = deps.enrichOrdersWithShopNames(
       deps.enrichOrdersFromCatalog(page.rows, products),
@@ -279,6 +394,10 @@ export async function getOrderCounts(req, res) {
     const counts = await countOrdersByTabsFromStore({
       shopId: shopId || undefined,
     });
+    console.log(
+      `[GET /api/order-counts] shopId=${shopId || "(all)"} counts=`,
+      counts,
+    );
     return res.status(200).json({ success: true, counts });
   } catch (error) {
     console.error(
