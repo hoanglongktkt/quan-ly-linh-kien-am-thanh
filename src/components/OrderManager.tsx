@@ -2411,7 +2411,7 @@ export default function OrderManager({
   };
 
   const TRACKING_MISSING_TOAST =
-    'Chưa đồng bộ được mã vận đơn từ Shopee, hệ thống đang tự động lấy lại, vui lòng thử lại sau!';
+    'Shopee chưa xuất được PDF vận đơn. Đơn đã xác nhận — thử In đơn lại sau ít phút.';
 
   const fetchPrintDocumentSync = async (
     orderIds: string[],
@@ -2467,7 +2467,7 @@ export default function OrderManager({
       const jobId = startData.jobId;
       const deadline = Date.now() + 3 * 60 * 1000;
       let pollCount = 0;
-      opts?.onStatus?.('Đang tạo PDF vận đơn...');
+      opts?.onStatus?.('Đang tạo vận đơn hàng loạt trên Shopee...');
       while (Date.now() < deadline) {
         // Lần đầu poll ngay; sau đó mỗi 300ms (không fake backoff).
         if (pollCount > 0) {
@@ -2593,7 +2593,7 @@ export default function OrderManager({
     return { success: false, message: detail || 'Shopee chưa trả về file vận đơn PDF.' };
   };
 
-  // Shopee batch print: 1 request duy nhất với toàn bộ orderIds → BE merge 1 PDF → mở/in 1 lần.
+  // Shopee batch print: 1 request → BE Batch API (create + poll READY + download 1 PDF Shopee).
   // TUYỆT ĐỐI không loop window.open / fetch từng đơn trên FE (popup blocker).
   /** Nếu mọi đơn đã có labelUrl/pdfFilename trong state → window.open ngay, không gọi API. */
   const tryOpenCachedLabelUrls = (
@@ -2806,8 +2806,8 @@ export default function OrderManager({
   };
 
   /**
-   * Payload tóm tắt sau xác nhận hàng loạt — dùng cho Result Summary modal.
-   * KHÔNG liên quan PDF — in đơn là thao tác thủ công qua nút "In đơn".
+   * Payload tóm tắt sau xác nhận hàng loạt — chỉ lỗi ship_order.
+   * Không báo thất bại vì thiếu tracking_no / lỗi in PDF (đơn đã xác nhận vẫn tính thành công).
    */
   const buildShipConfirmSummary = (
     payload: {
@@ -2816,21 +2816,43 @@ export default function OrderManager({
       failCount?: number;
       failedCount?: number;
       successfulOrderIds?: Array<string | number>;
-      failedOrderDetails?: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string }>;
-      failedOrders?: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string }>;
+      failedOrderDetails?: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string; shipped?: boolean }>;
+      failedOrders?: Array<{ orderSn?: string; orderId?: string; error?: string; message?: string; shipped?: boolean }>;
       results?: Array<{ success?: boolean; orderSn?: string; orderId?: string; error?: string; message?: string }>;
       message?: string;
     },
     fallbackTotal = 0,
   ) => {
     const results = Array.isArray(payload.results) ? payload.results : [];
-    const successfulOrderIds = Array.isArray(payload.successfulOrderIds)
-      ? payload.successfulOrderIds.map((id) => String(id || '').trim()).filter(Boolean)
-      : results
-          .filter((r) => r?.success)
-          .map((r) => String(r?.orderId || r?.orderSn || '').trim())
-          .filter(Boolean);
-    const failedOrderDetails = Array.isArray(payload.failedOrderDetails)
+    const successfulOrderIds = [
+      ...new Set(
+        (Array.isArray(payload.successfulOrderIds)
+          ? payload.successfulOrderIds.map((id) => String(id || '').trim()).filter(Boolean)
+          : results
+              .filter((r) => r?.success)
+              .map((r) => String(r?.orderId || r?.orderSn || '').trim())
+              .filter(Boolean)),
+      ),
+    ];
+    const successKeySet = new Set<string>();
+    for (const id of successfulOrderIds) {
+      const s = String(id || '').trim();
+      if (!s) continue;
+      successKeySet.add(s);
+      successKeySet.add(s.replace(/^shopee-/i, ''));
+      successKeySet.add(`shopee-${s.replace(/^shopee-/i, '')}`);
+    }
+    const isPrintOnlyFail = (f: { error?: string; message?: string; shipped?: boolean }) => {
+      const err = String(f?.error || '').toLowerCase();
+      const msg = String(f?.message || '').toLowerCase();
+      if (f?.shipped) return true;
+      if (err.includes('tracking') || err.includes('pdf') || err.includes('document') || err.includes('print')) {
+        return true;
+      }
+      if (msg.includes('mã vận đơn') || msg.includes('pdf') || msg.includes('vận đơn')) return true;
+      return false;
+    };
+    const rawFailed = Array.isArray(payload.failedOrderDetails)
       ? payload.failedOrderDetails
       : Array.isArray(payload.failedOrders)
         ? payload.failedOrders
@@ -2842,14 +2864,22 @@ export default function OrderManager({
               error: String(r?.error || 'ship_failed'),
               message: String(r?.message || r?.error || 'Xác nhận thất bại'),
             }));
+    // Chỉ giữ lỗi xác nhận thật — bỏ fail in/thiếu mã và đơn đã success.
+    const failedOrderDetails = rawFailed.filter((f) => {
+      if (isPrintOnlyFail(f)) return false;
+      const id = String(f?.orderId || '').trim();
+      const sn = String(f?.orderSn || '').trim();
+      if (id && successKeySet.has(id)) return false;
+      if (sn && (successKeySet.has(sn) || successKeySet.has(`shopee-${sn}`))) return false;
+      return true;
+    });
     const successCount = Number(payload.successCount) || successfulOrderIds.length;
-    const failCount =
-      Number(payload.failCount ?? payload.failedCount) || failedOrderDetails.length;
+    const failCount = failedOrderDetails.length;
     return {
       total: Number(payload.total) || fallbackTotal || successCount + failCount,
       successCount,
       failCount,
-      successfulOrderIds: [...new Set(successfulOrderIds)],
+      successfulOrderIds,
       failedOrderDetails,
     };
   };
@@ -2960,8 +2990,8 @@ export default function OrderManager({
     setProgressCompleted(0);
     setProgressTotal(totalQueued);
     setProgressDone(false);
-    setProgressMessage('Đang xử lý & tạo vận đơn...');
-    showToast('Đang xác nhận & in nhanh...');
+    setProgressMessage('Đang xác nhận đơn lên Shopee...');
+    showToast('Đang xác nhận đơn...');
 
     onAddLog({
       id: `log-${Date.now()}`,
@@ -3100,7 +3130,7 @@ export default function OrderManager({
     setProgressCompleted(0);
     setProgressTotal(ids.length);
     setIsShipping(true);
-    setProgressMessage(`Đang tải vận đơn: 0/${ids.length} đơn...`);
+    setProgressMessage(`Đang in hàng loạt ${ids.length} đơn (Batch API Shopee)...`);
 
     try {
       const result = await printShopeeDocuments(ids, {
@@ -3110,7 +3140,7 @@ export default function OrderManager({
           setProgressMessage(
             completed >= total
               ? 'Hoàn tất — đang mở PDF vận đơn...'
-              : `Đang tải vận đơn từ Shopee: ${completed}/${total} đơn...`
+              : `Đang chờ Shopee xuất PDF hàng loạt: ${completed}/${total} đơn...`
           );
         },
         onStatus: (message) => {
@@ -3447,7 +3477,7 @@ export default function OrderManager({
       setProgressDone(false);
       setProgressTotal(shopeeAll.length);
       setProgressCompleted(0);
-      setProgressMessage(`Đang tải vận đơn: 0/${shopeeAll.length} đơn...`);
+      setProgressMessage(`Đang in hàng loạt ${shopeeAll.length} đơn (Batch API)...`);
     }
     try {
       if (shopeeAll.length > 0) {
@@ -3457,7 +3487,7 @@ export default function OrderManager({
           channel: 'shopee',
           type: 'stock_sync',
           status: 'success',
-          message: `[SHOPEE API] Đang gọi v2.logistics.create_shipping_document + download_shipping_document để lấy vận đơn thật cho ${shopeeAll.length} đơn hàng.`
+          message: `[SHOPEE BATCH] create_shipping_document → poll READY → download_shipping_document (1 PDF) cho ${shopeeAll.length} đơn.`
         });
         const result = await printShopeeDocuments(shopeeAll, {
           onProgress: (completed, total) => {
@@ -3466,9 +3496,10 @@ export default function OrderManager({
             setProgressMessage(
               completed >= total
                 ? 'Hoàn tất — đang mở PDF vận đơn...'
-                : `Đang tải vận đơn từ Shopee: ${completed}/${total} đơn...`
+                : `Đang chờ Shopee xuất PDF hàng loạt: ${completed}/${total} đơn...`
             );
           },
+          onStatus: (message) => setProgressMessage(message),
         });
         if (!result.success) {
           showToast(`In vận đơn Shopee thất bại: ${result.message}`);
@@ -3704,14 +3735,14 @@ export default function OrderManager({
     setProgressDone(false);
     setProgressTotal(1);
     setProgressCompleted(0);
-    setProgressMessage('Đang tải vận đơn: 0/1 đơn...');
+    setProgressMessage('Đang tạo vận đơn Batch API Shopee...');
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
       channel: 'shopee',
       type: 'stock_sync',
       status: 'success',
-      message: `[SHOPEE API] Đang tạo & tải vận đơn thật (AWB) cho đơn ${order.orderSn}.`
+      message: `[SHOPEE BATCH] create → poll READY → download AWB cho đơn ${order.orderSn}.`
     });
     try {
       const result = await printShopeeDocuments([order.id], {
@@ -3719,9 +3750,10 @@ export default function OrderManager({
           setProgressCompleted(completed);
           setProgressTotal(total);
           setProgressMessage(
-            completed >= total ? 'Hoàn tất — đang mở PDF...' : `Đang tải vận đơn: ${completed}/${total} đơn...`
+            completed >= total ? 'Hoàn tất — đang mở PDF...' : 'Đang chờ Shopee xuất PDF vận đơn...'
           );
         },
+        onStatus: (message) => setProgressMessage(message),
       });
       if (!result.success) {
         alert(`In vận đơn thất bại cho đơn ${order.orderSn}: ${result.message}`);
