@@ -108292,6 +108292,10 @@ function getLabelMem(filename) {
     return null;
   }
 }
+function hasLabelMem(filename) {
+  const hit = getLabelMem(filename);
+  return Boolean(hit && hit.buf.length > 0 && isPdfBuffer(hit.buf));
+}
 function assertLabelFileReady(filename) {
   const safe = safeLabelFilename(filename);
   if (!safe) throw new Error(`T\xEAn file v\u1EADn \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7: ${filename}`);
@@ -112286,16 +112290,9 @@ function dedupeShopeeParentVariantRows(products) {
 var SHOPEE_LOGISTICS_TIMEOUT_MS = 5e3;
 var SHIP_ORDER_OPERATION_TIMEOUT_MS = 8e3;
 var SHIP_ORDER_CHUNK_PAUSE_MS = 200;
-var PRINT_CHUNK_POLL_MAX = 10;
-var PRINT_CHUNK_POLL_MS = 1e3;
-var PRINT_CHUNK_DEADLINE_MS = 45e3;
 var SHIP_ORDER_PDF_RETRY_MAX = 10;
 var SHIP_ORDER_PDF_RETRY_DELAY_MS = 1e3;
-var SHOPEE_SHIPPING_DOC_BATCH_MAX = 50;
 var SHOPEE_WAYBILL_PDF_MAX_BYTES = 25 * 1024 * 1024;
-var PRINT_TRACKING_CHUNK_SIZE = 10;
-var PRINT_TRACKING_CONCURRENCY = 5;
-var PRINT_TRACKING_CHUNK_PAUSE_MS = 300;
 var shopeeAddressListMemCache = /* @__PURE__ */ new Map();
 var shopeeAddressListInflight = /* @__PURE__ */ new Map();
 var SHOPEE_ADDRESS_LIST_MEM_TTL_MS = 10 * 60 * 1e3;
@@ -115156,74 +115153,6 @@ function scheduleShopeeCancelReturnReconcile() {
 function scheduleAutoIncrementalOrdersSyncSafe() {
   console.log("[CRON] Auto Incremental Sync OFF \u2014 ch\u1EC9 webhook + n\xFAt L\xE0m m\u1EDBi.");
 }
-async function ensureTrackingBeforePrint(orders, targetOrders, opts) {
-  const retries = opts?.retries ?? 1;
-  let filled = 0;
-  const groups = {};
-  for (const o of targetOrders) {
-    if (o.channel !== "shopee") continue;
-    if (!o.shopId) {
-      const resolved = resolveOrderShopId(o);
-      if (resolved) o.shopId = resolved;
-    }
-    if (!o.shopId) continue;
-    if (hasUsableShopeeTrackingNumber(o)) continue;
-    groups[o.shopId] = groups[o.shopId] || [];
-    groups[o.shopId].push(o);
-  }
-  for (const [shopId, groupOrders] of Object.entries(groups)) {
-    const accessToken = await getValidShopeeAccessToken(shopId);
-    if (!accessToken) {
-      console.error(`[Shopee Print Gate] Kh\xF4ng c\xF3 access_token shop_id=${shopId}`);
-      continue;
-    }
-    for (let i2 = 0; i2 < groupOrders.length; i2 += PRINT_TRACKING_CHUNK_SIZE) {
-      const chunk = groupOrders.slice(i2, i2 + PRINT_TRACKING_CHUNK_SIZE);
-      await mapWithConcurrency(chunk, PRINT_TRACKING_CONCURRENCY, async (o) => {
-        try {
-          console.log(
-            `[Shopee Print Gate] \u0110\u01A1n ${o.orderSn} thi\u1EBFu tracking_no \u2014 g\u1ECDi get_tracking_number (light, retries=${retries})...`
-          );
-          await enrichShopeeOrderTrackingFromApi(shopId, accessToken, o, {
-            retries,
-            light: true
-          });
-          const idx = orders.findIndex((x2) => String(x2.orderSn) === String(o.orderSn));
-          if (idx >= 0) {
-            orders[idx].trackingNumber = o.trackingNumber;
-            orders[idx].tracking_no = o.tracking_no || o.trackingNumber;
-            orders[idx].internalTrackingCode = o.internalTrackingCode;
-            orders[idx].packageNumber = o.packageNumber || orders[idx].packageNumber;
-          }
-          if (hasUsableShopeeTrackingNumber(o)) {
-            filled++;
-            await persistOrderTrackingToDb(o);
-            console.log(
-              `[Shopee Print Gate] OK order_sn=${o.orderSn} tracking_no=${o.trackingNumber}`
-            );
-          } else {
-            console.error(
-              `[Shopee Print Gate] V\u1EAAN thi\u1EBFu tracking_no order_sn=${o.orderSn} sau ${retries} l\u1EA7n th\u1EED`
-            );
-          }
-        } catch (error) {
-          console.error("L\u1ED7i 1 \u0111\u01A1n:", error);
-        }
-      });
-      if (i2 + PRINT_TRACKING_CHUNK_SIZE < groupOrders.length) {
-        await sleep2(PRINT_TRACKING_CHUNK_PAUSE_MS);
-      }
-    }
-  }
-  if (filled > 0) {
-    try {
-      await persistChangedOrdersPatch(targetOrders.filter((o) => hasUsableShopeeTrackingNumber(o)));
-    } catch (err) {
-      console.warn("[Shopee Print Gate] persistChangedOrdersPatch:", err?.message || err);
-    }
-  }
-  return filled;
-}
 function isShopeeOrderPreparedForPrint(order) {
   if (order?.isPrepared === true) return true;
   const status = String(order?.status || "").toLowerCase();
@@ -117529,17 +117458,7 @@ function pruneOldShipOrderJobs() {
 }
 var printDocumentJobs = /* @__PURE__ */ new Map();
 var PRINT_JOB_TTL_MS = 30 * 60 * 1e3;
-var printBatchTasks = /* @__PURE__ */ new Map();
 var PRINT_BATCH_TASK_TTL_MS = 30 * 60 * 1e3;
-function createPrintBatchTaskId() {
-  return `pbt-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-function pruneOldPrintBatchTasks() {
-  const cutoff = Date.now() - PRINT_BATCH_TASK_TTL_MS;
-  for (const [id, task] of printBatchTasks) {
-    if (task.updatedAt < cutoff) printBatchTasks.delete(id);
-  }
-}
 function createPrintDocumentJobId() {
   return `print-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -118757,17 +118676,17 @@ async function startServer() {
             }))
           );
         } catch (primeErr) {
-          console.warn("[Fast Process] prime create skip:", primeErr?.message || primeErr);
+          console.warn("[Fast Process] label prepare skip:", primeErr?.message || primeErr);
         }
       }
       const shipFailed = failed;
       const successCount = results.filter((r2) => r2?.success).length;
       const elapsed = Date.now() - t0;
       let message = `Th\xE0nh c\xF4ng: ${successCount} \u0111\u01A1n. Th\u1EA5t b\u1EA1i: ${shipFailed.length} \u0111\u01A1n`;
-      if (successCount > 0) message += ` \u2014 b\u1EA5m In \u0111\u01A1n \u0111\u1EC3 l\u1EA5y PDF (Batch API)`;
+      if (successCount > 0) message += ` \u2014 PDF \u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m, b\u1EA5m In \u0111\u01A1n khi s\u1EB5n s\xE0ng`;
       message += ` (${elapsed}ms).`;
       console.log(
-        `[Fast Process] Done ship=${successCount}/${toShip.length} shipFail=${shipFailed.length} ${elapsed}ms (kh\xF4ng ch\u1EDD PDF)`
+        `[Fast Process] Done ship=${successCount}/${toShip.length} shipFail=${shipFailed.length} ${elapsed}ms (PDF n\u1EC1n)`
       );
       return res.status(200).json({
         success: true,
@@ -118934,11 +118853,20 @@ async function startServer() {
   function findExistingLabelFile(orderSn) {
     const sn = String(orderSn || "").replace(/[^a-zA-Z0-9_-]/g, "");
     if (!sn) return null;
+    const nameMatches = (name) => /\.pdf$/i.test(name) && (name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`));
+    try {
+      let bestRam = null;
+      for (const [name, val] of labelMemCache) {
+        if (!nameMatches(name) || !val?.buf?.length || !isPdfBuffer(val.buf)) continue;
+        if (val.expires < Date.now()) continue;
+        if (!bestRam || val.expires > bestRam.expires) bestRam = { name, expires: val.expires };
+      }
+      if (bestRam) return bestRam.name;
+    } catch {
+    }
     try {
       ensureLabelsDir();
-      const matches = import_fs15.default.readdirSync(LABELS_DIR).filter(
-        (name) => /\.pdf$/i.test(name) && (name === `${sn}.pdf` || name.startsWith(`${sn}_`) || name.startsWith(`order_${sn}_`))
-      ).map((name) => {
+      const matches = import_fs15.default.readdirSync(LABELS_DIR).filter((name) => nameMatches(name)).map((name) => {
         const full = import_path15.default.join(LABELS_DIR, name);
         return { name, mtime: import_fs15.default.statSync(full).mtimeMs, size: import_fs15.default.statSync(full).size };
       }).filter((x2) => x2.size > 0).sort((a, b) => b.mtime - a.mtime);
@@ -119035,545 +118963,67 @@ async function startServer() {
       url: null,
       printedOrderSns: [],
       skippedOrders: [],
-      message: "\u0110\xE3 g\u1EEDi create_shipping_document n\u1EC1n \u2014 d\xF9ng In \u0111\u01A1n (FE poll) \u0111\u1EC3 l\u1EA5y PDF."
+      message: "\u0110\xE3 enqueue chu\u1EA9n b\u1ECB PDF n\u1EC1n (download + l\u01B0u labels) \u2014 In \u0111\u01A1n ch\u1EC9 \u0111\u1ECDc kho n\u1ED9i b\u1ED9."
     };
   }
   async function printBatchCreateHandler(req, res) {
-    beginLogisticsWork("print-batch-create");
-    try {
-      pruneOldPrintBatchTasks();
-      const rawIds = req.body?.order_ids ?? req.body?.orderIds ?? [];
-      const { orderIds } = { orderIds: rawIds };
-      if (!Array.isArray(orderIds) || orderIds.length === 0) {
-        return res.status(400).json({ success: false, error: "missing_order_ids", message: "Thi\u1EBFu danh s\xE1ch orderIds." });
-      }
-      console.log(
-        `[Shopee Print Create] orderIds=${orderIds.map(String).join(",")}`
-      );
-      const idList = orderIds.map((id) => String(id || "").trim()).filter(Boolean);
-      const snList = idList.map((id) => id.replace(/^shopee-/i, "").trim()).filter(Boolean);
-      let orders = [];
-      try {
-        orders = await loadOrdersForShipScoped(idList, snList);
-      } catch (loadErr) {
-        console.warn("[Shopee Print Create] loadOrdersForShipScoped:", loadErr?.message || loadErr);
-      }
-      if (!orders.length && isMongoReady()) {
-        try {
-          const loaded = await loadOrdersForApi({ readOnly: true });
-          const idSet = new Set(idList);
-          orders = (loaded.orders || []).filter(
-            (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
-          );
-        } catch (apiErr) {
-          console.warn("[Shopee Print Create] loadOrdersForApi:", apiErr?.message || apiErr);
-        }
-      }
-      if (!orders.length) {
-        const legacy = loadOrders();
-        const idSet = new Set(idList);
-        orders = legacy.filter(
-          (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
-        );
-      }
-      for (const o of orders) {
-        if (o.channel === "shopee" && !o.shopId) {
-          const resolved = resolveOrderShopId(o);
-          if (resolved) o.shopId = resolved;
-        }
-      }
-      const shopeeCandidates = orders.filter((o) => o.channel === "shopee" && o.shopId);
-      if (!shopeeCandidates.length) {
-        return res.status(400).json({
-          success: false,
-          error: "orders_not_found",
-          message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n Shopee (c\xF3 shop_id) \u0111\u1EC3 t\u1EA1o l\u1EC7nh in."
-        });
-      }
-      try {
-        await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 1 });
-      } catch (trackErr) {
-        console.warn("[Shopee Print Create] ensureTracking soft:", trackErr?.message || trackErr);
-      }
-      const groups = {};
-      for (const o of shopeeCandidates) {
-        const sid = String(o.shopId || "").trim();
-        if (!sid) continue;
-        groups[sid] = groups[sid] || [];
-        groups[sid].push(o);
-      }
-      const tasks = [];
-      for (const [shopId, groupOrders] of Object.entries(groups)) {
-        let accessToken = "";
-        try {
-          accessToken = await getValidShopeeAccessToken(shopId) || "";
-        } catch (tokErr) {
-          console.error(`[Shopee Print Create] token shop=${shopId}:`, tokErr?.message || tokErr);
-        }
-        if (!accessToken) {
-          const fail2 = describeShopeeTokenFailure(shopId);
-          return res.status(400).json({
-            success: false,
-            error: fail2.error,
-            message: fail2.message
-          });
-        }
-        console.log(
-          `[Shopee Print Create] Enrich package_number/tracking shop=${shopId} n=${groupOrders.length}`
-        );
-        await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, groupOrders);
-        const stillMissingPkg = groupOrders.filter(
-          (o) => !String(o?.packageNumber || o?.package_number || "").trim()
-        );
-        if (stillMissingPkg.length > 0) {
-          console.warn(
-            `[Shopee Print Create] Retry enrich package_number cho ${stillMissingPkg.length} \u0111\u01A1n m\u1EDBi x\xE1c nh\u1EADn...`
-          );
-          await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, stillMissingPkg);
-        }
-        for (const order of groupOrders) {
-          const orderList = [order].map((o) => buildShopeeShippingDocOrderRow(o)).filter((r2) => Boolean(r2?.order_sn));
-          if (orderList.length === 0) continue;
-          const missingPkg = orderList.filter((r2) => !String(r2.package_number || "").trim());
-          const missingTn = orderList.filter((r2) => !String(r2.tracking_number || "").trim());
-          console.log(
-            `[Shopee Print Create] Payload check shop=${shopId} order=${orderList[0].order_sn}: with_pkg=${orderList.length - missingPkg.length}/${orderList.length} with_tn=${orderList.length - missingTn.length}/${orderList.length}`
-          );
-          if (missingPkg.length > 0 && missingTn.length > 0) {
-            console.warn(
-              `[Shopee Print Create] THI\u1EBEU package_number + tracking_number cho: ${missingPkg.map((r2) => r2.order_sn).join(", ")} \u2014 skip create`
-            );
-            tasks.push({
-              task_id: "",
-              shopId,
-              orderSns: orderList.map((r2) => r2.order_sn),
-              status: "FAILED",
-              create_error: "missing_package_and_tracking",
-              create_message: "Thi\u1EBFu package_number v\xE0 tracking_number t\u1EEB Shopee \u2014 kh\xF4ng g\u1ECDi create_shipping_document. \u0110\u1ED3ng b\u1ED9 l\u1EA1i \u0111\u01A1n r\u1ED3i th\u1EED in."
-            });
-            continue;
-          }
-          if (missingPkg.length > 0) {
-            console.warn(
-              `[Shopee Print Create] THI\u1EBEU package_number cho: ${missingPkg.map((r2) => r2.order_sn).join(", ")} \u2014 v\u1EABn th\u1EED create v\u1EDBi order_sn (+ tracking n\u1EBFu c\xF3)`
-            );
-          }
-          const createPayload = {
-            order_list: orderList,
-            shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
-            // NORMAL_AIR_WAYBILL — máy in văn phòng A4
-          };
-          console.log(
-            `[Shopee Print Create] create_shipping_document REQUEST shop=${shopId}:`,
-            JSON.stringify(createPayload)
-          );
-          let createResult = null;
-          try {
-            createResult = await shopeeCreateShippingDocument(shopId, accessToken, orderList);
-          } catch (createErr) {
-            console.error(
-              `[Shopee Print Create] create exception shop=${shopId} order=${orderList[0].order_sn}:`,
-              createErr?.message || createErr
-            );
-            tasks.push({
-              task_id: "",
-              shopId,
-              orderSns: orderList.map((r2) => r2.order_sn),
-              status: "FAILED",
-              create_error: "create_shipping_document_failed",
-              create_message: String(createErr?.message || createErr)
-            });
-            continue;
-          }
-          console.log(
-            `[Shopee Print Create] create_shipping_document RESPONSE.data=`,
-            JSON.stringify(createResult)
-          );
-          const createList = createResult?.response?.result_list || createResult?.result_list || [];
-          const failedItems = createList.filter((it) => it?.fail_error);
-          const failedSnSet = new Set(failedItems.map((it) => String(it.order_sn || "")));
-          let okItems = createList.filter((it) => it?.order_sn && !it.fail_error);
-          const okSnSet = new Set(okItems.map((it) => String(it.order_sn)));
-          for (const orig of orderList) {
-            const sn = String(orig.order_sn || "");
-            if (!sn || failedSnSet.has(sn) || okSnSet.has(sn)) continue;
-            okItems.push({ order_sn: sn, package_number: orig.package_number });
-            okSnSet.add(sn);
-          }
-          if (okItems.length === 0 && !createResult?.error && failedItems.length === 0) {
-            okItems = orderList.map((o) => ({ order_sn: o.order_sn, package_number: o.package_number }));
-          }
-          if (okItems.length === 0) {
-            const first = failedItems[0];
-            const detail = failedItems.map((it) => `${it.order_sn}: ${it.fail_message || it.fail_error}`).join("; ");
-            console.warn(
-              `[Shopee Print Create] skip order=${orderList[0].order_sn}:`,
-              detail || createResult?.message || createResult?.error
-            );
-            tasks.push({
-              task_id: "",
-              shopId,
-              orderSns: orderList.map((r2) => r2.order_sn),
-              status: "FAILED",
-              create_error: first?.fail_error || createResult?.error || "document_generation_failed",
-              create_message: detail || createResult?.message || first?.fail_message || "Shopee t\u1EEB ch\u1ED1i t\u1EA1o v\u1EADn \u0111\u01A1n."
-            });
-            continue;
-          }
-          const pendingList = okItems.map((it) => {
-            const orig = orderList.find((o) => o.order_sn === String(it.order_sn));
-            const row = { order_sn: String(it.order_sn) };
-            const pkg = String(it.package_number || orig?.package_number || "").trim();
-            const tn = String(orig?.tracking_number || "").trim();
-            if (pkg) row.package_number = pkg;
-            if (tn) row.tracking_number = tn;
-            return row;
-          });
-          const taskId = createPrintBatchTaskId();
-          const now = Date.now();
-          const task = {
-            taskId,
-            shopId,
-            orderList: pendingList,
-            orderIds: [String(order.id || `shopee-${order.orderSn}`)],
-            orderSns: pendingList.map((r2) => r2.order_sn),
-            createResponse: createResult,
-            status: "CREATED",
-            skippedOrders: failedItems.map((it) => ({
-              orderSn: String(it.order_sn || ""),
-              error: String(it.fail_error || "document_generation_failed"),
-              message: String(it.fail_message || it.fail_error || "Shopee create fail")
-            })),
-            createdAt: now,
-            updatedAt: now
-          };
-          printBatchTasks.set(taskId, task);
-          tasks.push({
-            task_id: taskId,
-            shopId,
-            orderSns: task.orderSns,
-            status: "CREATED",
-            create_error: createResult?.error || void 0,
-            create_message: createResult?.message || void 0
-          });
-          console.log(
-            `[Shopee Print Create] task_id=${taskId} shop=${shopId} order=${task.orderSns.join(",")} (1 \u0111\u01A1n / 1 PDF)`
-          );
-        }
-      }
-      const okTasks = tasks.filter((t2) => String(t2.task_id || "").trim());
-      if (!okTasks.length) {
-        const firstFail = tasks.find((t2) => t2.create_error || t2.create_message);
-        return res.status(400).json({
-          success: false,
-          error: firstFail?.create_error || "no_tasks",
-          message: firstFail?.create_message || "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c task in n\xE0o.",
-          tasks
-        });
-      }
-      return res.status(200).json({
-        success: true,
-        task_id: okTasks[0].task_id,
-        task_ids: okTasks.map((t2) => t2.task_id),
-        tasks: okTasks,
-        message: `\u0110\xE3 t\u1EA1o ${okTasks.length} l\u1EC7nh in (m\u1ED7i \u0111\u01A1n 1 PDF) \u2014 FE poll status m\u1ED7i 1s.`
-      });
-    } catch (err) {
-      console.error("[Shopee Print Create] fatal:", err?.stack || err);
-      return res.status(500).json({
-        success: false,
-        error: "internal_error",
-        message: String(err?.message || err)
-      });
-    } finally {
-      endLogisticsWork("print-batch-create");
-    }
+    return printChunkHandler(req, res);
   }
   async function printBatchStatusHandler(req, res) {
-    beginLogisticsWork("print-batch-status");
+    beginLogisticsWork("print-batch-status-local");
     try {
-      pruneOldPrintBatchTasks();
       const taskId = String(req.body?.task_id || req.query?.task_id || "").trim();
-      if (!taskId) {
-        return res.status(400).json({ success: false, error: "missing_task_id", message: "Thi\u1EBFu task_id." });
+      const orderIds = req.body?.order_ids ?? req.body?.orderIds ?? [];
+      if (Array.isArray(orderIds) && orderIds.length > 0) {
+        return printChunkHandler(req, res);
       }
-      const task = printBatchTasks.get(taskId);
-      if (!task) {
-        return res.status(404).json({
-          success: false,
-          error: "task_not_found",
-          status: "FAILED",
-          message: "Kh\xF4ng t\xECm th\u1EA5y task in (h\u1EBFt h\u1EA1n ho\u1EB7c sai task_id)."
-        });
-      }
-      if (task.status === "READY" && task.url) {
-        return res.status(200).json({
-          success: true,
-          task_id: task.taskId,
-          status: "READY",
-          url: task.url,
-          mergedUrl: task.url,
-          pdfFilename: task.pdfFilename,
-          orderSns: task.orderSns || [],
-          readyOrderSns: task.readyOrderSns || task.orderSns,
-          skippedOrders: task.skippedOrders || [],
-          message: "PDF \u0111\xE3 s\u1EB5n s\xE0ng (cache)."
-        });
-      }
-      if (task.status === "FAILED") {
-        return res.status(200).json({
-          success: false,
-          task_id: task.taskId,
-          status: "FAILED",
-          error: task.error,
-          message: task.message || "Task in \u0111\xE3 th\u1EA5t b\u1EA1i.",
-          skippedOrders: task.skippedOrders || []
-        });
-      }
-      let accessToken = "";
-      try {
-        accessToken = await getValidShopeeAccessToken(task.shopId) || "";
-      } catch (tokErr) {
-        console.error(`[Shopee Print Status] token shop=${task.shopId}:`, tokErr?.message || tokErr);
-      }
-      if (!accessToken) {
-        const fail2 = describeShopeeTokenFailure(task.shopId);
-        task.status = "FAILED";
-        task.error = fail2.error;
-        task.message = fail2.message;
-        task.updatedAt = Date.now();
-        return res.status(200).json({
-          success: false,
-          task_id: task.taskId,
-          status: "FAILED",
-          error: fail2.error,
-          message: fail2.message
-        });
-      }
-      console.log(
-        `[Shopee Print Status] get_shipping_document_result task=${task.taskId} shop=${task.shopId} n=${task.orderList.length}`
-      );
-      let pollResult;
-      try {
-        pollResult = await shopeeGetShippingDocumentResult(task.shopId, accessToken, task.orderList);
-      } catch (pollErr) {
-        console.error(`[Shopee Print Status] get_result exception:`, pollErr?.message || pollErr);
-        return res.status(200).json({
-          success: true,
-          task_id: task.taskId,
-          status: "PROCESSING",
-          message: "L\u1ED7i t\u1EA1m khi h\u1ECFi Shopee \u2014 FE th\u1EED l\u1EA1i sau 2s.",
-          detail: String(pollErr?.message || pollErr)
-        });
-      }
-      console.log(
-        `[Shopee Print Status] get_shipping_document_result RESPONSE.data=`,
-        JSON.stringify(pollResult)
-      );
-      if (pollResult?.error && !Array.isArray(pollResult?.response?.result_list) && !Array.isArray(pollResult?.result_list)) {
-        const errMsg = String(pollResult.message || pollResult.error || "get_shipping_document_result failed");
-        console.error(`[Shopee Print Status] Shopee error task=${task.taskId}:`, errMsg);
-        task.status = "FAILED";
-        task.error = String(pollResult.error);
-        task.message = errMsg;
-        task.updatedAt = Date.now();
-        return res.status(200).json({
-          success: false,
-          task_id: task.taskId,
-          status: "FAILED",
-          error: task.error,
-          message: task.message,
-          shopeeResponse: pollResult
-        });
-      }
-      const items = pollResult?.response?.result_list || pollResult?.result_list || [];
-      if (items.length === 0) {
-        task.status = "PROCESSING";
-        task.updatedAt = Date.now();
-        return res.status(200).json({
-          success: true,
-          task_id: task.taskId,
-          status: "PROCESSING",
-          readyCount: 0,
-          pendingCount: task.orderList.length,
-          message: "Shopee ch\u01B0a tr\u1EA3 result_list \u2014 ti\u1EBFp t\u1EE5c ch\u1EDD READY.",
-          shopeeResponse: pollResult
-        });
-      }
-      const bySn = new Map(items.map((it) => [String(it.order_sn || ""), it]));
-      const readyList = [];
-      const stillProcessing = [];
-      const pollFailed = [
-        ...task.skippedOrders || []
-      ];
-      for (const o of task.orderList) {
-        const it = bySn.get(String(o.order_sn));
-        const st = String(it?.status || "").toUpperCase();
-        if (st === "READY") {
-          readyList.push(o);
-        } else if (st === "FAILED" || it?.fail_error) {
-          pollFailed.push({
-            orderSn: o.order_sn,
-            error: String(it?.fail_error || "document_failed"),
-            message: String(it?.fail_message || it?.fail_error || "Shopee b\xE1o FAILED khi t\u1EA1o v\u1EADn \u0111\u01A1n")
-          });
-        } else {
-          stillProcessing.push(o);
-        }
-      }
-      console.log(
-        `[Shopee Print Status] task=${task.taskId} ready=${readyList.length} pending=${stillProcessing.length} failed_new=${pollFailed.length - (task.skippedOrders?.length || 0)}`
-      );
-      if (stillProcessing.length > 0) {
-        task.status = "PROCESSING";
-        task.updatedAt = Date.now();
-        return res.status(200).json({
-          success: true,
-          task_id: task.taskId,
-          status: "PROCESSING",
-          readyCount: readyList.length,
-          pendingCount: stillProcessing.length,
-          failedCount: pollFailed.length,
-          message: `Shopee \u0111ang x\u1EED l\xFD \u2014 READY ${readyList.length}/${task.orderSns.length}`,
-          result_list: items
-        });
-      }
-      if (readyList.length === 0) {
-        const firstFail = pollFailed[0];
-        task.status = "FAILED";
-        task.error = firstFail?.error || pollResult?.error || "document_not_ready";
-        task.message = firstFail?.message || pollResult?.message || "Kh\xF4ng c\xF3 \u0111\u01A1n n\xE0o READY \u2014 to\xE0n b\u1ED9 th\u1EA5t b\u1EA1i ho\u1EB7c ch\u01B0a c\xF3 k\u1EBFt qu\u1EA3.";
-        task.skippedOrders = pollFailed;
-        task.updatedAt = Date.now();
-        return res.status(200).json({
-          success: false,
-          task_id: task.taskId,
-          status: "FAILED",
-          error: task.error,
-          message: task.message,
-          skippedOrders: pollFailed,
-          result_list: items,
-          shopeeResponse: pollResult
-        });
-      }
-      const downloadList = readyList.map((r2) => {
-        const row = { order_sn: r2.order_sn };
-        if (r2.package_number) row.package_number = r2.package_number;
-        return row;
-      });
-      console.log(
-        `[Shopee Print Status] download_shipping_document REQUEST task=${task.taskId}:`,
-        JSON.stringify({
-          order_list: downloadList,
-          shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
-        })
-      );
-      let downloadResult;
-      try {
-        downloadResult = await shopeeDownloadShippingDocument(task.shopId, accessToken, downloadList);
-      } catch (dlErr) {
-        console.error(`[Shopee Print Status] download exception:`, dlErr?.message || dlErr);
-        return res.status(200).json({
-          success: true,
-          task_id: task.taskId,
-          status: "PROCESSING",
-          message: "T\u1EA3i PDF t\u1EA1m l\u1ED7i \u2014 FE th\u1EED l\u1EA1i sau 2s.",
-          detail: String(dlErr?.message || dlErr)
-        });
-      }
-      if (downloadResult?.error && !downloadResult?.buffer) {
-        console.error(
-          `[Shopee Print Status] download JSON error=`,
-          JSON.stringify(downloadResult)
-        );
-      }
-      console.log(
-        `[Shopee Print Status] download meta task=${task.taskId} error=${downloadResult?.error || ""} size=${downloadResult?.buffer?.length || 0} type=${downloadResult?.contentType || ""}`
-      );
-      if (!downloadResult?.buffer || !Buffer.isBuffer(downloadResult.buffer) || !isPdfBuffer(downloadResult.buffer, downloadResult.contentType)) {
-        task.status = "FAILED";
-        task.error = downloadResult?.error || "download_failed";
-        task.message = downloadResult?.message || `Shopee kh\xF4ng tr\u1EA3 PDF h\u1EE3p l\u1EC7 (error=${downloadResult?.error || "unknown"}).`;
-        task.updatedAt = Date.now();
-        return res.status(200).json({
-          success: false,
-          task_id: task.taskId,
-          status: "FAILED",
-          error: task.error,
-          message: task.message,
-          downloadResponse: downloadResult?.error ? { error: downloadResult.error, message: downloadResult.message } : void 0
-        });
-      }
-      const fname = buildMergedLabelFilename(readyList.map((r2) => r2.order_sn));
-      saveLabelFile(downloadResult.buffer, fname, downloadResult.contentType || "application/pdf");
-      assertLabelFileReady(fname);
-      const url = absoluteLabelUrl(`/api/public/labels/${fname}`);
-      if (!url) {
-        task.status = "FAILED";
-        task.error = "empty_label_url";
-        task.message = "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c URL sau khi l\u01B0u PDF.";
-        task.updatedAt = Date.now();
-        return res.status(200).json({
-          success: false,
-          task_id: task.taskId,
-          status: "FAILED",
-          error: task.error,
-          message: task.message
-        });
-      }
-      task.status = "READY";
-      task.url = url;
-      task.pdfFilename = fname;
-      task.readyOrderSns = readyList.map((r2) => r2.order_sn);
-      task.skippedOrders = pollFailed;
-      task.updatedAt = Date.now();
-      downloadResult.buffer = void 0;
-      setImmediate(() => {
-        void markOrdersPrintedInStore(task.readyOrderSns || [], true, {
-          labelUrl: url,
-          pdfFilename: fname
-        }).catch(() => {
-        });
-      });
-      console.log(`[Shopee Print Status] READY task=${task.taskId} url=${url} file=${fname}`);
-      return res.status(200).json({
-        success: true,
-        task_id: task.taskId,
-        status: "READY",
-        url,
-        mergedUrl: url,
-        pdfFilename: fname,
-        orderSns: task.orderSns || task.readyOrderSns || [],
-        readyOrderSns: task.readyOrderSns,
-        skippedOrders: pollFailed,
-        documents: [
-          {
-            shopId: task.shopId,
-            orderSns: task.readyOrderSns,
-            orderSn: (task.readyOrderSns || [])[0],
-            url,
-            contentType: "application/pdf"
-          }
-        ],
-        message: "PDF v\u1EADn \u0111\u01A1n \u0111\xE3 s\u1EB5n s\xE0ng (1 \u0111\u01A1n / 1 file)."
-      });
-    } catch (err) {
-      console.error("[Shopee Print Status] fatal:", err?.stack || err);
-      return res.status(500).json({
+      return res.status(404).json({
         success: false,
+        error: "task_not_found",
         status: "FAILED",
-        error: "internal_error",
-        message: String(err?.message || err)
+        message: taskId ? "Task in c\u0169 kh\xF4ng c\xF2n \u2014 d\xF9ng In \u0111\u01A1n (PDF n\u1ED9i b\u1ED9)." : "Thi\u1EBFu order_ids. In \u0111\u01A1n ch\u1EC9 \u0111\u1ECDc PDF \u0111\xE3 l\u01B0u n\u1ED9i b\u1ED9."
       });
     } finally {
-      endLogisticsWork("print-batch-status");
+      endLogisticsWork("print-batch-status-local");
     }
   }
+  function resolveLocalLabelForOrder(order) {
+    const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+    const orderId = String(order?.id || (orderSn ? `shopee-${orderSn}` : "")).trim();
+    if (!orderSn) return null;
+    const tryFilename = (raw) => {
+      const fn = String(raw || "").trim();
+      const safe = safeLabelFilename(fn) || safeLabelFilename(decodeURIComponent(fn));
+      if (!safe || !hasLabelMem(safe)) return null;
+      const url = absoluteLabelUrl(`/api/public/labels/${safe}`);
+      return url ? { url, pdfFilename: safe } : null;
+    };
+    const metaFn = String(
+      order?.pdfFilename || order?.data?.pdfFilename || ""
+    ).trim();
+    const fromMeta = tryFilename(metaFn);
+    if (fromMeta) {
+      return { ...fromMeta, orderSn, orderId };
+    }
+    const labelUrl = String(
+      order?.labelUrl || order?.pdfUrl || order?.data?.labelUrl || order?.data?.pdfUrl || ""
+    ).trim();
+    const m2 = labelUrl.match(/\/api\/public\/labels\/([^/?#]+)/i);
+    if (m2?.[1]) {
+      const fromUrl = tryFilename(m2[1]);
+      if (fromUrl) return { ...fromUrl, orderSn, orderId };
+    }
+    const existing = findExistingLabelFile(orderSn);
+    if (existing) {
+      const fromDisk = tryFilename(existing);
+      if (fromDisk) return { ...fromDisk, orderSn, orderId };
+    }
+    return null;
+  }
   async function printChunkHandler(req, res) {
-    beginLogisticsWork("print-chunk");
+    beginLogisticsWork("print-chunk-local");
     const t0 = Date.now();
     try {
-      pruneOldPrintBatchTasks();
       const rawIds = req.body?.order_ids ?? req.body?.orderIds ?? [];
       if (!Array.isArray(rawIds) || rawIds.length === 0) {
         return res.status(400).json({
@@ -119586,12 +119036,12 @@ async function startServer() {
       }
       const idList = [...new Set(rawIds.map((id) => String(id || "").trim()).filter(Boolean))];
       const snList = idList.map((id) => id.replace(/^shopee-/i, "").trim()).filter(Boolean);
-      console.log(`[Shopee Print Chunk] order_ids=${idList.join(",")} n=${idList.length}`);
+      console.log(`[Print Local] order_ids=${idList.join(",")} n=${idList.length}`);
       let orders = [];
       try {
         orders = await loadOrdersForShipScoped(idList, snList);
       } catch (loadErr) {
-        console.warn("[Shopee Print Chunk] loadOrdersForShipScoped:", loadErr?.message || loadErr);
+        console.warn("[Print Local] loadOrdersForShipScoped:", loadErr?.message || loadErr);
       }
       if (!orders.length && isMongoReady()) {
         try {
@@ -119601,7 +119051,7 @@ async function startServer() {
             (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
           );
         } catch (apiErr) {
-          console.warn("[Shopee Print Chunk] loadOrdersForApi:", apiErr?.message || apiErr);
+          console.warn("[Print Local] loadOrdersForApi:", apiErr?.message || apiErr);
         }
       }
       if (!orders.length) {
@@ -119611,410 +119061,119 @@ async function startServer() {
           (o) => idSet.has(String(o.id || "")) || idSet.has(String(o.orderSn || "")) || idSet.has(`shopee-${o.orderSn}`)
         );
       }
-      for (const o of orders) {
-        if (o.channel === "shopee" && !o.shopId) {
-          const resolved = resolveOrderShopId(o);
-          if (resolved) o.shopId = resolved;
-        }
-      }
-      const shopeeCandidates = orders.filter((o) => o.channel === "shopee" && o.shopId);
-      if (!shopeeCandidates.length) {
-        return res.status(400).json({
-          success: false,
-          error: "orders_not_found",
-          message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n Shopee (c\xF3 shop_id) \u0111\u1EC3 in.",
-          urls: [],
-          documents: []
-        });
-      }
-      try {
-        await ensureTrackingBeforePrint(orders, shopeeCandidates, { retries: 1 });
-      } catch (trackErr) {
-        console.warn("[Shopee Print Chunk] ensureTracking soft:", trackErr?.message || trackErr);
-      }
-      const pending = [];
-      const isSinglePrint = shopeeCandidates.length === 1;
-      for (let oi = 0; oi < shopeeCandidates.length; oi++) {
-        const order = shopeeCandidates[oi];
-        const shopId = String(order.shopId || "").trim();
-        const orderSn = String(order.orderSn || "").replace(/^shopee-/i, "").trim();
-        const orderId = String(order.id || `shopee-${orderSn}`);
-        if (!shopId || !orderSn) {
-          pending.push({
-            order,
-            shopId,
-            orderList: [],
-            orderId,
-            orderSn,
-            status: "FAILED",
-            error: "missing_shop_or_sn",
-            message: "Thi\u1EBFu shopId ho\u1EB7c orderSn."
-          });
-          continue;
-        }
-        let accessToken = "";
-        try {
-          accessToken = await getValidShopeeAccessToken(shopId) || "";
-        } catch (tokErr) {
-          console.error(`[Shopee Print Chunk] token shop=${shopId}:`, tokErr?.message || tokErr);
-        }
-        if (!accessToken) {
-          const fail2 = describeShopeeTokenFailure(shopId);
-          pending.push({
-            order,
-            shopId,
-            orderList: [],
-            orderId,
-            orderSn,
-            status: "FAILED",
-            error: fail2.error,
-            message: fail2.message
-          });
-          continue;
-        }
-        try {
-          await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
-          const hasPkg = Boolean(String(order.packageNumber || order.package_number || "").trim());
-          const hasTn = Boolean(trackingForShopeeShippingDoc(order));
-          if (!hasPkg && !hasTn) {
-            await sleep2(isSinglePrint ? 300 : 500);
-            await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
-          }
-        } catch (enrErr) {
-          console.warn(`[Shopee Print Chunk] enrich ${orderSn}:`, enrErr?.message || enrErr);
-        }
-        const orderList = [order].map((o) => buildShopeeShippingDocOrderRow(o)).filter((r2) => Boolean(r2?.order_sn));
-        if (orderList.length === 0) {
-          pending.push({
-            order,
-            shopId,
-            orderList: [],
-            orderId,
-            orderSn,
-            status: "FAILED",
-            error: "invalid_order_row",
-            message: "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c order_list cho Shopee."
-          });
-          continue;
-        }
-        const rowPkg = String(orderList[0]?.package_number || "").trim();
-        const rowTn = String(orderList[0]?.tracking_number || "").trim();
-        if (!rowPkg && !rowTn) {
-          pending.push({
-            order,
-            shopId,
-            orderList,
-            orderId,
-            orderSn,
-            status: "FAILED",
-            error: "missing_package_and_tracking",
-            message: "Thi\u1EBFu package_number v\xE0 tracking_number t\u1EEB Shopee \u2014 kh\xF4ng g\u1ECDi create_shipping_document. \u0110\u1ED3ng b\u1ED9 l\u1EA1i \u0111\u01A1n r\u1ED3i th\u1EED in."
-          });
-          continue;
-        }
-        let createResult = null;
-        try {
-          createResult = await shopeeCreateShippingDocument(shopId, accessToken, orderList);
-        } catch (createErr) {
-          pending.push({
-            order,
-            shopId,
-            orderList,
-            orderId,
-            orderSn,
-            status: "FAILED",
-            error: "create_shipping_document_failed",
-            message: String(createErr?.message || createErr)
-          });
-          continue;
-        }
-        const createList = createResult?.response?.result_list || createResult?.result_list || [];
-        const failedItems = createList.filter((it) => it?.fail_error);
-        if (failedItems.length > 0 && createList.every((it) => it?.fail_error)) {
-          const first = failedItems[0];
-          pending.push({
-            order,
-            shopId,
-            orderList,
-            orderId,
-            orderSn,
-            status: "FAILED",
-            error: String(first?.fail_error || createResult?.error || "document_generation_failed"),
-            message: String(
-              first?.fail_message || createResult?.message || "Shopee t\u1EEB ch\u1ED1i t\u1EA1o v\u1EADn \u0111\u01A1n."
-            )
-          });
-          continue;
-        }
-        for (const it of createList) {
-          if (it?.fail_error) continue;
-          const pkg = String(it?.package_number || "").trim();
-          if (pkg && orderList[0] && !orderList[0].package_number) {
-            orderList[0].package_number = pkg;
-          }
-        }
-        pending.push({
-          order,
-          shopId,
-          orderList,
-          orderId,
-          orderSn,
-          status: "PENDING"
-        });
-        console.log(`[Shopee Print Chunk] created order=${orderSn} shop=${shopId}`);
-        if (!isSinglePrint && oi < shopeeCandidates.length - 1 && PRINT_API_DELAY_MS > 0) {
-          await sleep2(PRINT_API_DELAY_MS);
-        }
-      }
-      const deadline = Date.now() + PRINT_CHUNK_DEADLINE_MS;
-      let pollRound = 0;
-      while (pending.some((p) => p.status === "PENDING") && pollRound < PRINT_CHUNK_POLL_MAX && Date.now() < deadline) {
-        if (pollRound > 0) await sleep2(PRINT_CHUNK_POLL_MS);
-        pollRound += 1;
-        for (const item of pending) {
-          if (item.status !== "PENDING" || item.orderList.length === 0) continue;
-          let accessToken = "";
-          try {
-            accessToken = await getValidShopeeAccessToken(item.shopId) || "";
-          } catch {
-            continue;
-          }
-          if (!accessToken) continue;
-          let pollResult;
-          try {
-            pollResult = await shopeeGetShippingDocumentResult(
-              item.shopId,
-              accessToken,
-              item.orderList
-            );
-          } catch (pollErr) {
-            console.warn(
-              `[Shopee Print Chunk] poll ${item.orderSn}:`,
-              pollErr?.message || pollErr
-            );
-            continue;
-          }
-          const items = pollResult?.response?.result_list || pollResult?.result_list || [];
-          const bySn = new Map(items.map((it2) => [String(it2.order_sn || ""), it2]));
-          const it = bySn.get(item.orderSn) || items[0];
-          const st = String(it?.status || "").toUpperCase();
-          if (st === "READY") {
-            item.status = "READY";
-          } else if (st === "FAILED" || it?.fail_error) {
-            item.status = "FAILED";
-            item.error = String(it?.fail_error || "document_failed");
-            item.message = String(
-              it?.fail_message || it?.fail_error || "Shopee b\xE1o FAILED khi t\u1EA1o v\u1EADn \u0111\u01A1n"
-            );
-          }
-        }
-      }
-      for (const item of pending) {
-        if (item.status === "PENDING") {
-          item.status = "FAILED";
-          item.error = "print_poll_timeout";
-          item.message = "Qu\xE1 th\u1EDDi gian ch\u1EDD Shopee xu\u1EA5t PDF trong chunk. Th\u1EED In \u0111\u01A1n l\u1EA1i.";
-        }
-      }
       const documents = [];
-      const urls = [];
       const results = [];
-      const pdfParts = [];
-      for (const item of pending) {
-        if (item.status !== "READY") {
-          documents.push({
-            orderSn: item.orderSn,
-            orderId: item.orderId,
-            orderSns: [item.orderSn],
-            error: item.error || "print_failed",
-            message: item.message || "In th\u1EA5t b\u1EA1i"
-          });
-          results.push({
-            orderId: item.orderId,
-            orderSn: item.orderSn,
-            success: false,
-            error: item.error,
-            message: item.message
-          });
-          continue;
-        }
-        let accessToken = "";
-        try {
-          accessToken = await getValidShopeeAccessToken(item.shopId) || "";
-        } catch {
-        }
-        if (!accessToken) {
-          const fail2 = describeShopeeTokenFailure(item.shopId);
-          documents.push({
-            orderSn: item.orderSn,
-            orderId: item.orderId,
-            error: fail2.error,
-            message: fail2.message
-          });
-          results.push({
-            orderId: item.orderId,
-            orderSn: item.orderSn,
-            success: false,
-            ...fail2
-          });
-          continue;
-        }
-        const downloadList = item.orderList.map((r2) => {
-          const row = { order_sn: r2.order_sn };
-          if (r2.package_number) row.package_number = r2.package_number;
-          return row;
-        });
-        let downloadResult;
-        try {
-          downloadResult = await shopeeDownloadShippingDocument(
-            item.shopId,
-            accessToken,
-            downloadList
-          );
-        } catch (dlErr) {
-          documents.push({
-            orderSn: item.orderSn,
-            orderId: item.orderId,
-            error: "download_failed",
-            message: String(dlErr?.message || dlErr)
-          });
-          results.push({
-            orderId: item.orderId,
-            orderSn: item.orderSn,
-            success: false,
-            error: "download_failed",
-            message: String(dlErr?.message || dlErr)
-          });
-          continue;
-        }
-        if (!downloadResult?.buffer || !Buffer.isBuffer(downloadResult.buffer) || !isPdfBuffer(downloadResult.buffer, downloadResult.contentType)) {
-          documents.push({
-            orderSn: item.orderSn,
-            orderId: item.orderId,
-            error: downloadResult?.error || "download_failed",
-            message: downloadResult?.message || "Shopee kh\xF4ng tr\u1EA3 PDF h\u1EE3p l\u1EC7."
-          });
-          results.push({
-            orderId: item.orderId,
-            orderSn: item.orderSn,
-            success: false,
-            error: downloadResult?.error || "download_failed",
-            message: downloadResult?.message || "Shopee kh\xF4ng tr\u1EA3 PDF h\u1EE3p l\u1EC7."
-          });
-          if (downloadResult) downloadResult.buffer = void 0;
-          continue;
-        }
-        const singleFname = buildMergedLabelFilename([item.orderSn]);
-        const singleBuf = downloadResult.buffer;
-        try {
-          saveLabelFile(singleBuf, singleFname, downloadResult.contentType || "application/pdf");
-        } catch (saveErr) {
-          console.warn(
-            `[Shopee Print Chunk] l\u01B0u PDF l\u1EBB ${item.orderSn}:`,
-            saveErr?.message || saveErr
-          );
-        }
-        pdfParts.push({
-          orderSn: item.orderSn,
-          orderId: item.orderId,
-          buffer: Buffer.from(singleBuf),
-          singleFname
-        });
-        downloadResult.buffer = void 0;
-        if (PRINT_API_DELAY_MS > 0 && pdfParts.length < pending.filter((p) => p.status === "READY").length) {
-          await sleep2(Math.min(PRINT_API_DELAY_MS, 200));
+      const urls = [];
+      const missingOrders = [];
+      const byKey = /* @__PURE__ */ new Map();
+      for (const o of orders) {
+        const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim();
+        const id = String(o.id || "").trim();
+        if (id) byKey.set(id, o);
+        if (sn) {
+          byKey.set(sn, o);
+          byKey.set(`shopee-${sn}`, o);
         }
       }
-      let primaryUrl = null;
-      let primaryFilename = null;
-      const successSns = pdfParts.map((p) => p.orderSn);
-      if (pdfParts.length === 1) {
-        primaryFilename = pdfParts[0].singleFname;
-        try {
-          assertLabelFileReady(primaryFilename);
-          primaryUrl = absoluteLabelUrl(`/api/public/labels/${primaryFilename}`);
-        } catch {
-          try {
-            saveLabelFile(pdfParts[0].buffer, primaryFilename, "application/pdf");
-            assertLabelFileReady(primaryFilename);
-            primaryUrl = absoluteLabelUrl(`/api/public/labels/${primaryFilename}`);
-          } catch (err) {
-            console.error(`[Shopee Print Chunk] save 1 PDF:`, err?.message || err);
-          }
-        }
-      } else if (pdfParts.length > 1) {
-        primaryFilename = buildMergedLabelFilename(successSns);
-        try {
-          const mergedBuf = await mergePdfLabelBuffers(pdfParts.map((p) => p.buffer));
-          saveLabelFile(mergedBuf, primaryFilename, "application/pdf");
-          assertLabelFileReady(primaryFilename);
-          primaryUrl = absoluteLabelUrl(`/api/public/labels/${primaryFilename}`);
-          console.log(
-            `[Shopee Print Chunk] \u0110\xE3 gh\xE9p ${pdfParts.length} PDF \u2192 ${primaryFilename} (${mergedBuf.length} bytes)`
-          );
-        } catch (mergeErr) {
-          console.error(`[Shopee Print Chunk] merge PDF fail:`, mergeErr?.message || mergeErr);
-          try {
-            primaryFilename = pdfParts[0].singleFname;
-            primaryUrl = absoluteLabelUrl(`/api/public/labels/${primaryFilename}`);
-          } catch {
-            primaryUrl = null;
-            primaryFilename = null;
-          }
-        }
-      }
-      for (const part of pdfParts) {
-        part.buffer = void 0;
-      }
-      if (primaryUrl && primaryFilename) {
-        urls.push(primaryUrl);
-        for (const part of pdfParts) {
+      for (const rawId of idList) {
+        const order = byKey.get(rawId) || byKey.get(rawId.replace(/^shopee-/i, ""));
+        const orderSn = String(order?.orderSn || rawId.replace(/^shopee-/i, "")).trim();
+        const orderId = String(order?.id || rawId).trim();
+        if (!order) {
           documents.push({
-            url: primaryUrl,
-            pdfFilename: primaryFilename,
-            orderSn: part.orderSn,
-            orderId: part.orderId,
-            orderSns: successSns
+            orderSn,
+            orderId,
+            orderSns: [orderSn],
+            error: "order_not_found",
+            message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n trong DB n\u1ED9i b\u1ED9."
           });
           results.push({
-            orderId: part.orderId,
-            orderSn: part.orderSn,
-            success: true,
-            url: primaryUrl,
-            pdfFilename: primaryFilename
+            orderId,
+            orderSn,
+            success: false,
+            error: "order_not_found",
+            message: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n trong DB n\u1ED9i b\u1ED9."
           });
+          continue;
         }
-        setImmediate(() => {
-          void markOrdersPrintedInStore(successSns, true, {
-            labelUrl: primaryUrl,
-            pdfFilename: primaryFilename
-          }).catch(() => {
+        const local = resolveLocalLabelForOrder(order);
+        if (!local) {
+          missingOrders.push(order);
+          documents.push({
+            orderSn,
+            orderId,
+            orderSns: [orderSn],
+            error: "label_not_ready",
+            message: "V\u1EADn \u0111\u01A1n ch\u01B0a c\xF3 s\u1EB5n trong h\u1EC7 th\u1ED1ng \u2014 \u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m, vui l\xF2ng in l\u1EA1i sau v\xE0i gi\xE2y."
           });
+          results.push({
+            orderId,
+            orderSn,
+            success: false,
+            error: "label_not_ready",
+            message: "V\u1EADn \u0111\u01A1n ch\u01B0a c\xF3 s\u1EB5n trong h\u1EC7 th\u1ED1ng \u2014 \u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m, vui l\xF2ng in l\u1EA1i sau v\xE0i gi\xE2y."
+          });
+          continue;
+        }
+        if (!urls.includes(local.url)) urls.push(local.url);
+        documents.push({
+          url: local.url,
+          pdfFilename: local.pdfFilename,
+          orderSn: local.orderSn,
+          orderId: local.orderId,
+          orderSns: [local.orderSn]
         });
+        results.push({
+          orderId: local.orderId,
+          orderSn: local.orderSn,
+          success: true,
+          url: local.url,
+          pdfFilename: local.pdfFilename
+        });
+      }
+      if (missingOrders.length > 0) {
+        try {
+          firePrepareShippingLabelsForOrders(missingOrders);
+        } catch (bgErr) {
+          console.warn("[Print Local] enqueue prepare:", bgErr?.message || bgErr);
+        }
       }
       const successCount = results.filter((r2) => r2.success).length;
       const failCount = results.length - successCount;
       const elapsed = Date.now() - t0;
-      const message = successCount > 0 ? pdfParts.length > 1 ? `\u0110\xE3 gh\xE9p ${pdfParts.length} v\u1EADn \u0111\u01A1n th\xE0nh 1 file PDF A4 (${primaryFilename}) \u2014 ${elapsed}ms.` : `\u0110\xE3 s\u1EB5n s\xE0ng 1 URL PDF (${elapsed}ms).` : `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c URL PDF n\xE0o (${elapsed}ms).`;
+      const message = successCount > 0 && failCount === 0 ? `\u0110\xE3 l\u1EA5y ${successCount} PDF t\u1EEB kho n\u1ED9i b\u1ED9 (${elapsed}ms).` : successCount > 0 ? `\u0110\xE3 l\u1EA5y ${successCount}/${results.length} PDF t\u1EEB kho n\u1ED9i b\u1ED9; ${failCount} \u0111\u01A1n ch\u01B0a s\u1EB5n s\xE0ng (\u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m).` : `Ch\u01B0a c\xF3 PDF n\u1ED9i b\u1ED9 cho c\xE1c \u0111\u01A1n \u0111\xE3 ch\u1ECDn \u2014 h\u1EC7 th\u1ED1ng \u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m, th\u1EED l\u1EA1i sau v\xE0i gi\xE2y.`;
       console.log(
-        `[Shopee Print Chunk] Done ok=${successCount} fail=${failCount} merged=${Boolean(primaryUrl && pdfParts.length > 1)} file=${primaryFilename || "-"} ${elapsed}ms`
+        `[Print Local] Done ok=${successCount} fail=${failCount} missing=${missingOrders.length} ${elapsed}ms`
       );
-      return res.status(200).json({
+      if (successCount > 0) {
+        const okSns = results.filter((r2) => r2.success).map((r2) => String(r2.orderSn || "")).filter(Boolean);
+        const firstDoc = documents.find((d) => d.url && d.pdfFilename);
+        setImmediate(() => {
+          void markOrdersPrintedInStore(okSns, true, {
+            labelUrl: firstDoc?.url,
+            pdfFilename: firstDoc?.pdfFilename
+          }).catch(() => {
+          });
+        });
+      }
+      return res.status(successCount > 0 ? 200 : 409).json({
         success: successCount > 0,
-        urls: primaryUrl ? [primaryUrl] : [],
-        url: primaryUrl,
-        mergedUrl: primaryUrl,
-        pdfFilename: primaryFilename,
+        urls,
+        url: urls[0] || null,
+        mergedUrl: urls[0] || null,
+        pdfFilename: documents.find((d) => d.pdfFilename)?.pdfFilename,
         documents,
         results,
         successCount,
         failCount,
         total: idList.length,
         message,
-        elapsedMs: elapsed
+        elapsedMs: elapsed,
+        local_only: true,
+        preparing: missingOrders.map((o) => String(o.orderSn || "")).filter(Boolean)
       });
     } catch (err) {
-      console.error("[Shopee Print Chunk] fatal:", err?.stack || err);
+      console.error("[Print Local] fatal:", err?.stack || err);
       return res.status(500).json({
         success: false,
         error: "internal_error",
@@ -120023,55 +119182,95 @@ async function startServer() {
         documents: []
       });
     } finally {
-      endLogisticsWork("print-chunk");
+      endLogisticsWork("print-chunk-local");
     }
   }
   async function printDocumentHandler(req, res) {
     return printChunkHandler(req, res);
   }
-  function fireCreateShippingDocumentsForOrders(items) {
+  const labelPrepareInFlight = /* @__PURE__ */ new Set();
+  function firePrepareShippingLabelsForOrders(items) {
     if (!Array.isArray(items) || items.length === 0) return;
     setImmediate(() => {
       void (async () => {
-        const byShop = /* @__PURE__ */ new Map();
+        const queue = [];
         for (const it of items) {
           const o = it.order || it;
-          const shopId = String(it.shopId || o?.shopId || resolveOrderShopId(o) || "").trim();
           const sn = String(it.orderSn || o?.orderSn || "").replace(/^shopee-/i, "").trim();
-          if (!shopId || !sn) continue;
-          const row = { order_sn: sn };
-          const pkg = String(it.packageNumber || o?.packageNumber || "").trim();
-          const tn = String(
-            it.trackingNumber || o?.trackingNumber || o?.tracking_no || ""
-          ).trim();
-          if (pkg) row.package_number = pkg;
-          if (tn && !/^0FG/i.test(tn) && !isShopeeInternalTrackingCode2(tn)) {
-            row.tracking_number = tn;
-          }
-          const list = byShop.get(shopId) || [];
-          list.push(row);
-          byShop.set(shopId, list);
+          if (!sn || labelPrepareInFlight.has(sn)) continue;
+          if (resolveLocalLabelForOrder(o)) continue;
+          labelPrepareInFlight.add(sn);
+          queue.push({ ...o, shopId: it.shopId || o?.shopId, orderSn: sn });
         }
-        for (const [shopId, orderList] of byShop) {
+        if (queue.length === 0) return;
+        console.log(`[Label Prepare BG] START n=${queue.length}`);
+        for (const order of queue) {
+          const sn = String(order.orderSn || "").trim();
           try {
-            const accessToken = await getValidShopeeAccessToken(shopId) || "";
-            if (!accessToken) continue;
-            for (let offset = 0; offset < orderList.length; offset += SHOPEE_SHIPPING_DOC_BATCH_MAX) {
-              const chunk = orderList.slice(offset, offset + SHOPEE_SHIPPING_DOC_BATCH_MAX);
-              await shopeeCreateShippingDocument(shopId, accessToken, chunk);
-              if (offset + SHOPEE_SHIPPING_DOC_BATCH_MAX < orderList.length) {
-                await sleep2(PRINT_API_DELAY_MS);
-              }
+            const shopId = String(order.shopId || resolveOrderShopId(order) || "").trim();
+            if (!shopId) {
+              console.warn(`[Label Prepare BG] skip ${sn}: missing shopId`);
+              continue;
             }
+            let accessToken = "";
+            try {
+              accessToken = await getValidShopeeAccessToken(shopId) || "";
+            } catch {
+            }
+            if (!accessToken) {
+              console.warn(`[Label Prepare BG] skip ${sn}: no token shop=${shopId}`);
+              continue;
+            }
+            try {
+              await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, [order]);
+            } catch (enrErr) {
+              console.warn(`[Label Prepare BG] enrich ${sn}:`, enrErr?.message || enrErr);
+            }
+            const row = buildShopeeShippingDocOrderRow(order);
+            if (!row?.order_sn) {
+              console.warn(`[Label Prepare BG] skip ${sn}: invalid shipping row`);
+              continue;
+            }
+            const hasPkg = Boolean(String(row.package_number || "").trim());
+            const hasTn = Boolean(String(row.tracking_number || "").trim());
+            if (!hasPkg && !hasTn) {
+              console.warn(`[Label Prepare BG] skip ${sn}: missing package+tracking`);
+              continue;
+            }
+            const gen = await generateShopeeShippingDocument(shopId, [row]);
+            const pdfFilename = String(gen?.filename || gen?.pdfFilename || "").trim();
+            if (!gen?.success || !gen.url || !pdfFilename) {
+              console.warn(
+                `[Label Prepare BG] fail ${sn}:`,
+                gen?.message || gen?.error || "no_url"
+              );
+              continue;
+            }
+            await bulkUpdateShippedOrdersBySn([
+              {
+                orderSn: sn,
+                shopId,
+                labelUrl: String(gen.url),
+                pdfFilename
+              }
+            ]);
+            order.labelUrl = gen.url;
+            order.pdfUrl = gen.url;
+            order.pdfFilename = pdfFilename;
+            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename}`);
           } catch (err) {
-            console.warn(
-              `[Ship Order] BG create_shipping_document skip shop=${shopId}:`,
-              err?.message || err
-            );
+            console.warn(`[Label Prepare BG] ${sn}:`, err?.message || err);
+          } finally {
+            labelPrepareInFlight.delete(sn);
+            await sleep2(PRINT_API_DELAY_MS || 300);
           }
         }
+        console.log("[Label Prepare BG] DONE");
       })();
     });
+  }
+  function fireCreateShippingDocumentsForOrders(items) {
+    firePrepareShippingLabelsForOrders(items);
   }
   async function executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList) {
     pruneOldShipOrderJobs();

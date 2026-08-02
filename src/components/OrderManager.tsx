@@ -2739,196 +2739,104 @@ export default function OrderManager({
       opts?.onProgress?.(Math.min(completed, uniqueIds.length), uniqueIds.length);
     };
 
-    // —— Fast-path: đúng 1 đơn — bỏ chunk/queue ——
-    if (uniqueIds.length === 1) {
-      opts?.onStatus?.('Đang in 1 đơn — xử lý ngay...');
-      reportProgress(0);
-      try {
-        const res = await fetch('/api/shopee/print-document/chunk', {
-          method: 'POST',
-          headers: authHeaders(),
-          body: JSON.stringify({ order_ids: uniqueIds, orderIds: uniqueIds }),
-        });
-        const data = await parseJsonResponse<
-          PrintDocumentResponse & {
-            urls?: string[];
-            results?: Array<{
-              success?: boolean;
-              url?: string;
-              orderSn?: string;
-              orderId?: string;
-              pdfFilename?: string;
-              error?: string;
-              message?: string;
-            }>;
-          }
-        >(res);
-        const allDocs: NonNullable<PrintDocumentResponse['documents']> = [];
-        const allUrls: string[] = [];
-        const errors: string[] = [];
-        mergeChunkResponse(data, allDocs, allUrls, errors);
-        if (!res.ok && allUrls.length === 0) {
-          return {
-            ok: false,
-            status: res.status,
-            data: {
-              error: data.error || 'print_failed',
-              message: data.message || errors.join('; ') || `HTTP ${res.status}`,
-              documents: allDocs,
-            },
-          };
-        }
-        if (allUrls.length === 0 && allDocs.every((d) => !d.url)) {
-          return {
-            ok: false,
-            status: res.status >= 400 ? res.status : 500,
-            data: {
-              error: 'empty_label_file',
-              message: errors.join('; ') || data.message || 'Không nhận được URL PDF từ Backend.',
-              documents: allDocs,
-            },
-          };
-        }
-        reportProgress(1);
-        return {
-          ok: true,
-          status: 200,
-          data: {
-            success: true,
-            url: allUrls[0],
-            mergedUrl: allUrls[0],
-            pdfFilename: allDocs.find((d) => d.pdfFilename)?.pdfFilename,
-            documents: allDocs.length ? allDocs : allUrls.map((url) => ({ url })),
-            message: data.message || 'Đã sẵn sàng PDF cho 1 đơn.',
-          },
-        };
-      } catch (err) {
-        return {
-          ok: false,
-          status: 500,
-          data: {
-            error: 'print_exception',
-            message: err instanceof Error ? err.message : 'Lỗi in 1 đơn.',
-          },
-        };
-      }
-    }
-
-    // —— Nhiều đơn: mỗi đơn 1 request (concurrency giới hạn) → onProgress tăng từng đơn (tránh kẹt 0/N).
-    const allDocs: NonNullable<PrintDocumentResponse['documents']> = [];
-    const allUrls: string[] = [];
-    const errors: string[] = [];
-    let lastStatus = 200;
-    let completedOrders = 0;
-
+    // —— Local DB print: 1 request cho toàn bộ order_ids (backend không gọi Shopee) ——
     opts?.onStatus?.(
-      `Đang in ${uniqueIds.length} đơn (tối đa ${PRINT_FE_CHUNK_CONCURRENCY} đơn song song)...`,
+      uniqueIds.length === 1
+        ? 'Đang lấy PDF từ kho nội bộ...'
+        : `Đang lấy ${uniqueIds.length} PDF từ kho nội bộ...`,
     );
     reportProgress(0);
-
-    type OrderPrintOutcome = {
-      status: number;
-      docs: NonNullable<PrintDocumentResponse['documents']>;
-      urls: string[];
-      errors: string[];
-    };
-
-    const outcomes = await mapPoolLimited(
-      uniqueIds,
-      PRINT_FE_CHUNK_CONCURRENCY,
-      async (orderId, i) => {
-        if (i > 0 && PRINT_FE_CHUNK_STAGGER_MS > 0) {
-          await new Promise((r) => setTimeout(r, PRINT_FE_CHUNK_STAGGER_MS * Math.min(i, 2)));
+    try {
+      const res = await fetch('/api/shopee/print-document/chunk', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ order_ids: uniqueIds, orderIds: uniqueIds }),
+      });
+      const data = await parseJsonResponse<
+        PrintDocumentResponse & {
+          urls?: string[];
+          preparing?: string[];
+          results?: Array<{
+            success?: boolean;
+            url?: string;
+            orderSn?: string;
+            orderId?: string;
+            pdfFilename?: string;
+            error?: string;
+            message?: string;
+          }>;
         }
-        opts?.onStatus?.(`Đang in đơn ${i + 1}/${uniqueIds.length}...`);
-        const localDocs: NonNullable<PrintDocumentResponse['documents']> = [];
-        const localUrls: string[] = [];
-        const localErrors: string[] = [];
-        let status = 200;
-        try {
-          const res = await fetch('/api/shopee/print-document/chunk', {
-            method: 'POST',
-            headers: authHeaders(),
-            body: JSON.stringify({ order_ids: [orderId], orderIds: [orderId] }),
-          });
-          status = res.status;
-          const data = await parseJsonResponse<
-            PrintDocumentResponse & {
-              urls?: string[];
-              results?: Array<{
-                success?: boolean;
-                url?: string;
-                orderSn?: string;
-                orderId?: string;
-                pdfFilename?: string;
-                error?: string;
-                message?: string;
-              }>;
-            }
-          >(res);
+      >(res);
+      const allDocs: NonNullable<PrintDocumentResponse['documents']> = [];
+      const allUrls: string[] = [];
+      const errors: string[] = [];
+      mergeChunkResponse(data, allDocs, allUrls, errors);
 
-          mergeChunkResponse(data, localDocs, localUrls, localErrors);
+      const readyCount = allDocs.filter((d) => d.url).length || allUrls.length;
+      reportProgress(readyCount > 0 ? readyCount : 0);
 
-          if (!res.ok && localUrls.length === 0) {
-            localErrors.push(data.message || data.error || `HTTP ${res.status}`);
-          } else if (data.message && !data.success && localUrls.length === 0) {
-            localErrors.push(data.message);
+      if (Array.isArray(data.results)) {
+        for (const r of data.results) {
+          if (r?.success === false) {
+            errors.push(String(r?.message || r?.error || r?.orderSn || 'fail'));
           }
-        } catch (err) {
-          localErrors.push(err instanceof Error ? err.message : `Lỗi đơn ${i + 1}`);
-        } finally {
-          completedOrders += 1;
-          reportProgress(completedOrders);
-          opts?.onStatus?.(`Đã xong ${completedOrders}/${uniqueIds.length} đơn...`);
         }
-        return {
-          status,
-          docs: localDocs,
-          urls: localUrls,
-          errors: localErrors,
-        } satisfies OrderPrintOutcome;
-      },
-    );
-
-    for (const out of outcomes) {
-      if (out.status >= 400) lastStatus = out.status;
-      for (const d of out.docs) allDocs.push(d);
-      for (const u of out.urls) {
-        if (!allUrls.includes(u)) allUrls.push(u);
       }
-      errors.push(...out.errors);
-    }
 
-    if (allUrls.length === 0 && allDocs.every((d) => !d.url)) {
+      if ((!res.ok || res.status === 409) && allUrls.length === 0) {
+        return {
+          ok: false,
+          status: res.status,
+          data: {
+            error: data.error || 'label_not_ready',
+            message:
+              data.message ||
+              errors.join('; ') ||
+              'Vận đơn chưa sẵn sàng trong kho nội bộ — hệ thống đang chuẩn bị ngầm, thử lại sau vài giây.',
+            documents: allDocs,
+          },
+        };
+      }
+      if (allUrls.length === 0 && allDocs.every((d) => !d.url)) {
+        return {
+          ok: false,
+          status: res.status >= 400 ? res.status : 409,
+          data: {
+            error: 'label_not_ready',
+            message:
+              errors.join('; ') ||
+              data.message ||
+              'Chưa có PDF nội bộ — đang chuẩn bị ngầm, thử lại sau vài giây.',
+            documents: allDocs,
+          },
+        };
+      }
+
+      reportProgress(uniqueIds.length);
+      return {
+        ok: true,
+        status: 200,
+        data: {
+          success: true,
+          url: allUrls[0],
+          mergedUrl: allUrls[0],
+          pdfFilename: allDocs.find((d) => d.pdfFilename)?.pdfFilename,
+          documents: allDocs.length ? allDocs : allUrls.map((url) => ({ url })),
+          message:
+            data.message ||
+            `Đã lấy ${allUrls.length} PDF từ kho nội bộ.`,
+        },
+      };
+    } catch (err) {
       return {
         ok: false,
-        status: lastStatus >= 400 ? lastStatus : 500,
+        status: 500,
         data: {
-          error: 'empty_label_file',
-          message: errors.join('; ') || 'Không nhận được URL PDF từ Backend.',
-          documents: allDocs,
+          error: 'print_exception',
+          message: err instanceof Error ? err.message : 'Lỗi in vận đơn (kho nội bộ).',
         },
       };
     }
-
-    reportProgress(uniqueIds.length);
-    return {
-      ok: true,
-      status: 200,
-      data: {
-        success: true,
-        url: allUrls[0],
-        mergedUrl: allUrls[0],
-        pdfFilename: allDocs.find((d) => d.pdfFilename)?.pdfFilename,
-        documents: allDocs.length
-          ? allDocs
-          : allUrls.map((url) => ({ url })),
-        message:
-          allUrls.length === uniqueIds.length && errors.length === 0
-            ? `Đã sẵn sàng ${allUrls.length} URL PDF (${uniqueIds.length} đơn).`
-            : `Đã sẵn sàng ${allUrls.length}/${uniqueIds.length} URL PDF. ${errors.filter(Boolean).join('; ')}`,
-      },
-    };
   };
   const applyPrintDocumentResponse = async (
     data: PrintDocumentResponse,
@@ -3253,7 +3161,15 @@ export default function OrderManager({
             ordersRef.current = merged;
             onUpdateOrders(merged, { persist: false });
           }
-          return { success: false, message: data.message || TRACKING_MISSING_TOAST };
+          if (data.error === 'tracking_number_missing') {
+            return { success: false, message: data.message || TRACKING_MISSING_TOAST };
+          }
+          return {
+            success: false,
+            message:
+              data.message ||
+              'Vận đơn chưa sẵn sàng trong kho nội bộ — đang chuẩn bị ngầm, thử lại sau vài giây.',
+          };
         }
         return {
           success: false,
