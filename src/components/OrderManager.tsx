@@ -2434,10 +2434,8 @@ export default function OrderManager({
   };
 
   /**
-   * In vận đơn (create/poll/download Shopee) có thể mất tới ~2 phút khi Shopee
-   * chậm hoặc cần retry GHN/J&T. Dùng job chạy NGẦM ở backend + poll thay vì giữ
-   * 1 request HTTP treo suốt thời gian đó. Rớt về endpoint đồng bộ cũ nếu backend
-   * chưa có route job (cPanel chưa deploy bản mới) để không phá luồng in hiện tại.
+   * Batch Print: API create (task_id) → FE setInterval poll status mỗi 2s → READY mở PDF.
+   * Backend không giữ HTTP chờ Shopee (tránh timeout cPanel 120s).
    */
   const fetchPrintDocumentApi = async (
     orderIds: string[],
@@ -2447,62 +2445,157 @@ export default function OrderManager({
     status: number;
     data: PrintDocumentResponse;
   }> => {
-    try {
-      const startRes = await fetch('/api/shopee/print-document/async', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({
-          orderIds,
-          ...(opts?.waitMs != null && opts.waitMs > 0 ? { waitMs: opts.waitMs } : {}),
-        }),
-      });
-      if (startRes.status === 404) {
-        return fetchPrintDocumentSync(orderIds, opts);
-      }
-      const startData = await parseJsonResponse<{ accepted?: boolean; jobId?: string }>(startRes);
-      if (!startRes.ok || !startData?.jobId) {
-        return fetchPrintDocumentSync(orderIds, opts);
-      }
+    void opts?.waitMs;
+    opts?.onStatus?.('Đang tạo lệnh in Batch trên Shopee...');
 
-      const jobId = startData.jobId;
-      const deadline = Date.now() + 3 * 60 * 1000;
-      let pollCount = 0;
-      opts?.onStatus?.('Đang tạo vận đơn hàng loạt trên Shopee...');
-      while (Date.now() < deadline) {
-        // Lần đầu poll ngay; sau đó mỗi 300ms (không fake backoff).
-        if (pollCount > 0) {
-          await new Promise((r) => setTimeout(r, 300));
-        }
-        pollCount += 1;
-        const jobRes = await fetch(`/api/shopee/print-document/job/${jobId}`, {
-          headers: authHeaders(),
-        });
-        if (!jobRes.ok) break;
-        const job = await parseJsonResponse<{
-          status?: string;
-          httpStatus?: number;
-          phase?: string;
-          message?: string;
-          result?: PrintDocumentResponse;
-          error?: string;
-        }>(jobRes);
-        if (job.message) opts?.onStatus?.(job.message);
-        if (job.status === 'done' || job.status === 'failed') {
-          if (job.result) {
-            const status = job.httpStatus || (job.status === 'done' ? 200 : 500);
-            return { ok: status >= 200 && status < 300, status, data: job.result };
-          }
-          return {
-            ok: false,
-            status: job.httpStatus || 500,
-            data: { error: job.error || 'print_job_failed', message: job.error },
-          };
-        }
-      }
-      return { ok: false, status: 504, data: { error: 'print_job_timeout', message: 'Quá thời gian chờ tạo vận đơn.' } };
-    } catch {
-      return fetchPrintDocumentSync(orderIds, opts);
+    const createRes = await fetch('/api/shopee/print-document/create', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ orderIds }),
+    });
+    const createData = await parseJsonResponse<{
+      success?: boolean;
+      task_id?: string;
+      task_ids?: string[];
+      message?: string;
+      error?: string;
+    }>(createRes);
+
+    if (!createRes.ok || !createData?.task_id) {
+      return {
+        ok: false,
+        status: createRes.status || 500,
+        data: {
+          error: createData?.error || 'create_failed',
+          message: createData?.message || 'Không tạo được lệnh in Batch.',
+        },
+      };
     }
+
+    const taskIds = Array.isArray(createData.task_ids) && createData.task_ids.length > 0
+      ? createData.task_ids.map(String)
+      : [String(createData.task_id)];
+
+    opts?.onStatus?.(`Đã nhận task_id — đang chờ Shopee READY (${taskIds.length} task)...`);
+
+    const deadline = Date.now() + 3 * 60 * 1000;
+    const readyUrls: string[] = [];
+    const readyFilenames: string[] = [];
+    const pending = new Set(taskIds);
+    let lastError = '';
+
+    return new Promise((resolve) => {
+      let finished = false;
+      const finish = (result: { ok: boolean; status: number; data: PrintDocumentResponse }) => {
+        if (finished) return;
+        finished = true;
+        clearInterval(timer);
+        resolve(result);
+      };
+
+      const pollOnce = async () => {
+        if (finished) return;
+        if (Date.now() > deadline) {
+          finish({
+            ok: false,
+            status: 504,
+            data: {
+              error: 'print_poll_timeout',
+              message: 'Quá thời gian chờ Shopee xuất PDF (FE poll). Thử In đơn lại.',
+            },
+          });
+          return;
+        }
+
+        for (const taskId of [...pending]) {
+          try {
+            const stRes = await fetch('/api/shopee/print-document/status', {
+              method: 'POST',
+              headers: authHeaders(),
+              body: JSON.stringify({ task_id: taskId }),
+            });
+            const st = await parseJsonResponse<{
+              success?: boolean;
+              status?: string;
+              url?: string;
+              mergedUrl?: string;
+              pdfFilename?: string;
+              message?: string;
+              error?: string;
+              readyCount?: number;
+              pendingCount?: number;
+            }>(stRes);
+
+            const status = String(st?.status || '').toUpperCase();
+            if (status === 'PROCESSING' || status === 'CREATED') {
+              opts?.onStatus?.(
+                st?.message ||
+                  `Đang chờ Shopee xuất PDF... (${st?.readyCount ?? 0} READY, còn ${st?.pendingCount ?? '?'} đơn)`,
+              );
+              continue;
+            }
+            if (status === 'READY' && (st?.url || st?.mergedUrl)) {
+              pending.delete(taskId);
+              readyUrls.push(String(st.url || st.mergedUrl));
+              if (st.pdfFilename) readyFilenames.push(String(st.pdfFilename));
+              opts?.onStatus?.(`Task ${taskId} READY — còn ${pending.size} task...`);
+              continue;
+            }
+            if (status === 'FAILED') {
+              pending.delete(taskId);
+              lastError =
+                st?.message ||
+                st?.error ||
+                'Shopee báo FAILED khi tạo vận đơn';
+              opts?.onStatus?.(lastError);
+              finish({
+                ok: false,
+                status: 400,
+                data: {
+                  error: st?.error || 'print_failed',
+                  message: lastError,
+                },
+              });
+              return;
+            }
+          } catch (err) {
+            opts?.onStatus?.(
+              err instanceof Error ? `Lỗi poll tạm: ${err.message}` : 'Lỗi poll tạm — thử lại...',
+            );
+          }
+        }
+
+        if (pending.size === 0 && readyUrls.length > 0) {
+          const primaryUrl = readyUrls[0];
+          finish({
+            ok: true,
+            status: 200,
+            data: {
+              success: true,
+              url: primaryUrl,
+              mergedUrl: primaryUrl,
+              pdfFilename: readyFilenames[0],
+              documents: readyUrls.map((url) => ({ url, orderSns: [] })),
+              message: 'PDF vận đơn hàng loạt đã sẵn sàng.',
+            },
+          });
+        } else if (pending.size === 0) {
+          finish({
+            ok: false,
+            status: 500,
+            data: {
+              error: 'empty_label_file',
+              message: lastError || 'Không nhận được URL PDF từ Shopee.',
+            },
+          });
+        }
+      };
+
+      void pollOnce();
+      const timer = window.setInterval(() => {
+        void pollOnce();
+      }, 2000);
+    });
   };
   const applyPrintDocumentResponse = async (
     data: PrintDocumentResponse,
@@ -2593,7 +2686,7 @@ export default function OrderManager({
     return { success: false, message: detail || 'Shopee chưa trả về file vận đơn PDF.' };
   };
 
-  // Shopee batch print: 1 request → BE Batch API (create + poll READY + download 1 PDF Shopee).
+  // Shopee batch print: create task_id → FE poll status 2s → READY mở 1 PDF.
   // TUYỆT ĐỐI không loop window.open / fetch từng đơn trên FE (popup blocker).
   /** Nếu mọi đơn đã có labelUrl/pdfFilename trong state → window.open ngay, không gọi API. */
   const tryOpenCachedLabelUrls = (
@@ -3487,7 +3580,7 @@ export default function OrderManager({
           channel: 'shopee',
           type: 'stock_sync',
           status: 'success',
-          message: `[SHOPEE BATCH] create_shipping_document → poll READY → download_shipping_document (1 PDF) cho ${shopeeAll.length} đơn.`
+          message: `[SHOPEE BATCH] create → FE poll status 2s → download (1 PDF) cho ${shopeeAll.length} đơn.`
         });
         const result = await printShopeeDocuments(shopeeAll, {
           onProgress: (completed, total) => {
