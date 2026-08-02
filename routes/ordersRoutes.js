@@ -22,6 +22,7 @@ import {
   healHandedOver,
   createManualOrder,
   resetPrintStatus,
+  updatePrintStatus,
 } from "../controllers/ordersController.js";
 import { pullOrders, quickSyncOrders } from "../controllers/shopeeOrdersController.js";
 import { fastProcessOrders } from "../controllers/shopeeShipController.js";
@@ -64,6 +65,7 @@ router.get("/scan-bg-status", h(getScanBgStatus));
 router.post("/scan-bg-ack", h(ackScanBg));
 router.post("/scan-bulk-update", h(scanBulkUpdate));
 router.post("/reset-print-status", h(resetPrintStatus));
+router.post("/update-print-status", h(updatePrintStatus));
 router.get("/:orderSn/events", h(getOrderEvents));
 router.post("/:id/hand-over-carrier", h(handOverCarrierById));
 router.get("/", h(listOrders));

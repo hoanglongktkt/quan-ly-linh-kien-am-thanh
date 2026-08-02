@@ -989,17 +989,18 @@ export async function patchOrder(req, res) {
 }
 
 /**
- * POST /api/orders/reset-print-status
- * Đặt isPrinted=false trên Mongo — cho phép in lại từ đầu (không gọi Shopee).
- * Body: { orderIds?: string[], orderSns?: string[] }
+ * POST /api/orders/update-print-status
+ * Cập nhật isPrinted trên DB nội bộ (không gọi Shopee).
+ * Body: { order_sns|orderSns|orderIds: string[], is_printed|isPrinted: boolean }
  */
-export async function resetPrintStatus(req, res) {
+export async function updatePrintStatus(req, res) {
   try {
     const body = req.body || {};
     const rawIds = [
       ...(Array.isArray(body.orderIds) ? body.orderIds : []),
       ...(Array.isArray(body.orderSns) ? body.orderSns : []),
       ...(Array.isArray(body.order_sns) ? body.order_sns : []),
+      ...(Array.isArray(body.order_sn) ? body.order_sn : []),
       body.orderId,
       body.orderSn,
       body.order_sn,
@@ -1011,9 +1012,32 @@ export async function resetPrintStatus(req, res) {
       return res.status(400).json({
         success: false,
         error: "missing_order_ids",
-        message: "Thiếu danh sách đơn cần reset trạng thái in.",
+        message: "Thiếu danh sách đơn cần cập nhật trạng thái in.",
       });
     }
+
+    const hasFlag =
+      typeof body.is_printed === "boolean" ||
+      typeof body.isPrinted === "boolean" ||
+      body.is_printed === 0 ||
+      body.is_printed === 1 ||
+      body.isPrinted === 0 ||
+      body.isPrinted === 1 ||
+      typeof body.is_printed === "string" ||
+      typeof body.isPrinted === "string";
+    if (!hasFlag) {
+      return res.status(400).json({
+        success: false,
+        error: "missing_is_printed",
+        message: "Thiếu biến is_printed (true/false).",
+      });
+    }
+    const rawFlag = body.is_printed ?? body.isPrinted;
+    const isPrinted =
+      rawFlag === true ||
+      rawFlag === 1 ||
+      String(rawFlag).trim().toLowerCase() === "true" ||
+      String(rawFlag).trim() === "1";
 
     const orders = loadOrders();
     const snSet = new Set(sns.map((s) => s.toLowerCase()));
@@ -1026,7 +1050,7 @@ export async function resetPrintStatus(req, res) {
         .trim()
         .toLowerCase();
       if (!snSet.has(sn) && !snSet.has(id)) continue;
-      orders[i] = { ...o, isPrinted: false };
+      orders[i] = { ...o, isPrinted };
       changed.push(orders[i]);
     }
     if (changed.length > 0) {
@@ -1034,23 +1058,35 @@ export async function resetPrintStatus(req, res) {
     }
     let mongoUpdated = 0;
     if (isMongoReady()) {
-      mongoUpdated = await markOrdersPrintedInStore(sns, false);
+      mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted);
       invalidateOrdersRefreshCache();
     }
     return res.json({
       success: true,
-      resetCount: Math.max(changed.length, mongoUpdated, sns.length),
+      isPrinted,
+      updatedCount: Math.max(changed.length, mongoUpdated, sns.length),
+      resetCount: isPrinted ? 0 : Math.max(changed.length, mongoUpdated, sns.length),
       orderSns: sns,
       orders: changed,
     });
   } catch (error) {
-    console.error("[Orders reset-print-status]", error?.stack || error?.message || error);
+    console.error("[Orders update-print-status]", error?.stack || error?.message || error);
     return res.status(500).json({
       success: false,
-      error: "reset_print_status_failed",
-      message: error?.message || "Không thể reset trạng thái in.",
+      error: "update_print_status_failed",
+      message: error?.message || "Không thể cập nhật trạng thái in.",
     });
   }
+}
+
+/**
+ * POST /api/orders/reset-print-status
+ * Đặt isPrinted=false trên Mongo — cho phép in lại từ đầu (không gọi Shopee).
+ * Body: { orderIds?: string[], orderSns?: string[] }
+ */
+export async function resetPrintStatus(req, res) {
+  req.body = { ...(req.body || {}), is_printed: false, isPrinted: false };
+  return updatePrintStatus(req, res);
 }
 
 /** DELETE /api/orders/:id */
