@@ -122,7 +122,7 @@ function getOrderWaybillCode(order: Order): string {
   return '';
 }
 
-/** Chia mảng thành các chunk cố định — FE gọi API tuần tự từng chunk (tránh Over Process cPanel). */
+/** Chia mảng thành các chunk cố định — FE gọi API theo chunk (nhiều đơn). */
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const n = Math.max(1, Math.floor(size) || 1);
   const out: T[][] = [];
@@ -132,8 +132,35 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
   return out;
 }
 
+/** Pool concurrency giới hạn — chạy gần song song có kiểm soát. */
+async function mapPoolLimited<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      while (true) {
+        const i = next++;
+        if (i >= items.length) break;
+        results[i] = await fn(items[i], i);
+      }
+    }),
+  );
+  return results;
+}
+
 /** Số đơn / 1 request xác nhận hoặc in đơn. */
 const LOGISTICS_FE_CHUNK_SIZE = 5;
+/** In nhiều đơn: tối đa 2 chunk song song (tránh Over Process + rate-limit). */
+const PRINT_FE_CHUNK_CONCURRENCY = 2;
+/** Nghỉ ngắn trước khi bắt đầu chunk tiếp theo trong pool (ms). */
+const PRINT_FE_CHUNK_STAGGER_MS = 250;
+/** Poll trạng thái task in (create/status) — 1 giây/lần. */
+const PRINT_FE_STATUS_POLL_MS = 1000;
 
 /** UNPAID/PENDING → Chờ xác nhận (tab "Đang kiểm tra bởi Shopee" đã bỏ). */
 function isPendingConfirmOrder(order: Order): boolean {
@@ -2545,6 +2572,69 @@ export default function OrderManager({
     }
   };
 
+  /** Tên file gộp nhiều vận đơn A4 — gọn, dễ Ctrl+P. */
+  const buildBatchVanDonFilename = (orderCount: number) => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    return `Danh_Sach_Van_Don_${Math.max(1, orderCount)}_${ts}.pdf`;
+  };
+
+  /**
+   * Ghép nhiều PDF thành 1 file A4 (mỗi nguồn giữ nguyên trang) → tải đúng 1 lần.
+   * Dùng khi BE đã merge trong chunk hoặc khi FE gom nhiều chunk.
+   */
+  const mergeAndDownloadLabelPdfs = async (
+    rawUrls: string[],
+    opts?: { filename?: string; orderCount?: number },
+  ): Promise<{ ok: boolean; filename: string }> => {
+    const uniqueUrls = [
+      ...new Set(rawUrls.map((u) => resolveLabelFetchUrl(String(u || '').trim())).filter(Boolean)),
+    ];
+    const filename =
+      opts?.filename && !opts.filename.includes('..') && !opts.filename.includes('/')
+        ? opts.filename
+        : buildBatchVanDonFilename(opts?.orderCount || uniqueUrls.length);
+
+    if (uniqueUrls.length === 0) return { ok: false, filename };
+    if (uniqueUrls.length === 1) {
+      const ok = await downloadLabelPdf(uniqueUrls[0], undefined, filename);
+      return { ok, filename };
+    }
+
+    try {
+      const { PDFDocument } = await import('pdf-lib');
+      const merged = await PDFDocument.create();
+      for (const url of uniqueUrls) {
+        const res = await fetch(url, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status} khi tải ${url}`);
+        const bytes = await res.arrayBuffer();
+        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+        const pages = await merged.copyPages(src, src.getPageIndices());
+        for (const page of pages) merged.addPage(page);
+      }
+      const out = await merged.save();
+      const blob = new Blob([new Uint8Array(out)], { type: 'application/pdf' });
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = filename;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      return { ok: true, filename };
+    } catch (err) {
+      console.warn('[Print Merge] pdf-lib merge failed, fallback tải từng file:', err);
+      for (let i = 0; i < uniqueUrls.length; i++) {
+        await downloadLabelPdf(uniqueUrls[i]);
+        if (i < uniqueUrls.length - 1) await new Promise((r) => setTimeout(r, 200));
+      }
+      return { ok: false, filename };
+    }
+  };
+
   const fetchPrintDocumentSync = async (
     orderIds: string[],
     opts?: { waitMs?: number }
@@ -2566,8 +2656,9 @@ export default function OrderManager({
   };
 
   /**
-   * In đơn theo CHUNK: gom order_ids → chia 5 đơn/chunk → for...of gọi API tuần tự.
-   * CẤM Promise.all — mỗi chunk = 1 process cPanel; BE trả mảng URL PDF (không Buffer).
+   * In đơn:
+   * - 1 đơn: fast-path — 1 request thẳng, không chunk/queue.
+   * - Nhiều đơn: chia chunk, chạy gần song song (concurrency 2) + stagger ngắn.
    */
   const fetchPrintDocumentApi = async (
     orderIds: string[],
@@ -2587,24 +2678,169 @@ export default function OrderManager({
       };
     }
 
+    const mergeChunkResponse = (
+      data: PrintDocumentResponse & {
+        urls?: string[];
+        results?: Array<{
+          success?: boolean;
+          url?: string;
+          orderSn?: string;
+          orderId?: string;
+          pdfFilename?: string;
+          error?: string;
+          message?: string;
+        }>;
+      },
+      allDocs: NonNullable<PrintDocumentResponse['documents']>,
+      allUrls: string[],
+      errors: string[],
+    ) => {
+      const chunkUrls = [
+        ...(Array.isArray(data.urls) ? data.urls : []),
+        ...(data.url ? [data.url] : []),
+        ...(data.mergedUrl ? [data.mergedUrl] : []),
+      ]
+        .map((u) => String(u || '').trim())
+        .filter(Boolean);
+      for (const u of chunkUrls) {
+        if (!allUrls.includes(u)) allUrls.push(u);
+      }
+
+      if (Array.isArray(data.documents) && data.documents.length > 0) {
+        for (const d of data.documents) {
+          allDocs.push(d);
+          const u = String(d?.url || '').trim();
+          if (u && !allUrls.includes(u)) allUrls.push(u);
+        }
+      } else if (Array.isArray(data.results)) {
+        for (const r of data.results) {
+          const u = String(r?.url || '').trim();
+          allDocs.push({
+            url: u || undefined,
+            pdfFilename: r?.pdfFilename,
+            orderSn: r?.orderSn,
+            orderSns: r?.orderSn ? [r.orderSn] : undefined,
+            error: r?.success === false ? r?.error || 'print_failed' : undefined,
+            message: r?.message,
+          });
+          if (u && !allUrls.includes(u)) allUrls.push(u);
+          if (r?.success === false) {
+            errors.push(String(r?.message || r?.error || r?.orderSn || 'fail'));
+          }
+        }
+      }
+    };
+
+    // —— Fast-path: đúng 1 đơn — bỏ chunk/queue ——
+    if (uniqueIds.length === 1) {
+      opts?.onStatus?.('Đang in 1 đơn — xử lý ngay...');
+      try {
+        const res = await fetch('/api/shopee/print-document/chunk', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ order_ids: uniqueIds, orderIds: uniqueIds }),
+        });
+        const data = await parseJsonResponse<
+          PrintDocumentResponse & {
+            urls?: string[];
+            results?: Array<{
+              success?: boolean;
+              url?: string;
+              orderSn?: string;
+              orderId?: string;
+              pdfFilename?: string;
+              error?: string;
+              message?: string;
+            }>;
+          }
+        >(res);
+        const allDocs: NonNullable<PrintDocumentResponse['documents']> = [];
+        const allUrls: string[] = [];
+        const errors: string[] = [];
+        mergeChunkResponse(data, allDocs, allUrls, errors);
+        if (!res.ok && allUrls.length === 0) {
+          return {
+            ok: false,
+            status: res.status,
+            data: {
+              error: data.error || 'print_failed',
+              message: data.message || errors.join('; ') || `HTTP ${res.status}`,
+              documents: allDocs,
+            },
+          };
+        }
+        if (allUrls.length === 0 && allDocs.every((d) => !d.url)) {
+          return {
+            ok: false,
+            status: res.status >= 400 ? res.status : 500,
+            data: {
+              error: 'empty_label_file',
+              message: errors.join('; ') || data.message || 'Không nhận được URL PDF từ Backend.',
+              documents: allDocs,
+            },
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          data: {
+            success: true,
+            url: allUrls[0],
+            mergedUrl: allUrls[0],
+            pdfFilename: allDocs.find((d) => d.pdfFilename)?.pdfFilename,
+            documents: allDocs.length ? allDocs : allUrls.map((url) => ({ url })),
+            message: data.message || 'Đã sẵn sàng PDF cho 1 đơn.',
+          },
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          status: 500,
+          data: {
+            error: 'print_exception',
+            message: err instanceof Error ? err.message : 'Lỗi in 1 đơn.',
+          },
+        };
+      }
+    }
+
+    // —— Nhiều đơn: chunk + concurrency giới hạn ——
     const chunks = chunkArray(uniqueIds, LOGISTICS_FE_CHUNK_SIZE);
     const allDocs: NonNullable<PrintDocumentResponse['documents']> = [];
     const allUrls: string[] = [];
     const errors: string[] = [];
     let lastStatus = 200;
+    let completedChunks = 0;
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
+    opts?.onStatus?.(
+      `Đang in ${uniqueIds.length} đơn (${chunks.length} nhóm, tối đa ${PRINT_FE_CHUNK_CONCURRENCY} song song)...`,
+    );
+
+    type ChunkOutcome = {
+      status: number;
+      docs: NonNullable<PrintDocumentResponse['documents']>;
+      urls: string[];
+      errors: string[];
+    };
+
+    const outcomes = await mapPoolLimited(chunks, PRINT_FE_CHUNK_CONCURRENCY, async (chunk, i) => {
+      if (i > 0 && PRINT_FE_CHUNK_STAGGER_MS > 0) {
+        await new Promise((r) => setTimeout(r, PRINT_FE_CHUNK_STAGGER_MS * Math.min(i, 2)));
+      }
       opts?.onStatus?.(
-        `Đang in chunk ${i + 1}/${chunks.length} (${chunk.length} đơn) — xếp hàng tuần tự...`,
+        `Đang in nhóm ${i + 1}/${chunks.length} (${chunk.length} đơn)...`,
       );
+      const localDocs: NonNullable<PrintDocumentResponse['documents']> = [];
+      const localUrls: string[] = [];
+      const localErrors: string[] = [];
+      let status = 200;
       try {
         const res = await fetch('/api/shopee/print-document/chunk', {
           method: 'POST',
           headers: authHeaders(),
           body: JSON.stringify({ order_ids: chunk, orderIds: chunk }),
         });
-        lastStatus = res.status;
+        status = res.status;
         const data = await parseJsonResponse<
           PrintDocumentResponse & {
             urls?: string[];
@@ -2620,49 +2856,31 @@ export default function OrderManager({
           }
         >(res);
 
-        const chunkUrls = [
-          ...(Array.isArray(data.urls) ? data.urls : []),
-          ...(data.url ? [data.url] : []),
-          ...(data.mergedUrl ? [data.mergedUrl] : []),
-        ]
-          .map((u) => String(u || '').trim())
-          .filter(Boolean);
-        for (const u of chunkUrls) {
-          if (!allUrls.includes(u)) allUrls.push(u);
-        }
+        mergeChunkResponse(data, localDocs, localUrls, localErrors);
 
-        if (Array.isArray(data.documents) && data.documents.length > 0) {
-          for (const d of data.documents) {
-            allDocs.push(d);
-            const u = String(d?.url || '').trim();
-            if (u && !allUrls.includes(u)) allUrls.push(u);
-          }
-        } else if (Array.isArray(data.results)) {
-          for (const r of data.results) {
-            const u = String(r?.url || '').trim();
-            allDocs.push({
-              url: u || undefined,
-              pdfFilename: r?.pdfFilename,
-              orderSn: r?.orderSn,
-              orderSns: r?.orderSn ? [r.orderSn] : undefined,
-              error: r?.success === false ? r?.error || 'print_failed' : undefined,
-              message: r?.message,
-            });
-            if (u && !allUrls.includes(u)) allUrls.push(u);
-            if (r?.success === false) {
-              errors.push(String(r?.message || r?.error || r?.orderSn || 'fail'));
-            }
-          }
-        }
-
-        if (!res.ok && allUrls.length === 0) {
-          errors.push(data.message || data.error || `HTTP ${res.status}`);
-        } else if (data.message && !data.success && allUrls.length === 0) {
-          errors.push(data.message);
+        if (!res.ok && localUrls.length === 0) {
+          localErrors.push(data.message || data.error || `HTTP ${res.status}`);
+        } else if (data.message && !data.success && localUrls.length === 0) {
+          localErrors.push(data.message);
         }
       } catch (err) {
-        errors.push(err instanceof Error ? err.message : `Lỗi chunk ${i + 1}`);
+        localErrors.push(err instanceof Error ? err.message : `Lỗi nhóm ${i + 1}`);
+      } finally {
+        completedChunks += 1;
+        opts?.onStatus?.(
+          `Đã xong ${completedChunks}/${chunks.length} nhóm...`,
+        );
       }
+      return { status, docs: localDocs, urls: localUrls, errors: localErrors } satisfies ChunkOutcome;
+    });
+
+    for (const out of outcomes) {
+      if (out.status >= 400) lastStatus = out.status;
+      for (const d of out.docs) allDocs.push(d);
+      for (const u of out.urls) {
+        if (!allUrls.includes(u)) allUrls.push(u);
+      }
+      errors.push(...out.errors);
     }
 
     if (allUrls.length === 0 && allDocs.every((d) => !d.url)) {
@@ -2690,7 +2908,7 @@ export default function OrderManager({
           : allUrls.map((url) => ({ url })),
         message:
           allUrls.length === uniqueIds.length && errors.length === 0
-            ? `Đã sẵn sàng ${allUrls.length} URL PDF (chunk ${chunks.length}×≤${LOGISTICS_FE_CHUNK_SIZE}).`
+            ? `Đã sẵn sàng ${allUrls.length} URL PDF (${chunks.length} nhóm ×≤${LOGISTICS_FE_CHUNK_SIZE}).`
             : `Đã sẵn sàng ${allUrls.length}/${uniqueIds.length} URL PDF. ${errors.filter(Boolean).join('; ')}`,
       },
     };
@@ -2810,23 +3028,53 @@ export default function OrderManager({
 
       if (docsToDownload.length === 0) {
         closeReservedPrintWindow(reservedWindow);
-      } else if (docsToDownload.length === 1) {
-        // 1 đơn: mở tab (hoặc dùng reserved window) — UX quen thuộc.
-        const only = docsToDownload[0];
-        await openShopeeLabelFromStream(
-          { pdfFilename: only.pdfFilename, url: only.url },
-          { reservedWindow },
-        );
       } else {
-        // Nhiều đơn: tải từng file (tránh popup blocker), delay nhẹ giữa các lần.
+        // Luôn ưu tiên 1 file: mergedUrl từ BE, hoặc ghép mọi URL thành 1 PDF A4.
         closeReservedPrintWindow(reservedWindow);
-        showToast(`Đang tải ${docsToDownload.length} file PDF riêng (mỗi đơn 1 file)...`);
-        for (let i = 0; i < docsToDownload.length; i++) {
-          const doc = docsToDownload[i];
-          const sn = String(doc.orderSn || doc.orderSns?.[0] || '').replace(/^shopee-/i, '').trim();
-          await downloadLabelPdf(String(doc.url), sn, doc.pdfFilename);
-          if (i < docsToDownload.length - 1) {
-            await new Promise((r) => setTimeout(r, 350));
+        const uniqueUrls = [
+          ...new Set(
+            [
+              data.mergedUrl,
+              data.url,
+              ...docsToDownload.map((d) => d.url),
+            ]
+              .map((u) => String(u || '').trim())
+              .filter(Boolean),
+          ),
+        ];
+        const orderCount = Math.max(
+          uniqueUrls.length,
+          docsToDownload.length,
+          orderIdsForCache?.length || 0,
+          1,
+        );
+        const preferredName = String(data.pdfFilename || '').trim();
+        const batchName =
+          preferredName &&
+          /^Danh_Sach_Van_Don_/i.test(preferredName) &&
+          uniqueUrls.length === 1
+            ? preferredName
+            : uniqueUrls.length > 1 || orderCount > 1
+              ? buildBatchVanDonFilename(orderCount)
+              : preferredName || undefined;
+
+        if (uniqueUrls.length === 1 && orderCount <= 1) {
+          await openShopeeLabelFromStream(
+            { pdfFilename: docsToDownload[0]?.pdfFilename || preferredName, url: uniqueUrls[0] },
+            { reservedWindow },
+          );
+        } else {
+          showToast(
+            uniqueUrls.length > 1
+              ? `Đang gộp ${orderCount} vận đơn thành 1 file PDF A4...`
+              : `Đang tải 1 file PDF (${orderCount} trang A4)...`,
+          );
+          const merged = await mergeAndDownloadLabelPdfs(uniqueUrls, {
+            filename: batchName,
+            orderCount,
+          });
+          if (merged.ok) {
+            showToast(`Đã tải ${merged.filename} — mở file và Ctrl+P để in toàn bộ.`);
           }
         }
       }
@@ -2859,8 +3107,7 @@ export default function OrderManager({
     return { success: false, message: detail || 'Shopee chưa trả về file vận đơn PDF.' };
   };
 
-  // Shopee batch print: create task_id → FE poll status 2s → READY mở 1 PDF.
-  // TUYỆT ĐỐI không loop window.open / fetch từng đơn trên FE (popup blocker).
+  // Shopee print: 1 đơn = fast-path; nhiều đơn = chunk song song có giới hạn; BE poll READY ~1s.
   /** Nếu mọi đơn đã có labelUrl/pdfFilename trong state → tải/mở từng PDF, không gọi API. */
   const tryOpenCachedLabelUrls = (
     orderIds: string[],
@@ -2938,15 +3185,17 @@ export default function OrderManager({
           const docs = cached.docs || [];
           if (docs.length > 1) {
             closeReservedPrintWindow(reservedWindow);
-            showToast(`Đang tải ${docs.length} file PDF từ bộ nhớ đệm...`);
-            for (let i = 0; i < docs.length; i++) {
-              await downloadLabelPdf(docs[i].url, docs[i].orderSn, docs[i].pdfFilename);
-              if (i < docs.length - 1) await new Promise((r) => setTimeout(r, 350));
-            }
+            showToast(`Đang gộp ${docs.length} vận đơn (cache) thành 1 file PDF A4...`);
+            const merged = await mergeAndDownloadLabelPdfs(
+              docs.map((d) => d.url),
+              { orderCount: docs.length },
+            );
             return {
               success: true,
               mergedUrl: docs[0]?.url,
-              message: `Đã tải ${docs.length} vận đơn từ bộ nhớ đệm (mỗi đơn 1 file).`,
+              message: merged.ok
+                ? `Đã tải ${merged.filename} — mở file và Ctrl+P để in toàn bộ.`
+                : `Đã tải ${docs.length} vận đơn từ bộ nhớ đệm.`,
             };
           }
           return { success: true, mergedUrl: cached.url, message: 'Đã mở vận đơn từ bộ nhớ đệm.' };
@@ -3441,16 +3690,17 @@ export default function OrderManager({
       .filter(Boolean);
     if (!ids.length || isPrintingFromSummary) return;
 
-    // Fast path: PDF đã có trên order state → mở/tải từng file.
+    // Fast path: PDF đã có trên order state → 1 đơn mở tab; nhiều đơn gộp 1 file.
     const cached = tryOpenCachedLabelUrls(ids);
     if (cached.opened) {
       const docs = cached.docs || [];
       if (docs.length > 1) {
-        showToast(`Đang tải ${docs.length} file PDF từ bộ nhớ đệm...`);
-        for (let i = 0; i < docs.length; i++) {
-          await downloadLabelPdf(docs[i].url, docs[i].orderSn, docs[i].pdfFilename);
-          if (i < docs.length - 1) await new Promise((r) => setTimeout(r, 350));
-        }
+        showToast(`Đang gộp ${docs.length} vận đơn (cache) thành 1 file PDF A4...`);
+        const merged = await mergeAndDownloadLabelPdfs(
+          docs.map((d) => d.url),
+          { orderCount: docs.length },
+        );
+        if (merged.ok) showToast(`Đã tải ${merged.filename} — mở file và Ctrl+P để in toàn bộ.`);
       } else {
         showToast('Đã mở vận đơn từ bộ nhớ đệm.');
       }
@@ -3465,7 +3715,11 @@ export default function OrderManager({
     setProgressCompleted(0);
     setProgressTotal(ids.length);
     setIsShipping(true);
-    setProgressMessage(`Đang in theo chunk (${LOGISTICS_FE_CHUNK_SIZE} đơn/lần): ${ids.length} đơn...`);
+    setProgressMessage(
+      ids.length === 1
+        ? 'Đang in 1 đơn — xử lý ngay...'
+        : `Đang in ${ids.length} đơn (tối đa ${PRINT_FE_CHUNK_CONCURRENCY} nhóm song song)...`,
+    );
 
     try {
       const result = await printShopeeDocuments(ids, {
@@ -3830,7 +4084,11 @@ export default function OrderManager({
       setProgressDone(false);
       setProgressTotal(shopeeAll.length);
       setProgressCompleted(0);
-      setProgressMessage(`Đang in hàng loạt ${shopeeAll.length} đơn (Batch API)...`);
+      setProgressMessage(
+        shopeeAll.length === 1
+          ? 'Đang in 1 đơn — xử lý ngay...'
+          : `Đang in hàng loạt ${shopeeAll.length} đơn...`,
+      );
     }
     try {
       if (shopeeAll.length > 0) {
@@ -3840,7 +4098,7 @@ export default function OrderManager({
           channel: 'shopee',
           type: 'stock_sync',
           status: 'success',
-          message: `[SHOPEE BATCH] create → FE poll status 2s → download (1 PDF) cho ${shopeeAll.length} đơn.`
+          message: `[SHOPEE PRINT] ${shopeeAll.length === 1 ? 'fast-path 1 đơn' : `chunk×${Math.ceil(shopeeAll.length / LOGISTICS_FE_CHUNK_SIZE)} concurrency=${PRINT_FE_CHUNK_CONCURRENCY}`} — poll READY ${PRINT_FE_STATUS_POLL_MS}ms.`,
         });
         const result = await printShopeeDocuments(shopeeAll, {
           onProgress: (completed, total) => {
@@ -3849,7 +4107,9 @@ export default function OrderManager({
             setProgressMessage(
               completed >= total
                 ? 'Hoàn tất — đang mở PDF vận đơn...'
-                : `Đang chờ Shopee xuất PDF hàng loạt: ${completed}/${total} đơn...`
+                : total === 1
+                  ? 'Đang chờ Shopee xuất PDF...'
+                  : `Đang chờ Shopee xuất PDF: ${completed}/${total} đơn...`
             );
           },
           onStatus: (message) => setProgressMessage(message),
@@ -4088,14 +4348,14 @@ export default function OrderManager({
     setProgressDone(false);
     setProgressTotal(1);
     setProgressCompleted(0);
-    setProgressMessage('Đang tạo vận đơn Batch API Shopee...');
+    setProgressMessage('Đang in 1 đơn — xử lý ngay...');
     onAddLog({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
       channel: 'shopee',
       type: 'stock_sync',
       status: 'success',
-      message: `[SHOPEE BATCH] create → poll READY → download AWB cho đơn ${order.orderSn}.`
+      message: `[SHOPEE PRINT] fast-path 1 đơn ${order.orderSn} — poll READY ${PRINT_FE_STATUS_POLL_MS}ms.`,
     });
     try {
       const result = await printShopeeDocuments([order.id], {
