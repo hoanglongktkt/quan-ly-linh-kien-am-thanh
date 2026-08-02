@@ -137,10 +137,16 @@ export async function fastProcessOrders(req, res) {
 export function shipOrderBulkAsync(req, res) {
   try {
     deps.pruneOldShipOrderJobs();
-    const { orderIds, orderSns, method } = req.body || {};
+    const { orderIds, orderSns, order_ids, order_sns, method } = req.body || {};
     const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
-    const idList = Array.isArray(orderIds) ? orderIds.map(String) : [];
-    const snList = Array.isArray(orderSns) ? orderSns.map(String) : [];
+    const idList = [
+      ...(Array.isArray(orderIds) ? orderIds : []),
+      ...(Array.isArray(order_ids) ? order_ids : []),
+    ].map(String);
+    const snList = [
+      ...(Array.isArray(orderSns) ? orderSns : []),
+      ...(Array.isArray(order_sns) ? order_sns : []),
+    ].map(String);
     if (idList.length === 0 && snList.length === 0) {
       return res.status(400).json({ error: "Thiếu danh sách orderIds hoặc orderSns." });
     }
