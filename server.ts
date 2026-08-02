@@ -15698,16 +15698,17 @@ async function startServer() {
           await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, stillMissingPkg);
         }
 
-        for (let offset = 0; offset < groupOrders.length; offset += SHOPEE_SHIPPING_DOC_BATCH_MAX) {
-          const chunk = groupOrders.slice(offset, offset + SHOPEE_SHIPPING_DOC_BATCH_MAX);
-          const orderList: ShopeeWaybillOrderRow[] = chunk
+        // In từng đơn: 1 đơn = 1 create_shipping_document = 1 task_id = 1 PDF riêng (A4).
+        for (const order of groupOrders) {
+          const orderList: ShopeeWaybillOrderRow[] = [order]
             .map((o: any) => buildShopeeShippingDocOrderRow(o))
             .filter((r): r is ShopeeWaybillOrderRow => Boolean(r?.order_sn));
+          if (orderList.length === 0) continue;
 
           const missingPkg = orderList.filter((r) => !String(r.package_number || "").trim());
           const missingTn = orderList.filter((r) => !String(r.tracking_number || "").trim());
           console.log(
-            `[Shopee Print Create] Payload check shop=${shopId}: with_pkg=${orderList.length - missingPkg.length}/${orderList.length} with_tn=${orderList.length - missingTn.length}/${orderList.length}`,
+            `[Shopee Print Create] Payload check shop=${shopId} order=${orderList[0].order_sn}: with_pkg=${orderList.length - missingPkg.length}/${orderList.length} with_tn=${orderList.length - missingTn.length}/${orderList.length}`,
           );
           if (missingPkg.length > 0) {
             console.warn(
@@ -15717,7 +15718,7 @@ async function startServer() {
 
           const createPayload = {
             order_list: orderList,
-            shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE,
+            shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE, // NORMAL_AIR_WAYBILL — máy in văn phòng A4
           };
           console.log(
             `[Shopee Print Create] create_shipping_document REQUEST shop=${shopId}:`,
@@ -15728,12 +15729,20 @@ async function startServer() {
           try {
             createResult = await shopeeCreateShippingDocument(shopId, accessToken, orderList);
           } catch (createErr: any) {
-            console.error(`[Shopee Print Create] create exception shop=${shopId}:`, createErr?.message || createErr);
-            return res.status(500).json({
-              success: false,
-              error: "create_shipping_document_failed",
-              message: String(createErr?.message || createErr),
+            console.error(
+              `[Shopee Print Create] create exception shop=${shopId} order=${orderList[0].order_sn}:`,
+              createErr?.message || createErr,
+            );
+            // Không hủy cả batch — bỏ qua đơn lỗi, tiếp tục đơn khác.
+            tasks.push({
+              task_id: "",
+              shopId,
+              orderSns: orderList.map((r) => r.order_sn),
+              status: "FAILED",
+              create_error: "create_shipping_document_failed",
+              create_message: String(createErr?.message || createErr),
             });
+            continue;
           }
 
           console.log(
@@ -15762,16 +15771,23 @@ async function startServer() {
             const detail = failedItems
               .map((it: any) => `${it.order_sn}: ${it.fail_message || it.fail_error}`)
               .join("; ");
-            return res.status(400).json({
-              success: false,
-              error: first?.fail_error || createResult?.error || "document_generation_failed",
-              message:
+            console.warn(
+              `[Shopee Print Create] skip order=${orderList[0].order_sn}:`,
+              detail || createResult?.message || createResult?.error,
+            );
+            tasks.push({
+              task_id: "",
+              shopId,
+              orderSns: orderList.map((r) => r.order_sn),
+              status: "FAILED",
+              create_error: first?.fail_error || createResult?.error || "document_generation_failed",
+              create_message:
                 detail ||
                 createResult?.message ||
                 first?.fail_message ||
-                "Shopee từ chối tạo vận đơn hàng loạt.",
-              createResponse: createResult,
+                "Shopee từ chối tạo vận đơn.",
             });
+            continue;
           }
 
           const pendingList: ShopeeWaybillOrderRow[] = okItems.map((it: any) => {
@@ -15790,7 +15806,7 @@ async function startServer() {
             taskId,
             shopId,
             orderList: pendingList,
-            orderIds: chunk.map((o: any) => String(o.id || `shopee-${o.orderSn}`)),
+            orderIds: [String(order.id || `shopee-${order.orderSn}`)],
             orderSns: pendingList.map((r) => r.order_sn),
             createResponse: createResult,
             status: "CREATED",
@@ -15812,26 +15828,29 @@ async function startServer() {
             create_message: createResult?.message || undefined,
           });
           console.log(
-            `[Shopee Print Create] task_id=${taskId} shop=${shopId} pending=${pendingList.length} skipped=${task.skippedOrders?.length || 0}`,
+            `[Shopee Print Create] task_id=${taskId} shop=${shopId} order=${task.orderSns.join(",")} (1 đơn / 1 PDF)`,
           );
         }
       }
 
-      if (!tasks.length) {
+      const okTasks = tasks.filter((t) => String(t.task_id || "").trim());
+      if (!okTasks.length) {
+        const firstFail = tasks.find((t) => t.create_error || t.create_message);
         return res.status(400).json({
           success: false,
-          error: "no_tasks",
-          message: "Không tạo được task in nào.",
+          error: firstFail?.create_error || "no_tasks",
+          message: firstFail?.create_message || "Không tạo được task in nào.",
+          tasks,
         });
       }
 
-      // Trả ngay — FE tự poll /status mỗi 2s.
+      // Trả ngay — FE tự poll /status mỗi 2s. 1 đơn = 1 task_id = 1 PDF.
       return res.status(200).json({
         success: true,
-        task_id: tasks[0].task_id,
-        task_ids: tasks.map((t) => t.task_id),
-        tasks,
-        message: `Đã tạo ${tasks.length} lệnh in Batch — FE poll status mỗi 2s.`,
+        task_id: okTasks[0].task_id,
+        task_ids: okTasks.map((t) => t.task_id),
+        tasks: okTasks,
+        message: `Đã tạo ${okTasks.length} lệnh in (mỗi đơn 1 PDF) — FE poll status mỗi 2s.`,
       });
     } catch (err: any) {
       console.error("[Shopee Print Create] fatal:", err?.stack || err);
@@ -15877,6 +15896,7 @@ async function startServer() {
           url: task.url,
           mergedUrl: task.url,
           pdfFilename: task.pdfFilename,
+          orderSns: task.orderSns || [],
           readyOrderSns: task.readyOrderSns || task.orderSns,
           skippedOrders: task.skippedOrders || [],
           message: "PDF đã sẵn sàng (cache).",
@@ -16133,17 +16153,19 @@ async function startServer() {
         url,
         mergedUrl: url,
         pdfFilename: fname,
+        orderSns: task.orderSns || task.readyOrderSns || [],
         readyOrderSns: task.readyOrderSns,
         skippedOrders: pollFailed,
         documents: [
           {
             shopId: task.shopId,
             orderSns: task.readyOrderSns,
+            orderSn: (task.readyOrderSns || [])[0],
             url,
             contentType: "application/pdf",
           },
         ],
-        message: "PDF vận đơn hàng loạt đã sẵn sàng.",
+        message: "PDF vận đơn đã sẵn sàng (1 đơn / 1 file).",
       });
     } catch (err: any) {
       console.error("[Shopee Print Status] fatal:", err?.stack || err);

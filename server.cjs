@@ -96331,13 +96331,13 @@ async function startServer() {
           );
           await enrichOrdersPackageAndTrackingForPrint(shopId, accessToken, stillMissingPkg);
         }
-        for (let offset = 0; offset < groupOrders.length; offset += SHOPEE_SHIPPING_DOC_BATCH_MAX) {
-          const chunk = groupOrders.slice(offset, offset + SHOPEE_SHIPPING_DOC_BATCH_MAX);
-          const orderList = chunk.map((o) => buildShopeeShippingDocOrderRow(o)).filter((r2) => Boolean(r2?.order_sn));
+        for (const order of groupOrders) {
+          const orderList = [order].map((o) => buildShopeeShippingDocOrderRow(o)).filter((r2) => Boolean(r2?.order_sn));
+          if (orderList.length === 0) continue;
           const missingPkg = orderList.filter((r2) => !String(r2.package_number || "").trim());
           const missingTn = orderList.filter((r2) => !String(r2.tracking_number || "").trim());
           console.log(
-            `[Shopee Print Create] Payload check shop=${shopId}: with_pkg=${orderList.length - missingPkg.length}/${orderList.length} with_tn=${orderList.length - missingTn.length}/${orderList.length}`
+            `[Shopee Print Create] Payload check shop=${shopId} order=${orderList[0].order_sn}: with_pkg=${orderList.length - missingPkg.length}/${orderList.length} with_tn=${orderList.length - missingTn.length}/${orderList.length}`
           );
           if (missingPkg.length > 0) {
             console.warn(
@@ -96347,6 +96347,7 @@ async function startServer() {
           const createPayload = {
             order_list: orderList,
             shipping_document_type: SHOPEE_SHIPPING_DOCUMENT_TYPE
+            // NORMAL_AIR_WAYBILL — máy in văn phòng A4
           };
           console.log(
             `[Shopee Print Create] create_shipping_document REQUEST shop=${shopId}:`,
@@ -96356,12 +96357,19 @@ async function startServer() {
           try {
             createResult = await shopeeCreateShippingDocument(shopId, accessToken, orderList);
           } catch (createErr) {
-            console.error(`[Shopee Print Create] create exception shop=${shopId}:`, createErr?.message || createErr);
-            return res.status(500).json({
-              success: false,
-              error: "create_shipping_document_failed",
-              message: String(createErr?.message || createErr)
+            console.error(
+              `[Shopee Print Create] create exception shop=${shopId} order=${orderList[0].order_sn}:`,
+              createErr?.message || createErr
+            );
+            tasks.push({
+              task_id: "",
+              shopId,
+              orderSns: orderList.map((r2) => r2.order_sn),
+              status: "FAILED",
+              create_error: "create_shipping_document_failed",
+              create_message: String(createErr?.message || createErr)
             });
+            continue;
           }
           console.log(
             `[Shopee Print Create] create_shipping_document RESPONSE.data=`,
@@ -96384,12 +96392,19 @@ async function startServer() {
           if (okItems.length === 0) {
             const first = failedItems[0];
             const detail = failedItems.map((it) => `${it.order_sn}: ${it.fail_message || it.fail_error}`).join("; ");
-            return res.status(400).json({
-              success: false,
-              error: first?.fail_error || createResult?.error || "document_generation_failed",
-              message: detail || createResult?.message || first?.fail_message || "Shopee t\u1EEB ch\u1ED1i t\u1EA1o v\u1EADn \u0111\u01A1n h\xE0ng lo\u1EA1t.",
-              createResponse: createResult
+            console.warn(
+              `[Shopee Print Create] skip order=${orderList[0].order_sn}:`,
+              detail || createResult?.message || createResult?.error
+            );
+            tasks.push({
+              task_id: "",
+              shopId,
+              orderSns: orderList.map((r2) => r2.order_sn),
+              status: "FAILED",
+              create_error: first?.fail_error || createResult?.error || "document_generation_failed",
+              create_message: detail || createResult?.message || first?.fail_message || "Shopee t\u1EEB ch\u1ED1i t\u1EA1o v\u1EADn \u0111\u01A1n."
             });
+            continue;
           }
           const pendingList = okItems.map((it) => {
             const orig = orderList.find((o) => o.order_sn === String(it.order_sn));
@@ -96406,7 +96421,7 @@ async function startServer() {
             taskId,
             shopId,
             orderList: pendingList,
-            orderIds: chunk.map((o) => String(o.id || `shopee-${o.orderSn}`)),
+            orderIds: [String(order.id || `shopee-${order.orderSn}`)],
             orderSns: pendingList.map((r2) => r2.order_sn),
             createResponse: createResult,
             status: "CREATED",
@@ -96428,23 +96443,26 @@ async function startServer() {
             create_message: createResult?.message || void 0
           });
           console.log(
-            `[Shopee Print Create] task_id=${taskId} shop=${shopId} pending=${pendingList.length} skipped=${task.skippedOrders?.length || 0}`
+            `[Shopee Print Create] task_id=${taskId} shop=${shopId} order=${task.orderSns.join(",")} (1 \u0111\u01A1n / 1 PDF)`
           );
         }
       }
-      if (!tasks.length) {
+      const okTasks = tasks.filter((t2) => String(t2.task_id || "").trim());
+      if (!okTasks.length) {
+        const firstFail = tasks.find((t2) => t2.create_error || t2.create_message);
         return res.status(400).json({
           success: false,
-          error: "no_tasks",
-          message: "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c task in n\xE0o."
+          error: firstFail?.create_error || "no_tasks",
+          message: firstFail?.create_message || "Kh\xF4ng t\u1EA1o \u0111\u01B0\u1EE3c task in n\xE0o.",
+          tasks
         });
       }
       return res.status(200).json({
         success: true,
-        task_id: tasks[0].task_id,
-        task_ids: tasks.map((t2) => t2.task_id),
-        tasks,
-        message: `\u0110\xE3 t\u1EA1o ${tasks.length} l\u1EC7nh in Batch \u2014 FE poll status m\u1ED7i 2s.`
+        task_id: okTasks[0].task_id,
+        task_ids: okTasks.map((t2) => t2.task_id),
+        tasks: okTasks,
+        message: `\u0110\xE3 t\u1EA1o ${okTasks.length} l\u1EC7nh in (m\u1ED7i \u0111\u01A1n 1 PDF) \u2014 FE poll status m\u1ED7i 2s.`
       });
     } catch (err) {
       console.error("[Shopee Print Create] fatal:", err?.stack || err);
@@ -96482,6 +96500,7 @@ async function startServer() {
           url: task.url,
           mergedUrl: task.url,
           pdfFilename: task.pdfFilename,
+          orderSns: task.orderSns || [],
           readyOrderSns: task.readyOrderSns || task.orderSns,
           skippedOrders: task.skippedOrders || [],
           message: "PDF \u0111\xE3 s\u1EB5n s\xE0ng (cache)."
@@ -96710,17 +96729,19 @@ async function startServer() {
         url,
         mergedUrl: url,
         pdfFilename: fname,
+        orderSns: task.orderSns || task.readyOrderSns || [],
         readyOrderSns: task.readyOrderSns,
         skippedOrders: pollFailed,
         documents: [
           {
             shopId: task.shopId,
             orderSns: task.readyOrderSns,
+            orderSn: (task.readyOrderSns || [])[0],
             url,
             contentType: "application/pdf"
           }
         ],
-        message: "PDF v\u1EADn \u0111\u01A1n h\xE0ng lo\u1EA1t \u0111\xE3 s\u1EB5n s\xE0ng."
+        message: "PDF v\u1EADn \u0111\u01A1n \u0111\xE3 s\u1EB5n s\xE0ng (1 \u0111\u01A1n / 1 file)."
       });
     } catch (err) {
       console.error("[Shopee Print Status] fatal:", err?.stack || err);
