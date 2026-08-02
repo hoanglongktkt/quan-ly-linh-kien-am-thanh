@@ -53228,6 +53228,40 @@ var ORDER_TAB_NOT_HANDED_OVER = {
     { "data.is_handed_over": { $ne: true } }
   ]
 };
+var ORDER_TAB_NOT_SHIPPING_LOGISTICS = {
+  $and: [
+    {
+      $or: [
+        { logistics_status: { $exists: false } },
+        { logistics_status: null },
+        { logistics_status: "" },
+        {
+          logistics_status: {
+            $not: {
+              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
+              $options: "i"
+            }
+          }
+        }
+      ]
+    },
+    {
+      $or: [
+        { "data.logistics_status": { $exists: false } },
+        { "data.logistics_status": null },
+        { "data.logistics_status": "" },
+        {
+          "data.logistics_status": {
+            $not: {
+              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
+              $options: "i"
+            }
+          }
+        }
+      ]
+    }
+  ]
+};
 function orderTabFilter(tab) {
   const key = String(tab || "").trim().toLowerCase();
   switch (key) {
@@ -53266,8 +53300,20 @@ function orderTabFilter(tab) {
       return {
         $and: [
           ORDER_TAB_NOT_HANDED_OVER,
+          ORDER_TAB_NOT_SHIPPING_LOGISTICS,
           {
             shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] }
+          },
+          {
+            $or: [
+              { "data.shopee_order_status": { $exists: false } },
+              { "data.shopee_order_status": { $in: [null, ""] } },
+              {
+                "data.shopee_order_status": {
+                  $nin: [...ORDER_TAB_LEFT_PICKUP_RAW]
+                }
+              }
+            ]
           },
           {
             $or: [
@@ -53318,6 +53364,7 @@ function orderTabFilter(tab) {
       return {
         $and: [
           ORDER_TAB_NOT_HANDED_OVER,
+          ORDER_TAB_NOT_SHIPPING_LOGISTICS,
           { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
           {
             $or: [
@@ -53403,155 +53450,273 @@ function orderTabFilter(tab) {
       return {};
   }
 }
-async function countOrdersByTabsFromStore(opts) {
-  requireMongo();
-  const shopAnd = [];
-  if (opts?.shopId && opts.shopId !== "all") {
-    const shopIdStr = String(opts.shopId).trim();
-    const shopVariants = [
-      { shopId: shopIdStr },
-      { "data.shopId": shopIdStr }
-    ];
-    const asNum = Number(shopIdStr);
-    if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
-      shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
-    }
-    shopAnd.push({ $or: shopVariants });
-  }
-  const withShop = (tabFilter) => {
-    const parts = [...shopAnd];
-    if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
-    if (parts.length === 0) return {};
-    if (parts.length === 1) return parts[0];
-    return { $and: parts };
-  };
-  const cancelReturnsFilter = withShop({
-    $or: [
-      { status: { $in: ["cancelled", "return_pending", "return_received"] } },
-      {
-        shopee_order_status: {
-          $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"]
-        }
-      },
-      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
-      { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
-      { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } }
-    ]
-  });
-  const countTabs = [
-    "pending_confirm",
-    "unprocessed",
-    "processed",
-    "shipping",
-    "handed_over_carrier",
-    "return_pending"
-  ];
-  const [all, ...tabCounts] = await Promise.all([
-    OrderModel.countDocuments(withShop({})).maxTimeMS(8e3),
-    ...countTabs.map(
-      (t2) => OrderModel.countDocuments(withShop(orderTabFilter(t2))).maxTimeMS(8e3)
-    ),
-    OrderModel.countDocuments(cancelReturnsFilter).maxTimeMS(8e3)
-  ]);
-  const counts = {
-    all: Number(all) || 0,
-    cancel_returns: Number(tabCounts[countTabs.length]) || 0
-  };
-  countTabs.forEach((t2, i2) => {
-    counts[t2] = Number(tabCounts[i2]) || 0;
-  });
+async function loadPriorityTabOrdersFromStore(opts) {
   try {
-    const dhhFilter = opts?.shopId && opts.shopId !== "all" ? {
-      $or: [
-        { shopId: String(opts.shopId) },
-        { shop_id: String(opts.shopId) }
-      ]
-    } : {};
-    counts.received_cancel_returns = Number(
-      await DonHoanHuyModel.countDocuments(dhhFilter).maxTimeMS(5e3)
+    requireMongo();
+    const perTab = Math.max(
+      10,
+      Math.min(50, Math.floor(Number(opts?.perTabLimit) || 40))
     );
-  } catch {
-    counts.received_cancel_returns = 0;
+    const tabs = [
+      "unprocessed",
+      "processed",
+      "pending_confirm",
+      "handed_over_carrier",
+      "shipping"
+    ];
+    const tabRowCounts = [];
+    const byId = /* @__PURE__ */ new Map();
+    for (const tab of tabs) {
+      try {
+        const page = await queryOrdersPageFromStore({
+          page: 1,
+          pageSize: perTab,
+          tab,
+          shopId: opts?.shopId || "",
+          skipCounts: true
+        });
+        const rows = page?.rows || [];
+        tabRowCounts.push(rows.length);
+        for (const row of rows) {
+          const id = String(row?.id || row?.orderSn || "").trim();
+          if (id) byId.set(id, row);
+        }
+      } catch (err) {
+        tabRowCounts.push(0);
+        console.warn(
+          `[MongoDB] loadPriorityTabOrders tab=${tab} failed:`,
+          err?.message || err
+        );
+      }
+      await new Promise((r2) => setTimeout(r2, 30));
+    }
+    const merged = [...byId.values()];
+    console.log(
+      `[MongoDB] loadPriorityTabOrders merged=${merged.length} tabs=${tabs.map((t2, i2) => `${t2}:${tabRowCounts[i2] || 0}`).join(",")}`
+    );
+    return merged;
+  } catch (err) {
+    console.error(
+      "[MongoDB] loadPriorityTabOrders FATAL:",
+      err?.message || err
+    );
+    return [];
   }
-  return counts;
+}
+async function safeCountDocuments(filter, maxTimeMS = 6e3) {
+  try {
+    return Number(await OrderModel.countDocuments(filter).maxTimeMS(maxTimeMS)) || 0;
+  } catch (err) {
+    console.warn(
+      "[MongoDB] safeCountDocuments failed:",
+      err?.message || err
+    );
+    return 0;
+  }
+}
+async function countOrdersByTabsFromStore(opts) {
+  const empty = {
+    all: 0,
+    pending_confirm: 0,
+    unprocessed: 0,
+    processed: 0,
+    shipping: 0,
+    handed_over_carrier: 0,
+    return_pending: 0,
+    cancel_returns: 0,
+    received_cancel_returns: 0
+  };
+  try {
+    requireMongo();
+    const shopAnd = [];
+    if (opts?.shopId && opts.shopId !== "all") {
+      const shopIdStr = String(opts.shopId).trim();
+      const shopVariants = [
+        { shopId: shopIdStr },
+        { "data.shopId": shopIdStr }
+      ];
+      const asNum = Number(shopIdStr);
+      if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+        shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+      }
+      shopAnd.push({ $or: shopVariants });
+    }
+    const withShop = (tabFilter) => {
+      const parts = [...shopAnd];
+      if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
+      if (parts.length === 0) return {};
+      if (parts.length === 1) return parts[0];
+      return { $and: parts };
+    };
+    const cancelReturnsFilter = withShop({
+      $or: [
+        { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+        {
+          shopee_order_status: {
+            $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"]
+          }
+        },
+        { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+        { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+        { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } }
+      ]
+    });
+    const countTabs = [
+      "pending_confirm",
+      "unprocessed",
+      "processed",
+      "shipping",
+      "handed_over_carrier",
+      "return_pending"
+    ];
+    const counts = { ...empty };
+    counts.all = await safeCountDocuments(withShop({}));
+    await new Promise((r2) => setTimeout(r2, 20));
+    for (const t2 of countTabs) {
+      counts[t2] = await safeCountDocuments(withShop(orderTabFilter(t2)));
+      await new Promise((r2) => setTimeout(r2, 20));
+    }
+    counts.cancel_returns = await safeCountDocuments(cancelReturnsFilter);
+    try {
+      const dhhFilter = opts?.shopId && opts.shopId !== "all" ? {
+        $or: [
+          { shopId: String(opts.shopId) },
+          { shop_id: String(opts.shopId) }
+        ]
+      } : {};
+      counts.received_cancel_returns = Number(
+        await DonHoanHuyModel.countDocuments(dhhFilter).maxTimeMS(5e3)
+      );
+    } catch {
+      counts.received_cancel_returns = 0;
+    }
+    return counts;
+  } catch (err) {
+    console.error(
+      "[MongoDB] countOrdersByTabsFromStore FATAL:",
+      err?.message || err
+    );
+    return empty;
+  }
 }
 async function queryOrdersPageFromStore(opts) {
-  requireMongo();
-  const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
-  const pageSize = Math.max(10, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
-  const and = [];
-  const tabFilter = orderTabFilter(opts?.tab);
-  if (Object.keys(tabFilter).length) and.push(tabFilter);
-  if (opts?.shopId && opts.shopId !== "all") {
-    const shopIdStr = String(opts.shopId).trim();
-    const shopVariants = [
-      { shopId: shopIdStr },
-      { "data.shopId": shopIdStr }
-    ];
-    const asNum = Number(shopIdStr);
-    if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
-      shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+  const empty = {
+    rows: [],
+    total: 0,
+    page: 1,
+    pageSize: 50,
+    hasMore: false,
+    counts: {}
+  };
+  try {
+    requireMongo();
+    const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
+    const pageSize = Math.max(10, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
+    const skipCounts = Boolean(opts?.skipCounts);
+    const and = [];
+    const tabFilter = orderTabFilter(opts?.tab);
+    if (Object.keys(tabFilter).length) and.push(tabFilter);
+    if (opts?.shopId && opts.shopId !== "all") {
+      const shopIdStr = String(opts.shopId).trim();
+      const shopVariants = [
+        { shopId: shopIdStr },
+        { "data.shopId": shopIdStr }
+      ];
+      const asNum = Number(shopIdStr);
+      if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+        shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+      }
+      and.push({ $or: shopVariants });
     }
-    and.push({ $or: shopVariants });
+    if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
+    const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
+    if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
+      and.push({
+        $or: [{ isPrinted: true }, { "data.isPrinted": true }]
+      });
+    } else if (printStatus === "unprinted" || printStatus === "chua-in" || printStatus === "false" || printStatus === "not_printed") {
+      and.push({
+        $and: [
+          { $or: [{ isPrinted: { $exists: false } }, { isPrinted: false }, { isPrinted: null }] },
+          {
+            $or: [
+              { "data.isPrinted": { $exists: false } },
+              { "data.isPrinted": false },
+              { "data.isPrinted": null }
+            ]
+          }
+        ]
+      });
+    }
+    const search = String(opts?.query || "").trim();
+    if (search) {
+      const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      and.push({
+        $or: [
+          { orderSn: regex },
+          { tracking_no: regex },
+          { "data.shopName": regex },
+          { "data.shipping_carrier": regex },
+          { "data.items.productTitle": regex }
+        ]
+      });
+    }
+    const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
+    let docs = [];
+    try {
+      docs = await OrderModel.find(filter).sort({ "data.date": -1, _id: -1 }).skip((page - 1) * pageSize).limit(pageSize).select({ _id: 1 }).maxTimeMS(8e3).lean();
+    } catch (findErr) {
+      console.error(
+        "[MongoDB] queryOrdersPageFromStore find failed:",
+        findErr?.message || findErr
+      );
+      return { ...empty, page, pageSize };
+    }
+    const total = await safeCountDocuments(filter, 8e3);
+    const ids = docs.map((doc) => String(doc._id));
+    let rows = [];
+    try {
+      const hydrated = ids.length ? await loadOrdersFromStore({ ids }) : [];
+      const rowById = new Map(hydrated.map((row) => [String(row.id || ""), row]));
+      rows = ids.map((id) => rowById.get(id)).filter(Boolean);
+    } catch (hydrateErr) {
+      console.warn(
+        "[MongoDB] queryOrdersPageFromStore hydrate failed:",
+        hydrateErr?.message || hydrateErr
+      );
+      rows = [];
+    }
+    const counts = {};
+    if (!skipCounts) {
+      const countTabs = [
+        "pending_confirm",
+        "unprocessed",
+        "processed",
+        "shipping",
+        "return_pending"
+      ];
+      counts.all = await safeCountDocuments({}, 6e3);
+      await new Promise((r2) => setTimeout(r2, 15));
+      for (const t2 of countTabs) {
+        counts[t2] = await safeCountDocuments(orderTabFilter(t2), 6e3);
+        await new Promise((r2) => setTimeout(r2, 15));
+      }
+    }
+    return {
+      rows,
+      total,
+      page,
+      pageSize,
+      hasMore: page * pageSize < total,
+      counts
+    };
+  } catch (err) {
+    console.error(
+      "[MongoDB] queryOrdersPageFromStore FATAL:",
+      err?.message || err
+    );
+    return empty;
   }
-  if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
-  const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
-  if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
-    and.push({
-      $or: [{ isPrinted: true }, { "data.isPrinted": true }]
-    });
-  } else if (printStatus === "unprinted" || printStatus === "chua-in" || printStatus === "false" || printStatus === "not_printed") {
-    and.push({
-      $and: [
-        { $or: [{ isPrinted: { $exists: false } }, { isPrinted: false }, { isPrinted: null }] },
-        {
-          $or: [
-            { "data.isPrinted": { $exists: false } },
-            { "data.isPrinted": false },
-            { "data.isPrinted": null }
-          ]
-        }
-      ]
-    });
-  }
-  const search = String(opts?.query || "").trim();
-  if (search) {
-    const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    and.push({
-      $or: [
-        { orderSn: regex },
-        { tracking_no: regex },
-        { "data.shopName": regex },
-        { "data.shipping_carrier": regex },
-        { "data.items.productTitle": regex }
-      ]
-    });
-  }
-  const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
-  const countTabs = [
-    "pending_confirm",
-    "unprocessed",
-    "processed",
-    "shipping",
-    "return_pending"
-  ];
-  const [total, docs, allCount, ...tabCounts] = await Promise.all([
-    OrderModel.countDocuments(filter).maxTimeMS(8e3),
-    OrderModel.find(filter).sort({ "data.date": -1, _id: -1 }).skip((page - 1) * pageSize).limit(pageSize).select({ _id: 1 }).maxTimeMS(8e3).lean(),
-    OrderModel.countDocuments({}).maxTimeMS(8e3),
-    ...countTabs.map(
-      (t2) => OrderModel.countDocuments(orderTabFilter(t2)).maxTimeMS(8e3)
-    )
-  ]);
-  const ids = docs.map((doc) => String(doc._id));
-  const hydrated = await loadOrdersFromStore({ ids });
-  const rowById = new Map(hydrated.map((row) => [String(row.id || ""), row]));
-  const rows = ids.map((id) => rowById.get(id)).filter(Boolean);
-  const counts = { all: Number(allCount) || 0 };
-  countTabs.forEach((t2, i2) => {
-    counts[t2] = Number(tabCounts[i2]) || 0;
-  });
-  return { rows, total, page, pageSize, hasMore: page * pageSize < total, counts };
 }
 async function createSyncJob(type, requestedBy) {
   requireMongo();
@@ -81989,14 +82154,96 @@ function initOrdersController(partial) {
 function invalidateOrdersRefreshCache() {
   ordersRefreshCache = null;
 }
-async function readOrdersForRefresh(limit) {
+async function readOrdersForRefresh(limit, opts = {}) {
+  const tab = String(opts.tab || "").trim().toLowerCase();
+  const shopId = String(opts.shopId || "").trim();
+  if (tab) {
+    if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
+      const pageSize2 = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 2e3) : 500;
+      const dhh = await loadDonHoanHuyAsOrders(pageSize2);
+      console.log(
+        `[GET /api/orders/refresh] tab=${tab} source=don_hoan_huy \u2192 ${dhh.length} \u0111\u01A1n`
+      );
+      return dhh.filter((order) => Boolean(order?.orderSn || order?.id));
+    }
+    const tabFilter = orderTabFilter(tab);
+    console.log(
+      `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"} filter=`,
+      JSON.stringify(tabFilter)
+    );
+    const pageSize = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 200) : 100;
+    const page = await queryOrdersPageFromStore({
+      page: 1,
+      pageSize,
+      tab,
+      shopId,
+      printStatus: String(opts.printStatus || ""),
+      skipCounts: true
+    });
+    console.log(
+      `[GET /api/orders/refresh] tab=${tab} \u2192 rows=${page.rows.length} total=${page.total} counts=`,
+      page.counts
+    );
+    return page.rows.filter((order) => Boolean(order?.orderSn || order?.id));
+  }
   const now = Date.now();
-  if (ordersRefreshCache && ordersRefreshCache.expiresAt > now) {
-    return limit && limit > 0 ? ordersRefreshCache.orders.slice(0, limit) : ordersRefreshCache.orders;
+  if (ordersRefreshCache && ordersRefreshCache.expiresAt > now && !shopId) {
+    const cached = ordersRefreshCache.orders;
+    if (limit && limit > 0) {
+      try {
+        const priority = await loadPriorityTabOrdersFromStore({
+          perTabLimit: Math.min(40, Math.max(20, limit))
+        });
+        const byId = /* @__PURE__ */ new Map();
+        for (const o of priority) {
+          const id = String(o?.id || o?.orderSn || "").trim();
+          if (id) byId.set(id, o);
+        }
+        for (const o of cached.slice(0, limit)) {
+          const id = String(o?.id || o?.orderSn || "").trim();
+          if (id && !byId.has(id)) byId.set(id, o);
+        }
+        return [...byId.values()];
+      } catch (prioErr) {
+        console.warn(
+          "[GET /api/orders/refresh] priority merge (cache) skipped:",
+          prioErr?.message || prioErr
+        );
+        return cached.slice(0, limit);
+      }
+    }
+    return cached;
   }
   if (limit && limit > 0) {
-    const orders = await loadOrdersFromStore({ limit });
-    return orders.filter((order) => Boolean(order?.orderSn || order?.id));
+    const recent = await loadOrdersFromStore({ limit });
+    let priority = [];
+    try {
+      priority = await loadPriorityTabOrdersFromStore({
+        perTabLimit: Math.min(50, Math.max(25, limit)),
+        shopId: shopId || void 0
+      });
+    } catch (prioErr) {
+      console.warn(
+        "[GET /api/orders/refresh] priority merge skipped:",
+        prioErr?.message || prioErr
+      );
+    }
+    const byId = /* @__PURE__ */ new Map();
+    for (const o of priority) {
+      const id = String(o?.id || o?.orderSn || "").trim();
+      if (id) byId.set(id, o);
+    }
+    for (const o of recent) {
+      const id = String(o?.id || o?.orderSn || "").trim();
+      if (id && !byId.has(id)) byId.set(id, o);
+    }
+    const merged = [...byId.values()].filter(
+      (order) => Boolean(order?.orderSn || order?.id)
+    );
+    console.log(
+      `[GET /api/orders/refresh] shallow limit=${limit} recent=${recent.length} priority=${priority.length} merged=${merged.length}`
+    );
+    return merged;
   }
   if (!ordersRefreshInFlight) {
     ordersRefreshInFlight = loadOrdersFromStore().then((orders) => {
@@ -82041,7 +82288,16 @@ async function refreshOrders(req, res) {
     }
     const rawLimit = Number(req.query.limit);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : void 0;
-    const rawOrders = await readOrdersForRefresh(limit);
+    const tab = String(req.query.tab || req.query.internal_tab || "").trim();
+    const shopId = String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    console.log(
+      `[GET /api/orders/refresh] params limit=${limit ?? "(full)"} tab=${tab || "(none)"} shopId=${shopId || "(all)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
+    );
+    const rawOrders = await readOrdersForRefresh(limit, {
+      tab,
+      shopId,
+      printStatus: String(req.query.print_status || req.query.printStatus || "")
+    });
     let mergedOrders = rawOrders;
     try {
       mergedOrders = await mergeDonHoanHuyIntoOrders(rawOrders);
@@ -82101,9 +82357,24 @@ async function queryOrders(req, res) {
       shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
       carrier: String(req.query.carrier || ""),
       query: String(req.query.q ?? req.query.query ?? ""),
-      printStatus: String(req.query.print_status ?? req.query.printStatus ?? "")
+      printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
+      // Badge dùng /api/order-counts riêng — tránh 6 countDocuments/request trên cPanel.
+      skipCounts: true
     });
-    const products = await deps14.loadProductsForOrders(page.rows);
+    console.log(
+      `[GET /api/orders/query] tab=${req.query.tab || "(all)"} shop=${req.query.shop_id || req.query.shopId || "(all)"} carrier=${req.query.carrier || "(all)"} print=${req.query.print_status || req.query.printStatus || "(all)"} filter=`,
+      JSON.stringify(orderTabFilter(String(req.query.tab || ""))),
+      `\u2192 rows=${page.rows.length} total=${page.total}`
+    );
+    let products = [];
+    try {
+      products = await deps14.loadProductsForOrders(page.rows);
+    } catch (catalogErr) {
+      console.warn(
+        "[Orders Query] catalog enrich skipped:",
+        catalogErr?.message || catalogErr
+      );
+    }
     const rows = deps14.enrichOrdersWithShopNames(
       deps14.enrichOrdersFromCatalog(page.rows, products)
     );
@@ -82155,6 +82426,10 @@ async function getOrderCounts(req, res) {
     const counts = await countOrdersByTabsFromStore({
       shopId: shopId || void 0
     });
+    console.log(
+      `[GET /api/order-counts] shopId=${shopId || "(all)"} counts=`,
+      counts
+    );
     return res.status(200).json({ success: true, counts });
   } catch (error) {
     console.error(
@@ -82192,9 +82467,18 @@ async function listOrders(req, res) {
         shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
         carrier: String(req.query.carrier || ""),
         query: String(req.query.q ?? req.query.query ?? ""),
-        printStatus: String(req.query.print_status ?? req.query.printStatus ?? "")
+        printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
+        skipCounts: true
       });
-      const products2 = await deps14.loadProductsForOrders(page.rows);
+      let products2 = [];
+      try {
+        products2 = await deps14.loadProductsForOrders(page.rows);
+      } catch (catalogErr) {
+        console.warn(
+          "[GET /api/orders] catalog enrich skipped:",
+          catalogErr?.message || catalogErr
+        );
+      }
       const rows = deps14.enrichOrdersWithShopNames(
         deps14.enrichOrdersFromCatalog(page.rows, products2)
       );

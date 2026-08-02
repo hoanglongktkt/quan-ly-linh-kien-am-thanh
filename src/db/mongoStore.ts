@@ -3046,6 +3046,8 @@ export type OrdersPageQuery = {
   query?: string;
   /** `printed` | `unprinted` — lọc theo cờ isPrinted trong Mongo (không gọi Shopee). */
   printStatus?: string;
+  /** Bỏ countDocuments phụ (badge) — bắt buộc khi load priority tabs trên cPanel. */
+  skipCounts?: boolean;
 };
 
 /** Terminal / thoát pool chờ lấy hàng — khớp isShopeeCancelledLike + shipping/completed. */
@@ -3350,131 +3352,176 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
  * Khi refresh shallow (limit), vẫn phải kéo đủ đơn thuộc các tab vận hành
  * (Chưa xử lý / Đã xử lý / Chờ xác nhận / Đã giao ĐVVC) — tránh badge=4 mà list=0
  * vì 50 đơn mới nhất toàn SHIPPED/COMPLETED.
+ *
+ * CẤM Promise.all đa tab: mỗi queryOrdersPageFromStore trước đây còn Promise.all
+ * ~7 countDocuments → 5 tab × 7 = ~35 query song song → cagefs_enter: Unable to fork.
  */
 export async function loadPriorityTabOrdersFromStore(opts?: {
   perTabLimit?: number;
   shopId?: string;
 }): Promise<any[]> {
-  requireMongo();
-  const perTab = Math.max(
-    20,
-    Math.min(200, Math.floor(Number(opts?.perTabLimit) || 100)),
-  );
-  const tabs = [
-    "unprocessed",
-    "processed",
-    "pending_confirm",
-    "handed_over_carrier",
-    "shipping",
-  ] as const;
-  const pages = await Promise.all(
-    tabs.map((tab) =>
-      queryOrdersPageFromStore({
-        page: 1,
-        pageSize: perTab,
-        tab,
-        shopId: opts?.shopId || "",
-      }).catch((err) => {
+  try {
+    requireMongo();
+    const perTab = Math.max(
+      10,
+      Math.min(50, Math.floor(Number(opts?.perTabLimit) || 40)),
+    );
+    const tabs = [
+      "unprocessed",
+      "processed",
+      "pending_confirm",
+      "handed_over_carrier",
+      "shipping",
+    ] as const;
+    const tabRowCounts: number[] = [];
+    const byId = new Map<string, any>();
+    for (const tab of tabs) {
+      try {
+        const page = await queryOrdersPageFromStore({
+          page: 1,
+          pageSize: perTab,
+          tab,
+          shopId: opts?.shopId || "",
+          skipCounts: true,
+        });
+        const rows = page?.rows || [];
+        tabRowCounts.push(rows.length);
+        for (const row of rows) {
+          const id = String(row?.id || row?.orderSn || "").trim();
+          if (id) byId.set(id, row);
+        }
+      } catch (err: any) {
+        tabRowCounts.push(0);
         console.warn(
           `[MongoDB] loadPriorityTabOrders tab=${tab} failed:`,
           err?.message || err,
         );
-        return { rows: [] as any[] };
-      }),
-    ),
-  );
-  const byId = new Map<string, any>();
-  for (const page of pages) {
-    for (const row of page.rows || []) {
-      const id = String(row?.id || row?.orderSn || "").trim();
-      if (id) byId.set(id, row);
+      }
+      // Nhường event loop / tránh spike nproc CageFS giữa các tab.
+      await new Promise((r) => setTimeout(r, 30));
     }
+    const merged = [...byId.values()];
+    console.log(
+      `[MongoDB] loadPriorityTabOrders merged=${merged.length}` +
+        ` tabs=${tabs.map((t, i) => `${t}:${tabRowCounts[i] || 0}`).join(",")}`,
+    );
+    return merged;
+  } catch (err: any) {
+    console.error(
+      "[MongoDB] loadPriorityTabOrders FATAL:",
+      err?.message || err,
+    );
+    return [];
   }
-  const merged = [...byId.values()];
-  console.log(
-    `[MongoDB] loadPriorityTabOrders merged=${merged.length}` +
-      ` tabs=${tabs.map((t, i) => `${t}:${pages[i]?.rows?.length || 0}`).join(",")}`,
-  );
-  return merged;
+}
+
+/** Đếm 1 filter — fail-soft (0) để 1 tab lỗi không kéo sập CageFS. */
+async function safeCountDocuments(
+  filter: Record<string, unknown>,
+  maxTimeMS = 6000,
+): Promise<number> {
+  try {
+    return Number(await OrderModel.countDocuments(filter).maxTimeMS(maxTimeMS)) || 0;
+  } catch (err: any) {
+    console.warn(
+      "[MongoDB] safeCountDocuments failed:",
+      err?.message || err,
+    );
+    return 0;
+  }
 }
 
 /** Đếm số đơn theo tab từ MongoDB — dùng cho badge/tab, không gọi Shopee. */
 export async function countOrdersByTabsFromStore(opts?: {
   shopId?: string;
 }): Promise<Record<string, number>> {
-  requireMongo();
-  const shopAnd: Record<string, unknown>[] = [];
-  if (opts?.shopId && opts.shopId !== "all") {
-    const shopIdStr = String(opts.shopId).trim();
-    const shopVariants: Record<string, unknown>[] = [
-      { shopId: shopIdStr },
-      { "data.shopId": shopIdStr },
-    ];
-    const asNum = Number(shopIdStr);
-    if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
-      shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
-    }
-    shopAnd.push({ $or: shopVariants });
-  }
-  const withShop = (tabFilter: Record<string, unknown>) => {
-    const parts = [...shopAnd];
-    if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
-    if (parts.length === 0) return {};
-    if (parts.length === 1) return parts[0];
-    return { $and: parts };
+  const empty: Record<string, number> = {
+    all: 0,
+    pending_confirm: 0,
+    unprocessed: 0,
+    processed: 0,
+    shipping: 0,
+    handed_over_carrier: 0,
+    return_pending: 0,
+    cancel_returns: 0,
+    received_cancel_returns: 0,
   };
-  const cancelReturnsFilter = withShop({
-    $or: [
-      { status: { $in: ["cancelled", "return_pending", "return_received"] } },
-      {
-        shopee_order_status: {
-          $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"],
-        },
-      },
-      { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
-      { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
-      { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
-    ],
-  });
-  const countTabs = [
-    "pending_confirm",
-    "unprocessed",
-    "processed",
-    "shipping",
-    "handed_over_carrier",
-    "return_pending",
-  ] as const;
-  const [all, ...tabCounts] = await Promise.all([
-    OrderModel.countDocuments(withShop({})).maxTimeMS(8000),
-    ...countTabs.map((t) =>
-      OrderModel.countDocuments(withShop(orderTabFilter(t))).maxTimeMS(8000),
-    ),
-    OrderModel.countDocuments(cancelReturnsFilter).maxTimeMS(8000),
-  ]);
-  const counts: Record<string, number> = {
-    all: Number(all) || 0,
-    cancel_returns: Number(tabCounts[countTabs.length]) || 0,
-  };
-  countTabs.forEach((t, i) => {
-    counts[t] = Number(tabCounts[i]) || 0;
-  });
   try {
-    const dhhFilter =
-      opts?.shopId && opts.shopId !== "all"
-        ? {
-            $or: [
-              { shopId: String(opts.shopId) },
-              { shop_id: String(opts.shopId) },
-            ],
-          }
-        : {};
-    counts.received_cancel_returns = Number(
-      await DonHoanHuyModel.countDocuments(dhhFilter).maxTimeMS(5000),
+    requireMongo();
+    const shopAnd: Record<string, unknown>[] = [];
+    if (opts?.shopId && opts.shopId !== "all") {
+      const shopIdStr = String(opts.shopId).trim();
+      const shopVariants: Record<string, unknown>[] = [
+        { shopId: shopIdStr },
+        { "data.shopId": shopIdStr },
+      ];
+      const asNum = Number(shopIdStr);
+      if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+        shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+      }
+      shopAnd.push({ $or: shopVariants });
+    }
+    const withShop = (tabFilter: Record<string, unknown>) => {
+      const parts = [...shopAnd];
+      if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
+      if (parts.length === 0) return {};
+      if (parts.length === 1) return parts[0];
+      return { $and: parts };
+    };
+    const cancelReturnsFilter = withShop({
+      $or: [
+        { status: { $in: ["cancelled", "return_pending", "return_received"] } },
+        {
+          shopee_order_status: {
+            $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"],
+          },
+        },
+        { "data.shopee_order_status": { $in: ["CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+        { local_status: { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+        { "data.local_status": { $in: ["CANCELLED_STORED", "RETURN_RECEIVED"] } },
+      ],
+    });
+    const countTabs = [
+      "pending_confirm",
+      "unprocessed",
+      "processed",
+      "shipping",
+      "handed_over_carrier",
+      "return_pending",
+    ] as const;
+    // Tuần tự — CẤM Promise.all 8 countDocuments (nproc/CageFS fork fail).
+    const counts: Record<string, number> = { ...empty };
+    counts.all = await safeCountDocuments(withShop({}));
+    await new Promise((r) => setTimeout(r, 20));
+    for (const t of countTabs) {
+      counts[t] = await safeCountDocuments(withShop(orderTabFilter(t)));
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    counts.cancel_returns = await safeCountDocuments(cancelReturnsFilter);
+    try {
+      const dhhFilter =
+        opts?.shopId && opts.shopId !== "all"
+          ? {
+              $or: [
+                { shopId: String(opts.shopId) },
+                { shop_id: String(opts.shopId) },
+              ],
+            }
+          : {};
+      counts.received_cancel_returns = Number(
+        await DonHoanHuyModel.countDocuments(dhhFilter).maxTimeMS(5000),
+      );
+    } catch {
+      counts.received_cancel_returns = 0;
+    }
+    return counts;
+  } catch (err: any) {
+    console.error(
+      "[MongoDB] countOrdersByTabsFromStore FATAL:",
+      err?.message || err,
     );
-  } catch {
-    counts.received_cancel_returns = 0;
+    return empty;
   }
-  return counts;
 }
 
 /** Danh sách đơn phân trang từ MongoDB; frontend không cần tải toàn bộ collection để lọc. */
@@ -3486,93 +3533,139 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
   hasMore: boolean;
   counts: Record<string, number>;
 }> {
-  requireMongo();
-  const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
-  const pageSize = Math.max(10, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
-  const and: Record<string, unknown>[] = [];
-  const tabFilter = orderTabFilter(opts?.tab);
-  if (Object.keys(tabFilter).length) and.push(tabFilter);
-  if (opts?.shopId && opts.shopId !== "all") {
-    const shopIdStr = String(opts.shopId).trim();
-    const shopVariants: Record<string, unknown>[] = [
-      { shopId: shopIdStr },
-      { "data.shopId": shopIdStr },
-    ];
-    const asNum = Number(shopIdStr);
-    if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
-      shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+  const empty = {
+    rows: [] as any[],
+    total: 0,
+    page: 1,
+    pageSize: 50,
+    hasMore: false,
+    counts: {} as Record<string, number>,
+  };
+  try {
+    requireMongo();
+    const page = Math.max(1, Math.floor(Number(opts?.page) || 1));
+    const pageSize = Math.max(10, Math.min(200, Math.floor(Number(opts?.pageSize) || 50)));
+    const skipCounts = Boolean(opts?.skipCounts);
+    const and: Record<string, unknown>[] = [];
+    const tabFilter = orderTabFilter(opts?.tab);
+    if (Object.keys(tabFilter).length) and.push(tabFilter);
+    if (opts?.shopId && opts.shopId !== "all") {
+      const shopIdStr = String(opts.shopId).trim();
+      const shopVariants: Record<string, unknown>[] = [
+        { shopId: shopIdStr },
+        { "data.shopId": shopIdStr },
+      ];
+      const asNum = Number(shopIdStr);
+      if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
+        shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+      }
+      and.push({ $or: shopVariants });
     }
-    and.push({ $or: shopVariants });
+    if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
+    const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
+    if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
+      and.push({
+        $or: [{ isPrinted: true }, { "data.isPrinted": true }],
+      });
+    } else if (
+      printStatus === "unprinted" ||
+      printStatus === "chua-in" ||
+      printStatus === "false" ||
+      printStatus === "not_printed"
+    ) {
+      and.push({
+        $and: [
+          { $or: [{ isPrinted: { $exists: false } }, { isPrinted: false }, { isPrinted: null }] },
+          {
+            $or: [
+              { "data.isPrinted": { $exists: false } },
+              { "data.isPrinted": false },
+              { "data.isPrinted": null },
+            ],
+          },
+        ],
+      });
+    }
+    const search = String(opts?.query || "").trim();
+    if (search) {
+      const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      and.push({
+        $or: [
+          { orderSn: regex },
+          { tracking_no: regex },
+          { "data.shopName": regex },
+          { "data.shipping_carrier": regex },
+          { "data.items.productTitle": regex },
+        ],
+      });
+    }
+    const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
+
+    // Find + count tuần tự — CẤM Promise.all 7 query (CageFS Unable to fork).
+    let docs: any[] = [];
+    try {
+      docs = await OrderModel.find(filter)
+        .sort({ "data.date": -1, _id: -1 })
+        .skip((page - 1) * pageSize)
+        .limit(pageSize)
+        .select({ _id: 1 })
+        .maxTimeMS(8000)
+        .lean();
+    } catch (findErr: any) {
+      console.error(
+        "[MongoDB] queryOrdersPageFromStore find failed:",
+        findErr?.message || findErr,
+      );
+      return { ...empty, page, pageSize };
+    }
+
+    const total = await safeCountDocuments(filter, 8000);
+    const ids = docs.map((doc: any) => String(doc._id));
+    let rows: any[] = [];
+    try {
+      const hydrated = ids.length ? await loadOrdersFromStore({ ids }) : [];
+      const rowById = new Map(hydrated.map((row: any) => [String(row.id || ""), row]));
+      rows = ids.map((id) => rowById.get(id)).filter(Boolean);
+    } catch (hydrateErr: any) {
+      console.warn(
+        "[MongoDB] queryOrdersPageFromStore hydrate failed:",
+        hydrateErr?.message || hydrateErr,
+      );
+      rows = [];
+    }
+
+    const counts: Record<string, number> = {};
+    if (!skipCounts) {
+      const countTabs = [
+        "pending_confirm",
+        "unprocessed",
+        "processed",
+        "shipping",
+        "return_pending",
+      ] as const;
+      counts.all = await safeCountDocuments({}, 6000);
+      await new Promise((r) => setTimeout(r, 15));
+      for (const t of countTabs) {
+        counts[t] = await safeCountDocuments(orderTabFilter(t), 6000);
+        await new Promise((r) => setTimeout(r, 15));
+      }
+    }
+
+    return {
+      rows,
+      total,
+      page,
+      pageSize,
+      hasMore: page * pageSize < total,
+      counts,
+    };
+  } catch (err: any) {
+    console.error(
+      "[MongoDB] queryOrdersPageFromStore FATAL:",
+      err?.message || err,
+    );
+    return empty;
   }
-  if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
-  const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
-  if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
-    and.push({
-      $or: [{ isPrinted: true }, { "data.isPrinted": true }],
-    });
-  } else if (
-    printStatus === "unprinted" ||
-    printStatus === "chua-in" ||
-    printStatus === "false" ||
-    printStatus === "not_printed"
-  ) {
-    and.push({
-      $and: [
-        { $or: [{ isPrinted: { $exists: false } }, { isPrinted: false }, { isPrinted: null }] },
-        {
-          $or: [
-            { "data.isPrinted": { $exists: false } },
-            { "data.isPrinted": false },
-            { "data.isPrinted": null },
-          ],
-        },
-      ],
-    });
-  }
-  const search = String(opts?.query || "").trim();
-  if (search) {
-    const regex = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    and.push({
-      $or: [
-        { orderSn: regex },
-        { tracking_no: regex },
-        { "data.shopName": regex },
-        { "data.shipping_carrier": regex },
-        { "data.items.productTitle": regex },
-      ],
-    });
-  }
-  const filter = and.length === 0 ? {} : and.length === 1 ? and[0] : { $and: and };
-  const countTabs = [
-    "pending_confirm",
-    "unprocessed",
-    "processed",
-    "shipping",
-    "return_pending",
-  ] as const;
-  const [total, docs, allCount, ...tabCounts] = await Promise.all([
-    OrderModel.countDocuments(filter).maxTimeMS(8000),
-    OrderModel.find(filter)
-      .sort({ "data.date": -1, _id: -1 })
-      .skip((page - 1) * pageSize)
-      .limit(pageSize)
-      .select({ _id: 1 })
-      .maxTimeMS(8000)
-      .lean(),
-    OrderModel.countDocuments({}).maxTimeMS(8000),
-    ...countTabs.map((t) =>
-      OrderModel.countDocuments(orderTabFilter(t)).maxTimeMS(8000),
-    ),
-  ]);
-  const ids = docs.map((doc: any) => String(doc._id));
-  const hydrated = await loadOrdersFromStore({ ids });
-  const rowById = new Map(hydrated.map((row: any) => [String(row.id || ""), row]));
-  const rows = ids.map((id) => rowById.get(id)).filter(Boolean);
-  const counts: Record<string, number> = { all: Number(allCount) || 0 };
-  countTabs.forEach((t, i) => {
-    counts[t] = Number(tabCounts[i]) || 0;
-  });
-  return { rows, total, page, pageSize, hasMore: page * pageSize < total, counts };
 }
 
 export async function createSyncJob(

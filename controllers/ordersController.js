@@ -115,14 +115,15 @@ async function readOrdersForRefresh(limit, opts = {}) {
     );
     const pageSize =
       Number.isFinite(Number(limit)) && Number(limit) > 0
-        ? Math.min(Math.floor(Number(limit)), 500)
-        : 200;
+        ? Math.min(Math.floor(Number(limit)), 200)
+        : 100;
     const page = await queryOrdersPageFromStore({
       page: 1,
       pageSize,
       tab,
       shopId,
       printStatus: String(opts.printStatus || ""),
+      skipCounts: true,
     });
     console.log(
       `[GET /api/orders/refresh] tab=${tab} → rows=${page.rows.length} total=${page.total} counts=`,
@@ -138,7 +139,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
       // Shallow: vẫn merge đơn tab ưu tiên để badge/list không lệch.
       try {
         const priority = await loadPriorityTabOrdersFromStore({
-          perTabLimit: Math.min(100, Math.max(50, limit)),
+          perTabLimit: Math.min(40, Math.max(20, limit)),
         });
         const byId = new Map();
         for (const o of priority) {
@@ -165,7 +166,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
     let priority = [];
     try {
       priority = await loadPriorityTabOrdersFromStore({
-        perTabLimit: Math.min(150, Math.max(80, limit)),
+        perTabLimit: Math.min(50, Math.max(25, limit)),
         shopId: shopId || undefined,
       });
     } catch (prioErr) {
@@ -324,6 +325,8 @@ export async function queryOrders(req, res) {
       carrier: String(req.query.carrier || ""),
       query: String(req.query.q ?? req.query.query ?? ""),
       printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
+      // Badge dùng /api/order-counts riêng — tránh 6 countDocuments/request trên cPanel.
+      skipCounts: true,
     });
     console.log(
       `[GET /api/orders/query] tab=${req.query.tab || "(all)"}` +
@@ -334,7 +337,15 @@ export async function queryOrders(req, res) {
       JSON.stringify(orderTabFilter(String(req.query.tab || ""))),
       `→ rows=${page.rows.length} total=${page.total}`,
     );
-    const products = await deps.loadProductsForOrders(page.rows);
+    let products = [];
+    try {
+      products = await deps.loadProductsForOrders(page.rows);
+    } catch (catalogErr) {
+      console.warn(
+        "[Orders Query] catalog enrich skipped:",
+        catalogErr?.message || catalogErr,
+      );
+    }
     const rows = deps.enrichOrdersWithShopNames(
       deps.enrichOrdersFromCatalog(page.rows, products),
     );
@@ -443,8 +454,17 @@ export async function listOrders(req, res) {
         carrier: String(req.query.carrier || ""),
         query: String(req.query.q ?? req.query.query ?? ""),
         printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
+        skipCounts: true,
       });
-      const products = await deps.loadProductsForOrders(page.rows);
+      let products = [];
+      try {
+        products = await deps.loadProductsForOrders(page.rows);
+      } catch (catalogErr) {
+        console.warn(
+          "[GET /api/orders] catalog enrich skipped:",
+          catalogErr?.message || catalogErr,
+        );
+      }
       const rows = deps.enrichOrdersWithShopNames(
         deps.enrichOrdersFromCatalog(page.rows, products),
       );
