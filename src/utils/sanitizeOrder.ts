@@ -137,7 +137,9 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       return undefined;
     })(),
     internalTrackingCode: raw.internalTrackingCode ? String(raw.internalTrackingCode) : undefined,
-    packageNumber: raw.packageNumber ? String(raw.packageNumber) : undefined,
+    packageNumber: raw.packageNumber || raw.package_number
+      ? String(raw.packageNumber || raw.package_number)
+      : undefined,
     is_pending_shopee_check: Boolean(raw.is_pending_shopee_check),
     isPrepared: Boolean(raw.isPrepared),
     isPrinted: Boolean(raw.isPrinted),

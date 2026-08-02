@@ -89,6 +89,8 @@ type OrderDoc = {
   shopId?: string | null;
   /** Mã vận đơn (SPXVN / GHN / ...) — top-level để query & force update */
   tracking_no?: string | null;
+  /** Shopee package_number (OFG...) — cốt lõi in vận đơn / logistics */
+  packageNumber?: string | null;
   /** Tên ĐVVC từ Shopee */
   shipping_carrier?: string | null;
   /** Flag bẫy lỗi: đơn đang chờ Shopee kiểm tra — default false */
@@ -192,6 +194,8 @@ const OrderSchema = new Schema<OrderDoc>(
     /** Shopee shop_id — luôn String (uint64-safe) */
     shopId: { type: String, default: null, index: true },
     tracking_no: { type: String, default: null, index: true },
+    /** Shopee package_number (OFG...) — bắt buộc cho create_shipping_document / logistics */
+    packageNumber: { type: String, default: null, index: true },
     shipping_carrier: { type: String, default: null, index: true },
     is_pending_shopee_check: { type: Boolean, default: false, index: true },
     /** Cờ nội bộ — chỉ $setOnInsert khi sync; QR/bàn giao mới $set true */
@@ -221,6 +225,10 @@ OrderSchema.index(
 );
 // Giữ compound index cho các truy vấn theo shop trong luồng reconciliation.
 OrderSchema.index({ orderSn: 1, shopId: 1 });
+// Lookup / quét theo package_number (OFG...).
+OrderSchema.index({ packageNumber: 1 });
+OrderSchema.index({ "data.packageNumber": 1 });
+OrderSchema.index({ "data.package_number": 1 });
 // Quét kiện hoàn theo return_tracking_no (barcode chiều về).
 OrderSchema.index({ "data.return_tracking_no": 1 });
 // Hỗ trợ Dashboard aggregation lọc theo ngày / doanh thu mà không quét toàn bộ collection.
@@ -1658,8 +1666,13 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       }
     }
 
-    if (order.packageNumber != null && String(order.packageNumber).trim()) {
-      $set["data.packageNumber"] = String(order.packageNumber);
+    const pkgNum = String(
+      order.packageNumber || order.package_number || "",
+    ).trim();
+    if (pkgNum) {
+      $set.packageNumber = pkgNum;
+      $set["data.packageNumber"] = pkgNum;
+      $set["data.package_number"] = pkgNum;
     }
     // Push fallback có thể chỉ chứa orderSn/status. Không để `items: []` hoặc
     // `totalAmount: 0` ghi đè snapshot chi tiết đã lấy trước đó.
@@ -1709,6 +1722,7 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       shopee_order_status: rawStatus || null,
       status_local: order.status || null,
       tracking_no: usableTn,
+      packageNumber: pkgNum || null,
       shipping_carrier: carrier || null,
       setOnInsert_flags: "is_handed_over/isPrinted/isPrepared=false",
     });
@@ -2265,7 +2279,12 @@ export async function updateOrderTrackingInStore(
     $set["data.internalTrackingCode"] = extra.internalTrackingCode;
   }
   if (extra?.packageNumber) {
-    $set["data.packageNumber"] = extra.packageNumber;
+    const pkg = String(extra.packageNumber).trim();
+    if (pkg) {
+      $set.packageNumber = pkg;
+      $set["data.packageNumber"] = pkg;
+      $set["data.package_number"] = pkg;
+    }
   }
   if (extra?.status != null) {
     $set.status = String(extra.status);
@@ -2295,6 +2314,76 @@ export async function updateOrderTrackingInStore(
   );
   console.log(
     `[MongoDB] findOneAndUpdate tracking_no=${tn} order_sn=${sn} shopId=${shopIdStr || "-"} status=${extra?.status || "-"} ok=${Boolean(result)}`,
+  );
+  return Boolean(result);
+}
+
+/**
+ * Ghi package_number (+ tracking nếu có) vào Mongo — dùng khi enrich in đơn
+ * lấy được package_number nhưng chưa có tracking_no.
+ */
+export async function updateOrderPackageNumberInStore(
+  orderSn: string,
+  packageNumber: string,
+  extra?: {
+    trackingNo?: string;
+    internalTrackingCode?: string;
+    status?: string;
+    isPrepared?: boolean;
+    shopee_order_status?: string;
+    shopId?: string;
+  },
+): Promise<boolean> {
+  if (!isMongoReady()) return false;
+  requireMongo();
+  const sn = String(orderSn || "").trim();
+  const pkg = String(packageNumber || "").trim();
+  if (!sn || !pkg) return false;
+  const _id = `shopee-${sn}`;
+  const shopIdStr = extra?.shopId != null ? String(extra.shopId).trim() : "";
+  const $set: Record<string, unknown> = {
+    packageNumber: pkg,
+    "data.packageNumber": pkg,
+    "data.package_number": pkg,
+  };
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
+  const tn = String(extra?.trackingNo || "").trim();
+  if (tn && !/^0FG/i.test(tn)) {
+    $set.tracking_no = tn;
+    $set["data.tracking_no"] = tn;
+    $set["data.trackingNumber"] = tn;
+  }
+  if (extra?.internalTrackingCode) {
+    $set["data.internalTrackingCode"] = extra.internalTrackingCode;
+  }
+  if (extra?.status != null) {
+    $set.status = String(extra.status);
+    $set["data.status"] = String(extra.status);
+  }
+  if (extra?.isPrepared != null) {
+    $set["data.isPrepared"] = extra.isPrepared;
+  }
+  if (extra?.shopee_order_status != null) {
+    $set.shopee_order_status = String(extra.shopee_order_status);
+    $set["data.shopee_order_status"] = String(extra.shopee_order_status);
+  }
+  const $setOnInsert: Record<string, unknown> = {
+    _id,
+    orderSn: sn,
+    "data.id": _id,
+    "data.orderSn": sn,
+    "data.channel": "shopee",
+  };
+  const result = await OrderModel.findOneAndUpdate(
+    buildOrderCompoundFilter(sn, _id, shopIdStr),
+    { $set, $setOnInsert },
+    { new: true, upsert: true },
+  );
+  console.log(
+    `[MongoDB] findOneAndUpdate packageNumber=${pkg} order_sn=${sn} shopId=${shopIdStr || "-"} ok=${Boolean(result)}`,
   );
   return Boolean(result);
 }
@@ -2708,6 +2797,13 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
   const sn = String(d?.orderSn || data.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
   if (!sn && !d?._id) return null;
   const tn = String(d?.tracking_no || data.tracking_no || data.trackingNumber || "").trim();
+  const pkg = String(
+    d?.packageNumber ||
+      data.packageNumber ||
+      data.package_number ||
+      d?.package_number ||
+      "",
+  ).trim();
   const rawStatus = String(d?.shopee_order_status || data.shopee_order_status || "")
     .trim()
     .toUpperCase();
@@ -2741,6 +2837,8 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     shopId: d?.shopId != null ? d.shopId : data.shopId,
     tracking_no: tn || undefined,
     trackingNumber: tn || undefined,
+    packageNumber: pkg || undefined,
+    package_number: pkg || undefined,
     shipping_carrier: carrier || data.shipping_carrier || undefined,
     is_pending_shopee_check:
       d?.is_pending_shopee_check != null
@@ -2812,12 +2910,14 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
     $or: [
       { tracking_no: { $in: keys } },
       { orderSn: { $in: keys } },
+      { packageNumber: { $in: keys } },
       { _id: { $in: uniqueIds } },
       { "data.tracking_no": { $in: keys } },
       { "data.trackingNumber": { $in: keys } },
       { "data.return_tracking_no": { $in: keys } },
       { "data.internalTrackingCode": { $in: keys } },
       { "data.packageNumber": { $in: keys } },
+      { "data.package_number": { $in: keys } },
       { "data.orderSn": { $in: keys } },
       { "data.order_sn": { $in: keys } },
     ],
@@ -2839,20 +2939,24 @@ export async function findOrderByScanCodeInStore(rawCode: string): Promise<any |
         const fieldMatchers = [
           { tracking_no: rxExact },
           { orderSn: rxExact },
+          { packageNumber: rxExact },
           { "data.tracking_no": rxExact },
           { "data.trackingNumber": rxExact },
           { "data.return_tracking_no": rxExact },
           { "data.internalTrackingCode": rxExact },
           { "data.packageNumber": rxExact },
+          { "data.package_number": rxExact },
           { "data.orderSn": rxExact },
           { "data.order_sn": rxExact },
           ...(rxSuffix
             ? [
                 { tracking_no: rxSuffix },
+                { packageNumber: rxSuffix },
                 { "data.tracking_no": rxSuffix },
                 { "data.trackingNumber": rxSuffix },
                 { "data.return_tracking_no": rxSuffix },
                 { "data.internalTrackingCode": rxSuffix },
+                { "data.packageNumber": rxSuffix },
                 { orderSn: rxSuffix },
               ]
             : []),
