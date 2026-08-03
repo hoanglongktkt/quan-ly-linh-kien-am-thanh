@@ -3286,6 +3286,8 @@ export type OrdersPageQuery = {
   pageSize?: number;
   tab?: string;
   shopId?: string;
+  /** Nhiều shop — filter `$in` (ưu tiên hơn shopId đơn khi length > 1). */
+  shopIds?: string[];
   carrier?: string;
   query?: string;
   /** `printed` | `unprinted` — lọc theo cờ isPrinted trong Mongo (không gọi Shopee). */
@@ -3293,6 +3295,52 @@ export type OrdersPageQuery = {
   /** Bỏ countDocuments phụ (badge) — bắt buộc khi load priority tabs trên cPanel. */
   skipCounts?: boolean;
 };
+
+/** Build Mongo filter cho 1 hoặc nhiều shopId (string + number variants). */
+export function buildShopIdMongoFilter(
+  shopId?: string | null,
+  shopIds?: string[] | null,
+): Record<string, unknown> | null {
+  const multi = Array.isArray(shopIds)
+    ? [
+        ...new Set(
+          shopIds
+            .map((s) => String(s || "").trim())
+            .filter((s) => s && s !== "all"),
+        ),
+      ]
+    : [];
+  if (multi.length > 1) {
+    const strIds = multi;
+    const numIds = multi
+      .map((s) => Number(s))
+      .filter((n) => Number.isFinite(n) && String(n) === String(Math.trunc(n)));
+    const variants: Record<string, unknown>[] = [
+      { shopId: { $in: strIds } },
+      { "data.shopId": { $in: strIds } },
+    ];
+    if (numIds.length) {
+      variants.push({ shopId: { $in: numIds } }, { "data.shopId": { $in: numIds } });
+    }
+    return { $or: variants };
+  }
+  const single =
+    multi.length === 1
+      ? multi[0]
+      : shopId && String(shopId).trim() && String(shopId).trim() !== "all"
+        ? String(shopId).trim()
+        : "";
+  if (!single) return null;
+  const shopVariants: Record<string, unknown>[] = [
+    { shopId: single },
+    { "data.shopId": single },
+  ];
+  const asNum = Number(single);
+  if (Number.isFinite(asNum) && String(asNum) === single) {
+    shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+  }
+  return { $or: shopVariants };
+}
 
 /** Terminal / thoát pool chờ lấy hàng — khớp isShopeeCancelledLike + shipping/completed. */
 const ORDER_TAB_LEFT_PICKUP_RAW = [
@@ -3603,6 +3651,7 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
 export async function loadPriorityTabOrdersFromStore(opts?: {
   perTabLimit?: number;
   shopId?: string;
+  shopIds?: string[];
 }): Promise<any[]> {
   try {
     requireMongo();
@@ -3626,6 +3675,7 @@ export async function loadPriorityTabOrdersFromStore(opts?: {
           pageSize: perTab,
           tab,
           shopId: opts?.shopId || "",
+          shopIds: opts?.shopIds,
           skipCounts: true,
         });
         const rows = page?.rows || [];
@@ -3678,6 +3728,7 @@ async function safeCountDocuments(
 /** Đếm số đơn theo tab từ MongoDB — dùng cho badge/tab, không gọi Shopee. */
 export async function countOrdersByTabsFromStore(opts?: {
   shopId?: string;
+  shopIds?: string[];
 }): Promise<Record<string, number>> {
   const empty: Record<string, number> = {
     all: 0,
@@ -3693,18 +3744,8 @@ export async function countOrdersByTabsFromStore(opts?: {
   try {
     requireMongo();
     const shopAnd: Record<string, unknown>[] = [];
-    if (opts?.shopId && opts.shopId !== "all") {
-      const shopIdStr = String(opts.shopId).trim();
-      const shopVariants: Record<string, unknown>[] = [
-        { shopId: shopIdStr },
-        { "data.shopId": shopIdStr },
-      ];
-      const asNum = Number(shopIdStr);
-      if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
-        shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
-      }
-      shopAnd.push({ $or: shopVariants });
-    }
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    if (shopFilter) shopAnd.push(shopFilter);
     const withShop = (tabFilter: Record<string, unknown>) => {
       const parts = [...shopAnd];
       if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
@@ -3743,17 +3784,31 @@ export async function countOrdersByTabsFromStore(opts?: {
     }
     counts.cancel_returns = await safeCountDocuments(cancelReturnsFilter);
     try {
-      const dhhFilter =
-        opts?.shopId && opts.shopId !== "all"
+      const dhhShop =
+        Array.isArray(opts?.shopIds) && opts!.shopIds!.length > 1
           ? {
               $or: [
-                { shopId: String(opts.shopId) },
-                { shop_id: String(opts.shopId) },
+                { shopId: { $in: opts!.shopIds!.map(String) } },
+                { shop_id: { $in: opts!.shopIds!.map(String) } },
               ],
             }
-          : {};
+          : opts?.shopId && opts.shopId !== "all"
+            ? {
+                $or: [
+                  { shopId: String(opts.shopId) },
+                  { shop_id: String(opts.shopId) },
+                ],
+              }
+            : Array.isArray(opts?.shopIds) && opts!.shopIds!.length === 1
+              ? {
+                  $or: [
+                    { shopId: String(opts!.shopIds![0]) },
+                    { shop_id: String(opts!.shopIds![0]) },
+                  ],
+                }
+              : {};
       counts.received_cancel_returns = Number(
-        await DonHoanHuyModel.countDocuments(dhhFilter).maxTimeMS(5000),
+        await DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(5000),
       );
     } catch {
       counts.received_cancel_returns = 0;
@@ -3793,18 +3848,8 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     const and: Record<string, unknown>[] = [];
     const tabFilter = orderTabFilter(opts?.tab);
     if (Object.keys(tabFilter).length) and.push(tabFilter);
-    if (opts?.shopId && opts.shopId !== "all") {
-      const shopIdStr = String(opts.shopId).trim();
-      const shopVariants: Record<string, unknown>[] = [
-        { shopId: shopIdStr },
-        { "data.shopId": shopIdStr },
-      ];
-      const asNum = Number(shopIdStr);
-      if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
-        shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
-      }
-      and.push({ $or: shopVariants });
-    }
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    if (shopFilter) and.push(shopFilter);
     if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
     const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
     if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {

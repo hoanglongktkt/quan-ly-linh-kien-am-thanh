@@ -75737,6 +75737,36 @@ async function loadShopeeTrackingEnrichCandidatesFromStore(opts) {
   if (!docs.length) return [];
   return loadOrdersFromStore({ ids: docs.map((d) => String(d._id)) });
 }
+function buildShopIdMongoFilter(shopId, shopIds) {
+  const multi = Array.isArray(shopIds) ? [
+    ...new Set(
+      shopIds.map((s2) => String(s2 || "").trim()).filter((s2) => s2 && s2 !== "all")
+    )
+  ] : [];
+  if (multi.length > 1) {
+    const strIds = multi;
+    const numIds = multi.map((s2) => Number(s2)).filter((n) => Number.isFinite(n) && String(n) === String(Math.trunc(n)));
+    const variants = [
+      { shopId: { $in: strIds } },
+      { "data.shopId": { $in: strIds } }
+    ];
+    if (numIds.length) {
+      variants.push({ shopId: { $in: numIds } }, { "data.shopId": { $in: numIds } });
+    }
+    return { $or: variants };
+  }
+  const single = multi.length === 1 ? multi[0] : shopId && String(shopId).trim() && String(shopId).trim() !== "all" ? String(shopId).trim() : "";
+  if (!single) return null;
+  const shopVariants = [
+    { shopId: single },
+    { "data.shopId": single }
+  ];
+  const asNum = Number(single);
+  if (Number.isFinite(asNum) && String(asNum) === single) {
+    shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
+  }
+  return { $or: shopVariants };
+}
 var ORDER_TAB_LEFT_PICKUP_RAW = [
   "SHIPPED",
   "TO_CONFIRM_RECEIVE",
@@ -76038,6 +76068,7 @@ async function loadPriorityTabOrdersFromStore(opts) {
           pageSize: perTab,
           tab,
           shopId: opts?.shopId || "",
+          shopIds: opts?.shopIds,
           skipCounts: true
         });
         const rows = page?.rows || [];
@@ -76094,18 +76125,8 @@ async function countOrdersByTabsFromStore(opts) {
   try {
     requireMongo();
     const shopAnd = [];
-    if (opts?.shopId && opts.shopId !== "all") {
-      const shopIdStr = String(opts.shopId).trim();
-      const shopVariants = [
-        { shopId: shopIdStr },
-        { "data.shopId": shopIdStr }
-      ];
-      const asNum = Number(shopIdStr);
-      if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
-        shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
-      }
-      shopAnd.push({ $or: shopVariants });
-    }
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    if (shopFilter) shopAnd.push(shopFilter);
     const withShop = (tabFilter) => {
       const parts = [...shopAnd];
       if (tabFilter && Object.keys(tabFilter).length) parts.push(tabFilter);
@@ -76143,14 +76164,24 @@ async function countOrdersByTabsFromStore(opts) {
     }
     counts.cancel_returns = await safeCountDocuments(cancelReturnsFilter);
     try {
-      const dhhFilter = opts?.shopId && opts.shopId !== "all" ? {
+      const dhhShop = Array.isArray(opts?.shopIds) && opts.shopIds.length > 1 ? {
+        $or: [
+          { shopId: { $in: opts.shopIds.map(String) } },
+          { shop_id: { $in: opts.shopIds.map(String) } }
+        ]
+      } : opts?.shopId && opts.shopId !== "all" ? {
         $or: [
           { shopId: String(opts.shopId) },
           { shop_id: String(opts.shopId) }
         ]
+      } : Array.isArray(opts?.shopIds) && opts.shopIds.length === 1 ? {
+        $or: [
+          { shopId: String(opts.shopIds[0]) },
+          { shop_id: String(opts.shopIds[0]) }
+        ]
       } : {};
       counts.received_cancel_returns = Number(
-        await DonHoanHuyModel.countDocuments(dhhFilter).maxTimeMS(5e3)
+        await DonHoanHuyModel.countDocuments(dhhShop).maxTimeMS(5e3)
       );
     } catch {
       counts.received_cancel_returns = 0;
@@ -76181,18 +76212,8 @@ async function queryOrdersPageFromStore(opts) {
     const and = [];
     const tabFilter = orderTabFilter(opts?.tab);
     if (Object.keys(tabFilter).length) and.push(tabFilter);
-    if (opts?.shopId && opts.shopId !== "all") {
-      const shopIdStr = String(opts.shopId).trim();
-      const shopVariants = [
-        { shopId: shopIdStr },
-        { "data.shopId": shopIdStr }
-      ];
-      const asNum = Number(shopIdStr);
-      if (Number.isFinite(asNum) && String(asNum) === shopIdStr) {
-        shopVariants.push({ shopId: asNum }, { "data.shopId": asNum });
-      }
-      and.push({ $or: shopVariants });
-    }
+    const shopFilter = buildShopIdMongoFilter(opts?.shopId, opts?.shopIds);
+    if (shopFilter) and.push(shopFilter);
     if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
     const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
     if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
@@ -103111,14 +103132,23 @@ async function refreshShopeeAccessTokenLocked(shopId, opts) {
       }
     }
     const oldRefresh = String(record.refresh_token);
+    const oauthOwner = normalizeShopIdKey(record.oauth_shop_id);
+    const refreshApiShopId = oauthOwner && oauthOwner !== key ? oauthOwner : key;
     console.log(
-      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)} lock=${lockKey}...`
+      `[Shopee Token] Refresh access_token shop_id=${key} apiShopId=${refreshApiShopId} force=${Boolean(opts?.force)} lock=${lockKey}...`
     );
-    const refreshed = await refreshShopeeToken(key, oldRefresh);
+    let refreshed = await refreshShopeeToken(refreshApiShopId, oldRefresh);
+    if (!refreshed.access_token && refreshApiShopId === key && oauthOwner && oauthOwner !== key) {
+      console.warn(
+        `[Shopee Token] Refresh shop_id=${key} fail \u2014 retry v\u1EDBi oauth_shop_id=${oauthOwner}`
+      );
+      refreshed = await refreshShopeeToken(oauthOwner, oldRefresh);
+    }
     if (refreshed.access_token) {
       const obtainedAt = Math.floor(Date.now() / 1e3);
+      const propagateFrom = normalizeShopIdKey(refreshed.shop_id) || refreshApiShopId || key;
       propagateShopeeTokenToLinkedShops(
-        key,
+        propagateFrom,
         {
           access_token: refreshed.access_token,
           refresh_token: refreshed.refresh_token || oldRefresh,
@@ -103128,7 +103158,12 @@ async function refreshShopeeAccessTokenLocked(shopId, opts) {
         { onlyMatchingRefreshToken: oldRefresh }
       );
       tokenCacheSet(key, refreshed.access_token, refreshed.expire_in);
-      console.log(`[Shopee Token] Refresh OK shop_id=${key} \u2014 DB + cache c\u1EADp nh\u1EADt theo shop_id`);
+      if (propagateFrom !== key) {
+        tokenCacheSet(propagateFrom, refreshed.access_token, refreshed.expire_in);
+      }
+      console.log(
+        `[Shopee Token] Refresh OK shop_id=${key} via=${propagateFrom} \u2014 DB + cache c\u1EADp nh\u1EADt`
+      );
       return String(refreshed.access_token);
     }
     tokenCacheClear(key);
@@ -104677,6 +104712,23 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
 
 // controllers/ordersController.js
 var APP_ROOT9 = resolveAppRoot3();
+function parseShopIdsParam(rawShopIds, rawShopId) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const push = (v) => {
+    const s2 = String(v || "").trim();
+    if (!s2 || s2 === "all" || seen.has(s2)) return;
+    seen.add(s2);
+    out.push(s2);
+  };
+  if (Array.isArray(rawShopIds)) {
+    for (const v of rawShopIds) push(v);
+  } else if (rawShopIds != null && String(rawShopIds).trim() !== "") {
+    for (const part of String(rawShopIds).split(",")) push(part);
+  }
+  if (out.length === 0) push(rawShopId);
+  return out;
+}
 var deps15 = {
   withLocalDbTimeout: async (p) => p,
   loadProductsForOrders: async () => [],
@@ -104725,6 +104777,7 @@ function invalidateOrdersRefreshCache() {
 async function readOrdersForRefresh(limit, opts = {}) {
   const tab = String(opts.tab || "").trim().toLowerCase();
   const shopId = String(opts.shopId || "").trim();
+  const shopIds = Array.isArray(opts.shopIds) ? opts.shopIds : [];
   if (tab) {
     if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
       const pageSize2 = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 2e3) : 500;
@@ -104736,7 +104789,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
     }
     const tabFilter = orderTabFilter(tab);
     console.log(
-      `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"} filter=`,
+      `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} filter=`,
       JSON.stringify(tabFilter)
     );
     const pageSize = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(Math.floor(Number(limit)), 200) : 100;
@@ -104745,6 +104798,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
       pageSize,
       tab,
       shopId,
+      shopIds: shopIds.length ? shopIds : void 0,
       printStatus: String(opts.printStatus || ""),
       skipCounts: true
     });
@@ -104788,7 +104842,8 @@ async function readOrdersForRefresh(limit, opts = {}) {
     try {
       priority = await loadPriorityTabOrdersFromStore({
         perTabLimit: Math.min(50, Math.max(25, limit)),
-        shopId: shopId || void 0
+        shopId: shopId || void 0,
+        shopIds: shopIds.length > 1 ? shopIds : void 0
       });
     } catch (prioErr) {
       console.warn(
@@ -104857,13 +104912,18 @@ async function refreshOrders(req, res) {
     const rawLimit = Number(req.query.limit);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : void 0;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
-    const shopId = String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const shopIds = parseShopIdsParam(
+      req.query.shop_ids ?? req.query.shopIds,
+      req.query.shop_id ?? req.query.shopId
+    );
+    const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     console.log(
-      `[GET /api/orders/refresh] params limit=${limit ?? "(full)"} tab=${tab || "(none)"} shopId=${shopId || "(all)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
+      `[GET /api/orders/refresh] params limit=${limit ?? "(full)"} tab=${tab || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
     );
     const rawOrders = await readOrdersForRefresh(limit, {
       tab,
       shopId,
+      shopIds,
       printStatus: String(req.query.print_status || req.query.printStatus || "")
     });
     let mergedOrders = rawOrders;
@@ -104918,11 +104978,17 @@ async function queryOrders(req, res) {
     if (!isMongoReady()) {
       return res.status(503).json({ success: false, error: "mongodb_not_ready", data: [] });
     }
+    const shopIds = parseShopIdsParam(
+      req.query.shop_ids ?? req.query.shopIds,
+      req.query.shop_id ?? req.query.shopId
+    );
+    const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "");
     const page = await queryOrdersPageFromStore({
       page: Number(req.query.page),
       pageSize: Number(req.query.page_size ?? req.query.pageSize),
       tab: String(req.query.tab || ""),
-      shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
+      shopId,
+      shopIds: shopIds.length > 1 ? shopIds : void 0,
       carrier: String(req.query.carrier || ""),
       query: String(req.query.q ?? req.query.query ?? ""),
       printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
@@ -104930,7 +104996,7 @@ async function queryOrders(req, res) {
       skipCounts: true
     });
     console.log(
-      `[GET /api/orders/query] tab=${req.query.tab || "(all)"} shop=${req.query.shop_id || req.query.shopId || "(all)"} carrier=${req.query.carrier || "(all)"} print=${req.query.print_status || req.query.printStatus || "(all)"} filter=`,
+      `[GET /api/orders/query] tab=${req.query.tab || "(all)"} shop=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} carrier=${req.query.carrier || "(all)"} print=${req.query.print_status || req.query.printStatus || "(all)"} filter=`,
       JSON.stringify(orderTabFilter(String(req.query.tab || ""))),
       `\u2192 rows=${page.rows.length} total=${page.total}`
     );
@@ -104990,12 +105056,17 @@ async function getOrderCounts(req, res) {
         error: "mongodb_not_ready"
       });
     }
-    const shopId = String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const shopIds = parseShopIdsParam(
+      req.query.shop_ids ?? req.query.shopIds,
+      req.query.shop_id ?? req.query.shopId
+    );
+    const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     const counts = await countOrdersByTabsFromStore({
-      shopId: shopId || void 0
+      shopId: shopId || void 0,
+      shopIds: shopIds.length > 1 ? shopIds : void 0
     });
     console.log(
-      `[GET /api/order-counts] shopId=${shopId || "(all)"} counts=`,
+      `[GET /api/order-counts] shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} counts=`,
       counts
     );
     return res.status(200).json({ success: true, counts });
@@ -105028,11 +105099,17 @@ async function listOrders(req, res) {
           error: "mongodb_not_ready"
         });
       }
+      const shopIds = parseShopIdsParam(
+        req.query.shop_ids ?? req.query.shopIds,
+        req.query.shop_id ?? req.query.shopId
+      );
+      const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "");
       const page = await queryOrdersPageFromStore({
         page: pageRaw,
         pageSize: pageSizeRaw || 50,
         tab: String(req.query.tab || req.query.internal_tab || ""),
-        shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
+        shopId,
+        shopIds: shopIds.length > 1 ? shopIds : void 0,
         carrier: String(req.query.carrier || ""),
         query: String(req.query.q ?? req.query.query ?? ""),
         printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
@@ -110013,37 +110090,100 @@ async function pullIncrementalOrdersFromShopee(opts) {
         }
       }
     }
-    const perShopBudgetMs = Math.max(
+    const MIN_SHOP_BUDGET_MS = shortLookback ? 15e3 : 2e4;
+    const basePerShopBudgetMs = Math.max(
       longLookback ? 45e3 : 28e3,
       Math.floor(pullDeadlineMs / Math.max(1, shopIds.length))
     );
+    const perShopResults = [];
     syncDiag(
       "Pull START",
-      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking3} longLookback=${longLookback}`
+      `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms basePerShop=${basePerShopBudgetMs}ms minShop=${MIN_SHOP_BUDGET_MS}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking3} longLookback=${longLookback}`
     );
     console.log(
-      `[Orders Pull] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m \u2014 shops=${shopIds.length} lookbackSec=${lookbackSec}`
+      `[Orders Pull] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m \u2014 shops=${shopIds.length} ids=[${shopIds.join(",")}] lookbackSec=${lookbackSec}`
     );
-    for (const shopId of shopIds) {
+    for (let shopIdx = 0; shopIdx < shopIds.length; shopIdx++) {
+      const shopId = shopIds[shopIdx];
+      const shopsRemaining = shopIds.length - shopIdx;
+      const remainingMs = Math.max(0, deadlineAt - Date.now());
+      const fairShareMs = Math.floor(remainingMs / Math.max(1, shopsRemaining));
+      const shopBudgetMs = Math.max(
+        Math.min(basePerShopBudgetMs, fairShareMs || 0),
+        Math.min(MIN_SHOP_BUDGET_MS, remainingMs)
+      );
+      let shopPulled = 0;
+      let shopAdded = 0;
+      let shopUpdated = 0;
+      let shopSn = 0;
+      let shopStatus = "pending";
+      let shopErrorMsg = "";
       try {
         await yieldToLogisticsIfBusy(12e3);
-        if (Date.now() >= deadlineAt) {
-          syncDiag("DEADLINE HIT \u2014 stop before next shop", `remaining skipped after ${shopId}`);
-          errors.push({
-            error: "pull_deadline",
-            message: `H\u1EBFt th\u1EDDi gian pull tr\u01B0\u1EDBc shop ${shopId}`,
-            shopId
-          });
+        if (remainingMs < MIN_SHOP_BUDGET_MS && shopsRemaining > 1 && remainingMs < 8e3) {
+          console.error(
+            `[Orders Pull] shopId=${shopId} SKIP \u2014 h\u1EBFt deadline to\xE0n c\u1EE5c (remaining=${remainingMs}ms). C\xE1c shop sau c\u0169ng b\u1ECB b\u1ECF: [${shopIds.slice(shopIdx).join(",")}]`
+          );
+          for (const skippedId of shopIds.slice(shopIdx)) {
+            errors.push({
+              shopId: skippedId,
+              error: "pull_deadline",
+              message: `H\u1EBFt th\u1EDDi gian pull \u2014 skip shop ${skippedId}`
+            });
+            perShopResults.push({
+              shopId: skippedId,
+              status: "SKIP",
+              sn: 0,
+              pulled: 0,
+              added: 0,
+              updated: 0,
+              error: "pull_deadline"
+            });
+          }
           break;
         }
-        const shopDeadlineAt = Math.min(deadlineAt, Date.now() + perShopBudgetMs);
+        if (Date.now() >= deadlineAt) {
+          console.error(
+            `[Orders Pull] shopId=${shopId} SKIP \u2014 deadlineAt \u0111\xE3 qua (elapsed=${Date.now() - startedAt}ms)`
+          );
+          errors.push({
+            shopId,
+            error: "pull_deadline",
+            message: `H\u1EBFt th\u1EDDi gian pull tr\u01B0\u1EDBc shop ${shopId}`
+          });
+          perShopResults.push({
+            shopId,
+            status: "SKIP",
+            sn: 0,
+            pulled: 0,
+            added: 0,
+            updated: 0,
+            error: "pull_deadline"
+          });
+          continue;
+        }
+        const shopDeadlineAt = Math.min(deadlineAt, Date.now() + Math.max(shopBudgetMs, MIN_SHOP_BUDGET_MS));
+        console.log(
+          `[Orders Pull] shopId=${shopId} START idx=${shopIdx + 1}/${shopIds.length} budgetMs=${shopDeadlineAt - Date.now()} remainingGlobal=${deadlineAt - Date.now()}ms`
+        );
         try {
           assertOrdersPullDeadline(shopDeadlineAt, `before shop=${shopId}`);
           let accessToken = await getValidShopeeAccessToken(shopId);
           if (!accessToken) {
             const msg = `Shop ${shopId}: kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token (h\u1EBFt h\u1EA1n / thi\u1EBFu refresh_token)`;
-            console.error(`[Orders Pull] ${msg}`);
+            console.error(`[Orders Pull] shopId=${shopId} ERROR \u2014 ${msg}`);
             errors.push({ shopId, error: "no_valid_access_token", message: msg });
+            shopStatus = "ERROR";
+            shopErrorMsg = "no_valid_access_token";
+            perShopResults.push({
+              shopId,
+              status: shopStatus,
+              sn: 0,
+              pulled: 0,
+              added: 0,
+              updated: 0,
+              error: shopErrorMsg
+            });
             continue;
           }
           const listCollect = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
@@ -110054,6 +110194,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
             allowShortLookback: shortLookback
           });
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
+          shopSn = orderSnList.length;
           if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {
             shopeeResponsePages.push(...listCollect.shopeeResponses);
             if (orderSnList.length === 0) {
@@ -110067,6 +110208,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
                   error: String(rawErr),
                   message: `get_order_list: ${msg}`
                 });
+                shopErrorMsg = String(rawErr);
               }
             }
           }
@@ -110086,6 +110228,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               }
               if (addedFromReturns > 0) {
                 orderSnList = [...snSet];
+                shopSn = orderSnList.length;
                 syncDiag(
                   "Return list merged",
                   `shop=${shopId} +${addedFromReturns} order_sn from get_return_list (total=${orderSnList.length})`
@@ -110093,7 +110236,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
               }
             } catch (returnErr) {
               console.error(
-                `[Orders Pull] shopeeFetchAllReturnSns skip shop=${shopId}:`,
+                `[Orders Pull] shopId=${shopId} shopeeFetchAllReturnSns skip:`,
                 returnErr?.message || returnErr
               );
             }
@@ -110106,7 +110249,25 @@ async function pullIncrementalOrdersFromShopee(opts) {
             );
           }
           syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
-          if (orderSnList.length === 0) continue;
+          console.log(
+            `[Orders Pull] shopId=${shopId} list sn=${orderSnList.length}`
+          );
+          if (orderSnList.length === 0) {
+            shopStatus = shopErrorMsg ? "ERROR" : "DONE";
+            console.log(
+              `[Orders Pull] shopId=${shopId} DONE sn=0 pulled=0` + (shopErrorMsg ? ` err=${shopErrorMsg}` : "")
+            );
+            perShopResults.push({
+              shopId,
+              status: shopStatus,
+              sn: 0,
+              pulled: 0,
+              added: 0,
+              updated: 0,
+              error: shopErrorMsg || void 0
+            });
+            continue;
+          }
           for (let i2 = 0; i2 < orderSnList.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
             try {
               assertOrdersPullDeadline(shopDeadlineAt, `detail chunk shop=${shopId} offset=${i2}`);
@@ -110136,7 +110297,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
                 }
                 if (!Array.isArray(normalized) || normalized.length === 0) {
                   console.warn(
-                    `[Orders Pull] Shop ${shopId}: get_order_detail normalize r\u1ED7ng cho ${chunkSns.length} sn \u2014 ${chunkSns.join(",")}`
+                    `[Orders Pull] shopId=${shopId} get_order_detail normalize r\u1ED7ng cho ${chunkSns.length} sn \u2014 ${chunkSns.join(",")}`
                   );
                   continue;
                 }
@@ -110150,6 +110311,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
                   added += upsert.added;
                   updated += upsert.updated;
                   pulled += normalized.length;
+                  shopPulled += normalized.length;
+                  shopAdded += upsert.added;
+                  shopUpdated += upsert.updated;
                   syncDiag(
                     "MongoDB save OK",
                     `shop=${shopId} +${upsert.added}/~${upsert.updated} elapsed=${Date.now() - startedAt}ms`
@@ -110157,7 +110321,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
                 } catch (saveErr) {
                   const friendly = describeMongoWriteError(saveErr);
                   console.error(
-                    "[Orders Pull] Mongo/JSON upsert FAILED:",
+                    `[Orders Pull] shopId=${shopId} Mongo/JSON upsert FAILED:`,
                     friendly,
                     saveErr?.message || saveErr,
                     saveErr?.stack || "",
@@ -110173,11 +110337,12 @@ async function pullIncrementalOrdersFromShopee(opts) {
                     message: friendly,
                     orderSns: normalized.map((o) => o?.orderSn)
                   });
+                  shopErrorMsg = "db_upsert_failed";
                 }
               } catch (chunkErr) {
                 if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
                 console.error(
-                  `[Orders Pull] Chunk exception shop=${shopId}:`,
+                  `[Orders Pull] shopId=${shopId} Chunk exception:`,
                   chunkErr?.message || chunkErr,
                   chunkErr?.stack || ""
                 );
@@ -110186,6 +110351,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
                   error: "chunk_failed",
                   message: chunkErr?.message || String(chunkErr)
                 });
+                shopErrorMsg = chunkErr?.message || "chunk_failed";
               }
               if (i2 + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
                 await yieldToLogisticsIfBusy(8e3);
@@ -110196,7 +110362,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
             } catch (loopErr) {
               if (String(loopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw loopErr;
               console.error(
-                `[Orders Pull] Loop exception shop=${shopId} offset=${i2}:`,
+                `[Orders Pull] shopId=${shopId} Loop exception offset=${i2}:`,
                 loopErr?.message || loopErr
               );
               errors.push({
@@ -110204,20 +110370,46 @@ async function pullIncrementalOrdersFromShopee(opts) {
                 error: "chunk_loop_failed",
                 message: loopErr?.message || String(loopErr)
               });
+              shopErrorMsg = loopErr?.message || "chunk_loop_failed";
             }
           }
+          shopStatus = shopErrorMsg && shopPulled === 0 ? "ERROR" : "DONE";
+          console.log(
+            `[Orders Pull] shopId=${shopId} ${shopStatus} sn=${shopSn} pulled=${shopPulled} +${shopAdded}/~${shopUpdated}` + (shopErrorMsg ? ` err=${shopErrorMsg}` : "")
+          );
+          perShopResults.push({
+            shopId,
+            status: shopStatus,
+            sn: shopSn,
+            pulled: shopPulled,
+            added: shopAdded,
+            updated: shopUpdated,
+            error: shopErrorMsg || void 0
+          });
         } catch (shopErr) {
           if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
             syncDiag("SHOP DEADLINE \u2014 continue next shop", shopErr.message);
+            console.error(
+              `[Orders Pull] shopId=${shopId} SKIP \u2014 shop deadline: ${shopErr.message}`
+            );
             errors.push({
               shopId,
               error: "pull_shop_deadline",
               message: shopErr.message
             });
+            perShopResults.push({
+              shopId,
+              status: "SKIP",
+              sn: shopSn,
+              pulled: shopPulled,
+              added: shopAdded,
+              updated: shopUpdated,
+              error: "pull_shop_deadline"
+            });
             continue;
           }
           console.error(
-            `[Orders Pull] Shop ${shopId} exception:`,
+            `[Orders Pull] shopId=${shopId} ERROR:`,
             shopErr?.message || shopErr,
             shopErr?.stack || ""
           );
@@ -110226,10 +110418,19 @@ async function pullIncrementalOrdersFromShopee(opts) {
             error: "pull_shop_failed",
             message: shopErr?.message || String(shopErr)
           });
+          perShopResults.push({
+            shopId,
+            status: "ERROR",
+            sn: shopSn,
+            pulled: shopPulled,
+            added: shopAdded,
+            updated: shopUpdated,
+            error: shopErr?.message || "pull_shop_failed"
+          });
         }
       } catch (outerShopErr) {
         console.error(
-          `[Orders Pull] OUTER shop guard ${shopId}:`,
+          `[Orders Pull] shopId=${shopId} OUTER ERROR:`,
           outerShopErr?.message || outerShopErr,
           outerShopErr?.stack || ""
         );
@@ -110238,8 +110439,21 @@ async function pullIncrementalOrdersFromShopee(opts) {
           error: "pull_shop_outer_failed",
           message: outerShopErr?.message || String(outerShopErr)
         });
+        perShopResults.push({
+          shopId,
+          status: "ERROR",
+          sn: shopSn,
+          pulled: shopPulled,
+          added: shopAdded,
+          updated: shopUpdated,
+          error: outerShopErr?.message || "pull_shop_outer_failed"
+        });
       }
     }
+    console.log(
+      `[Orders Pull] perShop summary:`,
+      JSON.stringify(perShopResults)
+    );
     if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
       try {
         const reconciled = await reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt);
@@ -110278,7 +110492,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
       `${message} success=${success} errors=${errors.length} hard=${hardErrors.length} failed=${failed_orders.length} truncatedShops=${truncatedShops}`
     );
     console.log(
-      `[Orders Pull] S\u1ED1 l\u01B0\u1EE3ng l\u1EA5y \u0111\u01B0\u1EE3c t\u1EEB S\xE0n \u2014 pulled=${pulled} +${added}/~${updated} success=${success} elapsedMs=${elapsedMs}`
+      `[Orders Pull] S\u1ED1 l\u01B0\u1EE3ng l\u1EA5y \u0111\u01B0\u1EE3c t\u1EEB S\xE0n \u2014 pulled=${pulled} +${added}/~${updated} success=${success} elapsedMs=${elapsedMs} perShop=${JSON.stringify(perShopResults)}`
     );
     return {
       success,
@@ -110287,6 +110501,7 @@ async function pullIncrementalOrdersFromShopee(opts) {
       updated,
       shops: shopIds.length,
       errors,
+      perShop: perShopResults,
       warnings: truncatedShops > 0 ? [
         {
           error: "pull_sn_cap",

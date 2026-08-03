@@ -40,6 +40,25 @@ import {
 
 const APP_ROOT = resolveAppRoot();
 
+/** Parse shop_ids từ query/body — CSV, array, hoặc shop_id đơn. */
+function parseShopIdsParam(rawShopIds, rawShopId) {
+  const out = [];
+  const seen = new Set();
+  const push = (v) => {
+    const s = String(v || "").trim();
+    if (!s || s === "all" || seen.has(s)) return;
+    seen.add(s);
+    out.push(s);
+  };
+  if (Array.isArray(rawShopIds)) {
+    for (const v of rawShopIds) push(v);
+  } else if (rawShopIds != null && String(rawShopIds).trim() !== "") {
+    for (const part of String(rawShopIds).split(",")) push(part);
+  }
+  if (out.length === 0) push(rawShopId);
+  return out;
+}
+
 let deps = {
   withLocalDbTimeout: async (p) => p,
   loadProductsForOrders: async () => [],
@@ -90,6 +109,7 @@ export function invalidateOrdersRefreshCache() {
 async function readOrdersForRefresh(limit, opts = {}) {
   const tab = String(opts.tab || "").trim().toLowerCase();
   const shopId = String(opts.shopId || "").trim();
+  const shopIds = Array.isArray(opts.shopIds) ? opts.shopIds : [];
 
   // Read theo tab = cùng filter với /api/order-counts (Sapo: count ≡ list).
   if (tab) {
@@ -110,7 +130,8 @@ async function readOrdersForRefresh(limit, opts = {}) {
     }
     const tabFilter = orderTabFilter(tab);
     console.log(
-      `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"} filter=`,
+      `[GET /api/orders/refresh] tab=${tab} shopId=${shopId || "(all)"}` +
+        ` shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} filter=`,
       JSON.stringify(tabFilter),
     );
     const pageSize =
@@ -122,6 +143,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
       pageSize,
       tab,
       shopId,
+      shopIds: shopIds.length ? shopIds : undefined,
       printStatus: String(opts.printStatus || ""),
       skipCounts: true,
     });
@@ -168,6 +190,7 @@ async function readOrdersForRefresh(limit, opts = {}) {
       priority = await loadPriorityTabOrdersFromStore({
         perTabLimit: Math.min(50, Math.max(25, limit)),
         shopId: shopId || undefined,
+        shopIds: shopIds.length > 1 ? shopIds : undefined,
       });
     } catch (prioErr) {
       console.warn(
@@ -252,14 +275,20 @@ export async function refreshOrders(req, res) {
         ? Math.min(Math.floor(rawLimit), 5000)
         : undefined;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
-    const shopId = String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const shopIds = parseShopIdsParam(
+      req.query.shop_ids ?? req.query.shopIds,
+      req.query.shop_id ?? req.query.shopId,
+    );
+    const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     console.log(
       `[GET /api/orders/refresh] params limit=${limit ?? "(full)"} tab=${tab || "(none)"}` +
-        ` shopId=${shopId || "(all)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`,
+        ` shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"}` +
+        ` print_status=${req.query.print_status || req.query.printStatus || "(all)"}`,
     );
     const rawOrders = await readOrdersForRefresh(limit, {
       tab,
       shopId,
+      shopIds,
       printStatus: String(req.query.print_status || req.query.printStatus || ""),
     });
     let mergedOrders = rawOrders;
@@ -317,11 +346,20 @@ export async function queryOrders(req, res) {
     if (!isMongoReady()) {
       return res.status(503).json({ success: false, error: "mongodb_not_ready", data: [] });
     }
+    const shopIds = parseShopIdsParam(
+      req.query.shop_ids ?? req.query.shopIds,
+      req.query.shop_id ?? req.query.shopId,
+    );
+    const shopId =
+      shopIds.length === 1
+        ? shopIds[0]
+        : String(req.query.shop_id ?? req.query.shopId ?? "");
     const page = await queryOrdersPageFromStore({
       page: Number(req.query.page),
       pageSize: Number(req.query.page_size ?? req.query.pageSize),
       tab: String(req.query.tab || ""),
-      shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
+      shopId,
+      shopIds: shopIds.length > 1 ? shopIds : undefined,
       carrier: String(req.query.carrier || ""),
       query: String(req.query.q ?? req.query.query ?? ""),
       printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),
@@ -330,7 +368,8 @@ export async function queryOrders(req, res) {
     });
     console.log(
       `[GET /api/orders/query] tab=${req.query.tab || "(all)"}` +
-        ` shop=${req.query.shop_id || req.query.shopId || "(all)"}` +
+        ` shop=${shopId || "(all)"}` +
+        ` shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"}` +
         ` carrier=${req.query.carrier || "(all)"}` +
         ` print=${req.query.print_status || req.query.printStatus || "(all)"}` +
         ` filter=`,
@@ -401,12 +440,18 @@ export async function getOrderCounts(req, res) {
         error: "mongodb_not_ready",
       });
     }
-    const shopId = String(req.query.shop_id ?? req.query.shopId ?? "").trim();
+    const shopIds = parseShopIdsParam(
+      req.query.shop_ids ?? req.query.shopIds,
+      req.query.shop_id ?? req.query.shopId,
+    );
+    const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     const counts = await countOrdersByTabsFromStore({
       shopId: shopId || undefined,
+      shopIds: shopIds.length > 1 ? shopIds : undefined,
     });
     console.log(
-      `[GET /api/order-counts] shopId=${shopId || "(all)"} counts=`,
+      `[GET /api/order-counts] shopId=${shopId || "(all)"}` +
+        ` shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} counts=`,
       counts,
     );
     return res.status(200).json({ success: true, counts });
@@ -446,11 +491,20 @@ export async function listOrders(req, res) {
           error: "mongodb_not_ready",
         });
       }
+      const shopIds = parseShopIdsParam(
+        req.query.shop_ids ?? req.query.shopIds,
+        req.query.shop_id ?? req.query.shopId,
+      );
+      const shopId =
+        shopIds.length === 1
+          ? shopIds[0]
+          : String(req.query.shop_id ?? req.query.shopId ?? "");
       const page = await queryOrdersPageFromStore({
         page: pageRaw,
         pageSize: pageSizeRaw || 50,
         tab: String(req.query.tab || req.query.internal_tab || ""),
-        shopId: String(req.query.shop_id ?? req.query.shopId ?? ""),
+        shopId,
+        shopIds: shopIds.length > 1 ? shopIds : undefined,
         carrier: String(req.query.carrier || ""),
         query: String(req.query.q ?? req.query.query ?? ""),
         printStatus: String(req.query.print_status ?? req.query.printStatus ?? ""),

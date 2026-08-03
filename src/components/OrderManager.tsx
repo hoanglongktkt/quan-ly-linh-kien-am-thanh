@@ -725,15 +725,23 @@ export default function OrderManager({
       window.clearInterval(syncPollTimerRef.current);
       syncPollTimerRef.current = null;
     }
+    const resolvePollLimit = (): number | undefined => {
+      // Tất cả shop / tab Chờ lấy hàng: tránh limit 50–100 che đơn shop 2.
+      if (selectedShopId === 'all') {
+        if (activeSubTab === 'unprocessed' || activeSubTab === 'processed') return 200;
+        return undefined; // full list
+      }
+      return 200;
+    };
     let ticks = 0;
     const maxTicks = 5;
     syncPollTimerRef.current = window.setInterval(() => {
       ticks += 1;
+      const pollLimit = resolvePollLimit();
       void onFetchOrders?.({
         silent: true,
         bustCache: true,
-        limit: 100,
-        merge: true,
+        ...(pollLimit != null ? { limit: pollLimit, merge: true } : { merge: false }),
         tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
       });
       void fetchOrderCounts();
@@ -749,16 +757,16 @@ export default function OrderManager({
     }, 4000);
     // Refresh lần đầu sau 1.5s (đơn có thể đã upsert sớm)
     window.setTimeout(() => {
+      const pollLimit = resolvePollLimit();
       void onFetchOrders?.({
         silent: true,
         bustCache: true,
-        limit: 100,
-        merge: true,
+        ...(pollLimit != null ? { limit: pollLimit, merge: true } : { merge: false }),
         tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
       });
       void fetchOrderCounts();
     }, 1500);
-  }, [onFetchOrders, fetchOrderCounts, activeSubTab]);
+  }, [onFetchOrders, fetchOrderCounts, activeSubTab, selectedShopId]);
 
   useEffect(() => {
     return () => {
@@ -828,8 +836,21 @@ export default function OrderManager({
         },
         body: JSON.stringify({ max: 120 }),
       }).catch(() => {});
-      // Đọc DB ngay + poll chờ đơn mới từ sync nền
-      void onFetchOrders?.({ silent: true, bustCache: true, limit: 50, merge: true });
+      // Đọc DB ngay + poll chờ đơn mới từ sync nền (limit cao hơn khi xem Tất cả)
+      const immediateLimit =
+        selectedShopId === 'all'
+          ? activeSubTab === 'unprocessed' || activeSubTab === 'processed'
+            ? 200
+            : undefined
+          : 200;
+      void onFetchOrders?.({
+        silent: true,
+        bustCache: true,
+        ...(immediateLimit != null
+          ? { limit: immediateLimit, merge: true }
+          : { merge: false }),
+        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
+      });
       void fetchOrderCounts();
       startSyncPolling();
     } catch (err) {

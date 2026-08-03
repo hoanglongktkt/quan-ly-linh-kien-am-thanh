@@ -1026,15 +1026,35 @@ export async function refreshShopeeAccessTokenLocked(shopId, opts) {
     }
 
     const oldRefresh = String(record.refresh_token);
+    // Linked shop (cùng main account): refresh bằng oauth_shop_id chủ token,
+    // rồi propagate sang mọi shop trong shop_id_list — tránh child refresh fail.
+    const oauthOwner = normalizeShopIdKey(record.oauth_shop_id);
+    const refreshApiShopId =
+      oauthOwner && oauthOwner !== key ? oauthOwner : key;
     console.log(
-      `[Shopee Token] Refresh access_token shop_id=${key} force=${Boolean(opts?.force)} lock=${lockKey}...`,
+      `[Shopee Token] Refresh access_token shop_id=${key}` +
+        ` apiShopId=${refreshApiShopId}` +
+        ` force=${Boolean(opts?.force)} lock=${lockKey}...`,
     );
-    // Luôn refresh với ĐÚNG shop_id đang xử lý — không thay bằng oauth_shop_id của shop khác.
-    const refreshed = await refreshShopeeToken(key, oldRefresh);
+    let refreshed = await refreshShopeeToken(refreshApiShopId, oldRefresh);
+    // Fallback: nếu refresh bằng child key thất bại nhưng có oauth owner khác — thử lại.
+    if (
+      !refreshed.access_token &&
+      refreshApiShopId === key &&
+      oauthOwner &&
+      oauthOwner !== key
+    ) {
+      console.warn(
+        `[Shopee Token] Refresh shop_id=${key} fail — retry với oauth_shop_id=${oauthOwner}`,
+      );
+      refreshed = await refreshShopeeToken(oauthOwner, oldRefresh);
+    }
     if (refreshed.access_token) {
       const obtainedAt = Math.floor(Date.now() / 1000);
+      const propagateFrom =
+        normalizeShopIdKey(refreshed.shop_id) || refreshApiShopId || key;
       propagateShopeeTokenToLinkedShops(
-        key,
+        propagateFrom,
         {
           access_token: refreshed.access_token,
           refresh_token: refreshed.refresh_token || oldRefresh,
@@ -1044,7 +1064,12 @@ export async function refreshShopeeAccessTokenLocked(shopId, opts) {
         { onlyMatchingRefreshToken: oldRefresh },
       );
       tokenCacheSet(key, refreshed.access_token, refreshed.expire_in);
-      console.log(`[Shopee Token] Refresh OK shop_id=${key} — DB + cache cập nhật theo shop_id`);
+      if (propagateFrom !== key) {
+        tokenCacheSet(propagateFrom, refreshed.access_token, refreshed.expire_in);
+      }
+      console.log(
+        `[Shopee Token] Refresh OK shop_id=${key} via=${propagateFrom} — DB + cache cập nhật`,
+      );
       return String(refreshed.access_token);
     }
 

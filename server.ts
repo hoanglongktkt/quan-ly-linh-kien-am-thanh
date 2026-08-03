@@ -2620,44 +2620,122 @@ async function pullIncrementalOrdersFromShopee(opts?: {
         }
       }
     }
-    // Ngân sách thời gian công bằng — tránh shop đầu chiếm hết deadline.
-    const perShopBudgetMs = Math.max(
+    // Ngân sách tối thiểu mỗi shop còn lại — tránh shop đầu chiếm hết Quick Sync 90s.
+    const MIN_SHOP_BUDGET_MS = shortLookback ? 15_000 : 20_000;
+    const basePerShopBudgetMs = Math.max(
       longLookback ? 45_000 : 28_000,
       Math.floor(pullDeadlineMs / Math.max(1, shopIds.length)),
     );
+    const perShopResults: Array<{
+      shopId: string;
+      status: string;
+      sn: number;
+      pulled: number;
+      added: number;
+      updated: number;
+      error?: string;
+    }> = [];
     syncDiag(
       "Pull START",
       `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s` +
-        ` short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms` +
-        ` maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap}` +
+        ` short=${shortLookback} deadline=${pullDeadlineMs}ms basePerShop=${basePerShopBudgetMs}ms` +
+        ` minShop=${MIN_SHOP_BUDGET_MS}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap}` +
         ` enrichTracking=${enrichTracking} longLookback=${longLookback}`,
     );
     console.log(
-      `[Orders Pull] Bắt đầu chạy tiến trình ngầm — shops=${shopIds.length} lookbackSec=${lookbackSec}`,
+      `[Orders Pull] Bắt đầu chạy tiến trình ngầm — shops=${shopIds.length} ids=[${shopIds.join(",")}] lookbackSec=${lookbackSec}`,
     );
 
     // TUẦN TỰ từng shop — CẤM mapWithConcurrency đa shop khi cùng mutate `orders`
     // (unshift/findIndex song song → race → crash/HTTP 500 HTML).
-    for (const shopId of shopIds) {
+    for (let shopIdx = 0; shopIdx < shopIds.length; shopIdx++) {
+      const shopId = shopIds[shopIdx];
+      const shopsRemaining = shopIds.length - shopIdx;
+      const remainingMs = Math.max(0, deadlineAt - Date.now());
+      // Chia đều phần thời gian còn lại cho các shop chưa chạy (không để shop 1 nuốt hết).
+      const fairShareMs = Math.floor(remainingMs / Math.max(1, shopsRemaining));
+      const shopBudgetMs = Math.max(
+        Math.min(basePerShopBudgetMs, fairShareMs || 0),
+        Math.min(MIN_SHOP_BUDGET_MS, remainingMs),
+      );
+      let shopPulled = 0;
+      let shopAdded = 0;
+      let shopUpdated = 0;
+      let shopSn = 0;
+      let shopStatus = "pending";
+      let shopErrorMsg = "";
+
       try {
         await yieldToLogisticsIfBusy(12_000);
-        if (Date.now() >= deadlineAt) {
-          syncDiag("DEADLINE HIT — stop before next shop", `remaining skipped after ${shopId}`);
-          errors.push({
-            error: "pull_deadline",
-            message: `Hết thời gian pull trước shop ${shopId}`,
-            shopId,
-          });
+        if (remainingMs < MIN_SHOP_BUDGET_MS && shopsRemaining > 1 && remainingMs < 8_000) {
+          // Hết hẳn thời gian — đánh dấu SKIP các shop còn lại rồi dừng.
+          console.error(
+            `[Orders Pull] shopId=${shopId} SKIP — hết deadline toàn cục (remaining=${remainingMs}ms). ` +
+              `Các shop sau cũng bị bỏ: [${shopIds.slice(shopIdx).join(",")}]`,
+          );
+          for (const skippedId of shopIds.slice(shopIdx)) {
+            errors.push({
+              shopId: skippedId,
+              error: "pull_deadline",
+              message: `Hết thời gian pull — skip shop ${skippedId}`,
+            });
+            perShopResults.push({
+              shopId: skippedId,
+              status: "SKIP",
+              sn: 0,
+              pulled: 0,
+              added: 0,
+              updated: 0,
+              error: "pull_deadline",
+            });
+          }
           break;
         }
-        const shopDeadlineAt = Math.min(deadlineAt, Date.now() + perShopBudgetMs);
+        if (Date.now() >= deadlineAt) {
+          // Còn đúng 1 shop hoặc vẫn còn chút budget — thử chạy với phần còn lại tối thiểu.
+          console.error(
+            `[Orders Pull] shopId=${shopId} SKIP — deadlineAt đã qua (elapsed=${Date.now() - startedAt}ms)`,
+          );
+          errors.push({
+            shopId,
+            error: "pull_deadline",
+            message: `Hết thời gian pull trước shop ${shopId}`,
+          });
+          perShopResults.push({
+            shopId,
+            status: "SKIP",
+            sn: 0,
+            pulled: 0,
+            added: 0,
+            updated: 0,
+            error: "pull_deadline",
+          });
+          continue;
+        }
+
+        const shopDeadlineAt = Math.min(deadlineAt, Date.now() + Math.max(shopBudgetMs, MIN_SHOP_BUDGET_MS));
+        console.log(
+          `[Orders Pull] shopId=${shopId} START idx=${shopIdx + 1}/${shopIds.length}` +
+            ` budgetMs=${shopDeadlineAt - Date.now()} remainingGlobal=${deadlineAt - Date.now()}ms`,
+        );
         try {
           assertOrdersPullDeadline(shopDeadlineAt, `before shop=${shopId}`);
           let accessToken = await getValidShopeeAccessToken(shopId);
           if (!accessToken) {
             const msg = `Shop ${shopId}: không lấy được access_token (hết hạn / thiếu refresh_token)`;
-            console.error(`[Orders Pull] ${msg}`);
+            console.error(`[Orders Pull] shopId=${shopId} ERROR — ${msg}`);
             errors.push({ shopId, error: "no_valid_access_token", message: msg });
+            shopStatus = "ERROR";
+            shopErrorMsg = "no_valid_access_token";
+            perShopResults.push({
+              shopId,
+              status: shopStatus,
+              sn: 0,
+              pulled: 0,
+              added: 0,
+              updated: 0,
+              error: shopErrorMsg,
+            });
             continue;
           }
 
@@ -2669,6 +2747,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             allowShortLookback: shortLookback,
           });
           let orderSnList = Array.isArray(listCollect?.orderSns) ? listCollect.orderSns : [];
+          shopSn = orderSnList.length;
           if (Array.isArray(listCollect?.shopeeResponses) && listCollect.shopeeResponses.length) {
             shopeeResponsePages.push(...listCollect.shopeeResponses);
             // Nếu get_order_list lỗi và không có SN nào → đẩy lỗi rõ ràng lên FE (không nuốt thành "0 đơn").
@@ -2686,6 +2765,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                   error: String(rawErr),
                   message: `get_order_list: ${msg}`,
                 });
+                shopErrorMsg = String(rawErr);
               }
             }
           }
@@ -2708,6 +2788,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
               }
               if (addedFromReturns > 0) {
                 orderSnList = [...snSet];
+                shopSn = orderSnList.length;
                 syncDiag(
                   "Return list merged",
                   `shop=${shopId} +${addedFromReturns} order_sn from get_return_list (total=${orderSnList.length})`,
@@ -2715,7 +2796,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
               }
             } catch (returnErr: any) {
               console.error(
-                `[Orders Pull] shopeeFetchAllReturnSns skip shop=${shopId}:`,
+                `[Orders Pull] shopId=${shopId} shopeeFetchAllReturnSns skip:`,
                 returnErr?.message || returnErr,
               );
             }
@@ -2731,8 +2812,27 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           }
 
           syncDiag("Order list received (shop total)", `${orderSnList.length} orders shop=${shopId}`);
+          console.log(
+            `[Orders Pull] shopId=${shopId} list sn=${orderSnList.length}`,
+          );
 
-          if (orderSnList.length === 0) continue;
+          if (orderSnList.length === 0) {
+            shopStatus = shopErrorMsg ? "ERROR" : "DONE";
+            console.log(
+              `[Orders Pull] shopId=${shopId} DONE sn=0 pulled=0` +
+                (shopErrorMsg ? ` err=${shopErrorMsg}` : ""),
+            );
+            perShopResults.push({
+              shopId,
+              status: shopStatus,
+              sn: 0,
+              pulled: 0,
+              added: 0,
+              updated: 0,
+              error: shopErrorMsg || undefined,
+            });
+            continue;
+          }
 
           for (let i = 0; i < orderSnList.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
             try {
@@ -2765,7 +2865,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
 
                 if (!Array.isArray(normalized) || normalized.length === 0) {
                   console.warn(
-                    `[Orders Pull] Shop ${shopId}: get_order_detail normalize rỗng cho ${chunkSns.length} sn — ${chunkSns.join(",")}`,
+                    `[Orders Pull] shopId=${shopId} get_order_detail normalize rỗng cho ${chunkSns.length} sn — ${chunkSns.join(",")}`,
                   );
                   continue;
                 }
@@ -2781,6 +2881,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                   added += upsert.added;
                   updated += upsert.updated;
                   pulled += normalized.length;
+                  shopPulled += normalized.length;
+                  shopAdded += upsert.added;
+                  shopUpdated += upsert.updated;
                   syncDiag(
                     "MongoDB save OK",
                     `shop=${shopId} +${upsert.added}/~${upsert.updated} elapsed=${Date.now() - startedAt}ms`,
@@ -2788,7 +2891,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                 } catch (saveErr: any) {
                   const friendly = describeMongoWriteError(saveErr);
                   console.error(
-                    "[Orders Pull] Mongo/JSON upsert FAILED:",
+                    `[Orders Pull] shopId=${shopId} Mongo/JSON upsert FAILED:`,
                     friendly,
                     saveErr?.message || saveErr,
                     saveErr?.stack || "",
@@ -2804,11 +2907,12 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                     message: friendly,
                     orderSns: normalized.map((o) => o?.orderSn),
                   });
+                  shopErrorMsg = "db_upsert_failed";
                 }
               } catch (chunkErr: any) {
                 if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
                 console.error(
-                  `[Orders Pull] Chunk exception shop=${shopId}:`,
+                  `[Orders Pull] shopId=${shopId} Chunk exception:`,
                   chunkErr?.message || chunkErr,
                   chunkErr?.stack || "",
                 );
@@ -2817,6 +2921,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                   error: "chunk_failed",
                   message: chunkErr?.message || String(chunkErr),
                 });
+                shopErrorMsg = chunkErr?.message || "chunk_failed";
               }
               if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSnList.length) {
                 await yieldToLogisticsIfBusy(8_000);
@@ -2827,7 +2932,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             } catch (loopErr: any) {
               if (String(loopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw loopErr;
               console.error(
-                `[Orders Pull] Loop exception shop=${shopId} offset=${i}:`,
+                `[Orders Pull] shopId=${shopId} Loop exception offset=${i}:`,
                 loopErr?.message || loopErr,
               );
               errors.push({
@@ -2835,20 +2940,48 @@ async function pullIncrementalOrdersFromShopee(opts?: {
                 error: "chunk_loop_failed",
                 message: loopErr?.message || String(loopErr),
               });
+              shopErrorMsg = loopErr?.message || "chunk_loop_failed";
             }
           }
+          shopStatus = shopErrorMsg && shopPulled === 0 ? "ERROR" : "DONE";
+          console.log(
+            `[Orders Pull] shopId=${shopId} ${shopStatus} sn=${shopSn} pulled=${shopPulled}` +
+              ` +${shopAdded}/~${shopUpdated}` +
+              (shopErrorMsg ? ` err=${shopErrorMsg}` : ""),
+          );
+          perShopResults.push({
+            shopId,
+            status: shopStatus,
+            sn: shopSn,
+            pulled: shopPulled,
+            added: shopAdded,
+            updated: shopUpdated,
+            error: shopErrorMsg || undefined,
+          });
         } catch (shopErr: any) {
           if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
             syncDiag("SHOP DEADLINE — continue next shop", shopErr.message);
+            console.error(
+              `[Orders Pull] shopId=${shopId} SKIP — shop deadline: ${shopErr.message}`,
+            );
             errors.push({
               shopId,
               error: "pull_shop_deadline",
               message: shopErr.message,
             });
+            perShopResults.push({
+              shopId,
+              status: "SKIP",
+              sn: shopSn,
+              pulled: shopPulled,
+              added: shopAdded,
+              updated: shopUpdated,
+              error: "pull_shop_deadline",
+            });
             continue;
           }
           console.error(
-            `[Orders Pull] Shop ${shopId} exception:`,
+            `[Orders Pull] shopId=${shopId} ERROR:`,
             shopErr?.message || shopErr,
             shopErr?.stack || "",
           );
@@ -2857,11 +2990,20 @@ async function pullIncrementalOrdersFromShopee(opts?: {
             error: "pull_shop_failed",
             message: shopErr?.message || String(shopErr),
           });
+          perShopResults.push({
+            shopId,
+            status: "ERROR",
+            sn: shopSn,
+            pulled: shopPulled,
+            added: shopAdded,
+            updated: shopUpdated,
+            error: shopErr?.message || "pull_shop_failed",
+          });
         }
       } catch (outerShopErr: any) {
         // Tuyệt đối không để 1 shop làm sập cả phiên pull.
         console.error(
-          `[Orders Pull] OUTER shop guard ${shopId}:`,
+          `[Orders Pull] shopId=${shopId} OUTER ERROR:`,
           outerShopErr?.message || outerShopErr,
           outerShopErr?.stack || "",
         );
@@ -2870,8 +3012,22 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           error: "pull_shop_outer_failed",
           message: outerShopErr?.message || String(outerShopErr),
         });
+        perShopResults.push({
+          shopId,
+          status: "ERROR",
+          sn: shopSn,
+          pulled: shopPulled,
+          added: shopAdded,
+          updated: shopUpdated,
+          error: outerShopErr?.message || "pull_shop_outer_failed",
+        });
       }
     }
+
+    console.log(
+      `[Orders Pull] perShop summary:`,
+      JSON.stringify(perShopResults),
+    );
 
     // Nút "Làm mới" phải đối soát cả các đơn cũ đang PROCESSED/READY_TO_SHIP.
     if (opts?.reconcileActive === true && Date.now() <= deadlineAt) {
@@ -2939,7 +3095,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     );
     console.log(
       `[Orders Pull] Số lượng lấy được từ Sàn — pulled=${pulled} +${added}/~${updated}` +
-        ` success=${success} elapsedMs=${elapsedMs}`,
+        ` success=${success} elapsedMs=${elapsedMs} perShop=${JSON.stringify(perShopResults)}`,
     );
     return {
       success,
@@ -2948,6 +3104,7 @@ async function pullIncrementalOrdersFromShopee(opts?: {
       updated,
       shops: shopIds.length,
       errors,
+      perShop: perShopResults,
       warnings:
         truncatedShops > 0
           ? [
