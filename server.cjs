@@ -73415,6 +73415,10 @@ OrderSchema.index({ shopId: 1, shopee_order_status: 1, last_synced_at: 1 });
 OrderSchema.index({ shopId: 1, shopee_order_status: 1, "data.date": -1, _id: -1 });
 OrderSchema.index({ shopId: 1, status: 1, "data.date": -1, _id: -1 });
 OrderSchema.index({ "data.date": -1, _id: -1 });
+OrderSchema.index({ "data.tracking_no": 1 });
+OrderSchema.index({ "data.trackingNumber": 1 });
+OrderSchema.index({ "data.orderSn": 1 });
+OrderSchema.index({ "data.order_sn": 1 });
 var OrderEventSchema = new import_mongoose3.Schema(
   {
     _id: { type: String, required: true },
@@ -104839,6 +104843,79 @@ async function findOrderByScanLookup(orders, raw) {
   }
   return null;
 }
+async function handOverOrderToCarrierFast(opts = {}) {
+  const code = String(opts.code || opts.trackingHint || "").trim();
+  let sn = String(opts.orderSn || "").replace(/^shopee-/i, "").trim();
+  if (!sn && opts.orderId) {
+    sn = String(opts.orderId || "").replace(/^shopee-/i, "").trim();
+  }
+  let shopId = opts.shopId != null && String(opts.shopId).trim() ? String(opts.shopId).trim() : void 0;
+  let found = null;
+  if (!sn && code) {
+    if (!isMongoReady()) {
+      return { ok: false, status: 503, error: "mongodb_not_ready" };
+    }
+    found = await findOrderByScanCodeInStore(code);
+    if (!found) {
+      return {
+        ok: false,
+        status: 404,
+        error: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng v\u1EDBi m\xE3 "${code}".`
+      };
+    }
+    sn = String(found.orderSn || found.order_sn || "").replace(/^shopee-/i, "").trim();
+    if (!shopId && found.shopId != null) shopId = String(found.shopId);
+  }
+  if (!sn) {
+    return {
+      ok: false,
+      status: 400,
+      error: "Thi\u1EBFu orderSn / orderId / m\xE3 qu\xE9t."
+    };
+  }
+  if (found && deps14.hasLeftHandedOverCarrierTab(found)) {
+    return {
+      ok: false,
+      status: 400,
+      error: `\u0110\u01A1n ${sn} \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y \u2014 kh\xF4ng ghi \u0110\xE3 giao \u0110VVC.`
+    };
+  }
+  if (found && deps14.resolveOrderHandoverFlag(found)) {
+    return { ok: true, order: found, changed: false };
+  }
+  const source = opts.source === "qr_scan" ? deps14.HANDED_OVER_SOURCE.QR_SCAN : deps14.HANDED_OVER_SOURCE.MANUAL_BUTTON;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  if (!isMongoReady()) {
+    return { ok: false, status: 503, error: "mongodb_not_ready" };
+  }
+  const ok = await markOrderHandedOverInStore(sn, {
+    source,
+    handedOverAt: now,
+    shopId
+  });
+  if (!ok) {
+    return {
+      ok: false,
+      status: 500,
+      error: `Kh\xF4ng ghi \u0111\u01B0\u1EE3c c\u1EDD b\xE0n giao \u0110VVC cho \u0111\u01A1n ${sn}.`
+    };
+  }
+  queueOrdersJsonMirrorFromMongo();
+  const base = found && typeof found === "object" ? { ...found } : {
+    id: `shopee-${sn}`,
+    orderSn: sn,
+    shopId
+  };
+  if (code && !deps14.isShopeeInternalTrackingCode(code)) {
+    if (!base.trackingNumber) base.trackingNumber = code;
+    if (!base.tracking_no) base.tracking_no = code;
+  }
+  const updated = deps14.applyHandedOverWrite(base, now, source);
+  console.log(
+    `[Orders Handover Fast] \u0111\u01A1n ${sn} \u2192 is_handed_over=true source=${source} (${ok ? "mongo_ok" : "mongo_fail"})`
+  );
+  return { ok: true, order: updated, changed: true };
+}
 async function handOverOrderToCarrierByIndex(orders, index, opts) {
   if (index < 0) {
     return { ok: false, status: 404, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." };
@@ -106005,23 +106082,22 @@ async function deleteOrder(req, res) {
 }
 async function handOverCarrierById(req, res) {
   try {
-    const loaded = await loadOrdersForApi();
-    const orders = loaded.orders;
-    const hit = findOrderRecord(orders, String(req.params.id || ""));
     const trackingHint = String(
       req.body?.trackingNumber || req.body?.tracking_no || req.body?.waybill || req.body?.code || ""
     ).trim();
-    const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1, {
-      source: String(req.body?.source || "").trim() === "qr_scan" ? "qr_scan" : "manual_button",
-      trackingHint
+    const result = await handOverOrderToCarrierFast({
+      orderId: String(req.params.id || "").trim(),
+      orderSn: String(req.body?.orderSn || req.body?.order_sn || "").trim(),
+      code: trackingHint,
+      trackingHint,
+      shopId: req.body?.shopId,
+      source: String(req.body?.source || "").trim() === "qr_scan" ? "qr_scan" : "manual_button"
     });
     if (!result.ok) {
-      return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+      return res.status(result.status || 400).json({ success: false, error: result.error, message: result.error });
     }
-    const products = await deps15.loadProductsForOrders([result.order]);
-    const enriched = deps15.enrichOrdersFromCatalog([result.order], products)[0];
     invalidateOrdersRefreshCache();
-    return res.json({ success: true, order: enriched });
+    return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] single error:", error);
     return res.status(500).json({
@@ -106035,38 +106111,34 @@ async function handOverCarrierByCode(req, res) {
   try {
     const code = String(req.body?.code || req.body?.scanCode || req.body?.q || "").trim();
     const orderId = String(
-      req.body?.orderId || req.body?.id || req.body?.orderSn || req.body?.order_sn || ""
+      req.body?.orderId || req.body?.id || ""
     ).trim();
-    const loaded = await loadOrdersForApi();
-    const orders = loaded.orders;
-    let index = -1;
-    if (orderId) {
-      const hit = findOrderRecord(orders, orderId);
-      index = hit ? hit.index : -1;
-    } else if (code) {
-      const found = await findOrderByScanLookup(orders.filter(deps15.isValidOrder), code);
-      if (found) {
-        const hit = findOrderRecord(orders, String(found.id || found.orderSn || ""));
-        index = hit ? hit.index : orders.findIndex((o) => o.id === found.id);
-      }
-    } else {
+    const orderSn = String(
+      req.body?.orderSn || req.body?.order_sn || ""
+    ).trim();
+    const trackingHint = String(
+      req.body?.trackingNumber || req.body?.tracking_no || req.body?.waybill || code || ""
+    ).trim();
+    if (!orderId && !orderSn && !code && !trackingHint) {
       return res.status(400).json({
         success: false,
         error: "Thi\u1EBFu orderId ho\u1EB7c m\xE3 qu\xE9t (code).",
         message: "Thi\u1EBFu orderId ho\u1EB7c m\xE3 qu\xE9t (code)."
       });
     }
-    const result = await handOverOrderToCarrierByIndex(orders, index, {
-      source: String(req.body?.source || "").trim() === "qr_scan" || code ? "qr_scan" : "manual_button",
-      trackingHint: code || String(req.body?.trackingNumber || req.body?.tracking_no || "").trim()
+    const result = await handOverOrderToCarrierFast({
+      orderId,
+      orderSn,
+      code: code || trackingHint,
+      trackingHint,
+      shopId: req.body?.shopId,
+      source: String(req.body?.source || "").trim() === "qr_scan" || code ? "qr_scan" : "manual_button"
     });
     if (!result.ok) {
-      return res.status(result.status).json({ success: false, error: result.error, message: result.error });
+      return res.status(result.status || 400).json({ success: false, error: result.error, message: result.error });
     }
-    const products = await deps15.loadProductsForOrders([result.order]);
-    const enriched = deps15.enrichOrdersFromCatalog([result.order], products)[0];
     invalidateOrdersRefreshCache();
-    return res.json({ success: true, order: enriched });
+    return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] by-code error:", error);
     return res.status(500).json({
@@ -106097,39 +106169,29 @@ async function handOverCarrierBulk(req, res) {
         message: "Thi\u1EBFu danh s\xE1ch \u0111\u01A1n (orderIds / orderSns)."
       });
     }
-    const loaded = await loadOrdersForApi();
-    const orders = loaded.orders;
     const updatedOrders = [];
     const failed = [];
     let skipped = 0;
-    const seenIdx = /* @__PURE__ */ new Set();
+    const seenSn = /* @__PURE__ */ new Set();
     for (const key of keys) {
-      const hit = findOrderRecord(orders, key);
-      if (!hit) {
-        failed.push({ key, error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
-        continue;
-      }
-      if (seenIdx.has(hit.index)) {
-        skipped++;
-        continue;
-      }
-      seenIdx.add(hit.index);
-      const result = await handOverOrderToCarrierByIndex(orders, hit.index, {
-        persist: false,
+      const result = await handOverOrderToCarrierFast({
+        orderId: key,
+        orderSn: key,
         source: "manual_button"
       });
       if (!result.ok) {
         failed.push({ key, error: result.error });
         continue;
       }
+      const sn = String(result.order?.orderSn || key).replace(/^shopee-/i, "").trim().toLowerCase();
+      if (sn && seenSn.has(sn)) {
+        skipped++;
+        continue;
+      }
+      if (sn) seenSn.add(sn);
       if (result.changed) updatedOrders.push(result.order);
       else skipped++;
     }
-    if (updatedOrders.length) {
-      await persistOrdersToDatabase(orders, updatedOrders);
-    }
-    const products = await deps15.loadProductsForOrders(updatedOrders);
-    const enriched = deps15.enrichOrdersFromCatalog(updatedOrders, products);
     console.log(
       `[Orders Handover Bulk] keys=${keys.length} updated=${updatedOrders.length} skipped=${skipped} failed=${failed.length}`
     );
@@ -106150,7 +106212,7 @@ async function handOverCarrierBulk(req, res) {
       updated: updatedOrders.length,
       skipped,
       failed,
-      orders: enriched
+      orders: updatedOrders
     });
   } catch (error) {
     console.error("[Orders Handover Bulk] error:", error);

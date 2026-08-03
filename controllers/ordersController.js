@@ -17,6 +17,7 @@ import {
   findOrderRecord,
   findOrderByScanLookup,
   handOverOrderToCarrierByIndex,
+  handOverOrderToCarrierFast,
 } from "../services/orders.js";
 import {
   isMongoReady,
@@ -1421,12 +1422,9 @@ export async function deleteOrder(req, res) {
   });
 }
 
-/** POST /api/orders/:id/hand-over-carrier */
+/** POST /api/orders/:id/hand-over-carrier — Mongo $set nhanh, không load full orders. */
 export async function handOverCarrierById(req, res) {
   try {
-    const loaded = await loadOrdersForApi();
-    const orders = loaded.orders;
-    const hit = findOrderRecord(orders, String(req.params.id || ""));
     const trackingHint = String(
       req.body?.trackingNumber ||
         req.body?.tracking_no ||
@@ -1434,19 +1432,21 @@ export async function handOverCarrierById(req, res) {
         req.body?.code ||
         "",
     ).trim();
-    const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1, {
-      source: String(req.body?.source || "").trim() === "qr_scan" ? "qr_scan" : "manual_button",
+    const result = await handOverOrderToCarrierFast({
+      orderId: String(req.params.id || "").trim(),
+      orderSn: String(req.body?.orderSn || req.body?.order_sn || "").trim(),
+      code: trackingHint,
       trackingHint,
+      shopId: req.body?.shopId,
+      source: String(req.body?.source || "").trim() === "qr_scan" ? "qr_scan" : "manual_button",
     });
     if (!result.ok) {
       return res
-        .status(result.status)
+        .status(result.status || 400)
         .json({ success: false, error: result.error, message: result.error });
     }
-    const products = await deps.loadProductsForOrders([result.order]);
-    const enriched = deps.enrichOrdersFromCatalog([result.order], products)[0];
     invalidateOrdersRefreshCache();
-    return res.json({ success: true, order: enriched });
+    return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] single error:", error);
     return res.status(500).json({
@@ -1457,27 +1457,21 @@ export async function handOverCarrierById(req, res) {
   }
 }
 
-/** POST /api/orders/hand-over-carrier */
+/** POST /api/orders/hand-over-carrier — Mongo lookup + $set, không sync Shopee. */
 export async function handOverCarrierByCode(req, res) {
   try {
     const code = String(req.body?.code || req.body?.scanCode || req.body?.q || "").trim();
     const orderId = String(
-      req.body?.orderId || req.body?.id || req.body?.orderSn || req.body?.order_sn || "",
+      req.body?.orderId || req.body?.id || "",
     ).trim();
-    const loaded = await loadOrdersForApi();
-    const orders = loaded.orders;
+    const orderSn = String(
+      req.body?.orderSn || req.body?.order_sn || "",
+    ).trim();
+    const trackingHint = String(
+      req.body?.trackingNumber || req.body?.tracking_no || req.body?.waybill || code || "",
+    ).trim();
 
-    let index = -1;
-    if (orderId) {
-      const hit = findOrderRecord(orders, orderId);
-      index = hit ? hit.index : -1;
-    } else if (code) {
-      const found = await findOrderByScanLookup(orders.filter(deps.isValidOrder), code);
-      if (found) {
-        const hit = findOrderRecord(orders, String(found.id || found.orderSn || ""));
-        index = hit ? hit.index : orders.findIndex((o) => o.id === found.id);
-      }
-    } else {
+    if (!orderId && !orderSn && !code && !trackingHint) {
       return res.status(400).json({
         success: false,
         error: "Thiếu orderId hoặc mã quét (code).",
@@ -1485,23 +1479,24 @@ export async function handOverCarrierByCode(req, res) {
       });
     }
 
-    const result = await handOverOrderToCarrierByIndex(orders, index, {
+    const result = await handOverOrderToCarrierFast({
+      orderId,
+      orderSn,
+      code: code || trackingHint,
+      trackingHint,
+      shopId: req.body?.shopId,
       source:
         String(req.body?.source || "").trim() === "qr_scan" || code
           ? "qr_scan"
           : "manual_button",
-      trackingHint:
-        code || String(req.body?.trackingNumber || req.body?.tracking_no || "").trim(),
     });
     if (!result.ok) {
       return res
-        .status(result.status)
+        .status(result.status || 400)
         .json({ success: false, error: result.error, message: result.error });
     }
-    const products = await deps.loadProductsForOrders([result.order]);
-    const enriched = deps.enrichOrdersFromCatalog([result.order], products)[0];
     invalidateOrdersRefreshCache();
-    return res.json({ success: true, order: enriched });
+    return res.json({ success: true, order: result.order, changed: result.changed !== false });
   } catch (error) {
     console.error("[Orders Handover] by-code error:", error);
     return res.status(500).json({
@@ -1541,42 +1536,34 @@ export async function handOverCarrierBulk(req, res) {
       });
     }
 
-    const loaded = await loadOrdersForApi();
-    const orders = loaded.orders;
     const updatedOrders = [];
     const failed = [];
     let skipped = 0;
-    const seenIdx = new Set();
+    const seenSn = new Set();
 
     for (const key of keys) {
-      const hit = findOrderRecord(orders, key);
-      if (!hit) {
-        failed.push({ key, error: "Không tìm thấy đơn hàng." });
-        continue;
-      }
-      if (seenIdx.has(hit.index)) {
-        skipped++;
-        continue;
-      }
-      seenIdx.add(hit.index);
-      const result = await handOverOrderToCarrierByIndex(orders, hit.index, {
-        persist: false,
+      const result = await handOverOrderToCarrierFast({
+        orderId: key,
+        orderSn: key,
         source: "manual_button",
       });
       if (!result.ok) {
         failed.push({ key, error: result.error });
         continue;
       }
+      const sn = String(result.order?.orderSn || key)
+        .replace(/^shopee-/i, "")
+        .trim()
+        .toLowerCase();
+      if (sn && seenSn.has(sn)) {
+        skipped++;
+        continue;
+      }
+      if (sn) seenSn.add(sn);
       if (result.changed) updatedOrders.push(result.order);
       else skipped++;
     }
 
-    if (updatedOrders.length) {
-      await persistOrdersToDatabase(orders, updatedOrders);
-    }
-
-    const products = await deps.loadProductsForOrders(updatedOrders);
-    const enriched = deps.enrichOrdersFromCatalog(updatedOrders, products);
     console.log(
       `[Orders Handover Bulk] keys=${keys.length} updated=${updatedOrders.length} skipped=${skipped} failed=${failed.length}`,
     );
@@ -1599,7 +1586,7 @@ export async function handOverCarrierBulk(req, res) {
       updated: updatedOrders.length,
       skipped,
       failed,
-      orders: enriched,
+      orders: updatedOrders,
     });
   } catch (error) {
     console.error("[Orders Handover Bulk] error:", error);

@@ -252,6 +252,11 @@ OrderSchema.index({ shopId: 1, status: 1, "data.date": -1, _id: -1 });
 // Khớp trực tiếp với truy vấn danh sách đơn mới nhất, tránh MongoDB phải sort lại
 // toàn bộ collection sau mỗi lần làm mới.
 OrderSchema.index({ "data.date": -1, _id: -1 });
+// Quét ĐVVC / lookup — tracking trong data (barcode VĐ).
+OrderSchema.index({ "data.tracking_no": 1 });
+OrderSchema.index({ "data.trackingNumber": 1 });
+OrderSchema.index({ "data.orderSn": 1 });
+OrderSchema.index({ "data.order_sn": 1 });
 
 const OrderEventSchema = new Schema<OrderEventDoc>(
   {

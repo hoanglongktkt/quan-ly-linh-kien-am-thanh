@@ -1300,36 +1300,46 @@ export default function OrderManager({
         }
         return true;
       }
-      if (isHandingOverRef.current) {
-        if (!opts?.silent) showScanToast('Đang xử lý bàn giao ĐVVC — vui lòng đợi.', 'error');
-        return false;
-      }
-      isHandingOverRef.current = true;
-      setHandingOverOrderId(order.id);
-      try {
-        const orderKey = order.id || order.orderSn;
-        const waybill = getOrderWaybillCode(order) || getOrderTrackingNo(order) || order.trackingNumber || order.tracking_no || '';
-        const handOverBody = JSON.stringify({
-          orderId: order.id,
-          orderSn: order.orderSn,
-          trackingNumber: waybill,
-          tracking_no: waybill,
-          waybill,
-          source: opts?.fromScan ? 'qr_scan' : 'manual_button',
-        });
-        let res = await fetch(`/api/orders/${encodeURIComponent(orderKey)}/hand-over-carrier`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: handOverBody,
-        });
-        let data = await res.json().catch(() => ({}));
 
-        // Fallback: POST by body, rồi PATCH local_status nếu endpoint bàn giao lỗi/404
-        if (!res.ok) {
-          const altRes = await fetch('/api/orders/hand-over-carrier', {
+      const source = opts?.fromScan ? 'qr_scan' : 'manual_button';
+      // 1) Optimistic UI — cập nhật state/badge ngay, không chờ API.
+      applyHandoverToLocalOrders(order, source);
+      if (opts?.switchTab !== false) openHandedOverCarrierTab();
+      if (!opts?.silent) {
+        showScanToast(`Đã giao cho ĐVVC — đơn #${order.orderSn}`, 'success');
+      }
+      onAddLog({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        channel: order.channel,
+        type: 'stock_sync',
+        status: 'success',
+        message: opts?.fromScan
+          ? `[QUÉT QR] Bàn giao ĐVVC đơn ${order.orderSn} → Tab Đã giao cho ĐVVC (optimistic).`
+          : `[BÀN GIAO] Đơn ${order.orderSn} → Đã giao cho ĐVVC (optimistic).`,
+      });
+
+      // 2) API nền — fire-and-forget, tuyệt đối không block UI quét.
+      const orderKey = order.id || order.orderSn;
+      const waybill =
+        getOrderWaybillCode(order) ||
+        getOrderTrackingNo(order) ||
+        order.trackingNumber ||
+        order.tracking_no ||
+        '';
+      const handOverBody = JSON.stringify({
+        orderId: order.id,
+        orderSn: order.orderSn,
+        shopId: order.shopId,
+        trackingNumber: waybill,
+        tracking_no: waybill,
+        waybill,
+        source,
+      });
+      setHandingOverOrderId(order.id);
+      void (async () => {
+        try {
+          let res = await fetch(`/api/orders/${encodeURIComponent(String(orderKey))}/hand-over-carrier`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${token}`,
@@ -1337,72 +1347,31 @@ export default function OrderManager({
             },
             body: handOverBody,
           });
-          if (altRes.ok) {
-            res = altRes;
-            data = await altRes.json().catch(() => ({}));
-          } else {
-            const patchRes = await fetch(`/api/orders/${encodeURIComponent(order.id)}`, {
-              method: 'PATCH',
+          if (!res.ok) {
+            const altRes = await fetch('/api/orders/hand-over-carrier', {
+              method: 'POST',
               headers: {
                 Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify(
-                buildHandedOverWritePatch(
-                  undefined,
-                  opts?.fromScan
-                    ? HANDED_OVER_SOURCE.QR_SCAN
-                    : HANDED_OVER_SOURCE.MANUAL_BUTTON,
-                ),
-              ),
+              body: handOverBody,
             });
-            const patchData = await patchRes.json().catch(() => ({}));
-            if (!patchRes.ok) {
-              throw new Error(
-                data?.message ||
-                  data?.error ||
-                  patchData?.message ||
-                  patchData?.error ||
-                  `HTTP ${res.status}`,
-              );
-            }
-            res = patchRes;
-            data = { success: true, order: patchData };
+            if (altRes.ok) res = altRes;
           }
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || data?.success === false) {
+            throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+          }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[Handover BG] đơn ${order.orderSn} fail:`, msg);
+          showScanToast(`Lưu ĐVVC nền thất bại #${order.orderSn}: ${msg}`, 'error');
+        } finally {
+          setHandingOverOrderId((cur) => (cur === order.id ? null : cur));
         }
+      })();
 
-        if (data?.success === false) {
-          throw new Error(data?.message || data?.error || 'hand_over_failed');
-        }
-
-        const saved = (data?.order || data) as Order;
-        applyHandoverToLocalOrders(
-          { ...order, ...saved },
-          opts?.fromScan ? 'qr_scan' : 'manual_button',
-        );
-        onAddLog({
-          id: `log-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          channel: order.channel,
-          type: 'stock_sync',
-          status: 'success',
-          message: opts?.fromScan
-            ? `[QUÉT QR] Bàn giao ĐVVC đơn ${order.orderSn} → Tab Đã giao cho ĐVVC.`
-            : `[BÀN GIAO] Đơn ${order.orderSn} → Đã giao cho ĐVVC.`,
-        });
-        if (opts?.switchTab !== false) openHandedOverCarrierTab();
-        if (!opts?.silent) {
-          showScanToast(`Đã giao cho ĐVVC — đơn #${order.orderSn}`, 'success');
-        }
-        return true;
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!opts?.silent) showScanToast(`Không ghi nhận bàn giao: ${msg}`, 'error');
-        return false;
-      } finally {
-        isHandingOverRef.current = false;
-        setHandingOverOrderId(null);
-      }
+      return true;
     },
     [applyHandoverToLocalOrders, onAddLog, openHandedOverCarrierTab]
   );
@@ -1414,13 +1383,18 @@ export default function OrderManager({
 
       isScanBusyRef.current = true;
       setIsScanBusy(true);
-      setCameraScanResult('Đang tra cứu mã...');
 
       try {
-        const token = localStorage.getItem('admin_token');
-        let order =
-          findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex) ||
-          (await lookupOrderByScanCode(trimmed, ordersRef.current, token, orderScanIndex));
+        // Local-first — không block UI chờ lookup API.
+        let order = findOrderByScanPayload(ordersRef.current, trimmed, orderScanIndex);
+        if (!order) {
+          const token = localStorage.getItem('admin_token');
+          // Miss local: thử lookup nhanh nhưng có timeout ngắn; ưu tiên không treo máy quét.
+          order = await Promise.race([
+            lookupOrderByScanCode(trimmed, ordersRef.current, token, orderScanIndex),
+            new Promise<null>((resolve) => window.setTimeout(() => resolve(null), 2500)),
+          ]);
+        }
 
         if (order) {
           const idx = ordersRef.current.findIndex((o) => o.id === order!.id);
@@ -1452,27 +1426,20 @@ export default function OrderManager({
 
         if (isEligibleForHandOverToCarrier(order)) {
           const waybill = getOrderWaybillCode(order);
-          // Giữ nguyên tab hiện tại khi quét liên tục — state/badge cập nhật realtime.
-          const ok = await handOverOrderToCarrier(order, {
+          // Optimistic + API nền — không await, mở khóa quét ngay.
+          void handOverOrderToCarrier(order, {
             fromScan: true,
             switchTab: false,
           });
-          if (ok) {
-            scanFeedback('success');
-            setCameraScanError(false);
-            setCameraScanSuccess(true);
-            setCameraScanResult(
-              waybill
-                ? `✓ Giao ĐVVC · VĐ ${waybill} · #${order.orderSn}`
-                : `✓ Giao ĐVVC #${order.orderSn}`,
-            );
-            setTimeout(() => setCameraScanSuccess(false), 2000);
-          } else {
-            scanFeedback('error');
-            setCameraScanSuccess(false);
-            setCameraScanError(true);
-            setTimeout(() => setCameraScanError(false), 2000);
-          }
+          scanFeedback('success');
+          setCameraScanError(false);
+          setCameraScanSuccess(true);
+          setCameraScanResult(
+            waybill
+              ? `✓ Giao ĐVVC · VĐ ${waybill} · #${order.orderSn}`
+              : `✓ Giao ĐVVC #${order.orderSn}`,
+          );
+          setTimeout(() => setCameraScanSuccess(false), 1500);
           return;
         }
 
@@ -1742,8 +1709,8 @@ export default function OrderManager({
       if (!key) return;
 
       const now = Date.now();
-      // Debounce 1.2s cùng mã — tránh gọi API/âm thanh liên tục khi giữ camera.
-      if (key === lastQrScanRef.current.key && now - lastQrScanRef.current.at < 1200) {
+      // Debounce 400ms cùng mã — tránh double-beep khi giữ camera, vẫn cho quét liên tục mã khác.
+      if (key === lastQrScanRef.current.key && now - lastQrScanRef.current.at < 400) {
         return;
       }
 
@@ -1781,8 +1748,8 @@ export default function OrderManager({
       }
 
       isScanBusyRef.current = true;
-      setIsVerifyingScan(true);
-      setCameraScanResult(`Đang kiểm tra: ${trimmed}...`);
+      // Không bật overlay "Đang kiểm tra" — phân loại local phải xong trong vài ms.
+      setCameraScanResult(`Đang phân loại: ${trimmed}...`);
 
       try {
         const order = localOrder;
@@ -1791,7 +1758,7 @@ export default function OrderManager({
         if (idx >= 0) {
           const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order } : o));
           ordersRef.current = merged;
-          onUpdateOrders(merged);
+          onUpdateOrders(merged, { persist: false });
         }
 
         // Phân loại theo cancel/return kind + badge — gồm failed_delivery / hoàn / hủy.
@@ -1930,25 +1897,12 @@ export default function OrderManager({
             daXuatKhoListRef.current = next;
             return next;
           });
-          // Ghi DB ngay + chuyển tab Đã xử lý → Đã giao ĐVVC (badge realtime).
-          const ok = await handOverOrderToCarrier(order, {
+          // Optimistic UI + API nền — không await, cho quét mã tiếp ngay.
+          void handOverOrderToCarrier(order, {
             fromScan: true,
             switchTab: false,
             silent: true,
           });
-          if (!ok) {
-            // Rollback list nếu API thất bại — tránh lệch số lượng.
-            setDaXuatKhoList((prev) => {
-              const next = prev.filter((x) => x.code !== item.code || x.orderSn !== item.orderSn);
-              daXuatKhoListRef.current = next;
-              return next;
-            });
-            playScanSound('error');
-            vibrateScan('error');
-            flashViewfinder('error', 500);
-            showScanToast(`Không ghi nhận xuất kho #${order.orderSn}`, 'error');
-            return;
-          }
           setCameraScanResult(
             waybill
               ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
@@ -4332,81 +4286,45 @@ export default function OrderManager({
 
     isHandingOverRef.current = true;
     setIsBulkHandingOver(true);
-    try {
-      const orderIds = eligible.map((o) => o.id).filter(Boolean);
-      const orderSns = eligible.map((o) => o.orderSn).filter(Boolean);
-      const res = await fetch('/api/orders/hand-over-carrier/bulk', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ orderIds, orderSns }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.success === false) {
-        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
-      }
 
-      // Không dùng `|| eligible.length` — updated=0 từng báo giả "thành công 3 đơn".
-      const updatedCount = Number(data?.updated);
-      const skippedCount = Number(data?.skipped) || 0;
-      const failedArr = Array.isArray(data?.failed) ? data.failed : [];
-      const realUpdated = Number.isFinite(updatedCount) ? updatedCount : 0;
+    // Optimistic UI ngay — không chờ API / không refetch full list.
+    applyHandoverBulkToLocalOrders(eligible);
+    setSelectedOrderIds([]);
+    openHandedOverCarrierTab();
+    showToast(`Đã giao cho ĐVVC ${eligible.length} đơn (đang lưu nền)...`);
+    onAddLog({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      channel: 'all',
+      type: 'stock_sync',
+      status: 'success',
+      message: `[BÀN GIAO HÀNG LOẠT] ${eligible.length} đơn → Đã giao cho ĐVVC (optimistic).`,
+    });
 
-      if (realUpdated <= 0 && skippedCount <= 0) {
-        throw new Error(
-          failedArr[0]?.error || data?.message || 'Không bàn giao được đơn nào vào DB.',
-        );
-      }
-
-      const savedList = Array.isArray(data?.orders) ? (data.orders as Order[]) : [];
-      if (savedList.length > 0) {
-        applyHandoverBulkToLocalOrders(savedList);
-      } else if (realUpdated > 0) {
-        applyHandoverBulkToLocalOrders(eligible.slice(0, realUpdated));
-      }
-
-      onAddLog({
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        channel: 'all',
-        type: 'stock_sync',
-        status: failedArr.length > 0 ? 'error' : 'success',
-        message: `[BÀN GIAO HÀNG LOẠT] ${realUpdated} đơn → Đã giao cho ĐVVC${
-          skippedCount ? ` (đã có sẵn ${skippedCount})` : ''
-        }${failedArr.length ? ` (lỗi ${failedArr.length})` : ''}.`,
-      });
-      setSelectedOrderIds([]);
-
-      if (onFetchOrders) {
-        try {
-          await onFetchOrders();
-        } catch {
-          /* giữ state local nếu refetch lỗi */
+    const orderIds = eligible.map((o) => o.id).filter(Boolean);
+    const orderSns = eligible.map((o) => o.orderSn).filter(Boolean);
+    void (async () => {
+      try {
+        const res = await fetch('/api/orders/hand-over-carrier/bulk', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ orderIds, orderSns }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.success === false) {
+          throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
         }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        showToast(`Lưu bàn giao ĐVVC nền thất bại: ${msg}`);
+      } finally {
+        isHandingOverRef.current = false;
+        setIsBulkHandingOver(false);
       }
-      openHandedOverCarrierTab();
-
-      const visibleAfter = ordersRef.current.filter((o) => matchesHandedOverCarrierTab(o)).length;
-      if (realUpdated <= 0 && skippedCount > 0) {
-        showToast(
-          `Đã có ${skippedCount} đơn mang cờ ĐVVC — tab đang hiện ${visibleAfter} đơn.`,
-        );
-      } else {
-        showToast(
-          failedArr.length > 0
-            ? `Xuất kho ${realUpdated} / Lỗi ${failedArr.length}. Tab hiện ${visibleAfter}.`
-            : `Xuất kho ${realUpdated} đơn — tab hiện ${visibleAfter}.`,
-        );
-      }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(`Không bàn giao hàng loạt: ${msg}`);
-    } finally {
-      isHandingOverRef.current = false;
-      setIsBulkHandingOver(false);
-    }
+    })();
   };
 
   // Single-order "Chuẩn bị hàng" — opens the pickup/dropoff confirmation modal;
@@ -4743,7 +4661,8 @@ export default function OrderManager({
         }
       }
 
-      void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
+      // Kết thúc phiên: không refetch full list — state đã optimistic từng mã.
+      // void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
 
       if (safeXuat > 0) openHandedOverCarrierTab();
       else if (safeHoan > 0 || safeHuy > 0) {
@@ -4937,11 +4856,9 @@ export default function OrderManager({
               </div>
             )}
             {(isVerifyingScan && !isFlushingQueue) && (
-              <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px] flex flex-col items-center justify-center gap-3 z-10">
-                <Loader2 className="w-9 h-9 text-blue-400 animate-spin" />
-                <p className="text-xs font-bold text-white/90 px-4 text-center">
-                  Đang kiểm tra mã...
-                </p>
+              <div className="pointer-events-none absolute top-2 left-2 right-2 z-10 flex items-center justify-center gap-2 rounded-lg bg-black/50 px-3 py-1.5">
+                <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
+                <p className="text-[11px] font-bold text-white/90">Đang phân loại...</p>
               </div>
             )}
           </div>
@@ -4975,7 +4892,7 @@ export default function OrderManager({
         <div className="shrink-0 p-3 pt-2 border-t border-zinc-800 bg-zinc-950 space-y-2">
           <button
             type="button"
-            disabled={isFlushingQueue || isVerifyingScan}
+            disabled={isFlushingQueue}
             onClick={() => setShowEndConfirm(true)}
             className="w-full min-h-14 rounded-2xl bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white font-black text-base uppercase tracking-wide transition-colors shadow-lg shadow-rose-900/40 disabled:opacity-50"
           >
