@@ -11711,7 +11711,11 @@ async function persistShopeeOrderChunk(
         Boolean(row?.trackingNumber || row?.tracking_no);
       const hasPdfAlready =
         row?.hasPdf === true ||
-        Boolean(String(row?.labelUrl || row?.pdfUrl || row?.pdfFilename || "").trim());
+        Boolean(
+          String(
+            row?.waybill_url || row?.labelUrl || row?.pdfUrl || row?.pdfFilename || "",
+          ).trim(),
+        );
       if (printable && !hasPdfAlready) {
         newlyAddedForPdf.push(row);
       }
@@ -16099,7 +16103,13 @@ async function startServer() {
     }
 
     const labelUrl = String(
-      order?.labelUrl || order?.pdfUrl || order?.data?.labelUrl || order?.data?.pdfUrl || "",
+      order?.labelUrl ||
+        order?.pdfUrl ||
+        order?.waybill_url ||
+        order?.data?.labelUrl ||
+        order?.data?.pdfUrl ||
+        order?.data?.waybill_url ||
+        "",
     ).trim();
     const m = labelUrl.match(/\/api\/public\/labels\/([^/?#]+)/i);
     if (m?.[1]) {
@@ -16220,7 +16230,7 @@ async function startServer() {
             orderSns: [orderSn],
             error: "label_not_ready",
             message:
-              "Vận đơn chưa có sẵn trong hệ thống — đang chuẩn bị ngầm, vui lòng in lại sau vài giây.",
+              "Đang tải file in từ sàn, vui lòng thử lại sau vài giây...",
           });
           results.push({
             orderId,
@@ -16228,7 +16238,7 @@ async function startServer() {
             success: false,
             error: "label_not_ready",
             message:
-              "Vận đơn chưa có sẵn trong hệ thống — đang chuẩn bị ngầm, vui lòng in lại sau vài giây.",
+              "Đang tải file in từ sàn, vui lòng thử lại sau vài giây...",
           });
           continue;
         }
@@ -16265,8 +16275,8 @@ async function startServer() {
         successCount > 0 && failCount === 0
           ? `Đã lấy ${successCount} PDF từ kho nội bộ (${elapsed}ms).`
           : successCount > 0
-            ? `Đã lấy ${successCount}/${results.length} PDF từ kho nội bộ; ${failCount} đơn chưa sẵn sàng (đang chuẩn bị ngầm).`
-            : `Chưa có PDF nội bộ cho các đơn đã chọn — hệ thống đang chuẩn bị ngầm, thử lại sau vài giây.`;
+            ? `Đã lấy ${successCount}/${results.length} PDF từ kho nội bộ; ${failCount} đơn đang tải từ sàn — thử lại sau vài giây.`
+            : `Đang tải file in từ sàn, vui lòng thử lại sau vài giây...`;
 
       console.log(
         `[Print Local] Done ok=${successCount} fail=${failCount} missing=${missingOrders.length} ${elapsed}ms`,
@@ -16279,6 +16289,7 @@ async function startServer() {
         setImmediate(() => {
           void markOrdersPrintedInStore(okSns, true, {
             labelUrl: firstDoc?.url,
+            waybill_url: firstDoc?.url,
             pdfFilename: firstDoc?.pdfFilename,
           }).catch(() => {});
         });
@@ -16399,18 +16410,20 @@ async function startServer() {
               continue;
             }
 
-            // Lưu meta PDF + hasPdf — tuyệt đối KHÔNG set isPrinted (user chưa bấm In).
+            // Lưu meta PDF + hasPdf + waybill_url — tuyệt đối KHÔNG set isPrinted (user chưa bấm In).
             await markOrdersHasPdfInStore([sn], {
               shopId,
               labelUrl: String(gen.url),
+              waybill_url: String(gen.url),
               pdfFilename,
             });
             order.labelUrl = gen.url;
             order.pdfUrl = gen.url;
+            order.waybill_url = gen.url;
             order.pdfFilename = pdfFilename;
             order.hasPdf = true;
             order.readyToPrint = true;
-            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename} hasPdf=true isPrinted=unchanged`);
+            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename} hasPdf=true waybill_url=set isPrinted=unchanged`);
           } catch (err: any) {
             console.warn(`[Label Prepare BG] ${sn}:`, err?.message || err);
           } finally {

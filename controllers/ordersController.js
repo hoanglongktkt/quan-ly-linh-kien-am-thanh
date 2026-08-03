@@ -9,7 +9,9 @@ import {
   loadOrders,
   saveOrders,
   loadOrdersForApi,
+  loadOrdersForShipScoped,
   persistOrdersToDatabase,
+  persistChangedOrdersPatch,
   mirrorTrackingFieldsForRead,
   hydrateTrackingFromMongoToJson,
   purgeHandedOverGarbageOrdersOnce,
@@ -1168,19 +1170,62 @@ export async function enrichTracking(req, res) {
   }
 }
 
-/** PATCH /api/orders/:id */
+/** PATCH /api/orders/:id — bắt buộc dùng dynamic orderId/orderSn (Mongo SSOT). */
 export async function patchOrder(req, res) {
-  const orders = loadOrders();
   const key = String(req.params.id || "").trim();
-  const index = orders.findIndex(
+  if (!key) {
+    return res.status(400).json({
+      error: "missing_order_id",
+      message: "Thiếu orderId hoặc orderSn động trên URL.",
+    });
+  }
+  const snKey = key.replace(/^shopee-/i, "").trim();
+  // Chặn mã test/hardcode cố định — bắt buộc truyền đơn thật từ FE.
+  if (/^TEST[-_]/i.test(snKey) || /TEST-SCAN-MVC/i.test(snKey)) {
+    return res.status(400).json({
+      error: "invalid_order_id",
+      message: `Mã đơn không hợp lệ (hardcode/test): ${key}. Hãy truyền orderId/orderSn động của đơn thực tế.`,
+    });
+  }
+
+  const orders = loadOrders();
+  let index = orders.findIndex(
     (o) =>
       o.id === key ||
       o.orderSn === key ||
       o.id === `shopee-${key}` ||
-      String(o.orderSn || "") === key.replace(/^shopee-/i, ""),
+      String(o.orderSn || "") === snKey,
   );
+
+  // Mongo-only: đơn không còn trong orders.json → vẫn PATCH theo orderSn/orderId động.
+  if (index === -1 && isMongoReady()) {
+    try {
+      const scoped = await loadOrdersForShipScoped([key, `shopee-${snKey}`], [snKey]);
+      const hit = scoped[0];
+      if (hit) {
+        const existingIdx = orders.findIndex(
+          (o) =>
+            String(o.id || "") === String(hit.id || "") ||
+            String(o.orderSn || "").replace(/^shopee-/i, "") === snKey,
+        );
+        if (existingIdx >= 0) {
+          index = existingIdx;
+          orders[index] = { ...orders[index], ...hit };
+        } else {
+          orders.push(hit);
+          index = orders.length - 1;
+        }
+      }
+    } catch (err) {
+      console.warn("[Orders PATCH] Mongo scoped lookup:", err?.message || err);
+    }
+  }
+
   if (index === -1) {
-    return res.status(404).json({ error: "Không tìm thấy đơn hàng." });
+    return res.status(404).json({
+      error: "order_not_found",
+      message: `Không tìm thấy đơn hàng theo orderId/orderSn: ${key}`,
+    });
   }
   const patch = { ...req.body };
   delete patch.id;
@@ -1226,7 +1271,13 @@ export async function patchOrder(req, res) {
       patch.status = "return_received";
     }
   }
-  orders[index] = { ...orders[index], ...patch, id: orders[index].id };
+  const stableId =
+    String(orders[index].id || "").trim() ||
+    (snKey ? `shopee-${snKey}` : key);
+  orders[index] = { ...orders[index], ...patch, id: stableId };
+  if (!orders[index].orderSn && snKey) {
+    orders[index].orderSn = snKey;
+  }
   {
     const tn = String(
       orders[index].tracking_no || orders[index].trackingNumber || "",
@@ -1248,7 +1299,20 @@ export async function patchOrder(req, res) {
       customCosts: deps.sumOrderCustomCosts(orders[index]),
     });
   }
-  await persistOrdersToDatabase(orders, [orders[index]]);
+  try {
+    await persistOrdersToDatabase(orders, [orders[index]]);
+  } catch (persistErr) {
+    console.warn("[Orders PATCH] persistOrdersToDatabase:", persistErr?.message || persistErr);
+    try {
+      await persistChangedOrdersPatch([orders[index]]);
+    } catch (err2) {
+      console.error("[Orders PATCH] persistChangedOrdersPatch failed:", err2?.message || err2);
+      return res.status(500).json({
+        error: "persist_failed",
+        message: "Không lưu được đơn lên MongoDB.",
+      });
+    }
+  }
   if (wantHanded && isMongoReady()) {
     try {
       await markOrderHandedOverInStore(String(orders[index].orderSn || ""), {

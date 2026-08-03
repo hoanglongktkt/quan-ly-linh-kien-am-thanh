@@ -103,6 +103,8 @@ type OrderDoc = {
   isPrinted?: boolean;
   /** PDF đã lưu sẵn (BG) — khác isPrinted (user đã in ra giấy). */
   hasPdf?: boolean;
+  /** URL PDF vận đơn nội bộ đã cache (ERP) */
+  waybill_url?: string | null;
   isPrepared?: boolean;
   /** Thời điểm bản trạng thái Shopee cuối cùng được xác minh. */
   last_synced_at?: Date | null;
@@ -208,6 +210,8 @@ const OrderSchema = new Schema<OrderDoc>(
     isPrinted: { type: Boolean, default: false },
     /** PDF đã tải sẵn vào kho nội bộ — BG worker; KHÔNG đồng nghĩa đã in giấy */
     hasPdf: { type: Boolean, default: false },
+    /** URL PDF vận đơn nội bộ (ERP cache) — BG worker ghi sau xác nhận */
+    waybill_url: { type: String, default: null },
     isPrepared: { type: Boolean, default: false },
     last_synced_at: { type: Date, default: null, index: true },
     /** Tương đương Shopee update_time — index giảm dần phục vụ quét đơn mới. */
@@ -1580,6 +1584,7 @@ const INTERNAL_FLAG_KEYS = new Set([
   "labelUrl",
   "pdfUrl",
   "pdfFilename",
+  "waybill_url",
 ]);
 
 /**
@@ -2134,6 +2139,7 @@ export async function markOrdersPrintedInStore(
     shopId?: string;
     labelUrl?: string;
     pdfUrl?: string;
+    waybill_url?: string;
     pdfFilename?: string;
   },
 ): Promise<number> {
@@ -2150,7 +2156,7 @@ export async function markOrdersPrintedInStore(
 
   const printed = Boolean(isPrinted);
   const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
-  const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || "").trim();
+  const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || meta?.waybill_url || "").trim();
   const pdfFilename = String(meta?.pdfFilename || "").trim();
   const ids = sns.map((sn) => `shopee-${sn}`);
 
@@ -2164,6 +2170,8 @@ export async function markOrdersPrintedInStore(
     $set["data.hasPdf"] = true;
     $set["data.readyToPrint"] = true;
     if (labelUrl) {
+      $set.waybill_url = labelUrl;
+      $set["data.waybill_url"] = labelUrl;
       $set["data.labelUrl"] = labelUrl;
       $set["data.pdfUrl"] = labelUrl;
     }
@@ -2252,6 +2260,7 @@ export async function markOrdersHasPdfInStore(
     shopId?: string;
     labelUrl?: string;
     pdfUrl?: string;
+    waybill_url?: string;
     pdfFilename?: string;
   },
 ): Promise<number> {
@@ -2267,7 +2276,9 @@ export async function markOrdersHasPdfInStore(
   if (sns.length === 0) return 0;
 
   const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
-  const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || "").trim();
+  const labelUrl = String(
+    meta?.labelUrl || meta?.pdfUrl || meta?.waybill_url || "",
+  ).trim();
   const pdfFilename = String(meta?.pdfFilename || "").trim();
 
   const ops = sns.map((sn) => {
@@ -2278,6 +2289,8 @@ export async function markOrdersHasPdfInStore(
       "data.readyToPrint": true,
     };
     if (labelUrl) {
+      $set.waybill_url = labelUrl;
+      $set["data.waybill_url"] = labelUrl;
       $set["data.labelUrl"] = labelUrl;
       $set["data.pdfUrl"] = labelUrl;
     }
@@ -3138,15 +3151,26 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
       d?.hasPdf != null
         ? Boolean(d.hasPdf)
         : Boolean(data.hasPdf ?? data.readyToPrint) ||
-          Boolean(String(data.labelUrl || data.pdfUrl || data.pdfFilename || "").trim()),
+          Boolean(
+            String(
+              data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || "",
+            ).trim(),
+          ),
     readyToPrint:
       d?.hasPdf != null
         ? Boolean(d.hasPdf)
         : Boolean(data.readyToPrint ?? data.hasPdf) ||
-          Boolean(String(data.labelUrl || data.pdfUrl || data.pdfFilename || "").trim()),
+          Boolean(
+            String(
+              data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || "",
+            ).trim(),
+          ),
     isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
-    labelUrl: data.labelUrl || data.pdfUrl || undefined,
-    pdfUrl: data.pdfUrl || data.labelUrl || undefined,
+    waybill_url:
+      d?.waybill_url || data.waybill_url || data.labelUrl || data.pdfUrl || undefined,
+    labelUrl:
+      data.labelUrl || data.pdfUrl || data.waybill_url || d?.waybill_url || undefined,
+    pdfUrl: data.pdfUrl || data.labelUrl || data.waybill_url || undefined,
     pdfFilename: data.pdfFilename || undefined,
     ...(localStored
       ? {

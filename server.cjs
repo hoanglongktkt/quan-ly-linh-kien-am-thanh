@@ -73389,6 +73389,8 @@ var OrderSchema = new import_mongoose3.Schema(
     isPrinted: { type: Boolean, default: false },
     /** PDF đã tải sẵn vào kho nội bộ — BG worker; KHÔNG đồng nghĩa đã in giấy */
     hasPdf: { type: Boolean, default: false },
+    /** URL PDF vận đơn nội bộ (ERP cache) — BG worker ghi sau xác nhận */
+    waybill_url: { type: String, default: null },
     isPrepared: { type: Boolean, default: false },
     last_synced_at: { type: Date, default: null, index: true },
     /** Tương đương Shopee update_time — index giảm dần phục vụ quét đơn mới. */
@@ -74438,7 +74440,8 @@ var INTERNAL_FLAG_KEYS = /* @__PURE__ */ new Set([
   "stock_restored_at",
   "labelUrl",
   "pdfUrl",
-  "pdfFilename"
+  "pdfFilename",
+  "waybill_url"
 ]);
 async function bulkUpsertOrdersToStore(orders) {
   requireMongo();
@@ -74859,7 +74862,7 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
   if (sns.length === 0) return 0;
   const printed = Boolean(isPrinted);
   const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
-  const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || "").trim();
+  const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || meta?.waybill_url || "").trim();
   const pdfFilename = String(meta?.pdfFilename || "").trim();
   const ids = sns.map((sn) => `shopee-${sn}`);
   const $set = {
@@ -74871,6 +74874,8 @@ async function markOrdersPrintedInStore(orderSns, isPrinted, meta) {
     $set["data.hasPdf"] = true;
     $set["data.readyToPrint"] = true;
     if (labelUrl) {
+      $set.waybill_url = labelUrl;
+      $set["data.waybill_url"] = labelUrl;
       $set["data.labelUrl"] = labelUrl;
       $set["data.pdfUrl"] = labelUrl;
     }
@@ -74949,7 +74954,9 @@ async function markOrdersHasPdfInStore(orderSns, meta) {
   ];
   if (sns.length === 0) return 0;
   const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
-  const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || "").trim();
+  const labelUrl = String(
+    meta?.labelUrl || meta?.pdfUrl || meta?.waybill_url || ""
+  ).trim();
   const pdfFilename = String(meta?.pdfFilename || "").trim();
   const ops = sns.map((sn) => {
     const _id = `shopee-${sn}`;
@@ -74959,6 +74966,8 @@ async function markOrdersHasPdfInStore(orderSns, meta) {
       "data.readyToPrint": true
     };
     if (labelUrl) {
+      $set.waybill_url = labelUrl;
+      $set["data.waybill_url"] = labelUrl;
       $set["data.labelUrl"] = labelUrl;
       $set["data.pdfUrl"] = labelUrl;
     }
@@ -75599,11 +75608,20 @@ function hydrateOrderFromMongoDoc(d) {
     is_handed_over_to_carrier: handed,
     is_handed_over_to_courier: handed,
     isPrinted: readPrintedFlag(d?.isPrinted, data.isPrinted),
-    hasPdf: d?.hasPdf != null ? Boolean(d.hasPdf) : Boolean(data.hasPdf ?? data.readyToPrint) || Boolean(String(data.labelUrl || data.pdfUrl || data.pdfFilename || "").trim()),
-    readyToPrint: d?.hasPdf != null ? Boolean(d.hasPdf) : Boolean(data.readyToPrint ?? data.hasPdf) || Boolean(String(data.labelUrl || data.pdfUrl || data.pdfFilename || "").trim()),
+    hasPdf: d?.hasPdf != null ? Boolean(d.hasPdf) : Boolean(data.hasPdf ?? data.readyToPrint) || Boolean(
+      String(
+        data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || ""
+      ).trim()
+    ),
+    readyToPrint: d?.hasPdf != null ? Boolean(d.hasPdf) : Boolean(data.readyToPrint ?? data.hasPdf) || Boolean(
+      String(
+        data.waybill_url || data.labelUrl || data.pdfUrl || data.pdfFilename || ""
+      ).trim()
+    ),
     isPrepared: d?.isPrepared != null ? Boolean(d.isPrepared) : Boolean(data.isPrepared),
-    labelUrl: data.labelUrl || data.pdfUrl || void 0,
-    pdfUrl: data.pdfUrl || data.labelUrl || void 0,
+    waybill_url: d?.waybill_url || data.waybill_url || data.labelUrl || data.pdfUrl || void 0,
+    labelUrl: data.labelUrl || data.pdfUrl || data.waybill_url || d?.waybill_url || void 0,
+    pdfUrl: data.pdfUrl || data.labelUrl || data.waybill_url || void 0,
     pdfFilename: data.pdfFilename || void 0,
     ...localStored ? {
       local_status: localStored,
@@ -105898,13 +105916,49 @@ async function enrichTracking(req, res) {
   }
 }
 async function patchOrder(req, res) {
-  const orders = loadOrders();
   const key = String(req.params.id || "").trim();
-  const index = orders.findIndex(
-    (o) => o.id === key || o.orderSn === key || o.id === `shopee-${key}` || String(o.orderSn || "") === key.replace(/^shopee-/i, "")
+  if (!key) {
+    return res.status(400).json({
+      error: "missing_order_id",
+      message: "Thi\u1EBFu orderId ho\u1EB7c orderSn \u0111\u1ED9ng tr\xEAn URL."
+    });
+  }
+  const snKey = key.replace(/^shopee-/i, "").trim();
+  if (/^TEST[-_]/i.test(snKey) || /TEST-SCAN-MVC/i.test(snKey)) {
+    return res.status(400).json({
+      error: "invalid_order_id",
+      message: `M\xE3 \u0111\u01A1n kh\xF4ng h\u1EE3p l\u1EC7 (hardcode/test): ${key}. H\xE3y truy\u1EC1n orderId/orderSn \u0111\u1ED9ng c\u1EE7a \u0111\u01A1n th\u1EF1c t\u1EBF.`
+    });
+  }
+  const orders = loadOrders();
+  let index = orders.findIndex(
+    (o) => o.id === key || o.orderSn === key || o.id === `shopee-${key}` || String(o.orderSn || "") === snKey
   );
+  if (index === -1 && isMongoReady()) {
+    try {
+      const scoped = await loadOrdersForShipScoped([key, `shopee-${snKey}`], [snKey]);
+      const hit = scoped[0];
+      if (hit) {
+        const existingIdx = orders.findIndex(
+          (o) => String(o.id || "") === String(hit.id || "") || String(o.orderSn || "").replace(/^shopee-/i, "") === snKey
+        );
+        if (existingIdx >= 0) {
+          index = existingIdx;
+          orders[index] = { ...orders[index], ...hit };
+        } else {
+          orders.push(hit);
+          index = orders.length - 1;
+        }
+      }
+    } catch (err) {
+      console.warn("[Orders PATCH] Mongo scoped lookup:", err?.message || err);
+    }
+  }
   if (index === -1) {
-    return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
+    return res.status(404).json({
+      error: "order_not_found",
+      message: `Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng theo orderId/orderSn: ${key}`
+    });
   }
   const patch = { ...req.body };
   delete patch.id;
@@ -105943,7 +105997,11 @@ async function patchOrder(req, res) {
       patch.status = "return_received";
     }
   }
-  orders[index] = { ...orders[index], ...patch, id: orders[index].id };
+  const stableId = String(orders[index].id || "").trim() || (snKey ? `shopee-${snKey}` : key);
+  orders[index] = { ...orders[index], ...patch, id: stableId };
+  if (!orders[index].orderSn && snKey) {
+    orders[index].orderSn = snKey;
+  }
   {
     const tn = String(
       orders[index].tracking_no || orders[index].trackingNumber || ""
@@ -105965,7 +106023,20 @@ async function patchOrder(req, res) {
       customCosts: deps15.sumOrderCustomCosts(orders[index])
     });
   }
-  await persistOrdersToDatabase(orders, [orders[index]]);
+  try {
+    await persistOrdersToDatabase(orders, [orders[index]]);
+  } catch (persistErr) {
+    console.warn("[Orders PATCH] persistOrdersToDatabase:", persistErr?.message || persistErr);
+    try {
+      await persistChangedOrdersPatch([orders[index]]);
+    } catch (err2) {
+      console.error("[Orders PATCH] persistChangedOrdersPatch failed:", err2?.message || err2);
+      return res.status(500).json({
+        error: "persist_failed",
+        message: "Kh\xF4ng l\u01B0u \u0111\u01B0\u1EE3c \u0111\u01A1n l\xEAn MongoDB."
+      });
+    }
+  }
   if (wantHanded && isMongoReady()) {
     try {
       await markOrderHandedOverInStore(String(orders[index].orderSn || ""), {
@@ -116850,7 +116921,11 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       if (!sn) continue;
       const raw = String(row?.shopee_order_status || "").toUpperCase();
       const printable = raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || Boolean(row?.packageNumber || row?.package_number) || Boolean(row?.trackingNumber || row?.tracking_no);
-      const hasPdfAlready = row?.hasPdf === true || Boolean(String(row?.labelUrl || row?.pdfUrl || row?.pdfFilename || "").trim());
+      const hasPdfAlready = row?.hasPdf === true || Boolean(
+        String(
+          row?.waybill_url || row?.labelUrl || row?.pdfUrl || row?.pdfFilename || ""
+        ).trim()
+      );
       if (printable && !hasPdfAlready) {
         newlyAddedForPdf.push(row);
       }
@@ -119938,7 +120013,7 @@ async function startServer() {
       return { ...fromMeta, orderSn, orderId };
     }
     const labelUrl = String(
-      order?.labelUrl || order?.pdfUrl || order?.data?.labelUrl || order?.data?.pdfUrl || ""
+      order?.labelUrl || order?.pdfUrl || order?.waybill_url || order?.data?.labelUrl || order?.data?.pdfUrl || order?.data?.waybill_url || ""
     ).trim();
     const m2 = labelUrl.match(/\/api\/public\/labels\/([^/?#]+)/i);
     if (m2?.[1]) {
@@ -120036,14 +120111,14 @@ async function startServer() {
             orderId,
             orderSns: [orderSn],
             error: "label_not_ready",
-            message: "V\u1EADn \u0111\u01A1n ch\u01B0a c\xF3 s\u1EB5n trong h\u1EC7 th\u1ED1ng \u2014 \u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m, vui l\xF2ng in l\u1EA1i sau v\xE0i gi\xE2y."
+            message: "\u0110ang t\u1EA3i file in t\u1EEB s\xE0n, vui l\xF2ng th\u1EED l\u1EA1i sau v\xE0i gi\xE2y..."
           });
           results.push({
             orderId,
             orderSn,
             success: false,
             error: "label_not_ready",
-            message: "V\u1EADn \u0111\u01A1n ch\u01B0a c\xF3 s\u1EB5n trong h\u1EC7 th\u1ED1ng \u2014 \u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m, vui l\xF2ng in l\u1EA1i sau v\xE0i gi\xE2y."
+            message: "\u0110ang t\u1EA3i file in t\u1EEB s\xE0n, vui l\xF2ng th\u1EED l\u1EA1i sau v\xE0i gi\xE2y..."
           });
           continue;
         }
@@ -120073,7 +120148,7 @@ async function startServer() {
       const successCount = results.filter((r2) => r2.success).length;
       const failCount = results.length - successCount;
       const elapsed = Date.now() - t0;
-      const message = successCount > 0 && failCount === 0 ? `\u0110\xE3 l\u1EA5y ${successCount} PDF t\u1EEB kho n\u1ED9i b\u1ED9 (${elapsed}ms).` : successCount > 0 ? `\u0110\xE3 l\u1EA5y ${successCount}/${results.length} PDF t\u1EEB kho n\u1ED9i b\u1ED9; ${failCount} \u0111\u01A1n ch\u01B0a s\u1EB5n s\xE0ng (\u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m).` : `Ch\u01B0a c\xF3 PDF n\u1ED9i b\u1ED9 cho c\xE1c \u0111\u01A1n \u0111\xE3 ch\u1ECDn \u2014 h\u1EC7 th\u1ED1ng \u0111ang chu\u1EA9n b\u1ECB ng\u1EA7m, th\u1EED l\u1EA1i sau v\xE0i gi\xE2y.`;
+      const message = successCount > 0 && failCount === 0 ? `\u0110\xE3 l\u1EA5y ${successCount} PDF t\u1EEB kho n\u1ED9i b\u1ED9 (${elapsed}ms).` : successCount > 0 ? `\u0110\xE3 l\u1EA5y ${successCount}/${results.length} PDF t\u1EEB kho n\u1ED9i b\u1ED9; ${failCount} \u0111\u01A1n \u0111ang t\u1EA3i t\u1EEB s\xE0n \u2014 th\u1EED l\u1EA1i sau v\xE0i gi\xE2y.` : `\u0110ang t\u1EA3i file in t\u1EEB s\xE0n, vui l\xF2ng th\u1EED l\u1EA1i sau v\xE0i gi\xE2y...`;
       console.log(
         `[Print Local] Done ok=${successCount} fail=${failCount} missing=${missingOrders.length} ${elapsed}ms`
       );
@@ -120083,6 +120158,7 @@ async function startServer() {
         setImmediate(() => {
           void markOrdersPrintedInStore(okSns, true, {
             labelUrl: firstDoc?.url,
+            waybill_url: firstDoc?.url,
             pdfFilename: firstDoc?.pdfFilename
           }).catch(() => {
           });
@@ -120181,14 +120257,16 @@ async function startServer() {
             await markOrdersHasPdfInStore([sn], {
               shopId,
               labelUrl: String(gen.url),
+              waybill_url: String(gen.url),
               pdfFilename
             });
             order.labelUrl = gen.url;
             order.pdfUrl = gen.url;
+            order.waybill_url = gen.url;
             order.pdfFilename = pdfFilename;
             order.hasPdf = true;
             order.readyToPrint = true;
-            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename} hasPdf=true isPrinted=unchanged`);
+            console.log(`[Label Prepare BG] OK ${sn} file=${pdfFilename} hasPdf=true waybill_url=set isPrinted=unchanged`);
           } catch (err) {
             console.warn(`[Label Prepare BG] ${sn}:`, err?.message || err);
           } finally {

@@ -213,6 +213,8 @@ export interface Order {
   /** URL PDF vận đơn đã tạo (in nhanh qua window.open, không gọi lại API). */
   labelUrl?: string;
   pdfUrl?: string;
+  /** Alias ERP — URL PDF nội bộ đã cache (đồng bộ với labelUrl). */
+  waybill_url?: string;
   pdfFilename?: string;
   /**
    * Canonical cờ nội bộ: đã bàn giao ĐVVC (QR / nút Bàn giao).

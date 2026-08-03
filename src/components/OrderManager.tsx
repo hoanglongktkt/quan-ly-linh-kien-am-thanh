@@ -2877,7 +2877,7 @@ export default function OrderManager({
             message:
               data.message ||
               errors.join('; ') ||
-              'Vận đơn chưa sẵn sàng trong kho nội bộ — hệ thống đang chuẩn bị ngầm, thử lại sau vài giây.',
+              'Đang tải file in từ sàn, vui lòng thử lại sau vài giây...',
             documents: allDocs,
           },
         };
@@ -2891,7 +2891,7 @@ export default function OrderManager({
             message:
               errors.join('; ') ||
               data.message ||
-              'Chưa có PDF nội bộ — đang chuẩn bị ngầm, thử lại sau vài giây.',
+              'Đang tải file in từ sàn, vui lòng thử lại sau vài giây...',
             documents: allDocs,
           },
         };
@@ -3004,6 +3004,7 @@ export default function OrderManager({
           ...o,
           labelUrl: hit.url,
           pdfUrl: hit.url,
+          waybill_url: hit.url,
           pdfFilename: hit.pdfFilename || o.pdfFilename,
           hasPdf: true,
           readyToPrint: true,
@@ -3143,7 +3144,7 @@ export default function OrderManager({
           : '';
       const raw =
         fromFile ||
-        String(o.labelUrl || o.pdfUrl || '').trim();
+        String(o.waybill_url || o.labelUrl || o.pdfUrl || '').trim();
       if (!raw) return { opened: false };
       docs.push({
         url: resolveLabelFetchUrl(raw),
@@ -3255,7 +3256,7 @@ export default function OrderManager({
             success: false,
             message:
               data.message ||
-              'Vận đơn chưa sẵn sàng trong kho nội bộ — đang chuẩn bị ngầm, thử lại sau vài giây.',
+              'Đang tải file in từ sàn, vui lòng thử lại sau vài giây...',
           };
         }
         return {
@@ -3369,7 +3370,7 @@ export default function OrderManager({
     const queuedKeys = buildQueuedOrderKeys(queuedOrders);
     const patched = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, opts);
     ordersRef.current = patched;
-    onUpdateOrders(patched);
+    onUpdateOrders(patched, { persist: false });
     if (onFetchOrders) {
       await onFetchOrders();
     }
@@ -3526,7 +3527,7 @@ export default function OrderManager({
         shipMethod,
       });
       ordersRef.current = patched;
-      onUpdateOrders(patched);
+      onUpdateOrders(patched, { persist: false });
     }
 
     return summary;
@@ -3552,7 +3553,7 @@ export default function OrderManager({
     const optimisticOrders = applyLocalShippedOrdersUpdate(ordersRef.current, queuedKeys, {
       shipMethod,
     });
-    onUpdateOrders(optimisticOrders);
+    onUpdateOrders(optimisticOrders, { persist: false });
     ordersRef.current = optimisticOrders;
 
     setShipConfirmOrders(null);
@@ -3585,13 +3586,38 @@ export default function OrderManager({
       for (let ci = 0; ci < orderChunks.length; ci++) {
         const chunk = orderChunks[ci];
         const orderIds = [
-          ...new Set(chunk.map((o) => o.id).filter((id) => Boolean(id && String(id).trim()))),
+          ...new Set(
+            chunk
+              .map((o) => {
+                const sn = String(o.orderSn || '').replace(/^shopee-/i, '').trim();
+                const id = String(o.id || '').trim();
+                // Dynamic ID — ưu tiên id thật, fallback shopee-{orderSn}; cấm mã test hardcode.
+                if (id && !/^shopee-TEST/i.test(id) && !/TEST-SCAN-MVC/i.test(id)) return id;
+                return sn ? `shopee-${sn}` : '';
+              })
+              .filter((id) => Boolean(id && String(id).trim())),
+          ),
         ];
         const orderSns = [
           ...new Set(
-            chunk.map((o) => o.orderSn).filter((sn) => Boolean(sn && String(sn).trim())),
+            chunk
+              .map((o) => String(o.orderSn || '').replace(/^shopee-/i, '').trim())
+              .filter((sn) => Boolean(sn) && !/^TEST/i.test(sn) && !/TEST-SCAN-MVC/i.test(sn)),
           ),
         ];
+        if (orderIds.length === 0 && orderSns.length === 0) {
+          for (const o of chunk) {
+            mergedFailed.push({
+              orderSn: o.orderSn,
+              orderId: o.id,
+              error: 'missing_order_id',
+              message: 'Thiếu orderId/orderSn động của đơn.',
+            });
+          }
+          doneCount += chunk.length;
+          setProgressCompleted(doneCount);
+          continue;
+        }
         setProgressMessage(
           `Đang xác nhận chunk ${ci + 1}/${orderChunks.length} (${chunk.length} đơn)...`,
         );
@@ -3692,7 +3718,7 @@ export default function OrderManager({
           shipMethod,
         });
         ordersRef.current = patchedBase;
-        onUpdateOrders(patchedBase);
+        onUpdateOrders(patchedBase, { persist: false });
       }
 
       onAddLog({
@@ -3708,9 +3734,12 @@ export default function OrderManager({
       setShipConfirmSummary(summary);
       setProgressMessage(
         summary.successCount > 0
-          ? 'Đã xác nhận — bấm In đơn để lấy URL PDF vận đơn'
+          ? 'Xác nhận thành công — PDF đang tải ngầm, bấm In đơn khi sẵn sàng'
           : 'Kết quả xác nhận hàng loạt',
       );
+      if (summary.successCount > 0) {
+        showToast(`Xác nhận thành công ${summary.successCount} đơn.`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Lỗi không xác định';
       showToast(`Không thể kết nối API: ${msg}`);
@@ -3763,11 +3792,11 @@ export default function OrderManager({
         onProgress: (completed, total) => {
           setProgressCompleted(completed);
           setProgressTotal(total);
-          setProgressMessage(
-            completed >= total
-              ? 'Hoàn tất — đang tải PDF từng đơn...'
-              : `Đang chờ Shopee xuất PDF từng đơn: ${completed}/${total}...`
-          );
+            setProgressMessage(
+              completed >= total
+                ? 'Hoàn tất — đang tải PDF từng đơn...'
+                : `Đang lấy PDF từ kho nội bộ: ${completed}/${total}...`
+            );
         },
         onStatus: (message) => {
           setProgressMessage(message);
@@ -4203,7 +4232,7 @@ export default function OrderManager({
           channel: 'shopee',
           type: 'stock_sync',
           status: 'success',
-          message: `[SHOPEE PRINT] ${shopeeAll.length === 1 ? 'fast-path 1 đơn' : `per-order×${shopeeAll.length} concurrency=${PRINT_FE_CHUNK_CONCURRENCY}`} — poll READY ${PRINT_FE_STATUS_POLL_MS}ms.`,
+          message: `[SHOPEE PRINT] ${shopeeAll.length === 1 ? 'fast-path 1 đơn' : `batch×${shopeeAll.length}`} — đọc PDF kho nội bộ (Mongo waybill_url).`,
         });
         const result = await printShopeeDocuments(shopeeAll, {
           onProgress: (completed, total) => {
@@ -4213,8 +4242,8 @@ export default function OrderManager({
               completed >= total
                 ? 'Hoàn tất — đang mở PDF vận đơn...'
                 : total === 1
-                  ? 'Đang chờ Shopee xuất PDF...'
-                  : `Đang chờ Shopee xuất PDF: ${completed}/${total} đơn...`
+                  ? 'Đang lấy PDF từ kho nội bộ...'
+                  : `Đang lấy PDF nội bộ: ${completed}/${total} đơn...`
             );
           },
           onStatus: (message) => setProgressMessage(message),
@@ -4421,7 +4450,7 @@ export default function OrderManager({
       channel: 'shopee',
       type: 'stock_sync',
       status: 'success',
-      message: `[SHOPEE PRINT] fast-path 1 đơn ${order.orderSn} — poll READY ${PRINT_FE_STATUS_POLL_MS}ms.`,
+      message: `[SHOPEE PRINT] fast-path 1 đơn ${order.orderSn} — đọc PDF kho nội bộ.`,
     });
     try {
       const result = await printShopeeDocuments([order.id], {
@@ -4429,7 +4458,7 @@ export default function OrderManager({
           setProgressCompleted(completed);
           setProgressTotal(total);
           setProgressMessage(
-            completed >= total ? 'Hoàn tất — đang mở PDF...' : 'Đang chờ Shopee xuất PDF vận đơn...'
+            completed >= total ? 'Hoàn tất — đang mở PDF...' : 'Đang lấy PDF từ kho nội bộ...'
           );
         },
         onStatus: (message) => setProgressMessage(message),
@@ -5762,7 +5791,7 @@ export default function OrderManager({
                 className="om-mobile-hide-print w-full text-left px-4 py-2 text-xs font-bold text-gray-700 hover:bg-slate-50 flex items-center gap-2.5 disabled:opacity-50"
               >
                 <Printer className={`w-4 h-4 text-blue-600 shrink-0 ${isBulkPrinting ? 'animate-spin' : ''}`} />
-                <span>{isBulkPrinting ? 'Đang lấy vận đơn Shopee...' : 'In đơn hàng hàng loạt'}</span>
+                <span>{isBulkPrinting ? 'Đang lấy PDF nội bộ...' : 'In đơn hàng hàng loạt'}</span>
               </button>
 
               <button
@@ -6505,7 +6534,9 @@ export default function OrderManager({
                   <div className="relative">
                     <CheckCircle2 className="w-16 h-16 text-emerald-600 animate-in zoom-in duration-500" />
                   </div>
-                  <h3 className="text-lg font-black text-gray-900">Kết quả xác nhận</h3>
+                  <h3 className="text-lg font-black text-gray-900">
+                    {shipConfirmSummary.successCount > 0 ? 'Xác nhận thành công' : 'Kết quả xác nhận'}
+                  </h3>
                   <div className="w-full space-y-3 text-left">
                     <div className="rounded-2xl bg-emerald-50 border border-emerald-100 px-4 py-3">
                       <p className="text-base font-bold text-emerald-700">
@@ -6679,9 +6710,9 @@ export default function OrderManager({
               <div className="flex items-center gap-2">
                 <Truck className="w-5 h-5 text-blue-400" />
                 <div>
-                  <h3 className="text-sm font-bold">Xác nhận &amp; In nhanh</h3>
+                  <h3 className="text-sm font-bold">Xác nhận đơn hàng</h3>
                   <p className="text-[10px] text-slate-400">
-                    Chọn phương thức giao vận — hệ thống xác nhận và in vận đơn trong 1 bước cho {shipConfirmOrders.length} đơn {shipConfirmOrders.length === 1 ? `#${shipConfirmOrders[0].orderSn}` : 'đã chọn'}
+                    Chỉ chuẩn bị hàng trên Shopee (không chờ PDF). PDF tải ngầm — in sau bằng nút In đơn. {shipConfirmOrders.length} đơn {shipConfirmOrders.length === 1 ? `#${shipConfirmOrders[0].orderSn}` : 'đã chọn'}
                   </p>
                 </div>
               </div>
@@ -6744,7 +6775,7 @@ export default function OrderManager({
                 className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 disabled:opacity-60"
               >
                 {isShipping && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                <span>{isShipping ? 'Đang xử lý...' : 'Xác nhận & In nhanh'}</span>
+                <span>{isShipping ? 'Đang xác nhận...' : 'Xác nhận đơn hàng'}</span>
               </button>
             </div>
           </div>

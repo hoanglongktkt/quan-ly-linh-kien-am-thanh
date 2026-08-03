@@ -997,14 +997,28 @@ export default function App() {
       const prev = previousById.get(order.id);
       if (!prev || JSON.stringify(prev) === JSON.stringify(order)) return;
 
-      fetch(`/api/orders/${encodeURIComponent(order.id)}`, {
+      // Dynamic orderId/orderSn — tuyệt đối không hardcode mã test.
+      const sn = String(order.orderSn || '').replace(/^shopee-/i, '').trim();
+      const orderKey =
+        String(order.id || '').trim() ||
+        (sn ? `shopee-${sn}` : '');
+      if (!orderKey || /^shopee-TEST/i.test(orderKey) || /TEST-SCAN-MVC/i.test(orderKey)) {
+        console.warn('[Orders PATCH] skip invalid/hardcoded order key:', orderKey || '(empty)');
+        return;
+      }
+
+      fetch(`/api/orders/${encodeURIComponent(orderKey)}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify(order),
-      }).catch(err => console.error(`Sync order ${order.id} error:`, err));
+        body: JSON.stringify({
+          ...order,
+          id: orderKey,
+          orderSn: sn || order.orderSn,
+        }),
+      }).catch(err => console.error(`Sync order ${orderKey} error:`, err));
     });
   };
 
