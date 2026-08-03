@@ -189,7 +189,8 @@ const MetaSchema = new Schema<MetaDoc>(
 const OrderSchema = new Schema<OrderDoc>(
   {
     _id: { type: String, required: true },
-    orderSn: { type: String, default: null, index: true },
+    // Unique index khai báo riêng bên dưới (orderSn_unique) — KHÔNG dùng index: true để tránh trùng orderSn_1.
+    orderSn: { type: String, default: null },
     status: { type: String, default: null, index: true },
     /** Raw Shopee — bắt buộc lưu khi sync (READY_TO_SHIP / SHIPPED / ...) */
     shopee_order_status: { type: String, default: null, index: true },
@@ -203,11 +204,13 @@ const OrderSchema = new Schema<OrderDoc>(
     /** Cờ nội bộ — chỉ $setOnInsert khi sync; QR/bàn giao mới $set true */
     is_handed_over: { type: Boolean, default: false, index: true },
     /** Cờ in vận đơn nội bộ — chỉ $setOnInsert khi sync; API in user mới $set true */
-    isPrinted: { type: Boolean, default: false, index: true },
+    // Index kép hasPdf+isPrinted khai báo riêng — bỏ index đơn lẻ.
+    isPrinted: { type: Boolean, default: false },
     /** PDF đã tải sẵn vào kho nội bộ — BG worker; KHÔNG đồng nghĩa đã in giấy */
-    hasPdf: { type: Boolean, default: false, index: true },
+    hasPdf: { type: Boolean, default: false },
     isPrepared: { type: Boolean, default: false },
     last_synced_at: { type: Date, default: null, index: true },
+    /** Tương đương Shopee update_time — index giảm dần phục vụ quét đơn mới. */
     last_shopee_update_at: { type: Date, default: null },
     sync_state: { type: String, default: "verified", index: true },
     // data.items[].productId / modelId / item_id… = String (Shopee uint64)
@@ -227,6 +230,10 @@ OrderSchema.index(
     name: "orderSn_unique",
   },
 );
+// Luồng in ấn / BG PDF: lọc hasPdf + isPrinted cùng lúc (thay index đơn lẻ).
+OrderSchema.index({ hasPdf: 1, isPrinted: 1 });
+// Quét đơn mới theo chiều giảm dần (Shopee update_time → last_shopee_update_at).
+OrderSchema.index({ last_shopee_update_at: -1 });
 // Giữ compound index cho các truy vấn theo shop trong luồng reconciliation.
 OrderSchema.index({ orderSn: 1, shopId: 1 });
 // Lookup / quét theo package_number (OFG...).
@@ -564,7 +571,9 @@ export async function initMongo(appRoot?: string): Promise<boolean> {
 
     try {
       await OrderModel.syncIndexes();
-      console.log("[MongoDB] Order indexes synced (orderSn, shopId, orderSn+shopId compound)");
+      console.log(
+        "[MongoDB] Order indexes synced (orderSn_unique, hasPdf+isPrinted, last_shopee_update_at:-1, …)",
+      );
     } catch (idxErr) {
       console.warn("[MongoDB] syncIndexes orders:", idxErr);
     }
