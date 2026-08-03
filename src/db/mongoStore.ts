@@ -3705,20 +3705,13 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
         ],
       };
     case "handed_over_carrier":
-      // matchesHandedOverCarrierTab: is_handed_over AND chưa rời (SHIPPED/CANCEL/…)
+      // matchesHandedOverCarrierTab: is_handed_over AND còn TO_SHIP-like (chưa SHIPPED)
       return {
         $and: [
           ORDER_TAB_IS_HANDED_OVER,
           {
             shopee_order_status: {
-              $nin: [
-                "SHIPPED",
-                "TO_CONFIRM_RECEIVE",
-                "COMPLETED",
-                "CANCELLED",
-                "IN_CANCEL",
-                "TO_RETURN",
-              ],
+              $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"],
             },
           },
           {
@@ -3727,14 +3720,7 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
               { "data.shopee_order_status": { $in: [null, ""] } },
               {
                 "data.shopee_order_status": {
-                  $nin: [
-                    "SHIPPED",
-                    "TO_CONFIRM_RECEIVE",
-                    "COMPLETED",
-                    "CANCELLED",
-                    "IN_CANCEL",
-                    "TO_RETURN",
-                  ],
+                  $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"],
                 },
               },
             ],

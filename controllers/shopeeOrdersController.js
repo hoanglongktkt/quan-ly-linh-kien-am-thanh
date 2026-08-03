@@ -563,7 +563,8 @@ export async function syncShopee(req, res) {
             jobType: isQuick ? "shopee_orders_quick_sync" : "shopee_orders_sync",
             logTag: isQuick ? "Orders Sync-Shopee Quick" : "Orders Sync-Shopee",
             allowShortLookback: isQuick,
-            reconcileActive: !isQuick,
+            // Quick cũng đối soát nhẹ: bắt SHIPPED cho đơn Đã xử lý / Đã giao ĐVVC.
+            reconcileActive: true,
             skipCancelReturn: isQuick,
           });
           console.log(
@@ -625,7 +626,7 @@ export async function quickSyncOrders(req, res) {
       jobType: "shopee_orders_quick_sync",
       logTag: "Orders Quick Sync BG",
       allowShortLookback: true,
-      reconcileActive: false,
+      reconcileActive: true,
       skipCancelReturn: true,
     });
     return;

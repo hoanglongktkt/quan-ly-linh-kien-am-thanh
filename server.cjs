@@ -71758,7 +71758,8 @@ function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
         lookbackSec,
         trigger: "cron",
         allowShortLookback: true,
-        reconcileActive: false,
+        // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
+        reconcileActive: true,
         jobType: "shopee_orders_cron_sync"
       });
       console.log(
@@ -72369,7 +72370,10 @@ function isTruthyFlag(value) {
   return false;
 }
 function getShopeeRaw(order) {
-  return String(order.shopee_order_status || "").toUpperCase();
+  return String(order.shopee_order_status || order.order_status || "").toUpperCase();
+}
+function isToShipLikeRaw(raw) {
+  return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED";
 }
 function getInternalStatusRaw(order) {
   return String(
@@ -72387,11 +72391,11 @@ function hasLeftHandedOverCarrierTab(order) {
   if (order.status === "cancelled" || order.status === "return_pending" || order.status === "return_received") {
     return true;
   }
+  if (order.status === "shipping" || order.status === "completed") return true;
   const logistics = String(order.logistics_status || "").toUpperCase();
   if (logistics && !logistics.includes("FAILED") && !logistics.includes("CANCEL") && (logistics.includes("PICKUP_DONE") || logistics.includes("LOGISTICS_SHIPPED") || logistics.includes("IN_TRANSIT") || logistics.includes("TRANSPORTING") || logistics.includes("DELIVERY_DONE"))) {
     return true;
   }
-  if (order.status === "shipping") return true;
   return false;
 }
 function isOrderHandedOverToCarrier(order) {
@@ -72462,6 +72466,13 @@ function resolveOrderLocalStatus(order) {
 function matchesHandedOverCarrierTab(order) {
   if (!isOrderHandedOverToCarrier(order)) return false;
   if (hasLeftHandedOverCarrierTab(order)) return false;
+  const raw = getShopeeRaw(order);
+  if (raw) {
+    if (!isToShipLikeRaw(raw)) return false;
+  } else {
+    const st = String(order.status || "");
+    if (st !== "processed" && st !== "unprocessed") return false;
+  }
   return true;
 }
 
@@ -72530,11 +72541,11 @@ function isLogisticsHandedToCarrierStatus(order) {
 function isShopeeShippingStatus(order) {
   const raw = getShopeeOrderRawStatus(order);
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return true;
-  if (order.status === "shipping" && isLogisticsHandedToCarrierStatus(order)) return true;
+  if (order.status === "shipping") return true;
   return isLogisticsHandedToCarrierStatus(order);
 }
 function isShopeeCompletedStatus(order) {
-  return getShopeeOrderRawStatus(order) === "COMPLETED";
+  return getShopeeOrderRawStatus(order) === "COMPLETED" || order.status === "completed";
 }
 function isShopeeCancelledLikeStatus(order) {
   const raw = getShopeeOrderRawStatus(order);
@@ -72557,11 +72568,13 @@ function matchesShippingTab(order) {
   return isShopeeShippingStatus(order);
 }
 function matchesProcessedPickupTab(order) {
+  if (isShopeeShippingStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
   if (!isPickupPoolOrder(order)) return false;
   return isProcessedCondition(order);
 }
 function matchesUnprocessedPickupTab(order) {
+  if (isShopeeShippingStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
   if (!isPickupPoolOrder(order)) return false;
   const raw = getShopeeOrderRawStatus(order);
@@ -76095,14 +76108,7 @@ function orderTabFilter(tab) {
           ORDER_TAB_IS_HANDED_OVER,
           {
             shopee_order_status: {
-              $nin: [
-                "SHIPPED",
-                "TO_CONFIRM_RECEIVE",
-                "COMPLETED",
-                "CANCELLED",
-                "IN_CANCEL",
-                "TO_RETURN"
-              ]
+              $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"]
             }
           },
           {
@@ -76111,14 +76117,7 @@ function orderTabFilter(tab) {
               { "data.shopee_order_status": { $in: [null, ""] } },
               {
                 "data.shopee_order_status": {
-                  $nin: [
-                    "SHIPPED",
-                    "TO_CONFIRM_RECEIVE",
-                    "COMPLETED",
-                    "CANCELLED",
-                    "IN_CANCEL",
-                    "TO_RETURN"
-                  ]
+                  $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"]
                 }
               }
             ]
@@ -106917,7 +106916,8 @@ async function syncShopee(req, res) {
             jobType: isQuick ? "shopee_orders_quick_sync" : "shopee_orders_sync",
             logTag: isQuick ? "Orders Sync-Shopee Quick" : "Orders Sync-Shopee",
             allowShortLookback: isQuick,
-            reconcileActive: !isQuick,
+            // Quick cũng đối soát nhẹ: bắt SHIPPED cho đơn Đã xử lý / Đã giao ĐVVC.
+            reconcileActive: true,
             skipCancelReturn: isQuick
           });
           console.log(
@@ -106972,7 +106972,7 @@ async function quickSyncOrders(req, res) {
       jobType: "shopee_orders_quick_sync",
       logTag: "Orders Quick Sync BG",
       allowShortLookback: true,
-      reconcileActive: false,
+      reconcileActive: true,
       skipCancelReturn: true
     });
     return;
@@ -110121,19 +110121,32 @@ async function reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt)
   }
   const allowedShops = new Set(shopIds.map((id) => String(id).trim()).filter(Boolean));
   const byShop = /* @__PURE__ */ new Map();
+  const byShopPriority = /* @__PURE__ */ new Map();
   for (const order of mongoOrders) {
     if (String(order?.channel || "") !== "shopee") continue;
     const shopId = String(order?.shopId || "").trim();
     const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
     const raw = String(order?.shopee_order_status || "").toUpperCase();
     const local = String(order?.status || "").toLowerCase();
-    const requiresReconcile = raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "IN_CANCEL" || raw === "TO_RETURN" || local === "unprocessed" || local === "processed" || local === "shipping" || local === "return_pending";
+    const handed = order?.is_handed_over === true || order?.isHandedOverToCarrier === true || String(order?.local_status || order?.localStatus || "").toUpperCase() === "HANDED_OVER";
+    const isPickupStuck = raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || raw === "PROCESSED" || local === "unprocessed" || local === "processed" || handed;
+    const requiresReconcile = isPickupStuck || raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "IN_CANCEL" || raw === "TO_RETURN" || local === "shipping" || local === "return_pending";
     if (!requiresReconcile || !shopId || !orderSn || !allowedShops.has(shopId)) continue;
-    const sns = byShop.get(shopId) || [];
+    const target = isPickupStuck ? byShopPriority : byShop;
+    const sns = target.get(shopId) || [];
     if (sns.length < SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP && !sns.includes(orderSn)) {
       sns.push(orderSn);
-      byShop.set(shopId, sns);
+      target.set(shopId, sns);
     }
+  }
+  for (const [shopId, sns] of byShopPriority) {
+    const rest = byShop.get(shopId) || [];
+    const merged = [...sns];
+    for (const sn of rest) {
+      if (merged.length >= SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP) break;
+      if (!merged.includes(sn)) merged.push(sn);
+    }
+    byShop.set(shopId, merged);
   }
   for (const [shopId, orderSns] of byShop) {
     try {

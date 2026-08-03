@@ -2304,32 +2304,50 @@ async function reconcileActiveShopeeOrdersFromStore(
 
   const allowedShops = new Set(shopIds.map((id) => String(id).trim()).filter(Boolean));
   const byShop = new Map<string, string[]>();
+  const byShopPriority = new Map<string, string[]>(); // handed_over / processed trước
   for (const order of mongoOrders) {
     if (String(order?.channel || "") !== "shopee") continue;
     const shopId = String(order?.shopId || "").trim();
     const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
     const raw = String(order?.shopee_order_status || "").toUpperCase();
     const local = String(order?.status || "").toLowerCase();
-    // Mở rộng: shipping / return_pending / SHIPPED / TO_RETURN / IN_CANCEL
-    // để bắt SHIPPED→CANCELLED và hoàn hàng khi webhook miss.
-    const requiresReconcile =
+    const handed =
+      order?.is_handed_over === true ||
+      order?.isHandedOverToCarrier === true ||
+      String(order?.local_status || order?.localStatus || "").toUpperCase() === "HANDED_OVER";
+    // Ưu tiên đối soát đơn còn TO_SHIP (Đã xử lý / Đã giao ĐVVC) — bắt SHIPPED.
+    const isPickupStuck =
       raw === "READY_TO_SHIP" ||
       raw === "RETRY_SHIP" ||
       raw === "PROCESSED" ||
+      local === "unprocessed" ||
+      local === "processed" ||
+      handed;
+    const requiresReconcile =
+      isPickupStuck ||
       raw === "SHIPPED" ||
       raw === "TO_CONFIRM_RECEIVE" ||
       raw === "IN_CANCEL" ||
       raw === "TO_RETURN" ||
-      local === "unprocessed" ||
-      local === "processed" ||
       local === "shipping" ||
       local === "return_pending";
     if (!requiresReconcile || !shopId || !orderSn || !allowedShops.has(shopId)) continue;
-    const sns = byShop.get(shopId) || [];
+    const target = isPickupStuck ? byShopPriority : byShop;
+    const sns = target.get(shopId) || [];
     if (sns.length < SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP && !sns.includes(orderSn)) {
       sns.push(orderSn);
-      byShop.set(shopId, sns);
+      target.set(shopId, sns);
     }
+  }
+  // Gộp: priority trước, rồi phần còn lại (không trùng).
+  for (const [shopId, sns] of byShopPriority) {
+    const rest = byShop.get(shopId) || [];
+    const merged = [...sns];
+    for (const sn of rest) {
+      if (merged.length >= SHOPEE_ACTIVE_STATUS_RECONCILE_LIMIT_PER_SHOP) break;
+      if (!merged.includes(sn)) merged.push(sn);
+    }
+    byShop.set(shopId, merged);
   }
 
   for (const [shopId, orderSns] of byShop) {

@@ -66,7 +66,8 @@ export function scheduleAutoIncrementalOrdersSync(deps = {}) {
         lookbackSec,
         trigger: "cron",
         allowShortLookback: true,
-        reconcileActive: false,
+        // Đối soát PROCESSED/Đã giao ĐVVC còn kẹt — bắt SHIPPED khi bưu tá đã lấy hàng.
+        reconcileActive: true,
         jobType: "shopee_orders_cron_sync",
       });
       console.log(

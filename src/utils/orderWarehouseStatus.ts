@@ -39,7 +39,12 @@ export function isTruthyFlag(value: unknown): boolean {
 }
 
 function getShopeeRaw(order: Partial<Order> & Record<string, unknown>): string {
-  return String(order.shopee_order_status || '').toUpperCase();
+  return String(order.shopee_order_status || order.order_status || '').toUpperCase();
+}
+
+/** TO_SHIP-like trên Shopee (chờ lấy) — chưa SHIPPED. */
+function isToShipLikeRaw(raw: string): boolean {
+  return raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || raw === 'PROCESSED';
 }
 
 function getInternalStatusRaw(
@@ -71,6 +76,8 @@ export function hasLeftHandedOverCarrierTab(
   ) {
     return true;
   }
+  // Local đã Đang giao / hoàn tất — dù raw sync chậm.
+  if (order.status === 'shipping' || order.status === 'completed') return true;
   // App quét ĐVVC: logistics PICKUP_DONE/SHIPPED dù order_status còn PROCESSED.
   const logistics = String(order.logistics_status || '').toUpperCase();
   if (
@@ -85,7 +92,6 @@ export function hasLeftHandedOverCarrierTab(
   ) {
     return true;
   }
-  if (order.status === 'shipping') return true;
   return false;
 }
 
@@ -196,14 +202,20 @@ export function resolveOrderLocalStatus(
 
 /**
  * TAB "ĐÃ GIAO CHO ĐVVC" —
- * CHỈ đơn đã quét/bàn giao ĐVVC thành công (is_handed_over = true)
- * và chưa rời sang Đang giao / hoàn tất / hủy.
- * Loại trừ tuyệt đối với tab "Chờ lấy hàng (Đã xử lý)".
+ * TO_SHIP-like (Shopee chưa SHIPPED) AND is_handed_over = true.
+ * Khi Shopee → SHIPPED: rời tab này → Đang giao (bỏ qua cờ is_handed_over).
  */
 export function matchesHandedOverCarrierTab(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   if (!isOrderHandedOverToCarrier(order)) return false;
   if (hasLeftHandedOverCarrierTab(order)) return false;
+  const raw = getShopeeRaw(order);
+  if (raw) {
+    if (!isToShipLikeRaw(raw)) return false;
+  } else {
+    const st = String(order.status || '');
+    if (st !== 'processed' && st !== 'unprocessed') return false;
+  }
   return true;
 }

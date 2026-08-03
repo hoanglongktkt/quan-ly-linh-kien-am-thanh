@@ -727,32 +727,34 @@ export default function OrderManager({
     }
   }, [selectedShopId]);
 
-  /** Sau sync nền: poll DB mỗi 4s trong ~20s để thấy đơn mới. */
+  /** Sau sync nền: poll DB mỗi 4s trong ~20s để thấy đơn mới + SHIPPED chuyển tab. */
   const startSyncPolling = useCallback(() => {
     if (syncPollTimerRef.current != null) {
       window.clearInterval(syncPollTimerRef.current);
       syncPollTimerRef.current = null;
     }
-    const resolvePollLimit = (): number | undefined => {
-      // Tất cả shop / tab Chờ lấy hàng: tránh limit 50–100 che đơn shop 2.
-      if (selectedShopId === 'all') {
-        if (activeSubTab === 'unprocessed' || activeSubTab === 'processed') return 200;
-        return undefined; // full list
-      }
-      return 200;
+    const resolvePollLimit = (): number => {
+      // Không lọc theo tab hiện tại — phải kéo cả shipping để đơn SHIPPED rời ĐVVC/Đã xử lý.
+      if (selectedShopId === 'all') return 400;
+      return 250;
+    };
+    const pollOnce = () => {
+      const pollLimit = resolvePollLimit();
+      void onFetchOrders?.({
+        silent: true,
+        bustCache: true,
+        limit: pollLimit,
+        merge: true,
+        // CẤM tab filter — tránh cache kẹt PROCESSED khi Mongo đã SHIPPED.
+        tab: '',
+      });
+      void fetchOrderCounts();
     };
     let ticks = 0;
     const maxTicks = 5;
     syncPollTimerRef.current = window.setInterval(() => {
       ticks += 1;
-      const pollLimit = resolvePollLimit();
-      void onFetchOrders?.({
-        silent: true,
-        bustCache: true,
-        ...(pollLimit != null ? { limit: pollLimit, merge: true } : { merge: false }),
-        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
-      });
-      void fetchOrderCounts();
+      pollOnce();
       if (ticks >= maxTicks) {
         if (syncPollTimerRef.current != null) {
           window.clearInterval(syncPollTimerRef.current);
@@ -765,16 +767,9 @@ export default function OrderManager({
     }, 4000);
     // Refresh lần đầu sau 1.5s (đơn có thể đã upsert sớm)
     window.setTimeout(() => {
-      const pollLimit = resolvePollLimit();
-      void onFetchOrders?.({
-        silent: true,
-        bustCache: true,
-        ...(pollLimit != null ? { limit: pollLimit, merge: true } : { merge: false }),
-        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
-      });
-      void fetchOrderCounts();
+      pollOnce();
     }, 1500);
-  }, [onFetchOrders, fetchOrderCounts, activeSubTab, selectedShopId]);
+  }, [onFetchOrders, fetchOrderCounts, selectedShopId]);
 
   useEffect(() => {
     return () => {

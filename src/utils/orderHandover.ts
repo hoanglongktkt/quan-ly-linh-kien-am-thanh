@@ -24,12 +24,15 @@ export type { HandedOverSource } from './orderWarehouseStatus';
 /**
  * STATE MACHINE — Tab filter (SSOT, không giao thoa):
  *
- *  Đơn chưa xử lý     = READY_TO_SHIP-like AND chưa xử lý AND is_handed_over = false
- *  Chờ lấy (Đã xử lý) = READY_TO_SHIP-like AND đã xử lý AND is_handed_over = false
- *  Đã giao ĐVVC       = is_handed_over = true AND chưa rời (SHIPPED/CANCEL/…)
- *  Đang giao          = SHIPPED (hoặc TO_CONFIRM_RECEIVE) — bỏ qua is_handed_over
+ *  Đơn chưa xử lý     = TO_SHIP-like AND chưa xử lý AND is_handed_over = false
+ *  Chờ lấy (Đã xử lý) = TO_SHIP-like (READY_TO_SHIP|RETRY_SHIP|PROCESSED)
+ *                       AND đã xử lý AND is_handed_over = false
+ *  Đã giao ĐVVC       = TO_SHIP-like AND is_handed_over = true
+ *  Đang giao          = SHIPPED | TO_CONFIRM_RECEIVE | status=shipping
+ *                       — BỎ QUA is_handed_over
  *
- * Hai tab Đã xử lý ↔ Đã giao ĐVVC loại trừ lẫn nhau hoàn toàn qua cờ is_handed_over.
+ * Hai tab Đã xử lý ↔ Đã giao ĐVVC loại trừ lẫn nhau qua cờ is_handed_over.
+ * Cả hai loại trừ Đang giao khi Shopee đã SHIPPED.
  */
 
 export function getShopeeOrderRawStatus(
@@ -129,20 +132,21 @@ function isLogisticsHandedToCarrierStatus(
   );
 }
 
-/** Terminal / thoát pool chờ lấy hàng — raw SHIPPED hoặc logistics đã lấy hàng. */
+/** Terminal / thoát pool chờ lấy hàng — raw SHIPPED hoặc local shipping hoặc logistics. */
 export function isShopeeShippingStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   const raw = getShopeeOrderRawStatus(order);
   if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE') return true;
-  if (order.status === 'shipping' && isLogisticsHandedToCarrierStatus(order)) return true;
+  // Local status shipping = SSOT sau sync — không đòi logistics.
+  if (order.status === 'shipping') return true;
   return isLogisticsHandedToCarrierStatus(order);
 }
 
 export function isShopeeCompletedStatus(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
-  return getShopeeOrderRawStatus(order) === 'COMPLETED';
+  return getShopeeOrderRawStatus(order) === 'COMPLETED' || order.status === 'completed';
 }
 
 export function isShopeeCancelledLikeStatus(
@@ -239,8 +243,8 @@ export function resolveOrderBadgeStatus(order: Order): Order['status'] {
 }
 
 /**
- * TAB "ĐANG GIAO" — Status = SHIPPED (hoặc TO_CONFIRM_RECEIVE).
- * Bỏ qua is_handed_over (ĐVVC đã quét mã trên sàn).
+ * TAB "ĐANG GIAO" — SHIPPED / TO_CONFIRM_RECEIVE / status=shipping / logistics lấy hàng.
+ * Bỏ qua is_handed_over (ĐVVC đã quét trên sàn → rời tab Đã giao ĐVVC).
  */
 export function matchesShippingTab(order: Order): boolean {
   return isShopeeShippingStatus(order);
@@ -248,9 +252,11 @@ export function matchesShippingTab(order: Order): boolean {
 
 /**
  * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" —
- * Đã đóng gói/xử lý + CHƯA bàn giao ĐVVC (loại trừ tuyệt đối tab Đã giao ĐVVC).
+ * TO_SHIP-like + đã xử lý + CHƯA bàn giao ĐVVC.
+ * Loại trừ tuyệt đối Đã giao ĐVVC và Đang giao.
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
+  if (isShopeeShippingStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
   if (!isPickupPoolOrder(order)) return false;
   return isProcessedCondition(order);
@@ -263,6 +269,7 @@ export function matchesProcessedPickupTab(order: Order): boolean {
  * - AND chưa bàn giao ĐVVC / chưa isPrepared(dropoff)
  */
 export function matchesUnprocessedPickupTab(order: Order): boolean {
+  if (isShopeeShippingStatus(order)) return false;
   if (isOrderHandedOverToCarrier(order)) return false;
   if (!isPickupPoolOrder(order)) return false;
   const raw = getShopeeOrderRawStatus(order);

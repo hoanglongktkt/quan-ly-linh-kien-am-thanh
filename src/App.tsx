@@ -54,8 +54,9 @@ import {
   formatScanBgToast,
 } from './utils/scanBgQueue';
 
-/** Gộp shallow fetch (50 đơn mới) vào cache: cập nhật đơn cũ, prepend đơn mới.
- * Không downgrade cờ bàn giao ĐVVC (true → false) khi fresh còn stale. */
+/** Gộp shallow fetch vào cache: cập nhật đơn cũ, prepend đơn mới.
+ * - Không downgrade cờ bàn giao ĐVVC (true → false) khi fresh còn stale.
+ * - Không downgrade SHIPPED/shipping → PROCESSED (tránh tab Đang giao bị kéo lùi). */
 function mergeShallowOrders(cached: Order[], fresh: Order[]): Order[] {
   const keyOf = (o: Order) => String(o.id || o.orderSn || '').trim();
   const freshByKey = new Map<string, Order>();
@@ -69,20 +70,52 @@ function mergeShallowOrders(cached: Order[], fresh: Order[]): Order[] {
     if (!cachedKeys.has(k)) newOrders.push(o);
   }
 
+  const lifecycleRank = (o: Order): number => {
+    const raw = String(o.shopee_order_status || '').toUpperCase();
+    const st = String(o.status || '');
+    if (raw === 'COMPLETED' || st === 'completed') return 100;
+    if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE' || st === 'shipping') return 90;
+    if (
+      raw === 'CANCELLED' ||
+      raw === 'IN_CANCEL' ||
+      raw === 'TO_RETURN' ||
+      st === 'cancelled' ||
+      st === 'return_pending' ||
+      st === 'return_received'
+    ) {
+      return 80;
+    }
+    if (raw === 'PROCESSED' || st === 'processed') return 50;
+    if (raw === 'READY_TO_SHIP' || raw === 'RETRY_SHIP' || st === 'unprocessed') return 40;
+    return 0;
+  };
+
+  const preferProgress = (prev: Order, next: Order): Order => {
+    if (lifecycleRank(prev) <= lifecycleRank(next)) return next;
+    return {
+      ...next,
+      shopee_order_status: prev.shopee_order_status || next.shopee_order_status,
+      status: prev.status || next.status,
+      logistics_status: prev.logistics_status || next.logistics_status,
+    };
+  };
+
   const preserveHandover = (prev: Order, next: Order): Order => {
+    const progressed = preferProgress(prev, next);
     const prevHanded =
       prev.is_handed_over === true ||
       prev.isHandedOverToCarrier === true ||
       String(prev.local_status || prev.localStatus || prev.internal_status || '').toUpperCase() ===
         'HANDED_OVER';
     const nextHanded =
-      next.is_handed_over === true ||
-      next.isHandedOverToCarrier === true ||
-      String(next.local_status || next.localStatus || next.internal_status || '').toUpperCase() ===
-        'HANDED_OVER';
-    if (!prevHanded || nextHanded) return next;
+      progressed.is_handed_over === true ||
+      progressed.isHandedOverToCarrier === true ||
+      String(
+        progressed.local_status || progressed.localStatus || progressed.internal_status || '',
+      ).toUpperCase() === 'HANDED_OVER';
+    if (!prevHanded || nextHanded) return progressed;
     return {
-      ...next,
+      ...progressed,
       is_handed_over: true,
       isHandedOverToCarrier: true,
       is_handed_over_to_carrier: true,
@@ -90,9 +123,9 @@ function mergeShallowOrders(cached: Order[], fresh: Order[]): Order[] {
       local_status: prev.local_status || 'HANDED_OVER',
       localStatus: prev.localStatus || 'HANDED_OVER',
       internal_status: prev.internal_status || 'HANDED_OVER',
-      handedOverAt: next.handedOverAt || prev.handedOverAt,
-      handedOverSource: next.handedOverSource || prev.handedOverSource,
-      handed_over_source: next.handed_over_source || prev.handed_over_source,
+      handedOverAt: progressed.handedOverAt || prev.handedOverAt,
+      handedOverSource: progressed.handedOverSource || prev.handedOverSource,
+      handed_over_source: progressed.handed_over_source || prev.handed_over_source,
     };
   };
 
