@@ -139,6 +139,17 @@ body {
   }
 }
 
+/* Pull-to-refresh indicator — mobile orders list */
+.om-pull-refresh-indicator {
+  will-change: height;
+}
+
+@media (min-width: 769px) {
+  .om-pull-refresh-indicator {
+    display: none !important;
+  }
+}
+
 /* Điện thoại — vuốt mượt, ẩn scrollbar, vùng bấm lớn */
 @media (max-width: 768px) {
   .app-main-scroll,

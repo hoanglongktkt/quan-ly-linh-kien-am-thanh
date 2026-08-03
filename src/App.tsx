@@ -419,6 +419,8 @@ export default function App() {
     print_status?: 'printed' | 'unprinted' | 'all' | '';
     /** Cùng filter với /api/order-counts — tránh badge ≠ list. */
     tab?: string;
+    /** Bỏ qua dedupe in-flight (vd: tab vừa visible lại sau đóng băng). */
+    force?: boolean;
   }) => {
     const token = localStorage.getItem('admin_token');
     if (!token) return;
@@ -437,7 +439,7 @@ export default function App() {
     const tab = String(opts?.tab || '').trim().toLowerCase();
     const flightKey = `${limit ? `limit:${limit}` : 'full'}|print:${printStatus || 'all'}|tab:${tab || 'all'}`;
 
-    if (fetchOrdersInFlightRef.current?.key === flightKey) {
+    if (!opts?.force && fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
     }
 
@@ -493,6 +495,7 @@ export default function App() {
           'Cache-Control': 'no-cache, no-store, must-revalidate',
           Pragma: 'no-cache',
           Expires: '0',
+          'If-Modified-Since': '0',
         },
       });
       if (response.ok) {
@@ -698,11 +701,12 @@ export default function App() {
     }
   };
 
-  // Quay lại tab trình duyệt → làm mới danh sách từ DB nội bộ (KHÔNG gọi Shopee sync).
+  // Quay lại tab / sáng màn hình → lập tức fetch đơn mới nhất, bỏ qua cache (KHÔNG gọi Shopee).
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const FOCUS_REFRESH_COOLDOWN_MS = 12_000;
+    // Chỉ chống double-fire focus + visibilitychange cùng lúc; không chặn sau khi tab bị đóng băng.
+    const FOCUS_REFRESH_COOLDOWN_MS = 800;
 
     const refreshFromLocalDb = async () => {
       if (document.visibilityState === 'hidden') return;
@@ -712,7 +716,7 @@ export default function App() {
 
       setBackgroundRefreshing(true);
       try {
-        await fetchOrders({ silent: true });
+        await fetchOrders({ silent: true, bustCache: true, force: true });
         if (
           activeTab === 'products' ||
           activeTab === 'dashboard' ||

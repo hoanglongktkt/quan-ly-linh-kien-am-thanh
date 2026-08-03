@@ -530,6 +530,7 @@ interface OrderManagerProps {
     print_status?: 'printed' | 'unprinted' | 'all' | '';
     /** Tab SSOT — cùng filter với /api/order-counts. */
     tab?: string;
+    force?: boolean;
   }) => Promise<void> | void;
   ordersLoading?: boolean;
   shops: ConnectedShop[];
@@ -547,6 +548,7 @@ interface OrderManagerProps {
 }
 
 const CANCEL_RETURN_STATUSES: Order['status'][] = ['cancelled', 'return_pending', 'return_received'];
+const OM_PULL_REFRESH_THRESHOLD_PX = 72;
 
 function isCancelReturnOrder(order: Order): boolean {
   const local = String(order.local_status || order.localStatus || '').toUpperCase();
@@ -694,6 +696,12 @@ export default function OrderManager({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [serverOrderCounts, setServerOrderCounts] = useState<Record<string, number> | null>(null);
   const syncPollTimerRef = useRef<number | null>(null);
+  /** Pull-to-refresh (mobile): vuốt từ trên xuống để fetch lại đơn. */
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPullRefreshing, setIsPullRefreshing] = useState(false);
+  const pullStartYRef = useRef<number | null>(null);
+  const pullActiveRef = useRef(false);
+  const pullDistanceRef = useRef(0);
   const showToast = (msg: string, durationMs = 4500) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), durationMs);
@@ -3739,12 +3747,87 @@ export default function OrderManager({
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      void onFetchOrders?.({ silent: true });
+      void onFetchOrders?.({ silent: true, bustCache: true });
       void fetchOrderCounts();
     }, 12_000);
     return () => window.clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const isAtScrollTop = useCallback(() => {
+    if (typeof window === 'undefined') return true;
+    const main = document.querySelector('.app-main-scroll') as HTMLElement | null;
+    if (main) return main.scrollTop <= 2;
+    return window.scrollY <= 2 || document.documentElement.scrollTop <= 2;
+  }, []);
+
+  const handlePullTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      if (isPullRefreshing || isRefreshing || ordersLoading) return;
+      if (typeof window !== 'undefined' && window.matchMedia('(min-width: 769px)').matches) return;
+      if (!isAtScrollTop()) {
+        pullStartYRef.current = null;
+        pullActiveRef.current = false;
+        return;
+      }
+      pullStartYRef.current = e.touches[0]?.clientY ?? null;
+      pullActiveRef.current = true;
+      pullDistanceRef.current = 0;
+    },
+    [isAtScrollTop, isPullRefreshing, isRefreshing, ordersLoading],
+  );
+
+  const handlePullTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      if (!pullActiveRef.current || pullStartYRef.current == null || isPullRefreshing) return;
+      if (!isAtScrollTop()) {
+        pullActiveRef.current = false;
+        pullStartYRef.current = null;
+        if (pullDistanceRef.current !== 0) {
+          pullDistanceRef.current = 0;
+          setPullDistance(0);
+        }
+        return;
+      }
+      const y = e.touches[0]?.clientY ?? pullStartYRef.current;
+      const raw = Math.max(0, y - pullStartYRef.current);
+      // Rubber-band: giảm độ nhạy sau threshold
+      const dist = Math.min(120, raw * 0.45);
+      pullDistanceRef.current = dist;
+      setPullDistance(dist);
+    },
+    [isAtScrollTop, isPullRefreshing],
+  );
+
+  const handlePullTouchEnd = useCallback(async () => {
+    if (!pullActiveRef.current) return;
+    pullActiveRef.current = false;
+    pullStartYRef.current = null;
+    const dist = pullDistanceRef.current;
+    pullDistanceRef.current = 0;
+
+    if (dist < OM_PULL_REFRESH_THRESHOLD_PX || isPullRefreshing) {
+      setPullDistance(0);
+      return;
+    }
+
+    setIsPullRefreshing(true);
+    setPullDistance(OM_PULL_REFRESH_THRESHOLD_PX);
+    try {
+      await onFetchOrders?.({
+        silent: true,
+        bustCache: true,
+        force: true,
+        limit: 2000,
+        merge: true,
+        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
+      });
+      void fetchOrderCounts();
+    } finally {
+      setIsPullRefreshing(false);
+      setPullDistance(0);
+    }
+  }, [activeSubTab, fetchOrderCounts, isPullRefreshing, onFetchOrders]);
 
   // Status Vietnamese styling and labeling helper matching mockup closely
   const getStatusBadge = (status: Order['status']) => {
@@ -4954,7 +5037,48 @@ export default function OrderManager({
   }
 
   return (
-    <div className="space-y-6 max-md:space-y-4 om-orders-page">
+    <div
+      className="space-y-6 max-md:space-y-4 om-orders-page relative"
+      onTouchStart={handlePullTouchStart}
+      onTouchMove={handlePullTouchMove}
+      onTouchEnd={() => void handlePullTouchEnd()}
+      onTouchCancel={() => {
+        pullActiveRef.current = false;
+        pullStartYRef.current = null;
+        pullDistanceRef.current = 0;
+        if (!isPullRefreshing) setPullDistance(0);
+      }}
+    >
+      {/* Pull-to-refresh indicator — chỉ hiện trên mobile khi vuốt */}
+      <div
+        className="om-pull-refresh-indicator md:hidden pointer-events-none flex items-center justify-center overflow-hidden transition-[height] duration-150 ease-out"
+        style={{ height: isPullRefreshing ? 56 : pullDistance }}
+        aria-hidden={!(isPullRefreshing || pullDistance > 8)}
+      >
+        <div
+          className={`flex items-center gap-2 text-sky-600 text-xs font-bold ${
+            isPullRefreshing || pullDistance >= OM_PULL_REFRESH_THRESHOLD_PX ? 'opacity-100' : 'opacity-70'
+          }`}
+        >
+          <Loader2
+            className={`w-5 h-5 text-sky-500 ${
+              isPullRefreshing || pullDistance >= OM_PULL_REFRESH_THRESHOLD_PX ? 'animate-spin' : ''
+            }`}
+            style={
+              !isPullRefreshing && pullDistance < OM_PULL_REFRESH_THRESHOLD_PX
+                ? { transform: `rotate(${Math.min(360, (pullDistance / OM_PULL_REFRESH_THRESHOLD_PX) * 360)}deg)` }
+                : undefined
+            }
+          />
+          <span>
+            {isPullRefreshing
+              ? 'Đang làm mới đơn hàng...'
+              : pullDistance >= OM_PULL_REFRESH_THRESHOLD_PX
+                ? 'Thả để làm mới'
+                : 'Vuốt xuống để làm mới'}
+          </span>
+        </div>
+      </div>
       {lastSyncSummary && (
         <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold text-blue-800">
           {lastSyncSummary}
