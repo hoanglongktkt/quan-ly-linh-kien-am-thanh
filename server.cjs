@@ -72461,16 +72461,7 @@ function resolveOrderLocalStatus(order) {
 }
 function matchesHandedOverCarrierTab(order) {
   if (!isOrderHandedOverToCarrier(order)) return false;
-  const raw = getShopeeRaw(order);
-  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED") {
-    return false;
-  }
-  if (raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
-    return false;
-  }
-  if (raw !== "READY_TO_SHIP" && raw !== "RETRY_SHIP" && raw !== "PROCESSED") {
-    return false;
-  }
+  if (hasLeftHandedOverCarrierTab(order)) return false;
   return true;
 }
 
@@ -75863,7 +75854,28 @@ var ORDER_TAB_DROPOFF_PREPARED = {
 var ORDER_TAB_NOT_HANDED_OVER = {
   $and: [
     { is_handed_over: { $ne: true } },
-    { "data.is_handed_over": { $ne: true } }
+    { "data.is_handed_over": { $ne: true } },
+    { "data.isHandedOverToCarrier": { $ne: true } },
+    { "data.is_handed_over_to_carrier": { $ne: true } },
+    { "data.is_handed_over_to_courier": { $ne: true } },
+    {
+      $or: [
+        { "data.local_status": { $exists: false } },
+        { "data.local_status": { $nin: ["HANDED_OVER"] } }
+      ]
+    }
+  ]
+};
+var ORDER_TAB_IS_HANDED_OVER = {
+  $or: [
+    { is_handed_over: true },
+    { "data.is_handed_over": true },
+    { "data.isHandedOverToCarrier": true },
+    { "data.is_handed_over_to_carrier": true },
+    { "data.is_handed_over_to_courier": true },
+    { "data.local_status": "HANDED_OVER" },
+    { "data.localStatus": "HANDED_OVER" },
+    { "data.internal_status": "HANDED_OVER" }
   ]
 };
 var ORDER_TAB_NOT_SHIPPING_LOGISTICS = {
@@ -76075,8 +76087,45 @@ function orderTabFilter(tab) {
       };
     case "handed_over_carrier":
       return {
-        is_handed_over: true,
-        shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] }
+        $and: [
+          ORDER_TAB_IS_HANDED_OVER,
+          {
+            shopee_order_status: {
+              $nin: [
+                "SHIPPED",
+                "TO_CONFIRM_RECEIVE",
+                "COMPLETED",
+                "CANCELLED",
+                "IN_CANCEL",
+                "TO_RETURN"
+              ]
+            }
+          },
+          {
+            $or: [
+              { "data.shopee_order_status": { $exists: false } },
+              { "data.shopee_order_status": { $in: [null, ""] } },
+              {
+                "data.shopee_order_status": {
+                  $nin: [
+                    "SHIPPED",
+                    "TO_CONFIRM_RECEIVE",
+                    "COMPLETED",
+                    "CANCELLED",
+                    "IN_CANCEL",
+                    "TO_RETURN"
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            status: {
+              $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
+            }
+          },
+          ORDER_TAB_NOT_SHIPPING_LOGISTICS
+        ]
       };
     case "stale":
       return {
@@ -105963,7 +106012,7 @@ async function handOverCarrierById(req, res) {
       req.body?.trackingNumber || req.body?.tracking_no || req.body?.waybill || req.body?.code || ""
     ).trim();
     const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1, {
-      source: "manual_button",
+      source: String(req.body?.source || "").trim() === "qr_scan" ? "qr_scan" : "manual_button",
       trackingHint
     });
     if (!result.ok) {
@@ -105971,6 +106020,7 @@ async function handOverCarrierById(req, res) {
     }
     const products = await deps15.loadProductsForOrders([result.order]);
     const enriched = deps15.enrichOrdersFromCatalog([result.order], products)[0];
+    invalidateOrdersRefreshCache();
     return res.json({ success: true, order: enriched });
   } catch (error) {
     console.error("[Orders Handover] single error:", error);
@@ -106007,7 +106057,7 @@ async function handOverCarrierByCode(req, res) {
       });
     }
     const result = await handOverOrderToCarrierByIndex(orders, index, {
-      source: code ? "qr_scan" : "manual_button",
+      source: String(req.body?.source || "").trim() === "qr_scan" || code ? "qr_scan" : "manual_button",
       trackingHint: code || String(req.body?.trackingNumber || req.body?.tracking_no || "").trim()
     });
     if (!result.ok) {
@@ -106015,6 +106065,7 @@ async function handOverCarrierByCode(req, res) {
     }
     const products = await deps15.loadProductsForOrders([result.order]);
     const enriched = deps15.enrichOrdersFromCatalog([result.order], products)[0];
+    invalidateOrdersRefreshCache();
     return res.json({ success: true, order: enriched });
   } catch (error) {
     console.error("[Orders Handover] by-code error:", error);
@@ -106093,6 +106144,7 @@ async function handOverCarrierBulk(req, res) {
         message: failed[0]?.error || "Kh\xF4ng b\xE0n giao \u0111\u01B0\u1EE3c \u0111\u01A1n n\xE0o."
       });
     }
+    invalidateOrdersRefreshCache();
     return res.json({
       success: true,
       updated: updatedOrders.length,

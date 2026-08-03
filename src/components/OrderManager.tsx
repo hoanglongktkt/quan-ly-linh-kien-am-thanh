@@ -1201,6 +1201,7 @@ export default function OrderManager({
       const sn = String(patched.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
       const id = String(patched.id || '').trim().toLowerCase();
       let hit = false;
+      let wasAlreadyHanded = false;
       const merged = ordersRef.current.map((o) => {
         const oSn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
         const oId = String(o.id || '').trim().toLowerCase();
@@ -1211,11 +1212,21 @@ export default function OrderManager({
           (sn && oId && oId === `shopee-${sn}`);
         if (!same) return o;
         hit = true;
+        wasAlreadyHanded = isOrderHandedOverToCarrier(o);
         return { ...o, ...patched };
       });
       if (!hit) merged.unshift(patched);
       ordersRef.current = merged;
       onUpdateOrders(merged, { persist: false });
+      // Badge realtime: trừ Đã xử lý, cộng Đã giao ĐVVC (chỉ khi mới bàn giao).
+      if (!wasAlreadyHanded) {
+        setServerOrderCounts((prev) => {
+          if (!prev) return prev;
+          const processed = Math.max(0, Number(prev.processed || 0) - 1);
+          const handed = Number(prev.handed_over_carrier || 0) + 1;
+          return { ...prev, processed, handed_over_carrier: handed };
+        });
+      }
     },
     [onUpdateOrders]
   );
@@ -1242,6 +1253,7 @@ export default function OrderManager({
           ) as Order,
         );
       }
+      let newlyHanded = 0;
       const merged = ordersRef.current.map((o) => {
         const oSn = String(o.orderSn || '').replace(/^shopee-/i, '').trim().toLowerCase();
         const oId = String(o.id || '').trim().toLowerCase();
@@ -1249,33 +1261,47 @@ export default function OrderManager({
           byKey.get(oId) ||
           byKey.get(oSn) ||
           (oSn ? byKey.get(`shopee-${oSn}`) : undefined);
-        return hit ? { ...o, ...hit } : o;
+        if (!hit) return o;
+        if (!isOrderHandedOverToCarrier(o)) newlyHanded += 1;
+        return { ...o, ...hit };
       });
       ordersRef.current = merged;
       onUpdateOrders(merged, { persist: false });
+      if (newlyHanded > 0) {
+        setServerOrderCounts((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            processed: Math.max(0, Number(prev.processed || 0) - newlyHanded),
+            handed_over_carrier: Number(prev.handed_over_carrier || 0) + newlyHanded,
+          };
+        });
+      }
     },
     [onUpdateOrders]
   );
 
   const handOverOrderToCarrier = React.useCallback(
-    async (order: Order, opts?: { switchTab?: boolean; fromScan?: boolean }) => {
+    async (order: Order, opts?: { switchTab?: boolean; fromScan?: boolean; silent?: boolean }) => {
       const token = localStorage.getItem('admin_token');
       if (!token) {
-        showScanToast('Chưa đăng nhập — không thể ghi nhận bàn giao ĐVVC.', 'error');
+        if (!opts?.silent) showScanToast('Chưa đăng nhập — không thể ghi nhận bàn giao ĐVVC.', 'error');
         return false;
       }
       if (!isEligibleForHandOverToCarrier(order) && !isOrderHandedOverToCarrier(order)) {
         const why = getHandOverIneligibleReason(order) || 'không đủ điều kiện';
-        showScanToast(`Đơn #${order.orderSn}: ${why}`, 'error');
+        if (!opts?.silent) showScanToast(`Đơn #${order.orderSn}: ${why}`, 'error');
         return false;
       }
       if (isOrderHandedOverToCarrier(order)) {
         if (opts?.switchTab !== false) openHandedOverCarrierTab();
-        showScanToast(`Đơn #${order.orderSn} đã ghi nhận giao cho ĐVVC trước đó.`, 'success');
+        if (!opts?.silent) {
+          showScanToast(`Đơn #${order.orderSn} đã ghi nhận giao cho ĐVVC trước đó.`, 'success');
+        }
         return true;
       }
       if (isHandingOverRef.current) {
-        showScanToast('Đang xử lý bàn giao ĐVVC — vui lòng đợi.', 'error');
+        if (!opts?.silent) showScanToast('Đang xử lý bàn giao ĐVVC — vui lòng đợi.', 'error');
         return false;
       }
       isHandingOverRef.current = true;
@@ -1289,6 +1315,7 @@ export default function OrderManager({
           trackingNumber: waybill,
           tracking_no: waybill,
           waybill,
+          source: opts?.fromScan ? 'qr_scan' : 'manual_button',
         });
         let res = await fetch(`/api/orders/${encodeURIComponent(orderKey)}/hand-over-carrier`, {
           method: 'POST',
@@ -1364,11 +1391,13 @@ export default function OrderManager({
             : `[BÀN GIAO] Đơn ${order.orderSn} → Đã giao cho ĐVVC.`,
         });
         if (opts?.switchTab !== false) openHandedOverCarrierTab();
-        showScanToast(`Đã giao cho ĐVVC — đơn #${order.orderSn}`, 'success');
+        if (!opts?.silent) {
+          showScanToast(`Đã giao cho ĐVVC — đơn #${order.orderSn}`, 'success');
+        }
         return true;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        showScanToast(`Không ghi nhận bàn giao: ${msg}`, 'error');
+        if (!opts?.silent) showScanToast(`Không ghi nhận bàn giao: ${msg}`, 'error');
         return false;
       } finally {
         isHandingOverRef.current = false;
@@ -1398,11 +1427,11 @@ export default function OrderManager({
           if (idx >= 0) {
             const merged = ordersRef.current.map((o, i) => (i === idx ? { ...o, ...order! } : o));
             ordersRef.current = merged;
-            onUpdateOrders(merged);
+            onUpdateOrders(merged, { persist: false });
           } else {
             const merged = [order, ...ordersRef.current];
             ordersRef.current = merged;
-            onUpdateOrders(merged);
+            onUpdateOrders(merged, { persist: false });
           }
         }
 
@@ -1423,7 +1452,11 @@ export default function OrderManager({
 
         if (isEligibleForHandOverToCarrier(order)) {
           const waybill = getOrderWaybillCode(order);
-          const ok = await handOverOrderToCarrier(order, { fromScan: true });
+          // Giữ nguyên tab hiện tại khi quét liên tục — state/badge cập nhật realtime.
+          const ok = await handOverOrderToCarrier(order, {
+            fromScan: true,
+            switchTab: false,
+          });
           if (ok) {
             scanFeedback('success');
             setCameraScanError(false);
@@ -1513,7 +1546,7 @@ export default function OrderManager({
         const statusLabels: Record<Order['status'], string> = {
           pending_verification: 'Chờ xác nhận',
           pending_confirm: 'Chờ xác nhận',
-          unprocessed: 'Chờ lấy hàng (Chưa xử lý)',
+          unprocessed: 'Đơn chưa xử lý',
           processed: 'Chờ lấy hàng (Đã xử lý)',
           shipping: 'Đang giao',
           completed: 'Thành công',
@@ -1897,6 +1930,25 @@ export default function OrderManager({
             daXuatKhoListRef.current = next;
             return next;
           });
+          // Ghi DB ngay + chuyển tab Đã xử lý → Đã giao ĐVVC (badge realtime).
+          const ok = await handOverOrderToCarrier(order, {
+            fromScan: true,
+            switchTab: false,
+            silent: true,
+          });
+          if (!ok) {
+            // Rollback list nếu API thất bại — tránh lệch số lượng.
+            setDaXuatKhoList((prev) => {
+              const next = prev.filter((x) => x.code !== item.code || x.orderSn !== item.orderSn);
+              daXuatKhoListRef.current = next;
+              return next;
+            });
+            playScanSound('error');
+            vibrateScan('error');
+            flashViewfinder('error', 500);
+            showScanToast(`Không ghi nhận xuất kho #${order.orderSn}`, 'error');
+            return;
+          }
           setCameraScanResult(
             waybill
               ? `✓ Xuất kho · VĐ ${waybill} · #${order.orderSn}`
@@ -1947,7 +1999,7 @@ export default function OrderManager({
         }
       }
     },
-    [isFlushingQueue, orderScanIndex, onUpdateOrders, enqueueBackgroundLookup, persistCancelReturnScanFlag]
+    [isFlushingQueue, orderScanIndex, onUpdateOrders, enqueueBackgroundLookup, persistCancelReturnScanFlag, handOverOrderToCarrier]
   );
 
   useEffect(() => {
@@ -2119,7 +2171,7 @@ export default function OrderManager({
   // Multi-select bulk state
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [showBulkActionsDropdown, setShowBulkActionsDropdown] = useState(false);
-  /** Tab Chờ lấy hàng (Chưa xử lý): lọc theo ĐVVC — all | spx | ghn | instant | other */
+  /** Tab Đơn chưa xử lý: lọc theo ĐVVC — all | spx | ghn | instant | other */
   const [selectedShippingCarrier, setSelectedShippingCarrier] =
     useState<ShippingCarrierFilter>('all');
 
@@ -3836,7 +3888,7 @@ export default function OrderManager({
       case 'pending_confirm': 
         return { text: 'Chờ xác nhận', color: 'bg-amber-50 text-amber-600 border-amber-200/60' };
       case 'unprocessed': 
-        return { text: 'Chờ lấy hàng (Chưa xử lý)', color: 'bg-sky-50 text-sky-600 border-sky-200/60 font-semibold' };
+        return { text: 'Đơn chưa xử lý', color: 'bg-sky-50 text-sky-600 border-sky-200/60 font-semibold' };
       case 'processed': 
         return { text: 'Chờ lấy hàng (Đã xử lý)', color: 'bg-emerald-50 text-emerald-600 border-emerald-200/60' };
       case 'shipping': 
@@ -3900,8 +3952,9 @@ export default function OrderManager({
         return o.status === status;
       }).length;
     }
-    // Fallback server count khi pool chưa có dữ liệu tab (đang load).
-    if (clientCount === 0 && serverOrderCounts) {
+    // Fallback server count chỉ khi pool client còn trống (đang load lần đầu).
+    // Khi đã có dữ liệu local: tin client để badge realtime sau quét ĐVVC.
+    if (clientCount === 0 && serverOrderCounts && orders.length === 0) {
       const key = status === 'pending_verification' ? 'pending_confirm' : status;
       const serverN = Number(serverOrderCounts[key]);
       if (Number.isFinite(serverN) && serverN > 0) {
@@ -4672,6 +4725,22 @@ export default function OrderManager({
         }
         ordersRef.current = merged;
         onUpdateOrders(merged, { persist: false });
+      } else if (safeXuat > 0 && shipped.length > 0) {
+        // Fallback: API không trả orders — vẫn đánh dấu bàn giao trên state local.
+        const shippedOrders = shipped
+          .map((item) =>
+            ordersRef.current.find(
+              (o) =>
+                o.id === item.orderId ||
+                o.orderSn === item.orderSn ||
+                String(o.trackingNumber || o.tracking_no || '') ===
+                  String(item.trackingNumber || item.code || ''),
+            ),
+          )
+          .filter(Boolean) as Order[];
+        if (shippedOrders.length > 0) {
+          applyHandoverBulkToLocalOrders(shippedOrders);
+        }
       }
 
       void onFetchOrders?.({ silent: true, limit: 2000, merge: true, bustCache: true });
@@ -5402,7 +5471,7 @@ export default function OrderManager({
               : 'border-transparent text-gray-500 hover:text-gray-900 hover:bg-gray-50'
           }`}
         >
-          <span>Chờ lấy hàng (Chưa xử lý)</span>
+          <span>Đơn chưa xử lý</span>
           <span className="px-1.5 py-0.2 text-[10px] font-black rounded-full bg-rose-100 text-rose-700 border border-rose-200">
             {getCount('unprocessed')}
           </span>
@@ -5763,7 +5832,7 @@ export default function OrderManager({
               Những sản phẩm có trong đơn
             </h3>
             <p className="text-[11px] text-gray-500 mt-1">
-              Tổng hợp từ đơn <strong>Chờ lấy hàng (Chưa xử lý)</strong> và <strong>Chờ lấy hàng (Đã xử lý)</strong>
+              Tổng hợp từ đơn <strong>Đơn chưa xử lý</strong> và <strong>Chờ lấy hàng (Đã xử lý)</strong>
             </p>
           </div>
 
@@ -5861,7 +5930,7 @@ export default function OrderManager({
             <ShoppingBag className="w-12 h-12 text-slate-200" />
             <span className="font-semibold text-slate-600">Không tìm thấy đơn hàng nào khớp với điều kiện lọc</span>
             <p className="text-[11px] text-gray-400 max-w-sm leading-relaxed">
-              Hãy thay đổi bộ lọc sàn TMĐT hoặc chuyển sang các tab khác như "Chờ lấy hàng (Chưa xử lý)" để xem thêm.
+              Hãy thay đổi bộ lọc sàn TMĐT hoặc chuyển sang các tab khác như "Đơn chưa xử lý" để xem thêm.
             </p>
           </div>
         ) : (

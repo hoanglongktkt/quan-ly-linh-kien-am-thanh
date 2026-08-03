@@ -54,7 +54,8 @@ import {
   formatScanBgToast,
 } from './utils/scanBgQueue';
 
-/** Gộp shallow fetch (50 đơn mới) vào cache: cập nhật đơn cũ, prepend đơn mới. */
+/** Gộp shallow fetch (50 đơn mới) vào cache: cập nhật đơn cũ, prepend đơn mới.
+ * Không downgrade cờ bàn giao ĐVVC (true → false) khi fresh còn stale. */
 function mergeShallowOrders(cached: Order[], fresh: Order[]): Order[] {
   const keyOf = (o: Order) => String(o.id || o.orderSn || '').trim();
   const freshByKey = new Map<string, Order>();
@@ -68,10 +69,37 @@ function mergeShallowOrders(cached: Order[], fresh: Order[]): Order[] {
     if (!cachedKeys.has(k)) newOrders.push(o);
   }
 
+  const preserveHandover = (prev: Order, next: Order): Order => {
+    const prevHanded =
+      prev.is_handed_over === true ||
+      prev.isHandedOverToCarrier === true ||
+      String(prev.local_status || prev.localStatus || prev.internal_status || '').toUpperCase() ===
+        'HANDED_OVER';
+    const nextHanded =
+      next.is_handed_over === true ||
+      next.isHandedOverToCarrier === true ||
+      String(next.local_status || next.localStatus || next.internal_status || '').toUpperCase() ===
+        'HANDED_OVER';
+    if (!prevHanded || nextHanded) return next;
+    return {
+      ...next,
+      is_handed_over: true,
+      isHandedOverToCarrier: true,
+      is_handed_over_to_carrier: true,
+      is_handed_over_to_courier: true,
+      local_status: prev.local_status || 'HANDED_OVER',
+      localStatus: prev.localStatus || 'HANDED_OVER',
+      internal_status: prev.internal_status || 'HANDED_OVER',
+      handedOverAt: next.handedOverAt || prev.handedOverAt,
+      handedOverSource: next.handedOverSource || prev.handedOverSource,
+      handed_over_source: next.handed_over_source || prev.handed_over_source,
+    };
+  };
+
   const updatedCached = cached.map((o) => {
     const k = keyOf(o);
     const f = k ? freshByKey.get(k) : undefined;
-    return f ? { ...o, ...f } : o;
+    return f ? preserveHandover(o, { ...o, ...f }) : o;
   });
 
   return sanitizeOrders([...newOrders, ...updatedCached]);

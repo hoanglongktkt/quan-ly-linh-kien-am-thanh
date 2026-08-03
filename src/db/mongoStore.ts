@@ -3454,6 +3454,28 @@ const ORDER_TAB_NOT_HANDED_OVER: Record<string, unknown> = {
   $and: [
     { is_handed_over: { $ne: true } },
     { "data.is_handed_over": { $ne: true } },
+    { "data.isHandedOverToCarrier": { $ne: true } },
+    { "data.is_handed_over_to_carrier": { $ne: true } },
+    { "data.is_handed_over_to_courier": { $ne: true } },
+    {
+      $or: [
+        { "data.local_status": { $exists: false } },
+        { "data.local_status": { $nin: ["HANDED_OVER"] } },
+      ],
+    },
+  ],
+};
+
+const ORDER_TAB_IS_HANDED_OVER: Record<string, unknown> = {
+  $or: [
+    { is_handed_over: true },
+    { "data.is_handed_over": true },
+    { "data.isHandedOverToCarrier": true },
+    { "data.is_handed_over_to_carrier": true },
+    { "data.is_handed_over_to_courier": true },
+    { "data.local_status": "HANDED_OVER" },
+    { "data.localStatus": "HANDED_OVER" },
+    { "data.internal_status": "HANDED_OVER" },
   ],
 };
 
@@ -3678,9 +3700,47 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
         ],
       };
     case "handed_over_carrier":
+      // matchesHandedOverCarrierTab: is_handed_over AND chưa rời (SHIPPED/CANCEL/…)
       return {
-        is_handed_over: true,
-        shopee_order_status: { $nin: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED"] },
+        $and: [
+          ORDER_TAB_IS_HANDED_OVER,
+          {
+            shopee_order_status: {
+              $nin: [
+                "SHIPPED",
+                "TO_CONFIRM_RECEIVE",
+                "COMPLETED",
+                "CANCELLED",
+                "IN_CANCEL",
+                "TO_RETURN",
+              ],
+            },
+          },
+          {
+            $or: [
+              { "data.shopee_order_status": { $exists: false } },
+              { "data.shopee_order_status": { $in: [null, ""] } },
+              {
+                "data.shopee_order_status": {
+                  $nin: [
+                    "SHIPPED",
+                    "TO_CONFIRM_RECEIVE",
+                    "COMPLETED",
+                    "CANCELLED",
+                    "IN_CANCEL",
+                    "TO_RETURN",
+                  ],
+                },
+              },
+            ],
+          },
+          {
+            status: {
+              $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"],
+            },
+          },
+          ORDER_TAB_NOT_SHIPPING_LOGISTICS,
+        ],
       };
     case "stale":
       return {

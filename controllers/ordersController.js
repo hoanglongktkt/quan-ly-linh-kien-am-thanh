@@ -1435,7 +1435,7 @@ export async function handOverCarrierById(req, res) {
         "",
     ).trim();
     const result = await handOverOrderToCarrierByIndex(orders, hit ? hit.index : -1, {
-      source: "manual_button",
+      source: String(req.body?.source || "").trim() === "qr_scan" ? "qr_scan" : "manual_button",
       trackingHint,
     });
     if (!result.ok) {
@@ -1445,6 +1445,7 @@ export async function handOverCarrierById(req, res) {
     }
     const products = await deps.loadProductsForOrders([result.order]);
     const enriched = deps.enrichOrdersFromCatalog([result.order], products)[0];
+    invalidateOrdersRefreshCache();
     return res.json({ success: true, order: enriched });
   } catch (error) {
     console.error("[Orders Handover] single error:", error);
@@ -1485,7 +1486,10 @@ export async function handOverCarrierByCode(req, res) {
     }
 
     const result = await handOverOrderToCarrierByIndex(orders, index, {
-      source: code ? "qr_scan" : "manual_button",
+      source:
+        String(req.body?.source || "").trim() === "qr_scan" || code
+          ? "qr_scan"
+          : "manual_button",
       trackingHint:
         code || String(req.body?.trackingNumber || req.body?.tracking_no || "").trim(),
     });
@@ -1496,6 +1500,7 @@ export async function handOverCarrierByCode(req, res) {
     }
     const products = await deps.loadProductsForOrders([result.order]);
     const enriched = deps.enrichOrdersFromCatalog([result.order], products)[0];
+    invalidateOrdersRefreshCache();
     return res.json({ success: true, order: enriched });
   } catch (error) {
     console.error("[Orders Handover] by-code error:", error);
@@ -1588,6 +1593,7 @@ export async function handOverCarrierBulk(req, res) {
       });
     }
 
+    invalidateOrdersRefreshCache();
     return res.json({
       success: true,
       updated: updatedOrders.length,

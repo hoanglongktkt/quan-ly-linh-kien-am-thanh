@@ -24,10 +24,12 @@ export type { HandedOverSource } from './orderWarehouseStatus';
 /**
  * STATE MACHINE — Tab filter (SSOT, không giao thoa):
  *
- *  Chờ lấy hàng  = READY_TO_SHIP-like AND is_handed_over = false
- *                  (TUYỆT ĐỐI loại SHIPPED / COMPLETED / CANCELLED)
- *  Đã giao ĐVVC  = READY_TO_SHIP-like AND is_handed_over = true
- *  Đang giao     = SHIPPED (hoặc TO_CONFIRM_RECEIVE) — bỏ qua is_handed_over
+ *  Đơn chưa xử lý     = READY_TO_SHIP-like AND chưa xử lý AND is_handed_over = false
+ *  Chờ lấy (Đã xử lý) = READY_TO_SHIP-like AND đã xử lý AND is_handed_over = false
+ *  Đã giao ĐVVC       = is_handed_over = true AND chưa rời (SHIPPED/CANCEL/…)
+ *  Đang giao          = SHIPPED (hoặc TO_CONFIRM_RECEIVE) — bỏ qua is_handed_over
+ *
+ * Hai tab Đã xử lý ↔ Đã giao ĐVVC loại trừ lẫn nhau hoàn toàn qua cờ is_handed_over.
  */
 
 export function getShopeeOrderRawStatus(
@@ -246,7 +248,7 @@ export function matchesShippingTab(order: Order): boolean {
 
 /**
  * TAB "CHỜ LẤY HÀNG (ĐÃ XỬ LÝ)" —
- * READY_TO_SHIP-like AND is_handed_over = false AND đã xử lý.
+ * Đã đóng gói/xử lý + CHƯA bàn giao ĐVVC (loại trừ tuyệt đối tab Đã giao ĐVVC).
  */
 export function matchesProcessedPickupTab(order: Order): boolean {
   if (isOrderHandedOverToCarrier(order)) return false;
@@ -255,7 +257,7 @@ export function matchesProcessedPickupTab(order: Order): boolean {
 }
 
 /**
- * TAB "CHỜ LẤY HÀNG (CHƯA XỬ LÝ)":
+ * TAB "ĐƠN CHƯA XỬ LÝ" (trước: Chờ lấy hàng — Chưa xử lý):
  * - Raw READY_TO_SHIP | RETRY_SHIP (không PROCESSED) + chưa có mã VĐ outbound
  * - HOẶC local status=unprocessed khi thiếu raw
  * - AND chưa bàn giao ĐVVC / chưa isPrepared(dropoff)

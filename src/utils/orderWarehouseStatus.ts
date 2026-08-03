@@ -196,21 +196,14 @@ export function resolveOrderLocalStatus(
 
 /**
  * TAB "ĐÃ GIAO CHO ĐVVC" —
- * order_status READY_TO_SHIP-like AND is_handed_over = true.
+ * CHỈ đơn đã quét/bàn giao ĐVVC thành công (is_handed_over = true)
+ * và chưa rời sang Đang giao / hoàn tất / hủy.
+ * Loại trừ tuyệt đối với tab "Chờ lấy hàng (Đã xử lý)".
  */
 export function matchesHandedOverCarrierTab(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   if (!isOrderHandedOverToCarrier(order)) return false;
-  const raw = getShopeeRaw(order);
-  if (raw === 'SHIPPED' || raw === 'TO_CONFIRM_RECEIVE' || raw === 'COMPLETED') {
-    return false;
-  }
-  if (raw === 'CANCELLED' || raw === 'IN_CANCEL' || raw === 'TO_RETURN') {
-    return false;
-  }
-  if (raw !== 'READY_TO_SHIP' && raw !== 'RETRY_SHIP' && raw !== 'PROCESSED') {
-    return false;
-  }
+  if (hasLeftHandedOverCarrierTab(order)) return false;
   return true;
 }
