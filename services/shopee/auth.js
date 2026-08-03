@@ -270,13 +270,18 @@ function normalizeShopeeTokenResponse(raw) {
 function buildShopeeTokenRecord(shopKey, authJson, oauthShopId, existing) {
   const key = normalizeShopIdKey(shopKey);
   const oauth = normalizeShopIdKey(oauthShopId) || key;
-  const fromAuthList = Array.isArray(authJson?.shop_id_list)
+  // Nếu API trả shop_id_list (kể cả []) → thay thế, KHÔNG merge list cũ.
+  // Merge stale khiến shop A bị clone token sang shop B → get_order_list invalid_access_token.
+  const authHasShopList = Array.isArray(authJson?.shop_id_list);
+  const fromAuthList = authHasShopList
     ? authJson.shop_id_list.map((x) => normalizeShopIdKey(x)).filter(Boolean)
     : [];
   const fromExistingList = Array.isArray(existing?.shop_id_list)
     ? existing.shop_id_list.map((x) => normalizeShopIdKey(x)).filter(Boolean)
     : [];
-  const shopIdList = [...new Set([...fromAuthList, ...fromExistingList, key].filter(Boolean))];
+  const shopIdList = authHasShopList
+    ? [...new Set([...fromAuthList, key].filter(Boolean))]
+    : [...new Set([...fromExistingList, key].filter(Boolean))];
 
   const fromAuthMerchants = Array.isArray(authJson?.merchant_id_list)
     ? authJson.merchant_id_list.map((x) => String(x)).filter(Boolean)
@@ -618,33 +623,45 @@ export function listShopeeSyncShopIds() {
 export function ensureShopeeLinkedShopTokenKeys() {
   const tokens = normalizeTokenStore(loadShopeeTokens());
   const updates = {};
+  let pruned = 0;
 
   for (const [rawKey, record] of Object.entries(tokens)) {
     if (!record?.access_token && !record?.refresh_token) continue;
     const owner = normalizeShopIdKey(rawKey) || normalizeShopIdKey(record?.shop_id);
-    const oauth = normalizeShopIdKey(record?.oauth_shop_id) || owner;
-    const linked = new Set();
-    if (owner) linked.add(owner);
-    if (oauth) linked.add(oauth);
-    for (const raw of Array.isArray(record?.shop_id_list) ? record.shop_id_list : []) {
-      const id = normalizeShopIdKey(raw);
-      if (id) linked.add(id);
-    }
-    if (linked.size <= 1) continue;
+    if (!owner) continue;
 
-    const linkedList = [...linked];
-    for (const id of linkedList) {
+    const list = Array.isArray(record?.shop_id_list)
+      ? record.shop_id_list.map((x) => normalizeShopIdKey(x)).filter(Boolean)
+      : [];
+    // Token 1 shop: ép shop_id_list = [owner], gỡ link giả.
+    if (list.length <= 1) {
+      if (list.length !== 1 || list[0] !== owner) {
+        updates[owner] = {
+          ...record,
+          shop_id: owner,
+          shop_id_list: [owner],
+        };
+        pruned += 1;
+      }
+      continue;
+    }
+
+    // Multi-shop (main account): chỉ materialize key nằm trong shop_id_list.
+    const oauth = normalizeShopIdKey(record?.oauth_shop_id) || owner;
+    for (const id of list) {
       const existing = tokens[id] || updates[id];
       if (existing?.access_token && existing?.refresh_token) {
-        const mergedList = [
-          ...new Set([
-            ...(Array.isArray(existing.shop_id_list)
-              ? existing.shop_id_list.map((x) => normalizeShopIdKey(x))
-              : []),
-            ...linkedList,
-          ].filter(Boolean)),
-        ];
-        if (mergedList.length !== (existing.shop_id_list || []).length) {
+        // Shop đã có token riêng khác refresh_token → không đè.
+        if (
+          id !== owner &&
+          existing.refresh_token &&
+          record.refresh_token &&
+          String(existing.refresh_token) !== String(record.refresh_token)
+        ) {
+          continue;
+        }
+        const mergedList = [...new Set([...(existing.shop_id_list || []).map(normalizeShopIdKey), ...list].filter(Boolean))];
+        if (mergedList.join(",") !== (existing.shop_id_list || []).map(normalizeShopIdKey).join(",")) {
           updates[id] = {
             ...existing,
             shop_id: id,
@@ -661,7 +678,7 @@ export function ensureShopeeLinkedShopTokenKeys() {
           refresh_token: record.refresh_token,
           expire_in: record.expire_in,
           obtained_at: record.obtained_at,
-          shop_id_list: linkedList,
+          shop_id_list: list,
           merchant_id_list: record.merchant_id_list || [],
         },
         oauth || id,
@@ -670,10 +687,52 @@ export function ensureShopeeLinkedShopTokenKeys() {
     }
   }
 
-  if (Object.keys(updates).length > 0) {
-    saveShopeeTokens(updates);
+  // Gỡ key clone giả: cùng refresh_token với shop khác nhưng không nằm trong shop_id_list của owner.
+  for (const [rawKey, record] of Object.entries({ ...tokens, ...updates })) {
+    const key = normalizeShopIdKey(rawKey);
+    if (!key || !record) continue;
+    const oauth = normalizeShopIdKey(record.oauth_shop_id);
+    if (!oauth || oauth === key) continue;
+    const ownerRec = updates[oauth] || tokens[oauth];
+    if (!ownerRec) continue;
+    const ownerList = Array.isArray(ownerRec.shop_id_list)
+      ? ownerRec.shop_id_list.map(normalizeShopIdKey).filter(Boolean)
+      : [oauth];
+    const sameRefresh =
+      record.refresh_token &&
+      ownerRec.refresh_token &&
+      String(record.refresh_token) === String(ownerRec.refresh_token);
+    if (sameRefresh && !ownerList.includes(key)) {
+      // Token clone giả — xóa khỏi store để sync không gọi get_order_list với token sai.
+      console.error(
+        `[Shopee Tokens] Gỡ shop clone giả shop_id=${key} (token thuộc ${oauth}, không có trong shop_id_list). Cần OAuth riêng shop ${key}.`,
+      );
+      delete updates[key];
+      if (tokens[key]) {
+        // Đánh dấu xóa bằng save sau
+        updates[`__delete__${key}`] = true;
+      }
+      pruned += 1;
+    }
+  }
+
+  const deleteKeys = Object.keys(updates).filter((k) => k.startsWith("__delete__"));
+  for (const dk of deleteKeys) {
+    delete updates[dk];
+  }
+
+  if (Object.keys(updates).length > 0 || deleteKeys.length > 0) {
+    const next = normalizeTokenStore(loadShopeeTokens());
+    for (const dk of deleteKeys) {
+      const id = dk.replace(/^__delete__/, "");
+      delete next[id];
+    }
+    Object.assign(next, updates);
+    // saveShopeeTokens merges — cần ghi đè cả file khi xóa key.
+    fs.writeFileSync(SHOPEE_TOKENS_PATH, JSON.stringify(next, null, 2), "utf8");
     console.log(
-      `[Shopee Tokens] ensureLinkedShopTokenKeys — upsert keys=[${Object.keys(updates).join(", ")}]`,
+      `[Shopee Tokens] ensureLinkedShopTokenKeys — upsert=[${Object.keys(updates).join(", ")}]` +
+        ` deleted=[${deleteKeys.map((k) => k.replace(/^__delete__/, "")).join(", ")}] pruned=${pruned}`,
     );
   }
   return listShopeeSyncShopIds();
@@ -689,15 +748,14 @@ export function propagateShopeeTokenToLinkedShops(sourceShopId, patch, opts) {
     tokenCacheSet(key, patch.access_token, patch.expire_in);
     return;
   }
-  const linked = new Set([key]);
+  // Chỉ propagate tới shop nằm trong shop_id_list MỚI từ refresh/OAuth.
+  // Không union với list cũ — tránh clone token shop A sang shop B.
+  const fromPatch = Array.isArray(patch.shop_id_list)
+    ? patch.shop_id_list.map((x) => normalizeShopIdKey(x)).filter(Boolean)
+    : [];
+  const linked = new Set(fromPatch.length ? fromPatch : [key]);
+  linked.add(key);
   const oauth = normalizeShopIdKey(record.oauth_shop_id);
-  if (oauth) linked.add(oauth);
-  const recordShop = normalizeShopIdKey(record.shop_id);
-  if (recordShop) linked.add(recordShop);
-  for (const raw of Array.isArray(record.shop_id_list) ? record.shop_id_list : []) {
-    const id = normalizeShopIdKey(raw);
-    if (id) linked.add(id);
-  }
   const onlyMatchingRefresh = opts?.onlyMatchingRefreshToken
     ? String(opts.onlyMatchingRefreshToken)
     : "";
@@ -713,12 +771,22 @@ export function propagateShopeeTokenToLinkedShops(sourceShopId, patch, opts) {
     ) {
       continue;
     }
+    // Shop khác đã có refresh_token riêng (OAuth độc lập) — không ghi đè.
+    if (
+      id !== key &&
+      existing?.refresh_token &&
+      onlyMatchingRefresh &&
+      String(existing.refresh_token) !== onlyMatchingRefresh
+    ) {
+      continue;
+    }
     updates[id] = buildShopeeTokenRecord(
       id,
       {
-        ...(existing || record),
-        ...patch,
-        shop_id: id,
+        access_token: patch.access_token,
+        refresh_token: patch.refresh_token,
+        expire_in: patch.expire_in,
+        obtained_at: patch.obtained_at,
         shop_id_list: [...linked],
       },
       normalizeShopIdKey(existing?.oauth_shop_id) || oauth || key,
@@ -727,6 +795,9 @@ export function propagateShopeeTokenToLinkedShops(sourceShopId, patch, opts) {
     tokenCacheSet(id, patch.access_token, patch.expire_in);
   }
   saveShopeeTokens(updates);
+  console.log(
+    `[Shopee Tokens] propagate from=${key} → [${Object.keys(updates).join(", ")}] list=[${[...linked].join(",")}]`,
+  );
 }
 
 export function shopeeSign(apiPath, timestamp, accessToken, shopId) {
@@ -872,15 +943,29 @@ async function refreshShopeeToken(shopId, refreshToken) {
 
     const normalized = normalizeShopeeTokenResponse(json);
     if (normalized.access_token) {
+      // shop_id_list từ API: [] hoặc thiếu = token 1 shop → chỉ [key], không giữ list cũ.
+      const apiList = Array.isArray(normalized.shop_id_list)
+        ? normalized.shop_id_list
+        : Array.isArray(json?.shop_id_list)
+          ? json.shop_id_list
+          : [];
+      const shopIdListForSave = apiList.length
+        ? apiList.map((x) => normalizeShopIdKey(x)).filter(Boolean)
+        : [key];
       // Chỉ UPSERT đúng key shop_id đang refresh — không ghi nhầm sang shop khác.
       saveShopeeTokenForShop(key, {
         access_token: normalized.access_token,
         refresh_token: normalized.refresh_token || refreshToken,
         expire_in: normalized.expire_in,
         obtained_at: Math.floor(Date.now() / 1000),
+        shop_id_list: shopIdListForSave,
       });
       tokenCacheSet(key, normalized.access_token, normalized.expire_in);
-      return { ...normalized, shop_id: key };
+      return {
+        ...normalized,
+        shop_id: key,
+        shop_id_list: shopIdListForSave,
+      };
     }
     console.error(
       `[Shopee API] Refresh token thất bại shop_id=${key}:`,
@@ -1026,49 +1111,73 @@ export async function refreshShopeeAccessTokenLocked(shopId, opts) {
     }
 
     const oldRefresh = String(record.refresh_token);
-    // Linked shop (cùng main account): refresh bằng oauth_shop_id chủ token,
-    // rồi propagate sang mọi shop trong shop_id_list — tránh child refresh fail.
+    // Ưu tiên refresh ĐÚNG shop_id đang yêu cầu. Chỉ dùng oauth_shop_id khi
+    // refresh shop thất bại VÀ shop nằm trong shop_id_list thật (main-account).
     const oauthOwner = normalizeShopIdKey(record.oauth_shop_id);
-    const refreshApiShopId =
-      oauthOwner && oauthOwner !== key ? oauthOwner : key;
     console.log(
       `[Shopee Token] Refresh access_token shop_id=${key}` +
-        ` apiShopId=${refreshApiShopId}` +
         ` force=${Boolean(opts?.force)} lock=${lockKey}...`,
     );
-    let refreshed = await refreshShopeeToken(refreshApiShopId, oldRefresh);
-    // Fallback: nếu refresh bằng child key thất bại nhưng có oauth owner khác — thử lại.
+    let refreshed = await refreshShopeeToken(key, oldRefresh);
+    let refreshVia = key;
+
     if (
       !refreshed.access_token &&
-      refreshApiShopId === key &&
       oauthOwner &&
       oauthOwner !== key
     ) {
       console.warn(
-        `[Shopee Token] Refresh shop_id=${key} fail — retry với oauth_shop_id=${oauthOwner}`,
+        `[Shopee Token] Refresh shop_id=${key} fail — retry oauth_shop_id=${oauthOwner}`,
       );
       refreshed = await refreshShopeeToken(oauthOwner, oldRefresh);
+      refreshVia = oauthOwner;
     }
+
     if (refreshed.access_token) {
+      // Token lấy qua shop khác → bắt buộc verify get_shop_info cho shop đang cần.
+      if (refreshVia !== key) {
+        const verified = await verifyShopeeShopToken(key, refreshed.access_token);
+        if (!verified.ok) {
+          console.error(
+            `[Shopee Token] Token từ shop=${refreshVia} KHÔNG dùng được cho shop_id=${key}` +
+              ` (error=${verified.error}). Cần OAuth riêng shop ${key}.`,
+          );
+          tokenCacheClear(key);
+          throw new ShopeeRefreshTokenExpiredError(key);
+        }
+      }
+
       const obtainedAt = Math.floor(Date.now() / 1000);
-      const propagateFrom =
-        normalizeShopIdKey(refreshed.shop_id) || refreshApiShopId || key;
+      const apiList = Array.isArray(refreshed.shop_id_list)
+        ? refreshed.shop_id_list.map((x) => normalizeShopIdKey(x)).filter(Boolean)
+        : [];
+      // Chỉ propagate sang shop trong list API trả về (main-account). Token 1 shop = [refreshVia].
+      const propagateList = apiList.length ? apiList : [refreshVia];
+      if (!propagateList.includes(key) && refreshVia === key) {
+        // ok — single shop
+      } else if (!propagateList.includes(key) && refreshVia !== key) {
+        // Đã verify ở trên — vẫn lưu cho key này nhưng không clone lung tung.
+        propagateList.push(key);
+      }
+
       propagateShopeeTokenToLinkedShops(
-        propagateFrom,
+        refreshVia,
         {
           access_token: refreshed.access_token,
           refresh_token: refreshed.refresh_token || oldRefresh,
           expire_in: refreshed.expire_in,
           obtained_at: obtainedAt,
+          shop_id_list: propagateList,
         },
         { onlyMatchingRefreshToken: oldRefresh },
       );
       tokenCacheSet(key, refreshed.access_token, refreshed.expire_in);
-      if (propagateFrom !== key) {
-        tokenCacheSet(propagateFrom, refreshed.access_token, refreshed.expire_in);
+      if (refreshVia !== key) {
+        tokenCacheSet(refreshVia, refreshed.access_token, refreshed.expire_in);
       }
       console.log(
-        `[Shopee Token] Refresh OK shop_id=${key} via=${propagateFrom} — DB + cache cập nhật`,
+        `[Shopee Token] Refresh OK shop_id=${key} via=${refreshVia}` +
+          ` list=[${propagateList.join(",")}]`,
       );
       return String(refreshed.access_token);
     }
@@ -1175,6 +1284,25 @@ export async function getValidShopeeAccessToken(shopId) {
 
   const fresh = readShopeeAccessTokenIfFresh(key);
   if (fresh) {
+    const oauth = normalizeShopIdKey(record.oauth_shop_id);
+    const list = Array.isArray(record.shop_id_list)
+      ? record.shop_id_list.map(normalizeShopIdKey).filter(Boolean)
+      : [];
+    // Token clone / nghi ngờ không thuộc shop này → verify get_shop_info trước khi dùng.
+    const suspectClone =
+      (oauth && oauth !== key && (!list.length || !list.includes(key))) ||
+      (oauth && oauth !== key && list.length <= 1);
+    if (suspectClone) {
+      const verified = await verifyShopeeShopToken(key, fresh);
+      if (!verified.ok) {
+        console.error(
+          `[Shopee API] shop_id=${key} token clone/không hợp lệ (error=${verified.error}).` +
+            ` Cần OAuth riêng shop ${key} — không dùng token của ${oauth}.`,
+        );
+        tokenCacheClear(key);
+        return null;
+      }
+    }
     console.log(`[Shopee API] access_token còn hạn shop_id=${key}`);
     return fresh;
   }

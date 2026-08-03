@@ -2722,7 +2722,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
           assertOrdersPullDeadline(shopDeadlineAt, `before shop=${shopId}`);
           let accessToken = await getValidShopeeAccessToken(shopId);
           if (!accessToken) {
-            const msg = `Shop ${shopId}: không lấy được access_token (hết hạn / thiếu refresh_token)`;
+            const msg =
+              `Shop ${shopId}: không lấy được access_token hợp lệ.` +
+              ` Token có thể thuộc shop khác (clone giả) — vào Cài đặt → Ủy quyền lại ĐÚNG shop ${shopId}.`;
             console.error(`[Orders Pull] shopId=${shopId} ERROR — ${msg}`);
             errors.push({ shopId, error: "no_valid_access_token", message: msg });
             shopStatus = "ERROR";
@@ -2737,6 +2739,35 @@ async function pullIncrementalOrdersFromShopee(opts?: {
               error: shopErrorMsg,
             });
             continue;
+          }
+
+          // Xác minh token thật sự thuộc shop này trước khi get_order_list.
+          try {
+            const verified = await verifyShopeeShopToken(shopId, accessToken);
+            if (!verified?.ok) {
+              const msg =
+                `Shop ${shopId}: token không hợp lệ với Shopee (${verified?.error || "verify_failed"}).` +
+                ` Cần OAuth lại shop ${shopId}.`;
+              console.error(`[Orders Pull] shopId=${shopId} ERROR — ${msg}`);
+              errors.push({ shopId, error: "token_shop_mismatch", message: msg });
+              shopStatus = "ERROR";
+              shopErrorMsg = "token_shop_mismatch";
+              perShopResults.push({
+                shopId,
+                status: shopStatus,
+                sn: 0,
+                pulled: 0,
+                added: 0,
+                updated: 0,
+                error: shopErrorMsg,
+              });
+              continue;
+            }
+          } catch (verifyErr: any) {
+            console.warn(
+              `[Orders Pull] shopId=${shopId} verify skip:`,
+              verifyErr?.message || verifyErr,
+            );
           }
 
           const listCollect = await collectShopeeOrderSnsIncremental(shopId, accessToken, {
