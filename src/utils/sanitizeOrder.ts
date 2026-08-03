@@ -142,7 +142,7 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
       : undefined,
     is_pending_shopee_check: Boolean(raw.is_pending_shopee_check),
     isPrepared: Boolean(raw.isPrepared),
-    isPrinted: Boolean(raw.isPrinted),
+    isPrinted: isTruthyFlag(raw.isPrinted),
     hasPdf: Boolean(
       raw.hasPdf ??
         raw.readyToPrint ??

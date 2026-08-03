@@ -233,12 +233,23 @@ async function readOrdersForRefresh(limit, opts = {}) {
   return ordersRefreshInFlight;
 }
 
+/** Lọc theo cờ isPrinted — khớp SSOT docToOrder / badge UI. */
+function isOrderPrintedFlag(order) {
+  if (!order || typeof order !== "object") return false;
+  if (order.isPrinted === true || order.isPrinted === 1) return true;
+  if (typeof order.isPrinted === "string") {
+    const s = String(order.isPrinted).trim().toLowerCase();
+    return s === "true" || s === "1" || s === "yes";
+  }
+  return false;
+}
+
 /** Lọc theo cờ isPrinted trong Mongo — không gọi Shopee. */
 function filterOrdersByPrintStatus(orders, printStatusRaw) {
   const printStatus = String(printStatusRaw || "").trim().toLowerCase();
   if (!printStatus || printStatus === "all") return orders;
   if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
-    return orders.filter((o) => o?.isPrinted === true);
+    return orders.filter((o) => isOrderPrintedFlag(o));
   }
   if (
     printStatus === "unprinted" ||
@@ -246,7 +257,7 @@ function filterOrdersByPrintStatus(orders, printStatusRaw) {
     printStatus === "false" ||
     printStatus === "not_printed"
   ) {
-    return orders.filter((o) => o?.isPrinted !== true);
+    return orders.filter((o) => !isOrderPrintedFlag(o));
   }
   return orders;
 }
@@ -1325,7 +1336,13 @@ export async function updatePrintStatus(req, res) {
     }
     let mongoUpdated = 0;
     if (isMongoReady()) {
-      mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted);
+      const shopIdHint = String(
+        changed.find((o) => o?.shopId != null && String(o.shopId).trim())?.shopId ||
+          "",
+      ).trim();
+      mongoUpdated = await markOrdersPrintedInStore(sns, isPrinted, {
+        ...(shopIdHint ? { shopId: shopIdHint } : {}),
+      });
       invalidateOrdersRefreshCache();
     }
     return res.json({

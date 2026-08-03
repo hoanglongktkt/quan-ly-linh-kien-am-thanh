@@ -1067,7 +1067,8 @@ export default function OrderManager({
     setActiveSubTab(UI_TAB_HANDED_OVER_CARRIER);
   }, []);
 
-  /** Đổi lọc Đã in / Chưa in → gọi API nội bộ kèm print_status (Mongo, không Shopee). */
+  /** Đổi lọc Đã in / Chưa in — lọc client theo cờ isPrinted.
+   * Đồng bộ lại cờ từ Mongo (KHÔNG gửi print_status: merge subset làm lệch cờ các đơn không nằm trong response). */
   const applyPrintStatusFilter = React.useCallback(
     (next: 'all' | 'printed' | 'unprinted') => {
       setPrintStatusFilter(next);
@@ -1076,7 +1077,6 @@ export default function OrderManager({
         bustCache: true,
         limit: 2000,
         merge: true,
-        print_status: next === 'all' ? '' : next,
       });
     },
     [onFetchOrders],
@@ -3886,9 +3886,9 @@ export default function OrderManager({
       if (!matchSn && !matchTracking && !matchInternal && !matchProduct) return false;
     }
 
-    // 5. Lọc Đã in / Chưa in theo cờ isPrinted từ Mongo
-    if (printStatusFilter === 'printed' && !Boolean(order.isPrinted)) return false;
-    if (printStatusFilter === 'unprinted' && Boolean(order.isPrinted)) return false;
+    // 5. Lọc Đã in / Chưa in theo cờ isPrinted (cùng SSOT với badge)
+    if (printStatusFilter === 'printed' && !isOrderPrintedEffective(order)) return false;
+    if (printStatusFilter === 'unprinted' && isOrderPrintedEffective(order)) return false;
 
     return true;
   };

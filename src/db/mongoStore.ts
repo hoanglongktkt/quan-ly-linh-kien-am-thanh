@@ -2075,6 +2075,7 @@ export async function markOrderHandedOverInStore(
 /**
  * Ghi cờ isPrinted — CHỈ khi user bấm In thành công (hoặc reset Chưa in).
  * Không dùng cho background chuẩn bị PDF.
+ * Dùng updateMany theo orderSn/_id — tránh upsert tạo document trùng làm lệch lọc.
  */
 export async function markOrdersPrintedInStore(
   orderSns: string[],
@@ -2101,60 +2102,94 @@ export async function markOrdersPrintedInStore(
   const shopIdStr = meta?.shopId != null ? String(meta.shopId).trim() : "";
   const labelUrl = String(meta?.labelUrl || meta?.pdfUrl || "").trim();
   const pdfFilename = String(meta?.pdfFilename || "").trim();
+  const ids = sns.map((sn) => `shopee-${sn}`);
 
-  const ops = sns.map((sn) => {
-    const _id = `shopee-${sn}`;
-    const $set: Record<string, unknown> = {
-      isPrinted: printed,
-      "data.isPrinted": printed,
-    };
-    // User in thành công → chắc chắn đã có PDF; reset "Chưa in" vẫn giữ hasPdf nếu còn file.
-    if (printed) {
-      $set.hasPdf = true;
-      $set["data.hasPdf"] = true;
-      $set["data.readyToPrint"] = true;
-      if (labelUrl) {
-        $set["data.labelUrl"] = labelUrl;
-        $set["data.pdfUrl"] = labelUrl;
-      }
-      if (pdfFilename) $set["data.pdfFilename"] = pdfFilename;
+  const $set: Record<string, unknown> = {
+    isPrinted: printed,
+    "data.isPrinted": printed,
+  };
+  // User in thành công → chắc chắn đã có PDF; reset "Chưa in" vẫn giữ hasPdf nếu còn file.
+  if (printed) {
+    $set.hasPdf = true;
+    $set["data.hasPdf"] = true;
+    $set["data.readyToPrint"] = true;
+    if (labelUrl) {
+      $set["data.labelUrl"] = labelUrl;
+      $set["data.pdfUrl"] = labelUrl;
     }
-    if (shopIdStr) {
-      $set.shopId = shopIdStr;
-      $set["data.shopId"] = shopIdStr;
-    }
-    return {
-      updateOne: {
-        filter: buildOrderCompoundFilter(sn, _id, shopIdStr || null),
-        update: {
-          $set,
-          $setOnInsert: {
-            _id,
-            orderSn: sn,
-            "data.id": _id,
-            "data.orderSn": sn,
-            "data.channel": "shopee",
-          },
-        },
-        upsert: true,
-      },
-    };
-  });
+    if (pdfFilename) $set["data.pdfFilename"] = pdfFilename;
+  }
+  if (shopIdStr) {
+    $set.shopId = shopIdStr;
+    $set["data.shopId"] = shopIdStr;
+  }
 
+  const filter: Record<string, unknown> = {
+    $or: [
+      { orderSn: { $in: sns } },
+      { _id: { $in: ids } },
+      { "data.orderSn": { $in: sns } },
+    ],
+  };
+
+  let matched = 0;
   await withWriteTimeout(
     enqueueWrite(async () => {
-      const result = await OrderModel.bulkWrite(ops as any, {
-        ordered: false,
+      const result = await OrderModel.updateMany(filter, { $set }, {
         maxTimeMS: 8_000,
-      });
+      } as any);
+      matched = Number(result?.matchedCount || result?.n || 0);
+      const modified = Number(result?.modifiedCount || result?.nModified || 0);
       console.log(
         `[MongoDB] markOrdersPrintedInStore isPrinted=${printed} sns=${sns.length}` +
-          ` modified=${result.modifiedCount || 0} upserted=${result.upsertedCount || 0}`,
+          ` matched=${matched} modified=${modified}`,
       );
+
+      // Đơn chưa có trong Mongo → upsert từng sn (hiếm).
+      if (matched < sns.length) {
+        const existing = await OrderModel.find(filter)
+          .select({ orderSn: 1, _id: 1 })
+          .lean()
+          .maxTimeMS(5_000);
+        const have = new Set<string>();
+        for (const d of existing as any[]) {
+          const sn = String(d?.orderSn || String(d?._id || "").replace(/^shopee-/i, "")).trim();
+          if (sn) have.add(sn);
+        }
+        const missing = sns.filter((sn) => !have.has(sn));
+        if (missing.length > 0) {
+          const ops = missing.map((sn) => {
+            const _id = `shopee-${sn}`;
+            return {
+              updateOne: {
+                filter: { _id },
+                update: {
+                  $set: { ...$set, orderSn: sn, "data.orderSn": sn },
+                  $setOnInsert: {
+                    _id,
+                    "data.id": _id,
+                    "data.channel": "shopee",
+                  },
+                },
+                upsert: true,
+              },
+            };
+          });
+          const up = await OrderModel.bulkWrite(ops as any, {
+            ordered: false,
+            maxTimeMS: 8_000,
+          });
+          matched += missing.length;
+          console.log(
+            `[MongoDB] markOrdersPrintedInStore upsert missing=${missing.length}` +
+              ` upserted=${up.upsertedCount || 0}`,
+          );
+        }
+      }
     }),
     "mark_printed",
   );
-  return sns.length;
+  return matched || sns.length;
 }
 
 /**
@@ -2907,6 +2942,24 @@ function buildScanKeyVariantsForMongo(rawKeys: string[]): string[] {
   return [...out];
 }
 
+/** Đọc cờ isPrinted — ưu tiên top-level, fallback data.isPrinted (khớp badge/lọc UI). */
+function readPrintedFlag(top: unknown, nested: unknown): boolean {
+  const pick = (v: unknown): boolean | null => {
+    if (v === true || v === 1) return true;
+    if (v === false || v === 0) return false;
+    if (v == null) return null;
+    if (typeof v === "string") {
+      const s = v.trim().toLowerCase();
+      if (s === "true" || s === "1" || s === "yes") return true;
+      if (s === "false" || s === "0" || s === "no" || s === "") return false;
+    }
+    return null;
+  };
+  const fromTop = pick(top);
+  if (fromTop != null) return fromTop;
+  return pick(nested) === true;
+}
+
 function hydrateOrderFromMongoDoc(d: any): any | null {
   if (!d) return null;
   const data = d?.data && typeof d.data === "object" ? { ...d.data } : {};
@@ -2964,7 +3017,7 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
     isHandedOverToCarrier: handed,
     is_handed_over_to_carrier: handed,
     is_handed_over_to_courier: handed,
-    isPrinted: d?.isPrinted != null ? Boolean(d.isPrinted) : Boolean(data.isPrinted),
+    isPrinted: readPrintedFlag(d?.isPrinted, data.isPrinted),
     hasPdf:
       d?.hasPdf != null
         ? Boolean(d.hasPdf)
@@ -3852,9 +3905,23 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
     if (shopFilter) and.push(shopFilter);
     if (opts?.carrier && opts.carrier !== "all") and.push({ shipping_carrier: String(opts.carrier) });
     const printStatus = String(opts?.printStatus || "").trim().toLowerCase();
+    // SSOT khớp docToOrder: ưu tiên isPrinted top-level; chỉ fallback data.isPrinted khi top-level thiếu.
     if (printStatus === "printed" || printStatus === "da-in" || printStatus === "true") {
       and.push({
-        $or: [{ isPrinted: true }, { "data.isPrinted": true }],
+        $or: [
+          { isPrinted: true },
+          {
+            $and: [
+              {
+                $or: [
+                  { isPrinted: { $exists: false } },
+                  { isPrinted: null },
+                ],
+              },
+              { "data.isPrinted": true },
+            ],
+          },
+        ],
       });
     } else if (
       printStatus === "unprinted" ||
@@ -3863,13 +3930,17 @@ export async function queryOrdersPageFromStore(opts?: OrdersPageQuery): Promise<
       printStatus === "not_printed"
     ) {
       and.push({
-        $and: [
-          { $or: [{ isPrinted: { $exists: false } }, { isPrinted: false }, { isPrinted: null }] },
+        $nor: [
+          { isPrinted: true },
           {
-            $or: [
-              { "data.isPrinted": { $exists: false } },
-              { "data.isPrinted": false },
-              { "data.isPrinted": null },
+            $and: [
+              {
+                $or: [
+                  { isPrinted: { $exists: false } },
+                  { isPrinted: null },
+                ],
+              },
+              { "data.isPrinted": true },
             ],
           },
         ],

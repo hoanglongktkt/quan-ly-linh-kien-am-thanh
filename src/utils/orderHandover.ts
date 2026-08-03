@@ -4,6 +4,7 @@ import {
   isOrderHandedOverToCarrier,
   matchesHandedOverCarrierTab,
   hasLeftHandedOverCarrierTab,
+  isTruthyFlag,
 } from './orderWarehouseStatus';
 
 export {
@@ -196,7 +197,7 @@ export function isOrderPrintedEffective(
   order: Partial<Order> & Record<string, unknown>,
 ): boolean {
   // SSOT: cờ isPrinted trong MongoDB — không phụ thuộc processed/Shopee live.
-  return Boolean(order.isPrinted);
+  return isTruthyFlag(order.isPrinted);
 }
 
 export function isOrderPreparedEffective(
