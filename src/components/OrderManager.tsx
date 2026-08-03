@@ -785,8 +785,8 @@ export default function OrderManager({
         body.shop_ids = [String(selectedShopId)];
       }
       console.log(`[Orders Sync] → POST /api/sync-shopee mode=${mode}`);
-      showToast('Đang đồng bộ...', 8000);
-      setLastSyncSummary('Đang đồng bộ...');
+      showToast('Hệ thống đang đồng bộ ngầm', 8000);
+      setLastSyncSummary('Hệ thống đang đồng bộ ngầm');
       const syncRes = await fetch('/api/sync-shopee', {
         method: 'POST',
         headers: {
@@ -817,6 +817,8 @@ export default function OrderManager({
         setIsRefreshing(false);
         return;
       }
+      setLastSyncSummary('Hệ thống đang đồng bộ ngầm');
+      showToast('Hệ thống đang đồng bộ ngầm', 5000);
       // Fire-and-forget enrich tracking
       void fetch('/api/orders/enrich-tracking', {
         method: 'POST',
@@ -5198,7 +5200,7 @@ export default function OrderManager({
             className="px-4 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing || ordersLoading ? 'animate-spin' : ''}`} />
-            <span>{isRefreshing || ordersLoading ? 'Đang đồng bộ...' : 'Đồng bộ nhanh 3h'}</span>
+            <span>{isRefreshing || ordersLoading ? 'Đang đồng bộ ngầm...' : 'Đồng bộ nhanh 3h'}</span>
           </button>
           <button
             type="button"
@@ -5208,7 +5210,7 @@ export default function OrderManager({
             className="px-4 py-2 bg-white hover:bg-blue-50 border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing || ordersLoading ? 'animate-spin' : ''}`} />
-            <span>{isRefreshing || ordersLoading ? 'Đang đồng bộ...' : 'Cập nhật đơn hàng'}</span>
+            <span>{isRefreshing || ordersLoading ? 'Đang đồng bộ ngầm...' : 'Cập nhật đơn hàng'}</span>
           </button>
           <button
             onClick={() => setShowCreateOrderPage(true)}

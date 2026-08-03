@@ -368,100 +368,58 @@ function resolveSyncHttpStatus(result) {
   return 200;
 }
 
-/** POST /api/orders/pull — await kéo đơn, trả shopee_response thô về FE để debug. */
-export async function pullOrders(req, res) {
-  console.log("=== BẮT ĐẦU PULL ORDERS ===");
-  try {
-    console.log("Bắt đầu lấy đơn");
-    // Mặc định 14 ngày; tối đa 90 ngày (chia chunk ≤15 ngày phía Shopee API).
-    const hours = resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
-    const lookbackSec = Math.floor(hours * 60 * 60);
-    const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
-    const shopIds = resolvePullShopIds(shopIdsRaw);
-    const username = String(req.user?.username || "");
-    console.log(
-      `Đã lấy xong shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"}` +
-        ` lookback_hours=${hours} lookbackSec=${lookbackSec}`,
-    );
-
-    if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
-      sendJson(res, 200, {
-        status: 200,
-        success: true,
-        warning: true,
-        pulled: 0,
-        added: 0,
-        updated: 0,
-        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
-        shopee_response: { skipped: true, reason: "pull_in_flight" },
-      });
-      console.log("Đã gửi phản hồi về FE");
-      return;
-    }
-
-    const result = await runOrdersPull({
-      lookbackSec,
-      shopIds,
-      username,
-      jobType: "shopee_orders_pull",
-      logTag: "Orders Pull",
-    });
-
-    const httpStatus = resolveSyncHttpStatus(result);
-    const ok = httpStatus === 200;
-    sendJson(res, httpStatus, {
-      status: httpStatus,
-      success: ok,
-      message: ok
-        ? "Kéo đơn hoàn tất"
-        : result?.message || result?.detail_message || "Đồng bộ đơn hàng thất bại",
-      total_success: result?.total_success ?? result?.pulled ?? 0,
-      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
-      pulled: result?.pulled || 0,
-      added: result?.added || 0,
-      updated: result?.updated || 0,
-      shops: result?.shops || 0,
-      errors: Array.isArray(result?.errors) ? result.errors : [],
-      detail_message: result?.detail_message || result?.message || "",
-      jobId: result?.jobId || "",
-      lookbackSec: result?.lookbackSec || lookbackSec,
-      elapsedMs: result?.elapsedMs,
-      shopee_response: result?.shopee_response ?? null,
-    });
-    console.log("Đã gửi phản hồi về FE");
-    return;
-  } catch (err) {
-    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
-    console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
-    sendJson(res, 500, {
-      success: false,
-      message: friendlyPullError(err),
-      total_success: 0,
-      failed_orders: [],
-      error: friendlyPullError(err),
-      detail_message: friendlyPullError(err),
-      pulled: 0,
-      added: 0,
-      updated: 0,
-      shopee_response: null,
-    });
-    console.log("Đã gửi phản hồi về FE");
-    return;
-  }
+/**
+ * Fire-and-forget sync helper — ACK ngay, kéo đơn chạy nền.
+ * Tuyệt đối không để FE chờ kết quả từ API sàn.
+ */
+function ackBackgroundPull(res, meta) {
+  sendJson(res, 200, {
+    status: 200,
+    success: true,
+    background: true,
+    message: "Hệ thống đang đồng bộ ngầm",
+    pulled: 0,
+    added: 0,
+    updated: 0,
+    shopee_response: null,
+    ...meta,
+  });
 }
 
-/** POST /api/shopee/orders/sync — await kéo đơn, trả shopee_response thô về FE. */
-export async function syncOrders(req, res) {
-  console.log("=== BẮT ĐẦU PULL ORDERS ===");
+function fireOrdersPullInBackground(pullOpts) {
+  setImmediate(() => {
+    void (async () => {
+      console.log(
+        `[${pullOpts.logTag}] Bắt đầu chạy tiến trình ngầm lookbackSec=${pullOpts.lookbackSec}`,
+      );
+      try {
+        const result = await runOrdersPull(pullOpts);
+        console.log(
+          `[${pullOpts.logTag}] BG done pulled=${result?.pulled || 0}` +
+            ` +${result?.added || 0}/~${result?.updated || 0}` +
+            ` msg=${result?.message || ""}`,
+        );
+      } catch (bgErr) {
+        console.error(
+          `[${pullOpts.logTag}] BG failed:`,
+          bgErr?.stack || bgErr?.message || bgErr,
+        );
+      }
+    })();
+  });
+}
+
+/** POST /api/orders/pull — ACK ngay, kéo đơn chạy nền (không await Shopee). */
+export async function pullOrders(req, res) {
+  console.log("=== BẮT ĐẦU PULL ORDERS (BG) ===");
   try {
-    console.log("Bắt đầu lấy đơn");
     const hours = resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     console.log(
-      `Đã lấy xong shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"}` +
+      `Pull trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"}` +
         ` lookback_hours=${hours}`,
     );
 
@@ -470,63 +428,79 @@ export async function syncOrders(req, res) {
         status: 200,
         success: true,
         warning: true,
-        pulled: 0,
-        added: 0,
-        updated: 0,
+        background: true,
         message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
         shopee_response: { skipped: true, reason: "pull_in_flight" },
       });
-      console.log("Đã gửi phản hồi về FE");
       return;
     }
 
-    const result = await runOrdersPull({
+    ackBackgroundPull(res, { lookbackSec, mode: "full" });
+    fireOrdersPullInBackground({
+      lookbackSec,
+      shopIds,
+      username,
+      jobType: "shopee_orders_pull",
+      logTag: "Orders Pull BG",
+    });
+    return;
+  } catch (err) {
+    console.error("[API_SYNC_ERROR] pullOrders:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        message: friendlyPullError(err),
+        background: false,
+      });
+    }
+    return;
+  }
+}
+
+/** POST /api/shopee/orders/sync — ACK ngay, kéo đơn chạy nền. */
+export async function syncOrders(req, res) {
+  console.log("=== BẮT ĐẦU SYNC ORDERS (BG) ===");
+  try {
+    const hours = resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
+    const lookbackSec = Math.floor(hours * 60 * 60);
+    const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
+    const shopIds = resolvePullShopIds(shopIdsRaw);
+    const username = String(req.user?.username || "");
+    console.log(
+      `Sync trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"}` +
+        ` lookback_hours=${hours}`,
+    );
+
+    if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
+      sendJson(res, 200, {
+        status: 200,
+        success: true,
+        warning: true,
+        background: true,
+        message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
+        shopee_response: { skipped: true, reason: "pull_in_flight" },
+      });
+      return;
+    }
+
+    ackBackgroundPull(res, { lookbackSec, mode: "full" });
+    fireOrdersPullInBackground({
       lookbackSec,
       shopIds,
       username,
       jobType: "shopee_orders_sync",
-      logTag: "Orders Sync",
+      logTag: "Orders Sync BG",
     });
-
-    const httpStatus = resolveSyncHttpStatus(result);
-    const ok = httpStatus === 200;
-    sendJson(res, httpStatus, {
-      status: httpStatus,
-      success: ok,
-      message: ok
-        ? "Kéo đơn hoàn tất"
-        : result?.message || result?.detail_message || "Đồng bộ đơn hàng thất bại",
-      total_success: result?.total_success ?? result?.pulled ?? 0,
-      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
-      pulled: result?.pulled || 0,
-      added: result?.added || 0,
-      updated: result?.updated || 0,
-      shops: result?.shops || 0,
-      errors: Array.isArray(result?.errors) ? result.errors : [],
-      detail_message: result?.detail_message || result?.message || "",
-      jobId: result?.jobId || "",
-      lookbackSec: result?.lookbackSec || lookbackSec,
-      elapsedMs: result?.elapsedMs,
-      shopee_response: result?.shopee_response ?? null,
-    });
-    console.log("Đã gửi phản hồi về FE");
     return;
   } catch (err) {
-    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
-    console.error("[API_SYNC_ERROR] Lỗi chi tiết:", err?.stack || err);
-    sendJson(res, 500, {
-      success: false,
-      message: friendlyPullError(err),
-      total_success: 0,
-      failed_orders: [],
-      error: friendlyPullError(err),
-      detail_message: friendlyPullError(err),
-      pulled: 0,
-      added: 0,
-      updated: 0,
-      shopee_response: null,
-    });
-    console.log("Đã gửi phản hồi về FE");
+    console.error("[API_SYNC_ERROR] syncOrders:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        message: friendlyPullError(err),
+        background: false,
+      });
+    }
     return;
   }
 }
@@ -566,12 +540,12 @@ export async function syncShopee(req, res) {
       return;
     }
 
-    // ACK ngay — không await Shopee (kiến trúc Sapo Sync async).
+    // ACK ngay — không await Shopee (Background Sync).
     sendJson(res, 200, {
       status: 200,
       success: true,
       background: true,
-      message: "Đang đồng bộ",
+      message: "Hệ thống đang đồng bộ ngầm",
       mode: isQuick ? "quick_sync" : "full",
       lookbackSec,
     });
@@ -616,16 +590,16 @@ export async function syncShopee(req, res) {
   }
 }
 
-/** POST /api/orders/quick-sync — kéo đơn update_time trong 3h gần nhất (nhẹ, tránh timeout cPanel). */
+/** POST /api/orders/quick-sync — ACK ngay, kéo đơn 3h chạy nền. */
 export async function quickSyncOrders(req, res) {
-  console.log("=== BẮT ĐẦU QUICK SYNC ORDERS (3h) ===");
+  console.log("=== BẮT ĐẦU QUICK SYNC ORDERS (3h BG) ===");
   try {
     const lookbackSec = QUICK_SYNC_LOOKBACK_SEC;
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     console.log(
-      `Quick Sync shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"}` +
+      `Quick Sync trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"}` +
         ` lookbackSec=${lookbackSec} (3h)`,
     );
 
@@ -634,70 +608,37 @@ export async function quickSyncOrders(req, res) {
         status: 200,
         success: true,
         warning: true,
-        pulled: 0,
-        added: 0,
-        updated: 0,
+        background: true,
         message: "Hệ thống đang trong quá trình đồng bộ ngầm. Vui lòng đợi trong giây lát",
         shopee_response: { skipped: true, reason: "pull_in_flight" },
         lookbackSec,
         mode: "quick_sync",
       });
-      console.log("Đã gửi phản hồi về FE");
       return;
     }
 
-    const result = await runOrdersPull({
+    ackBackgroundPull(res, { lookbackSec, mode: "quick_sync" });
+    fireOrdersPullInBackground({
       lookbackSec,
       shopIds,
       username,
       jobType: "shopee_orders_quick_sync",
-      logTag: "Orders Quick Sync",
+      logTag: "Orders Quick Sync BG",
       allowShortLookback: true,
       reconcileActive: false,
       skipCancelReturn: true,
     });
-
-    const httpStatus = resolveSyncHttpStatus(result);
-    const ok = httpStatus === 200;
-    sendJson(res, httpStatus, {
-      status: httpStatus,
-      success: ok,
-      message: ok
-        ? result?.message || "Đồng bộ nhanh 3h hoàn tất"
-        : result?.message || result?.detail_message || "Đồng bộ nhanh thất bại",
-      total_success: result?.total_success ?? result?.pulled ?? 0,
-      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
-      pulled: result?.pulled || 0,
-      added: result?.added || 0,
-      updated: result?.updated || 0,
-      shops: result?.shops || 0,
-      errors: Array.isArray(result?.errors) ? result.errors : [],
-      detail_message: result?.detail_message || result?.message || "",
-      jobId: result?.jobId || "",
-      lookbackSec: result?.lookbackSec || lookbackSec,
-      elapsedMs: result?.elapsedMs,
-      mode: "quick_sync",
-      shopee_response: result?.shopee_response ?? null,
-    });
-    console.log("Đã gửi phản hồi về FE");
     return;
   } catch (err) {
-    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
-    console.error("[API_SYNC_ERROR] Quick Sync lỗi chi tiết:", err?.stack || err);
-    sendJson(res, 500, {
-      success: false,
-      message: friendlyPullError(err),
-      total_success: 0,
-      failed_orders: [],
-      error: friendlyPullError(err),
-      detail_message: friendlyPullError(err),
-      pulled: 0,
-      added: 0,
-      updated: 0,
-      mode: "quick_sync",
-      shopee_response: null,
-    });
-    console.log("Đã gửi phản hồi về FE");
+    console.error("[API_SYNC_ERROR] Quick Sync:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        message: friendlyPullError(err),
+        mode: "quick_sync",
+        background: false,
+      });
+    }
     return;
   }
 }

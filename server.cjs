@@ -71467,6 +71467,312 @@ var import_fs15 = __toESM(require("fs"), 1);
 var import_dotenv2 = __toESM(require_main(), 1);
 var import_pdf_lib = __toESM(require_cjs(), 1);
 
+// cron/index.js
+var import_node_cron = __toESM(require("node-cron"), 1);
+
+// services/orderSync/labelPdfQueue.js
+var prepareLabelsFn = null;
+var pendingBuffer = [];
+var flushScheduled = false;
+function registerLabelPdfDownloader(fn) {
+  prepareLabelsFn = typeof fn === "function" ? fn : null;
+  console.log(
+    `[LabelPdfQueue] register downloader=${prepareLabelsFn ? "OK" : "NULL"}`
+  );
+  if (prepareLabelsFn && pendingBuffer.length > 0) {
+    flushPending();
+  }
+}
+function enqueueLabelPdfDownload(orders) {
+  const list = Array.isArray(orders) ? orders.filter(Boolean) : [];
+  if (list.length === 0) return 0;
+  const items = [];
+  for (const o of list) {
+    const sn = String(o?.orderSn || o?.order_sn || "").replace(/^shopee-/i, "").trim();
+    if (!sn) continue;
+    if (o?.hasPdf === true || o?.readyToPrint === true) {
+      const hasFile = Boolean(
+        String(o?.labelUrl || o?.pdfUrl || o?.pdfFilename || "").trim()
+      );
+      if (hasFile) continue;
+    }
+    items.push({
+      shopId: o.shopId || o.shop_id,
+      orderSn: sn,
+      packageNumber: o.packageNumber || o.package_number,
+      trackingNumber: o.trackingNumber || o.tracking_no,
+      order: o
+    });
+  }
+  if (items.length === 0) {
+    console.log("[LabelPdfQueue] enqueue skip \u2014 kh\xF4ng c\xF3 \u0111\u01A1n c\u1EA7n t\u1EA3i PDF");
+    return 0;
+  }
+  console.log(
+    `[LabelPdfQueue] \u0110\u1EA9y v\xE0o h\xE0ng \u0111\u1EE3i t\u1EA3i PDF \u2014 n=${items.length} sns=[${items.map((i2) => i2.orderSn).join(",")}]`
+  );
+  if (prepareLabelsFn) {
+    try {
+      prepareLabelsFn(items);
+    } catch (err) {
+      console.error("[LabelPdfQueue] prepareLabelsFn throw:", err?.message || err);
+    }
+    return items.length;
+  }
+  pendingBuffer.push(...items);
+  if (!flushScheduled) {
+    flushScheduled = true;
+    setTimeout(() => {
+      flushScheduled = false;
+      flushPending();
+    }, 2e3);
+  }
+  return items.length;
+}
+function flushPending() {
+  if (!prepareLabelsFn || pendingBuffer.length === 0) return;
+  const batch = pendingBuffer.splice(0, pendingBuffer.length);
+  console.log(`[LabelPdfQueue] flush pending n=${batch.length}`);
+  try {
+    prepareLabelsFn(batch);
+  } catch (err) {
+    console.error("[LabelPdfQueue] flush failed:", err?.message || err);
+  }
+}
+
+// services/orderSync/orderSyncService.js
+var DEFAULT_INCREMENTAL_LOOKBACK_SEC = 2 * 60 * 60;
+var deps = {
+  /** @type {(opts?: any) => Promise<any>} */
+  pullIncrementalOrdersFromShopee: async () => ({
+    success: false,
+    pulled: 0,
+    added: 0,
+    updated: 0,
+    shops: 0,
+    errors: [],
+    message: "not_initialized",
+    newlyUpsertedOrders: []
+  }),
+  createSyncJob: async () => ({ id: "" }),
+  finishSyncJob: async () => {
+  },
+  invalidateOrdersRefreshCache: () => {
+  },
+  isOrdersPullLocked: () => false
+};
+var bgRunning = false;
+function initOrderSyncService(partial) {
+  deps = { ...deps, ...partial };
+  console.log("[OrderSyncService] initialized");
+}
+function isOrderSyncBackgroundBusy() {
+  return bgRunning || typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked();
+}
+async function runBackgroundOrderSync(opts = {}) {
+  const lookbackSec = Math.max(
+    60,
+    Number(opts.lookbackSec) || DEFAULT_INCREMENTAL_LOOKBACK_SEC
+  );
+  const trigger = String(opts.trigger || "manual");
+  const logTag = `OrderSync[${trigger}]`;
+  if (bgRunning) {
+    console.log(`[${logTag}] SKIP \u2014 background sync \u0111ang ch\u1EA1y`);
+    return {
+      success: true,
+      skipped: true,
+      message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
+      pulled: 0,
+      added: 0,
+      updated: 0
+    };
+  }
+  if (typeof deps.isOrdersPullLocked === "function" && deps.isOrdersPullLocked()) {
+    console.log(`[${logTag}] SKIP \u2014 orders pull lock busy`);
+    return {
+      success: true,
+      skipped: true,
+      message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
+      pulled: 0,
+      added: 0,
+      updated: 0
+    };
+  }
+  bgRunning = true;
+  let jobId = "";
+  const startedAt = Date.now();
+  console.log(
+    `[${logTag}] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m \u2014 lookbackSec=${lookbackSec} shops=${opts.shopIds?.length ? opts.shopIds.join(",") : "all"}`
+  );
+  try {
+    try {
+      const job = await deps.createSyncJob(
+        opts.jobType || "shopee_orders_bg_sync",
+        opts.username || trigger
+      );
+      jobId = job?.id || "";
+    } catch (jobErr) {
+      console.warn(`[${logTag}] createSyncJob skip:`, jobErr?.message || jobErr);
+    }
+    const result = await deps.pullIncrementalOrdersFromShopee({
+      lookbackSec,
+      shopIds: opts.shopIds?.length ? opts.shopIds : void 0,
+      allowShortLookback: opts.allowShortLookback !== false,
+      reconcileActive: opts.reconcileActive === true,
+      enrichTracking: opts.enrichTracking === true
+    });
+    const pulled = result?.pulled || 0;
+    const added = result?.added || 0;
+    const updated = result?.updated || 0;
+    console.log(
+      `[${logTag}] S\u1ED1 l\u01B0\u1EE3ng l\u1EA5y \u0111\u01B0\u1EE3c t\u1EEB S\xE0n \u2014 pulled=${pulled} +${added}/~${updated} shops=${result?.shops || 0}`
+    );
+    const newly = Array.isArray(result?.newlyUpsertedOrders) ? result.newlyUpsertedOrders : [];
+    if (newly.length > 0) {
+      console.log(`[${logTag}] \u0110\u1EA9y v\xE0o h\xE0ng \u0111\u1EE3i t\u1EA3i PDF \u2014 n=${newly.length}`);
+      enqueueLabelPdfDownload(newly);
+    }
+    try {
+      deps.invalidateOrdersRefreshCache?.();
+    } catch {
+    }
+    const success = result?.success !== false && !result?.skipped;
+    const message = result?.message || (pulled > 0 ? `\u0110\u1ED3ng b\u1ED9 ng\u1EA7m xong \u2014 ${pulled} \u0111\u01A1n (+${added}/~${updated})` : "\u0110\u1ED3ng b\u1ED9 ng\u1EA7m xong \u2014 0 \u0111\u01A1n trong c\u1EEDa s\u1ED5");
+    if (jobId) {
+      try {
+        await deps.finishSyncJob(
+          jobId,
+          success || result?.skipped ? "succeeded" : "failed",
+          { pulled, added, updated, shops: result?.shops, trigger, lookbackSec },
+          success || result?.skipped ? void 0 : message
+        );
+      } catch {
+      }
+    }
+    console.log(
+      `[${logTag}] DONE elapsedMs=${Date.now() - startedAt} \u2014 ${message}`
+    );
+    return {
+      success: success || Boolean(result?.skipped),
+      skipped: Boolean(result?.skipped),
+      pulled,
+      added,
+      updated,
+      shops: result?.shops || 0,
+      errors: result?.errors || [],
+      message,
+      lookbackSec,
+      elapsedMs: Date.now() - startedAt,
+      jobId
+    };
+  } catch (err) {
+    console.error(`[${logTag}] FATAL:`, err?.stack || err?.message || err);
+    if (jobId) {
+      try {
+        await deps.finishSyncJob(jobId, "failed", {}, err?.message || String(err));
+      } catch {
+      }
+    }
+    return {
+      success: false,
+      pulled: 0,
+      added: 0,
+      updated: 0,
+      shops: 0,
+      errors: [{ error: "bg_sync_exception", message: err?.message || String(err) }],
+      message: err?.message || "\u0110\u1ED3ng b\u1ED9 ng\u1EA7m th\u1EA5t b\u1EA1i",
+      elapsedMs: Date.now() - startedAt,
+      jobId
+    };
+  } finally {
+    bgRunning = false;
+  }
+}
+function triggerBackgroundOrderSync(opts = {}) {
+  if (isOrderSyncBackgroundBusy()) {
+    console.log(
+      `[OrderSyncService] trigger SKIP \u2014 \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m (trigger=${opts.trigger || "api"})`
+    );
+    return {
+      accepted: false,
+      busy: true,
+      message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t"
+    };
+  }
+  console.log(
+    `[OrderSyncService] trigger ACCEPTED \u2014 h\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m (trigger=${opts.trigger || "api"} lookbackSec=${opts.lookbackSec || DEFAULT_INCREMENTAL_LOOKBACK_SEC})`
+  );
+  setImmediate(() => {
+    void runBackgroundOrderSync(opts).catch((err) => {
+      console.error(
+        "[OrderSyncService] background run failed:",
+        err?.stack || err?.message || err
+      );
+    });
+  });
+  return {
+    accepted: true,
+    busy: false,
+    message: "H\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m",
+    lookbackSec: opts.lookbackSec || DEFAULT_INCREMENTAL_LOOKBACK_SEC
+  };
+}
+
+// cron/index.js
+var autoIncrementalScheduled = false;
+var cronTask = null;
+function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
+  if (autoIncrementalScheduled) {
+    console.log("[CRON] Auto Incremental Sync already scheduled (idempotent).");
+    return;
+  }
+  autoIncrementalScheduled = true;
+  const disabled = String(process.env.AUTO_ORDER_SYNC_CRON || "1").trim() === "0" || String(process.env.AUTO_ORDER_SYNC_CRON || "").toLowerCase() === "off" || String(process.env.AUTO_ORDER_SYNC_CRON || "").toLowerCase() === "false";
+  if (disabled) {
+    console.log(
+      "[CRON] Auto Incremental Sync DISABLED (AUTO_ORDER_SYNC_CRON=0) \u2014 ch\u1EC9 webhook + n\xFAt \u0110\u1ED3ng b\u1ED9."
+    );
+    return;
+  }
+  const lookbackSec = Math.max(
+    60,
+    Number(deps21.lookbackSec) || Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || DEFAULT_INCREMENTAL_LOOKBACK_SEC
+  );
+  const cronExpr = String(
+    deps21.cronExpr || process.env.AUTO_ORDER_SYNC_CRON_EXPR || "*/5 * * * *"
+  ).trim();
+  if (!import_node_cron.default.validate(cronExpr)) {
+    console.error(`[CRON] Invalid cron expr="${cronExpr}" \u2014 sync cron NOT started`);
+    return;
+  }
+  cronTask = import_node_cron.default.schedule(cronExpr, () => {
+    console.log(
+      `[CRON] Tick Incremental Sync \u2014 lookbackSec=${lookbackSec} (${Math.round(lookbackSec / 3600)}h)`
+    );
+    try {
+      if (typeof deps21.runSync === "function") {
+        void deps21.runSync({ lookbackSec, trigger: "cron" });
+        return;
+      }
+      const ack = triggerBackgroundOrderSync({
+        lookbackSec,
+        trigger: "cron",
+        allowShortLookback: true,
+        reconcileActive: false,
+        jobType: "shopee_orders_cron_sync"
+      });
+      console.log(
+        `[CRON] trigger \u2192 accepted=${ack.accepted} busy=${ack.busy} msg=${ack.message}`
+      );
+    } catch (err) {
+      console.error("[CRON] Incremental Sync tick failed:", err?.message || err);
+    }
+  });
+  console.log(
+    `[CRON] Auto Incremental Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Mutex b\u1EA3o v\u1EC7 ch\u1ED3ng job.`
+  );
+}
+
 // src/webhooks/shopeeWebhookHandler.ts
 var import_express = __toESM(require_express2(), 1);
 
@@ -76562,14 +76868,14 @@ async function seedStoreFromArrays(products, listings) {
 }
 
 // controllers/scanController.js
-var deps = {
+var deps2 = {
   findOrderByScanCodeInStore: async () => null,
   resolveOrderFromShopeeByScanCode: async () => null,
   isValidOrder: () => false,
   mirrorTrackingFieldsForRead: (o) => o
 };
 function initScanController(partial) {
-  deps = { ...deps, ...partial };
+  deps2 = { ...deps2, ...partial };
 }
 function normalizeOrderSn(raw) {
   return String(raw || "").replace(/^shopee-/i, "").trim();
@@ -76610,18 +76916,18 @@ async function resolveFullOrderForScan(rawCode) {
   if (!code) return null;
   let found = null;
   try {
-    found = await deps.findOrderByScanCodeInStore(code);
-    if (found && !deps.isValidOrder(found)) found = null;
-    if (found) found = deps.mirrorTrackingFieldsForRead(found);
+    found = await deps2.findOrderByScanCodeInStore(code);
+    if (found && !deps2.isValidOrder(found)) found = null;
+    if (found) found = deps2.mirrorTrackingFieldsForRead(found);
   } catch (err) {
     console.warn(`[Scan Save] local lookup fail code=${code}:`, err?.message || err);
   }
   const needsShopee = !found || !normalizeOrderSn(found.orderSn) || isCarrierTrackingCode2(found.orderSn) || !orderHasItems(found);
   if (needsShopee) {
     try {
-      const fromShopee = await deps.resolveOrderFromShopeeByScanCode(code);
-      if (fromShopee && deps.isValidOrder(fromShopee)) {
-        const mirrored = deps.mirrorTrackingFieldsForRead(fromShopee);
+      const fromShopee = await deps2.resolveOrderFromShopeeByScanCode(code);
+      if (fromShopee && deps2.isValidOrder(fromShopee)) {
+        const mirrored = deps2.mirrorTrackingFieldsForRead(fromShopee);
         if (!found) {
           found = mirrored;
         } else {
@@ -77013,7 +77319,7 @@ function resolveShopeeCallbackUrl() {
 }
 var SHOPEE_CALLBACK_URL = resolveShopeeCallbackUrl();
 var SHOPEE_WEBHOOK_URL = `${APP_BASE_URL}/api/shopee/webhook`;
-var deps2 = {
+var deps3 = {
   ensureDataDirs: () => {
     import_fs5.default.mkdirSync(import_path5.default.join(APP_ROOT, "data"), { recursive: true });
   },
@@ -77026,20 +77332,20 @@ var deps2 = {
   shopeeWebhookUrl: SHOPEE_WEBHOOK_URL
 };
 function initHealthController(partial) {
-  deps2 = { ...deps2, ...partial };
+  deps3 = { ...deps3, ...partial };
 }
 function getPublicConfig(_req, res) {
   res.json({
-    appUrl: deps2.appBaseUrl,
-    apiBaseUrl: deps2.appBaseUrl,
-    shopeeCallbackUrl: deps2.shopeeCallbackUrl,
-    shopeeWebhookUrl: deps2.shopeeWebhookUrl
+    appUrl: deps3.appBaseUrl,
+    apiBaseUrl: deps3.appBaseUrl,
+    shopeeCallbackUrl: deps3.shopeeCallbackUrl,
+    shopeeWebhookUrl: deps3.shopeeWebhookUrl
   });
 }
 function postClientLog(req, res) {
   try {
-    deps2.ensureDataDirs();
-    const logPath = import_path5.default.join(deps2.appRoot, "data", "debug-556dce.ndjson");
+    deps3.ensureDataDirs();
+    const logPath = import_path5.default.join(deps3.appRoot, "data", "debug-556dce.ndjson");
     const payload = {
       sessionId: "556dce",
       runId: req.body?.runId || "post-fix",
@@ -77061,7 +77367,7 @@ function postClientLog(req, res) {
 }
 function getClientLog(_req, res) {
   try {
-    const logPath = import_path5.default.join(deps2.appRoot, "data", "debug-556dce.ndjson");
+    const logPath = import_path5.default.join(deps3.appRoot, "data", "debug-556dce.ndjson");
     if (!import_fs5.default.existsSync(logPath)) return res.json({ ok: true, lines: [] });
     const lines = import_fs5.default.readFileSync(logPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(-80).map((line) => {
       try {
@@ -77079,11 +77385,11 @@ function getClientLog(_req, res) {
   }
 }
 function getHealth(_req, res) {
-  const shopIds = deps2.listShopeeOAuthShopIds();
+  const shopIds = deps3.listShopeeOAuthShopIds();
   let dataDirWritable = false;
   try {
-    deps2.ensureDataDirs();
-    import_fs5.default.accessSync(import_path5.default.join(deps2.appRoot, "data"), import_fs5.default.constants.W_OK);
+    deps3.ensureDataDirs();
+    import_fs5.default.accessSync(import_path5.default.join(deps3.appRoot, "data"), import_fs5.default.constants.W_OK);
     dataDirWritable = true;
   } catch {
     dataDirWritable = false;
@@ -77091,13 +77397,13 @@ function getHealth(_req, res) {
   res.status(200).json({
     ok: true,
     service: "cpanel-backend",
-    host: deps2.appBaseUrl,
-    appRoot: deps2.appRoot,
-    tokensPath: deps2.tokensPath,
-    tokensFileExists: import_fs5.default.existsSync(deps2.tokensPath),
+    host: deps3.appBaseUrl,
+    appRoot: deps3.appRoot,
+    tokensPath: deps3.tokensPath,
+    tokensFileExists: import_fs5.default.existsSync(deps3.tokensPath),
     dataDirWritable,
     shopeeOAuthShopIds: shopIds,
-    lastOAuth: deps2.loadLastOAuthAudit(),
+    lastOAuth: deps3.loadLastOAuthAudit(),
     oauthHint: shopIds.length > 0 ? "V\xE0o C\xE0i \u0111\u1EB7t \u2192 shop Shopee \u2192 b\u1EA5m OAuth (shop_id ph\u1EA3i kh\u1EDBp). Sau OAuth ki\u1EC3m tra lastOAuth.success=true." : "Ch\u01B0a c\xF3 shop OAuth \u2014 b\u1EA5m n\xFAt OAuth trong C\xE0i \u0111\u1EB7t.",
     checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
     routes: {
@@ -77412,7 +77718,7 @@ var import_fs8 = __toESM(require("fs"), 1);
 var import_path8 = __toESM(require("path"), 1);
 var APP_ROOT4 = resolveAppRoot3();
 var IMPORTS_DB_PATH = import_path8.default.join(APP_ROOT4, "data", "imports.json");
-var deps3 = {
+var deps4 = {
   loadProductById: async () => null,
   loadProducts: async () => [],
   applyImportStockAndPriceToMainWarehouse: async () => {
@@ -77420,7 +77726,7 @@ var deps3 = {
   }
 };
 function initImportsController(partial) {
-  deps3 = { ...deps3, ...partial };
+  deps4 = { ...deps4, ...partial };
 }
 function loadImports() {
   try {
@@ -77448,7 +77754,7 @@ async function getImportHistory(req, res) {
   try {
     const productId = String(req.params.productId || "").trim();
     if (!productId) return res.status(400).json({ success: false, error: "missing_product_id" });
-    const product = await deps3.loadProductById(productId);
+    const product = await deps4.loadProductById(productId);
     const sku = String(product?.sku || "").trim();
     const imports = loadImports();
     const history = imports.filter(
@@ -77473,7 +77779,7 @@ async function getImportHistory(req, res) {
 }
 async function getImportProductContext(req, res) {
   const productId = String(req.params.productId);
-  const product = await deps3.loadProductById(productId) || (await deps3.loadProducts()).find((p) => p.id === productId);
+  const product = await deps4.loadProductById(productId) || (await deps4.loadProducts()).find((p) => p.id === productId);
   if (!product) {
     return res.status(404).json({ error: "product_not_found" });
   }
@@ -77516,7 +77822,7 @@ async function createImport(req, res) {
   const computedTotal = qty * unitPrice + importCost;
   const warehouseId = "KhoGoc";
   try {
-    const applied = await deps3.applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice, {
+    const applied = await deps4.applyImportStockAndPriceToMainWarehouse(productId, qty, unitPrice, {
       skuHint: productSku
     });
     const updatedProduct = applied.product;
@@ -77547,7 +77853,7 @@ async function createImport(req, res) {
       saveImports(imports);
     } catch (logErr) {
       console.error("[Imports] Ghi log th\u1EA5t b\u1EA1i \u2014 rollback t\u1ED3n/gi\xE1 Kho G\u1ED1c:", logErr);
-      await deps3.applyImportStockAndPriceToMainWarehouse(productId, -qty, applied.oldImportPrice, {
+      await deps4.applyImportStockAndPriceToMainWarehouse(productId, -qty, applied.oldImportPrice, {
         skuHint: productSku
       }).catch((rb) => console.error("[Imports] Rollback Kho G\u1ED1c failed:", rb));
       throw logErr;
@@ -98592,7 +98898,7 @@ function ensureGeminiClientFromEnv() {
   }
   return ai;
 }
-var deps4 = {
+var deps5 = {
   CHANNEL_SETTINGS_PATH: "",
   DEFAULT_CHANNEL_SETTINGS: {},
   loadChannelSettings: () => ({ shops: [] }),
@@ -98607,20 +98913,20 @@ var deps4 = {
   enrichShopsWithConnectionStatus: (shops) => Array.isArray(shops) ? shops : []
 };
 function initSettingsController(partial) {
-  deps4 = { ...deps4, ...partial };
+  deps5 = { ...deps5, ...partial };
 }
 async function getChannelSettings(_req, res) {
   try {
-    const settings = deps4.loadChannelSettings();
-    const shops = deps4.enrichShopsWithConnectionStatus(settings.shops || []);
+    const settings = deps5.loadChannelSettings();
+    const shops = deps5.enrichShopsWithConnectionStatus(settings.shops || []);
     return res.json({
       success: true,
       settings: { ...settings, shops },
-      path: deps4.CHANNEL_SETTINGS_PATH,
+      path: deps5.CHANNEL_SETTINGS_PATH,
       shopCount: shops.length
     });
   } catch (error) {
-    deps4.logOAuthSaveError("GET /api/settings/channels", error);
+    deps5.logOAuthSaveError("GET /api/settings/channels", error);
     return res.status(500).json({
       success: false,
       error: error?.message || "load_failed",
@@ -98638,9 +98944,9 @@ async function putChannelSettings(req, res) {
         message: "Thi\u1EBFu tr\u01B0\u1EDDng settings trong body"
       });
     }
-    const onDisk = deps4.loadChannelSettings();
+    const onDisk = deps5.loadChannelSettings();
     const incomingShops = Array.isArray(incoming.shops) ? incoming.shops : [];
-    const mergedShops = deps4.upsertShopsInChannelSettings(onDisk.shops || [], incomingShops);
+    const mergedShops = deps5.upsertShopsInChannelSettings(onDisk.shops || [], incomingShops);
     if (incomingShops.length > 0 && mergedShops.length === 0) {
       return res.status(400).json({
         success: false,
@@ -98648,16 +98954,16 @@ async function putChannelSettings(req, res) {
         message: "D\u1EEF li\u1EC7u shop thi\u1EBFu tr\u01B0\u1EDDng b\u1EAFt bu\u1ED9c (platform, shopId, shopName, apiKey)"
       });
     }
-    const payload = { ...deps4.DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...incoming, shops: mergedShops };
-    if (!deps4.saveChannelSettings(payload)) {
+    const payload = { ...deps5.DEFAULT_CHANNEL_SETTINGS, ...onDisk, ...incoming, shops: mergedShops };
+    if (!deps5.saveChannelSettings(payload)) {
       return res.status(500).json({
         success: false,
         error: "save_failed",
         message: "Kh\xF4ng ghi \u0111\u01B0\u1EE3c file channel_settings.json tr\xEAn m\xE1y ch\u1EE7"
       });
     }
-    const saved = deps4.loadChannelSettings();
-    const shops = deps4.enrichShopsWithConnectionStatus(saved.shops || []);
+    const saved = deps5.loadChannelSettings();
+    const shops = deps5.enrichShopsWithConnectionStatus(saved.shops || []);
     console.log(
       "[Channel Settings] PUT OK \u2014 shop_ids:",
       shops.map((s2) => s2.shopId).join(", ") || "(tr\u1ED1ng)"
@@ -98668,7 +98974,7 @@ async function putChannelSettings(req, res) {
       shopCount: shops.length
     });
   } catch (error) {
-    deps4.logOAuthSaveError("PUT /api/settings/channels", error);
+    deps5.logOAuthSaveError("PUT /api/settings/channels", error);
     return res.status(500).json({
       success: false,
       error: error?.message || "save_failed",
@@ -98729,7 +99035,7 @@ async function postShopConnectionStatus(req, res) {
               () => reject(new Error("Timeout ki\u1EC3m tra k\u1EBFt n\u1ED1i (15s)")),
               15e3
             );
-            Promise.resolve(deps4.checkShopConnectionStatus(shop)).then(
+            Promise.resolve(deps5.checkShopConnectionStatus(shop)).then(
               (v) => {
                 clearTimeout(timer);
                 resolve(v);
@@ -99121,7 +99427,7 @@ function buildDashboardChart(dailyRevenue, range) {
 }
 
 // controllers/dashboardController.js
-var deps5 = {
+var deps6 = {
   isMongoReady: () => false,
   withLocalDbTimeout: async (promise) => promise,
   getDashboardStatsFromStore: async () => ({
@@ -99140,7 +99446,7 @@ var deps5 = {
   loadProductsByIdsFromStore: async () => []
 };
 function initDashboardController(partial) {
-  deps5 = { ...deps5, ...partial };
+  deps6 = { ...deps6, ...partial };
 }
 async function getDashboard(req, res) {
   try {
@@ -99149,7 +99455,7 @@ async function getDashboard(req, res) {
     const range = getDashboardDateRange(dateRange);
     const startKey = toDateKey(range.start);
     const endKey = toDateKey(range.end);
-    if (!deps5.isMongoReady()) {
+    if (!deps6.isMongoReady()) {
       return res.status(200).json({
         dateRange: range.key,
         dateRangeLabel: range.label,
@@ -99173,16 +99479,16 @@ async function getDashboard(req, res) {
     }
     const LOW_STOCK_THRESHOLD = 5;
     const [stats, lowStockRows] = await Promise.all([
-      deps5.withLocalDbTimeout(deps5.getDashboardStatsFromStore(startKey, endKey), 8e3, "dashboard_stats"),
-      deps5.withLocalDbTimeout(
-        deps5.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
+      deps6.withLocalDbTimeout(deps6.getDashboardStatsFromStore(startKey, endKey), 8e3, "dashboard_stats"),
+      deps6.withLocalDbTimeout(
+        deps6.getLowStockProductsFromStore(LOW_STOCK_THRESHOLD, 50),
         8e3,
         "dashboard_low_stock"
       )
     ]);
     const wantedProductIds = stats.topProducts.map((p) => p.productId).filter(Boolean);
-    const topProductDocs = wantedProductIds.length ? await deps5.withLocalDbTimeout(
-      deps5.loadProductsByIdsFromStore(wantedProductIds, []),
+    const topProductDocs = wantedProductIds.length ? await deps6.withLocalDbTimeout(
+      deps6.loadProductsByIdsFromStore(wantedProductIds, []),
       8e3,
       "dashboard_top_products"
     ) : [];
@@ -99279,7 +99585,7 @@ function dbReadyMiddleware(req, res, next) {
 var dbReady_default = dbReadyMiddleware;
 
 // controllers/scanBulkController.js
-var deps6 = {
+var deps7 = {
   findOrderByScanCodeInStore: async () => null,
   resolveOrderFromShopeeByScanCode: async () => null,
   isValidOrder: () => false,
@@ -99310,7 +99616,7 @@ var deps6 = {
   }
 };
 function initScanBulkController(partial) {
-  deps6 = { ...deps6, ...partial };
+  deps7 = { ...deps7, ...partial };
 }
 async function scanBulkUpdate(req, res) {
   try {
@@ -99334,9 +99640,9 @@ async function scanBulkUpdate(req, res) {
       codes.map(async (code) => {
         let found = null;
         try {
-          found = await deps6.findOrderByScanCodeInStore(code);
-          if (found && !deps6.isValidOrder(found)) found = null;
-          if (found) found = deps6.mirrorTrackingFieldsForRead(found);
+          found = await deps7.findOrderByScanCodeInStore(code);
+          if (found && !deps7.isValidOrder(found)) found = null;
+          if (found) found = deps7.mirrorTrackingFieldsForRead(found);
         } catch (lookupErr) {
           console.warn(
             `[Orders Scan Bulk] lookup miss code=${code}:`,
@@ -99348,9 +99654,9 @@ async function scanBulkUpdate(req, res) {
         const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
         if (!found || looksLikeTn || missingItems) {
           try {
-            const fromShopee = await deps6.resolveOrderFromShopeeByScanCode(code);
-            if (fromShopee && deps6.isValidOrder(fromShopee)) {
-              const mirrored = deps6.mirrorTrackingFieldsForRead(fromShopee);
+            const fromShopee = await deps7.resolveOrderFromShopeeByScanCode(code);
+            if (fromShopee && deps7.isValidOrder(fromShopee)) {
+              const mirrored = deps7.mirrorTrackingFieldsForRead(fromShopee);
               if (!found) {
                 found = mirrored;
               } else {
@@ -99415,10 +99721,10 @@ async function scanBulkUpdate(req, res) {
       const order = orders[index];
       const status = String(order.status || "");
       const rawShopee = String(order.shopee_order_status || "").toUpperCase();
-      const existingLocal = deps6.resolveOrderLocalStatus(order);
+      const existingLocal = deps7.resolveOrderLocalStatus(order);
       let alreadyInDonHoanHuy = false;
       try {
-        alreadyInDonHoanHuy = await deps6.existsDonHoanHuy(String(order.orderSn || ""));
+        alreadyInDonHoanHuy = await deps7.existsDonHoanHuy(String(order.orderSn || ""));
       } catch {
         alreadyInDonHoanHuy = false;
       }
@@ -99426,7 +99732,7 @@ async function scanBulkUpdate(req, res) {
       const forceCancel = forceCancelCodes.has(codeKey) || forceCancelCodes.has(norm(String(order.orderSn || ""))) || forceCancelCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceCancelCodes.has(norm(String(order.return_tracking_no || "")));
       const forceReturn = forceReturnCodes.has(codeKey) || forceReturnCodes.has(norm(String(order.orderSn || ""))) || forceReturnCodes.has(norm(String(order.trackingNumber || order.tracking_no || ""))) || forceReturnCodes.has(norm(String(order.return_tracking_no || "")));
       const isReturnLike = status === "return_pending" || status === "return_received" || rawShopee === "TO_RETURN";
-      const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || deps6.isShopeeCancelOrReturnLikeOrder(order));
+      const isCancelLike = !isReturnLike && (status === "cancelled" || rawShopee === "CANCELLED" || rawShopee === "IN_CANCEL" || deps7.isShopeeCancelOrReturnLikeOrder(order));
       if (forceCancel && alreadyInDonHoanHuy) {
         summary.donHuy += 1;
         donHoanHuyAlready += 1;
@@ -99454,8 +99760,8 @@ async function scanBulkUpdate(req, res) {
         continue;
       }
       const allowForceCancelReturnOverride = (forceCancel || forceReturn) && (existingLocal === "HANDED_OVER" || existingLocal === "CANCELLED_STORED" || existingLocal === "RETURN_RECEIVED" || isCancelLike || isReturnLike);
-      if (deps6.isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride && !forceCancel && !forceReturn) {
-        const reason = deps6.getScanProcessedReason(order);
+      if (deps7.isOrderAlreadyScanProcessed(order) && !allowForceCancelReturnOverride && !forceCancel && !forceReturn) {
+        const reason = deps7.getScanProcessedReason(order);
         results.push({
           code,
           action: "duplicate",
@@ -99473,7 +99779,7 @@ async function scanBulkUpdate(req, res) {
         continue;
       }
       if (forceHandOver) {
-        const result = await deps6.handOverOrderToCarrierByIndex(orders, index, {
+        const result = await deps7.handOverOrderToCarrierByIndex(orders, index, {
           persist: false,
           source: "qr_scan"
         });
@@ -99505,7 +99811,7 @@ async function scanBulkUpdate(req, res) {
           orderId: result.order.id,
           orderSn: result.order.orderSn,
           message: result.changed ? `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${result.order.orderSn}` : `\u0110\u01A1n #${result.order.orderSn} \u0111\xE3 c\xF3 c\u1EDD \u0110VVC`,
-          local_status: deps6.ORDER_LOCAL_STATUS.HANDED_OVER
+          local_status: deps7.ORDER_LOCAL_STATUS.HANDED_OVER
         });
         continue;
       }
@@ -99540,10 +99846,10 @@ async function scanBulkUpdate(req, res) {
         }
         const wasHandedOver = existingLocal === "HANDED_OVER" || order.is_handed_over === true || order.isHandedOverToCarrier === true;
         const updated = { ...order };
-        deps6.clearHandedOverLocalForCancelReturn(updated);
-        deps6.setOrderLocalStatus(updated, "RETURN_RECEIVED");
+        deps7.clearHandedOverLocalForCancelReturn(updated);
+        deps7.setOrderLocalStatus(updated, "RETURN_RECEIVED");
         try {
-          const restock = await deps6.restoreLocalStockOnCancelReturnScan(updated, {
+          const restock = await deps7.restoreLocalStockOnCancelReturnScan(updated, {
             wasHandedOver
           });
           if (restock?.restored) {
@@ -99604,10 +99910,10 @@ async function scanBulkUpdate(req, res) {
         const wasHandedOver = existingLocal === "HANDED_OVER" || order.is_handed_over === true || order.isHandedOverToCarrier === true;
         const updated = { ...order };
         if (updated.status !== "cancelled") updated.status = "cancelled";
-        deps6.clearHandedOverLocalForCancelReturn(updated);
-        deps6.setOrderLocalStatus(updated, "CANCELLED_STORED");
+        deps7.clearHandedOverLocalForCancelReturn(updated);
+        deps7.setOrderLocalStatus(updated, "CANCELLED_STORED");
         try {
-          const restock = await deps6.restoreLocalStockOnCancelReturnScan(updated, {
+          const restock = await deps7.restoreLocalStockOnCancelReturnScan(updated, {
             wasHandedOver
           });
           if (restock?.restored) {
@@ -99636,8 +99942,8 @@ async function scanBulkUpdate(req, res) {
         });
         continue;
       }
-      if (deps6.isEligibleForHandOverShared(order)) {
-        const result = await deps6.handOverOrderToCarrierByIndex(orders, index, {
+      if (deps7.isEligibleForHandOverShared(order)) {
+        const result = await deps7.handOverOrderToCarrierByIndex(orders, index, {
           persist: false,
           source: "qr_scan"
         });
@@ -99669,7 +99975,7 @@ async function scanBulkUpdate(req, res) {
           orderId: result.order.id,
           orderSn: result.order.orderSn,
           message: `\u0110\xE3 b\xE0n giao \u0110VVC \u2014 \u0111\u01A1n #${result.order.orderSn}`,
-          local_status: deps6.ORDER_LOCAL_STATUS.HANDED_OVER
+          local_status: deps7.ORDER_LOCAL_STATUS.HANDED_OVER
         });
         continue;
       }
@@ -99718,7 +100024,7 @@ async function scanBulkUpdate(req, res) {
       errors: []
     };
     if (cancelReturnRows.length > 0) {
-      if (!deps6.isMongoReady()) {
+      if (!deps7.isMongoReady()) {
         console.error("[Orders Scan Bulk] Mongo not ready \u2014 kh\xF4ng ghi \u0111\u01B0\u1EE3c don_hoan_huy");
         return res.status(500).json({
           success: false,
@@ -99727,7 +100033,7 @@ async function scanBulkUpdate(req, res) {
         });
       }
       try {
-        donHoanHuyWrite = await deps6.upsertDonHoanHuyBatch(
+        donHoanHuyWrite = await deps7.upsertDonHoanHuyBatch(
           cancelReturnRows.map((r2) => ({
             order: r2.order,
             type: r2.type,
@@ -99737,10 +100043,10 @@ async function scanBulkUpdate(req, res) {
         );
       } catch (dhhErr) {
         console.error("[Orders Scan Bulk] don_hoan_huy batch FAIL:", dhhErr);
-        const detail = deps6.describeMongoWriteError(dhhErr);
+        const detail = deps7.describeMongoWriteError(dhhErr);
         return res.status(500).json({
           success: false,
-          message: deps6.isMongoConnectionError(dhhErr) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
+          message: deps7.isMongoConnectionError(dhhErr) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail,
           error: "don_hoan_huy_write_failed"
         });
       }
@@ -99765,11 +100071,11 @@ async function scanBulkUpdate(req, res) {
       });
       if (handoverOnly.length > 0) {
         try {
-          await deps6.persistChangedOrdersPatch(handoverOnly);
+          await deps7.persistChangedOrdersPatch(handoverOnly);
         } catch (persistErr) {
           console.warn(
             "[Orders Scan Bulk] persistChangedOrdersPatch handover:",
-            deps6.describeMongoWriteError(persistErr),
+            deps7.describeMongoWriteError(persistErr),
             persistErr
           );
         }
@@ -99784,14 +100090,14 @@ async function scanBulkUpdate(req, res) {
         ).toUpperCase();
         try {
           if (local === "HANDED_OVER" || o?.is_handed_over === true || o?.isHandedOverToCarrier === true) {
-            const ok = await deps6.markOrderHandedOverInStore(sn, {
+            const ok = await deps7.markOrderHandedOverInStore(sn, {
               source: "qr_scan",
               handedOverAt: String(o.handedOverAt || (/* @__PURE__ */ new Date()).toISOString()),
               shopId
             });
             if (ok) flagOk += 1;
           } else if (local === "CANCELLED_STORED" || local === "RETURN_RECEIVED") {
-            const ok = await deps6.markOrderLocalStatusInStore(sn, local, {
+            const ok = await deps7.markOrderLocalStatusInStore(sn, local, {
               shopId,
               clearHandedOver: true,
               status: local === "RETURN_RECEIVED" ? "return_received" : "cancelled",
@@ -99803,7 +100109,7 @@ async function scanBulkUpdate(req, res) {
         } catch (flagErr) {
           console.error(
             `[Orders Scan Bulk] mark flag fail order_sn=${sn}:`,
-            deps6.describeMongoWriteError(flagErr),
+            deps7.describeMongoWriteError(flagErr),
             flagErr
           );
         }
@@ -99811,14 +100117,14 @@ async function scanBulkUpdate(req, res) {
       console.log(
         `[Orders Scan Bulk] don_hoan_huy ok=${donHoanHuyWrite.ok} fail=${donHoanHuyWrite.failed} handoverFlags=${flagOk} changed=${changedOrders.length}`
       );
-      deps6.invalidateOrdersRefreshCache();
+      deps7.invalidateOrdersRefreshCache();
     }
     const updatedList = [...updatedById.values()];
-    const products = await deps6.loadProductsForOrders(updatedList);
-    const enriched = deps6.enrichOrdersFromCatalog(updatedList, products);
+    const products = await deps7.loadProductsForOrders(updatedList);
+    const enriched = deps7.enrichOrdersFromCatalog(updatedList, products);
     const processedCount = summary.daXuatKho + summary.donHuy + summary.daNhanHoan;
     console.log(
-      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps6.isMongoReady()}`
+      `[Orders Scan Bulk] PERSISTED codes=${codes.length} updated=${changedOrders.length} summary=${JSON.stringify(summary)} failed=${failed_scans.length} mongo=${deps7.isMongoReady()}`
     );
     return res.json({
       success: true,
@@ -99844,10 +100150,10 @@ async function scanBulkUpdate(req, res) {
     });
   } catch (error) {
     console.error("[Orders Scan Bulk] Error:", error);
-    const detail = deps6.describeMongoWriteError(error);
+    const detail = deps7.describeMongoWriteError(error);
     return res.status(500).json({
       success: false,
-      message: deps6.isMongoConnectionError(error) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt h\xE0ng lo\u1EA1t \u0111\u01A1n \u0111\xE3 qu\xE9t.",
+      message: deps7.isMongoConnectionError(error) ? "L\u1ED7i k\u1EBFt n\u1ED1i MongoDB" : detail || "Kh\xF4ng th\u1EC3 c\u1EADp nh\u1EADt h\xE0ng lo\u1EA1t \u0111\u01A1n \u0111\xE3 qu\xE9t.",
       error: error?.message || "scan_bulk_update_failed"
     });
   }
@@ -99863,7 +100169,7 @@ var scanBgJobKeys = /* @__PURE__ */ new Set();
 var scanBgWorkerRunning = false;
 var scanBgPersistTimer = null;
 var scanBgDrainKickTimer = null;
-var deps7 = {
+var deps8 = {
   findOrderByScanCodeInStore: async () => null,
   isValidOrder: () => false,
   mirrorTrackingFieldsForRead: (o) => o,
@@ -99882,7 +100188,7 @@ var deps7 = {
   markOrderLocalStatusInStore: async () => false
 };
 function initScanBgQueue(partial) {
-  deps7 = { ...deps7, ...partial };
+  deps8 = { ...deps8, ...partial };
   if (!scanBgJobs.some((j) => j.status === "pending")) return;
   if (scanBgDrainKickTimer || scanBgWorkerRunning) return;
   scanBgDrainKickTimer = setTimeout(() => {
@@ -99963,7 +100269,7 @@ function classifyScanBgCancelReturn(order) {
   const raw = String(order?.shopee_order_status || "").toUpperCase();
   const kind = String(order?.shopee_cancel_return_kind || "");
   const isReturn = kind === "refund_return" || status === "return_pending" || status === "return_received" || raw === "TO_RETURN" || Boolean(order?.return_sn);
-  const isCancel = !isReturn && (kind === "cancelled" || kind === "failed_delivery" || status === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL" || deps7.isShopeeCancelOrReturnLikeOrder(order));
+  const isCancel = !isReturn && (kind === "cancelled" || kind === "failed_delivery" || status === "cancelled" || raw === "CANCELLED" || raw === "IN_CANCEL" || deps8.isShopeeCancelOrReturnLikeOrder(order));
   return { isReturn, isCancel };
 }
 function enqueueScanBgCodes(codes) {
@@ -100003,9 +100309,9 @@ async function processOneScanBgJob(job) {
   try {
     let found = null;
     try {
-      found = await deps7.findOrderByScanCodeInStore(job.code);
-      if (found && !deps7.isValidOrder(found)) found = null;
-      if (found) found = deps7.mirrorTrackingFieldsForRead(found);
+      found = await deps8.findOrderByScanCodeInStore(job.code);
+      if (found && !deps8.isValidOrder(found)) found = null;
+      if (found) found = deps8.mirrorTrackingFieldsForRead(found);
     } catch {
       found = null;
     }
@@ -100016,9 +100322,9 @@ async function processOneScanBgJob(job) {
     const missingItems = !Array.isArray(found?.items) || found.items.length === 0;
     if (!found || looksLikeTn || missingItems) {
       try {
-        const fromShopee = await deps7.resolveOrderFromShopeeByScanCode(job.code);
+        const fromShopee = await deps8.resolveOrderFromShopeeByScanCode(job.code);
         if (fromShopee) {
-          const mirrored = deps7.mirrorTrackingFieldsForRead(fromShopee);
+          const mirrored = deps8.mirrorTrackingFieldsForRead(fromShopee);
           if (!found) {
             found = mirrored;
           } else {
@@ -100044,10 +100350,10 @@ async function processOneScanBgJob(job) {
     }
     job.orderId = found.id ? String(found.id) : void 0;
     job.orderSn = found.orderSn ? String(found.orderSn) : void 0;
-    const existingLocal = deps7.resolveOrderLocalStatusShared(found);
+    const existingLocal = deps8.resolveOrderLocalStatusShared(found);
     let alreadyDhh = false;
     try {
-      alreadyDhh = await deps7.existsDonHoanHuy(String(found.orderSn || ""));
+      alreadyDhh = await deps8.existsDonHoanHuy(String(found.orderSn || ""));
     } catch {
       alreadyDhh = false;
     }
@@ -100086,19 +100392,19 @@ async function processOneScanBgJob(job) {
       scanBgJobKeys.delete(job.codeKey);
       return;
     }
-    const target = isReturn ? deps7.ORDER_LOCAL_STATUS.RETURN_RECEIVED : deps7.ORDER_LOCAL_STATUS.CANCELLED_STORED;
+    const target = isReturn ? deps8.ORDER_LOCAL_STATUS.RETURN_RECEIVED : deps8.ORDER_LOCAL_STATUS.CANCELLED_STORED;
     const wasHandedOver = existingLocal === "HANDED_OVER" || found.is_handed_over === true || found.isHandedOverToCarrier === true;
-    deps7.clearHandedOverLocalForCancelReturn(found);
-    deps7.setOrderLocalStatus(found, target);
+    deps8.clearHandedOverLocalForCancelReturn(found);
+    deps8.setOrderLocalStatus(found, target);
     try {
-      const restock = await deps7.restoreLocalStockOnCancelReturnScan(found, { wasHandedOver });
+      const restock = await deps8.restoreLocalStockOnCancelReturnScan(found, { wasHandedOver });
       if (restock?.restored) {
         console.log(`[Scan BG] Restock +${restock.qty || 0} order_sn=${found.orderSn}`);
       }
     } catch (restockErr) {
       console.warn(`[Scan BG] Restock fail order_sn=${found.orderSn}:`, restockErr?.message || restockErr);
     }
-    const dhh = await deps7.upsertDonHoanHuy(found, {
+    const dhh = await deps8.upsertDonHoanHuy(found, {
       type: isReturn ? "return" : "cancelled",
       scanCode: job.code,
       source: "scan_bg"
@@ -100107,7 +100413,7 @@ async function processOneScanBgJob(job) {
       throw new Error(dhh.error || "Ghi don_hoan_huy th\u1EA5t b\u1EA1i");
     }
     try {
-      await deps7.markOrderLocalStatusInStore(String(found.orderSn || ""), target, {
+      await deps8.markOrderLocalStatusInStore(String(found.orderSn || ""), target, {
         shopId: found.shopId != null ? String(found.shopId) : void 0,
         clearHandedOver: true,
         status: isReturn ? "return_received" : "cancelled",
@@ -100126,7 +100432,7 @@ async function processOneScanBgJob(job) {
   } catch (err) {
     job.status = "failed";
     job.action = "error";
-    job.message = deps7.describeMongoWriteError(err);
+    job.message = deps8.describeMongoWriteError(err);
     job.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
     scanBgJobKeys.delete(job.codeKey);
     console.error(`[Scan BG] job fail code=${job.code}:`, err);
@@ -100254,7 +100560,7 @@ var SHOPEE_SYNC_QUEUE_MAX_RETRY = 3;
 var shopeeSyncQueue = [];
 var shopeeSyncQueueKeys = /* @__PURE__ */ new Set();
 var shopeeSyncQueueRunning = false;
-var deps8 = {
+var deps9 = {
   getProductChildrenList: () => [],
   inheritShopeeLinkFromParent: (child) => child,
   getShopeeItemIdForStockPush: () => null,
@@ -100284,7 +100590,7 @@ var deps8 = {
   loadProductById: async () => null
 };
 function initStockSyncQueue(partial) {
-  deps8 = { ...deps8, ...partial };
+  deps9 = { ...deps9, ...partial };
 }
 function detectStockPriceChanges(before, after) {
   const stockBefore = Math.max(0, Math.round(Number(before?.stock) || 0));
@@ -100301,9 +100607,9 @@ function findProductRowById(products, productId) {
   if (!id) return null;
   for (const p of Array.isArray(products) ? products : []) {
     if (String(p?.id || "").trim() === id) return p;
-    for (const child of deps8.getProductChildrenList(p)) {
+    for (const child of deps9.getProductChildrenList(p)) {
       if (String(child?.id || "").trim() === id) {
-        return deps8.inheritShopeeLinkFromParent(child, p);
+        return deps9.inheritShopeeLinkFromParent(child, p);
       }
     }
   }
@@ -100312,12 +100618,12 @@ function findProductRowById(products, productId) {
 async function resolveProductWithShopeeMapping(product) {
   if (!product || typeof product !== "object") return null;
   let current = product;
-  const hasItemId = () => deps8.getShopeeItemIdForStockPush(current) != null;
-  const hasModelId = () => deps8.resolveShopeeModelIdForStockPush(current) != null;
+  const hasItemId = () => deps9.getShopeeItemIdForStockPush(current) != null;
+  const hasModelId = () => deps9.resolveShopeeModelIdForStockPush(current) != null;
   if (!hasItemId() || !hasModelId()) {
     let listings = [];
     try {
-      listings = await deps8.readChannelListingsDb();
+      listings = await deps9.readChannelListingsDb();
     } catch (err) {
       console.error("[Shopee Sync Queue] Kh\xF4ng \u0111\u1ECDc \u0111\u01B0\u1EE3c channel_listings:", err);
       if (!hasItemId()) return null;
@@ -100336,9 +100642,9 @@ async function resolveProductWithShopeeMapping(product) {
       if (match2) {
         const channelId = String(match2.channelId || match2.itemId || "").trim();
         if (channelId || match2.itemId != null) {
-          current = deps8.applyShopeeLinkFieldsToProduct(current, channelId || String(match2.itemId), {
+          current = deps9.applyShopeeLinkFieldsToProduct(current, channelId || String(match2.itemId), {
             modelId: match2.modelId ?? match2.shopeeModelId ?? current.shopeeModelId,
-            itemId: match2.itemId ?? deps8.getShopeeItemIdForStockPush(current)
+            itemId: match2.itemId ?? deps9.getShopeeItemIdForStockPush(current)
           });
           const listingShop = match2.shopId ?? match2.shop_id ?? match2.channelShopId ?? null;
           if (listingShop != null && String(listingShop).trim()) {
@@ -100348,11 +100654,11 @@ async function resolveProductWithShopeeMapping(product) {
       }
     }
   }
-  if (deps8.getShopeeItemIdForStockPush(current) == null) return null;
+  if (deps9.getShopeeItemIdForStockPush(current) == null) return null;
   return current;
 }
 async function resolveShopAuthForStockSync(mapped, opts) {
-  const itemId = deps8.getShopeeItemIdForStockPush(mapped);
+  const itemId = deps9.getShopeeItemIdForStockPush(mapped);
   const shopId = String(
     opts?.shopId || mapped?.shopeeShopId || mapped?.shopId || mapped?.shop_id || ""
   ).trim();
@@ -100369,7 +100675,7 @@ async function resolveShopAuthForStockSync(mapped, opts) {
     console.log(
       `[Shopee Sync] getValidShopeeAccessToken shop_id=${shopId} (refresh n\u1EBFu h\u1EBFt h\u1EA1n)...`
     );
-    const accessToken = await deps8.getValidShopeeAccessToken(shopId);
+    const accessToken = await deps9.getValidShopeeAccessToken(shopId);
     if (!accessToken) {
       const msg = `Kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token h\u1EE3p l\u1EC7 cho shop_id=${shopId} (token h\u1EBFt h\u1EA1n v\xE0 refresh th\u1EA5t b\u1EA1i). V\xE0o m\u1EE5c C\xE0i \u0111\u1EB7t \u2192 \u1EE6y quy\u1EC1n l\u1EA1i Shop Shopee.`;
       console.error(`[Shopee Sync] ${msg}`);
@@ -100386,7 +100692,7 @@ async function resolveShopAuthForStockSync(mapped, opts) {
 function isAuthFailResult(result) {
   if (!result || typeof result !== "object") return false;
   if (Number(result.httpStatus) === 401 || Number(result.httpStatus) === 403) return true;
-  return deps8.isShopeeInvalidTokenError(result.error, result.message);
+  return deps9.isShopeeInvalidTokenError(result.error, result.message);
 }
 async function executeShopeeStockPriceSyncJob(product, opts) {
   try {
@@ -100399,15 +100705,15 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
       return { ok: false, message: auth.message };
     }
     let { shopId, accessToken } = auth;
-    const itemId = deps8.getShopeeItemIdForStockPush(mapped);
-    let modelId = deps8.resolveShopeeModelIdForStockPush(mapped);
+    const itemId = deps9.getShopeeItemIdForStockPush(mapped);
+    let modelId = deps9.resolveShopeeModelIdForStockPush(mapped);
     if (itemId == null) {
       return { ok: false, message: "Thi\u1EBFu Shopee item_id sau khi resolve Mapping." };
     }
-    let itemHasModel = deps8.productRequiresShopeeModelId(mapped, 1);
+    let itemHasModel = deps9.productRequiresShopeeModelId(mapped, 1);
     if (modelId == null) {
       try {
-        const fromApi = await deps8.resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
+        const fromApi = await deps9.resolveShopeeModelIdFromApi(shopId, accessToken, itemId, mapped);
         if (fromApi.hasModel) itemHasModel = true;
         if (fromApi.modelId != null) {
           modelId = fromApi.modelId;
@@ -100422,7 +100728,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
     }
     if (itemHasModel && modelId == null) {
       const msg = "Ph\xE2n lo\u1EA1i (variant) thi\u1EBFu model_id \u2014 b\u1EAFt bu\u1ED9c truy\u1EC1n item_id + model_id khi update_stock";
-      await deps8.appendShopeeSyncErrorToDb({
+      await deps9.appendShopeeSyncErrorToDb({
         itemId,
         modelId: void 0,
         sku: mapped.sku,
@@ -100436,7 +100742,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
     let locationId = null;
     if (opts.syncStock) {
       try {
-        locationId = await deps8.resolveShopeeStockLocationId(shopId, accessToken);
+        locationId = await deps9.resolveShopeeStockLocationId(shopId, accessToken);
       } catch (err) {
         console.warn(
           `[Shopee Sync] resolveShopeeStockLocationId shop=${shopId}:`,
@@ -100446,24 +100752,24 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
     }
     const lines = [];
     if (opts.syncStock) {
-      const stockEntry = deps8.buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
+      const stockEntry = deps9.buildShopeeUpdateStockEntry(mapped.stock, modelId, locationId);
       try {
         console.log(
           `[Shopee Sync] UpdateStock shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} stock=${mapped.stock}`
         );
-        const stockResult = await deps8.withShopeeAccessTokenRetry(
+        const stockResult = await deps9.withShopeeAccessTokenRetry(
           shopId,
           async (token) => {
             accessToken = token || accessToken;
-            return deps8.shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
+            return deps9.shopeeUpdateStock(shopId, accessToken, itemId, [stockEntry]);
           },
           isAuthFailResult
         );
-        const parsed = deps8.parseShopeeApiResult(stockResult, mapped, "update_stock");
+        const parsed = deps9.parseShopeeApiResult(stockResult, mapped, "update_stock");
         lines.push(parsed.message);
         if (!parsed.success) {
           console.error(`[Shopee Sync] UpdateStock FAIL:`, parsed.message);
-          await deps8.appendShopeeSyncErrorToDb({
+          await deps9.appendShopeeSyncErrorToDb({
             itemId,
             modelId: modelId ?? mapped.shopeeModelId,
             sku: mapped.sku,
@@ -100476,12 +100782,12 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
         }
         console.log(`[Shopee Sync] UpdateStock OK item_id=${itemId}`);
       } catch (err) {
-        const msg = deps8.extractShopeeStockPushErrorMessage(
+        const msg = deps9.extractShopeeStockPushErrorMessage(
           err,
           err instanceof Error ? err.message : String(err)
         );
         console.error(`[Shopee Sync] UpdateStock exception shop=${shopId} item=${itemId}:`, err);
-        await deps8.appendShopeeSyncErrorToDb({
+        await deps9.appendShopeeSyncErrorToDb({
           itemId,
           modelId: modelId ?? mapped.shopeeModelId,
           sku: mapped.sku,
@@ -100495,24 +100801,24 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
     }
     if (opts.syncPrice) {
       await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
-      const priceEntry = deps8.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
+      const priceEntry = deps9.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
       try {
         console.log(
           `[Shopee Sync] UpdatePrice shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} price=${mapped.sellingPrice}`
         );
-        const priceResult = await deps8.withShopeeAccessTokenRetry(
+        const priceResult = await deps9.withShopeeAccessTokenRetry(
           shopId,
           async (token) => {
             accessToken = token || accessToken;
-            return deps8.shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
+            return deps9.shopeeUpdatePrice(shopId, accessToken, itemId, [priceEntry]);
           },
           isAuthFailResult
         );
-        const parsed = deps8.parseShopeeApiResult(priceResult, mapped, "update_price");
+        const parsed = deps9.parseShopeeApiResult(priceResult, mapped, "update_price");
         lines.push(parsed.message);
         if (!parsed.success) {
           console.error(`[Shopee Sync] UpdatePrice FAIL:`, parsed.message);
-          await deps8.appendShopeeSyncErrorToDb({
+          await deps9.appendShopeeSyncErrorToDb({
             itemId,
             modelId: modelId ?? mapped.shopeeModelId,
             sku: mapped.sku,
@@ -100525,12 +100831,12 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
         }
         console.log(`[Shopee Sync] UpdatePrice OK item_id=${itemId}`);
       } catch (err) {
-        const msg = deps8.extractShopeeStockPushErrorMessage(
+        const msg = deps9.extractShopeeStockPushErrorMessage(
           err,
           err instanceof Error ? err.message : String(err)
         );
         console.error(`[Shopee Sync] UpdatePrice exception shop=${shopId} item=${itemId}:`, err);
-        await deps8.appendShopeeSyncErrorToDb({
+        await deps9.appendShopeeSyncErrorToDb({
           itemId,
           modelId: modelId ?? mapped.shopeeModelId,
           sku: mapped.sku,
@@ -100565,12 +100871,12 @@ async function pushProductStockPriceToShopeeImmediate(product, opts) {
       };
     }
     const requestedShop = opts.shopId || mapped.shopeeShopId || mapped.shopId || mapped.shop_id || "";
-    const shopIds = typeof deps8.resolveShopeeShopIdsForSync === "function" ? deps8.resolveShopeeShopIdsForSync(requestedShop) : (() => {
-      const one = deps8.resolveShopeeTokenShopId(requestedShop);
-      return one ? [one] : deps8.listAuthorizedShopeeShopIds?.() || [];
+    const shopIds = typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync(requestedShop) : (() => {
+      const one = deps9.resolveShopeeTokenShopId(requestedShop);
+      return one ? [one] : deps9.listAuthorizedShopeeShopIds?.() || [];
     })();
     if (!shopIds.length) {
-      const msg = deps8.getShopeeUnauthorizedShopMessage();
+      const msg = deps9.getShopeeUnauthorizedShopMessage();
       console.error(`[Shopee Sync] ${msg}`);
       return { ok: false, message: msg };
     }
@@ -100619,7 +100925,7 @@ async function processShopeeSyncQueue() {
       const job = shopeeSyncQueue.shift();
       shopeeSyncQueueKeys.delete(job.key);
       try {
-        const row = await deps8.loadProductById(job.productId);
+        const row = await deps9.loadProductById(job.productId);
         if (!row) {
           console.warn(`[Shopee Sync Queue] B\u1ECF qua \u2014 kh\xF4ng th\u1EA5y productId=${job.productId}`);
           await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
@@ -100633,7 +100939,7 @@ async function processShopeeSyncQueue() {
           await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
           continue;
         }
-        const shopIds = job.shopId ? [String(job.shopId)] : typeof deps8.resolveShopeeShopIdsForSync === "function" ? deps8.resolveShopeeShopIdsForSync("") : deps8.listAuthorizedShopeeShopIds?.() || [];
+        const shopIds = job.shopId ? [String(job.shopId)] : typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync("") : deps9.listAuthorizedShopeeShopIds?.() || [];
         if (!shopIds.length) {
           console.error(
             `[Shopee Sync Queue] Kh\xF4ng c\xF3 shop \u1EE7y quy\u1EC1n \u2014 productId=${job.productId}`
@@ -100744,7 +101050,7 @@ async function enqueueShopeeStockPriceSync(products, opts) {
 // controllers/productsController.js
 var PRODUCTS_PAGE_SIZE_DEFAULT = 50;
 var PRODUCTS_PAGE_SIZE_MAX = 50;
-var deps9 = {
+var deps10 = {
   loadProducts: async () => [],
   saveProducts: async () => {
   },
@@ -100802,13 +101108,13 @@ var deps9 = {
   syncProductToTikTok: async () => []
 };
 function initProductsController(partial) {
-  deps9 = { ...deps9, ...partial };
+  deps10 = { ...deps10, ...partial };
 }
 async function listProducts(req, res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   try {
-    const diskMode = deps9.isProductsDiskMode();
-    if (!diskMode && !deps9.isMongoReady()) {
+    const diskMode = deps10.isProductsDiskMode();
+    if (!diskMode && !deps10.isMongoReady()) {
       return res.status(503).json({
         success: false,
         products: [],
@@ -100822,8 +101128,8 @@ async function listProducts(req, res) {
     const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(PRODUCTS_PAGE_SIZE_MAX, Math.floor(rawSize)) : PRODUCTS_PAGE_SIZE_DEFAULT;
     const rawSearch = req.query?.search ?? req.query?.keyword ?? "";
     const search = String(Array.isArray(rawSearch) ? rawSearch[0] : rawSearch).replace(/\s+/g, " ").trim();
-    const paged = await deps9.withLocalDbTimeout(
-      deps9.loadProductsPageFromStore(page, pageSize, search),
+    const paged = await deps10.withLocalDbTimeout(
+      deps10.loadProductsPageFromStore(page, pageSize, search),
       diskMode ? 15e3 : 3e4,
       "products_page_load"
     );
@@ -100845,7 +101151,7 @@ async function listProducts(req, res) {
       hasMore: paged.hasMore,
       grouped: false,
       source: diskMode ? "disk" : "mongodb",
-      storage: diskMode ? deps9.getProductsDiskPath() : "mongodb.products"
+      storage: diskMode ? deps10.getProductsDiskPath() : "mongodb.products"
     });
   } catch (err) {
     console.error("[Products API] GET /api/products failed:", err);
@@ -100875,10 +101181,10 @@ async function searchProducts(req, res) {
     let raw = [];
     let source = "mongodb";
     try {
-      raw = await deps9.searchProductsFromStore(q, limit);
+      raw = await deps10.searchProductsFromStore(q, limit);
     } catch (mongoErr) {
       console.warn("[Products API] searchProductsFromStore failed, fallback loadProducts:", mongoErr);
-      const all = await deps9.loadProducts();
+      const all = await deps10.loadProducts();
       const qLower = q.toLowerCase();
       const flat = [];
       const seen = /* @__PURE__ */ new Set();
@@ -100954,7 +101260,7 @@ async function handleProductSyncShopee(req, res) {
         error: "Thi\u1EBFu product id. G\u1EEDi body { id }, { productId } ho\u1EB7c { productIds: [...] }."
       });
     }
-    const products = await deps9.loadProducts();
+    const products = await deps10.loadProducts();
     const results = [];
     for (const productId of productIds) {
       const row = findProductRowById(products, productId);
@@ -100988,7 +101294,7 @@ async function handleProductSyncShopee(req, res) {
     }
     const succeeded = results.filter((result) => result.success);
     if (succeeded.length > 0) {
-      await deps9.saveProducts(products);
+      await deps10.saveProducts(products);
     }
     const failed = results.filter((result) => !result.success);
     if (failed.length > 0) {
@@ -101044,8 +101350,8 @@ async function createProduct(req, res) {
     wooId: body.wooId,
     lastSynced: (/* @__PURE__ */ new Date()).toISOString()
   };
-  await deps9.upsertProductsToStoreAsync([product]);
-  const cache = await deps9.loadLocalInventoryCache();
+  await deps10.upsertProductsToStoreAsync([product]);
+  const cache = await deps10.loadLocalInventoryCache();
   return res.status(201).json({
     ...product,
     localInventory: cache.products,
@@ -101054,18 +101360,18 @@ async function createProduct(req, res) {
 }
 async function getLocalInventory(_req, res) {
   try {
-    await deps9.reloadCachesFromDb();
-    const cache = await deps9.loadLocalInventoryCache();
+    await deps10.reloadCachesFromDb();
+    const cache = await deps10.loadLocalInventoryCache();
     return res.status(200).json({
       success: true,
       updatedAt: cache.updatedAt,
       products: cache.products,
-      listings: deps9.enrichChannelListingsWithMaster(cache.listings, cache.products),
+      listings: deps10.enrichChannelListingsWithMaster(cache.listings, cache.products),
       count: {
         products: cache.products.length,
         listings: cache.listings.length
       },
-      source: deps9.isMongoReady() ? "mongodb" : "json_fallback"
+      source: deps10.isMongoReady() ? "mongodb" : "json_fallback"
     });
   } catch (error) {
     return res.status(500).json({
@@ -101076,7 +101382,7 @@ async function getLocalInventory(_req, res) {
 }
 async function refreshLocalInventory(_req, res) {
   try {
-    const cache = await deps9.refreshCache();
+    const cache = await deps10.refreshCache();
     return res.status(200).json({
       success: true,
       updatedAt: cache.updatedAt,
@@ -101095,19 +101401,19 @@ async function replaceProducts(req, res) {
   if (!Array.isArray(incoming)) {
     return res.status(400).json({ error: "products_array_required" });
   }
-  await deps9.saveProducts(incoming);
+  await deps10.saveProducts(incoming);
   return res.json({ count: incoming.length, products: incoming });
 }
 async function patchProduct(req, res) {
   try {
-    const products = await deps9.loadProducts();
+    const products = await deps10.loadProducts();
     const patch = req.body || {};
     const topIndex = products.findIndex((p) => p.id === req.params.id);
     if (topIndex !== -1) {
       const before = products[topIndex];
-      const merged = deps9.mergeProductPatch(before, patch);
+      const merged = deps10.mergeProductPatch(before, patch);
       products[topIndex] = merged;
-      await deps9.upsertProductsToStoreAsync([merged]);
+      await deps10.upsertProductsToStoreAsync([merged]);
       const changes = detectStockPriceChanges(before, merged);
       const shopee = await pushProductStockPriceToShopeeImmediate(merged, {
         syncStock: changes.stock,
@@ -101130,19 +101436,19 @@ async function patchProduct(req, res) {
       });
     }
     for (let i2 = 0; i2 < products.length; i2++) {
-      const children = deps9.getProductChildrenList(products[i2]);
+      const children = deps10.getProductChildrenList(products[i2]);
       const childIdx = children.findIndex((c) => c.id === req.params.id);
       if (childIdx === -1) continue;
       const beforeChild = children[childIdx];
-      const mergedChild = deps9.mergeProductPatch(beforeChild, patch);
+      const mergedChild = deps10.mergeProductPatch(beforeChild, patch);
       const nextChildren = [...children];
       nextChildren[childIdx] = mergedChild;
       const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
       products[i2] = { ...products[i2], children: nextChildren, stock: totalStock };
-      await deps9.upsertProductsToStoreAsync([products[i2]]);
+      await deps10.upsertProductsToStoreAsync([products[i2]]);
       const changes = detectStockPriceChanges(beforeChild, mergedChild);
       const shopee = await pushProductStockPriceToShopeeImmediate(
-        deps9.inheritShopeeLinkFromParent(mergedChild, products[i2]),
+        deps10.inheritShopeeLinkFromParent(mergedChild, products[i2]),
         {
           syncStock: changes.stock,
           syncPrice: changes.price
@@ -101192,10 +101498,10 @@ async function inventoryBalance(req, res) {
     if (skuStockMap.size === 0) {
       return res.status(400).json({ success: false, message: "D\u1EEF li\u1EC7u c\xE2n b\u1EB1ng kho kh\xF4ng h\u1EE3p l\u1EC7." });
     }
-    const products = await deps9.loadProducts();
+    const products = await deps10.loadProducts();
     let updatedCount = 0;
     const next = products.map((p) => {
-      const children = deps9.getProductChildrenList(p);
+      const children = deps10.getProductChildrenList(p);
       if (children.length > 0) {
         let changed = false;
         const nextChildren = children.map((c) => {
@@ -101203,7 +101509,7 @@ async function inventoryBalance(req, res) {
           if (!skuStockMap.has(sku2)) return c;
           updatedCount++;
           changed = true;
-          return deps9.mergeProductPatch(c, { stock: skuStockMap.get(sku2) });
+          return deps10.mergeProductPatch(c, { stock: skuStockMap.get(sku2) });
         });
         if (!changed) return p;
         const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
@@ -101212,17 +101518,17 @@ async function inventoryBalance(req, res) {
       const sku = String(p.sku || "").trim();
       if (!skuStockMap.has(sku)) return p;
       updatedCount++;
-      return deps9.mergeProductPatch(p, { stock: skuStockMap.get(sku) });
+      return deps10.mergeProductPatch(p, { stock: skuStockMap.get(sku) });
     });
     if (updatedCount === 0) {
       return res.status(404).json({ success: false, message: "Kh\xF4ng t\xECm th\u1EA5y SKU n\xE0o trong kho g\u1ED1c \u0111\u1EC3 c\u1EADp nh\u1EADt." });
     }
-    const updatedProducts = deps9.flattenProductsForStockSync(next).filter((p) => skuStockMap.has(String(p.sku || "").trim()));
-    await deps9.upsertProductsToStoreAsync(
+    const updatedProducts = deps10.flattenProductsForStockSync(next).filter((p) => skuStockMap.has(String(p.sku || "").trim()));
+    await deps10.upsertProductsToStoreAsync(
       next.filter((product, index) => product !== products[index])
     );
     console.log(`[Inventory Balance] C\u1EADp nh\u1EADt kho g\u1ED1c ${updatedCount} SKU`);
-    const pushResult = await deps9.pushStockUpdatesToShopee(updatedProducts, preferredShopId);
+    const pushResult = await deps10.pushStockUpdatesToShopee(updatedProducts, preferredShopId);
     const parts = [];
     parts.push("kho g\u1ED1c \u0111\xE3 c\u1EADp nh\u1EADt");
     if (pushResult.pushed > 0) {
@@ -101254,26 +101560,26 @@ async function inventoryBalance(req, res) {
     });
   } catch (err) {
     console.error("[Inventory Balance] Exception:", err);
-    return deps9.sendApiErrorJson(res, err, 500);
+    return deps10.sendApiErrorJson(res, err, 500);
   }
 }
 async function syncStock(req, res) {
   try {
-    const products = await deps9.loadProducts();
+    const products = await deps10.loadProducts();
     const requestedShopId = req.body?.shopId;
-    const shopIds = typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync(requestedShopId) : (() => {
-      const one = deps9.resolveShopeeTokenShopId(requestedShopId);
+    const shopIds = typeof deps10.resolveShopeeShopIdsForSync === "function" ? deps10.resolveShopeeShopIdsForSync(requestedShopId) : (() => {
+      const one = deps10.resolveShopeeTokenShopId(requestedShopId);
       return one ? [one] : [];
     })();
     const warnings = [];
-    if (!deps9.isShopeeConfigValid()) {
+    if (!deps10.isShopeeConfigValid()) {
       return res.status(400).json({
         success: false,
         message: "Shopee: c\u1EA5u h\xECnh Partner ch\u01B0a h\u1EE3p l\u1EC7."
       });
     }
     if (!shopIds.length) {
-      const msg = deps9.getShopeeUnauthorizedShopMessage();
+      const msg = deps10.getShopeeUnauthorizedShopMessage();
       console.error(`[Sync Stock] ${msg}`);
       return res.status(400).json({
         success: false,
@@ -101282,13 +101588,13 @@ async function syncStock(req, res) {
       });
     }
     console.log(`[Sync Stock] Multi-shop \u0111\u1EA9y t\u1ED3n shops=[${shopIds.join(", ")}]`);
-    const shopeeResult = await deps9.pushStockUpdatesToShopee(
+    const shopeeResult = await deps10.pushStockUpdatesToShopee(
       products,
       requestedShopId || void 0
     );
     if (shopeeResult.warnings?.length) warnings.push(...shopeeResult.warnings);
     if (!shopeeResult.ok && shopeeResult.errors.length > 0) {
-      const onlyStale = shopeeResult.errors.every((e2) => deps9.isStaleShopeeItemErrorText(e2));
+      const onlyStale = shopeeResult.errors.every((e2) => deps10.isStaleShopeeItemErrorText(e2));
       if (!onlyStale) {
         const detailMsg = shopeeResult.errors.join(" | ");
         return res.status(400).json({
@@ -101313,11 +101619,11 @@ async function syncStock(req, res) {
       },
       tiktok: { updated: 0, message: "TikTok Shop API ch\u01B0a \u0111\u01B0\u1EE3c t\xEDch h\u1EE3p tr\xEAn server." },
       warnings,
-      products: await deps9.loadProducts()
+      products: await deps10.loadProducts()
     });
   } catch (err) {
     console.error("[Sync Stock]", err);
-    return deps9.sendApiErrorJson(res, err, 500);
+    return deps10.sendApiErrorJson(res, err, 500);
   }
 }
 async function bulkSaveProducts(req, res) {
@@ -101329,8 +101635,8 @@ async function bulkSaveProducts(req, res) {
   for (const u of updates) {
     if (u?.id) patchMap.set(String(u.id), u);
   }
-  const products = await deps9.loadProducts();
-  const beforeFlat = deps9.flattenProductsForStockSync(products);
+  const products = await deps10.loadProducts();
+  const beforeFlat = deps10.flattenProductsForStockSync(products);
   let updatedCount = 0;
   const changedRows = [];
   const next = products.map((p) => {
@@ -101338,13 +101644,13 @@ async function bulkSaveProducts(req, res) {
     if (patch) {
       updatedCount++;
       patchMap.delete(String(p.id));
-      const merged = deps9.mergeProductPatch(p, patch);
+      const merged = deps10.mergeProductPatch(p, patch);
       const before = beforeFlat.find((b) => String(b.id) === String(p.id));
       const changes = detectStockPriceChanges(before || p, merged);
       if (changes.stock || changes.price) changedRows.push(merged);
       return merged;
     }
-    const children = deps9.getProductChildrenList(p);
+    const children = deps10.getProductChildrenList(p);
     if (children.length === 0) return p;
     let childChanged = false;
     const nextChildren = children.map((c) => {
@@ -101353,7 +101659,7 @@ async function bulkSaveProducts(req, res) {
       updatedCount++;
       patchMap.delete(String(c.id));
       childChanged = true;
-      const mergedChild = deps9.mergeProductPatch(c, childPatch);
+      const mergedChild = deps10.mergeProductPatch(c, childPatch);
       const beforeChild = beforeFlat.find((b) => String(b.id) === String(c.id));
       const changes = detectStockPriceChanges(beforeChild || c, mergedChild);
       if (changes.stock || changes.price) changedRows.push(mergedChild);
@@ -101363,7 +101669,7 @@ async function bulkSaveProducts(req, res) {
     const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
     return { ...p, children: nextChildren, stock: totalStock };
   });
-  await deps9.upsertProductsToStoreAsync(
+  await deps10.upsertProductsToStoreAsync(
     next.filter((product, index) => product !== products[index])
   );
   if (changedRows.length > 0) {
@@ -101382,7 +101688,7 @@ async function bulkSaveProducts(req, res) {
 async function deleteProduct(req, res) {
   try {
     const id = String(req.params.id);
-    const products = await deps9.loadProducts();
+    const products = await deps10.loadProducts();
     let found = false;
     const next = [];
     for (const p of products) {
@@ -101390,7 +101696,7 @@ async function deleteProduct(req, res) {
         found = true;
         continue;
       }
-      const children = deps9.getProductChildrenList(p);
+      const children = deps10.getProductChildrenList(p);
       if (children.length > 0) {
         const filteredChildren = children.filter((c) => c.id !== id);
         if (filteredChildren.length !== children.length) {
@@ -101410,10 +101716,10 @@ async function deleteProduct(req, res) {
       return res.status(404).json({ error: "product_not_found" });
     }
     const nextIds = new Set(next.map((product) => String(product.id)));
-    await deps9.deleteProductsByIdsFromStore(
+    await deps10.deleteProductsByIdsFromStore(
       products.filter((product) => !nextIds.has(String(product.id))).map((product) => String(product.id))
     );
-    await deps9.upsertProductsToStoreAsync(
+    await deps10.upsertProductsToStoreAsync(
       next.filter(
         (product) => products.find((before) => before.id === product.id) !== product
       )
@@ -101431,9 +101737,9 @@ async function clearAllProducts(req, res) {
   if (req.body?.confirmation !== "CLEAR_INVENTORY") {
     return res.status(400).json({ success: false, error: "explicit_confirmation_required" });
   }
-  const backupFile = await deps9.backupInventoryBeforeDestructiveAction("products-clear");
-  await deps9.saveProducts([]);
-  deps9.writeInventoryAudit("products_cleared", {
+  const backupFile = await deps10.backupInventoryBeforeDestructiveAction("products-clear");
+  await deps10.saveProducts([]);
+  deps10.writeInventoryAudit("products_cleared", {
     requestedBy: req.user?.username || null,
     backupFile
   });
@@ -101448,36 +101754,36 @@ async function handleInventoryClearAll(req, res) {
         message: "X\xF3a kho y\xEAu c\u1EA7u confirmation: CLEAR_INVENTORY."
       });
     }
-    const backupFile = await deps9.backupInventoryBeforeDestructiveAction("inventory-clear");
-    await deps9.saveProducts([]);
+    const backupFile = await deps10.backupInventoryBeforeDestructiveAction("inventory-clear");
+    await deps10.saveProducts([]);
     let listingsCleared = false;
     let listingsError = null;
     try {
-      await deps9.writeChannelListingsDb([]);
+      await deps10.writeChannelListingsDb([]);
       listingsCleared = true;
     } catch (listErr) {
       listingsError = listErr?.message || String(listErr);
       console.warn("[Inventory] clear listings failed (Atlas?):", listingsError);
     }
     try {
-      deps9.writeProductListingsDb([]);
+      deps10.writeProductListingsDb([]);
     } catch {
     }
     try {
-      await deps9.refreshCache();
+      await deps10.refreshCache();
     } catch (cacheErr) {
       console.warn("[Inventory] refreshCache after clear:", cacheErr?.message || cacheErr);
     }
-    deps9.writeInventoryAudit("inventory_cleared", {
+    deps10.writeInventoryAudit("inventory_cleared", {
       requestedBy: req.user?.username || null,
       backupFile,
       productsCleared: true,
       listingsCleared,
       listingsError,
-      storage: deps9.isProductsDiskMode() ? "disk" : "mongo"
+      storage: deps10.isProductsDiskMode() ? "disk" : "mongo"
     });
     console.log(
-      `[Inventory] \u0110\xE3 x\xF3a Kho g\u1ED1c (products=${deps9.isProductsDiskMode() ? "disk" : "mongo"}) listingsCleared=${listingsCleared}.`
+      `[Inventory] \u0110\xE3 x\xF3a Kho g\u1ED1c (products=${deps10.isProductsDiskMode() ? "disk" : "mongo"}) listingsCleared=${listingsCleared}.`
     );
     return res.status(200).json({
       success: true,
@@ -101509,25 +101815,25 @@ async function bulkUpdateProducts(req, res) {
     return res.status(400).json({ error: "stock_or_price_required" });
   }
   const idSet = new Set(productIds.map(String));
-  const products = await deps9.loadProducts();
+  const products = await deps10.loadProducts();
   let updatedCount = 0;
   const changedRows = [];
   const next = products.map((p) => {
-    const children = deps9.getProductChildrenList(p);
+    const children = deps10.getProductChildrenList(p);
     if (children.length > 0) {
       let changed = false;
       const nextChildren = children.map((c) => {
         if (!idSet.has(c.id)) return c;
         updatedCount++;
         changed = true;
-        const merged2 = deps9.applyBulkProductUpdate(c, { stock, price });
+        const merged2 = deps10.applyBulkProductUpdate(c, { stock, price });
         changedRows.push(merged2);
         return merged2;
       });
       if (!changed && !idSet.has(p.id)) return p;
       if (idSet.has(p.id)) {
         updatedCount++;
-        const parentPatched = deps9.applyBulkProductUpdate(p, { stock, price });
+        const parentPatched = deps10.applyBulkProductUpdate(p, { stock, price });
         changedRows.push(parentPatched);
         const totalStock2 = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
         return { ...parentPatched, children: nextChildren, stock: totalStock2 };
@@ -101537,11 +101843,11 @@ async function bulkUpdateProducts(req, res) {
     }
     if (!idSet.has(p.id)) return p;
     updatedCount++;
-    const merged = deps9.applyBulkProductUpdate(p, { stock, price });
+    const merged = deps10.applyBulkProductUpdate(p, { stock, price });
     changedRows.push(merged);
     return merged;
   });
-  await deps9.saveProducts(next);
+  await deps10.saveProducts(next);
   if (changedRows.length > 0) {
     await enqueueShopeeStockPriceSync(changedRows, {
       syncStock: !!stock,
@@ -101558,21 +101864,21 @@ async function bulkChannelSync(req, res) {
     }
     const channelList = Array.isArray(channels) && channels.length ? channels : ["shopee"];
     const idSet = new Set(productIds.map(String));
-    const products = deps9.flattenProductsForStockSync(await deps9.loadProducts()).filter((p) => idSet.has(p.id));
+    const products = deps10.flattenProductsForStockSync(await deps10.loadProducts()).filter((p) => idSet.has(p.id));
     if (products.length === 0) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y s\u1EA3n ph\u1EA9m n\xE0o trong kho." });
     }
     const shopList = Array.isArray(shops) ? shops : [];
     const wooShop = shopList.find((s2) => s2.platform === "woocommerce" && s2.connected !== false);
     const requestedShopeeShop = shopId || shopList.find((s2) => s2.platform === "shopee")?.shopId || "";
-    const shopeeShopIds = typeof deps9.resolveShopeeShopIdsForSync === "function" ? deps9.resolveShopeeShopIdsForSync(requestedShopeeShop) : (() => {
-      const one = deps9.resolveShopeeTokenShopId(requestedShopeeShop);
+    const shopeeShopIds = typeof deps10.resolveShopeeShopIdsForSync === "function" ? deps10.resolveShopeeShopIdsForSync(requestedShopeeShop) : (() => {
+      const one = deps10.resolveShopeeTokenShopId(requestedShopeeShop);
       return one ? [one] : [];
     })();
     const shopeeTokensByShop = /* @__PURE__ */ new Map();
     if (channelList.includes("shopee")) {
       if (!shopeeShopIds.length) {
-        const authMsg = deps9.getShopeeUnauthorizedShopMessage();
+        const authMsg = deps10.getShopeeUnauthorizedShopMessage();
         console.error(`[Bulk Channel Sync] ${authMsg}`);
         return res.status(400).json({
           error: authMsg,
@@ -101589,7 +101895,7 @@ async function bulkChannelSync(req, res) {
         });
       }
       for (const sid of shopeeShopIds) {
-        const token = await deps9.getValidShopeeAccessToken(sid);
+        const token = await deps10.getValidShopeeAccessToken(sid);
         if (token) {
           shopeeTokensByShop.set(sid, token);
           console.log(`[Bulk Channel Sync] Token OK shop_id=${sid}`);
@@ -101618,16 +101924,16 @@ async function bulkChannelSync(req, res) {
       for (const channel of channelList) {
         if (channel === "shopee" && shopeeTokensByShop.size > 0) {
           for (const [sid, token] of shopeeTokensByShop.entries()) {
-            const lines = await deps9.syncProductToShopee(product, sid, token);
+            const lines = await deps10.syncProductToShopee(product, sid, token);
             logs.push(...lines);
             await new Promise((r2) => setTimeout(r2, 150));
           }
         } else if (channel === "woocommerce") {
-          const lines = await deps9.syncProductToWoo(product, wooShop);
+          const lines = await deps10.syncProductToWoo(product, wooShop);
           logs.push(...lines);
           await new Promise((r2) => setTimeout(r2, 100));
         } else if (channel === "tiktok") {
-          const lines = await deps9.syncProductToTikTok(product);
+          const lines = await deps10.syncProductToTikTok(product);
           logs.push(...lines);
         }
       }
@@ -101636,12 +101942,12 @@ async function bulkChannelSync(req, res) {
     const failCount = logs.filter((l) => !l.success).length;
     const syncedProductIds = new Set(logs.filter((l) => l.success).map((l) => l.productId));
     if (syncedProductIds.size > 0) {
-      const allProducts = await deps9.loadProducts();
+      const allProducts = await deps10.loadProducts();
       const now = (/* @__PURE__ */ new Date()).toISOString();
       const next = allProducts.map(
         (p) => syncedProductIds.has(p.id) ? { ...p, lastSynced: now } : p
       );
-      await deps9.saveProducts(next);
+      await deps10.saveProducts(next);
     }
     return res.status(failCount === 0 ? 200 : 400).json({
       success: failCount === 0,
@@ -101651,7 +101957,7 @@ async function bulkChannelSync(req, res) {
       successCount,
       failCount,
       total: logs.length,
-      products: await deps9.loadProducts()
+      products: await deps10.loadProducts()
     });
   } catch (error) {
     console.error("[Bulk Channel Sync]", error);
@@ -101996,14 +102302,14 @@ if (!isShopeeConfigValid()) {
 }
 var SHOPEE_TOKENS_PATH = import_path12.default.resolve(APP_ROOT7, "data", "shopee_tokens.json");
 var SHOPEE_OAUTH_LAST_PATH = import_path12.default.resolve(APP_ROOT7, "data", "shopee_oauth_last.json");
-var deps10 = {
+var deps11 = {
   syncOAuthShopsToChannelSettings: () => {
   },
   logOAuthSaveError: () => {
   }
 };
 function initShopeeAuth(partial) {
-  deps10 = { ...deps10, ...partial };
+  deps11 = { ...deps11, ...partial };
 }
 function ensureDataDirs() {
   const dataDir = import_path12.default.join(APP_ROOT7, "data");
@@ -102128,7 +102434,7 @@ function saveShopeeTokens(tokensToWrite) {
     );
     return true;
   } catch (error) {
-    deps10.logOAuthSaveError("saveShopeeTokens", error);
+    deps11.logOAuthSaveError("saveShopeeTokens", error);
     console.error(
       "[Shopee Tokens] fs.writeFileSync \u2014 L\u1ED6I GHI FILE",
       JSON.stringify({
@@ -102370,7 +102676,7 @@ async function completeShopeeOAuthFlow(code, params) {
     });
     tokenResult.saved_shop_ids = savedIds;
     if (savedIds.length > 0) {
-      deps10.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
+      deps11.syncOAuthShopsToChannelSettings(savedIds, { expectedShopId: expected || void 0 });
     }
   }
   const shopMismatch = Boolean(
@@ -102603,7 +102909,7 @@ async function exchangeShopeeCodeForToken(code, opts) {
     });
     rawText = await res.text();
   } catch (error) {
-    deps10.logOAuthSaveError("exchangeShopeeCodeForToken fetch", error);
+    deps11.logOAuthSaveError("exchangeShopeeCodeForToken fetch", error);
     return {
       error: "network_error",
       message: error?.message || "Kh\xF4ng g\u1ECDi \u0111\u01B0\u1EE3c Shopee token/get"
@@ -102690,7 +102996,7 @@ async function refreshShopeeToken(shopId, refreshToken) {
     );
     return { ...normalized, shop_id: key };
   } catch (error) {
-    deps10.logOAuthSaveError(`refreshShopeeToken shop_id=${key}`, error);
+    deps11.logOAuthSaveError(`refreshShopeeToken shop_id=${key}`, error);
     return { error: "refresh_failed", message: error?.message || String(error), shop_id: key };
   }
 }
@@ -103064,7 +103370,7 @@ function sendStrictApiErrorJson(res, err) {
 }
 
 // controllers/shopeeProductsController.js
-var deps11 = {
+var deps12 = {
   isProductsDiskMode: () => false,
   isMongoReady: () => false,
   saveProducts: async () => {
@@ -103098,12 +103404,12 @@ var deps11 = {
   })
 };
 function initShopeeProductsController(partial) {
-  deps11 = { ...deps11, ...partial };
+  deps12 = { ...deps12, ...partial };
 }
 async function syncProducts(req, res) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   try {
-    if (!deps11.isProductsDiskMode() && !deps11.isMongoReady()) {
+    if (!deps12.isProductsDiskMode() && !deps12.isMongoReady()) {
       return res.status(503).json({
         success: false,
         error: "mongodb_not_ready",
@@ -103141,12 +103447,12 @@ async function syncProducts(req, res) {
     const resetWarehouse = offset === 0 && (req.body?.reset === true || req.body?.reset === 1 || req.body?.reset === "1" || req.body?.replace === true);
     if (resetWarehouse) {
       console.log(
-        `[Shopee Product Sync] RESET Kho G\u1ED1c tr\u01B0\u1EDBc khi sync shop=${shopId} storage=${deps11.isProductsDiskMode() ? "disk" : "mongo"}`
+        `[Shopee Product Sync] RESET Kho G\u1ED1c tr\u01B0\u1EDBc khi sync shop=${shopId} storage=${deps12.isProductsDiskMode() ? "disk" : "mongo"}`
       );
-      await deps11.saveProducts([]);
+      await deps12.saveProducts([]);
     }
     try {
-      deps11.writeInventoryAudit("shopee_sync_page", {
+      deps12.writeInventoryAudit("shopee_sync_page", {
         shopId,
         offset,
         reset: resetWarehouse,
@@ -103156,16 +103462,16 @@ async function syncProducts(req, res) {
     }
     const syncStarted = Date.now();
     console.log(
-      `[Shopee Product Sync] B\u1EAFt \u0111\u1EA7u \u0111\u1ED3ng b\u1ED9 1 trang shop_id=${shopId}, offset=${offset}, page_size=${deps11.SHOPEE_ITEM_LIST_PAGE_SIZE}`
+      `[Shopee Product Sync] B\u1EAFt \u0111\u1EA7u \u0111\u1ED3ng b\u1ED9 1 trang shop_id=${shopId}, offset=${offset}, page_size=${deps12.SHOPEE_ITEM_LIST_PAGE_SIZE}`
     );
-    const result = await deps11.syncShopeeWarehouseSinglePage(shopId, accessToken, offset);
+    const result = await deps12.syncShopeeWarehouseSinglePage(shopId, accessToken, offset);
     const initialized = Number(result.productCount) || 0;
     const durationMs = Date.now() - syncStarted;
     console.log(
       `[Shopee Product Sync] Xong trang ${result.pageIndex + 1} \u2014 productCount=${initialized}, rowsInPage=${result.pageStats.rowsInPage}, hasMore=${result.hasMore}, durationMs=${durationMs}`
     );
     if (!result.hasMore) {
-      deps11.writeInventoryAudit("shopee_sync_completed", {
+      deps12.writeInventoryAudit("shopee_sync_completed", {
         shopId,
         requestedBy: req.user?.username || null,
         productCount: initialized,
@@ -103205,7 +103511,7 @@ async function syncProducts(req, res) {
   } catch (error) {
     console.error("[Shopee Product Sync] Exception:", error);
     console.error("L\u1ED7i khi l\u01B0u DB chunk:", error);
-    const { message, details } = deps11.extractHttpClientError(error);
+    const { message, details } = deps12.extractHttpClientError(error);
     const isRate = /429|rate.?limit|too many request/i.test(message);
     if (!res.headersSent) {
       return res.status(isRate ? 429 : 500).json({
@@ -103259,7 +103565,7 @@ async function syncItemVariants(req, res) {
         details: "no_valid_access_token"
       });
     }
-    const { item, variantProducts, error, modelCount } = await deps11.fetchShopeeItemVariants(
+    const { item, variantProducts, error, modelCount } = await deps12.fetchShopeeItemVariants(
       shopId,
       accessToken,
       itemId
@@ -103287,9 +103593,9 @@ async function syncItemVariants(req, res) {
         variants: initVariants
       });
     }
-    const allProducts = await deps11.loadProducts();
-    const merged = deps11.replaceProductsForShopeeItem(allProducts, String(itemId), variantProducts);
-    await deps11.saveProducts(merged);
+    const allProducts = await deps12.loadProducts();
+    const merged = deps12.replaceProductsForShopeeItem(allProducts, String(itemId), variantProducts);
+    await deps12.saveProducts(merged);
     console.log(
       `[Shopee Variant Sync] item_id=${itemId} -> ${variantProducts.length} dong (modelCount=${modelCount})`
     );
@@ -103310,7 +103616,7 @@ function flattenShopeeRowsForInitForm(variantProducts) {
   const out = [];
   for (const row of Array.isArray(variantProducts) ? variantProducts : []) {
     if (!row || typeof row !== "object") continue;
-    const children = deps11.getProductChildrenList(row);
+    const children = deps12.getProductChildrenList(row);
     const parentWeight = Math.max(0, Number(row.weight) || 0);
     if (children.length > 0) {
       children.forEach((child, idx) => {
@@ -103375,7 +103681,7 @@ async function previewItemVariants(req, res) {
         message: "Ch\u01B0a c\xF3 access_token h\u1EE3p l\u1EC7."
       });
     }
-    const { item, variantProducts, error, modelCount } = await deps11.fetchShopeeItemVariants(
+    const { item, variantProducts, error, modelCount } = await deps12.fetchShopeeItemVariants(
       shopId,
       accessToken,
       itemId
@@ -103420,7 +103726,7 @@ var productsRoutes_default = router11;
 var import_express13 = __toESM(require_express2(), 1);
 
 // controllers/mappingController.js
-var deps12 = {
+var deps13 = {
   reloadCachesFromDb: async () => ({ listings: [], products: [], updatedAt: "" }),
   enrichChannelListingsWithMaster: (listings) => listings,
   isMongoReady: () => false,
@@ -103470,32 +103776,32 @@ var deps12 = {
   refreshCache: async () => ({ updatedAt: "" })
 };
 function initMappingController(partial) {
-  deps12 = { ...deps12, ...partial };
+  deps13 = { ...deps13, ...partial };
 }
 async function handleMappingProductsGet(_req, res) {
   try {
-    const cache = await deps12.reloadCachesFromDb();
+    const cache = await deps13.reloadCachesFromDb();
     const rawListings = cache.listings;
-    const listings = deps12.enrichChannelListingsWithMaster(rawListings, cache.products);
+    const listings = deps13.enrichChannelListingsWithMaster(rawListings, cache.products);
     const successWithProduct = listings.filter(
       (l) => l?.status === "success" && l?.linkedProduct && (l?.linkedProductTitle || l?.linkedProductSku || l?.linkedProduct?.title)
     ).length;
     const broken = listings.filter((l) => l?.linkBroken).length;
     console.log(
-      `[Mapping Products] GET db \u2014 ${listings.length} d\xF2ng (success+product=${successWithProduct}, broken=${broken}) mongo=${deps12.isMongoReady()}`
+      `[Mapping Products] GET db \u2014 ${listings.length} d\xF2ng (success+product=${successWithProduct}, broken=${broken}) mongo=${deps13.isMongoReady()}`
     );
     return res.status(200).json({
       success: true,
       listings,
       count: listings.length,
       cacheUpdatedAt: cache.updatedAt,
-      source: deps12.isMongoReady() ? "mongodb" : "json_fallback"
+      source: deps13.isMongoReady() ? "mongodb" : "json_fallback"
     });
   } catch (error) {
     console.error("[Mapping Products] GET l\u1ED7i:", error?.message || error);
     try {
-      const raw = await deps12.readChannelListingsForGet();
-      const safe = (Array.isArray(raw) ? raw : []).map((r2) => deps12.sanitizeChannelListingRow(r2));
+      const raw = await deps13.readChannelListingsForGet();
+      const safe = (Array.isArray(raw) ? raw : []).map((r2) => deps13.sanitizeChannelListingRow(r2));
       return res.status(200).json({
         success: true,
         listings: safe,
@@ -103522,18 +103828,18 @@ async function handleMappingProductsUpsert(req, res) {
       });
     }
     console.log(`[Mapping Save] UPSERT nh\u1EADn ${incoming.length} d\xF2ng (${req.method})`);
-    const sanitized = incoming.map((row) => deps12.sanitizeChannelListingRow(row));
-    await deps12.bulkUpsertChannelListingsToStore(sanitized);
-    await deps12.flushDbWrites();
-    await deps12.sleep(200);
-    const verified = deps12.enrichChannelListingsWithMaster(sanitized, await deps12.loadProducts());
+    const sanitized = incoming.map((row) => deps13.sanitizeChannelListingRow(row));
+    await deps13.bulkUpsertChannelListingsToStore(sanitized);
+    await deps13.flushDbWrites();
+    await deps13.sleep(200);
+    const verified = deps13.enrichChannelListingsWithMaster(sanitized, await deps13.loadProducts());
     console.log(`\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 mapping bulkWrite ${sanitized.length} d\xF2ng`);
     return res.status(200).json({
       success: true,
       count: verified.length,
       listings: verified,
       cacheUpdatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      source: deps12.isMongoReady() ? "mongodb" : "json_fallback"
+      source: deps13.isMongoReady() ? "mongodb" : "json_fallback"
     });
   } catch (error) {
     const errMsg = error?.message || String(error);
@@ -103547,14 +103853,14 @@ async function handleMappingProductsUpsert(req, res) {
 }
 async function handleMappingProductsHeal(_req, res) {
   try {
-    const products = await deps12.loadProducts();
-    const enriched = deps12.enrichChannelListingsWithMaster(
-      await deps12.readChannelListingsDb(),
+    const products = await deps13.loadProducts();
+    const enriched = deps13.enrichChannelListingsWithMaster(
+      await deps13.readChannelListingsDb(),
       products
     );
-    const healed = await deps12.persistHealedBrokenMappingLinks(enriched);
-    const listings = deps12.enrichChannelListingsWithMaster(
-      await deps12.readChannelListingsDb(),
+    const healed = await deps13.persistHealedBrokenMappingLinks(enriched);
+    const listings = deps13.enrichChannelListingsWithMaster(
+      await deps13.readChannelListingsDb(),
       products
     );
     console.log(`[Mapping Products] HEAL xong: healed=${healed}, total=${listings.length}`);
@@ -103577,7 +103883,7 @@ async function handleMappingProductsHeal(_req, res) {
 async function handleBatchAutoLink(req, res) {
   try {
     const body = req?.body && typeof req.body === "object" ? req.body : {};
-    const result = await deps12.batchAutoLinkFromDatabase({
+    const result = await deps13.batchAutoLinkFromDatabase({
       cursor: body.cursor,
       limit: body.limit
     });
@@ -103615,7 +103921,7 @@ async function handleBatchAutoLink(req, res) {
 async function handleSingleAutoLink(req, res) {
   try {
     const body = req?.body && typeof req.body === "object" ? req.body : {};
-    const result = await deps12.autoLinkSingleListingFromDatabase({
+    const result = await deps13.autoLinkSingleListingFromDatabase({
       id: body.id,
       listingId: body.listingId,
       channelId: body.channelId,
@@ -103635,13 +103941,13 @@ async function handleSingleAutoLink(req, res) {
 }
 async function handleMappingSkuIndex(_req, res) {
   try {
-    const masterProducts = await deps12.loadProducts();
+    const masterProducts = await deps13.loadProducts();
     const items = [];
     const seen = /* @__PURE__ */ new Set();
     const addOne = (row) => {
       if (!row || typeof row !== "object") return;
       const rawSku = String(row.sku || "").trim();
-      const key = deps12.normalizeSkuKey(rawSku);
+      const key = deps13.normalizeSkuKey(rawSku);
       const id = row.id != null ? String(row.id).trim() : "";
       if (!key || !id || seen.has(key)) return;
       seen.add(key);
@@ -103654,7 +103960,7 @@ async function handleMappingSkuIndex(_req, res) {
     for (const masterItem of Array.isArray(masterProducts) ? masterProducts : []) {
       if (!masterItem) continue;
       addOne(masterItem);
-      for (const child of deps12.getProductChildrenList(masterItem)) addOne(child);
+      for (const child of deps13.getProductChildrenList(masterItem)) addOne(child);
       if (Array.isArray(masterItem.variants)) {
         for (const v of masterItem.variants) addOne(v);
       }
@@ -103667,7 +103973,7 @@ async function handleMappingSkuIndex(_req, res) {
       success: true,
       count: items.length,
       items,
-      source: deps12.isProductsDiskMode() ? "disk" : deps12.isMongoReady() ? "mongodb" : "json_fallback"
+      source: deps13.isProductsDiskMode() ? "disk" : deps13.isMongoReady() ? "mongodb" : "json_fallback"
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -103680,7 +103986,7 @@ async function handleBulkAutoLinkByIds(req, res) {
     const body = req?.body && typeof req.body === "object" ? req.body : {};
     const mode = String(body.mode || "").trim().toLowerCase();
     if (mode === "all-pending" || mode === "all_pending" || body.allPending === true) {
-      const result2 = await deps12.bulkAutoLinkAllPending({
+      const result2 = await deps13.bulkAutoLinkAllPending({
         limit: Number.isFinite(Number(body.limit)) ? Number(body.limit) : void 0
       });
       return res.status(200).json({
@@ -103690,7 +103996,7 @@ async function handleBulkAutoLinkByIds(req, res) {
       });
     }
     const rawIds = Array.isArray(body.ids) ? body.ids : Array.isArray(body.listingIds) ? body.listingIds : Array.isArray(body.listings) ? body.listings.map((row) => row?.id) : [];
-    const result = await deps12.bulkAutoLinkListingsByIds(rawIds);
+    const result = await deps13.bulkAutoLinkListingsByIds(rawIds);
     return res.status(200).json({
       success: true,
       ...result,
@@ -103704,9 +104010,9 @@ async function handleBulkAutoLinkByIds(req, res) {
 }
 async function handleMappingPurgeBroken(_req, res) {
   try {
-    const cache = await deps12.loadLocalInventoryCache();
-    const listings = Array.isArray(cache.listings) && cache.listings.length > 0 ? cache.listings : await deps12.readChannelListingsDb();
-    const masterLookup = deps12.buildMasterProductLookupById(cache.products);
+    const cache = await deps13.loadLocalInventoryCache();
+    const listings = Array.isArray(cache.listings) && cache.listings.length > 0 ? cache.listings : await deps13.readChannelListingsDb();
+    const masterLookup = deps13.buildMasterProductLookupById(cache.products);
     const kept = [];
     let deletedCount = 0;
     for (const row of Array.isArray(listings) ? listings : []) {
@@ -103725,9 +104031,9 @@ async function handleMappingPurgeBroken(_req, res) {
       kept.push(row);
     }
     if (deletedCount > 0) {
-      await deps12.writeChannelListingsDb(kept);
+      await deps13.writeChannelListingsDb(kept);
     }
-    const nextCache = await deps12.refreshCache();
+    const nextCache = await deps13.refreshCache();
     return res.json({
       success: true,
       deletedCount,
@@ -103767,7 +104073,7 @@ var import_path13 = __toESM(require("path"), 1);
 var APP_ROOT8 = resolveAppRoot3();
 var ORDERS_DB_PATH = import_path13.default.join(APP_ROOT8, "data", "orders.json");
 var HANDED_OVER_CLEANUP_MARKER = import_path13.default.join(APP_ROOT8, "data", ".cleanup-handed-over-v2");
-var deps13 = {
+var deps14 = {
   repairMisassignedTracking: (o) => o,
   repairFalseProcessedReadyToShip: (o) => o,
   isValidOrder: () => true,
@@ -103785,7 +104091,7 @@ var deps13 = {
   HANDED_OVER_SOURCE: { QR_SCAN: "qr_scan", MANUAL_BUTTON: "manual_button" }
 };
 function initOrdersService(partial) {
-  deps13 = { ...deps13, ...partial };
+  deps14 = { ...deps14, ...partial };
 }
 var orderLookupIndex = null;
 var ordersJsonMirrorQueued = false;
@@ -103831,7 +104137,7 @@ function loadOrders() {
     }
     const raw = import_fs13.default.readFileSync(ORDERS_DB_PATH, "utf-8");
     const parsed = raw.trim() ? JSON.parse(raw) : [];
-    const orders = Array.isArray(parsed) ? parsed.map(deps13.repairMisassignedTracking) : [];
+    const orders = Array.isArray(parsed) ? parsed.map(deps14.repairMisassignedTracking) : [];
     orderLookupIndex = rebuildOrderLookupIndex(orders);
     return orders;
   } catch (error) {
@@ -103884,12 +104190,12 @@ async function persistOrdersToDatabase(orders, changedOrders) {
   }
 }
 async function loadOrdersForApi(opts) {
-  const normalize = opts?.readOnly ? mirrorTrackingFieldsForRead : deps13.repairMisassignedTracking;
+  const normalize = opts?.readOnly ? mirrorTrackingFieldsForRead : deps14.repairMisassignedTracking;
   if (!isMongoReady()) {
     throw new Error("mongodb_not_ready");
   }
   try {
-    const orders = (await loadOrdersFromStore()).filter(deps13.isValidOrder).map(normalize);
+    const orders = (await loadOrdersFromStore()).filter(deps14.isValidOrder).map(normalize);
     return { orders, dirty: false, handoverMongoSync: [] };
   } catch (err) {
     console.warn("[Orders] Mongo read failed:", err?.message || err);
@@ -103920,8 +104226,8 @@ async function loadOrdersForShipScoped(orderIds, orderSns) {
   const bySn = /* @__PURE__ */ new Map();
   const byId = /* @__PURE__ */ new Map();
   const put = (o) => {
-    if (!deps13.isValidOrder(o) || !matchKey(o)) return;
-    deps13.repairFalseProcessedReadyToShip(o);
+    if (!deps14.isValidOrder(o) || !matchKey(o)) return;
+    deps14.repairFalseProcessedReadyToShip(o);
     const sn = String(o.orderSn || "").replace(/^shopee-/i, "").trim();
     const id = String(o.id || "").trim();
     if (sn) bySn.set(sn, o);
@@ -103932,7 +104238,7 @@ async function loadOrdersForShipScoped(orderIds, orderSns) {
       const mongoOrders = (await loadOrdersFromStore({
         orderSns: [...snSet],
         ids: [...idSet]
-      })).map(deps13.repairMisassignedTracking);
+      })).map(deps14.repairMisassignedTracking);
       for (const m2 of mongoOrders) put(m2);
     } catch (err) {
       console.warn("[Orders] loadOrdersForShipScoped mongo skip:", err?.message || err);
@@ -103994,7 +104300,7 @@ async function hydrateTrackingFromMongoToJson() {
 }
 function saveOrders(orders) {
   try {
-    const sanitized = orders.map(deps13.repairMisassignedTracking);
+    const sanitized = orders.map(deps14.repairMisassignedTracking);
     if (isMongoReady() && sanitized.length > 0) {
       void bulkUpsertOrdersToStore(sanitized).catch(
         (err) => console.warn("[Orders JSON Mirror] Mongo sync failed:", err?.message || err)
@@ -104017,7 +104323,7 @@ function saveOrders(orders) {
   }
 }
 function isHandedOverGarbageOrder(order) {
-  return deps13.matchesHandedOverCarrierTabOrder(order);
+  return deps14.matchesHandedOverCarrierTabOrder(order);
 }
 async function purgeHandedOverGarbageOrdersOnce(opts) {
   const force = Boolean(opts?.force);
@@ -104315,23 +104621,23 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
   }
   const order = orders[index];
   const hint = String(opts?.trackingHint || "").trim();
-  if (hint && !deps13.isShopeeInternalTrackingCode(hint)) {
+  if (hint && !deps14.isShopeeInternalTrackingCode(hint)) {
     if (!order.trackingNumber) order.trackingNumber = hint;
     if (!order.tracking_no) order.tracking_no = hint;
   }
-  if (deps13.hasLeftHandedOverCarrierTab(order)) {
+  if (deps14.hasLeftHandedOverCarrierTab(order)) {
     return {
       ok: false,
       status: 400,
       error: `\u0110\u01A1n ${order?.orderSn || order?.id} \u0111\xE3 \u0110ang giao/ho\xE0n t\u1EA5t/h\u1EE7y \u2014 kh\xF4ng ghi \u0110\xE3 giao \u0110VVC.`
     };
   }
-  if (deps13.resolveOrderHandoverFlag(order)) {
+  if (deps14.resolveOrderHandoverFlag(order)) {
     return { ok: true, order, changed: false };
   }
-  const eligible = deps13.isEligibleForHandOverShared(order) || deps13.matchesProcessedPickupTabShared(order) && deps13.hasOrderTrackingNoShared(order);
+  const eligible = deps14.isEligibleForHandOverShared(order) || deps14.matchesProcessedPickupTabShared(order) && deps14.hasOrderTrackingNoShared(order);
   if (!eligible) {
-    const detail = deps13.getHandOverIneligibleReasonShared(order) || `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}, tn=${order?.trackingNumber || order?.tracking_no || "-"}`;
+    const detail = deps14.getHandOverIneligibleReasonShared(order) || `status=${order?.status}, shopee=${order?.shopee_order_status || "-"}, tn=${order?.trackingNumber || order?.tracking_no || "-"}`;
     console.warn(`[Orders Handover] REJECT ${order?.orderSn}: ${detail}`);
     return {
       ok: false,
@@ -104339,8 +104645,8 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
       error: `\u0110\u01A1n ${order?.orderSn || order?.id} kh\xF4ng \u0111\u1EE7 \u0111i\u1EC1u ki\u1EC7n b\xE0n giao \u0110VVC: ${detail}`
     };
   }
-  const source = opts?.source === "qr_scan" ? deps13.HANDED_OVER_SOURCE.QR_SCAN : deps13.HANDED_OVER_SOURCE.MANUAL_BUTTON;
-  const updated = deps13.applyHandedOverWrite({ ...order }, void 0, source);
+  const source = opts?.source === "qr_scan" ? deps14.HANDED_OVER_SOURCE.QR_SCAN : deps14.HANDED_OVER_SOURCE.MANUAL_BUTTON;
+  const updated = deps14.applyHandedOverWrite({ ...order }, void 0, source);
   orders[index] = updated;
   if (opts?.persist !== false) {
     saveOrders(orders);
@@ -104364,7 +104670,7 @@ async function handOverOrderToCarrierByIndex(orders, index, opts) {
 
 // controllers/ordersController.js
 var APP_ROOT9 = resolveAppRoot3();
-var deps14 = {
+var deps15 = {
   withLocalDbTimeout: async (p) => p,
   loadProductsForOrders: async () => [],
   enrichOrdersFromCatalog: (orders) => orders,
@@ -104404,7 +104710,7 @@ var deps14 = {
 var ordersRefreshInFlight = null;
 var ordersRefreshCache = null;
 function initOrdersController(partial) {
-  deps14 = { ...deps14, ...partial };
+  deps15 = { ...deps15, ...partial };
 }
 function invalidateOrdersRefreshCache() {
   ordersRefreshCache = null;
@@ -104567,8 +104873,8 @@ async function refreshOrders(req, res) {
     let products = [];
     if (!limit) {
       try {
-        products = await deps14.withLocalDbTimeout(
-          deps14.loadProductsForOrders(mergedOrders),
+        products = await deps15.withLocalDbTimeout(
+          deps15.loadProductsForOrders(mergedOrders),
           2500,
           "orders_refresh_catalog"
         );
@@ -104579,8 +104885,8 @@ async function refreshOrders(req, res) {
         );
       }
     }
-    const orders = deps14.enrichOrdersWithShopNames(
-      deps14.enrichOrdersFromCatalog(mergedOrders, products)
+    const orders = deps15.enrichOrdersWithShopNames(
+      deps15.enrichOrdersFromCatalog(mergedOrders, products)
     );
     console.log(
       `[FRONTEND FETCHED] GET /api/orders/refresh${limit ? `?limit=${limit}` : ""} \u2014 tr\u1EA3 v\u1EC1 ${orders.length} \u0111\u01A1n t\u1EEB MongoDB.`
@@ -104623,15 +104929,15 @@ async function queryOrders(req, res) {
     );
     let products = [];
     try {
-      products = await deps14.loadProductsForOrders(page.rows);
+      products = await deps15.loadProductsForOrders(page.rows);
     } catch (catalogErr) {
       console.warn(
         "[Orders Query] catalog enrich skipped:",
         catalogErr?.message || catalogErr
       );
     }
-    const rows = deps14.enrichOrdersWithShopNames(
-      deps14.enrichOrdersFromCatalog(page.rows, products)
+    const rows = deps15.enrichOrdersWithShopNames(
+      deps15.enrichOrdersFromCatalog(page.rows, products)
     );
     return res.json({
       success: true,
@@ -104727,15 +105033,15 @@ async function listOrders(req, res) {
       });
       let products2 = [];
       try {
-        products2 = await deps14.loadProductsForOrders(page.rows);
+        products2 = await deps15.loadProductsForOrders(page.rows);
       } catch (catalogErr) {
         console.warn(
           "[GET /api/orders] catalog enrich skipped:",
           catalogErr?.message || catalogErr
         );
       }
-      const rows = deps14.enrichOrdersWithShopNames(
-        deps14.enrichOrdersFromCatalog(page.rows, products2)
+      const rows = deps15.enrichOrdersWithShopNames(
+        deps15.enrichOrdersFromCatalog(page.rows, products2)
       );
       return res.json({
         success: true,
@@ -104751,13 +105057,13 @@ async function listOrders(req, res) {
     }
   }
   let { orders: rawOrders } = await loadOrdersForApi({ readOnly: true });
-  rawOrders = rawOrders.filter(deps14.isValidOrder);
+  rawOrders = rawOrders.filter(deps15.isValidOrder);
   rawOrders = filterOrdersByPrintStatus(
     rawOrders,
     String(req.query.print_status || req.query.printStatus || "")
   );
-  const unprocessedPool = rawOrders.filter((o) => deps14.matchesUnprocessedPickupTabShared(o));
-  const processedPool = rawOrders.filter((o) => deps14.matchesProcessedPickupTabShared(o));
+  const unprocessedPool = rawOrders.filter((o) => deps15.matchesUnprocessedPickupTabShared(o));
+  const processedPool = rawOrders.filter((o) => deps15.matchesProcessedPickupTabShared(o));
   const readyToShipRaw = rawOrders.filter((o) => {
     const raw = String(o?.shopee_order_status || "").toUpperCase();
     return raw === "READY_TO_SHIP" || raw === "RETRY_SHIP";
@@ -104776,17 +105082,17 @@ async function listOrders(req, res) {
   );
   const tab = String(req.query.tab || req.query.internal_tab || "").trim().toLowerCase();
   if (tab === "processed" || tab === "da-xu-ly" || tab === "processed_pickup") {
-    rawOrders = rawOrders.filter((o) => deps14.matchesProcessedPickupTabShared(o));
+    rawOrders = rawOrders.filter((o) => deps15.matchesProcessedPickupTabShared(o));
     console.log(
       `[GET /api/orders] query.tab=${tab} filter=matchesProcessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n`
     );
   } else if (tab === "unprocessed" || tab === "chua-xu-ly" || tab === "ready_to_ship" || tab === "cho-lay-hang") {
-    rawOrders = rawOrders.filter((o) => deps14.matchesUnprocessedPickupTabShared(o));
+    rawOrders = rawOrders.filter((o) => deps15.matchesUnprocessedPickupTabShared(o));
     console.log(
       `[GET /api/orders] query.tab=${tab} filter=matchesUnprocessedPickupTab \u2192 ${rawOrders.length} \u0111\u01A1n | query={ shopee_order_status: READY_TO_SHIP|RETRY_SHIP, !PROCESSED, !tracking_outbound }`
     );
   } else if (tab === "shipping" || tab === "shipped" || tab === "dang-giao") {
-    rawOrders = rawOrders.filter((o) => deps14.matchesShippingTabShared(o));
+    rawOrders = rawOrders.filter((o) => deps15.matchesShippingTabShared(o));
   } else if (tab === "received_cancel_returns" || tab === "received-cancel-returns" || tab === "da_nhan_huy_hoan") {
     try {
       rawOrders = await loadDonHoanHuyAsOrders(
@@ -104797,7 +105103,7 @@ async function listOrders(req, res) {
       );
     } catch (dhhErr) {
       console.error("[GET /api/orders] don_hoan_huy load failed:", dhhErr);
-      rawOrders = rawOrders.filter((o) => deps14.matchesReceivedCancelReturnTabOrder(o));
+      rawOrders = rawOrders.filter((o) => deps15.matchesReceivedCancelReturnTabOrder(o));
     }
   } else if (tab === "pending_confirm" || tab === "pending_verification" || tab === "cho-xac-nhan" || tab === "pending_shopee_check" || tab === "dang_kiem_tra_shopee" || tab === "shopee_check") {
     rawOrders = rawOrders.filter((o) => {
@@ -104808,7 +105114,7 @@ async function listOrders(req, res) {
       if (o.status === "unprocessed" || o.status === "processed" || o.status === "shipping" || o.status === "completed" || o.status === "cancelled" || o.status === "return_pending" || o.status === "return_received") {
         return false;
       }
-      if (deps14.matchesProcessedPickupTabShared(o) || deps14.matchesUnprocessedPickupTabShared(o)) {
+      if (deps15.matchesProcessedPickupTabShared(o) || deps15.matchesUnprocessedPickupTabShared(o)) {
         return false;
       }
       return o.status === "pending_confirm" || o.status === "pending_verification" || ["UNPAID", "PENDING", "IN_REVIEW", "FRAUD_CHECK", "INVOICE_PENDING"].includes(raw);
@@ -104818,9 +105124,9 @@ async function listOrders(req, res) {
   if (Number.isFinite(rawLimit) && rawLimit > 0) {
     rawOrders = rawOrders.slice(0, Math.min(Math.floor(rawLimit), 5e3));
   }
-  const products = await deps14.loadProductsForOrders(rawOrders);
-  const orders = deps14.enrichOrdersWithShopNames(
-    deps14.enrichOrdersFromCatalog(rawOrders, products)
+  const products = await deps15.loadProductsForOrders(rawOrders);
+  const orders = deps15.enrichOrdersWithShopNames(
+    deps15.enrichOrdersFromCatalog(rawOrders, products)
   );
   console.log(
     `[GET /api/orders] READ-ONLY return length=${orders.length} tab=${tab || "(all)"} mongoReady=${isMongoReady()}`
@@ -104923,8 +105229,8 @@ async function ensureMongoTtl(_req, res) {
 }
 async function cleanupLabelPdfs(_req, res) {
   try {
-    const deleted = deps14.cleanupExpiredLabelFiles();
-    deps14.wipeLegacyPublicPrints();
+    const deleted = deps15.cleanupExpiredLabelFiles();
+    deps15.wipeLegacyPublicPrints();
     return res.json({
       success: true,
       deleted,
@@ -104943,8 +105249,8 @@ async function cleanupLabelPdfs(_req, res) {
 async function cleanupProcessedPickup(_req, res) {
   try {
     const orders = loadOrders();
-    const garbage = orders.filter((o) => deps14.matchesProcessedPickupTabShared(o));
-    const kept = orders.filter((o) => !deps14.matchesProcessedPickupTabShared(o));
+    const garbage = orders.filter((o) => deps15.matchesProcessedPickupTabShared(o));
+    const kept = orders.filter((o) => !deps15.matchesProcessedPickupTabShared(o));
     const sns = garbage.map((o) => String(o.orderSn || o.id || "").trim()).filter(Boolean);
     const ids = garbage.map((o) => String(o.id || "").trim()).filter(Boolean);
     if (garbage.length > 0) {
@@ -104984,7 +105290,7 @@ async function lookupOrder(req, res) {
   let foundRaw = null;
   try {
     foundRaw = await findOrderByScanCodeInStore(code);
-    if (foundRaw && !deps14.isValidOrder(foundRaw)) foundRaw = null;
+    if (foundRaw && !deps15.isValidOrder(foundRaw)) foundRaw = null;
     if (foundRaw) foundRaw = mirrorTrackingFieldsForRead(foundRaw);
   } catch (err) {
     console.warn("[Orders Lookup] mongo failed:", err?.message || err);
@@ -104993,10 +105299,10 @@ async function lookupOrder(req, res) {
     try {
       const { orders } = await loadOrdersForApi({ readOnly: true });
       const hit = await findOrderByScanLookup(
-        (Array.isArray(orders) ? orders : []).filter(deps14.isValidOrder),
+        (Array.isArray(orders) ? orders : []).filter(deps15.isValidOrder),
         code
       );
-      if (hit && deps14.isValidOrder(hit)) {
+      if (hit && deps15.isValidOrder(hit)) {
         foundRaw = mirrorTrackingFieldsForRead(hit);
       }
     } catch (err) {
@@ -105005,7 +105311,7 @@ async function lookupOrder(req, res) {
   }
   if (!foundRaw) {
     try {
-      const fromShopee = await deps14.resolveOrderFromShopeeByScanCode(code);
+      const fromShopee = await deps15.resolveOrderFromShopeeByScanCode(code);
       if (fromShopee) {
         foundRaw = mirrorTrackingFieldsForRead(fromShopee);
         ordersRefreshCache = null;
@@ -105020,14 +105326,14 @@ async function lookupOrder(req, res) {
       scannedCode: code
     });
   }
-  const products = await deps14.loadProductsForOrders([foundRaw]);
-  const found = deps14.enrichOrdersFromCatalog([foundRaw], products)[0];
+  const products = await deps15.loadProductsForOrders([foundRaw]);
+  const found = deps15.enrichOrdersFromCatalog([foundRaw], products)[0];
   return res.json(found);
 }
 async function cleanupMockOrders(_req, res) {
   const orders = loadOrders();
-  const validOrders = orders.filter(deps14.isValidOrder);
-  const removedOrders = orders.filter((o) => !deps14.isValidOrder(o));
+  const validOrders = orders.filter(deps15.isValidOrder);
+  const removedOrders = orders.filter((o) => !deps15.isValidOrder(o));
   saveOrders(validOrders);
   console.log(
     `[Orders Cleanup] \u0110\xE3 x\xF3a ${removedOrders.length} \u0111\u01A1n h\xE0ng l\u1ED7i/mock (0\u0111 v\xE0 kh\xF4ng c\xF3 s\u1EA3n ph\u1EA9m). C\xF2n l\u1EA1i ${validOrders.length} \u0111\u01A1n th\u1EADt.`,
@@ -105068,7 +105374,7 @@ async function forceResyncStuck(req, res) {
       message: "\u0110ang \xE9p \u0111\u1ED3ng b\u1ED9 \u0111\u01A1n k\u1EB9t ng\u1EA7m..."
     });
     setImmediate(() => {
-      deps14.forceResyncStuckOrdersWithoutTracking({
+      deps15.forceResyncStuckOrdersWithoutTracking({
         orderSns,
         maxAutoDetect: orderSns.length > 0 ? maxAutoDetect : Math.max(maxAutoDetect, 2),
         tryShip,
@@ -105110,7 +105416,7 @@ async function triggerFixStuckOrders(req, res) {
       message: "\u0110ang s\u1EEDa \u0111\u01A1n k\u1EB9t ng\u1EA7m..."
     });
     setImmediate(() => {
-      deps14.triggerFixStuckOrders({
+      deps15.triggerFixStuckOrders({
         orderSns,
         maxAutoDetect,
         tryShip,
@@ -105150,7 +105456,7 @@ async function enrichTracking(req, res) {
       (async () => {
         let enrichResult = null;
         try {
-          enrichResult = await deps14.enrichMissingShopeeTracking();
+          enrichResult = await deps15.enrichMissingShopeeTracking();
         } catch (enrichErr) {
           console.warn(
             "[Orders] enrich-tracking enrichMissingShopeeTracking:",
@@ -105160,7 +105466,7 @@ async function enrichTracking(req, res) {
         let repaired = 0;
         try {
           const { orders } = await loadOrdersForApi();
-          repaired = await deps14.repairMissingShopeeTrackingInOrders(orders, {
+          repaired = await deps15.repairMissingShopeeTrackingInOrders(orders, {
             max,
             retries: 2
           });
@@ -105213,7 +105519,7 @@ async function patchOrder(req, res) {
   if (wantHanded) {
     Object.assign(
       patch,
-      deps14.buildHandedOverWritePatch(void 0, deps14.HANDED_OVER_SOURCE.MANUAL_BUTTON)
+      deps15.buildHandedOverWritePatch(void 0, deps15.HANDED_OVER_SOURCE.MANUAL_BUTTON)
     );
   }
   const wantLocalStored = localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED" || localPatch === "NONE";
@@ -105226,7 +105532,7 @@ async function patchOrder(req, res) {
     patch.local_status_updated_at = patch.local_status_updated_at || nowIso;
     if (localPatch === "CANCELLED_STORED" || localPatch === "RETURN_RECEIVED") {
       patch.is_local_return_archived = false;
-      Object.assign(patch, deps14.buildClearHandedOverPatch(nowIso));
+      Object.assign(patch, deps15.buildClearHandedOverPatch(nowIso));
       patch.local_status = localPatch;
       patch.localStatus = localPatch;
       patch.internal_status = localPatch;
@@ -105247,24 +105553,24 @@ async function patchOrder(req, res) {
       orders[index].tracking_no = tn;
       orders[index].trackingNumber = tn;
     }
-    deps14.repairMisassignedTracking(orders[index]);
+    deps15.repairMisassignedTracking(orders[index]);
   }
   if ("custom_costs" in patch || "custom_cost_items" in patch) {
-    deps14.applyShopeeOrderFinanceFields(orders[index], {
+    deps15.applyShopeeOrderFinanceFields(orders[index], {
       totalAmount: orders[index].totalAmount,
       itemAmount: orders[index].item_amount,
       withholdingCitTax: orders[index].withholdingCitTax,
       escrowAmount: orders[index].escrowAmount,
       shopeeFees: orders[index].shopee_fees,
       escrowSynced: orders[index].escrow_synced,
-      customCosts: deps14.sumOrderCustomCosts(orders[index])
+      customCosts: deps15.sumOrderCustomCosts(orders[index])
     });
   }
   await persistOrdersToDatabase(orders, [orders[index]]);
   if (wantHanded && isMongoReady()) {
     try {
       await markOrderHandedOverInStore(String(orders[index].orderSn || ""), {
-        source: deps14.HANDED_OVER_SOURCE.MANUAL_BUTTON,
+        source: deps15.HANDED_OVER_SOURCE.MANUAL_BUTTON,
         handedOverAt: String(orders[index].handedOverAt || ""),
         shopId: orders[index].shopId != null ? String(orders[index].shopId) : void 0
       });
@@ -105432,8 +105738,8 @@ async function handOverCarrierById(req, res) {
     if (!result.ok) {
       return res.status(result.status).json({ success: false, error: result.error, message: result.error });
     }
-    const products = await deps14.loadProductsForOrders([result.order]);
-    const enriched = deps14.enrichOrdersFromCatalog([result.order], products)[0];
+    const products = await deps15.loadProductsForOrders([result.order]);
+    const enriched = deps15.enrichOrdersFromCatalog([result.order], products)[0];
     return res.json({ success: true, order: enriched });
   } catch (error) {
     console.error("[Orders Handover] single error:", error);
@@ -105457,7 +105763,7 @@ async function handOverCarrierByCode(req, res) {
       const hit = findOrderRecord(orders, orderId);
       index = hit ? hit.index : -1;
     } else if (code) {
-      const found = await findOrderByScanLookup(orders.filter(deps14.isValidOrder), code);
+      const found = await findOrderByScanLookup(orders.filter(deps15.isValidOrder), code);
       if (found) {
         const hit = findOrderRecord(orders, String(found.id || found.orderSn || ""));
         index = hit ? hit.index : orders.findIndex((o) => o.id === found.id);
@@ -105476,8 +105782,8 @@ async function handOverCarrierByCode(req, res) {
     if (!result.ok) {
       return res.status(result.status).json({ success: false, error: result.error, message: result.error });
     }
-    const products = await deps14.loadProductsForOrders([result.order]);
-    const enriched = deps14.enrichOrdersFromCatalog([result.order], products)[0];
+    const products = await deps15.loadProductsForOrders([result.order]);
+    const enriched = deps15.enrichOrdersFromCatalog([result.order], products)[0];
     return res.json({ success: true, order: enriched });
   } catch (error) {
     console.error("[Orders Handover] by-code error:", error);
@@ -105540,8 +105846,8 @@ async function handOverCarrierBulk(req, res) {
     if (updatedOrders.length) {
       await persistOrdersToDatabase(orders, updatedOrders);
     }
-    const products = await deps14.loadProductsForOrders(updatedOrders);
-    const enriched = deps14.enrichOrdersFromCatalog(updatedOrders, products);
+    const products = await deps15.loadProductsForOrders(updatedOrders);
+    const enriched = deps15.enrichOrdersFromCatalog(updatedOrders, products);
     console.log(
       `[Orders Handover Bulk] keys=${keys.length} updated=${updatedOrders.length} skipped=${skipped} failed=${failed.length}`
     );
@@ -105576,7 +105882,7 @@ async function healHandedOver(_req, res) {
   try {
     const loaded = await loadOrdersForApi();
     const orders = loaded.orders;
-    const healed = deps14.healInvalidHandedOverFlags(orders);
+    const healed = deps15.healInvalidHandedOverFlags(orders);
     if (healed.length) {
       await persistOrdersToDatabase(orders, healed);
     }
@@ -105623,8 +105929,8 @@ async function createManualOrder(req, res) {
     const feeToCollect = shippingFeePayer === "customer" ? Number(shippingFee) : 0;
     const totalAmount = subtotal + feeToCollect - Number(orderDiscount);
     const fullAddress = [addr.street, addr.ward, addr.district, addr.province].filter(Boolean).join(", ");
-    const trackingNumber = deps14.generateCarrierTracking(carrier);
-    const logisticsPayload = carrier !== "self" ? deps14.buildCarrierLogisticsPayload(
+    const trackingNumber = deps15.generateCarrierTracking(carrier);
+    const logisticsPayload = carrier !== "self" ? deps15.buildCarrierLogisticsPayload(
       carrier,
       { name: "Kh\xE1ch s\u1EC9", phone: "0900000000" },
       {
@@ -105687,7 +105993,7 @@ async function createManualOrder(req, res) {
       order: newOrder,
       trackingNumber,
       logisticsPayload,
-      orders: orders.filter(deps14.isValidOrder)
+      orders: orders.filter(deps15.isValidOrder)
     });
   } catch (error) {
     console.error("[Orders manual]", error);
@@ -105819,7 +106125,7 @@ function friendlyPullError(err) {
   }
   return raw || "\u0110\u1ED3ng b\u1ED9 th\u1EA5t b\u1EA1i";
 }
-var deps15 = {
+var deps16 = {
   createSyncJob: async () => ({ id: "" }),
   finishSyncJob: async () => {
   },
@@ -105871,7 +106177,7 @@ var deps15 = {
   SHOPEE_ITEM_LIST_PAGE_SIZE: 10
 };
 function initShopeeOrdersController(partial) {
-  deps15 = { ...deps15, ...partial };
+  deps16 = { ...deps16, ...partial };
 }
 async function runOrdersPull(opts) {
   const {
@@ -105893,7 +106199,7 @@ async function runOrdersPull(opts) {
   }
   try {
     try {
-      const job = await deps15.createSyncJob(jobType, username);
+      const job = await deps16.createSyncJob(jobType, username);
       jobId = job?.id || "";
     } catch (jobErr) {
       console.warn(`[${logTag}] createSyncJob skip:`, jobErr?.message || jobErr);
@@ -105901,7 +106207,7 @@ async function runOrdersPull(opts) {
     console.log(
       `[${logTag}] b\u1EAFt \u0111\u1EA7u k\xE9o \u0111\u01A1n shop_id=${shopIds?.length ? shopIds.join(",") : "all"} lookbackSec=${lookbackSec} short=${allowShortLookback} reconcile=${reconcileActive} skipCancel=${skipCancelReturn}`
     );
-    const result = await deps15.pullIncrementalOrdersFromShopee({
+    const result = await deps16.pullIncrementalOrdersFromShopee({
       lookbackSec,
       reconcileActive: reconcileActive === true,
       allowShortLookback: allowShortLookback === true,
@@ -105910,7 +106216,7 @@ async function runOrdersPull(opts) {
     let cancelPull = { pulled: 0, added: 0, updated: 0, errors: [], message: "", skipped: false };
     if (!skipCancelReturn) {
       try {
-        cancelPull = await deps15.pullShopeeCancelReturnOrders({
+        cancelPull = await deps16.pullShopeeCancelReturnOrders({
           lookbackSec: Math.max(lookbackSec, 48 * 3600),
           shopIds: shopIds?.length ? shopIds : void 0
         });
@@ -105928,7 +106234,7 @@ async function runOrdersPull(opts) {
       };
     }
     try {
-      deps15.invalidateOrdersRefreshCache();
+      deps16.invalidateOrdersRefreshCache();
     } catch (cacheErr) {
       console.error("[API_SYNC_ERROR] invalidate cache:", cacheErr?.stack || cacheErr);
     }
@@ -105941,7 +106247,7 @@ async function runOrdersPull(opts) {
     const message = dbErrors.length > 0 ? `L\u1ED7i l\u01B0u MongoDB: ${dbErrors[0]?.message || "db_upsert_failed"}` : String(result?.message || `\u0110\xE3 k\xE9o ${pulled} \u0111\u01A1n`) + (cancelPull.pulled > 0 || cancelPull.message && !cancelPull.skipped ? ` | Cancel/return: ${cancelPull.message || `+${cancelPull.pulled}`}` : "");
     if (jobId) {
       try {
-        await deps15.finishSyncJob(
+        await deps16.finishSyncJob(
           jobId,
           success ? "succeeded" : "failed",
           {
@@ -105990,7 +106296,7 @@ async function runOrdersPull(opts) {
     console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", error?.stack || error);
     if (jobId) {
       try {
-        await deps15.finishSyncJob(
+        await deps16.finishSyncJob(
           jobId,
           "failed",
           {
@@ -106105,162 +106411,122 @@ function resolveFullSyncLookbackHours(raw) {
   if (!Number.isFinite(hoursRaw) || hoursRaw <= 0) return 14 * 24;
   return Math.min(Math.max(hoursRaw, FULL_SYNC_MIN_LOOKBACK_HOURS), FULL_SYNC_MAX_LOOKBACK_HOURS);
 }
-function resolveSyncHttpStatus(result) {
-  if (result?.success === false) {
-    const msg = String(result?.message || result?.errors?.[0]?.message || "").toLowerCase();
-    const code = String(result?.errors?.[0]?.error || "").toLowerCase();
-    if (/no_oauth|no_valid_access|unauthorized|invalid.?token|param|bad.?request|missing/.test(
-      `${msg} ${code}`
-    )) {
-      return 400;
-    }
-    return 500;
-  }
-  return 200;
+function ackBackgroundPull(res, meta) {
+  sendJson(res, 200, {
+    status: 200,
+    success: true,
+    background: true,
+    message: "H\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m",
+    pulled: 0,
+    added: 0,
+    updated: 0,
+    shopee_response: null,
+    ...meta
+  });
+}
+function fireOrdersPullInBackground(pullOpts) {
+  setImmediate(() => {
+    void (async () => {
+      console.log(
+        `[${pullOpts.logTag}] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m lookbackSec=${pullOpts.lookbackSec}`
+      );
+      try {
+        const result = await runOrdersPull(pullOpts);
+        console.log(
+          `[${pullOpts.logTag}] BG done pulled=${result?.pulled || 0} +${result?.added || 0}/~${result?.updated || 0} msg=${result?.message || ""}`
+        );
+      } catch (bgErr) {
+        console.error(
+          `[${pullOpts.logTag}] BG failed:`,
+          bgErr?.stack || bgErr?.message || bgErr
+        );
+      }
+    })();
+  });
 }
 async function pullOrders(req, res) {
-  console.log("=== B\u1EAET \u0110\u1EA6U PULL ORDERS ===");
+  console.log("=== B\u1EAET \u0110\u1EA6U PULL ORDERS (BG) ===");
   try {
-    console.log("B\u1EAFt \u0111\u1EA7u l\u1EA5y \u0111\u01A1n");
     const hours = resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     console.log(
-      `\u0110\xE3 l\u1EA5y xong shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookback_hours=${hours} lookbackSec=${lookbackSec}`
+      `Pull trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookback_hours=${hours}`
     );
-    if (typeof deps15.isOrdersPullLocked === "function" && deps15.isOrdersPullLocked()) {
+    if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {
       sendJson(res, 200, {
         status: 200,
         success: true,
         warning: true,
-        pulled: 0,
-        added: 0,
-        updated: 0,
+        background: true,
         message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
         shopee_response: { skipped: true, reason: "pull_in_flight" }
       });
-      console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
       return;
     }
-    const result = await runOrdersPull({
+    ackBackgroundPull(res, { lookbackSec, mode: "full" });
+    fireOrdersPullInBackground({
       lookbackSec,
       shopIds,
       username,
       jobType: "shopee_orders_pull",
-      logTag: "Orders Pull"
+      logTag: "Orders Pull BG"
     });
-    const httpStatus = resolveSyncHttpStatus(result);
-    const ok = httpStatus === 200;
-    sendJson(res, httpStatus, {
-      status: httpStatus,
-      success: ok,
-      message: ok ? "K\xE9o \u0111\u01A1n ho\xE0n t\u1EA5t" : result?.message || result?.detail_message || "\u0110\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng th\u1EA5t b\u1EA1i",
-      total_success: result?.total_success ?? result?.pulled ?? 0,
-      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
-      pulled: result?.pulled || 0,
-      added: result?.added || 0,
-      updated: result?.updated || 0,
-      shops: result?.shops || 0,
-      errors: Array.isArray(result?.errors) ? result.errors : [],
-      detail_message: result?.detail_message || result?.message || "",
-      jobId: result?.jobId || "",
-      lookbackSec: result?.lookbackSec || lookbackSec,
-      elapsedMs: result?.elapsedMs,
-      shopee_response: result?.shopee_response ?? null
-    });
-    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     return;
   } catch (err) {
-    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
-    console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", err?.stack || err);
-    sendJson(res, 500, {
-      success: false,
-      message: friendlyPullError(err),
-      total_success: 0,
-      failed_orders: [],
-      error: friendlyPullError(err),
-      detail_message: friendlyPullError(err),
-      pulled: 0,
-      added: 0,
-      updated: 0,
-      shopee_response: null
-    });
-    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
+    console.error("[API_SYNC_ERROR] pullOrders:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        message: friendlyPullError(err),
+        background: false
+      });
+    }
     return;
   }
 }
 async function syncOrders(req, res) {
-  console.log("=== B\u1EAET \u0110\u1EA6U PULL ORDERS ===");
+  console.log("=== B\u1EAET \u0110\u1EA6U SYNC ORDERS (BG) ===");
   try {
-    console.log("B\u1EAFt \u0111\u1EA7u l\u1EA5y \u0111\u01A1n");
     const hours = resolveFullSyncLookbackHours(req.body?.lookback_hours ?? req.body?.hours);
     const lookbackSec = Math.floor(hours * 60 * 60);
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     console.log(
-      `\u0110\xE3 l\u1EA5y xong shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookback_hours=${hours}`
+      `Sync trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookback_hours=${hours}`
     );
-    if (typeof deps15.isOrdersPullLocked === "function" && deps15.isOrdersPullLocked()) {
+    if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {
       sendJson(res, 200, {
         status: 200,
         success: true,
         warning: true,
-        pulled: 0,
-        added: 0,
-        updated: 0,
+        background: true,
         message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
         shopee_response: { skipped: true, reason: "pull_in_flight" }
       });
-      console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
       return;
     }
-    const result = await runOrdersPull({
+    ackBackgroundPull(res, { lookbackSec, mode: "full" });
+    fireOrdersPullInBackground({
       lookbackSec,
       shopIds,
       username,
       jobType: "shopee_orders_sync",
-      logTag: "Orders Sync"
+      logTag: "Orders Sync BG"
     });
-    const httpStatus = resolveSyncHttpStatus(result);
-    const ok = httpStatus === 200;
-    sendJson(res, httpStatus, {
-      status: httpStatus,
-      success: ok,
-      message: ok ? "K\xE9o \u0111\u01A1n ho\xE0n t\u1EA5t" : result?.message || result?.detail_message || "\u0110\u1ED3ng b\u1ED9 \u0111\u01A1n h\xE0ng th\u1EA5t b\u1EA1i",
-      total_success: result?.total_success ?? result?.pulled ?? 0,
-      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
-      pulled: result?.pulled || 0,
-      added: result?.added || 0,
-      updated: result?.updated || 0,
-      shops: result?.shops || 0,
-      errors: Array.isArray(result?.errors) ? result.errors : [],
-      detail_message: result?.detail_message || result?.message || "",
-      jobId: result?.jobId || "",
-      lookbackSec: result?.lookbackSec || lookbackSec,
-      elapsedMs: result?.elapsedMs,
-      shopee_response: result?.shopee_response ?? null
-    });
-    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     return;
   } catch (err) {
-    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
-    console.error("[API_SYNC_ERROR] L\u1ED7i chi ti\u1EBFt:", err?.stack || err);
-    sendJson(res, 500, {
-      success: false,
-      message: friendlyPullError(err),
-      total_success: 0,
-      failed_orders: [],
-      error: friendlyPullError(err),
-      detail_message: friendlyPullError(err),
-      pulled: 0,
-      added: 0,
-      updated: 0,
-      shopee_response: null
-    });
-    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
+    console.error("[API_SYNC_ERROR] syncOrders:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        message: friendlyPullError(err),
+        background: false
+      });
+    }
     return;
   }
 }
@@ -106274,7 +106540,7 @@ async function syncShopee(req, res) {
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
-    if (typeof deps15.isOrdersPullLocked === "function" && deps15.isOrdersPullLocked()) {
+    if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {
       sendJson(res, 200, {
         status: 200,
         success: true,
@@ -106289,7 +106555,7 @@ async function syncShopee(req, res) {
       status: 200,
       success: true,
       background: true,
-      message: "\u0110ang \u0111\u1ED3ng b\u1ED9",
+      message: "H\u1EC7 th\u1ED1ng \u0111ang \u0111\u1ED3ng b\u1ED9 ng\u1EA7m",
       mode: isQuick ? "quick_sync" : "full",
       lookbackSec
     });
@@ -106331,80 +106597,50 @@ async function syncShopee(req, res) {
   }
 }
 async function quickSyncOrders(req, res) {
-  console.log("=== B\u1EAET \u0110\u1EA6U QUICK SYNC ORDERS (3h) ===");
+  console.log("=== B\u1EAET \u0110\u1EA6U QUICK SYNC ORDERS (3h BG) ===");
   try {
     const lookbackSec = QUICK_SYNC_LOOKBACK_SEC;
     const shopIdsRaw = req.body?.shop_ids ?? req.body?.shopIds ?? req.body?.shop_id;
     const shopIds = resolvePullShopIds(shopIdsRaw);
     const username = String(req.user?.username || "");
     console.log(
-      `Quick Sync shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookbackSec=${lookbackSec} (3h)`
+      `Quick Sync trigger shop_id${shopIds?.length ? `: [${shopIds.join(",")}]` : ": all"} lookbackSec=${lookbackSec} (3h)`
     );
-    if (typeof deps15.isOrdersPullLocked === "function" && deps15.isOrdersPullLocked()) {
+    if (typeof deps16.isOrdersPullLocked === "function" && deps16.isOrdersPullLocked()) {
       sendJson(res, 200, {
         status: 200,
         success: true,
         warning: true,
-        pulled: 0,
-        added: 0,
-        updated: 0,
+        background: true,
         message: "H\u1EC7 th\u1ED1ng \u0111ang trong qu\xE1 tr\xECnh \u0111\u1ED3ng b\u1ED9 ng\u1EA7m. Vui l\xF2ng \u0111\u1EE3i trong gi\xE2y l\xE1t",
         shopee_response: { skipped: true, reason: "pull_in_flight" },
         lookbackSec,
         mode: "quick_sync"
       });
-      console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
       return;
     }
-    const result = await runOrdersPull({
+    ackBackgroundPull(res, { lookbackSec, mode: "quick_sync" });
+    fireOrdersPullInBackground({
       lookbackSec,
       shopIds,
       username,
       jobType: "shopee_orders_quick_sync",
-      logTag: "Orders Quick Sync",
+      logTag: "Orders Quick Sync BG",
       allowShortLookback: true,
       reconcileActive: false,
       skipCancelReturn: true
     });
-    const httpStatus = resolveSyncHttpStatus(result);
-    const ok = httpStatus === 200;
-    sendJson(res, httpStatus, {
-      status: httpStatus,
-      success: ok,
-      message: ok ? result?.message || "\u0110\u1ED3ng b\u1ED9 nhanh 3h ho\xE0n t\u1EA5t" : result?.message || result?.detail_message || "\u0110\u1ED3ng b\u1ED9 nhanh th\u1EA5t b\u1EA1i",
-      total_success: result?.total_success ?? result?.pulled ?? 0,
-      failed_orders: Array.isArray(result?.failed_orders) ? result.failed_orders : [],
-      pulled: result?.pulled || 0,
-      added: result?.added || 0,
-      updated: result?.updated || 0,
-      shops: result?.shops || 0,
-      errors: Array.isArray(result?.errors) ? result.errors : [],
-      detail_message: result?.detail_message || result?.message || "",
-      jobId: result?.jobId || "",
-      lookbackSec: result?.lookbackSec || lookbackSec,
-      elapsedMs: result?.elapsedMs,
-      mode: "quick_sync",
-      shopee_response: result?.shopee_response ?? null
-    });
-    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
     return;
   } catch (err) {
-    console.log("Shopee Sync API Error: ", JSON.stringify(err?.response?.data || err));
-    console.error("[API_SYNC_ERROR] Quick Sync l\u1ED7i chi ti\u1EBFt:", err?.stack || err);
-    sendJson(res, 500, {
-      success: false,
-      message: friendlyPullError(err),
-      total_success: 0,
-      failed_orders: [],
-      error: friendlyPullError(err),
-      detail_message: friendlyPullError(err),
-      pulled: 0,
-      added: 0,
-      updated: 0,
-      mode: "quick_sync",
-      shopee_response: null
-    });
-    console.log("\u0110\xE3 g\u1EEDi ph\u1EA3n h\u1ED3i v\u1EC1 FE");
+    console.error("[API_SYNC_ERROR] Quick Sync:", err?.stack || err);
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        success: false,
+        message: friendlyPullError(err),
+        mode: "quick_sync",
+        background: false
+      });
+    }
     return;
   }
 }
@@ -106466,8 +106702,8 @@ async function debugReturnByOrder(req, res) {
             listOpts.createTimeFrom = timeFrom;
             listOpts.createTimeTo = timeTo;
           }
-          const listResult = await deps15.shopeeGetReturnList(shopId, accessToken, listOpts);
-          const rows = deps15.extractShopeeReturnListRows(listResult);
+          const listResult = await deps16.shopeeGetReturnList(shopId, accessToken, listOpts);
+          const rows = deps16.extractShopeeReturnListRows(listResult);
           for (const row of rows) {
             if (String(row?.order_sn || "") === orderSn) {
               matchedReturnSn = String(row.return_sn || "");
@@ -106486,11 +106722,11 @@ async function debugReturnByOrder(req, res) {
             pageNo,
             error: listResult.error || null,
             rowCount: rows.length,
-            more: deps15.parseShopeeReturnListMore(listResult),
+            more: deps16.parseShopeeReturnListMore(listResult),
             matched: Boolean(matchedReturnSn)
           });
           if (matchedReturnSn) break;
-          if (!deps15.parseShopeeReturnListMore(listResult) && rows.length < 100) break;
+          if (!deps16.parseShopeeReturnListMore(listResult) && rows.length < 100) break;
           if (rows.length === 0) break;
           pageNo++;
           await sleep2(400);
@@ -106505,13 +106741,13 @@ async function debugReturnByOrder(req, res) {
     let extractedTn = "";
     let trackingSources = {};
     if (matchedReturnSn) {
-      detailRaw = await deps15.shopeeGetReturnDetail(shopId, accessToken, matchedReturnSn);
+      detailRaw = await deps16.shopeeGetReturnDetail(shopId, accessToken, matchedReturnSn);
       console.log(`[DEBUG Return] === RAW get_return_detail return_sn=${matchedReturnSn} ===`);
       console.log(JSON.stringify(detailRaw, null, 2));
-      reverseRaw = await deps15.shopeeGetReverseTrackingInfo(shopId, accessToken, matchedReturnSn);
+      reverseRaw = await deps16.shopeeGetReverseTrackingInfo(shopId, accessToken, matchedReturnSn);
       console.log(`[DEBUG Return] === RAW get_reverse_tracking_info ===`);
       console.log(JSON.stringify(reverseRaw, null, 2));
-      const fetched = await deps15.fetchReturnShippingTrackingNumber(
+      const fetched = await deps16.fetchReturnShippingTrackingNumber(
         shopId,
         accessToken,
         matchedReturnSn,
@@ -106569,8 +106805,8 @@ async function syncFromShop(req, res) {
         message: "shop_id v\xE0 time_range ('all' ho\u1EB7c '24h') l\xE0 b\u1EAFt bu\u1ED9c."
       });
     }
-    const channelSettings = deps15.loadChannelSettings();
-    const connectedShop = deps15.asShopeeArray(channelSettings?.shops).find(
+    const channelSettings = deps16.loadChannelSettings();
+    const connectedShop = deps16.asShopeeArray(channelSettings?.shops).find(
       (shop) => normalizeShopIdKey(shop?.shopId) === normalizeShopIdKey(requestedShopId) && shop?.connected === true
     );
     if (!connectedShop) {
@@ -106607,15 +106843,15 @@ async function syncFromShop(req, res) {
     const shopId = tokenContext.apiShopId;
     const accessToken = tokenContext.token;
     ensureDataDirs();
-    const shopName = String(connectedShop.shopName || "").trim() || deps15.resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
+    const shopName = String(connectedShop.shopName || "").trim() || deps16.resolveConnectedShopDisplayName(shopId) || `Shop ${shopId}`;
     const offset = Math.max(0, Number(req.body?.offset) || 0);
     const requestedSyncTo = Number(req.body?.sync_to);
     const syncTo = Number.isFinite(requestedSyncTo) && requestedSyncTo > 0 ? Math.floor(requestedSyncTo) : Math.floor(Date.now() / 1e3);
     const updateWindow = timeRange === "24h" ? { from: syncTo - 24 * 60 * 60, to: syncTo } : void 0;
     console.log(
-      `[Sync From Shop] platform=shopee shop_id=${shopId} range=${timeRange} offset=${offset} page_size=${deps15.SHOPEE_ITEM_LIST_PAGE_SIZE}`
+      `[Sync From Shop] platform=shopee shop_id=${shopId} range=${timeRange} offset=${offset} page_size=${deps16.SHOPEE_ITEM_LIST_PAGE_SIZE}`
     );
-    const pageResult = await deps15.pullShopeeChannelListingsPage(
+    const pageResult = await deps16.pullShopeeChannelListingsPage(
       shopId,
       accessToken,
       shopName,
@@ -106624,18 +106860,18 @@ async function syncFromShop(req, res) {
     );
     let listingsCount = 0;
     try {
-      await deps15.flushDbWrites();
-      listingsCount = (await deps15.readChannelListingsDb()).length;
+      await deps16.flushDbWrites();
+      listingsCount = (await deps16.readChannelListingsDb()).length;
     } catch {
       listingsCount = pageResult.rowsSaved;
     }
     try {
-      await deps15.refreshCache();
+      await deps16.refreshCache();
     } catch (cacheErr) {
       console.error("[Sync From Shop] refreshCache th\u1EA5t b\u1EA1i:", cacheErr);
     }
     console.log(
-      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 trang offset=${offset}, listingsInDb=${listingsCount} mongo=${deps15.isMongoReady()}`
+      `\u0110\xE3 l\u01B0u DB th\xE0nh c\xF4ng \u2014 trang offset=${offset}, listingsInDb=${listingsCount} mongo=${deps16.isMongoReady()}`
     );
     return res.status(200).json({
       success: true,
@@ -106649,7 +106885,7 @@ async function syncFromShop(req, res) {
       offset: pageResult.currentOffset,
       nextOffset: pageResult.hasMore ? pageResult.nextOffset : null,
       hasMore: pageResult.hasMore,
-      pageSize: deps15.SHOPEE_ITEM_LIST_PAGE_SIZE,
+      pageSize: deps16.SHOPEE_ITEM_LIST_PAGE_SIZE,
       pageStats: pageResult.pageStats,
       savedCount: pageResult.rowsSaved,
       fetchedCount: pageResult.pageStats.rowsInPage,
@@ -106699,7 +106935,7 @@ function resetHeavyJob() {
 }
 
 // controllers/shopeeShipController.js
-var deps16 = {
+var deps17 = {
   loadOrdersForApi: async () => ({ orders: [] }),
   findOrderRecord: () => null,
   arrangeShipment: async () => ({ success: false }),
@@ -106724,15 +106960,15 @@ var deps16 = {
   }
 };
 function initShopeeShipController(partial) {
-  deps16 = { ...deps16, ...partial };
+  deps17 = { ...deps17, ...partial };
 }
 async function shipOrder(req, res) {
   try {
     const { orderId, orderSn, method } = req.body || {};
     const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
-    const loaded = await deps16.loadOrdersForApi();
+    const loaded = await deps17.loadOrdersForApi();
     const orders = loaded.orders;
-    const hit = deps16.findOrderRecord(orders, String(orderId || orderSn || ""));
+    const hit = deps17.findOrderRecord(orders, String(orderId || orderSn || ""));
     if (!hit) {
       return res.status(404).json({ error: "Kh\xF4ng t\xECm th\u1EA5y \u0111\u01A1n h\xE0ng." });
     }
@@ -106741,9 +106977,9 @@ async function shipOrder(req, res) {
     console.log(
       `[Ship Order] Y\xEAu c\u1EA7u chu\u1EA9n b\u1ECB h\xE0ng (${shipMethod}) cho \u0111\u01A1n ${order.orderSn} (channel=${order.channel})...`
     );
-    const result = await deps16.withOperationTimeout(
-      (signal) => deps16.arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
-      deps16.SHIP_ORDER_OPERATION_TIMEOUT_MS,
+    const result = await deps17.withOperationTimeout(
+      (signal) => deps17.arrangeShipment(order, shipMethod, signal, { skipRecover: true }),
+      deps17.SHIP_ORDER_OPERATION_TIMEOUT_MS,
       `Ship order ${order.orderSn}`
     );
     console.log("D\u1EEE LI\u1EC6U SHOPEE TR\u1EA2 V\u1EC0:", JSON.stringify(result));
@@ -106752,7 +106988,7 @@ async function shipOrder(req, res) {
         `[Ship Order] TH\u1EA4T B\u1EA0I cho \u0111\u01A1n ${order.orderSn} -> error="${result.error || ""}" message="${result.message || ""}"`
       );
     }
-    if (result.success || deps16.isAlreadyShippedError(result)) {
+    if (result.success || deps17.isAlreadyShippedError(result)) {
       const tn = String(
         order.trackingNumber || order.tracking_no || result.trackingNumber || orders[index].trackingNumber || ""
       ).trim();
@@ -106769,12 +107005,12 @@ async function shipOrder(req, res) {
         shopId: orders[index].shopId || order.shopId || result.shopId,
         shopee_order_status: order.shopee_order_status === "READY_TO_SHIP" || order.shopee_order_status === "RETRY_SHIP" || !order.shopee_order_status ? "PROCESSED" : order.shopee_order_status || orders[index].shopee_order_status || "PROCESSED"
       };
-      deps16.forceHealPickupOrderIfHasTracking(orders[index]);
-      await deps16.persistOrdersToDatabase(orders, [orders[index]]);
+      deps17.forceHealPickupOrderIfHasTracking(orders[index]);
+      await deps17.persistOrdersToDatabase(orders, [orders[index]]);
       return res.json({ success: true, mode: result.mode, order: orders[index] });
     }
-    if (deps16.isShopeePendingVerificationError(result)) {
-      await deps16.persistPendingShopeeCheckFlag(
+    if (deps17.isShopeePendingVerificationError(result)) {
+      await deps17.persistPendingShopeeCheckFlag(
         orders,
         index,
         result.message || result.error || "Order is pending verification"
@@ -106795,20 +107031,20 @@ async function shipOrder(req, res) {
   }
 }
 async function shipOrderBulk(req, res) {
-  if (typeof deps16.handleShipBulk === "function") {
-    return deps16.handleShipBulk(req, res);
+  if (typeof deps17.handleShipBulk === "function") {
+    return deps17.handleShipBulk(req, res);
   }
   return res.status(500).json({ success: false, message: "ship bulk ch\u01B0a kh\u1EDFi t\u1EA1o" });
 }
 async function fastProcessOrders(req, res) {
-  if (typeof deps16.handleFastProcess === "function") {
-    return deps16.handleFastProcess(req, res);
+  if (typeof deps17.handleFastProcess === "function") {
+    return deps17.handleFastProcess(req, res);
   }
   return res.status(500).json({ success: false, message: "fast-process ch\u01B0a kh\u1EDFi t\u1EA1o" });
 }
 function shipOrderBulkAsync(req, res) {
   try {
-    deps16.pruneOldShipOrderJobs();
+    deps17.pruneOldShipOrderJobs();
     const { orderIds, orderSns, order_ids, order_sns, method } = req.body || {};
     const shipMethod = method === "dropoff" ? "dropoff" : "pickup";
     const idList = [
@@ -106828,8 +107064,8 @@ function shipOrderBulkAsync(req, res) {
       ).size,
       idList.length || snList.length
     );
-    const jobId = deps16.createShipOrderJobId();
-    deps16.shipOrderJobs.set(jobId, {
+    const jobId = deps17.createShipOrderJobId();
+    deps17.shipOrderJobs.set(jobId, {
       id: jobId,
       status: "pending",
       phase: "pending",
@@ -106845,10 +107081,10 @@ function shipOrderBulkAsync(req, res) {
     });
     res.once("finish", () => {
       setImmediate(() => {
-        if (typeof deps16.executeShipOrderBackgroundJob === "function") {
-          void deps16.executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
+        if (typeof deps17.executeShipOrderBackgroundJob === "function") {
+          void deps17.executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList);
         } else {
-          const job = deps16.shipOrderJobs.get(jobId);
+          const job = deps17.shipOrderJobs.get(jobId);
           if (job) {
             job.status = "failed";
             job.error = "executeShipOrderBackgroundJob ch\u01B0a kh\u1EDFi t\u1EA1o";
@@ -106869,8 +107105,8 @@ function shipOrderBulkAsync(req, res) {
   }
 }
 async function getShipOrderJob(req, res) {
-  deps16.pruneOldShipOrderJobs();
-  const job = deps16.shipOrderJobs.get(String(req.params.jobId || ""));
+  deps17.pruneOldShipOrderJobs();
+  const job = deps17.shipOrderJobs.get(String(req.params.jobId || ""));
   if (!job) {
     return res.status(404).json({
       error: "job_not_found",
@@ -106990,11 +107226,11 @@ var import_express15 = __toESM(require_express2(), 1);
 
 // controllers/shopeeAuthController.js
 var APP_ROOT10 = resolveAppRoot3();
-var deps17 = {
+var deps18 = {
   logOAuthSaveError: (ctx, err) => console.error(ctx, err)
 };
 function initShopeeAuthController(partial) {
-  deps17 = { ...deps17, ...partial };
+  deps18 = { ...deps18, ...partial };
 }
 function logShopeeIngress(prefix, req) {
   console.log(
@@ -107047,7 +107283,7 @@ async function oauthComplete(req, res) {
       tokens_path: SHOPEE_TOKENS_PATH
     });
   } catch (error) {
-    deps17.logOAuthSaveError("Shopee OAuth Complete", error);
+    deps18.logOAuthSaveError("Shopee OAuth Complete", error);
     return res.status(500).json({
       success: false,
       error: error?.message || "unknown_error"
@@ -107144,7 +107380,7 @@ async function oauthCallback(req, res) {
 </body></html>`
     );
   } catch (error) {
-    deps17.logOAuthSaveError("Shopee Callback", error);
+    deps18.logOAuthSaveError("Shopee Callback", error);
     saveOAuthAudit({
       callback_shop_id: oauthShopId || mainAccountId || null,
       main_account_id: mainAccountId || null,
@@ -107277,7 +107513,7 @@ var shopeeShipRoutes_default = router17;
 var import_express19 = __toESM(require_express2(), 1);
 
 // controllers/shopeePrintController.js
-var deps18 = {
+var deps19 = {
   printDocumentHandler: null,
   printDocumentJobs: /* @__PURE__ */ new Map(),
   createPrintDocumentJobId: () => `print-${Date.now()}`,
@@ -107285,13 +107521,13 @@ var deps18 = {
   }
 };
 function initShopeePrintController(partial) {
-  deps18 = { ...deps18, ...partial };
+  deps19 = { ...deps19, ...partial };
 }
 async function printDocument(req, res) {
-  if (typeof deps18.printDocumentHandler !== "function") {
+  if (typeof deps19.printDocumentHandler !== "function") {
     return res.status(500).json({ success: false, message: "printDocumentHandler ch\u01B0a kh\u1EDFi t\u1EA1o" });
   }
-  return deps18.printDocumentHandler(req, res);
+  return deps19.printDocumentHandler(req, res);
 }
 async function printDocumentAsync(req, res) {
   try {
@@ -107299,21 +107535,21 @@ async function printDocumentAsync(req, res) {
     if (!Array.isArray(orderIds) || orderIds.length === 0) {
       return res.status(400).json({ error: "Thi\u1EBFu danh s\xE1ch orderIds." });
     }
-    if (typeof deps18.printDocumentHandler !== "function") {
+    if (typeof deps19.printDocumentHandler !== "function") {
       return res.status(500).json({ success: false, message: "printDocumentHandler ch\u01B0a kh\u1EDFi t\u1EA1o" });
     }
-    deps18.pruneOldPrintDocumentJobs();
-    const jobId = deps18.createPrintDocumentJobId();
-    deps18.printDocumentJobs.set(jobId, {
+    deps19.pruneOldPrintDocumentJobs();
+    const jobId = deps19.createPrintDocumentJobId();
+    deps19.printDocumentJobs.set(jobId, {
       id: jobId,
       status: "pending",
       createdAt: Date.now(),
       updatedAt: Date.now()
     });
-    const fakeReq = { body: req.body, printJob: deps18.printDocumentJobs.get(jobId) };
+    const fakeReq = { body: req.body, printJob: deps19.printDocumentJobs.get(jobId) };
     setImmediate(() => {
       void (async () => {
-        const job = deps18.printDocumentJobs.get(jobId);
+        const job = deps19.printDocumentJobs.get(jobId);
         if (!job) return;
         job.status = "running";
         job.updatedAt = Date.now();
@@ -107332,7 +107568,7 @@ async function printDocumentAsync(req, res) {
           }
         };
         try {
-          await deps18.printDocumentHandler(fakeReq, fakeRes);
+          await deps19.printDocumentHandler(fakeReq, fakeRes);
         } catch (err) {
           job.status = "failed";
           job.error = err?.message || String(err);
@@ -107349,8 +107585,8 @@ async function printDocumentAsync(req, res) {
   }
 }
 async function getPrintDocumentJob(req, res) {
-  deps18.pruneOldPrintDocumentJobs();
-  const job = deps18.printDocumentJobs.get(String(req.params.jobId || ""));
+  deps19.pruneOldPrintDocumentJobs();
+  const job = deps19.printDocumentJobs.get(String(req.params.jobId || ""));
   if (!job) {
     return res.status(404).json({
       error: "job_not_found",
@@ -107418,7 +107654,7 @@ router22.get("/prints/:filename", handlePublicLabelGet);
 var labelsRoutes_default = router22;
 
 // controllers/shopeeWebhookController.js
-var deps19 = {
+var deps20 = {
   parseShopeePushEvent: () => ({}),
   SHOPEE_WEBHOOK_ORDER_STATUSES: /* @__PURE__ */ new Set(),
   isLogisticsHandedToCarrier: () => false,
@@ -107446,7 +107682,7 @@ var deps19 = {
   listShopeeOAuthShopIds: () => []
 };
 function initShopeeWebhookController(partial) {
-  deps19 = { ...deps19, ...partial };
+  deps20 = { ...deps20, ...partial };
 }
 var WEBHOOK_PROCESS_TIMEOUT_MS = 4e4;
 async function loadWorkingOrdersForWebhook(orderSn) {
@@ -107460,9 +107696,9 @@ async function loadWorkingOrdersForWebhook(orderSn) {
     seen.add(key);
     orders.push(row);
   };
-  if (deps19.isMongoReady()) {
+  if (deps20.isMongoReady()) {
     try {
-      const mongoRows = await deps19.loadOrdersFromStore({ orderSns: [sn] });
+      const mongoRows = await deps20.loadOrdersFromStore({ orderSns: [sn] });
       for (const row of Array.isArray(mongoRows) ? mongoRows : []) pushUnique(row);
       return orders;
     } catch (err) {
@@ -107473,7 +107709,7 @@ async function loadWorkingOrdersForWebhook(orderSn) {
     }
   }
   try {
-    const jsonRows = deps19.loadOrders() || [];
+    const jsonRows = deps20.loadOrders() || [];
     for (const row of jsonRows) {
       if (String(row?.orderSn || "").trim() === sn) pushUnique(row);
     }
@@ -107487,7 +107723,7 @@ async function upsertOrderToDb(order, label = "") {
     console.log("\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:", "th\u1EA5t b\u1EA1i \u2014 thi\u1EBFu orderSn");
     return false;
   }
-  if (!deps19.isMongoReady()) {
+  if (!deps20.isMongoReady()) {
     console.warn(
       `[Shopee Webhook] Mongo ch\u01B0a s\u1EB5n s\xE0ng \u2014 b\u1ECF qua upsert order_sn=${order.orderSn}`
     );
@@ -107495,7 +107731,7 @@ async function upsertOrderToDb(order, label = "") {
     return false;
   }
   try {
-    await deps19.bulkUpsertOrdersToStore([order]);
+    await deps20.bulkUpsertOrdersToStore([order]);
     console.log(
       `[DB UPDATED] ${label ? `(${label}) ` : ""}order_sn=${order.orderSn} shop_id=${order.shopId || "?"} status=${order.shopee_order_status || order.status || "?"} \u2014 upsert OK`
     );
@@ -107504,7 +107740,7 @@ async function upsertOrderToDb(order, label = "") {
       `th\xE0nh c\xF4ng \u2014 order_sn=${order.orderSn} shop_id=${order.shopId || "?"} label=${label || "webhook"}`
     );
     try {
-      deps19.queueOrdersJsonMirrorFromMongo();
+      deps20.queueOrdersJsonMirrorFromMongo();
     } catch {
     }
     return true;
@@ -107701,7 +107937,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     const fromOrder = resolveShopeeTokenShopId(orders[0]?.shopId) || orders[0]?.shopId;
     pushShop(fromOrder);
     try {
-      for (const id of deps19.listShopeeOAuthShopIds() || []) pushShop(id);
+      for (const id of deps20.listShopeeOAuthShopIds() || []) pushShop(id);
     } catch (listErr) {
       console.warn(
         "[Shopee Webhook] listShopeeOAuthShopIds failed:",
@@ -107737,7 +107973,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
     let normalized = [];
     let errors = [];
     try {
-      const chunk = await deps19.fetchNormalizeShopeeOrderChunk(
+      const chunk = await deps20.fetchNormalizeShopeeOrderChunk(
         apiShopId,
         accessToken,
         fileKey,
@@ -107757,7 +107993,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
           const refreshed = await refreshShopeeAccessTokenLocked(fileKey, { force: true });
           if (refreshed) {
             accessToken = refreshed;
-            const retry2 = await deps19.fetchNormalizeShopeeOrderChunk(
+            const retry2 = await deps20.fetchNormalizeShopeeOrderChunk(
               apiShopId,
               accessToken,
               fileKey,
@@ -107803,7 +108039,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
       `th\xE0nh c\xF4ng \u2014 order_sn=${orderSn} shop=${apiShopId} status=${normalized[0]?.shopee_order_status || normalized[0]?.status || "?"} tn=${normalized[0]?.trackingNumber || "\u2014"}`
     );
     try {
-      await deps19.persistShopeeOrderChunk(orders, normalized, {
+      await deps20.persistShopeeOrderChunk(orders, normalized, {
         apiShopId,
         accessToken,
         skipTracking: true
@@ -107855,7 +108091,7 @@ async function fetchDetailAndUpsert(orderSn, preferredShopId, orders) {
   if (payloadShopId) {
     const fallbackShops = [];
     try {
-      for (const id of deps19.listShopeeOAuthShopIds() || []) {
+      for (const id of deps20.listShopeeOAuthShopIds() || []) {
         const s2 = String(id || "").trim();
         if (s2 && s2 !== payloadShopId && !fallbackShops.includes(s2)) fallbackShops.push(s2);
       }
@@ -107897,13 +108133,13 @@ async function processShopeeWebhookPayloadInner(body) {
     JSON.stringify(body)
   );
   if (String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0") {
-    const peek = deps19.parseShopeePushEvent(body);
+    const peek = deps20.parseShopeePushEvent(body);
     console.log(
       `[Shopee Webhook] IGNORED (disabled) order_sn=${peek.orderSn || "?"} code=${peek.code}`
     );
     return;
   }
-  const parsed = deps19.parseShopeePushEvent(body);
+  const parsed = deps20.parseShopeePushEvent(body);
   const extracted = extractOrderSnAndShopId(body, parsed);
   const orderSn = extracted.orderSn;
   let shopId = extracted.shopId;
@@ -107957,7 +108193,7 @@ async function processShopeeWebhookPayloadInner(body) {
         `[Shopee Webhook] Fallback shallow normalize order_sn=${orderSn} (detail ch\u01B0a l\u1EA5y \u0111\u01B0\u1EE3c)`
       );
       try {
-        await deps19.upsertShopeeWebhookShallow(body, orders);
+        await deps20.upsertShopeeWebhookShallow(body, orders);
         console.log("\u{1F4BE} K\u1EBFt qu\u1EA3 l\u01B0u DB:", `shallow fallback \u0111\xE3 g\u1ECDi \u2014 order_sn=${orderSn}`);
       } catch (shallowErr) {
         console.error(
@@ -107974,7 +108210,7 @@ async function processShopeeWebhookPayloadInner(body) {
     let idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
     if (idx < 0 && (parsed.trackingNo || parsed.status || orderSn)) {
       try {
-        await deps19.upsertShopeeWebhookShallow(body, orders);
+        await deps20.upsertShopeeWebhookShallow(body, orders);
       } catch {
       }
       idx = orders.findIndex((o) => String(o.orderSn) === orderSn);
@@ -107984,22 +108220,22 @@ async function processShopeeWebhookPayloadInner(body) {
         orders[idx].trackingNumber || orders[idx].tracking_no || ""
       );
       try {
-        deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
+        deps20.applyShopeePushFieldsToOrder(orders[idx], parsed);
       } catch (applyErr) {
         console.warn(
           `[Shopee Webhook] applyShopeePushFieldsToOrder:`,
           applyErr?.message || applyErr
         );
       }
-      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps19.hasUsableShopeeTrackingNumber(orders[idx]))) {
+      if (shopId && accessToken && (parsed.eventKind === "tracking_no_update" || parsed.eventKind === "shipping_document" || parsed.eventKind === "package_update" || !deps20.hasUsableShopeeTrackingNumber(orders[idx]))) {
         try {
-          await deps19.enrichShopeeOrderTrackingFromApi(
+          await deps20.enrichShopeeOrderTrackingFromApi(
             shopId,
             accessToken,
             orders[idx],
             { retries: 1, light: true }
           );
-          deps19.applyShopeePushFieldsToOrder(orders[idx], parsed);
+          deps20.applyShopeePushFieldsToOrder(orders[idx], parsed);
         } catch (trackErr) {
           console.warn(
             `[Shopee Webhook] Force get_tracking_number ${orderSn}:`,
@@ -108027,7 +108263,7 @@ async function processShopeeWebhookPayloadInner(body) {
     const needReturnFallback = parsed.eventKind === "return_refund" || Boolean(parsed.returnSn) || parsed.status === "TO_RETURN" || orderAfter != null && String(orderAfter.shopee_order_status || "").toUpperCase() === "TO_RETURN" || orderAfter != null && (orderAfter.status === "return_pending" || orderAfter.status === "return_received");
     if (needReturnFallback && shopId && accessToken) {
       try {
-        await deps19.applyWebhookReturnFallback(
+        await deps20.applyWebhookReturnFallback(
           shopId,
           accessToken,
           orderSn,
@@ -109778,6 +110014,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
       "Pull START",
       `shops=${shopIds.length} ids=[${shopIds.join(",")}] lookback=${lookbackSec}s short=${shortLookback} deadline=${pullDeadlineMs}ms perShop=${perShopBudgetMs}ms maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap} enrichTracking=${enrichTracking3} longLookback=${longLookback}`
     );
+    console.log(
+      `[Orders Pull] B\u1EAFt \u0111\u1EA7u ch\u1EA1y ti\u1EBFn tr\xECnh ng\u1EA7m \u2014 shops=${shopIds.length} lookbackSec=${lookbackSec}`
+    );
     for (const shopId of shopIds) {
       try {
         await yieldToLogisticsIfBusy(12e3);
@@ -110030,6 +110269,9 @@ async function pullIncrementalOrdersFromShopee(opts) {
     syncDiag(
       "Pull DONE",
       `${message} success=${success} errors=${errors.length} hard=${hardErrors.length} failed=${failed_orders.length} truncatedShops=${truncatedShops}`
+    );
+    console.log(
+      `[Orders Pull] S\u1ED1 l\u01B0\u1EE3ng l\u1EA5y \u0111\u01B0\u1EE3c t\u1EEB S\xE0n \u2014 pulled=${pulled} +${added}/~${updated} success=${success} elapsedMs=${elapsedMs}`
     );
     return {
       success,
@@ -115240,7 +115482,9 @@ function scheduleShopeeCancelReturnReconcile() {
   console.log("[CancelReturn Cron] Scheduler OFF \u2014 ch\u1EC9 webhook + n\xFAt L\xE0m m\u1EDBi.");
 }
 function scheduleAutoIncrementalOrdersSyncSafe() {
-  console.log("[CRON] Auto Incremental Sync OFF \u2014 ch\u1EC9 webhook + n\xFAt L\xE0m m\u1EDBi.");
+  scheduleAutoIncrementalOrdersSync({
+    lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 2 * 60 * 60
+  });
 }
 function isShopeeOrderPreparedForPrint(order) {
   if (order?.isPrepared === true) return true;
@@ -116021,13 +116265,31 @@ async function persistShopeeOrderChunk(orders, batchNormalized, syncCtx) {
       continue;
     }
   }
+  const newlyAddedForPdf = [];
   if (touched.length > 0) {
     if (!isMongoReady()) throw new Error("mongodb_not_ready");
+    console.log(`[Orders Sync] Tr\u1EA1ng th\xE1i ch\u1EA1y BulkWrite \u2014 ops=${touched.length}`);
     const mongoN = await bulkUpsertOrdersToStore(touched);
     queueOrdersJsonMirrorFromMongo();
     console.log(
       `[DB UPDATED] Mongo bulkWrite OK \u2014 batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o) => o.orderSn).join(",")}`
     );
+    for (const row of touched) {
+      const sn = String(row?.orderSn || "").trim();
+      if (!sn) continue;
+      const raw = String(row?.shopee_order_status || "").toUpperCase();
+      const printable = raw === "PROCESSED" || raw === "READY_TO_SHIP" || raw === "RETRY_SHIP" || Boolean(row?.packageNumber || row?.package_number) || Boolean(row?.trackingNumber || row?.tracking_no);
+      const hasPdfAlready = row?.hasPdf === true || Boolean(String(row?.labelUrl || row?.pdfUrl || row?.pdfFilename || "").trim());
+      if (printable && !hasPdfAlready) {
+        newlyAddedForPdf.push(row);
+      }
+    }
+    if (newlyAddedForPdf.length > 0) {
+      console.log(
+        `[Orders Sync] \u0110\u1EA9y v\xE0o h\xE0ng \u0111\u1EE3i t\u1EA3i PDF \u2014 n=${newlyAddedForPdf.length} sns=[${newlyAddedForPdf.map((o) => o.orderSn).join(",")}]`
+      );
+      enqueueLabelPdfDownload(newlyAddedForPdf);
+    }
   }
   if (syncCtx && touched.length > 0) {
     const PRIORITY_RAW = /* @__PURE__ */ new Set([
@@ -118274,6 +118536,13 @@ async function startServer() {
     isOrdersPullLocked,
     SHOPEE_ITEM_LIST_PAGE_SIZE
   });
+  initOrderSyncService({
+    pullIncrementalOrdersFromShopee,
+    createSyncJob,
+    finishSyncJob,
+    invalidateOrdersRefreshCache,
+    isOrdersPullLocked
+  });
   initShopeeProductsController({
     isProductsDiskMode,
     isMongoReady,
@@ -119360,6 +119629,7 @@ async function startServer() {
   function fireCreateShippingDocumentsForOrders(items) {
     firePrepareShippingLabelsForOrders(items);
   }
+  registerLabelPdfDownloader(firePrepareShippingLabelsForOrders);
   async function executeShipOrderBackgroundJob(jobId, shipMethod, idList, snList) {
     pruneOldShipOrderJobs();
     const job = shipOrderJobs.get(jobId);
@@ -120136,7 +120406,7 @@ async function startServer() {
         scheduleAutoIncrementalOrdersSyncSafe();
       }
       console.log(
-        `[MongoDB] connectDB xong \u2014 ready=${isMongoReady()} uri=${getMongoUriMasked()} | background sync=OFF`
+        `[MongoDB] connectDB xong \u2014 ready=${isMongoReady()} uri=${getMongoUriMasked()} | background order sync=ON (cron)`
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -120145,7 +120415,7 @@ async function startServer() {
     }
   }
   function startListening() {
-    console.log("[Orders] \u0110\u1ED3ng b\u1ED9 tr\u1EA1ng th\xE1i ch\u1EC9 nh\u1EADn t\u1EEB Shopee Webhook.");
+    console.log("[Orders] Background Sync & BulkWrite \u2014 cron + webhook + n\xFAt \u0110\u1ED3ng b\u1ED9 (ACK).");
     const onReady = () => {
       resetHeavyJob();
       console.log("[Boot] Heavy-job lock reset.");
@@ -120161,8 +120431,8 @@ async function startServer() {
       }
       console.log(`[MongoDB] listen OK \u2014 connecting DB in background (ready=${isMongoReady()})`);
       void connectDB2();
-      console.log("[Boot] Order sync: webhook ON + manual refresh ONLY \u2014 all background intervals OFF.");
-      console.log("[Boot] Recovery pull OFF | Tracking enrich cron OFF | CancelReturn cron OFF | Auto sync cron OFF.");
+      console.log("[Boot] Order sync: webhook ON + manual trigger (BG) + cron incremental ON.");
+      console.log("[Boot] Recovery pull OFF | Tracking enrich cron OFF | CancelReturn cron OFF.");
       console.log("[Labels Cleanup] setInterval OFF \u2014 one-shot boot cleanup only.");
       console.log(
         `[Shopee Webhook] orders write ${String(process.env.SHOPEE_WEBHOOK_ORDERS_ENABLED || "1").trim() === "0" ? "OFF (disabled)" : "ON"}`

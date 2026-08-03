@@ -4,7 +4,12 @@ import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import { PDFDocument } from "pdf-lib";
-// cron auto-sync: TẮT — không import scheduleAutoIncrementalOrdersSync.
+import { scheduleAutoIncrementalOrdersSync } from "./cron/index.js";
+import {
+  initOrderSyncService,
+  registerLabelPdfDownloader,
+  enqueueLabelPdfDownload,
+} from "./services/orderSync/index.js";
 import { createShopeeWebhookRouter } from "./src/webhooks/shopeeWebhookHandler.ts";
 import { enrichOrdersFromCatalog } from "./src/utils/orderItemVariation.ts";
 import { inferShippingCarrierLabel } from "./src/utils/shippingCarrier.ts";
@@ -2627,6 +2632,9 @@ async function pullIncrementalOrdersFromShopee(opts?: {
         ` maxSn=${maxOrderSnsPerShop} hardCap=${pageHardCap}` +
         ` enrichTracking=${enrichTracking} longLookback=${longLookback}`,
     );
+    console.log(
+      `[Orders Pull] Bắt đầu chạy tiến trình ngầm — shops=${shopIds.length} lookbackSec=${lookbackSec}`,
+    );
 
     // TUẦN TỰ từng shop — CẤM mapWithConcurrency đa shop khi cùng mutate `orders`
     // (unshift/findIndex song song → race → crash/HTTP 500 HTML).
@@ -2928,6 +2936,10 @@ async function pullIncrementalOrdersFromShopee(opts?: {
     syncDiag(
       "Pull DONE",
       `${message} success=${success} errors=${errors.length} hard=${hardErrors.length} failed=${failed_orders.length} truncatedShops=${truncatedShops}`,
+    );
+    console.log(
+      `[Orders Pull] Số lượng lấy được từ Sàn — pulled=${pulled} +${added}/~${updated}` +
+        ` success=${success} elapsedMs=${elapsedMs}`,
     );
     return {
       success,
@@ -10055,9 +10067,11 @@ function scheduleShopeeCancelReturnReconcile(): void {
   console.log("[CancelReturn Cron] Scheduler OFF — chỉ webhook + nút Làm mới.");
 }
 
-/** TẮT hẳn auto incremental cron — không kéo đơn ngầm. */
+/** Auto incremental cron — node-cron mỗi 5 phút (lookback ~2h). Tắt: AUTO_ORDER_SYNC_CRON=0 */
 function scheduleAutoIncrementalOrdersSyncSafe(): void {
-  console.log("[CRON] Auto Incremental Sync OFF — chỉ webhook + nút Làm mới.");
+  scheduleAutoIncrementalOrdersSync({
+    lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 2 * 60 * 60,
+  });
 }
 
 /**
@@ -11466,13 +11480,42 @@ async function persistShopeeOrderChunk(
 
   // Mongo bulkWrite hoàn tất trước; orders.json mirror từ Mongo (tránh webhook
   // truyền working-set 1 đơn rồi ghi đè mất toàn bộ JSON).
+  // CẤM for...await save/findOneAndUpdate từng đơn — chỉ bulkWrite 1 lần / lô.
+  const newlyAddedForPdf: any[] = [];
   if (touched.length > 0) {
     if (!isMongoReady()) throw new Error("mongodb_not_ready");
+    console.log(`[Orders Sync] Trạng thái chạy BulkWrite — ops=${touched.length}`);
     const mongoN = await bulkUpsertOrdersToStore(touched);
     queueOrdersJsonMirrorFromMongo();
     console.log(
       `[DB UPDATED] Mongo bulkWrite OK — batch=${touched.length} written=${mongoN} (+${added}/~${updated}) order_sn=${touched.map((o) => o.orderSn).join(",")}`,
     );
+
+    // Đơn mới (hoặc cập nhật thiếu PDF) → hàng đợi tải PDF ngầm (In siêu tốc).
+    for (const row of touched) {
+      const sn = String(row?.orderSn || "").trim();
+      if (!sn) continue;
+      const raw = String(row?.shopee_order_status || "").toUpperCase();
+      const printable =
+        raw === "PROCESSED" ||
+        raw === "READY_TO_SHIP" ||
+        raw === "RETRY_SHIP" ||
+        Boolean(row?.packageNumber || row?.package_number) ||
+        Boolean(row?.trackingNumber || row?.tracking_no);
+      const hasPdfAlready =
+        row?.hasPdf === true ||
+        Boolean(String(row?.labelUrl || row?.pdfUrl || row?.pdfFilename || "").trim());
+      if (printable && !hasPdfAlready) {
+        newlyAddedForPdf.push(row);
+      }
+    }
+    if (newlyAddedForPdf.length > 0) {
+      console.log(
+        `[Orders Sync] Đẩy vào hàng đợi tải PDF — n=${newlyAddedForPdf.length}` +
+          ` sns=[${newlyAddedForPdf.map((o) => o.orderSn).join(",")}]`,
+      );
+      enqueueLabelPdfDownload(newlyAddedForPdf);
+    }
   }
 
   // ——— BƯỚC 2: tracking tuần tự ———
@@ -14827,6 +14870,15 @@ async function startServer() {
     isOrdersPullLocked,
     SHOPEE_ITEM_LIST_PAGE_SIZE,
   });
+
+  // Background Sync Service — cron + trigger API dùng chung.
+  initOrderSyncService({
+    pullIncrementalOrdersFromShopee,
+    createSyncJob,
+    finishSyncJob,
+    invalidateOrdersRefreshCache,
+    isOrdersPullLocked,
+  });
   initShopeeProductsController({
     isProductsDiskMode,
     isMongoReady,
@@ -16174,6 +16226,9 @@ async function startServer() {
     firePrepareShippingLabelsForOrders(items);
   }
 
+  // Sync Service / cron / webhook → cùng hàng đợi PDF ngầm.
+  registerLabelPdfDownloader(firePrepareShippingLabelsForOrders);
+
   /**
    * Background ship job — chỉ xác nhận (ship_order), không ghép PDF.
    * Kết quả qua job map để FE poll loading 0/N → N/N.
@@ -17069,15 +17124,14 @@ async function startServer() {
       const ok = await initMongo(APP_ROOT);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
-        // TẮT toàn bộ background intervals / auto-sync / retention cron (process leak cPanel).
-        // Kéo đơn CHỈ qua: Shopee webhook real-time HOẶC nút Làm mới thủ công.
+        // Tracking/cancel cron vẫn OFF (tránh process leak). Order incremental sync ON (5 phút).
         scheduleMissingShopeeTrackingEnrichment(); // no-op OFF
         scheduleShopeeCancelReturnReconcile(); // no-op OFF
-        scheduleAutoIncrementalOrdersSyncSafe(); // no-op OFF
+        scheduleAutoIncrementalOrdersSyncSafe(); // node-cron incremental ~2h / 5 phút
         // KHÔNG gọi scheduleClosedOrdersRetentionCleanup / scheduleMongoTempCollectionsCleanup.
       }
       console.log(
-        `[MongoDB] connectDB xong — ready=${isMongoReady()} uri=${getMongoUriMasked()} | background sync=OFF`,
+        `[MongoDB] connectDB xong — ready=${isMongoReady()} uri=${getMongoUriMasked()} | background order sync=ON (cron)`,
       );
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -17090,7 +17144,7 @@ async function startServer() {
    * cPanel / Phusion Passenger: BẮT BUỘC listen NGAY — không await DB trước listen.
    */
   function startListening(): void {
-    console.log("[Orders] Đồng bộ trạng thái chỉ nhận từ Shopee Webhook.");
+    console.log("[Orders] Background Sync & BulkWrite — cron + webhook + nút Đồng bộ (ACK).");
 
     const onReady = () => {
       resetHeavyJob();
@@ -17112,10 +17166,9 @@ async function startServer() {
       // DB non-blocking: fire-and-forget sau khi port đã mở
       void connectDB();
 
-      // Sync đơn: CHỈ webhook real-time + nút Làm mới (POST /api/orders/pull|sync).
-      // KHÔNG recovery pull / KHÔNG setInterval / KHÔNG cron auto-sync khi boot.
-      console.log("[Boot] Order sync: webhook ON + manual refresh ONLY — all background intervals OFF.");
-      console.log("[Boot] Recovery pull OFF | Tracking enrich cron OFF | CancelReturn cron OFF | Auto sync cron OFF.");
+      // Sync đơn: webhook + nút Đồng bộ (ACK) + cron incremental 5 phút.
+      console.log("[Boot] Order sync: webhook ON + manual trigger (BG) + cron incremental ON.");
+      console.log("[Boot] Recovery pull OFF | Tracking enrich cron OFF | CancelReturn cron OFF.");
       console.log("[Labels Cleanup] setInterval OFF — one-shot boot cleanup only.");
       console.log(
         `[Shopee Webhook] orders write ${
