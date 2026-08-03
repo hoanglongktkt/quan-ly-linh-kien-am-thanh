@@ -526,9 +526,10 @@ interface OrderManagerProps {
     bustCache?: boolean;
     limit?: number;
     merge?: boolean;
+    page?: number;
     /** `printed` | `unprinted` — lọc theo isPrinted từ Mongo (không gọi Shopee). */
     print_status?: 'printed' | 'unprinted' | 'all' | '';
-    /** Tab SSOT — cùng filter với /api/order-counts. */
+    /** Tab SSOT — cùng filter với /api/orders/counter. */
     tab?: string;
     force?: boolean;
   }) => Promise<void> | void;
@@ -690,12 +691,16 @@ export default function OrderManager({
   const [cancelReturnTab, setCancelReturnTab] = useState<CancelReturnTab>(() => readStoredCancelTab());
   const [selectedShopId, setSelectedShopId] = useState<string>('all');
 
-  // Nút "Làm mới" / "Đồng bộ nhanh": POST /api/sync-shopee (ACK ngay) → polling DB.
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  // Sync = background job; FE chỉ ACK + lock nút + toast (không đổi text nút).
+  const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [serverOrderCounts, setServerOrderCounts] = useState<Record<string, number> | null>(null);
+  const [hasNewOrders, setHasNewOrders] = useState(false);
   const syncPollTimerRef = useRef<number | null>(null);
+  const counterPollTimerRef = useRef<number | null>(null);
+  const countsFingerprintRef = useRef<string>('');
+  const isSyncingRef = useRef(false);
   /** Pull-to-refresh (mobile): vuốt từ trên xuống để fetch lại đơn. */
   const [pullDistance, setPullDistance] = useState(0);
   const [isPullRefreshing, setIsPullRefreshing] = useState(false);
@@ -707,85 +712,138 @@ export default function OrderManager({
     setTimeout(() => setToastMessage(null), durationMs);
   };
 
-  const fetchOrderCounts = useCallback(async () => {
+  const fingerprintCounts = (counts: Record<string, number>) =>
+    [
+      'all',
+      'pending_confirm',
+      'unprocessed',
+      'processed',
+      'shipping',
+      'handed_over_carrier',
+      'cancel_returns',
+      'received_cancel_returns',
+    ]
+      .map((k) => `${k}:${Number(counts[k]) || 0}`)
+      .join('|');
+
+  const fetchOrderCounts = useCallback(async (): Promise<Record<string, number> | null> => {
     const token = localStorage.getItem('admin_token') || '';
-    if (!token) return;
+    if (!token) return null;
     try {
       const qs =
         selectedShopId && selectedShopId !== 'all'
           ? `?shop_id=${encodeURIComponent(String(selectedShopId))}`
           : '';
-      const res = await fetch(`/api/order-counts${qs}`, {
+      const res = await fetch(`/api/orders/counter${qs}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json().catch(() => ({} as Record<string, unknown>));
       if (res.ok && json?.success && json?.counts && typeof json.counts === 'object') {
-        setServerOrderCounts(json.counts as Record<string, number>);
+        const counts = json.counts as Record<string, number>;
+        setServerOrderCounts(counts);
+        return counts;
       }
     } catch (err) {
       console.warn('[OrderCounts] fetch failed:', err);
     }
+    return null;
   }, [selectedShopId]);
 
-  /** Sau sync nền: poll DB mỗi 4s trong ~20s để thấy đơn mới + SHIPPED chuyển tab. */
+  const refetchOrdersPage = useCallback(
+    (opts?: { silent?: boolean }) => {
+      setHasNewOrders(false);
+      void onFetchOrders?.({
+        silent: opts?.silent !== false,
+        bustCache: true,
+        force: true,
+        page: 1,
+        limit: 50,
+        merge: false,
+        tab: activeSubTab === 'cancel_returns' || activeSubTab === 'all' ? '' : activeSubTab,
+      });
+      void fetchOrderCounts();
+    },
+    [activeSubTab, fetchOrderCounts, onFetchOrders],
+  );
+
+  /** Sau sync nền: chỉ poll counter nhẹ — không kéo 150–400 đơn + merge. */
   const startSyncPolling = useCallback(() => {
     if (syncPollTimerRef.current != null) {
       window.clearInterval(syncPollTimerRef.current);
       syncPollTimerRef.current = null;
     }
-    const resolvePollLimit = (): number => {
-      // Không lọc theo tab hiện tại — phải kéo cả shipping để đơn SHIPPED rời ĐVVC/Đã xử lý.
-      if (selectedShopId === 'all') return 400;
-      return 250;
-    };
-    const pollOnce = () => {
-      const pollLimit = resolvePollLimit();
-      void onFetchOrders?.({
-        silent: true,
-        bustCache: true,
-        limit: pollLimit,
-        merge: true,
-        // CẤM tab filter — tránh cache kẹt PROCESSED khi Mongo đã SHIPPED.
-        tab: '',
-      });
-      void fetchOrderCounts();
-    };
     let ticks = 0;
-    const maxTicks = 5;
+    const maxTicks = 8; // ~2 phút @ 15s
+    const pollOnce = async () => {
+      const counts = await fetchOrderCounts();
+      if (!counts) return;
+      const fp = fingerprintCounts(counts);
+      if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
+        countsFingerprintRef.current = fp;
+        // Có thay đổi sau sync → tự làm mới trang 1 (limit 50, replace).
+        refetchOrdersPage({ silent: true });
+        showToast('Đã có đơn mới — đã làm mới danh sách', 3500);
+      } else if (!countsFingerprintRef.current) {
+        countsFingerprintRef.current = fp;
+      }
+    };
     syncPollTimerRef.current = window.setInterval(() => {
       ticks += 1;
-      pollOnce();
+      void pollOnce();
       if (ticks >= maxTicks) {
         if (syncPollTimerRef.current != null) {
           window.clearInterval(syncPollTimerRef.current);
           syncPollTimerRef.current = null;
         }
-        setIsRefreshing(false);
-        setLastSyncSummary('Đã làm mới danh sách từ DB nội bộ');
-        showToast('Đồng bộ hoàn tất — đã cập nhật danh sách', 4000);
+        setLastSyncSummary('Đồng bộ ngầm hoàn tất');
       }
-    }, 4000);
-    // Refresh lần đầu sau 1.5s (đơn có thể đã upsert sớm)
+    }, 15_000);
     window.setTimeout(() => {
-      pollOnce();
-    }, 1500);
-  }, [onFetchOrders, fetchOrderCounts, selectedShopId]);
+      void pollOnce();
+    }, 2000);
+  }, [fetchOrderCounts, refetchOrdersPage]);
 
   useEffect(() => {
     return () => {
       if (syncPollTimerRef.current != null) {
         window.clearInterval(syncPollTimerRef.current);
       }
+      if (counterPollTimerRef.current != null) {
+        window.clearInterval(counterPollTimerRef.current);
+      }
     };
   }, []);
 
+  /** Polling counter định kỳ 20s — badge nhảy nhanh; list chỉ refetch khi user bấm hoặc sync phát hiện đổi. */
   useEffect(() => {
-    void fetchOrderCounts();
+    void (async () => {
+      const counts = await fetchOrderCounts();
+      if (counts) countsFingerprintRef.current = fingerprintCounts(counts);
+    })();
+    if (counterPollTimerRef.current != null) {
+      window.clearInterval(counterPollTimerRef.current);
+    }
+    counterPollTimerRef.current = window.setInterval(async () => {
+      const counts = await fetchOrderCounts();
+      if (!counts) return;
+      const fp = fingerprintCounts(counts);
+      if (countsFingerprintRef.current && countsFingerprintRef.current !== fp) {
+        setHasNewOrders(true);
+      }
+      if (fp) countsFingerprintRef.current = fp;
+    }, 20_000);
+    return () => {
+      if (counterPollTimerRef.current != null) {
+        window.clearInterval(counterPollTimerRef.current);
+        counterPollTimerRef.current = null;
+      }
+    };
   }, [fetchOrderCounts]);
 
   const triggerShopeeSync = async (mode: 'full' | 'quick') => {
-    if (isRefreshing) return;
-    setIsRefreshing(true);
+    if (isSyncingRef.current || isSyncing) return;
+    isSyncingRef.current = true;
+    setIsSyncing(true);
     try {
       const token = localStorage.getItem('admin_token') || '';
       const body: Record<string, unknown> = {
@@ -796,8 +854,8 @@ export default function OrderManager({
         body.shop_ids = [String(selectedShopId)];
       }
       console.log(`[Orders Sync] → POST /api/sync-shopee mode=${mode}`);
-      showToast('Hệ thống đang đồng bộ ngầm', 8000);
-      setLastSyncSummary('Hệ thống đang đồng bộ ngầm');
+      showToast('Đang đồng bộ ngầm...', 8000);
+      setLastSyncSummary('Đang đồng bộ ngầm...');
       const syncRes = await fetch('/api/sync-shopee', {
         method: 'POST',
         headers: {
@@ -814,8 +872,10 @@ export default function OrderManager({
         );
         setLastSyncSummary(warnMsg);
         showToast(warnMsg, 7000);
-        setIsRefreshing(false);
-        void onFetchOrders?.({ silent: true, bustCache: true });
+        window.setTimeout(() => {
+          isSyncingRef.current = false;
+          setIsSyncing(false);
+        }, 4000);
         void fetchOrderCounts();
         return;
       }
@@ -825,12 +885,12 @@ export default function OrderManager({
         );
         setLastSyncSummary(`Đồng bộ thất bại: ${errMsg}`);
         showToast(errMsg, 7000);
-        setIsRefreshing(false);
+        isSyncingRef.current = false;
+        setIsSyncing(false);
         return;
       }
-      setLastSyncSummary('Hệ thống đang đồng bộ ngầm');
-      showToast('Hệ thống đang đồng bộ ngầm', 5000);
-      // Fire-and-forget enrich tracking
+      setLastSyncSummary('Đang đồng bộ ngầm...');
+      showToast('Đang đồng bộ ngầm...', 5000);
       void fetch('/api/orders/enrich-tracking', {
         method: 'POST',
         headers: {
@@ -839,28 +899,18 @@ export default function OrderManager({
         },
         body: JSON.stringify({ max: 120 }),
       }).catch(() => {});
-      // Đọc DB ngay + poll chờ đơn mới từ sync nền (limit cao hơn khi xem Tất cả)
-      const immediateLimit =
-        selectedShopId === 'all'
-          ? activeSubTab === 'unprocessed' || activeSubTab === 'processed'
-            ? 200
-            : undefined
-          : 200;
-      void onFetchOrders?.({
-        silent: true,
-        bustCache: true,
-        ...(immediateLimit != null
-          ? { limit: immediateLimit, merge: true }
-          : { merge: false }),
-        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
-      });
       void fetchOrderCounts();
       startSyncPolling();
+      window.setTimeout(() => {
+        isSyncingRef.current = false;
+        setIsSyncing(false);
+      }, 4000);
     } catch (err) {
       console.error('[Orders Sync] sync-shopee failed:', err);
       setLastSyncSummary('Đồng bộ thất bại: lỗi kết nối máy chủ.');
       showToast('Không nhận được phản hồi đồng bộ — thử lại.', 5000);
-      setIsRefreshing(false);
+      isSyncingRef.current = false;
+      setIsSyncing(false);
     }
   };
 
@@ -886,12 +936,13 @@ export default function OrderManager({
     }
   }, [activeSubTab]);
 
-  // Đổi tab: refetch DB theo đúng tab (cùng filter count) rồi merge vào pool.
+  // Đổi tab: fetch trang 1 (limit 50, replace) — Backend đã lọc theo tab.
   useEffect(() => {
     if (activeSubTab === 'pending_verification') return;
     syncOrdersTabToUrl(activeSubTab, cancelReturnTab);
     onOrdersSubTabChange?.(activeSubTab);
     const tabFetchTabs = new Set([
+      'all',
       'unprocessed',
       'processed',
       'pending_confirm',
@@ -901,13 +952,15 @@ export default function OrderManager({
       'received_cancel_returns',
     ]);
     if (tabFetchTabs.has(activeSubTab)) {
-      console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch tab-filtered list`);
+      console.log(`[Orders Tab] activeSubTab=${activeSubTab} → fetch page=1 limit=50`);
       void onFetchOrders?.({
         silent: true,
         bustCache: true,
-        limit: 150,
-        merge: true,
-        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
+        force: true,
+        page: 1,
+        limit: 50,
+        merge: false,
+        tab: activeSubTab === 'cancel_returns' || activeSubTab === 'all' ? '' : activeSubTab,
       });
       void fetchOrderCounts();
     }
@@ -3764,7 +3817,7 @@ export default function OrderManager({
 
   const handlePullTouchStart = useCallback(
     (e: React.TouchEvent) => {
-      if (isPullRefreshing || isRefreshing || ordersLoading) return;
+      if (isPullRefreshing || isSyncing || ordersLoading) return;
       if (typeof window !== 'undefined' && window.matchMedia('(min-width: 769px)').matches) return;
       if (!isAtScrollTop()) {
         pullStartYRef.current = null;
@@ -3775,7 +3828,7 @@ export default function OrderManager({
       pullActiveRef.current = true;
       pullDistanceRef.current = 0;
     },
-    [isAtScrollTop, isPullRefreshing, isRefreshing, ordersLoading],
+    [isAtScrollTop, isPullRefreshing, isSyncing, ordersLoading],
   );
 
   const handlePullTouchMove = useCallback(
@@ -3819,9 +3872,10 @@ export default function OrderManager({
         silent: true,
         bustCache: true,
         force: true,
-        limit: 2000,
-        merge: true,
-        tab: activeSubTab === 'cancel_returns' ? '' : activeSubTab,
+        page: 1,
+        limit: 50,
+        merge: false,
+        tab: activeSubTab === 'cancel_returns' || activeSubTab === 'all' ? '' : activeSubTab,
       });
       void fetchOrderCounts();
     } finally {
@@ -3878,7 +3932,12 @@ export default function OrderManager({
     if (status === 'order_products') {
       return aggregatedOrderProducts.length;
     }
-    // Đếm từ CÙNG pool + CÙNG matcher với danh sách (tránh badge Mongo ≠ list shallow).
+    // Ưu tiên counter API (Mongo countDocuments) — badge nhảy độc lập với list.
+    if (serverOrderCounts) {
+      const key = status === 'pending_verification' ? 'pending_confirm' : status;
+      const serverN = Number(serverOrderCounts[key]);
+      if (Number.isFinite(serverN)) return serverN;
+    }
     let clientCount = 0;
     if (status === 'cancel_returns') {
       clientCount = cancelReturnPool.length;
@@ -3900,18 +3959,6 @@ export default function OrderManager({
         if (status === 'handed_over_carrier') return matchesHandedOverCarrierTab(o);
         return o.status === status;
       }).length;
-    }
-    // Fallback server count chỉ khi pool client còn trống (đang load lần đầu).
-    // Khi đã có dữ liệu local: tin client để badge realtime sau quét ĐVVC.
-    if (clientCount === 0 && serverOrderCounts && orders.length === 0) {
-      const key = status === 'pending_verification' ? 'pending_confirm' : status;
-      const serverN = Number(serverOrderCounts[key]);
-      if (Number.isFinite(serverN) && serverN > 0) {
-        console.warn(
-          `[OrderCounts] tab=${status} client=0 nhưng server=${serverN} — pool thiếu, sẽ refetch theo tab`,
-        );
-        return serverN;
-      }
     }
     return clientCount;
   };
@@ -5321,22 +5368,22 @@ export default function OrderManager({
           <button
             type="button"
             onClick={handleQuickSyncOrders}
-            disabled={isRefreshing || ordersLoading}
+            disabled={isSyncing || ordersLoading}
             title="Chỉ kéo đơn tạo/cập nhật trong 3 giờ gần nhất — nhanh, tránh timeout"
             className="px-4 py-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing || ordersLoading ? 'animate-spin' : ''}`} />
-            <span>{isRefreshing || ordersLoading ? 'Đang đồng bộ ngầm...' : 'Đồng bộ nhanh 3h'}</span>
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>Đồng bộ nhanh 3h</span>
           </button>
           <button
             type="button"
             onClick={handleRefreshOrders}
-            disabled={isRefreshing || ordersLoading}
+            disabled={isSyncing || ordersLoading}
             title="Đồng bộ đầy đủ ~14 ngày + đối soát trạng thái"
             className="px-4 py-2 bg-white hover:bg-blue-50 border border-gray-200 text-gray-700 font-extrabold text-xs rounded-xl shadow-xs transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <RefreshCw className={`w-4 h-4 ${isRefreshing || ordersLoading ? 'animate-spin' : ''}`} />
-            <span>{isRefreshing || ordersLoading ? 'Đang đồng bộ ngầm...' : 'Cập nhật đơn hàng'}</span>
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>Cập nhật đơn hàng</span>
           </button>
           <button
             onClick={() => setShowCreateOrderPage(true)}
@@ -5347,6 +5394,21 @@ export default function OrderManager({
           </button>
         </div>
       </div>
+
+      {hasNewOrders && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5">
+          <span className="text-xs font-semibold text-sky-800">
+            Có đơn hàng mới trên hệ thống
+          </span>
+          <button
+            type="button"
+            onClick={() => refetchOrdersPage({ silent: false })}
+            className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold cursor-pointer"
+          >
+            Có đơn hàng mới, làm mới danh sách
+          </button>
+        </div>
+      )}
 
       {/* 2. SUB-TABS: Horizontal scrollable subtabs with counts — orders[] từ App.fetchOrders → GET /api/orders (cùng origin). Không import mock JSON. */}
       <div className="om-orders-sub-tabs border-b border-gray-200 flex flex-wrap gap-1 bg-white p-1 rounded-xl">

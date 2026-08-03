@@ -25,7 +25,7 @@ import {
   resetPrintStatus,
   updatePrintStatus,
 } from "../controllers/ordersController.js";
-import { pullOrders, quickSyncOrders } from "../controllers/shopeeOrdersController.js";
+import { pullOrders, quickSyncOrders, syncOrders } from "../controllers/shopeeOrdersController.js";
 import { fastProcessOrders } from "../controllers/shopeeShipController.js";
 import { saveScanOrders, listDonHoanHuy } from "../controllers/scanController.js";
 import {
@@ -43,7 +43,11 @@ const h = asyncHandler;
 router.get("/refresh", h(refreshOrders));
 router.get("/query", h(queryOrders));
 router.get("/counts", h(getOrderCounts));
+/** Badge count nhanh — chỉ countDocuments Mongo, không gọi Shopee / không trả list. */
+router.get("/counter", h(getOrderCounts));
 router.get("/lookup", h(lookupOrder));
+/** Sync = ACK + background job; list/refresh = Mongo read-only. */
+router.post("/sync", syncOrders);
 router.post("/pull", pullOrders);
 router.post("/quick-sync", quickSyncOrders);
 router.post("/fast-process", fastProcessOrders);

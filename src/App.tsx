@@ -470,15 +470,16 @@ export default function App() {
     verifyToken();
   }, []);
 
-  // Fetch orders: silent → shallow limit=50 + merge cache; manual → full replace.
+  // Fetch orders: Mongo-only pagination (default limit=50, replace — không shallow merge).
   const fetchOrders = async (opts?: {
     silent?: boolean;
     bustCache?: boolean;
     retriesLeft?: number;
     limit?: number;
     merge?: boolean;
+    page?: number;
     print_status?: 'printed' | 'unprinted' | 'all' | '';
-    /** Cùng filter với /api/order-counts — tránh badge ≠ list. */
+    /** Cùng filter với /api/orders/counter — tránh badge ≠ list. */
     tab?: string;
     /** Bỏ qua dedupe in-flight (vd: tab vừa visible lại sau đóng băng). */
     force?: boolean;
@@ -488,17 +489,15 @@ export default function App() {
 
     const silent = Boolean(opts?.silent);
     const bustCache = opts?.bustCache !== false;
-    // Silent/background: chỉ 50 đơn mới nhất (nhanh trên mobile); "Làm mới" = full list.
+    // ERP: luôn phân trang 50 — caller chỉ tăng limit khi thật sự cần (vd: quét mã).
     const limit =
-      typeof opts?.limit === 'number' && opts.limit > 0
-        ? opts.limit
-        : silent
-          ? 50
-          : undefined;
-    const merge = opts?.merge ?? Boolean(limit);
+      typeof opts?.limit === 'number' && opts.limit > 0 ? opts.limit : 50;
+    const page = typeof opts?.page === 'number' && opts.page > 0 ? opts.page : 1;
+    // Mặc định REPLACE — bỏ shallow merge nặng (Backend trả list đã lọc theo tab).
+    const merge = opts?.merge === true;
     const printStatus = String(opts?.print_status || '').trim().toLowerCase();
     const tab = String(opts?.tab || '').trim().toLowerCase();
-    const flightKey = `${limit ? `limit:${limit}` : 'full'}|print:${printStatus || 'all'}|tab:${tab || 'all'}`;
+    const flightKey = `page:${page}|limit:${limit}|print:${printStatus || 'all'}|tab:${tab || 'all'}`;
 
     if (!opts?.force && fetchOrdersInFlightRef.current?.key === flightKey) {
       return fetchOrdersInFlightRef.current.promise;
@@ -519,11 +518,11 @@ export default function App() {
     let requestTimeoutId: number | undefined;
     try {
       // Refresh chỉ đọc MongoDB nội bộ, không gọi Shopee API.
-      // Luôn bust cache (Vercel/CDN/browser) — timestamp + số ngẫu nhiên.
       const params = new URLSearchParams();
       params.set('t', String(Date.now()));
       params.set('_r', String(Math.random()).slice(2, 10));
-      if (limit) params.set('limit', String(limit));
+      params.set('page', String(page));
+      params.set('limit', String(limit));
       if (bustCache) params.set('bust', '1');
       if (printStatus && printStatus !== 'all') params.set('print_status', printStatus);
       if (tab) params.set('tab', tab);
@@ -545,8 +544,7 @@ export default function App() {
         );
       }
       const controller = new AbortController();
-      // Shallow phải về nhanh; full list cho thêm thời gian khi Mongo cold-start.
-      requestTimeoutId = window.setTimeout(() => controller.abort(), limit ? 15_000 : 25_000);
+      requestTimeoutId = window.setTimeout(() => controller.abort(), 15_000);
       const response = await fetch(path, {
         method: 'GET',
         cache: 'no-store',
@@ -570,30 +568,43 @@ export default function App() {
               `[Fetch Orders] Refresh lỗi tạm thời (${payload.error}) — thử lại sau 3s (còn ${retriesLeft} lần).`,
             );
             window.setTimeout(() => {
-              void fetchOrders({ silent, bustCache, limit, merge, tab, retriesLeft: retriesLeft - 1 });
+              void fetchOrders({
+                silent,
+                bustCache,
+                limit,
+                merge,
+                page,
+                tab,
+                retriesLeft: retriesLeft - 1,
+              });
             }, 3000);
             return;
           }
-          // Hết retry / lỗi khác: thoát spinner vĩnh viễn, giữ cache/UI hiện có.
           setHasLoadedOrdersOnce(true);
           console.warn('[Fetch Orders] Refresh failed; giữ nguyên danh sách hiện tại.');
           return;
         }
         const data = Array.isArray(payload.data) ? payload.data : [];
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG:', data.length);
-        // Chỉ bỏ qua nếu đã có response MỚI HƠN ĐƯỢC ÁP DỤNG rồi (không phải chỉ "đã
-        // phát request mới hơn") — request mới hơn có thể vẫn đang chạy hoặc cũng lỗi,
-        // không được phép vứt bỏ dữ liệu thật của request cũ hơn vừa lấy thành công.
         if (requestId <= lastAppliedOrdersSeqRef.current) {
           console.warn('[Fetch Orders] Bỏ qua response cũ (đã áp dụng response mới hơn).');
           return;
         }
         lastAppliedOrdersSeqRef.current = requestId;
         const sanitized = sanitizeOrders(data);
-        // Shallow rỗng: không wipe cache/UI (Mongo tạm trống / race) — giữ dữ liệu cũ.
-        if (limit && sanitized.length === 0) {
+        // Trang rỗng khi đang có data: không wipe (Mongo tạm trống / race).
+        if (sanitized.length === 0) {
+          const existing = ordersHydrateRef.current;
+          if (existing.length > 0 && page === 1) {
+            setHasLoadedOrdersOnce(true);
+            console.warn('[Fetch Orders] List rỗng — giữ danh sách/cache hiện tại.');
+            return;
+          }
+          if (page === 1) {
+            setOrders([]);
+            ordersHydrateRef.current = [];
+          }
           setHasLoadedOrdersOnce(true);
-          console.warn('[Fetch Orders] Shallow rỗng — giữ danh sách/cache hiện tại.');
           return;
         }
         if (merge) {
@@ -604,16 +615,6 @@ export default function App() {
             void saveOrdersCache(merged);
             return merged;
           });
-        } else if (sanitized.length === 0) {
-          // Full replace rỗng: chỉ chấp nhận khi chưa có dữ liệu local.
-          const existing = ordersHydrateRef.current;
-          if (existing.length > 0) {
-            setHasLoadedOrdersOnce(true);
-            console.warn('[Fetch Orders] Full refresh rỗng — giữ cache hiện tại, không wipe.');
-            return;
-          }
-          setOrders([]);
-          ordersHydrateRef.current = [];
         } else {
           setOrders(sanitized);
           ordersHydrateRef.current = sanitized;
@@ -622,13 +623,21 @@ export default function App() {
         setHasLoadedOrdersOnce(true);
         console.log(
           `[FRONTEND FETCHED] /api/orders/refresh OK — số đơn: ${sanitized.length}` +
-            `${merge ? ' (shallow merge)' : ' (full replace)'}`,
+            `${merge ? ' (merge)' : ' (replace page ' + page + ')'}`,
         );
       } else {
         console.log('🛑 DATA ĐƯỢC LẤY TỪ URL:', requestUrl, '- SỐ LƯỢNG: (HTTP', response.status, ')');
         if (retriesLeft > 0) {
           window.setTimeout(() => {
-            void fetchOrders({ silent, bustCache, limit, merge, tab, retriesLeft: retriesLeft - 1 });
+            void fetchOrders({
+              silent,
+              bustCache,
+              limit,
+              merge,
+              page,
+              tab,
+              retriesLeft: retriesLeft - 1,
+            });
           }, 3000);
         } else {
           setHasLoadedOrdersOnce(true);
@@ -636,17 +645,19 @@ export default function App() {
       }
     } catch (err) {
       console.error('[FRONTEND FETCHED] /api/orders/refresh THẤT BẠI:', err);
-      // QUAN TRỌNG: lỗi mạng/timeout (AbortError, fetch failed...) TRƯỚC ĐÂY không
-      // được retry — chỉ nhánh success:false ở trên mới retry. Đây chính là lý do
-      // sau F5 lúc server/Mongo vừa cold-start, request đầu tiên timeout xong là
-      // bỏ cuộc luôn, để trống danh sách cho tới khi người dùng tự bấm "Làm mới"
-      // 2-3 lần. Giờ retry luôn cả lỗi mạng/timeout, y hệt nhánh mongodb_not_ready.
       if (retriesLeft > 0) {
         window.setTimeout(() => {
-          void fetchOrders({ silent, bustCache, limit, merge, tab, retriesLeft: retriesLeft - 1 });
+          void fetchOrders({
+            silent,
+            bustCache,
+            limit,
+            merge,
+            page,
+            tab,
+            retriesLeft: retriesLeft - 1,
+          });
         }, 3000);
       } else {
-        // Hết retry: thoát spinner; giữ IndexedDB/cache nếu có.
         setHasLoadedOrdersOnce(true);
       }
     } finally {
@@ -1492,7 +1503,7 @@ export default function App() {
         setOrders(cached);
         setHasLoadedOrdersOnce(true);
       }
-      void fetchOrders({ silent: true, limit: 50, merge: true });
+      void fetchOrders({ silent: true, limit: 50, page: 1, merge: false });
 
       // F5: ưu tiên localStorage; chỉ gọi server khi chưa có cache.
       void fetchProducts({ page: 1, append: false, pageSize: 50, forceRefresh: false });

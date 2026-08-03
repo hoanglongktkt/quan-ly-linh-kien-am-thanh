@@ -15178,8 +15178,11 @@ async function startServer() {
   // Mount tường minh — tránh 404 khi router interop/MVC miss sau refactor.
   app.post("/api/orders/pull", authMiddleware, pullOrders);
   app.post("/api/orders/quick-sync", authMiddleware, quickSyncOrders);
+  app.post("/api/orders/sync", authMiddleware, syncOrders);
   app.post("/api/sync-shopee", authMiddleware, syncShopee);
   app.get("/api/order-counts", authMiddleware, getOrderCounts);
+  app.get("/api/orders/counter", authMiddleware, getOrderCounts);
+  app.get("/api/orders/counts", authMiddleware, getOrderCounts);
   app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
   app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
