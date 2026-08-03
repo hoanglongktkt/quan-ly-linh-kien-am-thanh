@@ -156,30 +156,78 @@ export function sanitizeOrder(raw: Partial<Order> & Record<string, unknown>): Or
     labelUrl: raw.labelUrl ? String(raw.labelUrl) : undefined,
     pdfUrl: raw.pdfUrl ? String(raw.pdfUrl) : raw.labelUrl ? String(raw.labelUrl) : undefined,
     pdfFilename: raw.pdfFilename ? String(raw.pdfFilename) : undefined,
-    is_handed_over: isTruthyFlag(
-      raw.is_handed_over ??
-        raw.isHandedOverToCarrier ??
-        raw.is_handed_over_to_carrier ??
-        raw.is_handed_over_to_courier,
-    ),
-    isHandedOverToCarrier: isTruthyFlag(
-      raw.is_handed_over ??
-        raw.isHandedOverToCarrier ??
-        raw.is_handed_over_to_carrier ??
-        raw.is_handed_over_to_courier,
-    ),
-    is_handed_over_to_carrier: isTruthyFlag(
-      raw.is_handed_over ??
-        raw.is_handed_over_to_carrier ??
-        raw.isHandedOverToCarrier ??
-        raw.is_handed_over_to_courier,
-    ),
-    is_handed_over_to_courier: isTruthyFlag(
-      raw.is_handed_over ??
-        raw.is_handed_over_to_courier ??
-        raw.is_handed_over_to_carrier ??
-        raw.isHandedOverToCarrier,
-    ),
+    is_handed_over: (() => {
+      const rawSt = String(raw.shopee_order_status || '').toUpperCase();
+      if (
+        rawSt === 'SHIPPED' ||
+        rawSt === 'TO_CONFIRM_RECEIVE' ||
+        rawSt === 'COMPLETED' ||
+        status === 'shipping' ||
+        status === 'completed'
+      ) {
+        return false;
+      }
+      return isTruthyFlag(
+        raw.is_handed_over ??
+          raw.isHandedOverToCarrier ??
+          raw.is_handed_over_to_carrier ??
+          raw.is_handed_over_to_courier,
+      );
+    })(),
+    isHandedOverToCarrier: (() => {
+      const rawSt = String(raw.shopee_order_status || '').toUpperCase();
+      if (
+        rawSt === 'SHIPPED' ||
+        rawSt === 'TO_CONFIRM_RECEIVE' ||
+        rawSt === 'COMPLETED' ||
+        status === 'shipping' ||
+        status === 'completed'
+      ) {
+        return false;
+      }
+      return isTruthyFlag(
+        raw.is_handed_over ??
+          raw.isHandedOverToCarrier ??
+          raw.is_handed_over_to_carrier ??
+          raw.is_handed_over_to_courier,
+      );
+    })(),
+    is_handed_over_to_carrier: (() => {
+      const rawSt = String(raw.shopee_order_status || '').toUpperCase();
+      if (
+        rawSt === 'SHIPPED' ||
+        rawSt === 'TO_CONFIRM_RECEIVE' ||
+        rawSt === 'COMPLETED' ||
+        status === 'shipping' ||
+        status === 'completed'
+      ) {
+        return false;
+      }
+      return isTruthyFlag(
+        raw.is_handed_over ??
+          raw.is_handed_over_to_carrier ??
+          raw.isHandedOverToCarrier ??
+          raw.is_handed_over_to_courier,
+      );
+    })(),
+    is_handed_over_to_courier: (() => {
+      const rawSt = String(raw.shopee_order_status || '').toUpperCase();
+      if (
+        rawSt === 'SHIPPED' ||
+        rawSt === 'TO_CONFIRM_RECEIVE' ||
+        rawSt === 'COMPLETED' ||
+        status === 'shipping' ||
+        status === 'completed'
+      ) {
+        return false;
+      }
+      return isTruthyFlag(
+        raw.is_handed_over ??
+          raw.is_handed_over_to_courier ??
+          raw.is_handed_over_to_carrier ??
+          raw.isHandedOverToCarrier,
+      );
+    })(),
     local_status: (() => {
       const v = String(
         raw.local_status ?? raw.localStatus ?? raw.internal_status ?? '',

@@ -72392,10 +72392,6 @@ function hasLeftHandedOverCarrierTab(order) {
     return true;
   }
   if (order.status === "shipping" || order.status === "completed") return true;
-  const logistics = String(order.logistics_status || "").toUpperCase();
-  if (logistics && !logistics.includes("FAILED") && !logistics.includes("CANCEL") && (logistics.includes("PICKUP_DONE") || logistics.includes("LOGISTICS_SHIPPED") || logistics.includes("IN_TRANSIT") || logistics.includes("TRANSPORTING") || logistics.includes("DELIVERY_DONE"))) {
-    return true;
-  }
   return false;
 }
 function isOrderHandedOverToCarrier(order) {
@@ -72464,13 +72460,15 @@ function resolveOrderLocalStatus(order) {
   return ORDER_LOCAL_STATUS.NONE;
 }
 function matchesHandedOverCarrierTab(order) {
-  if (!isOrderHandedOverToCarrier(order)) return false;
   if (hasLeftHandedOverCarrierTab(order)) return false;
+  if (!isOrderHandedOverToCarrier(order)) return false;
   const raw = getShopeeRaw(order);
+  if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return false;
   if (raw) {
     if (!isToShipLikeRaw(raw)) return false;
   } else {
     const st = String(order.status || "");
+    if (st === "shipping" || st === "completed") return false;
     if (st !== "processed" && st !== "unprocessed") return false;
   }
   return true;
@@ -72532,17 +72530,11 @@ function isProcessedCondition(order) {
   }
   return false;
 }
-function isLogisticsHandedToCarrierStatus(order) {
-  const s2 = String(order.logistics_status || "").toUpperCase();
-  if (!s2) return false;
-  if (s2.includes("FAILED") || s2.includes("CANCEL") || s2.includes("RETURN")) return false;
-  return s2.includes("PICKUP_DONE") || s2.includes("LOGISTICS_SHIPPED") || s2.includes("LOGISTICS_DELIVERY_DONE") || s2.includes("DELIVERY_DONE") || s2.includes("IN_TRANSIT") || s2.includes("TRANSPORTING");
-}
 function isShopeeShippingStatus(order) {
   const raw = getShopeeOrderRawStatus(order);
   if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE") return true;
   if (order.status === "shipping") return true;
-  return isLogisticsHandedToCarrierStatus(order);
+  return false;
 }
 function isShopeeCompletedStatus(order) {
   return getShopeeOrderRawStatus(order) === "COMPLETED" || order.status === "completed";
@@ -74503,9 +74495,25 @@ async function bulkUpsertOrdersToStore(orders) {
       $set.shopee_order_status = rawStatus;
       $set["data.shopee_order_status"] = rawStatus;
     }
+    if (rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE" || rawStatus === "COMPLETED" || rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL" || rawStatus === "TO_RETURN") {
+      $set.is_handed_over = false;
+      $set["data.is_handed_over"] = false;
+      $set["data.isHandedOverToCarrier"] = false;
+      $set["data.is_handed_over_to_carrier"] = false;
+      $set["data.is_handed_over_to_courier"] = false;
+      if (String(order.status || "").toLowerCase() === "shipping" || rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE") {
+        if (!order.status || String(order.status).trim() === "" || String(order.status) === "processed" || String(order.status) === "unprocessed" || String(order.status) === "handed_over") {
+          $set.status = "shipping";
+          $set["data.status"] = "shipping";
+        }
+      }
+    }
     if (order.status != null && String(order.status).trim()) {
-      $set.status = String(order.status);
-      $set["data.status"] = String(order.status);
+      const st = String(order.status).trim();
+      if (!($set.status === "shipping" && (st === "processed" || st === "unprocessed" || st === "handed_over"))) {
+        $set.status = st;
+        $set["data.status"] = st;
+      }
     }
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
     if (usableTn) {
@@ -74711,6 +74719,13 @@ async function bulkUpdateShippedOrdersBySn(patches) {
       const raw = String(p.shopee_order_status).trim().toUpperCase();
       $set.shopee_order_status = raw;
       $set["data.shopee_order_status"] = raw;
+      if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || raw === "COMPLETED" || raw === "CANCELLED" || raw === "IN_CANCEL" || raw === "TO_RETURN") {
+        $set.is_handed_over = false;
+        $set["data.is_handed_over"] = false;
+        $set["data.isHandedOverToCarrier"] = false;
+        $set["data.is_handed_over_to_carrier"] = false;
+        $set["data.is_handed_over_to_courier"] = false;
+      }
     }
     if (p.ship_method != null) $set["data.ship_method"] = p.ship_method;
     if (p.fulfillment_type != null) $set["data.fulfillment_type"] = p.fulfillment_type;
@@ -75247,6 +75262,48 @@ async function deleteHandedOverOrdersFromStore() {
   );
   return { deleted, sns };
 }
+async function clearHandedOverFlagsForShippedOrders() {
+  if (!isMongoReady()) return { matched: 0, modified: 0 };
+  requireMongo();
+  const filter = {
+    $and: [
+      {
+        $or: [
+          { is_handed_over: true },
+          { "data.is_handed_over": true },
+          { "data.isHandedOverToCarrier": true },
+          { "data.is_handed_over_to_carrier": true },
+          { "data.is_handed_over_to_courier": true },
+          { "data.local_status": "HANDED_OVER" },
+          { "data.localStatus": "HANDED_OVER" },
+          { "data.internal_status": "HANDED_OVER" }
+        ]
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED", "CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+          { "data.shopee_order_status": { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED", "CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+          { status: { $in: ["shipping", "completed", "cancelled", "return_pending", "return_received"] } },
+          { "data.status": { $in: ["shipping", "completed", "cancelled", "return_pending", "return_received"] } }
+        ]
+      }
+    ]
+  };
+  const $set = {
+    is_handed_over: false,
+    "data.is_handed_over": false,
+    "data.isHandedOverToCarrier": false,
+    "data.is_handed_over_to_carrier": false,
+    "data.is_handed_over_to_courier": false
+  };
+  const result = await OrderModel.updateMany(filter, { $set }, { maxTimeMS: 3e4 });
+  const matched = Number(result.matchedCount ?? result.n ?? 0);
+  const modified = Number(result.modifiedCount ?? result.nModified ?? 0);
+  console.log(
+    `[MongoDB] clearHandedOverFlagsForShippedOrders \u2014 matched=${matched} modified=${modified}`
+  );
+  return { matched, modified };
+}
 async function deleteClosedOrdersByRetention(opts) {
   if (!isMongoReady()) {
     return {
@@ -75518,11 +75575,12 @@ function hydrateOrderFromMongoDoc(d) {
   const carrier = String(
     d?.shipping_carrier || data.shipping_carrier || data.checkout_shipping_carrier || ""
   ).trim();
-  const handed = d?.is_handed_over === true || data.is_handed_over === true || data.isHandedOverToCarrier === true || data.is_handed_over_to_carrier === true || data.is_handed_over_to_courier === true || String(data.local_status || data.localStatus || data.internal_status || "").toUpperCase() === "HANDED_OVER";
+  const leftHandoverPhase = rawStatus === "SHIPPED" || rawStatus === "TO_CONFIRM_RECEIVE" || rawStatus === "COMPLETED" || rawStatus === "CANCELLED" || rawStatus === "IN_CANCEL" || rawStatus === "TO_RETURN" || d?.status === "shipping" || d?.status === "completed" || data.status === "shipping" || data.status === "completed";
+  const handed = leftHandoverPhase ? false : d?.is_handed_over === true || data.is_handed_over === true || data.isHandedOverToCarrier === true || data.is_handed_over_to_carrier === true || data.is_handed_over_to_courier === true || String(data.local_status || data.localStatus || data.internal_status || "").toUpperCase() === "HANDED_OVER";
   const localRaw = String(
     data.local_status || data.localStatus || data.internal_status || ""
   ).toUpperCase();
-  const localStored = localRaw === "CANCELLED_STORED" || localRaw === "RETURN_RECEIVED" ? localRaw : handed ? "HANDED_OVER" : localRaw === "NONE" || localRaw === "HANDED_OVER" ? localRaw : "";
+  const localStored = localRaw === "CANCELLED_STORED" || localRaw === "RETURN_RECEIVED" ? localRaw : handed ? "HANDED_OVER" : localRaw === "NONE" || localRaw === "HANDED_OVER" ? leftHandoverPhase ? "NONE" : localRaw : "";
   return {
     ...data,
     id: data.id || d._id || (sn ? `shopee-${sn}` : void 0),
@@ -75895,6 +75953,31 @@ var ORDER_TAB_IS_HANDED_OVER = {
     { "data.internal_status": "HANDED_OVER" }
   ]
 };
+var ORDER_TAB_TO_SHIP_RAW = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"];
+var ORDER_TAB_SHIPPED_RAW = ["SHIPPED", "TO_CONFIRM_RECEIVE"];
+var ORDER_TAB_IS_SHIPPED = {
+  $or: [
+    { status: "shipping" },
+    { shopee_order_status: { $in: [...ORDER_TAB_SHIPPED_RAW] } },
+    { "data.shopee_order_status": { $in: [...ORDER_TAB_SHIPPED_RAW] } }
+  ]
+};
+var ORDER_TAB_IS_TO_SHIP = {
+  $and: [
+    { $nor: [ORDER_TAB_IS_SHIPPED] },
+    {
+      $or: [
+        { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
+        { "data.shopee_order_status": { $in: [...ORDER_TAB_TO_SHIP_RAW] } }
+      ]
+    },
+    {
+      status: {
+        $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
+      }
+    }
+  ]
+};
 var ORDER_TAB_NOT_SHIPPING_LOGISTICS = {
   $and: [
     {
@@ -75935,25 +76018,7 @@ function orderTabFilter(tab) {
     case "shipping":
     case "shipped":
     case "dang-giao":
-      return {
-        $or: [
-          { status: "shipping" },
-          { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
-          { "data.shopee_order_status": { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
-          {
-            logistics_status: {
-              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
-              $options: "i"
-            }
-          },
-          {
-            "data.logistics_status": {
-              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
-              $options: "i"
-            }
-          }
-        ]
-      };
+      return ORDER_TAB_IS_SHIPPED;
     case "completed":
       return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
     case "cancelled":
@@ -75966,22 +76031,9 @@ function orderTabFilter(tab) {
     case "processed_pickup":
       return {
         $and: [
+          ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
           ORDER_TAB_NOT_SHIPPING_LOGISTICS,
-          {
-            shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] }
-          },
-          {
-            $or: [
-              { "data.shopee_order_status": { $exists: false } },
-              { "data.shopee_order_status": { $in: [null, ""] } },
-              {
-                "data.shopee_order_status": {
-                  $nin: [...ORDER_TAB_LEFT_PICKUP_RAW]
-                }
-              }
-            ]
-          },
           {
             $or: [
               { shopee_order_status: "PROCESSED" },
@@ -75990,8 +76042,8 @@ function orderTabFilter(tab) {
                 $and: [
                   {
                     $or: [
-                      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
-                      { "data.shopee_order_status": { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+                      { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
+                      { "data.shopee_order_status": { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
                       { status: { $in: ["processed", "unprocessed"] } }
                     ]
                   },
@@ -76002,8 +76054,8 @@ function orderTabFilter(tab) {
                 $and: [
                   {
                     $or: [
-                      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
-                      { "data.shopee_order_status": { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+                      { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
+                      { "data.shopee_order_status": { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
                       { status: { $in: ["processed", "unprocessed"] } }
                     ]
                   },
@@ -76030,6 +76082,7 @@ function orderTabFilter(tab) {
     case "cho-lay-hang":
       return {
         $and: [
+          ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
           ORDER_TAB_NOT_SHIPPING_LOGISTICS,
           { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
@@ -76104,31 +76157,7 @@ function orderTabFilter(tab) {
       };
     case "handed_over_carrier":
       return {
-        $and: [
-          ORDER_TAB_IS_HANDED_OVER,
-          {
-            shopee_order_status: {
-              $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"]
-            }
-          },
-          {
-            $or: [
-              { "data.shopee_order_status": { $exists: false } },
-              { "data.shopee_order_status": { $in: [null, ""] } },
-              {
-                "data.shopee_order_status": {
-                  $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"]
-                }
-              }
-            ]
-          },
-          {
-            status: {
-              $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"]
-            }
-          },
-          ORDER_TAB_NOT_SHIPPING_LOGISTICS
-        ]
+        $and: [ORDER_TAB_IS_TO_SHIP, ORDER_TAB_IS_HANDED_OVER]
       };
     case "stale":
       return {
@@ -105177,7 +105206,9 @@ async function refreshOrders(req, res) {
       ordersRefreshCache = null;
     }
     const rawLimit = Number(req.query.limit);
-    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 5e3) : void 0;
+    const pageRaw = Number(req.query.page);
+    const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.floor(pageRaw) : 1;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 2e3) : 50;
     const tab = String(req.query.tab || req.query.internal_tab || "").trim();
     const shopIds = parseShopIdsParam(
       req.query.shop_ids ?? req.query.shopIds,
@@ -105185,47 +105216,62 @@ async function refreshOrders(req, res) {
     );
     const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "").trim();
     console.log(
-      `[GET /api/orders/refresh] params limit=${limit ?? "(full)"} tab=${tab || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
+      `[GET /api/orders/refresh] params page=${page} limit=${limit} tab=${tab || "(none)"} shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} print_status=${req.query.print_status || req.query.printStatus || "(all)"}`
     );
-    const rawOrders = await readOrdersForRefresh(limit, {
-      tab,
-      shopId,
-      shopIds,
-      printStatus: String(req.query.print_status || req.query.printStatus || "")
-    });
-    let mergedOrders = rawOrders;
-    try {
-      mergedOrders = await mergeDonHoanHuyIntoOrders(rawOrders);
-    } catch (mergeErr) {
-      console.warn(
-        "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
-        mergeErr?.message || mergeErr
-      );
-    }
+    const tabLc = tab.toLowerCase();
     const printStatus = String(req.query.print_status || req.query.printStatus || "").trim();
-    mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
-    let products = [];
-    if (!limit) {
-      try {
-        products = await deps15.withLocalDbTimeout(
-          deps15.loadProductsForOrders(mergedOrders),
-          2500,
-          "orders_refresh_catalog"
-        );
-      } catch (catalogErr) {
-        console.warn(
-          "[GET /api/orders/refresh] Catalog enrich skipped:",
-          catalogErr instanceof Error ? catalogErr.message : catalogErr
-        );
+    let mergedOrders = [];
+    let total = 0;
+    let hasMore = false;
+    if (tabLc === "received_cancel_returns" || tabLc === "received-cancel-returns" || tabLc === "da_nhan_huy_hoan") {
+      mergedOrders = await readOrdersForRefresh(limit, {
+        tab,
+        shopId,
+        shopIds,
+        printStatus
+      });
+      total = mergedOrders.length;
+    } else {
+      const pageResult = await queryOrdersPageFromStore({
+        page,
+        pageSize: limit,
+        tab,
+        shopId,
+        shopIds: shopIds.length ? shopIds : void 0,
+        printStatus,
+        skipCounts: true
+      });
+      mergedOrders = pageResult.rows.filter(
+        (order) => Boolean(order?.orderSn || order?.id)
+      );
+      total = pageResult.total || mergedOrders.length;
+      hasMore = Boolean(pageResult.hasMore);
+      if (!tab) {
+        try {
+          mergedOrders = await mergeDonHoanHuyIntoOrders(mergedOrders);
+        } catch (mergeErr) {
+          console.warn(
+            "[GET /api/orders/refresh] mergeDonHoanHuy skipped:",
+            mergeErr?.message || mergeErr
+          );
+        }
       }
     }
+    mergedOrders = filterOrdersByPrintStatus(mergedOrders, printStatus);
     const orders = deps15.enrichOrdersWithShopNames(
-      deps15.enrichOrdersFromCatalog(mergedOrders, products)
+      deps15.enrichOrdersFromCatalog(mergedOrders, [])
     );
     console.log(
-      `[FRONTEND FETCHED] GET /api/orders/refresh${limit ? `?limit=${limit}` : ""} \u2014 tr\u1EA3 v\u1EC1 ${orders.length} \u0111\u01A1n t\u1EEB MongoDB.`
+      `[FRONTEND FETCHED] GET /api/orders/refresh?page=${page}&limit=${limit} \u2014 tr\u1EA3 v\u1EC1 ${orders.length}/${total} \u0111\u01A1n t\u1EEB MongoDB (READ-ONLY).`
     );
-    return res.status(200).json({ success: true, data: orders, total: orders.length });
+    return res.status(200).json({
+      success: true,
+      data: orders,
+      total,
+      page,
+      page_size: limit,
+      has_more: hasMore
+    });
   } catch (error) {
     console.error(
       "[GET /api/orders/refresh] Mongo query failed:",
@@ -105333,13 +105379,13 @@ async function getOrderCounts(req, res) {
       shopIds: shopIds.length > 1 ? shopIds : void 0
     });
     console.log(
-      `[GET /api/order-counts] shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} counts=`,
+      `[GET /api/orders/counter] shopId=${shopId || "(all)"} shopIds=${shopIds.length ? `[${shopIds.join(",")}]` : "(none)"} counts=`,
       counts
     );
     return res.status(200).json({ success: true, counts });
   } catch (error) {
     console.error(
-      "[GET /api/order-counts] failed:",
+      "[GET /api/orders/counter] failed:",
       error?.stack || error?.message || error
     );
     return res.status(200).json({
@@ -105355,8 +105401,10 @@ async function listOrders(req, res) {
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
   const pageRaw = Number(req.query.page);
-  const pageSizeRaw = Number(req.query.page_size ?? req.query.pageSize);
-  if (Number.isFinite(pageRaw) && pageRaw > 0 || Number.isFinite(pageSizeRaw) && pageSizeRaw > 0) {
+  const limitRaw = Number(req.query.limit);
+  const pageSizeRaw = Number(req.query.page_size ?? req.query.pageSize ?? limitRaw);
+  const usePaged = Number.isFinite(pageRaw) && pageRaw > 0 || Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 || Number.isFinite(limitRaw) && limitRaw > 0 || true;
+  if (usePaged) {
     try {
       if (!isMongoReady()) {
         return res.status(200).json({
@@ -105372,8 +105420,8 @@ async function listOrders(req, res) {
       );
       const shopId = shopIds.length === 1 ? shopIds[0] : String(req.query.shop_id ?? req.query.shopId ?? "");
       const page = await queryOrdersPageFromStore({
-        page: pageRaw,
-        pageSize: pageSizeRaw || 50,
+        page: Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1,
+        pageSize: Number.isFinite(pageSizeRaw) && pageSizeRaw > 0 ? Math.min(Math.floor(pageSizeRaw), 200) : 50,
         tab: String(req.query.tab || req.query.internal_tab || ""),
         shopId,
         shopIds: shopIds.length > 1 ? shopIds : void 0,
@@ -107534,7 +107582,9 @@ var h2 = asyncHandler;
 router13.get("/refresh", h2(refreshOrders));
 router13.get("/query", h2(queryOrders));
 router13.get("/counts", h2(getOrderCounts));
+router13.get("/counter", h2(getOrderCounts));
 router13.get("/lookup", h2(lookupOrder));
+router13.post("/sync", syncOrders);
 router13.post("/pull", pullOrders);
 router13.post("/quick-sync", quickSyncOrders);
 router13.post("/fast-process", fastProcessOrders);
@@ -119147,8 +119197,11 @@ async function startServer() {
   app.use("/api/shopee", authMiddleware, shopeeProductsRoutes);
   app.post("/api/orders/pull", authMiddleware, pullOrders);
   app.post("/api/orders/quick-sync", authMiddleware, quickSyncOrders);
+  app.post("/api/orders/sync", authMiddleware, syncOrders);
   app.post("/api/sync-shopee", authMiddleware, syncShopee);
   app.get("/api/order-counts", authMiddleware, getOrderCounts);
+  app.get("/api/orders/counter", authMiddleware, getOrderCounts);
+  app.get("/api/orders/counts", authMiddleware, getOrderCounts);
   app.post("/api/orders/update-print-status", authMiddleware, updatePrintStatus);
   app.post("/api/orders/reset-print-status", authMiddleware, resetPrintStatus);
   app.post("/api/shopee/orders/sync", authMiddleware, syncOrders);
@@ -120922,6 +120975,18 @@ async function startServer() {
       const ok = await initMongo(APP_ROOT11);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
+        void clearHandedOverFlagsForShippedOrders().then((r2) => {
+          if (r2.modified > 0) {
+            console.log(
+              `[Boot] Cleared is_handed_over on ${r2.modified} SHIPPED+ orders (matched=${r2.matched}).`
+            );
+          }
+        }).catch((err) => {
+          console.warn(
+            "[Boot] clearHandedOverFlagsForShippedOrders failed:",
+            err instanceof Error ? err.message : err
+          );
+        });
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
         scheduleAutoIncrementalOrdersSyncSafe();

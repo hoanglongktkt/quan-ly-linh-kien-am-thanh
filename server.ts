@@ -421,6 +421,7 @@ import {
   updateOrderPackageNumberInStore,
   deleteOrdersFromStore,
   deleteHandedOverOrdersFromStore,
+  clearHandedOverFlagsForShippedOrders,
   deleteClosedOrdersByRetention,
   loadOrdersFromStore,
   findOrderByScanCodeInStore,
@@ -17333,6 +17334,21 @@ async function startServer() {
       const ok = await initMongo(APP_ROOT);
       if (ok && isMongoReady()) {
         await hydrateChannelListingsOnBoot();
+        // One-shot: dọn is_handed_over trên đơn đã SHIPPED (tránh kẹt tab ĐVVC).
+        void clearHandedOverFlagsForShippedOrders()
+          .then((r) => {
+            if (r.modified > 0) {
+              console.log(
+                `[Boot] Cleared is_handed_over on ${r.modified} SHIPPED+ orders (matched=${r.matched}).`,
+              );
+            }
+          })
+          .catch((err) => {
+            console.warn(
+              "[Boot] clearHandedOverFlagsForShippedOrders failed:",
+              err instanceof Error ? err.message : err,
+            );
+          });
         // Tracking/cancel cron vẫn OFF (tránh process leak). Order incremental sync ON (5 phút).
         scheduleMissingShopeeTrackingEnrichment(); // no-op OFF
         scheduleShopeeCancelReturnReconcile(); // no-op OFF

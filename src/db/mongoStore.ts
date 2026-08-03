@@ -1666,10 +1666,41 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.shopee_order_status"] = rawStatus;
     }
 
+    // Khi Shopee → SHIPPED/COMPLETED/CANCEL: clear is_handed_over (cờ nội bộ hết tác dụng).
+    if (
+      rawStatus === "SHIPPED" ||
+      rawStatus === "TO_CONFIRM_RECEIVE" ||
+      rawStatus === "COMPLETED" ||
+      rawStatus === "CANCELLED" ||
+      rawStatus === "IN_CANCEL" ||
+      rawStatus === "TO_RETURN"
+    ) {
+      $set.is_handed_over = false;
+      $set["data.is_handed_over"] = false;
+      $set["data.isHandedOverToCarrier"] = false;
+      $set["data.is_handed_over_to_carrier"] = false;
+      $set["data.is_handed_over_to_courier"] = false;
+      if (
+        String(order.status || "").toLowerCase() === "shipping" ||
+        rawStatus === "SHIPPED" ||
+        rawStatus === "TO_CONFIRM_RECEIVE"
+      ) {
+        // Đảm bảo status local khớp tab Đang giao.
+        if (!order.status || String(order.status).trim() === "" || String(order.status) === "processed" || String(order.status) === "unprocessed" || String(order.status) === "handed_over") {
+          $set.status = "shipping";
+          $set["data.status"] = "shipping";
+        }
+      }
+    }
+
     // status local chỉ là helper UI — không thay shopee_order_status
     if (order.status != null && String(order.status).trim()) {
-      $set.status = String(order.status);
-      $set["data.status"] = String(order.status);
+      const st = String(order.status).trim();
+      // Không ghi đè status=shipping vừa set ở trên bằng processed/handed_over stale.
+      if (!($set.status === "shipping" && (st === "processed" || st === "unprocessed" || st === "handed_over"))) {
+        $set.status = st;
+        $set["data.status"] = st;
+      }
     }
 
     if (order.shopName != null) $set["data.shopName"] = String(order.shopName);
@@ -1926,6 +1957,20 @@ export async function bulkUpdateShippedOrdersBySn(
       const raw = String(p.shopee_order_status).trim().toUpperCase();
       $set.shopee_order_status = raw;
       $set["data.shopee_order_status"] = raw;
+      if (
+        raw === "SHIPPED" ||
+        raw === "TO_CONFIRM_RECEIVE" ||
+        raw === "COMPLETED" ||
+        raw === "CANCELLED" ||
+        raw === "IN_CANCEL" ||
+        raw === "TO_RETURN"
+      ) {
+        $set.is_handed_over = false;
+        $set["data.is_handed_over"] = false;
+        $set["data.isHandedOverToCarrier"] = false;
+        $set["data.is_handed_over_to_carrier"] = false;
+        $set["data.is_handed_over_to_courier"] = false;
+      }
     }
     if (p.ship_method != null) $set["data.ship_method"] = p.ship_method;
     if (p.fulfillment_type != null) $set["data.fulfillment_type"] = p.fulfillment_type;
@@ -2608,6 +2653,56 @@ export async function deleteHandedOverOrdersFromStore(): Promise<{
 }
 
 /**
+ * Migration one-shot: đơn đã SHIPPED (hoặc hoàn tất/hủy) mà còn is_handed_over=true
+ * → clear cờ nội bộ (tránh kẹt tab "Đã giao ĐVVC").
+ */
+export async function clearHandedOverFlagsForShippedOrders(): Promise<{
+  matched: number;
+  modified: number;
+}> {
+  if (!isMongoReady()) return { matched: 0, modified: 0 };
+  requireMongo();
+  const filter = {
+    $and: [
+      {
+        $or: [
+          { is_handed_over: true },
+          { "data.is_handed_over": true },
+          { "data.isHandedOverToCarrier": true },
+          { "data.is_handed_over_to_carrier": true },
+          { "data.is_handed_over_to_courier": true },
+          { "data.local_status": "HANDED_OVER" },
+          { "data.localStatus": "HANDED_OVER" },
+          { "data.internal_status": "HANDED_OVER" },
+        ],
+      },
+      {
+        $or: [
+          { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED", "CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+          { "data.shopee_order_status": { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE", "COMPLETED", "CANCELLED", "IN_CANCEL", "TO_RETURN"] } },
+          { status: { $in: ["shipping", "completed", "cancelled", "return_pending", "return_received"] } },
+          { "data.status": { $in: ["shipping", "completed", "cancelled", "return_pending", "return_received"] } },
+        ],
+      },
+    ],
+  };
+  const $set = {
+    is_handed_over: false,
+    "data.is_handed_over": false,
+    "data.isHandedOverToCarrier": false,
+    "data.is_handed_over_to_carrier": false,
+    "data.is_handed_over_to_courier": false,
+  };
+  const result = await OrderModel.updateMany(filter, { $set }, { maxTimeMS: 30_000 });
+  const matched = Number((result as any).matchedCount ?? (result as any).n ?? 0);
+  const modified = Number((result as any).modifiedCount ?? (result as any).nModified ?? 0);
+  console.log(
+    `[MongoDB] clearHandedOverFlagsForShippedOrders — matched=${matched} modified=${modified}`,
+  );
+  return { matched, modified };
+}
+
+/**
  * Xóa đơn đã đóng quá hạn retention (giải phóng dung lượng Atlas).
  * - Hủy/hoàn đã lưu / archived: > cancelReturnDays (mặc định 14)
  * - Hoàn tất / đang giao cũ / ĐVVC: > closedDays (mặc định 30)
@@ -2984,13 +3079,27 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
   const carrier = String(
     d?.shipping_carrier || data.shipping_carrier || data.checkout_shipping_carrier || "",
   ).trim();
-  const handed =
-    d?.is_handed_over === true ||
-    data.is_handed_over === true ||
-    data.isHandedOverToCarrier === true ||
-    data.is_handed_over_to_carrier === true ||
-    data.is_handed_over_to_courier === true ||
-    String(data.local_status || data.localStatus || data.internal_status || "").toUpperCase() === "HANDED_OVER";
+  // SHIPPED+ → cờ bàn giao nội bộ hết tác dụng (tránh kẹt tab Đã giao ĐVVC).
+  const leftHandoverPhase =
+    rawStatus === "SHIPPED" ||
+    rawStatus === "TO_CONFIRM_RECEIVE" ||
+    rawStatus === "COMPLETED" ||
+    rawStatus === "CANCELLED" ||
+    rawStatus === "IN_CANCEL" ||
+    rawStatus === "TO_RETURN" ||
+    d?.status === "shipping" ||
+    d?.status === "completed" ||
+    data.status === "shipping" ||
+    data.status === "completed";
+  const handed = leftHandoverPhase
+    ? false
+    : d?.is_handed_over === true ||
+      data.is_handed_over === true ||
+      data.isHandedOverToCarrier === true ||
+      data.is_handed_over_to_carrier === true ||
+      data.is_handed_over_to_courier === true ||
+      String(data.local_status || data.localStatus || data.internal_status || "").toUpperCase() ===
+        "HANDED_OVER";
   const localRaw = String(
     data.local_status || data.localStatus || data.internal_status || "",
   ).toUpperCase();
@@ -3000,7 +3109,9 @@ function hydrateOrderFromMongoDoc(d: any): any | null {
       : handed
         ? "HANDED_OVER"
         : localRaw === "NONE" || localRaw === "HANDED_OVER"
-          ? localRaw
+          ? leftHandoverPhase
+            ? "NONE"
+            : localRaw
           : "";
   return {
     ...data,
@@ -3484,6 +3595,45 @@ const ORDER_TAB_IS_HANDED_OVER: Record<string, unknown> = {
   ],
 };
 
+/** TO_SHIP (Shopee) = còn chờ lấy — READY_TO_SHIP | RETRY_SHIP | PROCESSED. */
+const ORDER_TAB_TO_SHIP_RAW = ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] as const;
+
+/** Đang giao trên Shopee — loại tuyệt đối khỏi Đã xử lý / Đã giao ĐVVC. */
+const ORDER_TAB_SHIPPED_RAW = ["SHIPPED", "TO_CONFIRM_RECEIVE"] as const;
+
+/**
+ * Đơn ĐANG GIAO (SHIPPED) — bất kể is_handed_over.
+ * Khớp cả top-level lẫn data.* (tránh lệch field sau sync).
+ */
+const ORDER_TAB_IS_SHIPPED: Record<string, unknown> = {
+  $or: [
+    { status: "shipping" },
+    { shopee_order_status: { $in: [...ORDER_TAB_SHIPPED_RAW] } },
+    { "data.shopee_order_status": { $in: [...ORDER_TAB_SHIPPED_RAW] } },
+  ],
+};
+
+/**
+ * Đơn còn TO_SHIP (chưa SHIPPED) — bắt buộc cho tab Đã xử lý / Đã giao ĐVVC.
+ * Loại trừ lẫn nhau với ORDER_TAB_IS_SHIPPED.
+ */
+const ORDER_TAB_IS_TO_SHIP: Record<string, unknown> = {
+  $and: [
+    { $nor: [ORDER_TAB_IS_SHIPPED] },
+    {
+      $or: [
+        { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
+        { "data.shopee_order_status": { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
+      ],
+    },
+    {
+      status: {
+        $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"],
+      },
+    },
+  ],
+};
+
 /** Khớp isShopeeShippingStatus — loại khỏi pool Chờ lấy hàng. */
 const ORDER_TAB_NOT_SHIPPING_LOGISTICS: Record<string, unknown> = {
   $and: [
@@ -3523,9 +3673,10 @@ const ORDER_TAB_NOT_SHIPPING_LOGISTICS: Record<string, unknown> = {
 };
 
 /**
- * SSOT Mongo filter theo tab — KHỚP matchesUnprocessedPickupTab / matchesProcessedPickupTab /
- * matchesShippingTab / isPendingConfirmOrder (OrderManager + GET /api/orders).
- * Dashboard pending counts và /api/orders/query dùng chung hàm này.
+ * SSOT Mongo filter theo tab — 3 tab vận hành LOẠI TRỪ LẪN NHAU:
+ *  - processed         = TO_SHIP + is_handed_over ≠ true (+ đã xử lý)
+ *  - handed_over_carrier = TO_SHIP + is_handed_over = true  (CẤM SHIPPED)
+ *  - shipping          = SHIPPED (bỏ qua is_handed_over)
  */
 export function orderTabFilter(tab?: string): Record<string, unknown> {
   const key = String(tab || "").trim().toLowerCase();
@@ -3533,25 +3684,8 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "shipping":
     case "shipped":
     case "dang-giao":
-      return {
-        $or: [
-          { status: "shipping" },
-          { shopee_order_status: { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
-          { "data.shopee_order_status": { $in: ["SHIPPED", "TO_CONFIRM_RECEIVE"] } },
-          {
-            logistics_status: {
-              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
-              $options: "i",
-            },
-          },
-          {
-            "data.logistics_status": {
-              $regex: "PICKUP_DONE|LOGISTICS_SHIPPED|LOGISTICS_DELIVERY_DONE|DELIVERY_DONE|IN_TRANSIT|TRANSPORTING",
-              $options: "i",
-            },
-          },
-        ],
-      };
+      // BẮT BUỘC: chỉ SHIPPED — bất kể is_handed_over.
+      return ORDER_TAB_IS_SHIPPED;
     case "completed":
       return { $or: [{ status: "completed" }, { shopee_order_status: "COMPLETED" }] };
     case "cancelled":
@@ -3562,25 +3696,12 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "processed":
     case "da-xu-ly":
     case "processed_pickup":
-      // matchesProcessedPickupTab: pickup pool + isProcessedCondition + !handed_over
+      // TO_SHIP + chưa bàn giao + đã xử lý (PROCESSED / có mã VĐ / dropoff prepared).
       return {
         $and: [
+          ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
           ORDER_TAB_NOT_SHIPPING_LOGISTICS,
-          {
-            shopee_order_status: { $nin: [...ORDER_TAB_LEFT_PICKUP_RAW] },
-          },
-          {
-            $or: [
-              { "data.shopee_order_status": { $exists: false } },
-              { "data.shopee_order_status": { $in: [null, ""] } },
-              {
-                "data.shopee_order_status": {
-                  $nin: [...ORDER_TAB_LEFT_PICKUP_RAW],
-                },
-              },
-            ],
-          },
           {
             $or: [
               { shopee_order_status: "PROCESSED" },
@@ -3589,8 +3710,8 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
                 $and: [
                   {
                     $or: [
-                      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
-                      { "data.shopee_order_status": { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+                      { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
+                      { "data.shopee_order_status": { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
                       { status: { $in: ["processed", "unprocessed"] } },
                     ],
                   },
@@ -3601,8 +3722,8 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
                 $and: [
                   {
                     $or: [
-                      { shopee_order_status: { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
-                      { "data.shopee_order_status": { $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"] } },
+                      { shopee_order_status: { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
+                      { "data.shopee_order_status": { $in: [...ORDER_TAB_TO_SHIP_RAW] } },
                       { status: { $in: ["processed", "unprocessed"] } },
                     ],
                   },
@@ -3627,10 +3748,10 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "chua-xu-ly":
     case "ready_to_ship":
     case "cho-lay-hang":
-      // matchesUnprocessedPickupTab: READY_TO_SHIP|RETRY_SHIP (hoặc local unprocessed),
-      // chưa PROCESSED / chưa tracking / chưa dropoff-prepared / chưa bàn giao / chưa shipping logistics.
+      // TO_SHIP + chưa xử lý + chưa bàn giao — loại SHIPPED tuyệt đối.
       return {
         $and: [
+          ORDER_TAB_IS_TO_SHIP,
           ORDER_TAB_NOT_HANDED_OVER,
           ORDER_TAB_NOT_SHIPPING_LOGISTICS,
           { shopee_order_status: { $nin: ["PROCESSED", ...ORDER_TAB_LEFT_PICKUP_RAW] } },
@@ -3666,7 +3787,6 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
     case "pending_confirm":
     case "pending_verification":
     case "cho-xac-nhan":
-      // Khớp isPendingConfirmOrder — loại đơn đã READY_TO_SHIP/PROCESSED.
       return {
         $and: [
           {
@@ -3705,33 +3825,10 @@ export function orderTabFilter(tab?: string): Record<string, unknown> {
         ],
       };
     case "handed_over_carrier":
-      // matchesHandedOverCarrierTab: is_handed_over AND còn TO_SHIP-like (chưa SHIPPED)
+      // TO_SHIP + is_handed_over=true — CẤM lấy SHIPPED vào tab này.
+      // Không loại theo logistics: chỉ SHIPPED mới đẩy sang Đang giao.
       return {
-        $and: [
-          ORDER_TAB_IS_HANDED_OVER,
-          {
-            shopee_order_status: {
-              $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"],
-            },
-          },
-          {
-            $or: [
-              { "data.shopee_order_status": { $exists: false } },
-              { "data.shopee_order_status": { $in: [null, ""] } },
-              {
-                "data.shopee_order_status": {
-                  $in: ["READY_TO_SHIP", "RETRY_SHIP", "PROCESSED"],
-                },
-              },
-            ],
-          },
-          {
-            status: {
-              $nin: ["shipping", "completed", "cancelled", "return_pending", "return_received"],
-            },
-          },
-          ORDER_TAB_NOT_SHIPPING_LOGISTICS,
-        ],
+        $and: [ORDER_TAB_IS_TO_SHIP, ORDER_TAB_IS_HANDED_OVER],
       };
     case "stale":
       return {
