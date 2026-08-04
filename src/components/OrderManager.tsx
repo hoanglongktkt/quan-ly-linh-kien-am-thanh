@@ -3822,20 +3822,25 @@ export default function OrderManager({
   const [showCreateOrderPage, setShowCreateOrderPage] = useState(false);
 
   /**
-   * Auto-refresh mỗi 12 giây khi tab trình duyệt đang hiển thị — đọc lại DB nội bộ
-   * (silent, KHÔNG gọi Shopee). Phù hợp đồng bộ ngầm: đơn mới tự hiện sau ít phút.
-   * `silent: true` → onFetchOrders (App.tsx) không set ordersLoading, không hiện overlay,
-   * chỉ cập nhật mảng `orders` ở App — filter/lựa chọn cục bộ của OrderManager không bị reset.
+   * Auto-refresh — PHẢI kèm tab đang xem. Không gửi tab → GET /refresh trả 50 đơn
+   * hỗn hợp rồi REPLACE → filter client theo tab → list lúc trống lúc có.
    */
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       if (document.visibilityState === 'hidden') return;
-      void onFetchOrders?.({ silent: true, bustCache: true });
+      void onFetchOrders?.({
+        silent: true,
+        bustCache: true,
+        page: 1,
+        limit: 50,
+        merge: false,
+        tab: activeSubTab === 'cancel_returns' || activeSubTab === 'all' ? '' : activeSubTab,
+      });
       void fetchOrderCounts();
-    }, 12_000);
+    }, 30_000);
     return () => window.clearInterval(intervalId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activeSubTab]);
 
   const isAtScrollTop = useCallback(() => {
     if (typeof window === 'undefined') return true;

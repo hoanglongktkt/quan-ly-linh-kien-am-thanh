@@ -1685,6 +1685,12 @@ export async function bulkUpsertOrdersToStore(orders: any[]): Promise<number> {
       $set["data.isHandedOverToCarrier"] = false;
       $set["data.is_handed_over_to_carrier"] = false;
       $set["data.is_handed_over_to_courier"] = false;
+      // Gỡ local_status HANDED_OVER còn sót — tránh kẹt tab / filter lệch.
+      $set["data.local_status"] = "NONE";
+      $set["data.localStatus"] = "NONE";
+      $set["data.internal_status"] = "NONE";
+      $set["data.handed_over_source"] = null;
+      $set["data.handedOverSource"] = null;
       if (
         String(order.status || "").toLowerCase() === "shipping" ||
         rawStatus === "SHIPPED" ||
@@ -2705,6 +2711,11 @@ export async function clearHandedOverFlagsForShippedOrders(): Promise<{
     "data.isHandedOverToCarrier": false,
     "data.is_handed_over_to_carrier": false,
     "data.is_handed_over_to_courier": false,
+    "data.local_status": "NONE",
+    "data.localStatus": "NONE",
+    "data.internal_status": "NONE",
+    "data.handed_over_source": null,
+    "data.handedOverSource": null,
   };
   const result = await OrderModel.updateMany(filter, { $set }, { maxTimeMS: 30_000 });
   const matched = Number((result as any).matchedCount ?? (result as any).n ?? 0);

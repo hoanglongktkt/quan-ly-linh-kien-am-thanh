@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Product, Expense, Order, ChannelSettings, SyncLog, Supplier, ImportTransaction, BulkUpdatePayload, BulkSaveProductUpdate, ConnectedShop, getProductChildren } from './types';
 import { 
   INITIAL_SYNC_LOGS,
@@ -592,12 +592,14 @@ export default function App() {
         }
         lastAppliedOrdersSeqRef.current = requestId;
         const sanitized = sanitizeOrders(data);
-        // Trang rỗng khi đang có data: không wipe (Mongo tạm trống / race).
+        // Trang rỗng khi đang có data: không wipe (Mongo tạm trống / race / sai tab).
         if (sanitized.length === 0) {
           const existing = ordersHydrateRef.current;
-          if (existing.length > 0 && page === 1) {
+          if (existing.length > 0) {
             setHasLoadedOrdersOnce(true);
-            console.warn('[Fetch Orders] List rỗng — giữ danh sách/cache hiện tại.');
+            console.warn(
+              `[Fetch Orders] List rỗng (page=${page} tab=${tab || 'all'}) — giữ danh sách/cache hiện tại.`,
+            );
             return;
           }
           if (page === 1) {
@@ -773,6 +775,15 @@ export default function App() {
     }
   };
 
+  const resolveOrdersFetchTab = useCallback((): string => {
+    if (activeTab !== 'orders') return '';
+    const hint = String(ordersSubTabHint || '').trim().toLowerCase();
+    if (!hint || hint === 'all' || hint === 'cancel_returns' || hint === 'order_products') {
+      return '';
+    }
+    return hint;
+  }, [activeTab, ordersSubTabHint]);
+
   // Quay lại tab / sáng màn hình → lập tức fetch đơn mới nhất, bỏ qua cache (KHÔNG gọi Shopee).
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -788,7 +799,16 @@ export default function App() {
 
       setBackgroundRefreshing(true);
       try {
-        await fetchOrders({ silent: true, bustCache: true, force: true });
+        const tab = resolveOrdersFetchTab();
+        await fetchOrders({
+          silent: true,
+          bustCache: true,
+          force: true,
+          page: 1,
+          limit: 50,
+          merge: false,
+          ...(tab ? { tab } : {}),
+        });
         if (
           activeTab === 'products' ||
           activeTab === 'dashboard' ||
@@ -815,7 +835,7 @@ export default function App() {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [isAuthenticated, activeTab]);
+  }, [isAuthenticated, activeTab, resolveOrdersFetchTab]);
 
   // Poll hàng đợi dò ngầm Backend — toast toàn app kể cả khi tắt màn quét / đổi tab.
   useEffect(() => {
@@ -845,7 +865,15 @@ export default function App() {
         const saved =
           (status.summary?.cancelled || 0) + (status.summary?.returnReceived || 0);
         if (saved > 0) {
-          void fetchOrders({ silent: true, bustCache: true });
+          const tab = resolveOrdersFetchTab();
+          void fetchOrders({
+            silent: true,
+            bustCache: true,
+            page: 1,
+            limit: 50,
+            merge: false,
+            ...(tab ? { tab } : {}),
+          });
         }
       } finally {
         scanBgPollBusyRef.current = false;
@@ -859,16 +887,19 @@ export default function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isAuthenticated, activeTab]);
-
-  // Mở tab "Quản lý đơn hàng" mà danh sách vẫn rỗng (VD: lần fetch đầu tiên lúc mount
-  // rơi đúng lúc MongoDB chưa kết nối xong sau restart, hết lượt retry) — tự fetch lại
-  // thay vì để trống vĩnh viễn cho tới khi người dùng tự bấm "Làm mới".
+  }, [isAuthenticated, activeTab, resolveOrdersFetchTab]);
   useEffect(() => {
     if (!isAuthenticated || activeTab !== 'orders' || orders.length > 0 || ordersLoading) return;
-    void fetchOrders({ silent: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ cần chạy lại khi đổi tab
-  }, [isAuthenticated, activeTab]);
+    const tab = resolveOrdersFetchTab();
+    void fetchOrders({
+      silent: true,
+      page: 1,
+      limit: 50,
+      merge: false,
+      ...(tab ? { tab } : {}),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ cần chạy lại khi đổi tab / list trống
+  }, [isAuthenticated, activeTab, orders.length, ordersLoading, resolveOrdersFetchTab]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
