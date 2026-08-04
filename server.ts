@@ -301,6 +301,7 @@ import {
 import {
   parseShopeeJson,
   toShopeeId,
+  toShopeeIdNumber,
   isValidShopeeId,
   stringifyShopeeIdsDeep,
 } from "./services/shopee/jsonBig.js";
@@ -1180,17 +1181,18 @@ function buildShopeeUpdateStockEntry(
   stock: number,
   modelId?: string | number | null,
   locationId?: string | null
-): { model_id?: string; seller_stock: { stock: number; location_id?: string }[] } {
+): { model_id?: number; seller_stock: { stock: number; location_id?: string }[] } {
   const sellerStock: { stock: number; location_id?: string } = {
     stock: Math.max(0, Math.round(Number(stock) || 0)),
   };
   const loc = String(locationId || "").trim();
   if (loc) sellerStock.location_id = loc;
-  const entry: { model_id?: string; seller_stock: { stock: number; location_id?: string }[] } = {
+  const entry: { model_id?: number; seller_stock: { stock: number; location_id?: string }[] } = {
     seller_stock: [sellerStock],
   };
-  const mid = toShopeeId(modelId);
-  if (mid) entry.model_id = mid;
+  // Shopee UpdateStockRequest.model_id = uint64 → BẮT BUỘC number, không gửi string.
+  const mid = toShopeeIdNumber(modelId);
+  if (mid != null) entry.model_id = mid;
   return entry;
 }
 
@@ -3729,13 +3731,21 @@ async function shopeeUpdateStock(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  const safeItemId = toShopeeId(itemId) || String(itemId);
+  // UpdateStockRequest.item_id / model_id = uint64 → phải là NUMBER trong JSON body.
+  const safeItemId = toShopeeIdNumber(itemId);
+  if (safeItemId == null) {
+    return {
+      error: "error_param",
+      message: "item_id không hợp lệ khi gọi update_stock",
+      response: { failure_list: [], success_list: [] },
+    };
+  }
   const normalizedStockList = (Array.isArray(stockList) ? stockList : []).map((row) => {
-    const entry: { model_id?: string; seller_stock: { stock: number; location_id?: string }[] } = {
+    const entry: { model_id?: number; seller_stock: { stock: number; location_id?: string }[] } = {
       seller_stock: row.seller_stock,
     };
-    const mid = toShopeeId(row?.model_id);
-    if (mid) entry.model_id = mid;
+    const mid = toShopeeIdNumber(row?.model_id);
+    if (mid != null) entry.model_id = mid;
     return entry;
   });
   const body = { item_id: safeItemId, stock_list: normalizedStockList };
@@ -3745,18 +3755,18 @@ async function shopeeUpdateStock(
   return json;
 }
 
-/** Chuẩn hóa 1 dòng price_list — original_price NUMBER; model_id STRING (uint64). */
+/** Chuẩn hóa 1 dòng price_list — original_price NUMBER; model_id NUMBER (uint64). */
 function buildShopeeUpdatePriceEntry(
   sellingPrice: unknown,
   modelId?: string | number | null
-): { model_id?: string; original_price: number } {
+): { model_id?: number; original_price: number } {
   // VN và hầu hết region (trừ SG/MY/BR/...): giá phải là số nguyên.
   const originalPrice = Math.max(0, Math.round(Number(sellingPrice) || 0));
-  const entry: { model_id?: string; original_price: number } = {
+  const entry: { model_id?: number; original_price: number } = {
     original_price: originalPrice,
   };
-  const mid = toShopeeId(modelId);
-  if (mid) entry.model_id = mid;
+  const mid = toShopeeIdNumber(modelId);
+  if (mid != null) entry.model_id = mid;
   return entry;
 }
 
@@ -3771,17 +3781,17 @@ async function shopeeUpdatePrice(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  const safeItemId = toShopeeId(itemId);
+  const safeItemId = toShopeeIdNumber(itemId);
   const normalizedPriceList = (Array.isArray(priceList) ? priceList : []).map((row) => {
     const originalPrice = Math.max(0, Math.round(Number(row?.original_price) || 0));
-    const entry: { model_id?: string; original_price: number } = {
+    const entry: { model_id?: number; original_price: number } = {
       original_price: originalPrice,
     };
-    const mid = toShopeeId(row?.model_id);
-    if (mid) entry.model_id = mid;
+    const mid = toShopeeIdNumber(row?.model_id);
+    if (mid != null) entry.model_id = mid;
     return entry;
   });
-  if (!safeItemId) {
+  if (safeItemId == null) {
     return {
       error: "error_param",
       message: "item_id không hợp lệ khi gọi update_price",
@@ -3828,9 +3838,9 @@ async function shopeeUpdateModelSku(
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
 
-  const safeItemId = toShopeeId(itemId);
-  const safeModelId = toShopeeId(modelId);
-  if (!safeItemId || !safeModelId) {
+  const safeItemId = toShopeeIdNumber(itemId);
+  const safeModelId = toShopeeIdNumber(modelId);
+  if (safeItemId == null || safeModelId == null) {
     return {
       error: "error_param",
       message: "item_id/model_id không hợp lệ khi gọi update_model",

@@ -1147,6 +1147,7 @@ export default function App() {
     if (!token) return { success: false, error: 'Chưa đăng nhập.' };
 
     try {
+      // Chỉ lưu kho nội bộ — đồng bộ Shopee tách riêng qua nút "Đồng bộ Shopee".
       const response = await fetch(`/api/products/${encodeURIComponent(updated.id)}`, {
         method: 'PATCH',
         headers: apiAuthHeaders(),
@@ -1172,39 +1173,13 @@ export default function App() {
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
         const error =
-          data?.error || data?.message || data?.shopeeMessage || `Lỗi cập nhật sản phẩm (HTTP ${response.status})`;
+          data?.error || data?.message || `Lỗi cập nhật sản phẩm (HTTP ${response.status})`;
         return {
           success: false,
           error,
           shopeeSynced: false,
           shopeeMessage: data?.shopeeMessage || error,
         };
-      }
-
-      let syncResult = data;
-      const shopeeSkippedUnmapped =
-        typeof data?.shopeeMessage === 'string' &&
-        data.shopeeMessage.includes('Chưa liên kết Mapping');
-      // PATCH đã lưu Mongo; nếu chưa sync Shopee (và vẫn còn mapping) → ép sync lại.
-      if (!data?.shopeeSynced && !shopeeSkippedUnmapped) {
-        const syncResponse = await fetch('/api/products/sync-shopee', {
-          method: 'POST',
-          headers: apiAuthHeaders(),
-          body: JSON.stringify({ productIds: [updated.id] }),
-        });
-        syncResult = await parseJsonResponse(syncResponse);
-        if (!syncResponse.ok || syncResult?.success === false) {
-          const error =
-            syncResult?.error ||
-            syncResult?.message ||
-            `Lưu kho thành công nhưng đồng bộ Shopee thất bại (HTTP ${syncResponse.status})`;
-          return {
-            success: false,
-            error,
-            shopeeSynced: false,
-            shopeeMessage: error,
-          };
-        }
       }
 
       if (data?.id) {
@@ -1221,12 +1196,8 @@ export default function App() {
       }
       return {
         success: true,
-        shopeeSynced: !!data?.shopeeSynced || !!syncResult?.shopeeSynced || shopeeSkippedUnmapped,
-        shopeeMessage:
-          syncResult?.shopeeMessage ||
-          syncResult?.message ||
-          data?.shopeeMessage ||
-          'Đồng bộ Shopee thành công!',
+        shopeeSynced: false,
+        shopeeMessage: 'Lưu thành công',
       };
     } catch (err: any) {
       console.error('Update product error:', err);

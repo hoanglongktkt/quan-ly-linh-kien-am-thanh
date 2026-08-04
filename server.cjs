@@ -71787,9 +71787,6 @@ function parseShopeeJson(data) {
   if (!text.trim()) return {};
   return JSONBig.parse(text);
 }
-function stringifyShopeeJson(value) {
-  return JSONBig.stringify(value);
-}
 function toShopeeId(value) {
   if (value == null || value === "") return null;
   if (typeof value === "bigint") {
@@ -71814,6 +71811,18 @@ function toShopeeId(value) {
   const m22 = raw.match(/(\d+)/);
   if (m22?.[1] && m22[1] !== "0") return m22[1];
   return null;
+}
+function toShopeeIdNumber(value) {
+  const id = toShopeeId(value);
+  if (id == null) return null;
+  if (!Number.isSafeInteger(Number(id))) {
+    console.warn(
+      `[Shopee uint64] ID v\u01B0\u1EE3t Safe Integer \u2014 kh\xF4ng \xE9p Number an to\xE0n: ${id}`
+    );
+  }
+  const n = Number(id);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.trunc(n);
 }
 var SHOPEE_ID_KEYS = /* @__PURE__ */ new Set([
   "item_id",
@@ -100784,6 +100793,7 @@ var deps9 = {
   extractShopeeStockPushErrorMessage: (_err, fallback) => fallback || "",
   buildShopeeUpdatePriceEntry: () => ({}),
   shopeeUpdatePrice: async () => ({}),
+  shopeeUpdateModelSku: async () => ({}),
   loadProductById: async () => null
 };
 function initStockSyncQueue(partial) {
@@ -101001,7 +101011,7 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
       const priceEntry = deps9.buildShopeeUpdatePriceEntry(mapped.sellingPrice, modelId);
       try {
         console.log(
-          `[Shopee Sync] UpdatePrice shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} price=${mapped.sellingPrice}`
+          `[Shopee Sync] UpdatePrice shop_id=${shopId} item_id=${itemId} model_id=${modelId ?? "n/a"} price=${mapped.sellingPrice} sku=${mapped.sku || ""}`
         );
         const priceResult = await deps9.withShopeeAccessTokenRetry(
           shopId,
@@ -101045,6 +101055,55 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
         return { ok: false, message: msg };
       }
     }
+    if (opts.syncSku && modelId != null && typeof deps9.shopeeUpdateModelSku === "function") {
+      await sleep2(SHOPEE_SYNC_QUEUE_GAP_MS);
+      const modelSku = String(mapped.sku || "").trim();
+      try {
+        console.log(
+          `[Shopee Sync] UpdateModelSku shop_id=${shopId} item_id=${itemId} model_id=${modelId} sku=${modelSku}`
+        );
+        const skuResult = await deps9.withShopeeAccessTokenRetry(
+          shopId,
+          async (token) => {
+            accessToken = token || accessToken;
+            return deps9.shopeeUpdateModelSku(shopId, accessToken, itemId, modelId, modelSku);
+          },
+          isAuthFailResult
+        );
+        const parsed = deps9.parseShopeeApiResult(skuResult, mapped, "update_model");
+        lines.push(parsed.message || `update_model sku=${modelSku}`);
+        if (!parsed.success) {
+          console.error(`[Shopee Sync] UpdateModelSku FAIL:`, parsed.message);
+          await deps9.appendShopeeSyncErrorToDb({
+            itemId,
+            modelId: modelId ?? mapped.shopeeModelId,
+            sku: mapped.sku,
+            shopId,
+            action: "update_model",
+            error: parsed.message,
+            productId: mapped.id
+          });
+          return { ok: false, message: parsed.message };
+        }
+        console.log(`[Shopee Sync] UpdateModelSku OK item_id=${itemId} model_id=${modelId}`);
+      } catch (err) {
+        const msg = deps9.extractShopeeStockPushErrorMessage(
+          err,
+          err instanceof Error ? err.message : String(err)
+        );
+        console.error(`[Shopee Sync] UpdateModelSku exception shop=${shopId} item=${itemId}:`, err);
+        await deps9.appendShopeeSyncErrorToDb({
+          itemId,
+          modelId: modelId ?? mapped.shopeeModelId,
+          sku: mapped.sku,
+          shopId,
+          action: "update_model",
+          error: msg,
+          productId: mapped.id
+        });
+        return { ok: false, message: msg };
+      }
+    }
     return { ok: true, message: lines.join(" | ") || "Sync Shopee OK" };
   } catch (err) {
     console.error("[Shopee Sync] executeShopeeStockPriceSyncJob exception:", err);
@@ -101055,8 +101114,8 @@ async function executeShopeeStockPriceSyncJob(product, opts) {
   }
 }
 async function pushProductStockPriceToShopeeImmediate(product, opts) {
-  if (!opts.syncStock && !opts.syncPrice) {
-    return { ok: true, skipped: true, message: "Kh\xF4ng c\xF3 thay \u0111\u1ED5i t\u1ED3n/gi\xE1 c\u1EA7n \u0111\u1ED3ng b\u1ED9 Shopee." };
+  if (!opts.syncStock && !opts.syncPrice && !opts.syncSku) {
+    return { ok: true, skipped: true, message: "Kh\xF4ng c\xF3 thay \u0111\u1ED5i t\u1ED3n/gi\xE1/SKU c\u1EA7n \u0111\u1ED3ng b\u1ED9 Shopee." };
   }
   try {
     const mapped = await resolveProductWithShopeeMapping(product);
@@ -101078,13 +101137,14 @@ async function pushProductStockPriceToShopeeImmediate(product, opts) {
       return { ok: false, message: msg };
     }
     console.log(
-      `[Shopee Sync] Manual sync product=${mapped.id || mapped.sku} shops=[${shopIds.join(", ")}] stock=${!!opts.syncStock} price=${!!opts.syncPrice}`
+      `[Shopee Sync] Manual sync product=${mapped.id || mapped.sku} item=${deps9.getShopeeItemIdForStockPush(mapped) ?? "?"} model=${deps9.resolveShopeeModelIdForStockPush(mapped) ?? "?"} sku=${mapped.sku || ""} shops=[${shopIds.join(", ")}] stock=${!!opts.syncStock} price=${!!opts.syncPrice} skuSync=${!!opts.syncSku}`
     );
     const shopResults = [];
     for (const shopId of shopIds) {
       const result = await executeShopeeStockPriceSyncJob(mapped, {
         syncStock: opts.syncStock,
         syncPrice: opts.syncPrice,
+        syncSku: !!opts.syncSku,
         shopId
       });
       shopResults.push({ shopId, ...result });
@@ -101607,64 +101667,31 @@ async function patchProduct(req, res) {
     const patch = req.body || {};
     const topIndex = products.findIndex((p) => p.id === req.params.id);
     if (topIndex !== -1) {
-      const before = products[topIndex];
-      const merged = deps10.mergeProductPatch(before, patch);
+      const merged = deps10.mergeProductPatch(products[topIndex], patch);
       products[topIndex] = merged;
       await deps10.upsertProductsToStoreAsync([merged]);
-      const changes = detectStockPriceChanges(before, merged);
-      const shopee = await pushProductStockPriceToShopeeImmediate(merged, {
-        syncStock: changes.stock,
-        syncPrice: changes.price
-      });
-      if (!shopee.ok) {
-        return res.status(400).json({
-          success: false,
-          error: shopee.message || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt t\u1ED3n/gi\xE1",
-          product: merged,
-          shopeeSynced: false,
-          shopeeMessage: shopee.message
-        });
-      }
       return res.json({
         ...merged,
         success: true,
-        shopeeSynced: !shopee.skipped,
-        shopeeMessage: shopee.message
+        shopeeSynced: false,
+        shopeeMessage: "\u0110\xE3 l\u01B0u kho n\u1ED9i b\u1ED9 (ch\u01B0a \u0111\u1ED3ng b\u1ED9 Shopee)."
       });
     }
     for (let i2 = 0; i2 < products.length; i2++) {
       const children = deps10.getProductChildrenList(products[i2]);
       const childIdx = children.findIndex((c) => c.id === req.params.id);
       if (childIdx === -1) continue;
-      const beforeChild = children[childIdx];
-      const mergedChild = deps10.mergeProductPatch(beforeChild, patch);
+      const mergedChild = deps10.mergeProductPatch(children[childIdx], patch);
       const nextChildren = [...children];
       nextChildren[childIdx] = mergedChild;
       const totalStock = nextChildren.reduce((s2, c) => s2 + (Number(c.stock) || 0), 0);
       products[i2] = { ...products[i2], children: nextChildren, stock: totalStock };
       await deps10.upsertProductsToStoreAsync([products[i2]]);
-      const changes = detectStockPriceChanges(beforeChild, mergedChild);
-      const shopee = await pushProductStockPriceToShopeeImmediate(
-        deps10.inheritShopeeLinkFromParent(mergedChild, products[i2]),
-        {
-          syncStock: changes.stock,
-          syncPrice: changes.price
-        }
-      );
-      if (!shopee.ok) {
-        return res.status(400).json({
-          success: false,
-          error: shopee.message || "Shopee t\u1EEB ch\u1ED1i c\u1EADp nh\u1EADt t\u1ED3n/gi\xE1",
-          product: mergedChild,
-          shopeeSynced: false,
-          shopeeMessage: shopee.message
-        });
-      }
       return res.json({
         ...mergedChild,
         success: true,
-        shopeeSynced: !shopee.skipped,
-        shopeeMessage: shopee.message
+        shopeeSynced: false,
+        shopeeMessage: "\u0110\xE3 l\u01B0u kho n\u1ED9i b\u1ED9 (ch\u01B0a \u0111\u1ED3ng b\u1ED9 Shopee)."
       });
     }
     return res.status(404).json({ success: false, error: "product_not_found" });
@@ -102418,8 +102445,9 @@ async function shopeePostJsonWithRetry(url, body, context, opts) {
       res = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // stringifyShopeeJson giữ uint64 dạng string — Shopee chấp nhận string ID.
-        body: stringifyShopeeJson(body)
+        // JSON.stringify chuẩn: giữ Number cho item_id/model_id (Shopee Go uint64).
+        // Không dùng stringifyShopeeJson (storeAsString) — sẽ biến ID thành string và bị Shopee từ chối.
+        body: JSON.stringify(body)
       });
       rawText = await res.text();
     } catch (err) {
@@ -109390,8 +109418,8 @@ function buildShopeeUpdateStockEntry(stock, modelId, locationId) {
   const entry = {
     seller_stock: [sellerStock]
   };
-  const mid = toShopeeId(modelId);
-  if (mid) entry.model_id = mid;
+  const mid = toShopeeIdNumber(modelId);
+  if (mid != null) entry.model_id = mid;
   return entry;
 }
 async function shopeeGetReturnList(shopId, accessToken, opts) {
@@ -111404,13 +111432,20 @@ async function shopeeUpdateStock(shopId, accessToken, itemId, stockList) {
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
-  const safeItemId = toShopeeId(itemId) || String(itemId);
+  const safeItemId = toShopeeIdNumber(itemId);
+  if (safeItemId == null) {
+    return {
+      error: "error_param",
+      message: "item_id kh\xF4ng h\u1EE3p l\u1EC7 khi g\u1ECDi update_stock",
+      response: { failure_list: [], success_list: [] }
+    };
+  }
   const normalizedStockList = (Array.isArray(stockList) ? stockList : []).map((row) => {
     const entry = {
       seller_stock: row.seller_stock
     };
-    const mid = toShopeeId(row?.model_id);
-    if (mid) entry.model_id = mid;
+    const mid = toShopeeIdNumber(row?.model_id);
+    if (mid != null) entry.model_id = mid;
     return entry;
   });
   const body = { item_id: safeItemId, stock_list: normalizedStockList };
@@ -111424,8 +111459,8 @@ function buildShopeeUpdatePriceEntry(sellingPrice, modelId) {
   const entry = {
     original_price: originalPrice
   };
-  const mid = toShopeeId(modelId);
-  if (mid) entry.model_id = mid;
+  const mid = toShopeeIdNumber(modelId);
+  if (mid != null) entry.model_id = mid;
   return entry;
 }
 async function shopeeUpdatePrice(shopId, accessToken, itemId, priceList) {
@@ -111433,17 +111468,17 @@ async function shopeeUpdatePrice(shopId, accessToken, itemId, priceList) {
   const timestamp = Math.floor(Date.now() / 1e3);
   const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
   const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
-  const safeItemId = toShopeeId(itemId);
+  const safeItemId = toShopeeIdNumber(itemId);
   const normalizedPriceList = (Array.isArray(priceList) ? priceList : []).map((row) => {
     const originalPrice = Math.max(0, Math.round(Number(row?.original_price) || 0));
     const entry = {
       original_price: originalPrice
     };
-    const mid = toShopeeId(row?.model_id);
-    if (mid) entry.model_id = mid;
+    const mid = toShopeeIdNumber(row?.model_id);
+    if (mid != null) entry.model_id = mid;
     return entry;
   });
-  if (!safeItemId) {
+  if (safeItemId == null) {
     return {
       error: "error_param",
       message: "item_id kh\xF4ng h\u1EE3p l\u1EC7 khi g\u1ECDi update_price",
@@ -111458,6 +111493,45 @@ async function shopeeUpdatePrice(shopId, accessToken, itemId, priceList) {
     };
   }
   const body = { item_id: safeItemId, price_list: normalizedPriceList };
+  console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${safeItemId}:`, JSON.stringify(body));
+  const { json: json2, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${safeItemId}`, {
+    maxAttempts: SHOPEE_SYNC_QUEUE_MAX_RETRY2
+  });
+  console.log(
+    `[Shopee API] POST ${apiPath} RESPONSE item_id=${safeItemId} HTTP ${httpStatus}:`,
+    JSON.stringify(json2)
+  );
+  if (json2 && typeof json2 === "object") {
+    const businessError = String(json2.error || "").trim();
+    if (businessError && !String(json2.message || "").trim()) {
+      json2.message = formatShopeeApiError(json2, httpStatus >= 400 ? httpStatus : void 0);
+    }
+  }
+  return json2;
+}
+async function shopeeUpdateModelSku(shopId, accessToken, itemId, modelId, modelSku) {
+  const apiPath = "/api/v2/product/update_model";
+  const timestamp = Math.floor(Date.now() / 1e3);
+  const sign = shopeeSign(apiPath, timestamp, accessToken, shopId);
+  const url = `${SHOPEE_HOST}${apiPath}?partner_id=${SHOPEE_PARTNER_ID}&timestamp=${timestamp}&access_token=${accessToken}&shop_id=${shopId}&sign=${sign}`;
+  const safeItemId = toShopeeIdNumber(itemId);
+  const safeModelId = toShopeeIdNumber(modelId);
+  if (safeItemId == null || safeModelId == null) {
+    return {
+      error: "error_param",
+      message: "item_id/model_id kh\xF4ng h\u1EE3p l\u1EC7 khi g\u1ECDi update_model",
+      response: { failure_list: [], success_list: [] }
+    };
+  }
+  const body = {
+    item_id: safeItemId,
+    model: [
+      {
+        model_id: safeModelId,
+        model_sku: String(modelSku || "").trim()
+      }
+    ]
+  };
   console.log(`[Shopee API] POST ${apiPath} REQUEST item_id=${safeItemId}:`, JSON.stringify(body));
   const { json: json2, httpStatus } = await shopeePostJsonWithRetry(url, body, `POST ${apiPath} item_id=${safeItemId}`, {
     maxAttempts: SHOPEE_SYNC_QUEUE_MAX_RETRY2
@@ -119019,6 +119093,7 @@ async function startServer() {
     extractShopeeStockPushErrorMessage,
     buildShopeeUpdatePriceEntry,
     shopeeUpdatePrice,
+    shopeeUpdateModelSku,
     loadProductById
   });
   initProductsController({

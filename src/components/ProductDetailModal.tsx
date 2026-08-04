@@ -278,7 +278,7 @@ export default function ProductDetailModal({
   const handleSave = async () => {
     if (!active) return;
     setSaving(true);
-    setToast('Đang lưu sản phẩm và đồng bộ Shopee...');
+    setToast('Đang lưu vào kho nội bộ...');
     const updated: Product = {
       ...active,
       title: editTitle.trim() || active.title,
@@ -297,26 +297,12 @@ export default function ProductDetailModal({
       const result = await onUpdateProduct(updated, { save: true });
       setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
       if (result && typeof result === 'object' && result.success === false) {
-        const detail =
-          result.error ||
-          result.shopeeMessage ||
-          'Lưu kho thành công nhưng đồng bộ Shopee thất bại.';
-        setToast(`Lỗi đồng bộ Shopee: ${detail}`);
+        setToast(`Lỗi lưu: ${result.error || 'Cập nhật sản phẩm thất bại.'}`);
         setTimeout(() => setToast(null), 4500);
         return;
       }
-      // Giữ modal mở — chỉ báo toast thành công để tiếp tục chỉnh sửa.
-      if (result && typeof result === 'object' && result.shopeeSynced) {
-        setToast(
-          result.shopeeMessage
-            ? `Lưu thành công! ${result.shopeeMessage}`
-            : 'Lưu thành công!'
-        );
-      } else if (result && typeof result === 'object' && result.shopeeMessage) {
-        setToast(`Lưu thành công. ${result.shopeeMessage}`);
-      } else {
-        setToast('Lưu thành công');
-      }
+      // Chỉ lưu MongoDB — giữ modal mở, không gọi Shopee.
+      setToast('Lưu thành công');
       setTimeout(() => setToast(null), 4500);
     } catch (err: any) {
       setToast(`Lỗi cập nhật: ${err?.message || 'Cập nhật sản phẩm thất bại.'}`);

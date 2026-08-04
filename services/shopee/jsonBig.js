@@ -56,6 +56,25 @@ export function isValidShopeeId(value) {
   return id != null && /^\d+$/.test(id);
 }
 
+/**
+ * ID dạng NUMBER cho body request Shopee (Go uint64).
+ * Shopee từ chối string: cannot unmarshal string into ... item_id of type uint64.
+ * Chỉ dùng khi ID nằm trong Number.MAX_SAFE_INTEGER (item/model Shopee thường 10–12 chữ số).
+ */
+export function toShopeeIdNumber(value) {
+  const id = toShopeeId(value);
+  if (id == null) return null;
+  if (!Number.isSafeInteger(Number(id))) {
+    console.warn(
+      `[Shopee uint64] ID vượt Safe Integer — không ép Number an toàn: ${id}`,
+    );
+    // Vẫn cố Number vì API bắt buộc kiểu số; caller có thể log thêm.
+  }
+  const n = Number(id);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.trunc(n);
+}
+
 /** Ép field ID trong object (in-place) sang string — dùng trước khi ghi Mongo. */
 const SHOPEE_ID_KEYS = new Set([
   "item_id",

@@ -414,50 +414,22 @@ export async function replaceProducts(req, res) {
   return res.json({ count: incoming.length, products: incoming });
 }
 
-/** PATCH /api/products/:id */
+/** PATCH /api/products/:id — CHỈ lưu kho nội bộ (Mongo/disk). Không gọi Shopee. */
 export async function patchProduct(req, res) {
   try {
     const products = await deps.loadProducts();
     const patch = req.body || {};
 
-    const pushAfterSave = async (before, merged, linkedRow) => {
-      const changes = detectStockPriceChanges(before, merged);
-      const skuChanged =
-        String(before?.sku || "").trim() !== String(merged?.sku || "").trim();
-      // Sau khi lưu Mongo/disk thành công: BẮT BUỘC đẩy tồn/giá lên Shopee.
-      // Đồng bộ SKU (update_model) khi SKU đổi hoặc client gửi field sku.
-      const shopee = await pushProductStockPriceToShopeeImmediate(linkedRow || merged, {
-        syncStock: true,
-        syncPrice: true,
-        syncSku: skuChanged || Object.prototype.hasOwnProperty.call(patch, "sku"),
-        // Giữ cờ thay đổi để log/debug phía sync
-        stockChanged: changes.stock,
-        priceChanged: changes.price,
-      });
-      return shopee;
-    };
-
     const topIndex = products.findIndex((p) => p.id === req.params.id);
     if (topIndex !== -1) {
-      const before = products[topIndex];
-      const merged = deps.mergeProductPatch(before, patch);
+      const merged = deps.mergeProductPatch(products[topIndex], patch);
       products[topIndex] = merged;
       await deps.upsertProductsToStoreAsync([merged]);
-      const shopee = await pushAfterSave(before, merged, merged);
-      if (!shopee.ok) {
-        return res.status(400).json({
-          success: false,
-          error: shopee.message || "Shopee từ chối cập nhật tồn/giá",
-          product: merged,
-          shopeeSynced: false,
-          shopeeMessage: shopee.message,
-        });
-      }
       return res.json({
         ...merged,
         success: true,
-        shopeeSynced: !shopee.skipped,
-        shopeeMessage: shopee.message,
+        shopeeSynced: false,
+        shopeeMessage: "Đã lưu kho nội bộ (chưa đồng bộ Shopee).",
       });
     }
 
@@ -466,29 +438,17 @@ export async function patchProduct(req, res) {
       const children = deps.getProductChildrenList(products[i]);
       const childIdx = children.findIndex((c) => c.id === req.params.id);
       if (childIdx === -1) continue;
-      const beforeChild = children[childIdx];
-      const mergedChild = deps.mergeProductPatch(beforeChild, patch);
+      const mergedChild = deps.mergeProductPatch(children[childIdx], patch);
       const nextChildren = [...children];
       nextChildren[childIdx] = mergedChild;
       const totalStock = nextChildren.reduce((s, c) => s + (Number(c.stock) || 0), 0);
       products[i] = { ...products[i], children: nextChildren, stock: totalStock };
       await deps.upsertProductsToStoreAsync([products[i]]);
-      const linked = deps.inheritShopeeLinkFromParent(mergedChild, products[i]);
-      const shopee = await pushAfterSave(beforeChild, mergedChild, linked);
-      if (!shopee.ok) {
-        return res.status(400).json({
-          success: false,
-          error: shopee.message || "Shopee từ chối cập nhật tồn/giá",
-          product: mergedChild,
-          shopeeSynced: false,
-          shopeeMessage: shopee.message,
-        });
-      }
       return res.json({
         ...mergedChild,
         success: true,
-        shopeeSynced: !shopee.skipped,
-        shopeeMessage: shopee.message,
+        shopeeSynced: false,
+        shopeeMessage: "Đã lưu kho nội bộ (chưa đồng bộ Shopee).",
       });
     }
 

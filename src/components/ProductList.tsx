@@ -221,7 +221,7 @@ export default function ProductList({
     const sku = String(product.sku ?? '').trim();
     setSavingImportPriceId(product.id);
     try {
-      // Gửi đủ tồn/giá/SKU để PATCH lưu Mongo rồi bắt buộc đẩy Shopee.
+      // Chỉ lưu kho nội bộ — đồng bộ Shopee dùng nút Refresh riêng.
       const response = await fetch(`/api/products/${encodeURIComponent(product.id)}`, {
         method: 'PATCH',
         headers: {
@@ -241,7 +241,7 @@ export default function ProductList({
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
         throw new Error(
-          data?.error || data?.message || data?.shopeeMessage || `Cập nhật phân loại thất bại (HTTP ${response.status})`
+          data?.error || data?.message || `Cập nhật phân loại thất bại (HTTP ${response.status})`
         );
       }
       const savedPrice = Math.max(0, Math.round(Number(data?.importPrice ?? importPrice) || 0));
@@ -255,35 +255,7 @@ export default function ProductList({
         stock: savedStock,
         sku: savedSku,
       });
-      // Nếu PATCH chưa sync (và vẫn có Mapping) → ép sync lại tồn/giá.
-      const unmapped =
-        typeof data?.shopeeMessage === 'string' &&
-        data.shopeeMessage.includes('Chưa liên kết Mapping');
-      if (!data?.shopeeSynced && !unmapped) {
-        const syncResponse = await fetch('/api/products/sync-shopee', {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ productIds: [product.id] }),
-        });
-        const syncData = await parseJsonResponse(syncResponse);
-        if (!syncResponse.ok || syncData?.success === false) {
-          throw new Error(
-            syncData?.error ||
-              syncData?.message ||
-              syncData?.shopeeMessage ||
-              'Lưu kho thành công nhưng đồng bộ Shopee thất bại.'
-          );
-        }
-      }
-      showActionToast(
-        data?.shopeeMessage
-          ? `Lưu thành công! ${data.shopeeMessage}`
-          : 'Lưu thành công!',
-        true
-      );
+      showActionToast('Lưu thành công', true);
     } catch (err: any) {
       showActionToast(`Lỗi: ${err?.message || 'Lưu phân loại thất bại.'}`);
     } finally {

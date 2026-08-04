@@ -6,7 +6,7 @@
 import path from "path";
 import { createRequire } from "node:module";
 import { sleep } from "../../utils/concurrency.js";
-import { parseShopeeJson, stringifyShopeeJson } from "./jsonBig.js";
+import { parseShopeeJson } from "./jsonBig.js";
 
 export const SHOPEE_API_MAX_RETRY = 3;
 export const SHOPEE_API_RETRY_BASE_MS = 1500;
@@ -318,8 +318,9 @@ export async function shopeePostJsonWithRetry(url, body, context, opts) {
       res = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // stringifyShopeeJson giữ uint64 dạng string — Shopee chấp nhận string ID.
-        body: stringifyShopeeJson(body),
+        // JSON.stringify chuẩn: giữ Number cho item_id/model_id (Shopee Go uint64).
+        // Không dùng stringifyShopeeJson (storeAsString) — sẽ biến ID thành string và bị Shopee từ chối.
+        body: JSON.stringify(body),
       });
       rawText = await res.text();
     } catch (err) {
