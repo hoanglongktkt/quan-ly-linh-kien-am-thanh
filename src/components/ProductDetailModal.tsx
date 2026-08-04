@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product, SystemFee, getProductChildren } from '../types';
 import { parseJsonResponse } from '../utils/apiClient';
+import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown, Save } from 'lucide-react';
 
 const SAPO = { blue: '#0078D4', bg: '#F4F6F8', border: '#E0E0E0' };
@@ -318,13 +319,14 @@ export default function ProductDetailModal({
     }
   };
 
-  /** Nút Cập nhật — lưu MongoDB rồi đồng bộ Shopee (cùng API nút Đồng bộ ngoài), đóng modal khi OK. */
+  /** Nút Cập nhật — lưu MongoDB rồi đồng bộ Shopee bằng ĐÚNG payload nút Đồng bộ ngoài. */
   const handleUpdateAndSync = async () => {
     const updated = buildUpdatedProduct();
     if (!updated) return;
     setSaving(true);
     setToast('Đang lưu và đồng bộ lên Shopee...');
     try {
+      // 1) Lưu form vào MongoDB trước (stock/price/sku) để sync đọc đúng từ kho.
       const result = await onUpdateProduct(updated, { save: true });
       setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
       if (result && typeof result === 'object' && result.success === false) {
@@ -340,14 +342,17 @@ export default function ProductDetailModal({
         return;
       }
 
-      // Tái sử dụng đúng endpoint của nút Đồng bộ bên ngoài (đã ép Number item_id/model_id).
+      // 2) Payload GIỐNG HỆT nút Đồng bộ bên ngoài (chung buildShopeeSyncPayload).
+      const payload = buildShopeeSyncPayload(updated.id);
+      console.log('PAYLOAD TỪ NÚT TRONG:', payload);
+
       const syncResponse = await fetch('/api/products/sync-shopee', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ productIds: [updated.id] }),
+        body: JSON.stringify(payload),
       });
       const syncData = await parseJsonResponse(syncResponse);
       if (!syncResponse.ok || syncData?.success === false) {

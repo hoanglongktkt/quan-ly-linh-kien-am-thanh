@@ -10,6 +10,7 @@ import BulkEditModal from './BulkEditModal';
 import ProductLinking from './ProductLinking';
 import InventoryAudit from './InventoryAudit';
 import { parseJsonResponse } from '../utils/apiClient';
+import { buildShopeeSyncPayload } from '../utils/shopeeSyncPayload';
 import { clearInventoryBrowserCache } from '../utils/catalogStorage';
 import CurrencyInput from './CurrencyInput';
 import { 
@@ -291,13 +292,15 @@ export default function ProductList({
     setActionToastOk(false);
     setActionToast('Đang đồng bộ giá và tồn kho lên Shopee...');
     try {
+      const payload = buildShopeeSyncPayload(productId);
+      console.log('PAYLOAD TỪ NÚT NGOÀI:', payload);
       const response = await fetch('/api/products/sync-shopee', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ productIds: [productId] }),
+        body: JSON.stringify(payload),
       });
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
