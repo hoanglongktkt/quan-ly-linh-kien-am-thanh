@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product, SystemFee, getProductChildren } from '../types';
-import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown } from 'lucide-react';
+import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown, Save } from 'lucide-react';
 
 const SAPO = { blue: '#0078D4', bg: '#F4F6F8', border: '#E0E0E0' };
 
@@ -275,7 +275,7 @@ export default function ProductDetailModal({
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (closeAfter = false) => {
     if (!active) return;
     setSaving(true);
     setToast('Đang lưu sản phẩm và đồng bộ Shopee...');
@@ -302,7 +302,14 @@ export default function ProductDetailModal({
           result.shopeeMessage ||
           'Lưu kho thành công nhưng đồng bộ Shopee thất bại.';
         setToast(`Lỗi đồng bộ Shopee: ${detail}`);
-      } else if (result && typeof result === 'object' && result.shopeeSynced) {
+        setTimeout(() => setToast(null), 4500);
+        return;
+      }
+      if (closeAfter) {
+        onClose();
+        return;
+      }
+      if (result && typeof result === 'object' && result.shopeeSynced) {
         setToast(
           result.shopeeMessage
             ? `Đồng bộ Shopee thành công! ${result.shopeeMessage}`
@@ -313,11 +320,12 @@ export default function ProductDetailModal({
       } else {
         setToast('Đã lưu vào kho gốc.');
       }
+      setTimeout(() => setToast(null), 4500);
     } catch (err: any) {
       setToast(`Lỗi cập nhật: ${err?.message || 'Cập nhật sản phẩm thất bại.'}`);
+      setTimeout(() => setToast(null), 4500);
     } finally {
       setSaving(false);
-      setTimeout(() => setToast(null), 4500);
     }
   };
 
@@ -528,13 +536,21 @@ export default function ProductDetailModal({
         >
           <button
             onClick={onClose}
-            className="w-full sm:w-auto min-h-11 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[14px] sm:text-[13px] font-medium text-[#424242] bg-white border rounded-[6px] sm:rounded-[4px] hover:bg-[#F9FAFB] max-sm:order-2"
+            className="w-full sm:w-auto min-h-11 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[14px] sm:text-[13px] font-medium text-[#424242] bg-white border rounded-[6px] sm:rounded-[4px] hover:bg-[#F9FAFB] max-sm:order-3"
             style={{ borderColor: SAPO.border }}
           >
             Hủy bỏ
           </button>
           <button
-            onClick={handleSave}
+            onClick={() => void handleSave(true)}
+            disabled={saving || syncing}
+            className="w-full sm:w-auto min-h-12 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[15px] sm:text-[13px] font-semibold text-[#0078D4] bg-white border border-[#0078D4] rounded-[6px] sm:rounded-[4px] disabled:opacity-50 flex items-center justify-center gap-2 max-sm:order-2"
+          >
+            {saving ? <RefreshCw className="w-5 h-5 sm:w-4 sm:h-4 animate-spin" /> : <Save className="w-5 h-5 sm:w-4 sm:h-4" />}
+            {saving ? 'Đang lưu...' : 'Lưu'}
+          </button>
+          <button
+            onClick={() => void handleSave(false)}
             disabled={saving || syncing}
             className="w-full sm:w-auto min-h-12 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[15px] sm:text-[13px] font-semibold text-white rounded-[6px] sm:rounded-[4px] disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm sm:shadow-none max-sm:order-1"
             style={{ background: '#0078D4' }}

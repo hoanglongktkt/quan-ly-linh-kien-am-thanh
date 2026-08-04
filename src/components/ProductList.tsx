@@ -36,7 +36,10 @@ import {
   AlertTriangle,
   ChevronRight,
   ChevronDown,
-  Save
+  Save,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown
 } from 'lucide-react';
 
 interface ProductListProps {
@@ -173,6 +176,8 @@ export default function ProductList({
   const [channelFilter, setChannelFilter] = useState<'all' | 'shopee' | 'tiktok' | 'none'>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
+  const [sortField, setSortField] = useState<'stock' | 'sellingPrice' | null>(null);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
 
   // Server-side search: debounce 400ms, luôn reset page về 1 khi đổi từ khóa.
   useEffect(() => {
@@ -211,6 +216,7 @@ export default function ProductList({
       return;
     }
     const importPrice = Math.max(0, Math.round(Number(product.importPrice) || 0));
+    const sku = String(product.sku ?? '').trim();
     setSavingImportPriceId(product.id);
     try {
       const response = await fetch(`/api/products/${encodeURIComponent(product.id)}`, {
@@ -219,22 +225,41 @@ export default function ProductList({
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ importPrice }),
+        body: JSON.stringify({ importPrice, sku }),
       });
       const data = await parseJsonResponse(response);
       if (!response.ok || data?.success === false) {
         throw new Error(
-          data?.error || data?.message || `Cập nhật giá nhập thất bại (HTTP ${response.status})`
+          data?.error || data?.message || `Cập nhật phân loại thất bại (HTTP ${response.status})`
         );
       }
       const savedPrice = Math.max(0, Math.round(Number(data?.importPrice ?? importPrice) || 0));
-      onUpdateProduct({ ...product, importPrice: savedPrice });
-      showActionToast('Cập nhật giá nhập thành công!', true);
+      const savedSku = String(data?.sku ?? sku);
+      onUpdateProduct({ ...product, importPrice: savedPrice, sku: savedSku });
+      showActionToast('Lưu phân loại thành công!', true);
     } catch (err: any) {
-      showActionToast(`Lỗi: ${err?.message || 'Cập nhật giá nhập thất bại.'}`);
+      showActionToast(`Lỗi: ${err?.message || 'Lưu phân loại thất bại.'}`);
     } finally {
       setSavingImportPriceId(null);
     }
+  };
+
+  const handleToggleSort = (field: 'stock' | 'sellingPrice') => {
+    if (sortField !== field) {
+      setSortField(field);
+      setSortOrder('asc');
+      return;
+    }
+    if (sortOrder === 'asc') {
+      setSortOrder('desc');
+      return;
+    }
+    if (sortOrder === 'desc') {
+      setSortField(null);
+      setSortOrder(null);
+      return;
+    }
+    setSortOrder('asc');
   };
 
   const handleQuickSyncShopee = async (productId: string) => {
@@ -408,26 +433,40 @@ export default function ProductList({
   // Filter Categories
   const categories = ['all', ...Array.from(new Set(products.map(p => p.category).filter(c => !isJunkCategoryLabel(c))))];
 
-  const filteredGroups = productGroups.filter((group) => {
-    const rep = group.representative;
-    // Search đã lọc server-side (toàn DB) — không filter lại theo search trên trang hiện tại.
-    const channels = Array.isArray(rep.channels) ? rep.channels : [];
+  const filteredGroups = useMemo(() => {
+    const filtered = productGroups.filter((group) => {
+      const rep = group.representative;
+      // Search đã lọc server-side (toàn DB) — không filter lại theo search trên trang hiện tại.
+      const channels = Array.isArray(rep.channels) ? rep.channels : [];
 
-    const matchesChannel =
-      channelFilter === 'all' ? true :
-      channelFilter === 'shopee' ? channels.includes('shopee') :
-      channelFilter === 'tiktok' ? channels.includes('tiktok') :
-      channels.length === 0;
+      const matchesChannel =
+        channelFilter === 'all' ? true :
+        channelFilter === 'shopee' ? channels.includes('shopee') :
+        channelFilter === 'tiktok' ? channels.includes('tiktok') :
+        channels.length === 0;
 
-    const matchesCategory = categoryFilter === 'all' ? true : rep.category === categoryFilter;
+      const matchesCategory = categoryFilter === 'all' ? true : rep.category === categoryFilter;
 
-    const matchesStock =
-      stockFilter === 'all' ? true :
-      stockFilter === 'low' ? group.totalStock > 0 && group.totalStock <= 10 :
-      group.totalStock === 0;
+      const matchesStock =
+        stockFilter === 'all' ? true :
+        stockFilter === 'low' ? group.totalStock > 0 && group.totalStock <= 10 :
+        group.totalStock === 0;
 
-    return matchesChannel && matchesCategory && matchesStock;
-  });
+      return matchesChannel && matchesCategory && matchesStock;
+    });
+
+    if (!sortField || !sortOrder) return filtered;
+
+    const dir = sortOrder === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      if (sortField === 'stock') {
+        return (a.totalStock - b.totalStock) * dir;
+      }
+      const priceA = (a.minSellingPrice + a.maxSellingPrice) / 2;
+      const priceB = (b.minSellingPrice + b.maxSellingPrice) / 2;
+      return (priceA - priceB) * dir;
+    });
+  }, [productGroups, channelFilter, categoryFilter, stockFilter, sortField, sortOrder]);
 
   const allFilteredIds = filteredGroups.flatMap((g) => g.variants.map((v) => v.id));
   const allFilteredSelected = allFilteredIds.length > 0 && allFilteredIds.every((id) => selectedIds.includes(id));
@@ -1062,9 +1101,41 @@ export default function ProductList({
                 </th>
                 <th className="p-4">Sản phẩm</th>
                 <th className="p-4">SKU / Phân loại</th>
-                <th className="p-4">Tồn Kho</th>
+                <th className="p-4">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleSort('stock')}
+                    className="inline-flex items-center gap-1 uppercase tracking-wider hover:text-indigo-600 transition-colors"
+                    title="Sắp xếp theo tồn kho"
+                  >
+                    Tồn Kho
+                    {sortField === 'stock' && sortOrder === 'asc' ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : sortField === 'stock' && sortOrder === 'desc' ? (
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <ArrowUpDown className="w-3.5 h-3.5 text-gray-400" />
+                    )}
+                  </button>
+                </th>
                 <th className="p-4 text-right">Giá Nhập</th>
-                <th className="p-4 text-right">Giá Bán</th>
+                <th className="p-4 text-right">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleSort('sellingPrice')}
+                    className="inline-flex items-center gap-1 uppercase tracking-wider hover:text-indigo-600 transition-colors ml-auto"
+                    title="Sắp xếp theo giá bán"
+                  >
+                    Giá Bán
+                    {sortField === 'sellingPrice' && sortOrder === 'asc' ? (
+                      <ArrowUp className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : sortField === 'sellingPrice' && sortOrder === 'desc' ? (
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600" />
+                    ) : (
+                      <ArrowUpDown className="w-3.5 h-3.5 text-gray-400" />
+                    )}
+                  </button>
+                </th>
                 <th className="p-4">Đăng Kênh</th>
                 <th className="p-4 text-center">Thao tác</th>
               </tr>
@@ -1331,7 +1402,14 @@ export default function ProductList({
                           </td>
                           <td className="p-3">
                             <div className="space-y-0.5">
-                              <span className="font-mono text-xs text-indigo-700 font-semibold block">{child.sku}</span>
+                              <input
+                                type="text"
+                                value={child.sku || ''}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => onUpdateProduct({ ...child, sku: e.target.value })}
+                                className="w-full max-w-[140px] px-1.5 py-1 font-mono text-xs text-indigo-700 font-semibold bg-white hover:bg-indigo-50/50 focus:bg-white rounded border border-indigo-100 outline-none focus:border-indigo-400"
+                                title="Sửa SKU"
+                              />
                               {child.modelName && (
                                 <span className="text-[10px] text-gray-400 block">{child.modelName}</span>
                               )}
@@ -1397,7 +1475,7 @@ export default function ProductList({
                                 onClick={() => void handleSaveImportPrice(child)}
                                 disabled={savingImportPriceId === child.id}
                                 className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all disabled:opacity-60"
-                                title="Lưu giá nhập"
+                                title="Lưu phân loại (SKU / giá nhập)"
                               >
                                 <Save className={`w-3.5 h-3.5 ${savingImportPriceId === child.id ? 'animate-pulse text-emerald-600' : ''}`} />
                               </button>
@@ -1511,7 +1589,16 @@ export default function ProductList({
                       <div key={child.id} className="flex items-center gap-2 bg-slate-50 rounded-xl p-2.5">
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-gray-800 truncate">{child.modelName || child.title}</p>
-                          <p className="text-[10px] font-mono text-indigo-600">SKU: {child.sku}</p>
+                          <p className="text-[10px] font-mono text-indigo-600 flex items-center gap-1">
+                            <span className="shrink-0">SKU:</span>
+                            <input
+                              type="text"
+                              value={child.sku || ''}
+                              onChange={(e) => onUpdateProduct({ ...child, sku: e.target.value })}
+                              className="flex-1 min-w-0 px-1 py-0.5 font-mono text-[10px] text-indigo-700 font-semibold bg-white rounded border border-indigo-100 outline-none focus:border-indigo-400"
+                              title="Sửa SKU"
+                            />
+                          </p>
                           <p className={`text-[10px] font-semibold mt-0.5 ${childProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             Lãi: {childProfit.toLocaleString('vi-VN')}đ
                           </p>
@@ -1530,8 +1617,8 @@ export default function ProductList({
                           onClick={() => void handleSaveImportPrice(child)}
                           disabled={savingImportPriceId === child.id}
                           className="w-8 h-8 flex items-center justify-center rounded-lg bg-white text-emerald-600 hover:bg-emerald-50 border border-emerald-100 shrink-0 transition-all disabled:opacity-60"
-                          title="Lưu giá nhập"
-                          aria-label="Lưu giá nhập"
+                          title="Lưu phân loại (SKU / giá nhập)"
+                          aria-label="Lưu phân loại"
                         >
                           <Save className="w-3.5 h-3.5" />
                         </button>
