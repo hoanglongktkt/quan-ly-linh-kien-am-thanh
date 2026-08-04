@@ -3842,6 +3842,50 @@ export default function OrderManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSubTab]);
 
+  /**
+   * Tab "Đã giao cho ĐVVC": dò API Shopee ngầm (ACK) — khi đơn thật sự SHIPPED
+   * Backend cập nhật Mongo → refresh list → tự nhảy sang "Đang giao".
+   * Không await / không set loading → không block UI; cooldown ở Backend chống spam.
+   */
+  useEffect(() => {
+    if (activeSubTab !== 'handed_over_carrier') return;
+    let cancelled = false;
+    let busy = false;
+
+    const triggerReconcile = () => {
+      if (cancelled || busy || document.visibilityState === 'hidden') return;
+      const token = localStorage.getItem('admin_token') || '';
+      if (!token) return;
+      busy = true;
+      void fetch('/api/orders/reconcile-handed-over', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          maxOrders: 80,
+          ...(selectedShopId && selectedShopId !== 'all'
+            ? { shopIds: [String(selectedShopId)] }
+            : {}),
+        }),
+      })
+        .catch(() => {})
+        .finally(() => {
+          busy = false;
+        });
+    };
+
+    // Lần đầu khi mở tab — sau 2s để không đụng fetch list.
+    const firstTimer = window.setTimeout(triggerReconcile, 2_000);
+    const intervalId = window.setInterval(triggerReconcile, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(firstTimer);
+      window.clearInterval(intervalId);
+    };
+  }, [activeSubTab, selectedShopId]);
+
   const isAtScrollTop = useCallback(() => {
     if (typeof window === 'undefined') return true;
     const main = document.querySelector('.app-main-scroll') as HTMLElement | null;

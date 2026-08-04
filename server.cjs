@@ -71721,6 +71721,8 @@ function triggerBackgroundOrderSync(opts = {}) {
 // cron/index.js
 var autoIncrementalScheduled = false;
 var cronTask = null;
+var handedOverReconcileScheduled = false;
+var handedOverReconcileTask = null;
 function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
   if (autoIncrementalScheduled) {
     console.log("[CRON] Auto Incremental Sync already scheduled (idempotent).");
@@ -71771,6 +71773,56 @@ function scheduleAutoIncrementalOrdersSync(deps21 = {}) {
   });
   console.log(
     `[CRON] Auto Incremental Sync ON \u2014 expr="${cronExpr}" lookbackSec=${lookbackSec} (~${Math.round(lookbackSec / 3600)}h). Mutex b\u1EA3o v\u1EC7 ch\u1ED3ng job.`
+  );
+}
+function scheduleHandedOverStatusReconcile(deps21 = {}) {
+  if (handedOverReconcileScheduled) {
+    console.log("[CRON] HandedOver status reconcile already scheduled (idempotent).");
+    return;
+  }
+  handedOverReconcileScheduled = true;
+  const disabled = String(process.env.AUTO_HANDED_OVER_RECONCILE_CRON || "1").trim() === "0" || String(process.env.AUTO_HANDED_OVER_RECONCILE_CRON || "").toLowerCase() === "off" || String(process.env.AUTO_HANDED_OVER_RECONCILE_CRON || "").toLowerCase() === "false";
+  if (disabled) {
+    console.log(
+      "[CRON] HandedOver status reconcile DISABLED (AUTO_HANDED_OVER_RECONCILE_CRON=0)."
+    );
+    return;
+  }
+  if (typeof deps21.reconcileHandedOverCarrierStatuses !== "function") {
+    console.warn(
+      "[CRON] HandedOver status reconcile NOT started \u2014 thi\u1EBFu deps.reconcileHandedOverCarrierStatuses"
+    );
+    return;
+  }
+  const cronExpr = String(
+    deps21.cronExpr || process.env.AUTO_HANDED_OVER_RECONCILE_CRON_EXPR || "*/2 * * * *"
+  ).trim();
+  if (!import_node_cron.default.validate(cronExpr)) {
+    console.error(
+      `[CRON] Invalid handed-over reconcile expr="${cronExpr}" \u2014 NOT started`
+    );
+    return;
+  }
+  handedOverReconcileTask = import_node_cron.default.schedule(cronExpr, () => {
+    console.log("[CRON] Tick HandedOver status reconcile (\u0110VVC \u2192 SHIPPED)");
+    try {
+      void Promise.resolve(deps21.reconcileHandedOverCarrierStatuses({ trigger: "cron" })).then(
+        (r2) => {
+          if (r2?.skipped) {
+            console.log(`[CRON] HandedOver reconcile skipped: ${r2.message || "busy"}`);
+            return;
+          }
+          console.log(
+            `[CRON] HandedOver reconcile done candidates=${r2?.candidates || 0} pulled=${r2?.pulled || 0} shipped\u2248${r2?.shipped || 0}`
+          );
+        }
+      );
+    } catch (err) {
+      console.error("[CRON] HandedOver reconcile tick failed:", err?.message || err);
+    }
+  });
+  console.log(
+    `[CRON] HandedOver status reconcile ON \u2014 expr="${cronExpr}" (ch\u1EC9 \u0111\u01A1n \u0110\xE3 giao \u0110VVC).`
   );
 }
 
@@ -105098,6 +105150,16 @@ var deps15 = {
     healed: 0,
     results: []
   }),
+  reconcileHandedOverCarrierStatuses: async () => ({
+    success: true,
+    skipped: true,
+    pulled: 0,
+    updated: 0,
+    shipped: 0,
+    candidates: 0,
+    errors: [],
+    message: "not_initialized"
+  }),
   repairMisassignedTracking: (o) => o,
   buildHandedOverWritePatch: () => ({}),
   buildClearHandedOverPatch: () => ({}),
@@ -105893,6 +105955,47 @@ async function triggerFixStuckOrders(req, res) {
         success: false,
         error: err?.message || String(err),
         message: "Kh\xF4ng th\u1EC3 trigger s\u1EEDa \u0111\u01A1n k\u1EB9t thi\u1EBFu m\xE3 v\u1EADn \u0111\u01A1n."
+      });
+    }
+    return;
+  }
+}
+async function reconcileHandedOver(req, res) {
+  try {
+    const body = req.body || {};
+    const maxRaw = Number(body.maxOrders ?? body.max ?? 100);
+    const maxOrders = Number.isFinite(maxRaw) ? Math.min(Math.max(1, Math.floor(maxRaw)), 150) : 100;
+    const shopIdsRaw = body.shop_ids ?? body.shopIds ?? body.shop_id;
+    const shopIds = Array.isArray(shopIdsRaw) ? shopIdsRaw.map((s2) => String(s2 || "").trim()).filter(Boolean) : shopIdsRaw ? [String(shopIdsRaw).trim()].filter(Boolean) : void 0;
+    const force = body.force === true || body.force === "1" || body.force === 1;
+    res.status(200).json({
+      success: true,
+      background: true,
+      message: "\u0110ang d\xF2 tr\u1EA1ng th\xE1i \u0110VVC t\u1EEB Shopee ng\u1EA7m..."
+    });
+    setImmediate(() => {
+      deps15.reconcileHandedOverCarrierStatuses({
+        maxOrders,
+        shopIds,
+        force,
+        trigger: "api"
+      }).then((result) => {
+        ordersRefreshCache = null;
+        console.log(
+          `[Orders] reconcile-handed-over BG candidates=${result.candidates || 0} pulled=${result.pulled || 0} shipped\u2248${result.shipped || 0} skipped=${Boolean(result.skipped)} msg=${result.message || ""}`
+        );
+      }).catch((err) => {
+        console.error("[Orders] reconcile-handed-over BG failed:", err?.message || err);
+      });
+    });
+    return;
+  } catch (err) {
+    console.error("[Orders] reconcile-handed-over failed:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Kh\xF4ng th\u1EC3 d\xF2 tr\u1EA1ng th\xE1i \u0111\u01A1n \u0110\xE3 giao \u0110VVC."
       });
     }
     return;
@@ -107706,6 +107809,7 @@ router13.post("/hydrate-tracking", h2(hydrateTracking));
 router13.post("/enrich-tracking", h2(enrichTracking));
 router13.post("/force-resync-stuck", h2(forceResyncStuck));
 router13.post("/trigger-fix-stuck-orders", h2(triggerFixStuckOrders));
+router13.post("/reconcile-handed-over", h2(reconcileHandedOver));
 router13.post("/hand-over-carrier/bulk", h2(handOverCarrierBulk));
 router13.post("/hand-over-carrier", h2(handOverCarrierByCode));
 router13.post("/heal-handed-over", h2(healHandedOver));
@@ -110380,6 +110484,203 @@ async function reconcileActiveShopeeOrdersFromStore(orders, shopIds, deadlineAt)
     }
   }
   return result;
+}
+var handedOverStatusReconcileInFlight = false;
+var lastHandedOverStatusReconcileAt = 0;
+var HANDED_OVER_STATUS_RECONCILE_COOLDOWN_MS = 45e3;
+var HANDED_OVER_STATUS_RECONCILE_LIMIT = 100;
+var HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS = 75e3;
+async function reconcileHandedOverCarrierStatuses(opts) {
+  const trigger = String(opts?.trigger || "manual");
+  const empty = {
+    success: true,
+    skipped: true,
+    pulled: 0,
+    updated: 0,
+    shipped: 0,
+    candidates: 0,
+    errors: [],
+    message: ""
+  };
+  if (handedOverStatusReconcileInFlight) {
+    return { ...empty, message: "reconcile_in_flight" };
+  }
+  if (!opts?.force && Date.now() - lastHandedOverStatusReconcileAt < HANDED_OVER_STATUS_RECONCILE_COOLDOWN_MS) {
+    return { ...empty, message: "cooldown" };
+  }
+  if (!isMongoReady()) {
+    return {
+      ...empty,
+      success: false,
+      skipped: false,
+      message: "mongodb_not_ready"
+    };
+  }
+  if (isOrdersPullLocked()) {
+    return { ...empty, message: "orders_pull_locked" };
+  }
+  handedOverStatusReconcileInFlight = true;
+  lastHandedOverStatusReconcileAt = Date.now();
+  const deadlineAt = Date.now() + HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS;
+  const maxOrders = Math.min(
+    Math.max(Number(opts?.maxOrders) || HANDED_OVER_STATUS_RECONCILE_LIMIT, 1),
+    150
+  );
+  const result = {
+    success: true,
+    pulled: 0,
+    updated: 0,
+    shipped: 0,
+    candidates: 0,
+    errors: [],
+    message: ""
+  };
+  try {
+    const page = await queryOrdersPageFromStore({
+      tab: "handed_over_carrier",
+      page: 1,
+      pageSize: maxOrders,
+      skipCounts: true,
+      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : void 0
+    });
+    const candidates = (page?.rows || []).filter(
+      (o) => String(o?.channel || "").toLowerCase() === "shopee"
+    );
+    result.candidates = candidates.length;
+    if (candidates.length === 0) {
+      result.message = "no_handed_over_candidates";
+      console.log(`[HandedOver Reconcile][${trigger}] empty \u2014 kh\xF4ng c\xF3 \u0111\u01A1n \u0110VVC c\u1EA7n d\xF2.`);
+      return result;
+    }
+    const allowedShops = new Set(
+      (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds()).map((id) => String(id).trim()).filter(Boolean)
+    );
+    const byShop = /* @__PURE__ */ new Map();
+    for (const order of candidates) {
+      const shopId = String(order?.shopId || "").trim();
+      const orderSn = String(order?.orderSn || "").replace(/^shopee-/i, "").trim();
+      if (!shopId || !orderSn || !allowedShops.has(shopId)) continue;
+      const sns = byShop.get(shopId) || [];
+      if (!sns.includes(orderSn)) sns.push(orderSn);
+      byShop.set(shopId, sns);
+    }
+    const workingOrders = [...candidates];
+    console.log(
+      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length} shops=${byShop.size} max=${maxOrders}`
+    );
+    for (const [shopId, orderSns] of byShop) {
+      try {
+        assertOrdersPullDeadline(deadlineAt, `handed-over reconcile shop=${shopId}`);
+        const auth = await getShopeeAccessTokenForApi(shopId);
+        if (!auth?.token) {
+          result.errors.push({
+            shopId,
+            error: "no_valid_access_token",
+            message: `Shop ${shopId}: kh\xF4ng l\u1EA5y \u0111\u01B0\u1EE3c access_token \u0111\u1EC3 d\xF2 \u0110VVC.`
+          });
+          continue;
+        }
+        for (let i2 = 0; i2 < orderSns.length; i2 += SHOPEE_SYNC_CHUNK_SIZE) {
+          assertOrdersPullDeadline(
+            deadlineAt,
+            `handed-over reconcile chunk shop=${shopId} offset=${i2}`
+          );
+          const chunk = orderSns.slice(i2, i2 + SHOPEE_SYNC_CHUNK_SIZE);
+          try {
+            const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+              auth.apiShopId,
+              auth.token,
+              auth.fileKey || shopId,
+              chunk,
+              { enrichTracking: false, skipEscrow: true }
+            );
+            if (errors.length) result.errors.push(...errors);
+            if (normalized.length === 0) continue;
+            for (const n of normalized) {
+              const raw = String(n?.shopee_order_status || "").toUpperCase();
+              const local = String(n?.status || "").toLowerCase();
+              if (raw === "SHIPPED" || raw === "TO_CONFIRM_RECEIVE" || local === "shipping" || local === "completed") {
+                result.shipped += 1;
+              }
+            }
+            const persisted = await persistShopeeOrderChunk(workingOrders, normalized, {
+              apiShopId: auth.apiShopId,
+              accessToken: auth.token,
+              skipTracking: true
+            });
+            result.pulled += normalized.length;
+            result.updated += persisted.updated + persisted.added;
+            syncDiag(
+              "HandedOver status reconcile SAVED",
+              `shop=${shopId} chunk=${Math.floor(i2 / SHOPEE_SYNC_CHUNK_SIZE) + 1} pulled=${normalized.length} upd=${persisted.updated}`
+            );
+          } catch (chunkErr) {
+            if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
+            result.errors.push({
+              shopId,
+              error: "handed_over_reconcile_chunk_failed",
+              message: chunkErr?.message || String(chunkErr),
+              orderSns: chunk
+            });
+            console.error(
+              `[HandedOver Reconcile] chunk failed shop=${shopId}:`,
+              chunkErr?.message || chunkErr
+            );
+          }
+          if (i2 + SHOPEE_SYNC_CHUNK_SIZE < orderSns.length) {
+            await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+          }
+        }
+      } catch (shopErr) {
+        if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
+          result.errors.push({
+            shopId,
+            error: "pull_shop_deadline",
+            message: shopErr.message
+          });
+          continue;
+        }
+        result.errors.push({
+          shopId,
+          error: "handed_over_reconcile_shop_failed",
+          message: shopErr?.message || String(shopErr)
+        });
+        console.error(
+          `[HandedOver Reconcile] shop=${shopId} exception:`,
+          shopErr?.message || shopErr
+        );
+      }
+    }
+    try {
+      const cleared = await clearHandedOverFlagsForShippedOrders();
+      if (cleared.modified > 0) {
+        result.shipped = Math.max(result.shipped, cleared.modified);
+        console.log(
+          `[HandedOver Reconcile] clearHandedOverFlags modified=${cleared.modified}`
+        );
+      }
+    } catch (clearErr) {
+      console.warn(
+        "[HandedOver Reconcile] clearHandedOverFlags failed:",
+        clearErr?.message || clearErr
+      );
+    }
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+    }
+    result.message = `d\xF2 ${result.candidates} \u0111\u01A1n \u0110VVC \u2192 pulled=${result.pulled} shipped\u2248${result.shipped} errors=${result.errors.length}`;
+    console.log(`[HandedOver Reconcile][${trigger}] DONE ${result.message}`);
+    return result;
+  } catch (err) {
+    result.success = false;
+    result.message = err?.message || String(err);
+    result.errors.push({ error: "handed_over_reconcile_failed", message: result.message });
+    console.error(`[HandedOver Reconcile][${trigger}] FATAL:`, result.message);
+    return result;
+  } finally {
+    handedOverStatusReconcileInFlight = false;
+  }
 }
 async function pullIncrementalOrdersFromShopee(opts) {
   if (!tryAcquireOrdersPullLock()) {
@@ -116212,6 +116513,11 @@ function scheduleAutoIncrementalOrdersSyncSafe() {
     lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 2 * 60 * 60
   });
 }
+function scheduleHandedOverStatusReconcileSafe() {
+  scheduleHandedOverStatusReconcile({
+    reconcileHandedOverCarrierStatuses: (opts) => reconcileHandedOverCarrierStatuses({ ...opts, trigger: opts?.trigger || "cron" })
+  });
+}
 function isShopeeOrderPreparedForPrint(order) {
   if (order?.isPrepared === true) return true;
   const status = String(order?.status || "").toLowerCase();
@@ -119234,6 +119540,7 @@ async function startServer() {
     repairMissingShopeeTrackingInOrders,
     forceResyncStuckOrdersWithoutTracking,
     triggerFixStuckOrders: triggerFixStuckOrders2,
+    reconcileHandedOverCarrierStatuses,
     repairMisassignedTracking,
     buildHandedOverWritePatch,
     buildClearHandedOverPatch,
@@ -121153,6 +121460,7 @@ async function startServer() {
         scheduleMissingShopeeTrackingEnrichment();
         scheduleShopeeCancelReturnReconcile();
         scheduleAutoIncrementalOrdersSyncSafe();
+        scheduleHandedOverStatusReconcileSafe();
       }
       console.log(
         `[MongoDB] connectDB xong \u2014 ready=${isMongoReady()} uri=${getMongoUriMasked()} | background order sync=ON (cron)`

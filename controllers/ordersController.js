@@ -87,6 +87,16 @@ let deps = {
     healed: 0,
     results: [],
   }),
+  reconcileHandedOverCarrierStatuses: async () => ({
+    success: true,
+    skipped: true,
+    pulled: 0,
+    updated: 0,
+    shipped: 0,
+    candidates: 0,
+    errors: [],
+    message: "not_initialized",
+  }),
   repairMisassignedTracking: (o) => o,
   buildHandedOverWritePatch: () => ({}),
   buildClearHandedOverPatch: () => ({}),
@@ -1100,6 +1110,70 @@ export async function triggerFixStuckOrders(req, res) {
         success: false,
         error: err?.message || String(err),
         message: "Không thể trigger sửa đơn kẹt thiếu mã vận đơn.",
+      });
+    }
+    return;
+  }
+}
+
+/**
+ * POST /api/orders/reconcile-handed-over
+ * Dò API Shopee cho đơn tab "Đã giao cho ĐVVC" — ACK ngay, chạy nền.
+ * Khi Shopee trả SHIPPED → Mongo cập nhật → đơn nhảy tab "Đang giao".
+ * Body: { maxOrders?: number, shopIds?: string[], force?: boolean }
+ */
+export async function reconcileHandedOver(req, res) {
+  try {
+    const body = req.body || {};
+    const maxRaw = Number(body.maxOrders ?? body.max ?? 100);
+    const maxOrders = Number.isFinite(maxRaw)
+      ? Math.min(Math.max(1, Math.floor(maxRaw)), 150)
+      : 100;
+    const shopIdsRaw = body.shop_ids ?? body.shopIds ?? body.shop_id;
+    const shopIds = Array.isArray(shopIdsRaw)
+      ? shopIdsRaw.map((s) => String(s || "").trim()).filter(Boolean)
+      : shopIdsRaw
+        ? [String(shopIdsRaw).trim()].filter(Boolean)
+        : undefined;
+    const force = body.force === true || body.force === "1" || body.force === 1;
+
+    res.status(200).json({
+      success: true,
+      background: true,
+      message: "Đang dò trạng thái ĐVVC từ Shopee ngầm...",
+    });
+
+    setImmediate(() => {
+      deps
+        .reconcileHandedOverCarrierStatuses({
+          maxOrders,
+          shopIds,
+          force,
+          trigger: "api",
+        })
+        .then((result) => {
+          ordersRefreshCache = null;
+          console.log(
+            `[Orders] reconcile-handed-over BG` +
+              ` candidates=${result.candidates || 0}` +
+              ` pulled=${result.pulled || 0}` +
+              ` shipped≈${result.shipped || 0}` +
+              ` skipped=${Boolean(result.skipped)}` +
+              ` msg=${result.message || ""}`,
+          );
+        })
+        .catch((err) => {
+          console.error("[Orders] reconcile-handed-over BG failed:", err?.message || err);
+        });
+    });
+    return;
+  } catch (err) {
+    console.error("[Orders] reconcile-handed-over failed:", err?.message || err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: err?.message || String(err),
+        message: "Không thể dò trạng thái đơn Đã giao ĐVVC.",
       });
     }
     return;

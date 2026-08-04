@@ -4,7 +4,7 @@ import fs from "fs";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import { PDFDocument } from "pdf-lib";
-import { scheduleAutoIncrementalOrdersSync } from "./cron/index.js";
+import { scheduleAutoIncrementalOrdersSync, scheduleHandedOverStatusReconcile } from "./cron/index.js";
 import {
   initOrderSyncService,
   registerLabelPdfDownloader,
@@ -2428,6 +2428,257 @@ async function reconcileActiveShopeeOrdersFromStore(
     }
   }
   return result;
+}
+
+/** Mutex + cooldown — tránh spam get_order_detail khi FE poll + cron chồng nhau. */
+let handedOverStatusReconcileInFlight = false;
+let lastHandedOverStatusReconcileAt = 0;
+const HANDED_OVER_STATUS_RECONCILE_COOLDOWN_MS = 45_000;
+const HANDED_OVER_STATUS_RECONCILE_LIMIT = 100;
+const HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS = 75_000;
+
+/**
+ * Dò trạng thái Shopee CHO RIÊNG tab "Đã giao cho ĐVVC".
+ * - Chỉ lấy đơn Mongo khớp filter handed_over_carrier (TO_SHIP + is_handed_over).
+ * - Batch get_order_detail (≤20 SN/request) + delay giữa các mẻ.
+ * - Khi Shopee báo SHIPPED / TO_CONFIRM_RECEIVE → upsert Mongo → tự nhảy tab Đang giao.
+ * Không block HTTP: caller phải ACK rồi setImmediate / cron.
+ */
+async function reconcileHandedOverCarrierStatuses(opts?: {
+  maxOrders?: number;
+  shopIds?: string[];
+  force?: boolean;
+  trigger?: string;
+}): Promise<{
+  success: boolean;
+  skipped?: boolean;
+  pulled: number;
+  updated: number;
+  shipped: number;
+  candidates: number;
+  errors: any[];
+  message: string;
+}> {
+  const trigger = String(opts?.trigger || "manual");
+  const empty = {
+    success: true,
+    skipped: true as const,
+    pulled: 0,
+    updated: 0,
+    shipped: 0,
+    candidates: 0,
+    errors: [] as any[],
+    message: "",
+  };
+
+  if (handedOverStatusReconcileInFlight) {
+    return { ...empty, message: "reconcile_in_flight" };
+  }
+  if (
+    !opts?.force &&
+    Date.now() - lastHandedOverStatusReconcileAt < HANDED_OVER_STATUS_RECONCILE_COOLDOWN_MS
+  ) {
+    return { ...empty, message: "cooldown" };
+  }
+  if (!isMongoReady()) {
+    return {
+      ...empty,
+      success: false,
+      skipped: false,
+      message: "mongodb_not_ready",
+    };
+  }
+  if (isOrdersPullLocked()) {
+    return { ...empty, message: "orders_pull_locked" };
+  }
+
+  handedOverStatusReconcileInFlight = true;
+  lastHandedOverStatusReconcileAt = Date.now();
+  const deadlineAt = Date.now() + HANDED_OVER_STATUS_RECONCILE_DEADLINE_MS;
+  const maxOrders = Math.min(
+    Math.max(Number(opts?.maxOrders) || HANDED_OVER_STATUS_RECONCILE_LIMIT, 1),
+    150,
+  );
+  const result = {
+    success: true,
+    pulled: 0,
+    updated: 0,
+    shipped: 0,
+    candidates: 0,
+    errors: [] as any[],
+    message: "",
+  };
+
+  try {
+    const page = await queryOrdersPageFromStore({
+      tab: "handed_over_carrier",
+      page: 1,
+      pageSize: maxOrders,
+      skipCounts: true,
+      shopIds: Array.isArray(opts?.shopIds) ? opts.shopIds : undefined,
+    });
+    const candidates = (page?.rows || []).filter(
+      (o: any) => String(o?.channel || "").toLowerCase() === "shopee",
+    );
+    result.candidates = candidates.length;
+    if (candidates.length === 0) {
+      result.message = "no_handed_over_candidates";
+      console.log(`[HandedOver Reconcile][${trigger}] empty — không có đơn ĐVVC cần dò.`);
+      return result;
+    }
+
+    const allowedShops = new Set(
+      (opts?.shopIds?.length ? opts.shopIds : listShopeeSyncShopIds())
+        .map((id) => String(id).trim())
+        .filter(Boolean),
+    );
+    const byShop = new Map<string, string[]>();
+    for (const order of candidates) {
+      const shopId = String(order?.shopId || "").trim();
+      const orderSn = String(order?.orderSn || "")
+        .replace(/^shopee-/i, "")
+        .trim();
+      if (!shopId || !orderSn || !allowedShops.has(shopId)) continue;
+      const sns = byShop.get(shopId) || [];
+      if (!sns.includes(orderSn)) sns.push(orderSn);
+      byShop.set(shopId, sns);
+    }
+
+    const workingOrders = [...candidates];
+    console.log(
+      `[HandedOver Reconcile][${trigger}] START candidates=${candidates.length}` +
+        ` shops=${byShop.size} max=${maxOrders}`,
+    );
+
+    for (const [shopId, orderSns] of byShop) {
+      try {
+        assertOrdersPullDeadline(deadlineAt, `handed-over reconcile shop=${shopId}`);
+        const auth = await getShopeeAccessTokenForApi(shopId);
+        if (!auth?.token) {
+          result.errors.push({
+            shopId,
+            error: "no_valid_access_token",
+            message: `Shop ${shopId}: không lấy được access_token để dò ĐVVC.`,
+          });
+          continue;
+        }
+
+        for (let i = 0; i < orderSns.length; i += SHOPEE_SYNC_CHUNK_SIZE) {
+          assertOrdersPullDeadline(
+            deadlineAt,
+            `handed-over reconcile chunk shop=${shopId} offset=${i}`,
+          );
+          const chunk = orderSns.slice(i, i + SHOPEE_SYNC_CHUNK_SIZE);
+          try {
+            const { normalized, errors } = await fetchNormalizeShopeeOrderChunk(
+              auth.apiShopId,
+              auth.token,
+              auth.fileKey || shopId,
+              chunk,
+              { enrichTracking: false, skipEscrow: true },
+            );
+            if (errors.length) result.errors.push(...errors);
+            if (normalized.length === 0) continue;
+
+            for (const n of normalized) {
+              const raw = String(n?.shopee_order_status || "").toUpperCase();
+              const local = String(n?.status || "").toLowerCase();
+              if (
+                raw === "SHIPPED" ||
+                raw === "TO_CONFIRM_RECEIVE" ||
+                local === "shipping" ||
+                local === "completed"
+              ) {
+                result.shipped += 1;
+              }
+            }
+
+            const persisted = await persistShopeeOrderChunk(workingOrders, normalized, {
+              apiShopId: auth.apiShopId,
+              accessToken: auth.token,
+              skipTracking: true,
+            });
+            result.pulled += normalized.length;
+            result.updated += persisted.updated + persisted.added;
+            syncDiag(
+              "HandedOver status reconcile SAVED",
+              `shop=${shopId} chunk=${Math.floor(i / SHOPEE_SYNC_CHUNK_SIZE) + 1}` +
+                ` pulled=${normalized.length} upd=${persisted.updated}`,
+            );
+          } catch (chunkErr: any) {
+            if (String(chunkErr?.message || "").includes("ORDERS_PULL_DEADLINE")) throw chunkErr;
+            result.errors.push({
+              shopId,
+              error: "handed_over_reconcile_chunk_failed",
+              message: chunkErr?.message || String(chunkErr),
+              orderSns: chunk,
+            });
+            console.error(
+              `[HandedOver Reconcile] chunk failed shop=${shopId}:`,
+              chunkErr?.message || chunkErr,
+            );
+          }
+          if (i + SHOPEE_SYNC_CHUNK_SIZE < orderSns.length) {
+            await shopeeSyncDelay(SHOPEE_SYNC_CHUNK_DELAY_MS);
+          }
+        }
+      } catch (shopErr: any) {
+        if (String(shopErr?.message || "").includes("ORDERS_PULL_DEADLINE")) {
+          result.errors.push({
+            shopId,
+            error: "pull_shop_deadline",
+            message: shopErr.message,
+          });
+          continue;
+        }
+        result.errors.push({
+          shopId,
+          error: "handed_over_reconcile_shop_failed",
+          message: shopErr?.message || String(shopErr),
+        });
+        console.error(
+          `[HandedOver Reconcile] shop=${shopId} exception:`,
+          shopErr?.message || shopErr,
+        );
+      }
+    }
+
+    // Safety net: đơn đã SHIPPED+ mà còn cờ ĐVVC → clear (không gọi Shopee).
+    try {
+      const cleared = await clearHandedOverFlagsForShippedOrders();
+      if (cleared.modified > 0) {
+        result.shipped = Math.max(result.shipped, cleared.modified);
+        console.log(
+          `[HandedOver Reconcile] clearHandedOverFlags modified=${cleared.modified}`,
+        );
+      }
+    } catch (clearErr: any) {
+      console.warn(
+        "[HandedOver Reconcile] clearHandedOverFlags failed:",
+        clearErr?.message || clearErr,
+      );
+    }
+
+    try {
+      invalidateOrdersRefreshCache();
+    } catch {
+      /* ignore */
+    }
+
+    result.message =
+      `dò ${result.candidates} đơn ĐVVC → pulled=${result.pulled}` +
+      ` shipped≈${result.shipped} errors=${result.errors.length}`;
+    console.log(`[HandedOver Reconcile][${trigger}] DONE ${result.message}`);
+    return result;
+  } catch (err: any) {
+    result.success = false;
+    result.message = err?.message || String(err);
+    result.errors.push({ error: "handed_over_reconcile_failed", message: result.message });
+    console.error(`[HandedOver Reconcile][${trigger}] FATAL:`, result.message);
+    return result;
+  } finally {
+    handedOverStatusReconcileInFlight = false;
+  }
 }
 
 /**
@@ -9021,8 +9272,8 @@ function isStuckShopeePickupOrder(order: any): boolean {
   ) {
     return false;
   }
-  // Đã bàn giao ĐVVC: không coi là "stuck sync" — tab này là đối soát QR nội bộ.
-  // SHIPPED/COMPLETED sẽ vào qua webhook / sync thường, không force-pull riêng cho tab.
+  // Đã bàn giao ĐVVC: không dùng force-resync-stuck (nặng / tryShip).
+  // Status SHIPPED → Đang giao do reconcileHandedOverCarrierStatuses (cron + FE poll).
   const pickupLike =
     raw === "READY_TO_SHIP" ||
     raw === "RETRY_SHIP" ||
@@ -9031,7 +9282,7 @@ function isStuckShopeePickupOrder(order: any): boolean {
     status === "processed" ||
     !raw;
   if (!pickupLike) return false;
-  // Đơn đã quét QR bàn giao: không inject vào heal stuck (tránh sync API vì tab ĐVVC).
+  // Đơn đã quét QR bàn giao: không inject vào heal stuck — dùng reconcile ĐVVC riêng.
   if (resolveOrderHandoverFlag(order)) return false;
   if (!hasUsableShopeeTrackingNumber(order)) return true;
   // Có mã nhưng vẫn tab Chưa xử lý → heal status
@@ -10337,6 +10588,14 @@ function scheduleShopeeCancelReturnReconcile(): void {
 function scheduleAutoIncrementalOrdersSyncSafe(): void {
   scheduleAutoIncrementalOrdersSync({
     lookbackSec: Number(process.env.AUTO_ORDER_SYNC_LOOKBACK_SEC) || 2 * 60 * 60,
+  });
+}
+
+/** Dò SHIPPED cho tab Đã giao ĐVVC — mỗi 2 phút (nhẹ, chỉ đơn ĐVVC). Tắt: AUTO_HANDED_OVER_RECONCILE_CRON=0 */
+function scheduleHandedOverStatusReconcileSafe(): void {
+  scheduleHandedOverStatusReconcile({
+    reconcileHandedOverCarrierStatuses: (opts) =>
+      reconcileHandedOverCarrierStatuses({ ...opts, trigger: opts?.trigger || "cron" }),
   });
 }
 
@@ -15107,6 +15366,7 @@ async function startServer() {
     repairMissingShopeeTrackingInOrders,
     forceResyncStuckOrdersWithoutTracking,
     triggerFixStuckOrders,
+    reconcileHandedOverCarrierStatuses,
     repairMisassignedTracking,
     buildHandedOverWritePatch,
     buildClearHandedOverPatch,
@@ -17423,9 +17683,11 @@ async function startServer() {
             );
           });
         // Tracking/cancel cron vẫn OFF (tránh process leak). Order incremental sync ON (5 phút).
+        // Handed-over status reconcile ON (2 phút) — dò SHIPPED → Đang giao.
         scheduleMissingShopeeTrackingEnrichment(); // no-op OFF
         scheduleShopeeCancelReturnReconcile(); // no-op OFF
         scheduleAutoIncrementalOrdersSyncSafe(); // node-cron incremental ~2h / 5 phút
+        scheduleHandedOverStatusReconcileSafe(); // node-cron dò ĐVVC → SHIPPED
         // KHÔNG gọi scheduleClosedOrdersRetentionCleanup / scheduleMongoTempCollectionsCleanup.
       }
       console.log(

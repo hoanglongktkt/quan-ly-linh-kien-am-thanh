@@ -46,6 +46,7 @@ const LONG_RUNNING_PREFIXES = [
   'orders/hydrate-tracking',
   'orders/force-resync-stuck',
   'orders/trigger-fix-stuck-orders',
+  'orders/reconcile-handed-over',
   'trigger-fix-stuck-orders',
   'orders/lookup',
   'orders/cleanup-closed-retention',
