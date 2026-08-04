@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Product, SystemFee, getProductChildren } from '../types';
+import { parseJsonResponse } from '../utils/apiClient';
 import { X, RefreshCw, Check, Package, TrendingUp, TrendingDown, Save } from 'lucide-react';
 
 const SAPO = { blue: '#0078D4', bg: '#F4F6F8', border: '#E0E0E0' };
@@ -275,11 +276,9 @@ export default function ProductDetailModal({
     }
   };
 
-  const handleSave = async () => {
-    if (!active) return;
-    setSaving(true);
-    setToast('Đang lưu vào kho nội bộ...');
-    const updated: Product = {
+  const buildUpdatedProduct = (): Product | null => {
+    if (!active) return null;
+    return {
       ...active,
       title: editTitle.trim() || active.title,
       sku: editSku.trim() || active.sku,
@@ -293,6 +292,14 @@ export default function ProductDetailModal({
       status: editStock <= 0 ? 'out_of_stock' : active.status === 'draft' ? 'draft' : 'active',
       lastSynced: new Date().toISOString(),
     };
+  };
+
+  /** Nút Lưu — chỉ ghi MongoDB nội bộ, giữ modal mở. */
+  const handleSaveOnly = async () => {
+    const updated = buildUpdatedProduct();
+    if (!updated) return;
+    setSaving(true);
+    setToast('Đang lưu vào kho nội bộ...');
     try {
       const result = await onUpdateProduct(updated, { save: true });
       setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
@@ -301,11 +308,64 @@ export default function ProductDetailModal({
         setTimeout(() => setToast(null), 4500);
         return;
       }
-      // Chỉ lưu MongoDB — giữ modal mở, không gọi Shopee.
       setToast('Lưu thành công');
       setTimeout(() => setToast(null), 4500);
     } catch (err: any) {
       setToast(`Lỗi cập nhật: ${err?.message || 'Cập nhật sản phẩm thất bại.'}`);
+      setTimeout(() => setToast(null), 4500);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Nút Cập nhật — lưu MongoDB rồi đồng bộ Shopee (cùng API nút Đồng bộ ngoài), đóng modal khi OK. */
+  const handleUpdateAndSync = async () => {
+    const updated = buildUpdatedProduct();
+    if (!updated) return;
+    setSaving(true);
+    setToast('Đang lưu và đồng bộ lên Shopee...');
+    try {
+      const result = await onUpdateProduct(updated, { save: true });
+      setLocalProducts(prev => prev.map(p => (p.id === updated.id ? updated : p)));
+      if (result && typeof result === 'object' && result.success === false) {
+        setToast(`Lỗi lưu: ${result.error || 'Cập nhật sản phẩm thất bại.'}`);
+        setTimeout(() => setToast(null), 4500);
+        return;
+      }
+
+      const token = localStorage.getItem('admin_token');
+      if (!token) {
+        setToast('Lưu kho thành công nhưng chưa đăng nhập — không đồng bộ được Shopee.');
+        setTimeout(() => setToast(null), 4500);
+        return;
+      }
+
+      // Tái sử dụng đúng endpoint của nút Đồng bộ bên ngoài (đã ép Number item_id/model_id).
+      const syncResponse = await fetch('/api/products/sync-shopee', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ productIds: [updated.id] }),
+      });
+      const syncData = await parseJsonResponse(syncResponse);
+      if (!syncResponse.ok || syncData?.success === false) {
+        throw new Error(
+          syncData?.error ||
+            syncData?.message ||
+            syncData?.shopeeMessage ||
+            `Đồng bộ Shopee thất bại (HTTP ${syncResponse.status})`
+        );
+      }
+
+      setToast('Cập nhật & Đồng bộ thành công');
+      setTimeout(() => {
+        setToast(null);
+        onClose();
+      }, 800);
+    } catch (err: any) {
+      setToast(`Lỗi đồng bộ Shopee: ${err?.message || 'Đồng bộ thất bại.'}`);
       setTimeout(() => setToast(null), 4500);
     } finally {
       setSaving(false);
@@ -525,7 +585,7 @@ export default function ProductDetailModal({
             Hủy bỏ
           </button>
           <button
-            onClick={() => void handleSave()}
+            onClick={() => void handleSaveOnly()}
             disabled={saving || syncing}
             className="w-full sm:w-auto min-h-12 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[15px] sm:text-[13px] font-semibold text-[#0078D4] bg-white border border-[#0078D4] rounded-[6px] sm:rounded-[4px] disabled:opacity-50 flex items-center justify-center gap-2 max-sm:order-2"
           >
@@ -533,7 +593,7 @@ export default function ProductDetailModal({
             {saving ? 'Đang lưu...' : 'Lưu'}
           </button>
           <button
-            onClick={() => void handleSave()}
+            onClick={() => void handleUpdateAndSync()}
             disabled={saving || syncing}
             className="w-full sm:w-auto min-h-12 sm:min-h-0 px-5 py-3 sm:py-[7px] text-[15px] sm:text-[13px] font-semibold text-white rounded-[6px] sm:rounded-[4px] disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm sm:shadow-none max-sm:order-1"
             style={{ background: '#0078D4' }}
